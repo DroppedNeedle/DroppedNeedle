@@ -62,14 +62,14 @@ export function withBasePath(path: string): string {
 			break;
 		}
 		if (!after.startsWith('/')) {
-			break; // lookalike segment such as '/dnextra' — not the base
+			break; // lookalike segment such as '/dnextra' - not the base
 		}
 		stripped = true;
 		rest = after.slice(1);
 	}
 
 	if (!stripped) {
-		// Not based yet — the ordinary prefixing case.
+		// Not based yet - the ordinary prefixing case.
 		return `${basePath}${pathPart}${suffix}`;
 	}
 
@@ -78,8 +78,8 @@ export function withBasePath(path: string): string {
 }
 
 /**
- * Removes exactly one deployment base prefix — the inverse of
- * {@link withBasePath} — for active-route comparisons: pass
+ * Removes exactly one deployment base prefix - the inverse of
+ * {@link withBasePath} - for active-route comparisons: pass
  * `page.url.pathname` through it before comparing against root-relative
  * route paths ('/', '/artists', ...) so navigation state matches whatever
  * base the app is deployed under. Exactly one occurrence is removed, never

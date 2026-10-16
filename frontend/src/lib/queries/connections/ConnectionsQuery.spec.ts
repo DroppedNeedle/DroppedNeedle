@@ -128,7 +128,7 @@ beforeEach(() => {
 	mockPut.mockResolvedValue({});
 });
 
-describe('ConnectionsQueryKeyFactory (AMU-5)', () => {
+describe('ConnectionsQueryKeyFactory', () => {
 	it('scopes the key by userId and normalizes a missing id to null', () => {
 		expect(ConnectionsQueryKeyFactory.list('userA')).toEqual(['me', 'connections', 'userA']);
 		expect(ConnectionsQueryKeyFactory.list(undefined)).toEqual(['me', 'connections', null]);

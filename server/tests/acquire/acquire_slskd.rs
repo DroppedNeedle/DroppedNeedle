@@ -93,12 +93,11 @@ async fn bitrate_absent_lossless_stays_none_and_extension_comes_from_filename() 
     let flac: Vec<_> = hits.iter().filter(|hit| hit.extension == "flac").collect();
     assert_eq!(flac.len(), 12);
     for hit in &flac {
-        // bitRate ABSENT on the wire for lossless (v2 C6b): None, never 0.
+        // bitRate ABSENT on the wire for lossless: None, never 0.
         assert_eq!(hit.bitrate, None, "lossless keeps bitrate None: {hit:?}");
         assert_eq!(hit.bit_depth, Some(16));
         assert_eq!(hit.sample_rate, Some(44100));
-        // extension parsed from filename even though the wire field is ""
-        // (v2 C6a).
+        // extension parsed from filename even though the wire field is "".
         assert_eq!(hit.extension, "flac");
         assert_eq!(hit.parent_directory, "Radiohead - OK Computer (1997)");
     }
@@ -419,7 +418,7 @@ async fn abort_removes_matched_transfer_records() {
     assert_eq!(status.status, "queued");
 
     // Post-import record removal shares the same path (v2
-    // `discard_client_artifacts` / DEC-1).
+    // `discard_client_artifacts`).
     let second = repo
         .enqueue(&[EnqueueFile {
             username: "alice".to_owned(),

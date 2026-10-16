@@ -100,7 +100,7 @@ export function saveLibraryScanSchedule() {
 	}));
 }
 
-// Remove ONE library file by id: the orphan-review action (P5) and the matched
+// Remove ONE library file by id: the orphan-review action and the matched
 // track page's per-row action. Admin/trusted only (the route enforces it).
 // Invalidates the album's coverage/status AND the local-library lists, and
 // clears the caller's captured source-match cache entry (the exact key string

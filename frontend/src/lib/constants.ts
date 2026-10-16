@@ -3,7 +3,7 @@ export type RequestKind = 'album' | 'track';
 
 export const AUTH_FREE_PATHS = ['/login', '/setup', '/auth/callback', '/recover-password'];
 
-// concert distances are stored in km but displayed in miles (owner decision U6)
+// concert distances are stored in km but displayed in miles
 export const KM_PER_MILE = 1.609;
 
 const CACHE_KEY_GROUPS = {

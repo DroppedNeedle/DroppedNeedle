@@ -49,7 +49,7 @@ export const createRejectAutoDownloadMutation = () =>
 			toastStore.show({ message: errorMessage(err, 'Reject failed'), type: 'error' })
 	}));
 
-// Bulk "Lidarr Import" approval batches (LidarrImport D3). Invalidating the adminApprovals
+// Bulk "Lidarr Import" approval batches. Invalidating the adminApprovals
 // prefix sweeps the nested batches key too.
 interface BatchActionVars {
 	batchId: string;

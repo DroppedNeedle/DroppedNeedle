@@ -321,7 +321,7 @@ function createScrobbleManager() {
 		},
 		reset(): void {
 			// clear per-user scrobble state on user switch/logout so the client gate +
-			// tooltip never reflect the wrong user (AMU-5). A play started before
+			// tooltip never reflect the wrong user. A play started before
 			// sign-out is dropped, never submitted under the next session.
 			active = false;
 			track = null;

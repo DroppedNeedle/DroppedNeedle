@@ -896,7 +896,7 @@ async fn brief_attach_existing_links_and_scopes_invalidation() {
         .unwrap();
     assert_eq!(linked.state, ContributionState::Linked);
     assert!(linked.next_actions.is_empty());
-    // ST1: exactly the touched identity keys, before returning.
+    // Exactly the touched identity keys, before returning.
     assert_eq!(
         rig.catalog.scopes(),
         vec![(vec![MBID_GROUP.to_string()], vec![MBID_ARTIST.to_string()])]

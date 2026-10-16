@@ -38,7 +38,7 @@
 				city_name: picked.name,
 				latitude: picked.latitude,
 				longitude: picked.longitude,
-				radius_km: 32, // 20 mi default (U6)
+				radius_km: 32, // 20 mi default
 				country_code: picked.country_code
 			}
 		]);
@@ -140,7 +140,7 @@
 			{/if}
 		</div>
 	{:else if cities.length === 0}
-		<!-- first run (U7): the empty screen IS the setup step -->
+		<!-- first run: the empty screen IS the setup step -->
 		<div class="mx-auto flex max-w-md flex-col items-center gap-4 py-16 text-center">
 			<span
 				class="flex h-16 w-16 items-center justify-center rounded-full bg-primary/15 text-primary"
@@ -177,7 +177,7 @@
 						<li
 							class="flex items-center gap-4 rounded-2xl border border-base-300 bg-base-200 p-3 sm:p-4"
 						>
-							<!-- calendar date block (U1) -->
+							<!-- calendar date block -->
 							<div
 								class="flex w-12 shrink-0 flex-col items-center rounded-xl bg-base-300/60 py-1.5"
 								aria-hidden="true"

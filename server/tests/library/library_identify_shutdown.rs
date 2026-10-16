@@ -1,4 +1,4 @@
-//! Stage-13 fix B: the identify drain yields to shutdown promptly.
+//! The identify drain yields to shutdown promptly.
 //!
 //! Briefs (small seeded drains, no provider waits):
 //!

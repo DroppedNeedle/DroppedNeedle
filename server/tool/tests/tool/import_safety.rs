@@ -310,7 +310,7 @@ async fn failed_config_write_marks_the_audit_row() {
     export["settings"]["wanted"] = json!({"enabled": true});
 
     let pool = migrated_pool().await;
-    let (dir, config_path, _) = scratch_config("audit-fixup");
+    let (dir, config_path, _) = scratch_config("audit-unwritable");
     std::fs::write(&config_path, r#"{"wanted": {"enabled": false}}"#).unwrap();
     // A directory sitting on the staging path: the config reads fine, but
     // the atomic write cannot create its temp file.

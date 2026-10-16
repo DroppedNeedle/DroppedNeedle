@@ -14,10 +14,10 @@ import type {
 } from './types';
 
 /**
- * Profile self-service mutations (D8). Each returns the updated user
+ * Profile self-service mutations. Each returns the updated user
  * (`UserResponse`, incl. providers), so on success we sync `authStore` - keeping
  * the topbar name/avatar and the change-vs-set-password branch correct - and
- * invalidate the user-scoped profile query so the card refreshes (AMU-5).
+ * invalidate the user-scoped profile query so the card refreshes.
  */
 async function applyUser(userId: string, user: AuthSessionUser): Promise<void> {
 	authStore.setUser(toAuthUser(user));

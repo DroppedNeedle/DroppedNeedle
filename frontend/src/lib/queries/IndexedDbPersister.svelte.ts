@@ -5,7 +5,7 @@ import {
 } from '@tanstack/svelte-query-persist-client';
 import { clear, createStore, del, entries, get } from 'idb-keyval';
 /**
- * Wipe every persisted query from IndexedDB on a user switch (AMU-5): the
+ * Wipe every persisted query from IndexedDB on a user switch: the
  * per-query entries written by {@link createIDBStorage}. idb-keyval's default
  * store is used only by this persister (verified), so a blanket `clear()` is safe
  * and cannot drop unrelated app data.

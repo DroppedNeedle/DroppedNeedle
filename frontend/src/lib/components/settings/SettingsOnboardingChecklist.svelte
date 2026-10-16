@@ -37,7 +37,7 @@
 	);
 	const mountOk = $derived(statusQuery.data?.mount?.ok === true);
 	const hasAcoustid = $derived(Boolean(libQuery.data?.acoustid_api_key));
-	// F-08: done once ANY scan run has terminalized (completed, cancelled,
+	// Done once ANY scan run has terminalized (completed, cancelled,
 	// superseded, or failed all count - the scan ran). Derived from run
 	// history, never from last_scan (no server scan-path writer exists).
 	const hasTerminalScanRun = $derived(

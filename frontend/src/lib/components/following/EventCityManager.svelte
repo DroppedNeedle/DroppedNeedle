@@ -11,7 +11,7 @@
 
 	let { cities }: Props = $props();
 
-	// radius presets (U6): shown in miles, stored in km
+	// radius presets: shown in miles, stored in km
 	const RADIUS_PRESETS_MI = [10, 20, 50, 100];
 	const DEFAULT_RADIUS_KM = 32; // 20 mi
 

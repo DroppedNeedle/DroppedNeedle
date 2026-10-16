@@ -80,7 +80,7 @@
 	</a>
 {/snippet}
 
-<!-- Always renders (owner-signed): worst case it offers the Bandcamp search.
+<!-- Always renders: worst case it offers the Bandcamp search.
      One line collapsed, above the track list; expand for every store + groups. -->
 <section aria-labelledby="where-to-buy-heading" class="rounded-2xl bg-base-200/40 px-3 py-2">
 	<div class="flex flex-wrap items-center gap-2">

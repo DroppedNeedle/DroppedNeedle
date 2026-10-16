@@ -93,7 +93,7 @@
 	}
 
 	// Source-resolution cache is namespaced per user so two accounts on a shared
-	// browser never read each other's resolved sources (AMU-5).
+	// browser never read each other's resolved sources.
 	const SOURCES_CACHE_PREFIX = 'droppedneedle_playlist_sources_';
 	function sourcesCacheKey(playlistId: string): string {
 		return `${SOURCES_CACHE_PREFIX}${userStorageSegment(authStore.user?.id)}_${playlistId}`;

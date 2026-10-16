@@ -1048,7 +1048,7 @@ async fn lastfm_artist_info_found_with_lenient_counts() {
 
 #[tokio::test]
 async fn lastfm_per_user_credentials_stay_isolated() {
-    // R7: one client, two users; each call carries its own key and the
+    // One client, two users; each call carries its own key and the
     // client stores neither.
     let payload = serde_json::json!({"artist": {"name": "x"}});
     let fake = Fake::start(always(ScriptedResponse::json(200, &payload))).await;

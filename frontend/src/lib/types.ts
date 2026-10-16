@@ -1792,7 +1792,7 @@ export interface LibraryAlbumStatus {
 	album_id: string;
 	track_count: number;
 	tracks: TargetNativeTrack[];
-	// Coverage vs the release's MB tracklist (P5): expected_tracks === 0 means the
+	// Coverage vs the release's MB tracklist: expected_tracks === 0 means the
 	// tracklist was unavailable and the UI falls back to the presence-only reading.
 	expected_tracks?: number;
 	covered_tracks?: number;

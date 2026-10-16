@@ -151,7 +151,7 @@ type Opts = {
 };
 
 describe('ProfileQueryKeyFactory', () => {
-	it('scopes the profile key by userId (AMU-5)', () => {
+	it('scopes the profile key by userId', () => {
 		expect(ProfileQueryKeyFactory.profile('userA')).toEqual(['profile', 'userA']);
 		expect(ProfileQueryKeyFactory.profile('userB')).not.toEqual(
 			ProfileQueryKeyFactory.profile('userA')
@@ -217,7 +217,7 @@ describe('mutation onSuccess', () => {
 	});
 });
 
-describe('resetQueryCacheForUserSwitch (AMU-5)', () => {
+describe('resetQueryCacheForUserSwitch', () => {
 	it('empties the in-memory client AND the persisted IndexedDB store', async () => {
 		await setQueryDataWithPersister(['profile', 'userA'], { display_name: 'leaked' });
 		expect(queryClient.getQueryData(['profile', 'userA'])).toBeDefined();

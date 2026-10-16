@@ -4,7 +4,7 @@ import { ApiError, api } from '$lib/api/client';
  * Download a file through the api client so failures surface as errors
  * (anchor-click downloads fail silently in the browser). The
  * server's Content-Disposition filename is used unless `filename` is given.
- * Throws ApiError on HTTP errors and TransportError on network failure —
+ * Throws ApiError on HTTP errors and TransportError on network failure -
  * callers turn these into toasts.
  */
 export async function downloadBlob(url: string, filename?: string): Promise<void> {

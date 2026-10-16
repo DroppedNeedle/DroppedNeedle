@@ -132,7 +132,7 @@ beforeEach(() => {
 	queryClient.clear();
 });
 
-describe('FollowQueryKeyFactory (AMU-5)', () => {
+describe('FollowQueryKeyFactory', () => {
 	it('scopes every key by userId and falls back to anon', () => {
 		expect(FollowQueryKeyFactory.status(MBID, 'userA')).toEqual([
 			'follow',
@@ -195,7 +195,7 @@ describe('concerts queries hit the right endpoints with user-scoped keys', () =>
 });
 
 describe('follow mutations', () => {
-	it('non-admin auto-download optimistically goes pending (D3)', async () => {
+	it('non-admin auto-download optimistically goes pending', async () => {
 		auth.isAdmin = false;
 		const m = createSetAutoDownloadMutation(() => MBID) as unknown as Opts;
 		await m.onMutate!(true);
@@ -206,7 +206,7 @@ describe('follow mutations', () => {
 		expect(cached?.auto_download_state).toBe('pending');
 	});
 
-	it('admin auto-download optimistically goes approved (D3)', async () => {
+	it('admin auto-download optimistically goes approved', async () => {
 		auth.isAdmin = true;
 		const m = createSetAutoDownloadMutation(() => MBID) as unknown as Opts;
 		await m.onMutate!(true);

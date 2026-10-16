@@ -1,7 +1,7 @@
-//! Stage-8 tags slice briefs: read, probe, fingerprint, save wrapper.
+//! Tag briefs: read, probe, fingerprint, save wrapper.
 //!
 //! Reads, probes, and fingerprints run against the committed real-audio
-//! fixtures in `backend/tests/fixtures/library/`. Every save test copies
+//! fixtures in `server/tests/fixtures/library/`. Every save test copies
 //! its fixture into a scratch dir first; the committed files are never
 //! written. Nothing here touches the network.
 
@@ -601,7 +601,7 @@ fn read_management_wav_pair() {
 
 #[test]
 fn read_management_aac_best_effort() {
-    // AAC tag reads are the accepted stage-1 gap: core fields only.
+    // AAC tag reads are best effort: core fields only.
     let (tag, _) = tags::read_tags(&fixture("management_full.aac")).unwrap();
     assert_eq!(tag.title, "Management Track");
     assert_eq!(tag.artist, "Alpha feat. Beta");
@@ -759,7 +759,7 @@ fn save_mp3_preserves_everything_but_the_title() {
     let before = std::fs::read(&path).unwrap();
     let audio_before = mp3_audio_tail(&before).to_vec();
 
-    // Plant unknown frames the way the stage-1 spike did, by splicing
+    // Plant unknown frames by splicing
     // raw frames (lofty's own save cannot plant them while #732 is open).
     let mut txxx = vec![3u8];
     txxx.extend_from_slice(b"ZZZ_UNHEARD_OF\0mystery");
@@ -825,7 +825,7 @@ fn save_flac_preserves_vendor_spelling_and_unknowns() {
     let audio_before = flac_audio_tail(&std::fs::read(&path).unwrap()).to_vec();
     let vendor_before = vorbis_vendor(&path);
 
-    // Plant an unknown field the spike way, by splicing the raw pair
+    // Plant an unknown field by splicing the raw pair
     // (a lofty save would drop the unknowns it cannot see).
     flac_inject_pairs(&path, &[("ZZZ_UNHEARD_OF_FIELD", "mystery")]);
 

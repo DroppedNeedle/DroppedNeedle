@@ -16,7 +16,7 @@ export function setAudioElement(el: HTMLAudioElement): void {
 		engine = newEngine;
 	} catch {
 		// connect() can throw (InvalidStateError, SecurityError).
-		// Audio element is still usable without EQ — engine stays null.
+		// Audio element is still usable without EQ - engine stays null.
 	}
 }
 

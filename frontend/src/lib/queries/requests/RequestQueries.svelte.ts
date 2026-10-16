@@ -19,7 +19,7 @@ export const getActiveRequestsQuery = (getEnabled: Getter<boolean> = () => true)
 		refetchIntervalInBackground: false
 	}));
 
-// Cheap R10 badge count: admins poll this instead of the full list.
+// Cheap badge count: admins poll this instead of the full list.
 export const getActiveRequestCountQuery = (getEnabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		queryKey: RequestQueryKeyFactory.activeCount(authStore.user?.id),

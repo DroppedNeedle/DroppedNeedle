@@ -38,10 +38,10 @@ use super::{
     writer::{LaneIdle, WalHold},
 };
 
-/// `PASSIVE` checkpoint cadence. The GH-293 owner calibration, unchanged.
+/// `PASSIVE` checkpoint cadence, as calibrated in GH-293.
 pub const CHECKPOINT_CADENCE: Duration = Duration::from_secs(30);
 /// Stall bound: no measurable `PASSIVE` progress for this long holds bulk
-/// writes. The GH-293 owner calibration, unchanged.
+/// writes, as calibrated in GH-293.
 pub const CHECKPOINT_READER_BLOCKED_BOUND: Duration = Duration::from_secs(60);
 /// Active-WAL high water: above this, bulk writes are held.
 pub const ACTIVE_HIGH_WATER_BYTES: i64 = 64 * 1024 * 1024;

@@ -108,7 +108,7 @@ describe('download queue queries', () => {
 		expect(opts.refetchInterval({ state: { data: { active_count: 0 } } })).toBe(120_000);
 		expect(opts.refetchIntervalInBackground).toBe(false);
 		expect(opts.refetchOnReconnect).toBe('always');
-		// B6: focus-'always' dropped - invalidations + the interval own freshness
+		// no focus-'always' - invalidations + the interval own freshness
 		expect(opts.refetchOnWindowFocus).toBeUndefined();
 		expect(opts.staleTime).toBe(0);
 	});
@@ -122,7 +122,7 @@ describe('download queue queries', () => {
 		};
 
 		expect(opts.refetchInterval).toBeUndefined();
-		// B6: neither always-flag remains; 30 s stale window instead
+		// neither always-flag remains; 30 s stale window instead
 		expect(opts.refetchOnWindowFocus).toBeUndefined();
 		expect(opts.refetchOnReconnect).toBeUndefined();
 		expect(opts.staleTime).toBe(30_000);

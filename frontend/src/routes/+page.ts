@@ -3,7 +3,7 @@ import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { PageLoad } from './$types';
 
-// B7: warm the home hero query during the layout bootstrap instead of after it.
+// Warm the home hero query during the layout bootstrap instead of after it.
 export const load: PageLoad = () => {
 	void queryClient.prefetchQuery(getHomeQueryOptions(authStore.user?.id));
 	return {};

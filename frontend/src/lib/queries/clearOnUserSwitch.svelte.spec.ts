@@ -11,7 +11,7 @@ import { clearUserScopedLocalCaches } from '$lib/utils/userScopedCaches';
 
 // A switch must drop both the user-keyed TanStack home cache and the localStorage caches the
 // query-cache reset misses; asserts the two mechanisms in isolation, not the logout() orchestration.
-describe('clear-on-user-switch (AMU-5)', () => {
+describe('clear-on-user-switch', () => {
 	beforeEach(() => {
 		localStorage.clear();
 		resetMusicBrainzSourceScope();

@@ -270,7 +270,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	const libraryTrackCount = $derived(libraryStatus?.track_count ?? 0);
 	// any held track below the quality cutoff -> the header's curator "Upgrade quality" affordance
 	const libraryBelowCutoff = $derived((libraryStatus?.tracks ?? []).some((t) => t.below_cutoff));
-	// P5 coverage: what the held files actually COVER of the release's tracklist.
+	// Coverage: what the held files actually COVER of the release's tracklist.
 	// expectedTracks === 0 -> tracklist unavailable, badge/Play All fall back to the
 	// presence-only reading (never block playback on a MusicBrainz hiccup).
 	const coverageExpected = $derived(libraryStatus?.expected_tracks ?? 0);
@@ -761,10 +761,10 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		void doFetchTracks(albumIdGetter(), signal);
 	}
 
-	// Playback sees only files that COVER an expected track (P5, 2026-07-05
-	// incident): an orphan ("doesn't match this album") never enters the album
-	// queue - it plays individually from the review section. Falls back to the
-	// raw match when the tracklist was unavailable (expected_tracks === 0).
+	// Playback sees only files that COVER an expected track: an orphan
+	// ("doesn't match this album") never enters the album queue - it plays
+	// individually from the review section. Falls back to the raw match when
+	// the tracklist was unavailable (expected_tracks === 0).
 	const localMatchForPlayback = $derived.by(() => {
 		if (!localMatch || coverageExpected === 0) return localMatch;
 		return {

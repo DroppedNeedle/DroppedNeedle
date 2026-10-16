@@ -151,7 +151,7 @@ beforeEach(() => {
 	});
 });
 
-describe('ScrobblePreferencesQueryKeyFactory (AMU-5)', () => {
+describe('ScrobblePreferencesQueryKeyFactory', () => {
 	it('scopes the key by userId', () => {
 		expect(ScrobblePreferencesQueryKeyFactory.get('userA')).toEqual([
 			'me',

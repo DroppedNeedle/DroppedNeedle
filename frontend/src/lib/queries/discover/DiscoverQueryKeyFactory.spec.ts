@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DiscoverQueryKeyFactory } from './DiscoverQueryKeyFactory';
 
-describe('DiscoverQueryKeyFactory (AMU-5)', () => {
+describe('DiscoverQueryKeyFactory', () => {
 	describe('discover', () => {
 		it('includes userId and MusicBrainz source identity', () => {
 			expect(DiscoverQueryKeyFactory.discover('user-a')).toEqual([

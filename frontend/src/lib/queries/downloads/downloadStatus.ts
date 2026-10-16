@@ -56,7 +56,7 @@ export function activeCount(tasks: DownloadTask[]): number {
 	return count;
 }
 
-// no cancel during processing: file move is unsafe to interrupt (UX-8)
+// no cancel during processing: file move is unsafe to interrupt
 export function canCancel(task: DownloadTask): boolean {
 	const derived = derivedDownloadStatus(task);
 	return derived === 'searching' || derived === 'queued' || derived === 'downloading';

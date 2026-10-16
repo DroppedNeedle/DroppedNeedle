@@ -14,7 +14,7 @@ export const getAutoDownloadApprovalsQuery = (getEnabled: Getter<boolean>) =>
 		enabled: getEnabled()
 	}));
 
-// The bulk "Lidarr Import" approval cards (LidarrImport D3).
+// The bulk "Lidarr Import" approval cards.
 export const getAutoDownloadApprovalBatchesQuery = (getEnabled: Getter<boolean>) =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.adminApprovalBatches(),

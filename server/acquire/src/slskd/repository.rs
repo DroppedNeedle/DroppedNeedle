@@ -61,7 +61,7 @@ pub struct SearchResult {
     pub filename: String,
     pub parent_directory: String,
     pub size: i64,
-    /// Lowercase extension parsed from the filename (v2 C6a).
+    /// Lowercase extension parsed from the filename.
     pub extension: String,
     /// `None` for lossless (bitRate absent on the wire, never coerced).
     pub bitrate: Option<i32>,
@@ -552,8 +552,7 @@ fn is_disc_dir(name: &str) -> bool {
 }
 
 /// Lowercase extension parsed from the filename (v2
-/// `_extension_from_filename`; slskd's `extension` field is unreliable, v2
-/// C6a).
+/// `_extension_from_filename`; slskd's `extension` field is unreliable).
 #[must_use]
 pub fn extension_from_filename(filename: &str) -> String {
     let base = filename.rsplit(['/', '\\']).next().unwrap_or(filename);

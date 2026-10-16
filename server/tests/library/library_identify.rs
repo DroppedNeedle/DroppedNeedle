@@ -719,7 +719,7 @@ fn queue_claims_by_priority_then_backs_off() {
     let first = rig.store.claim(0, LEASE_SECONDS * 1000).expect("claim");
     assert_eq!(first.id, "job-auto");
     assert_eq!(first.priority, PRIORITY_NEW_OR_CHANGED);
-    // Backoff ladder matches the owner-signed F-IDENT-04 sequence.
+    // Backoff ladder doubles from 30 seconds up to the cap.
     let ladder: Vec<u64> = (1..=9).map(backoff_secs).collect();
     assert_eq!(ladder, vec![30, 60, 120, 240, 480, 960, 1920, 3840, 7680]);
     assert_eq!(MAX_BACKOFF_SECONDS, 7680);

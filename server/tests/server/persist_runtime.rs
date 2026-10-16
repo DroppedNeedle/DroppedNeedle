@@ -233,7 +233,7 @@ async fn boot_migrates_and_applies_pragmas() {
         .fetch_one(pool)
         .await
         .unwrap();
-    // Stage-13 fix F diet: 2 MiB per connection (was 16 MiB).
+    // Page cache: 2 MiB per connection.
     assert_eq!(cache_size, -2048);
     let temp_store: i64 = sqlx::query_scalar("PRAGMA temp_store")
         .fetch_one(pool)
@@ -496,7 +496,7 @@ async fn writer_fairness_burst_eight_then_one() {
 }
 
 /// Lock contention surfaces once as 503 with `Retry-After`, through the
-/// stage-1 middleware, with the fixed envelope body.
+/// request middleware, with the fixed envelope body.
 #[tokio::test]
 async fn busy_path_returns_503_with_retry_after_and_no_spin() {
     let (runtime, dir) = open_scratch("busy").await;

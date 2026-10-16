@@ -183,8 +183,8 @@ fn canned_responses() -> Vec<Value> {
             file_entry(
                 &format!("@@music\\Radiohead - OK Computer (1997)\\{n:02} Track {n}.flac"),
                 30_000_000,
-                "",   // slskd omits extension for some files (v2 C6a)
-                None, // lossless: bitRate absent (v2 C6b)
+                "",   // slskd omits extension for some files
+                None, // lossless: bitRate absent
                 Some(16),
                 Some(44100),
             )

@@ -1,6 +1,6 @@
 import { userIdSegment } from '$lib/queries/userKeySegment';
 
-// userId scopes every key (AMU-5): without it the persisted cache leaks one
+// userId scopes every key: without it the persisted cache leaks one
 // user's follows to another on a shared browser.
 export const FollowQueryKeyFactory = {
 	statusPrefix: ['follow', 'status'] as const,
@@ -40,7 +40,7 @@ export const FollowQueryKeyFactory = {
 	// admin queue is global (not per-user) - admins review every pending grant
 	adminApprovals: () => [...FollowQueryKeyFactory.followingPrefix, 'admin-approvals'] as const,
 	// bulk "Lidarr Import" approval cards, nested under admin-approvals so its prefix
-	// invalidation sweeps both (LidarrImport D3)
+	// invalidation sweeps both
 	adminApprovalBatches: () =>
 		[...FollowQueryKeyFactory.followingPrefix, 'admin-approvals', 'batches'] as const,
 	pendingApprovalCount: (userId: string | null | undefined) =>

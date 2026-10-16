@@ -134,7 +134,7 @@ pub fn free_bytes_for(dir: &Path) -> Result<u64, PublishError> {
 /// the album again now, so its credits and release document catch up with
 /// the new manual identity (identify never overwrites a manual decision).
 ///
-/// Library Management (WI-21) hooks auto-management of a newly linked
+/// Library Management hooks auto-management of a newly linked
 /// album here, at `after_identified`, the same place v2's `on_identified`
 /// callback fired.
 pub struct IdentifyFollowUp {

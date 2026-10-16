@@ -195,9 +195,8 @@ impl FromRequestParts<ImportsDeps> for ImportsUser {
     }
 }
 
-/// Admin-only caller (v2 owner decision 2026-09-07: the Lidarr import and
-/// the Spotify/SABnzbd settings surfaces are admin-only). Lesser roles
-/// read as 403.
+/// Admin-only caller: the Lidarr import and the Spotify/SABnzbd settings
+/// surfaces are admin-only, as in v2. Lesser roles read as 403.
 pub struct ImportsAdmin(pub AuthContext);
 
 impl FromRequestParts<ImportsDeps> for ImportsAdmin {

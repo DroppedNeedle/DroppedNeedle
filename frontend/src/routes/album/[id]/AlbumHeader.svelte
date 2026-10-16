@@ -124,7 +124,7 @@
 		}
 	}
 
-	// Album quality upgrade (admin/trusted, CollectionManagement D18): fetch a
+	// Album quality upgrade (admin/trusted): fetch a
 	// better copy of everything below the cutoff; replace is strictly-better-only.
 	const upgrade = requestUpgradeAlbum();
 	let upgradeQueued = $state(false);

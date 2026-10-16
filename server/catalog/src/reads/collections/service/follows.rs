@@ -46,7 +46,7 @@ pub(crate) fn derive_state(row: &FollowRow) -> AutoDownloadState {
         .as_deref()
         .map_or(AutoDownloadState::None, AutoDownloadState::from_approval);
     if row.auto_download {
-        // Curators approve themselves and carry no approval row (v2 DD3).
+        // Curators approve themselves and carry no approval row, as in v2.
         if Role::parse(&row.user_role).is_some_and(Role::is_curator) {
             AutoDownloadState::Approved
         } else {

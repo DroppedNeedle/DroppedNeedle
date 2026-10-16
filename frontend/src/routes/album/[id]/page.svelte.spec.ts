@@ -314,7 +314,7 @@ vi.mock('$lib/queries/downloads/DownloadSSE.svelte', () => ({
 // Stub only the rescan mutation factory so AlbumHeader renders without a QueryClientProvider; keep other exports intact.
 vi.mock('$lib/queries/library/LibraryMutations.svelte', () => ({
 	rescanAlbum: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	// the orphan-review section (P5) creates its removal mutation at init - stub it
+	// the orphan-review section creates its removal mutation at init - stub it
 	// so the page renders without a QueryClientProvider
 	removeLibraryTrack: () => mockRemoveTrack,
 	removeLibraryAlbum: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false })

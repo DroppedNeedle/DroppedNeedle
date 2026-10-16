@@ -10,7 +10,7 @@ import { notifyPendingApprovalCountChanged } from '$lib/utils/requestsApi';
 import type { ScrobblePreferencesUpdate } from './types';
 import { isMusicSource, musicSourceStore } from '$lib/stores/musicSource';
 
-// invalidate so the card + (Phase 5) home/discover re-read the new primary source
+// invalidate so the card and home/discover re-read the new primary source
 export const createUpdateScrobblePreferencesMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: ScrobblePreferencesUpdate) =>

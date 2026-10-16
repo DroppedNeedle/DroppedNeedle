@@ -3,7 +3,7 @@ import { resetMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScop
 import type { MusicBrainzSourceMode } from '$lib/queries/musicbrainz/types';
 
 /** localStorage key holding the last hydrated user id, so a page load as a
- * different user (shared browser) can clear the persisted query cache (AMU-5). */
+ * different user (shared browser) can clear the persisted query cache. */
 export const LAST_USER_ID_KEY = 'msr:last_user_id';
 
 export interface MusicBrainzSourceIdentity {

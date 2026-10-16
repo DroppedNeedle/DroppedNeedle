@@ -1,6 +1,6 @@
 <script lang="ts">
 	// The album summary carries a normalized format for homogeneous albums, or the
-	// literal 'mixed' when indexed tracks use more than one format (F-PERF-10 display
+	// literal 'mixed' when indexed tracks use more than one format (a display
 	// policy, not a quality ranking). bitrate lives on per-track AudioQualityBadge.
 	interface Props {
 		format: string | null | undefined;

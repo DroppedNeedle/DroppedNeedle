@@ -94,7 +94,7 @@
 
 	async function loadPlaylists() {
 		try {
-			// Only the user's own playlists are valid add targets (D4).
+			// Only the user's own playlists are valid add targets.
 			const answer = await api.global.v3.GET(PlaylistV3Api.list());
 			playlists = toPageList(answer.playlists).filter(
 				(p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner

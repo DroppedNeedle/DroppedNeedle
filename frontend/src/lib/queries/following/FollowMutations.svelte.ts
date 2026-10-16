@@ -134,7 +134,7 @@ export const createSetAutoDownloadMutation = (getMbid: () => string) =>
 			const key = statusKey(getMbid());
 			await queryClient.cancelQueries({ queryKey: key });
 			const prev = queryClient.getQueryData<FollowStatus>(key) ?? NOT_FOLLOWING;
-			// admins are approved immediately; everyone else enters a pending state (D3)
+			// admins are approved immediately; everyone else enters a pending state
 			const optimisticState: AutoDownloadState = enabled
 				? authStore.isAdmin
 					? 'approved'

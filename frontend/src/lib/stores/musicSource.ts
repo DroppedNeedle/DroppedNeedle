@@ -165,7 +165,7 @@ function createMusicSourceStore() {
 
 	function reset(): void {
 		// wipe cached + per-page choices on user switch so a shared browser never
-		// carries the previous user's source (AMU-5); next load() re-fetches
+		// carries the previous user's source; next load() re-fetches
 		mutationVersion += 1;
 		if (browser) {
 			localStorage.removeItem(CACHED_SOURCE_KEY);

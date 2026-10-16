@@ -230,7 +230,7 @@ subscribeDownloadRoleChange((userId) => {
 });
 
 /**
- * Drop ALL cached query data on login / logout / user-switch (AMU-5): QueryClient +
+ * Drop ALL cached query data on login / logout / user-switch: QueryClient +
  * IndexedDB persister form one browser-wide cache with no user dimension, so
  * personalized data would otherwise leak across users sharing a browser.
  */

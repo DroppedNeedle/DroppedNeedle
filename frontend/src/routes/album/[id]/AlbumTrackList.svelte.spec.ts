@@ -16,7 +16,7 @@ vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({
 	requestUpgradeTrack: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
-// role gates the upgrade affordance (admin/trusted curators only, D18)
+// role gates the upgrade affordance (admin/trusted curators only)
 const auth = vi.hoisted(() => ({ role: 'user' }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
 	LAST_USER_ID_KEY: 'test:last-user',

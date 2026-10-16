@@ -31,7 +31,7 @@ export const getDownloadActivitySummaryQueryOptions = () =>
 				? ACTIVE_ACTIVITY_RECOVERY_MS
 				: IDLE_ACTIVITY_RECOVERY_MS,
 		refetchIntervalInBackground: false,
-		// B6: reconnect-'always' stays (a reconnect can mean missed SSE events); focus
+		// reconnect-'always' stays (a reconnect can mean missed SSE events); focus
 		// refetches only when the interval-owned data is actually stale (staleTime: 0).
 		refetchOnReconnect: 'always' as const
 	});
@@ -41,7 +41,7 @@ export const getDownloadActivitySummaryQuery = () =>
 
 // The downloads page owns the bounded detailed projection. It loads on entry and is
 // refreshed by the global summary revision rather than running a second timer.
-// B6: no focus-'always' - the SSE reconciler invalidates tasks(userId) exactly, and a
+// No focus-'always': the SSE reconciler invalidates tasks(userId) exactly, and a
 // 30 s stale window keeps same-tab returns free; beyond it one stale-true refetch.
 export const getDownloadsQueryOptions = () =>
 	queryOptions({

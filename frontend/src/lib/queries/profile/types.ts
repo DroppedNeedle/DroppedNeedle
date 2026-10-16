@@ -5,7 +5,7 @@ import type { components } from '$lib/api/v3/openapi';
  *  connection reads, library stats in the library/remotes stats reads - so
  *  the page composes those hooks instead of one query returning everything.
  *  `providers` stays the authoritative list used to choose change- vs
- *  set-password (D8). */
+ *  set-password. */
 export type ProfileData = components['schemas']['ProfileResponse'];
 
 /** One row of the profile's connected-services grid, mapped at runtime from

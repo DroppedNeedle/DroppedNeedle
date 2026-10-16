@@ -482,7 +482,7 @@ function createPlayerStore() {
 			progress = t;
 			duration = d;
 			// preview tier: DJ-style fade over the last 2s so 30s clips blend
-			// instead of stopping dead (owner-signed anti-jarring rule)
+			// instead of stopping dead
 			const item = queue[currentIndex];
 			if (item?.isPreview && d > 0) {
 				const remaining = d - t;

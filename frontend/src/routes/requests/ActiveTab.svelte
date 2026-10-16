@@ -44,7 +44,7 @@
 		});
 	});
 
-	// R10 batch-cancel selection.
+	// Batch-cancel selection.
 	let selectedKeys = $state<Set<string>>(new Set());
 	const selectedList = $derived(activeItems.filter((i) => selectedKeys.has(itemRequestKey(i))));
 

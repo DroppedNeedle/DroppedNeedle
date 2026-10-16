@@ -1,8 +1,8 @@
-//! Stage-10 admin-route briefs: gating, cache stats/clear, queue and
+//! Admin-route briefs: gating, cache stats/clear, queue and
 //! provider stats, quota admin, checkpoint health, and honest unwired 503s.
 //!
 //! The router mounts directly with sessions injected; health rides the full
-//! app. Scratch runtimes only — no network, no production database.
+//! app. Scratch runtimes only - no network, no production database.
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

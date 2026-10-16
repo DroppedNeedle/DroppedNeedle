@@ -5,7 +5,7 @@
 targets = ["x86_64-unknown-linux-gnu"]
 
 [advisories]
-# RUSTSEC-2024-0436: `paste` unmaintained, via lofty (stage-8 tag I/O).
+# RUSTSEC-2024-0436: `paste` unmaintained, via lofty (tag reading and writing).
 # Build-time proc-macro only, no runtime exposure; the advisory lists no
 # safe upgrade (pastey is not a drop-in for lofty's use). Re-check on
 # lofty upgrades.
@@ -17,7 +17,7 @@ ignore = ["RUSTSEC-2024-0436"]
 # The graph is scoped to the Linux target below, so target-gated crates
 # (wasi, r-efi) never appear here. A new target or a license outside this
 # list fails the check until it is reviewed and added deliberately.
-# MPL-2.0 (reviewed for stage 8): the symphonia 0.6 family (audio decode
+# MPL-2.0 (reviewed): the symphonia 0.6 family (audio decode
 # for tag probing) is file-scoped weak copyleft. The server links it
 # unmodified over crates.io; no MPL-covered file is modified, so no
 # source-disclosure obligation triggers. Re-check if symphonia is forked,

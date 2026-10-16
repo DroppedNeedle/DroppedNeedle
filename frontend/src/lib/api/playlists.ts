@@ -35,7 +35,7 @@ export interface PlaylistSummary {
 	source_ref: string | null;
 	created_at: string;
 	updated_at: string;
-	// Ownership / visibility (D4).
+	// Ownership and visibility.
 	is_public: boolean;
 	is_owner: boolean;
 	owner_name: string | null;
@@ -46,7 +46,7 @@ export interface PlaylistDetail extends PlaylistSummary {
 	tracks: PlaylistTrack[];
 }
 
-/** Admin's view of another user's PRIVATE playlist (D4): count + owner only. */
+/** Admin's view of another user's PRIVATE playlist: count + owner only. */
 export interface RedactedPlaylist {
 	id: string;
 	track_count: number;

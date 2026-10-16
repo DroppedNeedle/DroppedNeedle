@@ -1,4 +1,4 @@
-//! Stage 3 compat-auth goldens: every Subsonic code, the binary split
+//! Compat-auth goldens: every Subsonic code, the binary split
 //! with the getAvatar 403-as-text exception, Jellyfin 401s with the login
 //! echo, and account-password rejection on both protocols.
 

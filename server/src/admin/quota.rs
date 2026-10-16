@@ -9,7 +9,7 @@
 //!   pure inherit, the v2 `set` rule) and apply to the ledger at once, so
 //!   an edited quota bites on the next request. Boot reloads the table into
 //!   the ledger ([`reload_overrides`]).
-//! - Bounds mirror v2: count 0–1M, days 1–1M, storage 0–1M; 0 means
+//! - Bounds mirror v2: count 0-1M, days 1-1M, storage 0-1M; 0 means
 //!   unlimited.
 //! - Usage reads the enforcement view: window counts from the ledger's
 //!   recorded asks, storage from landed download bytes by owner.
@@ -225,7 +225,7 @@ async fn user_storage_bytes(db: &AdminDb, user_id: &str) -> Result<u64, AdminErr
     Ok(total.unwrap_or(0).max(0) as u64)
 }
 
-/// v2 `set_override` bounds: count 0–1M, days 1–1M, storage 0–1M.
+/// v2 `set_override` bounds: count 0-1M, days 1-1M, storage 0-1M.
 fn check_bounds(body: &QuotaOverrideBody) -> Result<(), AdminError> {
     let bounds = [
         (

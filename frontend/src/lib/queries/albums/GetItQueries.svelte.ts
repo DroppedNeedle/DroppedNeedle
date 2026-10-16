@@ -4,7 +4,7 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
 
-// "Where to buy" (Get it, phase 01). Deliberately lazy: only the inline
+// "Where to buy" links. Deliberately lazy: only the inline
 // section fetches this, with its own skeleton - the album page's load path
 // never pays for the cold MB/iTunes lookups. Not user-dependent (links come
 // from global admin settings), so no userId key segment.

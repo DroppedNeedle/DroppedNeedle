@@ -1062,7 +1062,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("POST", "/api/v3/auth/jellyfin/login", Posture::Public),
     ("POST", "/api/v3/auth/plex/start", Posture::Public),
     ("POST", "/api/v3/auth/plex/poll/login", Posture::Public),
-    // Link/connect polls hand out account Bearer tokens, so they stay session-gated (B1 fix).
+    // Link/connect polls hand out account Bearer tokens, so they stay session-gated.
     ("POST", "/api/v3/auth/plex/start/link", Posture::User),
     ("POST", "/api/v3/auth/plex/start/connect", Posture::Admin),
     ("POST", "/api/v3/auth/plex/poll/link", Posture::User),
@@ -1097,7 +1097,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/me/connections/lastfm/session",
         Posture::User,
     ),
-    // Stage-10 settings surface: every /settings route is admin-only;
+    // Settings: every /settings route is admin-only;
     // section prefs are per-user.
     ("GET", "/api/v3/me/section-prefs", Posture::User),
     ("PUT", "/api/v3/me/section-prefs", Posture::User),
@@ -1400,7 +1400,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/admin/import/jellyfin", Posture::Admin),
     ("GET", "/api/v3/admin/import/plex", Posture::Admin),
     ("POST", "/api/v3/admin/import", Posture::Admin),
-    // Stage-10 admin UX.
+    // Admin tools: backups, cache, stats and quotas.
     ("GET", "/api/v3/admin/backups", Posture::Admin),
     ("POST", "/api/v3/admin/backups", Posture::Admin),
     (
@@ -1414,7 +1414,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/admin/provider-stats", Posture::Admin),
     ("GET", "/api/v3/admin/users/{id}/quota", Posture::Admin),
     ("PUT", "/api/v3/admin/users/{id}/quota", Posture::Admin),
-    // Stage-10 plugins + scrobble. Plugin management and the panel page
+    // Plugins and scrobbling. Plugin management and the panel page
     // are admin-only; sources, guarded plugin HTTP, and the caller's own
     // scrobble settings admit any signed-in user.
     ("GET", "/api/v3/plugins", Posture::Admin),
@@ -1445,7 +1445,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/me/connections/listenbrainz",
         Posture::User,
     ),
-    // Stage-10 jobs: the playlist export trigger and the precache trigger
+    // Jobs: the playlist export trigger and the precache trigger
     // are both admin-only.
     (
         "POST",
@@ -1457,7 +1457,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     // curators may stop it.
     ("GET", "/api/v3/cache/sync/status", Posture::User),
     ("POST", "/api/v3/cache/sync/cancel", Posture::Curator),
-    // Stage-12 gap step: admin reimport behind the request card.
+    // Admin reimport behind the request card.
     (
         "POST",
         "/api/v3/downloads/tasks/{task_id}/reimport",
@@ -1571,7 +1571,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/import/items/{item_id}/discard",
         Posture::Curator,
     ),
-    // Stage-4 library reads.
+    // Library reads.
     ("GET", "/api/v3/library/albums", Posture::User),
     ("GET", "/api/v3/library/albums/{id}", Posture::User),
     ("GET", "/api/v3/library/albums/{id}/tracks", Posture::User),
@@ -1601,13 +1601,13 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/local-library/recent", Posture::User),
     ("GET", "/api/v3/local-library/decades", Posture::User),
     ("GET", "/api/v3/local-library/suggestions", Posture::User),
-    // Stage-12 gap step.
+    // Local album match.
     (
         "GET",
         "/api/v3/local-library/albums/match/{mbid}",
         Posture::User,
     ),
-    // Stage-4 unified search.
+    // Unified search.
     ("GET", "/api/v3/search", Posture::User),
     ("GET", "/api/v3/search/{bucket}", Posture::User),
     ("GET", "/api/v3/search/suggest", Posture::User),
@@ -1674,7 +1674,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/albums/{album_id}/plugin-details",
         Posture::User,
     ),
-    // Stage-4 discover + queue + radio + batches.
+    // Discover, queue, radio and batches.
     ("GET", "/api/v3/discover", Posture::User),
     ("POST", "/api/v3/discover/refresh", Posture::User),
     ("POST", "/api/v3/discover/activity", Posture::User),
@@ -1746,7 +1746,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/discover/batches/{batch_id}",
         Posture::User,
     ),
-    // Stage-4 home + now playing.
+    // Home and now playing.
     ("GET", "/api/v3/home", Posture::User),
     ("GET", "/api/v3/home/integration-status", Posture::User),
     ("GET", "/api/v3/home/genre/{genre_name}", Posture::User),
@@ -1755,7 +1755,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/home/your-top/albums", Posture::User),
     ("GET", "/api/v3/now-playing", Posture::User),
     ("GET", "/api/v3/events/stream", Posture::User),
-    // Stage-4 collections: playlists.
+    // Collections: playlists.
     ("GET", "/api/v3/playlists", Posture::User),
     ("POST", "/api/v3/playlists", Posture::User),
     ("GET", "/api/v3/playlists/{playlist_id}", Posture::User),
@@ -1812,7 +1812,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/playlists/{playlist_id}/cover",
         Posture::User,
     ),
-    // Stage-4 collections: favorites, follows, approvals, pins.
+    // Collections: favorites, follows, approvals, pins.
     ("GET", "/api/v3/favorites", Posture::User),
     ("PUT", "/api/v3/favorites/{kind}/{item_id}", Posture::User),
     (
@@ -1878,7 +1878,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/library/albums/{album_id}/edition-pin",
         Posture::Curator,
     ),
-    // Stage-4 platform: covers, version, wrapped.
+    // Platform: covers, version, wrapped.
     (
         "GET",
         "/api/v3/covers/release-group/{release_group_id}",
@@ -1930,7 +1930,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ),
     ("GET", "/api/v3/remotes/{source}/tracks", Posture::User),
     ("GET", "/api/v3/remotes/{source}/search", Posture::User),
-    // Stage-12 gap step.
+    // Remote source browse feeds.
     ("GET", "/api/v3/remotes/{source}/random", Posture::User),
     ("GET", "/api/v3/remotes/{source}/discovery", Posture::User),
     ("GET", "/api/v3/remotes/{source}/recent", Posture::User),
@@ -1997,7 +1997,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ),
     ("GET", "/api/v3/remotes/navidrome/folders", Posture::User),
     ("PUT", "/api/v3/remotes/navidrome/folders", Posture::User),
-    // Stage-6 stream gateway.
+    // Stream gateway.
     ("GET", "/api/v3/stream/{source}/{*key}", Posture::User),
     ("HEAD", "/api/v3/stream/{source}/{*key}", Posture::User),
     // Local file downloads; the access setting then decides per role.
@@ -2009,8 +2009,8 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/download/local/album/mbid/{mbid}",
         Posture::User,
     ),
-    // Stage-6 playback reporting (GET /now-playing keeps its stage-4 row;
-    // stage 6 serves it from the live registry now).
+    // Playback reporting (GET /now-playing is listed with home above and
+    // is served from the live registry).
     ("POST", "/api/v3/playback/start", Posture::User),
     ("POST", "/api/v3/playback/progress", Posture::User),
     ("POST", "/api/v3/playback/stop", Posture::User),
@@ -2018,7 +2018,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("POST", "/api/v3/scrobble/now-playing", Posture::User),
     ("POST", "/api/v3/now-playing", Posture::User),
     ("DELETE", "/api/v3/now-playing", Posture::User),
-    // Stage-7 acquisition requests.
+    // Acquisition requests.
     ("POST", "/api/v3/requests/albums", Posture::User),
     ("POST", "/api/v3/requests/tracks", Posture::User),
     ("POST", "/api/v3/requests/batches", Posture::User),
@@ -2125,7 +2125,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/albums/{album_id}/edition/acquire",
         Posture::Curator,
     ),
-    // Stage-7 acquisition imports.
+    // Acquisition imports.
     (
         "GET",
         "/api/v3/acquire/lidarr-import/config",
@@ -2172,7 +2172,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/acquire/health", Posture::User),
     ("GET", "/api/v3/acquire/slskd/status", Posture::User),
     ("GET", "/api/v3/acquire/sabnzbd/status", Posture::Admin),
-    // Stage-8 library engine.
+    // Library engine.
     ("GET", "/api/v3/library/roots", Posture::User),
     ("POST", "/api/v3/library/roots", Posture::Admin),
     ("POST", "/api/v3/library/scan", Posture::Admin),

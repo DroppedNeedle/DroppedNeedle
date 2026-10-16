@@ -43,7 +43,7 @@ const DEFAULTS: CacheTTLs = {
 	discoverQueueAutoGenerate: true
 };
 
-// ST6 dual-TTL unification: `$state` so TanStack option closures that read it
+// One TTL source: `$state` so TanStack option closures that read it
 // re-evaluate when initCacheTTLs() resolves (or a later settings save lands).
 let resolved = $state<CacheTTLs>({ ...DEFAULTS });
 let initialized = false;

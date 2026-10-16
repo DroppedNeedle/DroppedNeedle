@@ -20,7 +20,7 @@ describe('mergeNowPlayingSessions', () => {
 	it("drops only the viewer's own web echo, keeping their connected apps", () => {
 		const server = [
 			session({ id: 'me:web', user_name: 'Me', source: 'local' }), // shown via local overlay
-			session({ id: 'me:compat:manet', user_name: 'Me', source: 'manet' }), // my phone - keep
+			session({ id: 'me:compat:manet', user_name: 'Me', source: 'manet' }), // the viewer's phone - keep
 			session({ id: 'bob:web', user_name: 'Bob', source: 'local' })
 		];
 		const result = mergeNowPlayingSessions(null, server, 'me');
@@ -36,7 +36,7 @@ describe('mergeNowPlayingSessions', () => {
 			_isLocal: true
 		});
 		const server = [
-			// the Plex poll echoes my own session (different username, same source+track)
+			// the Plex poll echoes the viewer's own session (different username, same source+track)
 			session({ id: 'plex:s1', source: 'plex', track_name: 'Song', user_name: 'MePlex' }),
 			session({ id: 'plex:s2', source: 'plex', track_name: 'Other', user_name: 'Carol' })
 		];

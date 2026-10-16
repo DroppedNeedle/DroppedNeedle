@@ -48,7 +48,7 @@ export const COMBINED_SEARCH_LIMITS: SearchV3Limits = { artists: 6, albums: 24, 
 // Drill-down pages fetch this many rows per infinite-scroll page.
 export const SEARCH_BUCKET_PAGE_SIZE = 24;
 
-// B6, v3 edition: a degraded bucket holds a short floor so an outage never
+// A degraded bucket holds a short floor so an outage never
 // refires the provider fan-out on every tab return; a clean answer keeps
 // the full search window.
 export const successfulUnifiedSearchV3StaleTime = (query: {

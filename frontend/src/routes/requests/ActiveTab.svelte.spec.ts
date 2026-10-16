@@ -61,7 +61,7 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 
 import ActiveTab from './ActiveTab.svelte';
 
-describe('requests Active tab (R10 surface)', () => {
+describe('requests Active tab', () => {
 	it('batch-cancels the selected rows with one call per kind', async () => {
 		await render(ActiveTab, { active: true });
 

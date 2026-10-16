@@ -1,8 +1,8 @@
-//! Stage-10 backup-UX briefs: list, run, restore reports, rotation, and the
+//! Backup briefs: list, run, restore reports, rotation, and the
 //! pre-upgrade safety net.
 //!
 //! Everything runs against scratch runtimes (migrated temp databases) with
-//! the admin router mounted directly and sessions injected — no network, no
+//! the admin router mounted directly and sessions injected - no network, no
 //! production database.
 
 use std::sync::Arc;
@@ -315,7 +315,7 @@ async fn pre_upgrade_backup_skips_a_fresh_database_but_not_a_legacy_one() {
     let dir = scratch.to_path_buf();
     std::fs::create_dir_all(&dir).expect("scratch dir builds");
 
-    // Fresh file: stamp 0, no tables — exactly what a first boot holds.
+    // Fresh file: stamp 0, no tables - exactly what a first boot holds.
     let db_path = dir.join("app.db");
     {
         let connection = rusqlite::Connection::open(&db_path).expect("fresh db opens");

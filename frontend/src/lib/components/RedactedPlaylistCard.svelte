@@ -7,7 +7,7 @@
 	let trackText = $derived(`${playlist.track_count} track${playlist.track_count === 1 ? '' : 's'}`);
 </script>
 
-<!-- Admin-only redacted projection of another user's PRIVATE playlist (D4): no name,
+<!-- Admin-only redacted projection of another user's PRIVATE playlist: no name,
 	 no cover, no link-through; only count + owner. -->
 <div
 	class="card card-sm w-full shrink-0 bg-base-200/40 opacity-70 select-none cursor-default"

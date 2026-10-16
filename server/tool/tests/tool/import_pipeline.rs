@@ -779,7 +779,7 @@ async fn report_shape_matches_spec() {
 
 #[tokio::test]
 async fn pending_import_reopens_a_rejected_row() {
-    // §6 most-permissive ordering, pinned: pending outranks rejected, so a
+    // Most-permissive ordering, pinned: pending outranks rejected, so a
     // pending import reopens the decision instead of keeping it.
     let fixture = Fixture::shared();
     let pool = migrated_pool().await;

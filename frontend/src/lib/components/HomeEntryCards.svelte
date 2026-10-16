@@ -68,8 +68,8 @@
 		libraryStats?.last_scan_at ? new Date(libraryStats.last_scan_at * 1000) : null
 	);
 
-	// One card for the whole library: listen, browse, organise (the old Listen +
-	// Manage cards merged - owner-signed, phase 01c). Show stats mid-refetch,
+	// One card for the whole library: listen, browse, organise (one card where
+	// Listen and Manage used to be two). Show stats mid-refetch,
 	// surface errors instead of an endless skeleton.
 	const musicState = $derived<CardState>(
 		!integrations.current.loaded

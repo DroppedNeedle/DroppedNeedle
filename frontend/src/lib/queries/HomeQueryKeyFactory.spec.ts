@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { HomeQueryKeyFactory } from './HomeQueryKeyFactory';
 
-describe('HomeQueryKeyFactory (AMU-5)', () => {
+describe('HomeQueryKeyFactory', () => {
 	it('home key includes the userId and MusicBrainz source identity dimensions', () => {
 		expect(HomeQueryKeyFactory.home('user-a')).toEqual([
 			'home',

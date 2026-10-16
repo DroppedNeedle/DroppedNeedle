@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// `bit_rate` is absent for lossless files (v2 models: "left None, do not
 /// coerce to 0"). `extension` can be empty even for a real file, so the
-/// repository parses the extension from `filename` instead (v2 C6a).
+/// repository parses the extension from `filename` instead, as v2 did.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SlskdFile {

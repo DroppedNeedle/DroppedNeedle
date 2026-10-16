@@ -12,7 +12,7 @@
 	const query = getQuarantineQuery();
 	const del = deleteQuarantineEntry();
 
-	// two-step inline confirm; UX-5/§8.9 require confirmation for this permanent deletion
+	// two-step inline confirm: the deletion is permanent
 	let confirmId = $state<number | null>(null);
 
 	function requestDelete(id: number) {

@@ -8,8 +8,8 @@
 //! survive Apply, and hostile archives never extract. The publisher
 //! writes only under sandbox roots; nothing here touches real media.
 //!
-//! Tag staging goes through the real tags slice save
-//! wrapper (stage-8 integration); publish-path briefs plant real
+//! Tag staging goes through the real tag save
+//! wrapper; publish-path briefs plant real
 //! committed fixtures, never fake bytes with audio extensions.
 
 use droppedneedle_library::publish;
@@ -2466,7 +2466,7 @@ fn snapshots_expire_baselines_stay_and_blobs_dedup() {
     assert_eq!(baselines.impact().unwrap(), (1, 1));
 }
 
-// --- Stage-8 fixup briefs: seal coverage, gate strictness, 4xx path
+// --- Publish hardening briefs: seal coverage, gate strictness, 4xx path
 // hygiene, symlink refusal, resume backups, MP3 frame survival. ---
 
 #[test]
@@ -2670,7 +2670,7 @@ fn symlink_at_dest_flags_attention_without_touching_target() {
 #[cfg(unix)]
 #[test]
 fn committed_dest_swapped_for_symlink_refuses_without_touching_target() {
-    // M5 cleanup hardening: a committed destination swapped for a
+    // Cleanup hardening: a committed destination swapped for a
     // symlink must fail closed. Reconcile refuses through the
     // symlink-refusing resolver, the link target keeps its bytes,
     // the uncleaned sources survive, and restoring the real output

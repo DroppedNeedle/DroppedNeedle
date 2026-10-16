@@ -325,7 +325,7 @@
 				onclick: () => playTrackNext(track)
 			}
 		];
-		// Non-owners (public read-only view) cannot mutate the playlist (D4).
+		// Non-owners (public read-only view) cannot mutate the playlist.
 		if (!readonly) {
 			items.push({
 				label: 'Remove',

@@ -43,7 +43,7 @@ export type OidcExchangeVars = components['schemas']['OidcExchangeBody'];
 // /api/v3/auth/oidc/authorize 200 content), so the alias shares it by design.
 export type OidcAuthorizeResponse = components['schemas']['OidcAuthorizeBody'];
 
-/** An importable media-server account (admin import picker, Phase 6 / D5). */
+/** An importable media-server account (admin import picker). */
 export type ImportCandidate = components['schemas']['ImportCandidateView'];
 
 export type ImportCandidateListResponse = components['schemas']['ImportCandidateListResponse'];

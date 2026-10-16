@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
 
-describe('AuthQueryKeyFactory (AMU-5)', () => {
+describe('AuthQueryKeyFactory', () => {
 	it('prefix is [auth]', () => {
 		expect(AuthQueryKeyFactory.prefix).toEqual(['auth']);
 	});

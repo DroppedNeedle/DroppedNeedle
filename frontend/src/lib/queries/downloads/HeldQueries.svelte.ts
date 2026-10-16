@@ -12,7 +12,7 @@ import { DOWNLOAD_HELD_ENDPOINTS } from './endpoints';
 // filter, cross-album triage) and the album page (scoped to one release group). Keyed under
 // tasks() so a download mutation's invalidateTasks() refreshes it too. The global activity
 // revision invalidates this prefix after held rows change, so it needs no parallel timer -
-// and no focus-'always' refetch (B6): invalidations mark the key stale, so a tab return
+// and no focus-'always' refetch: invalidations mark the key stale, so a tab return
 // still refetches promptly after real changes; inside the 30 s window it costs nothing.
 export const getHeldImportsQuery = (
 	getMbid: Getter<string | undefined> = () => undefined,

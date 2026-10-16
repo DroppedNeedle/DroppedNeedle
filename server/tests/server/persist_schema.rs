@@ -138,7 +138,7 @@ async fn migrate_rerun_is_clean() {
     assert_eq!(artists, 2);
 }
 
-/// D1/D13/D14 exclusions: no lidarr marker, no rebuild leftovers, no legacy
+/// Dropped tables stay dropped: no lidarr marker, no rebuild leftovers, no legacy
 /// catalog tables, no transient swap tables.
 #[tokio::test]
 async fn legacy_and_swap_tables_are_absent() {

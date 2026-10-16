@@ -39,7 +39,7 @@
 		discarded: { label: 'Discarded', cls: 'badge-ghost' }
 	};
 
-	// F-02 retention: staged review items are hard-deleted 90 days after upload
+	// Retention: staged review items are hard-deleted 90 days after upload
 	// (backend DropImportService sweep), so surface the countdown from the job
 	// created_at. Mirrors the backend _REVIEW_RETENTION_DAYS - no new API.
 	const REVIEW_RETENTION_DAYS = 90;

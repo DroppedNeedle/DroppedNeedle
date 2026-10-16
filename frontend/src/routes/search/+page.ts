@@ -6,7 +6,7 @@ import { queryClient } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { PageLoad } from './$types';
 
-// B7: warm the unified search under the same gate as the search query
+// Warm the unified search under the same gate as the search query
 // (authenticated, >= 2 chars) so back-navigation renders from cache.
 export const load: PageLoad = ({ url }) => {
 	const q = url.searchParams.get('q') ?? '';

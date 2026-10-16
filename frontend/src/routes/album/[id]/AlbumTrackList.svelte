@@ -140,7 +140,7 @@
 		else heldOpen.add(idx);
 	}
 
-	// Per-track quality upgrade (admin/trusted, CollectionManagement D18): shown on
+	// Per-track quality upgrade (admin/trusted): shown on
 	// in-library tracks sitting below the cutoff while upgrades are on.
 	const upgradeTrack = requestUpgradeTrack();
 	const upgradeQueuedRecordings = new SvelteSet<string>();

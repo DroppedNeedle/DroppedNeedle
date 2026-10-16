@@ -1,4 +1,4 @@
-//! Stage-11 pipeline E2E briefs: a live v2 fixture dir travels export →
+//! Migration pipeline end-to-end briefs: a live v2 fixture dir travels export →
 //! validator → dry-run → import, then the migrated instance proves itself.
 //!
 //! One behavior per brief, each on its own scratch fixture: refusal of the

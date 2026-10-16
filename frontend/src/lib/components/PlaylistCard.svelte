@@ -24,7 +24,7 @@
 
 	const deleteMutation = deletePlaylistV3();
 
-	// Mutations (delete) are owner-only; admins may delete any playlist for cleanup (D4).
+	// Mutations (delete) are owner-only; admins may delete any playlist for cleanup.
 	let canDelete = $derived(playlist.is_owner || authStore.isAdmin);
 	let ownerInitials = $derived(
 		(playlist.owner_name ?? '')

@@ -365,7 +365,7 @@ async fn transcode_capacity_maps_to_fault() {
 
 #[tokio::test]
 async fn seek_then_transcode_starts_at_offset() {
-    // M1: the seek offset rides the params into decide(), so the ffmpeg
+    // The seek offset rides the params into decide(), so the ffmpeg
     // plan starts at T instead of 0.
     let root = ScratchDir::new("seek-transcode");
     put(&root, "song.flac", b"FLAC-BYTES");
@@ -389,7 +389,7 @@ async fn seek_then_transcode_starts_at_offset() {
 
 #[tokio::test]
 async fn forced_verdict_transcodes_same_codec_despite_unknown_source_bitrate() {
-    // M2: the gateway re-decide sees no source bitrate, so a same-codec
+    // The gateway re-decide sees no source bitrate, so a same-codec
     // bitrate plan lands direct, unless the compat adapter carries the
     // explicit `force_transcode` verdict, which the gateway then honors.
     let root = ScratchDir::new("forced");

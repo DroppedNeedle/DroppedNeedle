@@ -36,7 +36,7 @@
 		// still being worked on despite the terminal status: 'retrying' = auto-retry
 		// ladder, 'watching' = wanted watcher. Renders a chip linking to the Wanted tab.
 		watchState?: 'retrying' | 'watching';
-		// R10 batch-cancel selection. Rendered only when `selectable` is set.
+		// Batch-cancel selection. Rendered only when `selectable` is set.
 		selectable?: boolean;
 		selected?: boolean;
 		onselect?: (mbid: string, requestKind: RequestKind, selected: boolean) => void;
