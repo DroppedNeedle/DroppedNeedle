@@ -1,0 +1,34 @@
+//! Integration tests for the app itself, auth, providers, plugins and jobs.
+
+#[path = "../common/mod.rs"]
+mod common;
+
+mod admin_backups;
+mod admin_routes;
+mod auth_e2e;
+mod auth_federated;
+mod auth_stores;
+mod auth_users;
+mod boot;
+mod config_secrets;
+mod contract;
+mod envelope;
+mod events_stream;
+mod health;
+mod jobs_events;
+mod jobs_loops;
+mod jobs_plugin_ticks;
+mod jobs_registry;
+mod leak;
+mod persist_runtime;
+mod persist_schema;
+mod plugins_examples;
+mod plugins_host;
+mod plugins_scrobble;
+mod providers_audio;
+mod providers_catalog;
+mod providers_core;
+mod providers_events;
+mod providers_musicbrainz;
+mod settings_sections;
+mod web;

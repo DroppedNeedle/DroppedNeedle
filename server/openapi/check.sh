@@ -40,7 +40,7 @@ FRESH_TS="$TMP_DIR/openapi.d.ts"
 
 if [ "$FROM_TESTS" = "1" ]; then
   if ! DN_OPENAPI_OUT="$FRESH_JSON" cargo test --quiet --manifest-path "$ROOT/server/Cargo.toml" \
-    --test it -- --ignored --exact contract::write_openapi_document > "$TMP_DIR/test.log"; then
+    --test server -- --ignored --exact contract::write_openapi_document > "$TMP_DIR/test.log"; then
     cat "$TMP_DIR/test.log" >&2
     exit 1
   fi

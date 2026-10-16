@@ -42,4 +42,16 @@ test-support = [
 ]
 
 [dev-dependencies]
+droppedneedle-tool = { path = ".", features = ["test-support"] }
 droppedneedle-kernel = { workspace = true, features = ["test-support"] }
+droppedneedle-acquire.workspace = true
+droppedneedle-catalog.workspace = true
+droppedneedle-compat.workspace = true
+droppedneedle-media.workspace = true
+droppedneedle-plugins.workspace = true
+droppedneedle-providers.workspace = true
+droppedneedle-testkit = { path = "../testkit", version = "0.1.0" }
+axum.workspace = true
+regex.workspace = true
+tower.workspace = true
+utoipa.workspace = true

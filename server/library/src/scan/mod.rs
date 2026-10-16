@@ -24,7 +24,7 @@
 //!
 //! Scan and identify never write music files. The walk stats, the tag
 //! seam reads, and nothing in scan opens a library file for writing.
-//! `server/tests/it/library_scan.rs` pins zero file writes across full
+//! `server/tests/library/library_scan.rs` pins zero file writes across full
 //! runs.
 //!
 //! v2 quirks and bug fixes are cited where the code handles them: degraded

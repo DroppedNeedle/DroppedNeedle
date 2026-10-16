@@ -112,12 +112,6 @@ jobs:
           workspaces: server
           save-if: ${{ github.event_name != 'pull_request' }}
 
-      # The tool's CLI tests run its binary, which cargo test does not build
-      # because it is in another package. Building every target first makes
-      # it with the same features, so the test run compiles nothing again.
-      - name: Build tests and binaries
-        run: cargo build --workspace --all-targets
-
       - name: Run tests
         run: cargo test --workspace
 

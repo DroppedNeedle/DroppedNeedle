@@ -1,0 +1,17 @@
+//! Integration tests for acquisition: requests, searches, downloads and imports.
+
+#[path = "../common/mod.rs"]
+mod common;
+
+mod acquire_download_tasks;
+mod acquire_downloads;
+mod acquire_drop_import;
+mod acquire_flows;
+mod acquire_imports;
+mod acquire_journey;
+mod acquire_landing;
+mod acquire_requests;
+mod acquire_search_jobs;
+mod acquire_slskd;
+mod acquire_track_album;
+mod acquire_usenet;

@@ -4,7 +4,7 @@
 //! hold one handle while the code under test holds another.
 //!
 //! The identity providers themselves are exercised end to end against
-//! local mock servers instead (tests/it/auth_federated.rs).
+//! local mock servers instead (tests/server/auth_federated.rs).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

@@ -37,6 +37,10 @@ make frontend-install
 make frontend-dev
 ```
 
+### Where the code is
+
+`server/` is a Cargo workspace. Each area is a crate in `server/<name>`, from the bottom: `kernel`, `providers`, `auth`, `library`, `plugins`, `media`, `catalog`, `acquire`, `compat`, then the server crate in `server/src` and the migration tool in `server/tool`. A crate uses only crates below it. Integration tests are split into one binary per area (`library`, `acquire`, `compat`, `catalog`, `media` and `server` for the rest) sharing `server/tests/common`, plus `tool` in `server/tool/tests`. Run one module with `cd server && cargo test --test <binary> <module>` (`cargo test -p droppedneedle-tool --test tool <module>` for the tool), and a crate's unit tests with `cargo test -p droppedneedle-<crate>`.
+
 ### Running tests and checks
 
 ```bash

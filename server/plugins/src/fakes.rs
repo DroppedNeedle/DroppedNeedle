@@ -2,7 +2,7 @@
 //! fetchers, unpackers, verifiers, and roles.
 //!
 //! The real plugin runtime is a subprocess; tests that need one launch the
-//! shipped examples (see `tests/it/plugins_examples.rs`). These fakes cover
+//! shipped examples (see `tests/server/plugins_examples.rs`). These fakes cover
 //! the host logic around it: fan-out, publish guards, route clamps.
 //! The memory stores (`MemoryTickStore`, `MemoryScrobblePrefsStore`,
 //! `MemoryListenBrainzLinkStore`) are real implementations and double as

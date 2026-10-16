@@ -39,7 +39,7 @@ fn plant(path: &Path, fixture: &str, fields: &[(TagField, &str)]) {
     std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
     std::fs::copy(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/library")
+            .join("../tests/fixtures/library")
             .join(fixture),
         path,
     )

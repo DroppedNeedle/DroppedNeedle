@@ -2,6 +2,9 @@
 //! builders for hooked and production-like apps, the whole app for
 //! journeys, and a scratch directory that removes itself.
 
+// Each test binary uses part of this module.
+#![allow(dead_code, unused_imports)]
+
 mod app;
 pub mod compat;
 pub mod library;

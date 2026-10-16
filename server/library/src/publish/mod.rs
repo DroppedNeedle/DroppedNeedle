@@ -59,7 +59,7 @@
 //! structured evidence and deletes nothing.
 //!
 //! Supporting rules, all enforced here and covered by tests in
-//! `server/tests/it/library_publish.rs`:
+//! `server/tests/library/library_publish.rs`:
 //!
 //! - Same-filesystem rename only: temps live in the destination
 //!   directory, so a cross-device move is impossible by construction.

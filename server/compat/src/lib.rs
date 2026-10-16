@@ -30,13 +30,13 @@
 //! # Tests
 //!
 //! Wire goldens live with the tests, in `server/tests/fixtures/compat/`.
-//! `tests/it/compat_library_journeys.rs` replays the client traces and
+//! `tests/compat/compat_library_journeys.rs` replays the client traces and
 //! pinned shapes through the whole app over a library its own scanner
-//! filled (the `library_*` goldens); `tests/it/compat_journeys.rs` replays
+//! filled (the `library_*` goldens); `tests/compat/compat_journeys.rs` replays
 //! them over the test doubles. `COMPAT_BLESS=1` rewrites the goldens and is
-//! refused when `CI` is set. `tests/it/compat_subsonic.rs` and
-//! `tests/it/compat_jellyfin.rs` pin each protocol over the test doubles,
-//! and `tests/it/compat_catalog.rs` runs both over a real database.
+//! refused when `CI` is set. `tests/compat/compat_subsonic.rs` and
+//! `tests/compat/compat_jellyfin.rs` pin each protocol over the test doubles,
+//! and `tests/compat/compat_catalog.rs` runs both over a real database.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
