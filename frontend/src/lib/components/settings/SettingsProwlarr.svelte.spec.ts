@@ -31,7 +31,7 @@ describe('SettingsProwlarr.svelte', () => {
 		await expect.element(page.getByLabelText('Enabled')).toBeInTheDocument();
 		const url = page.getByLabelText('URL');
 		await expect.element(url).toHaveValue('http://prowlarr:9696');
-		const key = page.getByLabelText('API key');
+		const key = page.getByLabelText('API key', { exact: true });
 		await expect.element(key).toHaveValue('prowlarr****');
 	});
 

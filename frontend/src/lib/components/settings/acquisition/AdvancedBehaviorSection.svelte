@@ -1,4 +1,9 @@
 <script lang="ts">
+	import Field from '$lib/ui/Field.svelte';
+	import Input from '$lib/ui/Input.svelte';
+	import NumberField from '$lib/ui/NumberField.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
+
 	interface Props {
 		autoAccept: number;
 		manualMin: number;
@@ -46,32 +51,38 @@
 		<fieldset class="fieldset">
 			<legend class="fieldset-legend">Lossy rejection bounds</legend>
 			<div class="grid gap-3 sm:grid-cols-2">
-				<label class="form-control">
-					<span class="label-text">Reject lossy below (kbps)</span>
-					<input
-						type="number"
-						class="input input-bordered input-sm"
-						min="16"
-						max="2048"
-						placeholder="none"
-						aria-label="Reject lossy audio below this bitrate in kbps"
-						value={lossyMinBitrateKbps ?? ''}
-						onchange={(e) => (lossyMinBitrateKbps = nullableFrom(e.currentTarget.value))}
-					/>
-				</label>
-				<label class="form-control">
-					<span class="label-text">Reject lossy above (kbps)</span>
-					<input
-						type="number"
-						class="input input-bordered input-sm"
-						min="16"
-						max="2048"
-						placeholder="none"
-						aria-label="Reject lossy audio above this bitrate in kbps"
-						value={lossyMaxBitrateKbps ?? ''}
-						onchange={(e) => (lossyMaxBitrateKbps = nullableFrom(e.currentTarget.value))}
-					/>
-				</label>
+				<Field label="Reject lossy below (kbps)">
+					{#snippet children(control)}
+						<Input
+							{...control}
+							label="Reject lossy audio below this bitrate in kbps"
+							type="number"
+							size="sm"
+							class="w-full"
+							min="16"
+							max="2048"
+							placeholder="none"
+							value={lossyMinBitrateKbps ?? ''}
+							onchange={(e) => (lossyMinBitrateKbps = nullableFrom(e.currentTarget.value))}
+						/>
+					{/snippet}
+				</Field>
+				<Field label="Reject lossy above (kbps)">
+					{#snippet children(control)}
+						<Input
+							{...control}
+							label="Reject lossy audio above this bitrate in kbps"
+							type="number"
+							size="sm"
+							class="w-full"
+							min="16"
+							max="2048"
+							placeholder="none"
+							value={lossyMaxBitrateKbps ?? ''}
+							onchange={(e) => (lossyMaxBitrateKbps = nullableFrom(e.currentTarget.value))}
+						/>
+					{/snippet}
+				</Field>
 			</div>
 			<p class="text-xs text-base-content/60">
 				These are rejection bounds, not targets. Copies outside them are never taken, even as
@@ -86,99 +97,65 @@
 		</fieldset>
 
 		<div class="grid gap-4 sm:grid-cols-2">
-			<label class="form-control">
-				<span class="label-text">Auto-accept score (&ge;)</span>
-				<input
-					type="number"
-					step="0.05"
-					min="0"
-					max="1"
-					class="input input-bordered input-sm"
-					bind:value={autoAccept}
-				/>
-			</label>
-			<label class="form-control">
-				<span class="label-text">Manual-review score (&ge;)</span>
-				<input
-					type="number"
-					step="0.05"
-					min="0"
-					max="1"
-					class="input input-bordered input-sm"
-					bind:value={manualMin}
-				/>
-			</label>
-			<label class="form-control">
-				<span class="label-text">Preferred-quality queue wait (min)</span>
-				<input
-					type="number"
-					min="1"
-					max="1440"
-					class="input input-bordered input-sm"
-					bind:value={preferredQualityWait}
-				/>
-				<span class="mt-1 text-xs text-base-content/55">
-					After this zero-byte wait, try the best lower accepted quality.
-				</span>
-			</label>
-			<label class="form-control">
-				<span class="label-text">Max concurrent downloads</span>
-				<input
-					type="number"
-					min="1"
-					max="10"
-					class="input input-bordered input-sm"
-					bind:value={maxConcurrent}
-				/>
-			</label>
-			<label class="form-control">
-				<span class="label-text">Max failover attempts</span>
-				<input
-					type="number"
-					min="1"
-					max="10"
-					class="input input-bordered input-sm"
-					bind:value={maxFailover}
-				/>
-			</label>
-			<label class="form-control">
-				<span class="label-text">Auto-retry attempts</span>
-				<input
-					type="number"
-					min="0"
-					max="20"
-					class="input input-bordered input-sm"
-					bind:value={autoRetryMax}
-					disabled={!autoRetryEnabled}
-				/>
-			</label>
-			<label class="form-control">
-				<span class="label-text">Usenet release age before blocklisting (min)</span>
-				<input
-					type="number"
-					min="0"
-					max="1440"
-					class="input input-bordered input-sm"
-					bind:value={usenetMinAge}
-				/>
-			</label>
+			<NumberField
+				label="Auto-accept score (≥)"
+				size="sm"
+				step={0.05}
+				min={0}
+				max={1}
+				bind:value={autoAccept}
+			/>
+			<NumberField
+				label="Manual-review score (≥)"
+				size="sm"
+				step={0.05}
+				min={0}
+				max={1}
+				bind:value={manualMin}
+			/>
+			<NumberField
+				label="Preferred-quality queue wait (min)"
+				help="After this zero-byte wait, try the best lower accepted quality."
+				size="sm"
+				min={1}
+				max={1440}
+				bind:value={preferredQualityWait}
+			/>
+			<NumberField
+				label="Max concurrent downloads"
+				size="sm"
+				min={1}
+				max={10}
+				bind:value={maxConcurrent}
+			/>
+			<NumberField
+				label="Max failover attempts"
+				size="sm"
+				min={1}
+				max={10}
+				bind:value={maxFailover}
+			/>
+			<NumberField
+				label="Auto-retry attempts"
+				size="sm"
+				min={0}
+				max={20}
+				bind:value={autoRetryMax}
+				disabled={!autoRetryEnabled}
+			/>
+			<NumberField
+				label="Usenet release age before blocklisting (min)"
+				size="sm"
+				min={0}
+				max={1440}
+				bind:value={usenetMinAge}
+			/>
 		</div>
 
-		<label class="label cursor-pointer justify-start gap-3">
-			<input
-				type="checkbox"
-				class="toggle toggle-sm toggle-primary"
-				bind:checked={verifyDownloads}
-			/>
-			<span class="label-text">Verify downloads (AcoustID release-group check)</span>
-		</label>
-		<label class="label cursor-pointer justify-start gap-3 p-0">
-			<input
-				type="checkbox"
-				class="toggle toggle-sm toggle-primary"
-				bind:checked={autoRetryEnabled}
-			/>
-			<span class="label-text">Auto-retry failed downloads</span>
-		</label>
+		<ToggleRow
+			label="Verify downloads (AcoustID release-group check)"
+			bind:checked={verifyDownloads}
+		/>
+		<ToggleRow label="Auto-retry failed downloads" bind:checked={autoRetryEnabled} />
 	</div>
 </details>

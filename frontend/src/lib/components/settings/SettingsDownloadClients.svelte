@@ -2,6 +2,7 @@
 	import { Puzzle } from 'lucide-svelte';
 
 	import { getPluginSourcesQuery } from '$lib/queries/plugins/PluginSourceQueries.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	import SettingsDownloadClient from './SettingsDownloadClient.svelte';
@@ -25,8 +26,8 @@
 	</div>
 	<SettingsDownloadClient />
 	<SettingsSabnzbd />
-	<div class="card border border-base-300 bg-base-200">
-		<div class="card-body gap-3">
+	<Card variant="bordered">
+		<div class="space-y-3">
 			<div>
 				<h3 class="font-semibold">Plugin sources</h3>
 				<p class="text-sm text-base-content/70">
@@ -82,7 +83,7 @@
 				</ul>
 			{/if}
 		</div>
-	</div>
+	</Card>
 	<SettingsSourcePriority />
 	<SettingsDownloadPolicy />
 	<SettingsWanted />

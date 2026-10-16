@@ -5,6 +5,8 @@
 	import { getLidarrImportCandidatesQuery } from '$lib/queries/lidarr-import/LidarrImportQueries.svelte';
 	import { importFromLidarrMutation } from '$lib/queries/lidarr-import/LidarrImportMutations.svelte';
 	import type { LidarrImportResult } from '$lib/queries/lidarr-import/types';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		unlocked: boolean;
@@ -66,8 +68,8 @@
 	}
 </script>
 
-<div class="card border border-base-300 bg-base-200">
-	<div class="card-body gap-0 p-0">
+<Card variant="bordered" padding="none">
+	<div>
 		<div class="flex items-center gap-3 p-4">
 			<div class="grid size-12 place-items-center rounded-2xl bg-base-300/60">
 				<ArrowDownToLine class="size-6 text-accent" aria-hidden="true" />
@@ -98,14 +100,10 @@
 				<div class="alert alert-error py-2 text-sm">
 					Couldn't reach Lidarr - check the connection above.
 				</div>
-				<button type="button" class="btn btn-sm" onclick={() => void candidatesQuery.refetch()}>
-					Retry
-				</button>
+				<Button size="sm" onclick={() => void candidatesQuery.refetch()}>Retry</Button>
 			{:else if total === 0}
 				<p class="py-6 text-center text-sm text-base-content/50">No monitored artists in Lidarr.</p>
-				<button type="button" class="btn btn-sm" onclick={() => void candidatesQuery.refetch()}>
-					Check again
-				</button>
+				<Button size="sm" onclick={() => void candidatesQuery.refetch()}>Check again</Button>
 			{:else if newCount > 0}
 				<div class="alert py-2 text-sm">
 					{followedCount} of {total} in your follows · {newCount} new
@@ -180,9 +178,8 @@
 
 				<div class="flex items-center justify-end gap-3">
 					{#if result}
-						<button
-							type="button"
-							class="btn btn-sm"
+						<Button
+							size="sm"
 							onclick={() => {
 								result = null;
 								importError = null;
@@ -190,30 +187,25 @@
 							}}
 						>
 							Select remaining
-						</button>
+						</Button>
 					{/if}
-					<button
-						type="button"
-						class="btn btn-primary btn-sm"
-						disabled={selected.length === 0 || importMutation.isPending}
+					<Button
+						variant="primary"
+						size="sm"
+						icon={RefreshCw}
+						loading={importMutation.isPending}
+						disabled={selected.length === 0}
 						onclick={() => void runImport()}
 					>
-						{#if importMutation.isPending}
-							<span class="loading loading-spinner loading-xs"></span>
-						{:else}
-							<RefreshCw class="size-4" aria-hidden="true" />
-						{/if}
 						Import{selected.length > 0 ? ` ${selected.length}` : ''}
-					</button>
+					</Button>
 				</div>
 			{:else}
 				<div class="alert alert-success py-2 text-sm">
 					<CircleCheck class="size-4 shrink-0" aria-hidden="true" />
 					All {total} monitored artists are in your follows.
 				</div>
-				<button type="button" class="btn btn-sm" onclick={() => void candidatesQuery.refetch()}>
-					Check again
-				</button>
+				<Button size="sm" onclick={() => void candidatesQuery.refetch()}>Check again</Button>
 
 				{#if result}
 					<div class="alert alert-success flex-col items-start py-2.5 text-sm">
@@ -234,4 +226,4 @@
 			{/if}
 		</div>
 	</div>
-</div>
+</Card>

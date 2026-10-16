@@ -12,6 +12,12 @@
 	} from '$lib/queries/connect-apps/ConnectAppsMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import type { AdminAppPasswordView, ConnectAppsSettings } from '$lib/types';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
+	import NumberField from '$lib/ui/NumberField.svelte';
+	import SelectField from '$lib/ui/SelectField.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	const settingsQuery = getConnectAppsSettingsQuery();
 	const rosterQuery = getAdminAppPasswordsQuery();
@@ -28,13 +34,6 @@
 	let seeded = $state(false);
 
 	let pendingRevoke = $state<AdminAppPasswordView | null>(null);
-	let revokeDialog = $state<HTMLDialogElement>();
-
-	$effect(() => {
-		if (!revokeDialog) return;
-		if (pendingRevoke !== null) revokeDialog.showModal();
-		else if (revokeDialog.open) revokeDialog.close();
-	});
 
 	$effect(() => {
 		const d = settingsQuery.data;
@@ -95,21 +94,23 @@
 </script>
 
 <section class="flex flex-col gap-6">
-	<header class="overflow-hidden rounded-box border border-accent/20 bg-base-200 p-6">
-		<div class="flex items-center gap-2 text-accent">
-			<Waypoints class="h-5 w-5" aria-hidden="true" />
-			<h2 class="text-xl font-bold tracking-tight">Connect Apps</h2>
-		</div>
-		<p class="mt-1 max-w-2xl text-base-content/70">
-			Let music apps like Symfonium and Finamp stream this library over the OpenSubsonic or Jellyfin
-			protocols.
-		</p>
-		<p class="mt-1 max-w-2xl text-sm text-base-content/50">
-			These are server-wide switches. Each person creates their own app-password from their
-			<a href={withBasePath('/profile#connect-apps')} class="link link-accent"
-				>Profile → Connect Apps</a
-			>.
-		</p>
+	<header>
+		<Card variant="bordered">
+			<div class="flex items-center gap-2 text-accent">
+				<Waypoints class="h-5 w-5" aria-hidden="true" />
+				<h2 class="text-xl font-bold tracking-tight">Connect Apps</h2>
+			</div>
+			<p class="max-w-2xl text-base text-base-content/70">
+				Let music apps like Symfonium and Finamp stream this library over the OpenSubsonic or
+				Jellyfin protocols.
+			</p>
+			<p class="max-w-2xl text-sm text-base-content/50">
+				These are server-wide switches. Each person creates their own app-password from their
+				<a href={withBasePath('/profile#connect-apps')} class="link link-accent"
+					>Profile → Connect Apps</a
+				>.
+			</p>
+		</Card>
 	</header>
 
 	{#if settingsQuery.isLoading}
@@ -120,107 +121,66 @@
 			<span>Could not load Connect Apps settings.</span>
 		</div>
 	{:else}
-		<div class="card border border-base-300 bg-base-200">
-			<div class="card-body gap-5">
+		<Card variant="bordered">
+			{#snippet header()}
 				<h3 class="card-title text-base">Protocols</h3>
+			{/snippet}
+			<div class="mt-3 flex flex-col gap-5">
+				<ToggleRow
+					label="OpenSubsonic API"
+					description="Symfonium, Feishin, Amperfy and other Subsonic apps."
+					bind:checked={subsonicEnabled}
+				/>
 
-				<label class="flex items-center justify-between gap-4">
-					<span>
-						<span class="font-medium">OpenSubsonic API</span>
-						<span class="block text-sm text-base-content/60">
-							Symfonium, Feishin, Amperfy and other Subsonic apps.
-						</span>
-					</span>
-					<input
-						type="checkbox"
-						class="toggle toggle-accent"
-						aria-label="Enable OpenSubsonic API"
-						bind:checked={subsonicEnabled}
-					/>
-				</label>
-
-				<label class="flex items-center justify-between gap-4">
-					<span>
-						<span class="font-medium">Jellyfin-compatible API</span>
-						<span class="block text-sm text-base-content/60">
-							Finamp, Jellify, Manet Music and Symfonium's Jellyfin mode.
-						</span>
-					</span>
-					<input
-						type="checkbox"
-						class="toggle toggle-accent"
-						aria-label="Enable Jellyfin API"
-						bind:checked={jellyfinEnabled}
-					/>
-				</label>
+				<ToggleRow
+					label="Jellyfin-compatible API"
+					description="Finamp, Jellify, Manet Music and Symfonium's Jellyfin mode."
+					bind:checked={jellyfinEnabled}
+				/>
 
 				<div class="divider my-0"></div>
 
-				<label class="flex items-center justify-between gap-4">
-					<span class="font-medium">On-the-fly transcoding</span>
-					<input
-						type="checkbox"
-						class="toggle toggle-accent"
-						aria-label="Enable transcoding"
-						bind:checked={transcodingEnabled}
-					/>
-				</label>
+				<ToggleRow label="On-the-fly transcoding" bind:checked={transcodingEnabled} />
 
 				{#if transcodingEnabled}
 					<div class="grid gap-4 sm:grid-cols-2">
-						<label class="flex flex-col">
-							<span class="label-text mb-1">Default format</span>
-							<select
-								class="select select-bordered"
-								aria-label="Transcode format"
-								bind:value={transcodeFormat}
-							>
-								<option value="mp3">MP3</option>
-								<option value="opus">Opus</option>
-							</select>
-						</label>
-						<label class="flex flex-col">
-							<span class="label-text mb-1">Max bitrate (kbps)</span>
-							<input
-								type="number"
-								min="32"
-								max="1411"
-								class="input input-bordered"
-								aria-label="Max bitrate kbps"
-								bind:value={transcodeMaxKbps}
-							/>
-						</label>
+						<SelectField
+							label="Default format"
+							bind:value={transcodeFormat}
+							options={[
+								{ value: 'mp3', label: 'MP3' },
+								{ value: 'opus', label: 'Opus' }
+							]}
+						/>
+						<NumberField
+							label="Max bitrate (kbps)"
+							min={32}
+							max={1411}
+							bind:value={transcodeMaxKbps}
+						/>
 					</div>
 				{/if}
 
-				<label class="flex flex-col">
-					<span class="label-text mb-1">Similar-songs discovery</span>
-					<select
-						class="select select-bordered"
-						aria-label="Discovery mode"
-						bind:value={discoverMode}
-					>
-						<option value="local-only">Local only - same artist, no outbound calls</option>
-						<option value="lazy-mb">Lazy MusicBrainz - fetch related artists once, cached</option>
-						<option value="use-scrobble-targets"> Use Last.fm / ListenBrainz when linked </option>
-					</select>
-				</label>
+				<SelectField
+					label="Similar-songs discovery"
+					bind:value={discoverMode}
+					options={[
+						{ value: 'local-only', label: 'Local only - same artist, no outbound calls' },
+						{ value: 'lazy-mb', label: 'Lazy MusicBrainz - fetch related artists once, cached' },
+						{ value: 'use-scrobble-targets', label: 'Use Last.fm / ListenBrainz when linked' }
+					]}
+				/>
 
-				<div class="card-actions justify-end">
-					<button class="btn btn-accent" onclick={handleSave} disabled={save.isPending}>
-						{#if save.isPending}
-							<span class="loading loading-spinner loading-sm"></span>
-						{/if}
-						Save
-					</button>
+				<div class="flex justify-end">
+					<Button variant="accent" loading={save.isPending} onclick={handleSave}>Save</Button>
 				</div>
 			</div>
-		</div>
+		</Card>
 	{/if}
 
 	<!-- oversight: every user's connected apps (metadata only, never the secret) -->
-	<div class="card border border-base-300 bg-base-200">
-		<div class="card-body gap-4">
+	<Card variant="bordered">
+		<div class="flex flex-col gap-4">
 			<div class="flex flex-wrap items-center justify-between gap-2">
 				<h3 class="card-title text-base">
 					<Users class="h-4 w-4" aria-hidden="true" />
@@ -241,7 +201,7 @@
 				<div class="alert alert-error" role="alert">
 					<TriangleAlert class="h-5 w-5" aria-hidden="true" />
 					<span>Could not load the app-password list.</span>
-					<button class="btn btn-sm" onclick={() => void rosterQuery.refetch()}>Try again</button>
+					<Button size="sm" onclick={() => void rosterQuery.refetch()}>Try again</Button>
 				</div>
 			{:else if rosterQuery.data && rosterQuery.data.length > 0}
 				<div class="overflow-x-auto">
@@ -268,14 +228,15 @@
 									<td>{formatDate(pw.last_used_at)}</td>
 									<td>{pw.last_client ?? '-'}</td>
 									<td class="text-right">
-										<button
-											class="btn btn-ghost btn-xs text-error"
+										<Button
+											variant="danger-ghost"
+											size="xs"
+											icon={Trash2}
 											aria-label={`Revoke ${pw.name} for ${pw.owner_username}`}
 											onclick={() => (pendingRevoke = pw)}
 										>
-											<Trash2 class="h-4 w-4" aria-hidden="true" />
 											Revoke
-										</button>
+										</Button>
 									</td>
 								</tr>
 							{/each}
@@ -290,30 +251,20 @@
 				</div>
 			{/if}
 		</div>
-	</div>
+	</Card>
 
-	<dialog
-		bind:this={revokeDialog}
-		class="modal"
-		onclose={() => (pendingRevoke = null)}
-		aria-label="Confirm revoke"
-	>
-		<div class="modal-box">
-			<h3 class="text-lg font-bold">
-				Revoke "{pendingRevoke?.name}" for {pendingRevoke?.owner_display_name}?
-			</h3>
-			<p class="py-2 text-sm text-base-content/70">
-				This disconnects their app immediately; they can create a new one from their Profile.
-			</p>
-			<div class="modal-action">
-				<button class="btn btn-ghost" onclick={() => revokeDialog?.close()}>Cancel</button>
-				<button class="btn btn-error" onclick={confirmRevoke} disabled={adminRevoke.isPending}>
-					{#if adminRevoke.isPending}
-						<span class="loading loading-spinner loading-sm"></span>
-					{/if}
-					Revoke
-				</button>
-			</div>
-		</div>
-	</dialog>
+	<ConfirmDialog
+		bind:open={
+			() => pendingRevoke !== null,
+			(open) => {
+				if (!open) pendingRevoke = null;
+			}
+		}
+		title={`Revoke "${pendingRevoke?.name ?? ''}" for ${pendingRevoke?.owner_display_name ?? ''}?`}
+		message="This disconnects their app immediately; they can create a new one from their Profile."
+		confirmLabel="Revoke"
+		tone="danger"
+		pending={adminRevoke.isPending}
+		onconfirm={confirmRevoke}
+	/>
 </section>

@@ -11,6 +11,12 @@
 	import { toastStore } from '$lib/stores/toast';
 	import type { SabnzbdConnectionSettings, SabnzbdTestResult } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Input from '$lib/ui/Input.svelte';
+	import SecretField from '$lib/ui/SecretField.svelte';
+	import SelectField from '$lib/ui/SelectField.svelte';
+	import TextField from '$lib/ui/TextField.svelte';
 
 	import DownloadClientCard from './DownloadClientCard.svelte';
 
@@ -26,7 +32,7 @@
 	let enabled = $state(false);
 	let url = $state('');
 	let apiKey = $state('');
-	let showKey = $state(false);
+
 	let category = $state('*');
 	let downloadsMount = $state('/sabnzbd-downloads');
 	let priority = $state(0);
@@ -153,45 +159,23 @@
 		{/if}
 
 		<section class="space-y-3">
-			<div class="form-control">
-				<label class="label" for="sab-url"><span class="label-text">SABnzbd URL</span></label>
-				<input
-					id="sab-url"
-					class="input input-bordered w-full font-mono text-sm"
-					bind:value={url}
-					placeholder="http://sabnzbd:8080"
-				/>
-			</div>
-			<div class="form-control">
-				<label class="label" for="sab-key"><span class="label-text">API key (full)</span></label>
-				<div class="join w-full">
-					<input
-						id="sab-key"
-						type={showKey ? 'text' : 'password'}
-						class="input input-bordered join-item flex-1 font-mono text-sm"
-						bind:value={apiKey}
-						placeholder="SABnzbd full API key"
-					/>
-					<button
-						type="button"
-						class="btn join-item"
-						onclick={() => (showKey = !showKey)}
-						aria-label={showKey ? 'Hide API key' : 'Show API key'}
-					>
-						{showKey ? 'Hide' : 'Show'}
-					</button>
-				</div>
-			</div>
+			<TextField label="SABnzbd URL" mono bind:value={url} placeholder="http://sabnzbd:8080" />
+			<SecretField
+				label="API key (full)"
+				mask={configQuery.data?.api_key || undefined}
+				bind:value={apiKey}
+				placeholder="SABnzbd full API key"
+			/>
 			<div class="flex flex-wrap items-center gap-3">
-				<button
-					type="button"
-					class="btn btn-outline btn-sm"
+				<Button
+					variant="outline"
+					size="sm"
+					loading={test.isPending}
+					disabled={!url}
 					onclick={onTest}
-					disabled={test.isPending || !url}
 				>
-					{#if test.isPending}<span class="loading loading-spinner loading-xs"></span>{/if}
 					Test connection
-				</button>
+				</Button>
 				{#if testResult}
 					<span
 						class="flex items-center gap-1.5 text-sm"
@@ -215,54 +199,47 @@
 			not the NZB key - the NZB key can't manage the queue.
 		</p>
 
-		<div class="form-control">
-			<label class="label" for="sab-cat"><span class="label-text">Category</span></label>
-			<select id="sab-cat" class="select select-bordered" bind:value={category}>
-				{#each categoryOptions as opt (opt)}
-					<option value={opt}>{opt}</option>
-				{/each}
-			</select>
-			<span class="label">
-				<span class="label-text-alt">
-					Run Test to load categories. A dedicated <code>droppedneedle</code> category gives
-					predictable folders, but <code>*</code> works.
-				</span>
-			</span>
-		</div>
+		<SelectField
+			label="Category"
+			bind:value={category}
+			options={categoryOptions.map((opt) => ({ value: opt, label: opt }))}
+			help="Run Test to load categories. A dedicated droppedneedle category gives predictable folders, but * works."
+		/>
 
 		<section class="space-y-2">
 			<div class="flex items-center gap-2 text-sm font-semibold">
 				<FolderTree class="size-4 text-base-content/70" aria-hidden="true" /> Downloads mount
 			</div>
-			<div class="space-y-1.5 rounded-box border border-base-content/10 bg-base-200/40 p-3">
-				<label class="text-sm font-medium" for="sab-mount">Downloads mount</label>
-				<p class="text-xs text-base-content/60">
-					Where DroppedNeedle sees SABnzbd's completed folder (its <code>complete</code> dir),
-					mounted read-write into this container on the same disk as your library.
-					{#if testResult?.complete_dir}
-						SABnzbd's complete dir is <code class="text-base-content/70"
-							>{testResult.complete_dir}</code
-						>.
+			<Card variant="bordered" padding="sm">
+				<div class="space-y-1.5">
+					<label class="text-sm font-medium" for="sab-mount">Downloads mount</label>
+					<p class="text-xs text-base-content/60">
+						Where DroppedNeedle sees SABnzbd's completed folder (its <code>complete</code> dir),
+						mounted read-write into this container on the same disk as your library.
+						{#if testResult?.complete_dir}
+							SABnzbd's complete dir is <code class="text-base-content/70"
+								>{testResult.complete_dir}</code
+							>.
+						{/if}
+					</p>
+					<Input
+						id="sab-mount"
+						label="Downloads mount"
+						size="sm"
+						mono
+						class="w-full"
+						bind:value={downloadsMount}
+						placeholder="/sabnzbd-downloads"
+					/>
+					{#if testResult?.mount_message}
+						<p class="text-xs leading-relaxed text-warning">{testResult.mount_message}</p>
 					{/if}
-				</p>
-				<input
-					id="sab-mount"
-					type="text"
-					class="input input-sm input-bordered w-full font-mono"
-					bind:value={downloadsMount}
-					placeholder="/sabnzbd-downloads"
-				/>
-				{#if testResult?.mount_message}
-					<p class="text-xs leading-relaxed text-warning">{testResult.mount_message}</p>
-				{/if}
-			</div>
+				</div>
+			</Card>
 		</section>
 
 		<div class="flex justify-end">
-			<button class="btn btn-primary" onclick={onSave} disabled={save.isPending}>
-				{#if save.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
-				Save settings
-			</button>
+			<Button variant="primary" loading={save.isPending} onclick={onSave}>Save settings</Button>
 		</div>
 	</DownloadClientCard>
 {/if}

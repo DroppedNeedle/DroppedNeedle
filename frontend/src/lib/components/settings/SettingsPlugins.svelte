@@ -7,8 +7,13 @@
 		updatePluginMutation
 	} from '$lib/queries/plugins/PluginMutations.svelte';
 	import { updatePluginFromSourceMutation } from '$lib/queries/plugins/PluginInstallMutations.svelte';
-	import type { PluginInfo } from '$lib/queries/plugins/types';
+	import { PLUGIN_SECRET_MASK, type PluginInfo } from '$lib/queries/plugins/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import SecretField from '$lib/ui/SecretField.svelte';
+	import TextField from '$lib/ui/TextField.svelte';
 	import PluginInstall from './PluginInstall.svelte';
 	import PluginPanel from './PluginPanel.svelte';
 
@@ -50,32 +55,34 @@
 	}
 </script>
 
-<div class="card bg-base-200">
-	<div class="card-body">
+<Card>
+	{#snippet header()}
 		<div class="flex items-center gap-2">
 			<Blocks class="h-5 w-5 text-primary" aria-hidden="true" />
 			<h2 class="card-title">Plugins</h2>
 		</div>
-		<p class="text-sm text-base-content/60">
-			Plugins add download sources, scrobble webhooks, streaming and more. Each one runs as its own
-			program on your server, with the same file and network access as DroppedNeedle. It is not
-			sandboxed: only install plugins you trust. See PLUGINS.md in the repository.
+	{/snippet}
+	<p class="text-sm text-base-content/60">
+		Plugins add download sources, scrobble webhooks, streaming and more. Each one runs as its own
+		program on your server, with the same file and network access as DroppedNeedle. It is not
+		sandboxed: only install plugins you trust. See PLUGINS.md in the repository.
+	</p>
+
+	<PluginInstall />
+
+	{#if pluginsQuery.isLoading}
+		<div class="skeleton h-20 w-full rounded-xl"></div>
+	{:else if plugins.length === 0}
+		<p class="py-4 text-sm text-base-content/50">
+			No plugins yet. Install one above, or drop a folder into <code>plugins/</code> and reload.
 		</p>
-
-		<PluginInstall />
-
-		{#if pluginsQuery.isLoading}
-			<div class="skeleton h-20 w-full rounded-xl"></div>
-		{:else if plugins.length === 0}
-			<p class="py-4 text-sm text-base-content/50">
-				No plugins yet. Install one above, or drop a folder into <code>plugins/</code> and reload.
-			</p>
-		{:else}
-			<div class="space-y-4 pt-2">
-				{#each plugins as plugin (plugin.name)}
-					{@const draft = drafts[plugin.name]}
-					{#if draft}
-						<div class="rounded-2xl border border-base-content/10 bg-base-100/60 p-4">
+	{:else}
+		<div class="space-y-4 pt-2">
+			{#each plugins as plugin (plugin.name)}
+				{@const draft = drafts[plugin.name]}
+				{#if draft}
+					<Card variant="bordered" padding="md">
+						<div>
 							<div class="flex flex-wrap items-start justify-between gap-3">
 								<div class="min-w-0">
 									<div class="flex items-center gap-2">
@@ -187,20 +194,20 @@
 							{#if plugin.settings_fields?.length}
 								<div class="mt-3 grid gap-3 sm:grid-cols-2">
 									{#each plugin.settings_fields ?? [] as field (field.key)}
-										<div class="form-control">
-											<label class="label py-1" for="plugin-{plugin.name}-{field.key}">
-												<span class="label-text text-sm">{field.label}</span>
-											</label>
-											<input
-												id="plugin-{plugin.name}-{field.key}"
-												type={field.secret ? 'password' : 'text'}
-												class="input input-bordered input-sm w-full"
+										{#if field.secret}
+											<SecretField
+												label={field.label}
+												mask={PLUGIN_SECRET_MASK}
+												help={field.help ?? undefined}
 												bind:value={draft.settings[field.key]}
 											/>
-											{#if field.help}
-												<p class="mt-1 text-xs text-base-content/45">{field.help}</p>
-											{/if}
-										</div>
+										{:else}
+											<TextField
+												label={field.label}
+												help={field.help ?? undefined}
+												bind:value={draft.settings[field.key]}
+											/>
+										{/if}
 									{/each}
 								</div>
 							{/if}
@@ -218,15 +225,17 @@
 							<div class="mt-3 flex items-center justify-end gap-2">
 								{#if confirmingRemoval === plugin.name}
 									<span class="text-xs text-base-content/60">Remove this plugin?</span>
-									<button
-										class="btn btn-ghost btn-xs"
+									<Button
+										variant="ghost"
+										size="xs"
 										onclick={() => (confirmingRemoval = null)}
 										disabled={uninstall.isPending}
 									>
 										Cancel
-									</button>
-									<button
-										class="btn btn-error btn-xs"
+									</Button>
+									<Button
+										variant="danger"
+										size="xs"
 										onclick={() => {
 											uninstall.mutate(plugin.name);
 											confirmingRemoval = null;
@@ -234,39 +243,42 @@
 										disabled={uninstall.isPending}
 									>
 										Remove
-									</button>
+									</Button>
 								{:else}
-									<button
-										class="btn btn-ghost btn-xs text-base-content/50 hover:text-error"
+									<IconButton
+										label="Remove {plugin.display_name}"
+										icon={Trash2}
+										variant="danger-ghost"
+										size="xs"
+										shape="square"
 										onclick={() => (confirmingRemoval = plugin.name)}
-										aria-label="Remove {plugin.display_name}"
-									>
-										<Trash2 class="h-3.5 w-3.5" aria-hidden="true" />
-									</button>
+									/>
 									{#if plugin.install}
-										<button
-											class="btn btn-ghost btn-xs"
+										<Button
+											variant="ghost"
+											size="xs"
+											icon={RefreshCw}
+											aria-label="Update {plugin.display_name} from GitHub"
 											onclick={() => sourceUpdate.mutate(plugin.name)}
 											disabled={sourceUpdate.isPending}
-											aria-label="Update {plugin.display_name} from GitHub"
 										>
-											<RefreshCw class="h-3.5 w-3.5" aria-hidden="true" />
 											Update
-										</button>
+										</Button>
 									{/if}
-									<button
-										class="btn btn-primary btn-xs"
+									<Button
+										variant="primary"
+										size="xs"
 										onclick={() => save(plugin)}
 										disabled={update.isPending}
 									>
 										{update.isPending ? 'Saving…' : 'Save'}
-									</button>
+									</Button>
 								{/if}
 							</div>
 						</div>
-					{/if}
-				{/each}
-			</div>
-		{/if}
-	</div>
-</div>
+					</Card>
+				{/if}
+			{/each}
+		</div>
+	{/if}
+</Card>

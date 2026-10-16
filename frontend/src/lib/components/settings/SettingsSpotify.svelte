@@ -7,6 +7,11 @@
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { Copy, ExternalLink } from 'lucide-svelte';
 	import { onMount, onDestroy } from 'svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import SecretField from '$lib/ui/SecretField.svelte';
+	import TextField from '$lib/ui/TextField.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	let redirectUri = $state('');
 	let copied = $state(false);
@@ -28,7 +33,7 @@
 		saveEndpoint: SPOTIFY_ENDPOINTS.settings()
 	});
 
-	let showSecret = $state(false);
+	const SECRET_MASK = 'spotify****';
 
 	// The server builds the address from the request when no origin is saved,
 	// so behind a proxy it does not know about it can name the wrong one.
@@ -64,8 +69,8 @@
 	onDestroy(() => form.cleanup());
 </script>
 
-<div class="card border border-base-300/50 bg-base-200/60 backdrop-blur-sm">
-	<div class="card-body gap-4">
+<Card variant="bordered">
+	{#snippet header()}
 		<div class="flex items-center gap-3">
 			<div
 				class="flex h-11 w-11 items-center justify-center rounded-xl bg-spotify/10 text-spotify ring-1 ring-spotify/20"
@@ -77,11 +82,12 @@
 				</svg>
 			</div>
 			<div>
-				<h2 class="card-title text-2xl">Spotify</h2>
+				<h2 class="card-title">Spotify</h2>
 				<p class="text-sm text-base-content/60">App credentials for the whole instance.</p>
 			</div>
 		</div>
-
+	{/snippet}
+	<div class="mt-2 flex flex-col gap-4">
 		<div class="rounded-xl border border-info/20 bg-info/5 p-3 text-sm text-base-content/70">
 			These are the shared app credentials for one registered Spotify application. Each user links
 			<span class="font-medium">their own</span> Spotify account from their
@@ -109,100 +115,59 @@
 				<span class="loading loading-spinner loading-lg"></span>
 			</div>
 		{:else if form.data}
-			<label class="form-control w-full">
-				<span
-					class="label-text mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50"
-				>
-					Client ID
-				</span>
-				<input
-					type="text"
-					class="input input-soft w-full"
-					bind:value={form.data.client_id}
-					placeholder="Spotify Client ID"
-					autocomplete="off"
-				/>
-			</label>
+			<TextField
+				label="Client ID"
+				placeholder="Spotify Client ID"
+				bind:value={form.data.client_id}
+			/>
 
-			<label class="form-control w-full">
-				<span
-					class="label-text mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50"
-				>
-					Client Secret
-				</span>
-				<div class="relative">
-					<input
-						type={showSecret ? 'text' : 'password'}
-						class="input input-soft w-full pr-16"
-						bind:value={form.data.client_secret}
-						placeholder="Spotify Client Secret"
-						autocomplete="off"
-					/>
-					<button
-						type="button"
-						class="btn btn-ghost btn-xs absolute right-2 top-1/2 -translate-y-1/2 rounded-full"
-						onclick={() => (showSecret = !showSecret)}
-					>
-						{showSecret ? 'Hide' : 'Show'}
-					</button>
-				</div>
-			</label>
+			<SecretField
+				label="Client Secret"
+				mask={SECRET_MASK}
+				placeholder="Spotify Client Secret"
+				bind:value={form.data.client_secret}
+			/>
 
-			<label class="form-control w-full">
-				<span
-					class="label-text mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50"
-				>
-					Redirect Origin <span class="normal-case font-normal">(optional)</span>
-				</span>
-				<input
-					type="text"
-					class="input input-soft w-full"
-					bind:value={form.data.spotify_redirect_origin}
-					placeholder="https://music.example.com"
-					autocomplete="off"
-				/>
-				<p class="mt-1 text-xs text-base-content/50">
-					Leave this empty and DroppedNeedle uses the address it works out for itself. That is right
-					when you reach it directly, or through a reverse proxy that is listed in
-					<code>TRUSTED_PROXY_IPS</code> and sends <code>X-Forwarded-Proto</code>. Fill it in (no
-					path) when the redirect URI below does not start with the address in your browser's
-					address bar.
-				</p>
-			</label>
+			<TextField
+				label="Redirect Origin (optional)"
+				placeholder="https://music.example.com"
+				help="Leave this empty and DroppedNeedle uses the address it works out for itself. That is right when you reach it directly, or through a reverse proxy that is listed in TRUSTED_PROXY_IPS and sends X-Forwarded-Proto. Fill it in (no path) when the redirect URI below does not start with the address in your browser's address bar."
+				bind:value={form.data.spotify_redirect_origin}
+			/>
 
-			<label class="flex cursor-pointer items-center gap-3">
-				<input type="checkbox" class="toggle toggle-primary" bind:checked={form.data.enabled} />
-				<span class="text-sm">Enable Spotify integration</span>
-			</label>
+			<ToggleRow label="Enable Spotify integration" bind:checked={form.data.enabled} />
 
-			<div class="rounded-xl border border-base-300/50 bg-base-300/20 p-3">
-				<p class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/50">
-					Redirect URI: add this in your Spotify app dashboard
-				</p>
-				<div class="flex items-center gap-2">
-					<code
-						class="flex-1 truncate rounded-lg bg-base-100/60 px-2.5 py-1.5 text-xs text-base-content/80"
-					>
-						{redirectUri}
-					</code>
-					<button
-						type="button"
-						class="btn btn-ghost btn-xs shrink-0 rounded-full"
-						onclick={copyRedirectUri}
-					>
-						{#if copied}
-							Copied!
-						{:else}
-							<Copy class="h-3.5 w-3.5" />
-						{/if}
-					</button>
-				</div>
-				{#if addressIsElsewhere}
-					<p class="mt-2 text-xs text-warning">
-						This is not the address you are on. Put {window.location.origin} in Redirect Origin and save.
+			<Card variant="bordered" padding="sm">
+				<div>
+					<p class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/50">
+						Redirect URI: add this in your Spotify app dashboard
 					</p>
-				{/if}
-			</div>
+					<div class="flex items-center gap-2">
+						<code
+							class="flex-1 truncate rounded-lg bg-base-100/60 px-2.5 py-1.5 text-xs text-base-content/80"
+						>
+							{redirectUri}
+						</code>
+						<Button
+							variant="ghost"
+							size="xs"
+							pill
+							icon={copied ? undefined : Copy}
+							class="shrink-0"
+							aria-label="Copy redirect URI"
+							onclick={copyRedirectUri}
+						>
+							{#if copied}Copied!{/if}
+						</Button>
+					</div>
+					{#if addressIsElsewhere}
+						<p class="mt-2 text-xs text-warning">
+							This is not the address you are on. Put {window.location.origin} in Redirect Origin and
+							save.
+						</p>
+					{/if}
+				</div>
+			</Card>
 
 			<a
 				href="https://developer.spotify.com/dashboard"
@@ -224,20 +189,12 @@
 			{/if}
 
 			<div class="flex justify-end pt-1">
-				<button
-					type="button"
-					class="btn btn-primary glow-primary-soft gap-2 rounded-full"
-					onclick={() => void save()}
-					disabled={form.saving}
-				>
-					{#if form.saving}
-						<span class="loading loading-spinner loading-sm"></span>
-					{/if}
+				<Button variant="primary" pill loading={form.saving} onclick={() => void save()}>
 					Save credentials
-				</button>
+				</Button>
 			</div>
 		{:else if form.message}
 			<div class="alert alert-error"><span>{form.message}</span></div>
 		{/if}
 	</div>
-</div>
+</Card>

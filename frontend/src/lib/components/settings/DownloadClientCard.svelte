@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { ChevronDown } from 'lucide-svelte';
 	import type { Snippet } from 'svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
 		title: string;
@@ -29,8 +31,8 @@
 	let open = $state(false);
 </script>
 
-<div class="client-card card border border-base-300 bg-base-200" class:is-active={enabled}>
-	<div class="card-body gap-0 p-0">
+<Card variant="bordered" padding="none" class="client-card {enabled ? 'is-active' : ''}">
+	<div>
 		<div class="flex flex-wrap items-center gap-4 p-5">
 			<div class="grid size-12 place-items-center rounded-2xl bg-base-300/60">
 				<Icon class="size-6 text-accent" aria-hidden="true" />
@@ -59,23 +61,21 @@
 				<span class="text-sm font-medium">{enabled ? 'Enabled' : 'Disabled'}</span>
 				<input
 					type="checkbox"
-					class="toggle toggle-accent"
+					class="toggle toggle-sm toggle-primary"
 					bind:checked={enabled}
 					onchange={() => onToggle?.()}
 					aria-label={enableAriaLabel}
 				/>
 			</label>
-			<button
-				type="button"
-				class="btn btn-ghost btn-sm btn-square"
+			<IconButton
+				label={open ? 'Collapse' : 'Expand'}
+				icon={ChevronDown}
+				size="sm"
+				shape="square"
+				class={open ? 'rotate-180' : ''}
+				aria-expanded={open}
 				onclick={() => (open = !open)}
-				aria-label={open ? 'Collapse' : 'Expand'}
-			>
-				<ChevronDown
-					class={open ? 'size-5 rotate-180 transition-transform' : 'size-5 transition-transform'}
-					aria-hidden="true"
-				/>
-			</button>
+			/>
 		</div>
 
 		{#if open}
@@ -84,15 +84,15 @@
 			</div>
 		{/if}
 	</div>
-</div>
+</Card>
 
 <style>
-	.client-card {
+	:global(.client-card) {
 		transition:
 			box-shadow 0.4s ease,
 			border-color 0.4s ease;
 	}
-	.client-card.is-active {
+	:global(.client-card.is-active) {
 		border-color: oklch(from var(--color-accent) l c h / 0.55);
 		box-shadow:
 			0 0 0 1px oklch(from var(--color-accent) l c h / 0.3),

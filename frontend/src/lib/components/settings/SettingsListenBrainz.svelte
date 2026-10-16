@@ -14,6 +14,11 @@
 		ScrobbleSettings,
 		VerifyConnectionResponse
 	} from '$lib/queries/listenbrainz/types';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import SecretField from '$lib/ui/SecretField.svelte';
+	import TextField from '$lib/ui/TextField.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	const connQuery = getListenBrainzConnectionQuery();
 	const targetsQuery = getScrobbleTargetsQuery();
@@ -25,7 +30,7 @@
 	let connDirty = $state(false);
 	let targetsDraft = $state<ScrobbleSettings | null>(null);
 	let targetsDirty = $state(false);
-	let showToken = $state(false);
+	const TOKEN_MASK = 'listenbrainz****';
 	let verdict = $state<VerifyConnectionResponse | null>(null);
 
 	interface FormMessage {
@@ -46,6 +51,21 @@
 		const data = targetsQuery.data;
 		if (data && !targetsDirty) targetsDraft = { ...data };
 	});
+
+	function editConn<K extends keyof ListenBrainzConnection>(
+		key: K,
+		value: ListenBrainzConnection[K]
+	) {
+		if (!connDraft) return;
+		connDraft[key] = value;
+		connDirty = true;
+	}
+
+	function editTargets<K extends keyof ScrobbleSettings>(key: K, value: ScrobbleSettings[K]) {
+		if (!targetsDraft) return;
+		targetsDraft[key] = value;
+		targetsDirty = true;
+	}
 
 	function errorText(err: unknown, fallback: string): string {
 		return err instanceof Error && err.message ? err.message : fallback;
@@ -90,8 +110,8 @@
 </script>
 
 <div class="flex flex-col gap-6">
-	<div class="card border border-base-300/50 bg-base-200/60 backdrop-blur-sm">
-		<div class="card-body gap-4">
+	<Card variant="bordered">
+		{#snippet header()}
 			<div class="flex items-center gap-3">
 				<div
 					class="flex h-11 w-11 items-center justify-center rounded-xl bg-listenbrainz/10 text-listenbrainz ring-1 ring-listenbrainz/20"
@@ -99,11 +119,12 @@
 					<AudioLines class="h-5 w-5" />
 				</div>
 				<div>
-					<h2 class="card-title text-2xl">ListenBrainz</h2>
+					<h2 class="card-title">ListenBrainz</h2>
 					<p class="text-sm text-base-content/60">Instance connection for scrobbling.</p>
 				</div>
 			</div>
-
+		{/snippet}
+		<div class="mt-2 flex flex-col gap-4">
 			{#if connQuery.isPending}
 				<div data-testid="listenbrainz-skeleton" class="flex animate-pulse flex-col gap-3 py-6">
 					<div class="h-10 rounded-lg bg-base-300"></div>
@@ -113,63 +134,27 @@
 			{:else if connQuery.isError || !connDraft}
 				<div class="alert alert-warning">
 					<span>Could not load ListenBrainz settings. Check the connection and try again.</span>
-					<button class="btn btn-sm" onclick={() => connQuery.refetch()}>Retry</button>
+					<Button size="sm" onclick={() => connQuery.refetch()}>Retry</Button>
 				</div>
 			{:else}
-				<label class="flex cursor-pointer items-center gap-3">
-					<input
-						type="checkbox"
-						class="toggle toggle-primary"
-						bind:checked={connDraft.enabled}
-						onchange={() => (connDirty = true)}
-					/>
-					<span class="text-sm font-medium">Enable ListenBrainz</span>
-				</label>
+				<ToggleRow
+					label="Enable ListenBrainz"
+					bind:checked={() => connDraft!.enabled, (v) => editConn('enabled', v)}
+				/>
 
-				<label class="form-control w-full">
-					<span
-						class="label-text mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50"
-					>
-						Username
-					</span>
-					<input
-						type="text"
-						class="input input-soft w-full"
-						bind:value={connDraft.username}
-						oninput={() => (connDirty = true)}
-						placeholder="Your ListenBrainz username"
-						autocomplete="off"
-					/>
-				</label>
+				<TextField
+					label="Username"
+					placeholder="Your ListenBrainz username"
+					bind:value={() => connDraft!.username, (v) => editConn('username', v)}
+				/>
 
-				<label class="form-control w-full">
-					<span
-						class="label-text mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50"
-					>
-						User token
-					</span>
-					<div class="relative">
-						<input
-							type={showToken ? 'text' : 'password'}
-							class="input input-soft w-full pr-16"
-							bind:value={connDraft.user_token}
-							oninput={() => (connDirty = true)}
-							placeholder="User token"
-							autocomplete="off"
-						/>
-						<button
-							type="button"
-							class="btn btn-ghost btn-xs absolute right-2 top-1/2 -translate-y-1/2 rounded-full"
-							onclick={() => (showToken = !showToken)}
-						>
-							{showToken ? 'Hide' : 'Show'}
-						</button>
-					</div>
-				</label>
-				<p class="-mt-2 text-xs text-base-content/50">
-					Once saved, the token shows as a placeholder. Saving with the placeholder keeps the stored
-					token.
-				</p>
+				<SecretField
+					label="User token"
+					mask={TOKEN_MASK}
+					placeholder="User token"
+					help="Once saved, the token shows as a placeholder. Saving with the placeholder keeps the stored token."
+					bind:value={() => connDraft!.user_token, (v) => editConn('user_token', v)}
+				/>
 
 				<a
 					href="https://listenbrainz.org/profile/"
@@ -202,64 +187,55 @@
 				{/if}
 
 				<div class="flex justify-end gap-2 pt-1">
-					<button
-						type="button"
-						class="btn btn-ghost gap-2 rounded-full"
-						onclick={() => void testConnection()}
-						disabled={verify.isPending || saveConn.isPending}
-					>
-						{#if verify.isPending}
-							<span class="loading loading-spinner loading-sm"></span>
-						{/if}
-						Test connection
-					</button>
-					<button
-						type="button"
-						class="btn btn-primary glow-primary-soft gap-2 rounded-full"
-						onclick={() => void saveConnection()}
+					<Button
+						variant="ghost"
+						pill
+						loading={verify.isPending}
 						disabled={saveConn.isPending}
+						onclick={() => void testConnection()}
 					>
-						{#if saveConn.isPending}
-							<span class="loading loading-spinner loading-sm"></span>
-						{/if}
+						Test connection
+					</Button>
+					<Button
+						variant="primary"
+						pill
+						loading={saveConn.isPending}
+						onclick={() => void saveConnection()}
+					>
 						Save ListenBrainz settings
-					</button>
+					</Button>
 				</div>
 			{/if}
 		</div>
-	</div>
+	</Card>
 
-	<div class="card border border-base-300/50 bg-base-200/60 backdrop-blur-sm">
-		<div class="card-body gap-4">
+	<Card variant="bordered">
+		{#snippet header()}
 			<div>
-				<h2 class="card-title text-xl">Scrobble targets</h2>
+				<h2 class="card-title">Scrobble targets</h2>
 				<p class="text-sm text-base-content/60">Where plays from this instance are reported.</p>
 			</div>
-
+		{/snippet}
+		<div class="mt-2 flex flex-col gap-4">
 			{#if targetsQuery.isPending || !targetsDraft}
 				<div class="flex animate-pulse flex-col gap-3 py-2">
 					<div class="h-6 w-56 rounded bg-base-300"></div>
 					<div class="h-6 w-64 rounded bg-base-300"></div>
 				</div>
 			{:else}
-				<label class="flex cursor-pointer items-center gap-3">
-					<input
-						type="checkbox"
-						class="toggle toggle-primary"
-						bind:checked={targetsDraft.scrobble_to_listenbrainz}
-						onchange={() => (targetsDirty = true)}
-					/>
-					<span class="text-sm font-medium">Scrobble to ListenBrainz</span>
-				</label>
-				<label class="flex cursor-pointer items-center gap-3">
-					<input
-						type="checkbox"
-						class="toggle toggle-primary"
-						bind:checked={targetsDraft.scrobble_to_lastfm}
-						onchange={() => (targetsDirty = true)}
-					/>
-					<span class="text-sm font-medium">Scrobble to Last.fm</span>
-				</label>
+				<ToggleRow
+					label="Scrobble to ListenBrainz"
+					bind:checked={
+						() => targetsDraft!.scrobble_to_listenbrainz,
+						(v) => editTargets('scrobble_to_listenbrainz', v)
+					}
+				/>
+				<ToggleRow
+					label="Scrobble to Last.fm"
+					bind:checked={
+						() => targetsDraft!.scrobble_to_lastfm, (v) => editTargets('scrobble_to_lastfm', v)
+					}
+				/>
 
 				{#if targetsMessage}
 					<div
@@ -272,19 +248,16 @@
 				{/if}
 
 				<div class="flex justify-end pt-1">
-					<button
-						type="button"
-						class="btn btn-primary glow-primary-soft gap-2 rounded-full"
+					<Button
+						variant="primary"
+						pill
+						loading={saveTargets.isPending}
 						onclick={() => void saveScrobbleTargets()}
-						disabled={saveTargets.isPending}
 					>
-						{#if saveTargets.isPending}
-							<span class="loading loading-spinner loading-sm"></span>
-						{/if}
 						Save scrobble targets
-					</button>
+					</Button>
 				</div>
 			{/if}
 		</div>
-	</div>
+	</Card>
 </div>

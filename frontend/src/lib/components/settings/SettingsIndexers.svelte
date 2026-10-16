@@ -23,6 +23,11 @@
 	import { getPluginSourcesQuery } from '$lib/queries/plugins/PluginSourceQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import type { IndexerSettings, IndexerTestResult, UsenetSearchBackendName } from '$lib/types';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import SecretField from '$lib/ui/SecretField.svelte';
+	import TextField from '$lib/ui/TextField.svelte';
 
 	import SettingsProwlarr from './SettingsProwlarr.svelte';
 	import SettingsSectionCollapse from './SettingsSectionCollapse.svelte';
@@ -80,7 +85,6 @@
 	);
 	let editingId = $state<string | null>(null);
 	let draft = $state<IndexerSettings | null>(null);
-	let showKey = $state(false);
 	let testResults = $state<Record<string, IndexerTestResult>>({});
 	let dragId = $state<string | null>(null);
 
@@ -100,7 +104,6 @@
 	function startAdd() {
 		draft = blankIndexer();
 		editingId = NEW;
-		showKey = false;
 	}
 
 	function startEdit(indexer: IndexerSettings) {
@@ -111,7 +114,6 @@
 		}
 		draft = { ...indexer, categories: [...indexer.categories] };
 		editingId = indexer.id;
-		showKey = false;
 	}
 
 	function cancelEdit() {
@@ -227,8 +229,8 @@
 		</p>
 	</header>
 
-	<div class="card border border-base-300 bg-base-200">
-		<div class="card-body gap-3 p-4">
+	<Card variant="bordered" padding="md">
+		<div class="flex flex-col gap-3">
 			<div>
 				<h3 class="font-semibold">Search via</h3>
 				<p class="text-sm text-base-content/60">Only the selected backend is searched.</p>
@@ -274,7 +276,7 @@
 				</label>
 			</div>
 		</div>
-	</div>
+	</Card>
 
 	<SettingsSectionCollapse
 		title="Individual indexers"
@@ -295,110 +297,109 @@
 					Add a Newznab indexer (its URL + your API key) to search Usenet. DroppedNeedle bundles
 					none - bring your own. Run Prowlarr instead? Select it above and configure it below.
 				</p>
-				<button type="button" class="btn btn-primary btn-sm mt-5" onclick={startAdd}>
-					<Plus class="size-4" aria-hidden="true" /> Add indexer
-				</button>
+				<Button variant="primary" size="sm" icon={Plus} class="mt-5" onclick={startAdd}>
+					Add indexer
+				</Button>
 			</div>
 		{:else}
 			<ul class="space-y-3">
 				{#each indexers as indexer, index (indexer.id)}
 					{@const isOpen = editingId === indexer.id}
 					{@const result = testResults[indexer.id]}
-					<li
-						class="indexer-card card border border-base-300 bg-base-200"
-						class:is-active={indexer.enabled}
-						ondragover={(e) => e.preventDefault()}
-						ondrop={() => onDrop(index)}
-						role="listitem"
-					>
-						<div class="card-body gap-0 p-0">
-							<div class="flex flex-wrap items-center gap-3 p-4">
-								<button
-									type="button"
-									class="cursor-grab text-base-content/40 hover:text-base-content"
-									aria-label="Drag to reorder"
-									draggable="true"
-									ondragstart={() => (dragId = indexer.id)}
-									ondragend={() => (dragId = null)}
-									onkeydown={(e) => {
-										if (e.key === 'ArrowUp') {
-											e.preventDefault();
-											move(index, -1);
-										} else if (e.key === 'ArrowDown') {
-											e.preventDefault();
-											move(index, 1);
-										}
-									}}
-								>
-									<GripVertical class="size-4" aria-hidden="true" />
-								</button>
-								<span class="badge badge-ghost badge-sm tabular-nums">{index + 1}</span>
-								<div class="grid size-12 place-items-center rounded-2xl bg-base-300/60">
-									<Rss class="size-6 text-accent" aria-hidden="true" />
-								</div>
-								<button
-									type="button"
-									class="min-w-0 flex-1 text-left"
-									onclick={() => startEdit(indexer)}
-									aria-expanded={isOpen}
-								>
-									<div class="flex items-center gap-2">
-										<h3 class="truncate text-lg font-bold">{indexer.name || host(indexer.url)}</h3>
-										{#if result?.valid}
-											<span class="badge badge-ghost badge-sm">
-												{result.supports_audio_search ? 'music search' : 'text search'}
-											</span>
-										{/if}
-									</div>
-									<div class="flex items-center gap-2 text-sm text-base-content/70">
-										<span
-											class="orb"
-											class:is-connected={indexer.enabled}
-											role="status"
-											aria-label={indexer.enabled ? 'Enabled' : 'Disabled'}
-										></span>
-										<span class="truncate">{host(indexer.url)}</span>
-									</div>
-								</button>
-								<label class="flex cursor-pointer items-center gap-2">
-									<span class="text-sm font-medium">{indexer.enabled ? 'Enabled' : 'Disabled'}</span
+					<li ondragover={(e) => e.preventDefault()} ondrop={() => onDrop(index)} role="listitem">
+						<Card
+							variant="bordered"
+							padding="none"
+							class="indexer-card {indexer.enabled ? 'is-active' : ''}"
+						>
+							<div>
+								<div class="flex flex-wrap items-center gap-3 p-4">
+									<button
+										type="button"
+										class="cursor-grab text-base-content/40 hover:text-base-content"
+										aria-label="Drag to reorder"
+										draggable="true"
+										ondragstart={() => (dragId = indexer.id)}
+										ondragend={() => (dragId = null)}
+										onkeydown={(e) => {
+											if (e.key === 'ArrowUp') {
+												e.preventDefault();
+												move(index, -1);
+											} else if (e.key === 'ArrowDown') {
+												e.preventDefault();
+												move(index, 1);
+											}
+										}}
 									>
-									<input
-										type="checkbox"
-										class="toggle toggle-accent"
-										checked={indexer.enabled}
-										onchange={() => toggleEnabled(indexer)}
-										aria-label={indexer.enabled ? 'Disable indexer' : 'Enable indexer'}
+										<GripVertical class="size-4" aria-hidden="true" />
+									</button>
+									<span class="badge badge-ghost badge-sm tabular-nums">{index + 1}</span>
+									<div class="grid size-12 place-items-center rounded-2xl bg-base-300/60">
+										<Rss class="size-6 text-accent" aria-hidden="true" />
+									</div>
+									<button
+										type="button"
+										class="min-w-0 flex-1 text-left"
+										onclick={() => startEdit(indexer)}
+										aria-expanded={isOpen}
+									>
+										<div class="flex items-center gap-2">
+											<h3 class="truncate text-lg font-bold">
+												{indexer.name || host(indexer.url)}
+											</h3>
+											{#if result?.valid}
+												<span class="badge badge-ghost badge-sm">
+													{result.supports_audio_search ? 'music search' : 'text search'}
+												</span>
+											{/if}
+										</div>
+										<div class="flex items-center gap-2 text-sm text-base-content/70">
+											<span
+												class="orb"
+												class:is-connected={indexer.enabled}
+												role="status"
+												aria-label={indexer.enabled ? 'Enabled' : 'Disabled'}
+											></span>
+											<span class="truncate">{host(indexer.url)}</span>
+										</div>
+									</button>
+									<label class="flex cursor-pointer items-center gap-2">
+										<span class="text-sm font-medium"
+											>{indexer.enabled ? 'Enabled' : 'Disabled'}</span
+										>
+										<input
+											type="checkbox"
+											class="toggle toggle-sm toggle-primary"
+											checked={indexer.enabled}
+											onchange={() => toggleEnabled(indexer)}
+											aria-label={indexer.enabled ? 'Disable indexer' : 'Enable indexer'}
+										/>
+									</label>
+									<IconButton
+										label={isOpen ? 'Collapse' : 'Expand'}
+										icon={ChevronDown}
+										size="sm"
+										shape="square"
+										class={isOpen ? 'rotate-180' : ''}
+										aria-expanded={isOpen}
+										onclick={() => startEdit(indexer)}
 									/>
-								</label>
-								<button
-									type="button"
-									class="btn btn-ghost btn-sm btn-square"
-									onclick={() => startEdit(indexer)}
-									aria-label={isOpen ? 'Collapse' : 'Expand'}
-								>
-									<ChevronDown
-										class={isOpen
-											? 'size-5 rotate-180 transition-transform'
-											: 'size-5 transition-transform'}
-										aria-hidden="true"
-									/>
-								</button>
-							</div>
-
-							{#if isOpen && draft}
-								<div class="space-y-5 border-t border-base-300 p-5">
-									{@render editForm()}
 								</div>
-							{/if}
-						</div>
+
+								{#if isOpen && draft}
+									<div class="space-y-5 border-t border-base-300 p-5">
+										{@render editForm()}
+									</div>
+								{/if}
+							</div>
+						</Card>
 					</li>
 				{/each}
 			</ul>
 
 			{#if editingId === NEW && draft}
-				<div class="card border border-accent/40 bg-base-200">
-					<div class="card-body gap-0 p-0">
+				<Card variant="bordered" padding="none">
+					<div>
 						<div class="flex items-center gap-3 p-4">
 							<div class="grid size-12 place-items-center rounded-2xl bg-base-300/60">
 								<Rss class="size-6 text-accent" aria-hidden="true" />
@@ -409,41 +410,41 @@
 							{@render editForm()}
 						</div>
 					</div>
-				</div>
+				</Card>
 			{:else}
-				<button type="button" class="btn btn-sm" onclick={startAdd}>
-					<Plus class="size-4" aria-hidden="true" /> Add indexer
-				</button>
+				<Button size="sm" icon={Plus} onclick={startAdd}>Add indexer</Button>
 			{/if}
 			{#if pluginIndexers.length > 0}
-				<div class="rounded-box border border-base-300 bg-base-200 px-3 py-2">
-					<p class="text-xs font-semibold uppercase tracking-wide text-base-content/50">
-						Plugin indexers
-					</p>
-					<p class="mt-1 text-xs text-base-content/60">
-						Plugins provide these. Configure them under Plugins; you cannot edit them here. A plugin
-						indexer for Usenet appears with Usenet results; any other target gets its own group in
-						review.
-					</p>
-					<ul class="mt-2 space-y-1.5">
-						{#each pluginIndexers as source (source.key)}
-							<li class="flex flex-wrap items-center gap-1.5 text-sm">
-								<span class="font-medium">{source.display_name || source.key}</span>
-								<span class="badge badge-ghost badge-sm" title="Indexer target">
-									targets {source.target_source || source.key}
-								</span>
-								<span
-									class="badge badge-sm"
-									class:badge-success={source.configured}
-									class:badge-ghost={!source.configured}
-								>
-									{source.configured ? 'Configured' : 'Not configured'}
-								</span>
-								<span class="badge badge-ghost badge-sm">{source.health}</span>
-							</li>
-						{/each}
-					</ul>
-				</div>
+				<Card variant="bordered" padding="sm">
+					<div>
+						<p class="text-xs font-semibold uppercase tracking-wide text-base-content/50">
+							Plugin indexers
+						</p>
+						<p class="mt-1 text-xs text-base-content/60">
+							Plugins provide these. Configure them under Plugins; you cannot edit them here. A
+							plugin indexer for Usenet appears with Usenet results; any other target gets its own
+							group in review.
+						</p>
+						<ul class="mt-2 space-y-1.5">
+							{#each pluginIndexers as source (source.key)}
+								<li class="flex flex-wrap items-center gap-1.5 text-sm">
+									<span class="font-medium">{source.display_name || source.key}</span>
+									<span class="badge badge-ghost badge-sm" title="Indexer target">
+										targets {source.target_source || source.key}
+									</span>
+									<span
+										class="badge badge-sm"
+										class:badge-success={source.configured}
+										class:badge-ghost={!source.configured}
+									>
+										{source.configured ? 'Configured' : 'Not configured'}
+									</span>
+									<span class="badge badge-ghost badge-sm">{source.health}</span>
+								</li>
+							{/each}
+						</ul>
+					</div>
+				</Card>
 			{/if}
 		{/if}
 	</SettingsSectionCollapse>
@@ -464,42 +465,17 @@
 {#snippet editForm()}
 	{@const result = testResults[editingId ?? NEW]}
 	<div class="space-y-3">
-		<div class="form-control">
-			<label class="label" for="indexer-name"><span class="label-text">Name</span></label>
-			<input
-				id="indexer-name"
-				class="input input-bordered input-sm w-full"
-				placeholder="My Indexer"
-				bind:value={draft!.name}
-			/>
-		</div>
-		<div class="form-control">
-			<label class="label" for="indexer-url"><span class="label-text">URL</span></label>
-			<input
-				id="indexer-url"
-				class="input input-bordered input-sm w-full font-mono text-sm"
-				placeholder="https://indexer.example/api"
-				bind:value={draft!.url}
-			/>
-		</div>
-		<div class="form-control">
-			<label class="label" for="indexer-key"><span class="label-text">API key</span></label>
-			<div class="join w-full">
-				<input
-					id="indexer-key"
-					type={showKey ? 'text' : 'password'}
-					class="input input-bordered input-sm join-item flex-1 font-mono text-sm"
-					placeholder="your indexer API key"
-					bind:value={draft!.api_key}
-				/>
-				<button type="button" class="btn btn-sm join-item" onclick={() => (showKey = !showKey)}>
-					{showKey ? 'Hide' : 'Show'}
-				</button>
-			</div>
-		</div>
-		<div class="form-control">
-			<span class="label-text">Audio categories</span>
-			<div class="mt-1 flex flex-wrap gap-2">
+		<TextField label="Name" placeholder="My Indexer" bind:value={draft!.name} />
+		<TextField label="URL" mono placeholder="https://indexer.example/api" bind:value={draft!.url} />
+		<SecretField
+			label="API key"
+			mask={editingId !== NEW ? INDEXER_KEY_MASK : undefined}
+			placeholder="your indexer API key"
+			bind:value={draft!.api_key}
+		/>
+		<fieldset class="fieldset">
+			<legend class="fieldset-legend">Audio categories</legend>
+			<div class="flex flex-wrap gap-2">
 				{#each AUDIO_CATEGORIES as cat (cat.id)}
 					<label class="label cursor-pointer gap-2 rounded-btn border border-base-300 px-3 py-1">
 						<input
@@ -508,16 +484,16 @@
 							checked={draft!.categories.includes(cat.id)}
 							onchange={() => toggleCategory(cat.id)}
 						/>
-						<span class="label-text">{cat.label}</span>
+						<span>{cat.label}</span>
 					</label>
 				{/each}
 			</div>
-		</div>
+		</fieldset>
 
 		<div class="flex flex-wrap items-center gap-3">
-			<button type="button" class="btn btn-sm" onclick={runTest} disabled={test.isPending}>
+			<Button size="sm" onclick={runTest} disabled={test.isPending}>
 				{test.isPending ? 'Testing…' : 'Test'}
-			</button>
+			</Button>
 			{#if result}
 				<span
 					class="flex items-center gap-1.5 text-sm"
@@ -533,45 +509,40 @@
 				</span>
 			{/if}
 			{#if result?.suggested_url}
-				<button
-					type="button"
-					class="btn btn-outline btn-sm font-mono"
+				<Button
+					variant="outline"
+					size="sm"
 					onclick={() => applySuggestion(result.suggested_url!)}
 					disabled={test.isPending}
 				>
-					Use {result.suggested_url}
-				</button>
+					Use <span class="font-mono">{result.suggested_url}</span>
+				</Button>
 			{/if}
 			<div class="flex-1"></div>
 			{#if editingId !== NEW}
-				<button
-					type="button"
-					class="btn btn-ghost btn-sm text-error"
+				<Button
+					variant="danger-ghost"
+					size="sm"
+					icon={Trash2}
 					onclick={() => draft && removeIndexer(draft as IndexerSettings)}
 				>
-					<Trash2 class="size-4" aria-hidden="true" /> Remove
-				</button>
+					Remove
+				</Button>
 			{/if}
-			<button type="button" class="btn btn-ghost btn-sm" onclick={cancelEdit}>Cancel</button>
-			<button
-				type="button"
-				class="btn btn-primary btn-sm"
-				onclick={saveDraft}
-				disabled={save.isPending}
+			<Button variant="ghost" size="sm" onclick={cancelEdit}>Cancel</Button>
+			<Button variant="primary" size="sm" onclick={saveDraft} disabled={save.isPending}>Save</Button
 			>
-				Save
-			</button>
 		</div>
 	</div>
 {/snippet}
 
 <style>
-	.indexer-card {
+	:global(.indexer-card) {
 		transition:
 			box-shadow 0.4s ease,
 			border-color 0.4s ease;
 	}
-	.indexer-card.is-active {
+	:global(.indexer-card.is-active) {
 		border-color: oklch(from var(--color-accent) l c h / 0.55);
 		box-shadow:
 			0 0 0 1px oklch(from var(--color-accent) l c h / 0.3),

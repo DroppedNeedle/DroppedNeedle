@@ -8,6 +8,12 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { CalendarClock, ExternalLink } from 'lucide-svelte';
 	import { onDestroy, onMount } from 'svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Field from '$lib/ui/Field.svelte';
+	import Input from '$lib/ui/Input.svelte';
+	import SecretField from '$lib/ui/SecretField.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	const form = createSettingsForm<EventsSettings>({
 		loadEndpoint: SETTINGS_ENDPOINTS.events(),
@@ -25,8 +31,8 @@
 		}
 	});
 
-	let showTicketmasterKey = $state(false);
-	let showSkiddleKey = $state(false);
+	const TICKETMASTER_KEY_MASK = 'ticketmaster****';
+	const SKIDDLE_KEY_MASK = 'skiddle****';
 
 	// two sources = two independent test buttons (the shared form util only
 	// supports one testEndpoint)
@@ -58,8 +64,8 @@
 	onDestroy(() => form.cleanup());
 </script>
 
-<div class="card border border-base-300/50 bg-base-200/60 backdrop-blur-sm">
-	<div class="card-body gap-4">
+<Card variant="bordered">
+	{#snippet header()}
 		<div class="flex items-center gap-3">
 			<div
 				class="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/20"
@@ -67,197 +73,178 @@
 				<CalendarClock class="h-5 w-5" aria-hidden="true" />
 			</div>
 			<div>
-				<h2 class="card-title text-2xl">Live Events</h2>
+				<h2 class="card-title">Live Events</h2>
 				<p class="text-sm text-base-content/60">
 					Concert listings for followed artists, shown on the Following page.
 				</p>
 			</div>
 		</div>
-
+	{/snippet}
+	<div class="mt-2 flex flex-col gap-4">
 		{#if form.loading}
 			<div class="flex justify-center py-10">
 				<span class="loading loading-spinner loading-lg"></span>
 			</div>
 		{:else if form.data}
-			<label class="flex cursor-pointer items-center gap-3">
-				<input type="checkbox" class="toggle toggle-primary" bind:checked={form.data.enabled} />
-				<span class="text-sm">Enable live events</span>
-			</label>
+			<ToggleRow label="Enable live events" bind:checked={form.data.enabled} />
 
-			<fieldset class="rounded-xl border border-base-300/50 bg-base-300/20 p-4">
-				<legend class="px-1 text-xs font-semibold uppercase tracking-wider text-base-content/50">
-					Search for concerts by
-				</legend>
-				<label class="flex cursor-pointer items-center gap-3 py-1">
-					<input
-						type="radio"
-						class="radio radio-primary radio-sm"
-						value="followed"
-						bind:group={form.data.sweep_scope}
-					/>
-					<span class="text-sm">
-						Followed artists only
-						<span class="block text-xs text-base-content/60">
-							Checks the artists people follow. Light on API usage.
-						</span>
-					</span>
-				</label>
-				<label class="flex cursor-pointer items-center gap-3 py-1">
-					<input
-						type="radio"
-						class="radio radio-primary radio-sm"
-						value="library"
-						bind:group={form.data.sweep_scope}
-					/>
-					<span class="text-sm">
-						Every artist in the library
-						<span class="block text-xs text-base-content/60">
-							Also checks the whole library and shows those gigs to everyone. Very large libraries
-							are spread across several days to respect API limits.
-						</span>
-					</span>
-				</label>
-			</fieldset>
-
-			<!-- Ticketmaster -->
-			<div class="rounded-xl border border-base-300/50 bg-base-300/20 p-4">
-				<div class="mb-3 flex items-center justify-between">
-					<div>
-						<p class="font-medium">Ticketmaster</p>
-						<p class="text-xs text-base-content/60">
-							Worldwide coverage (USA + most of Europe). Free key, 5,000 calls/day.
-						</p>
-					</div>
-					<input
-						type="checkbox"
-						class="toggle toggle-primary"
-						bind:checked={form.data.ticketmaster_enabled}
-						aria-label="Enable Ticketmaster"
-					/>
-				</div>
-				<div class="flex items-center gap-2">
-					<div class="relative flex-1">
+			<Card variant="bordered" padding="md">
+				<fieldset>
+					<legend class="mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50">
+						Search for concerts by
+					</legend>
+					<label class="flex cursor-pointer items-center gap-3 py-1">
 						<input
-							type={showTicketmasterKey ? 'text' : 'password'}
-							class="input input-soft w-full pr-16"
-							bind:value={form.data.ticketmaster_api_key}
-							placeholder="Consumer Key from developer.ticketmaster.com"
-							autocomplete="off"
+							type="radio"
+							class="radio radio-sm"
+							value="followed"
+							bind:group={form.data.sweep_scope}
 						/>
-						<button
-							type="button"
-							class="btn btn-ghost btn-xs absolute right-2 top-1/2 -translate-y-1/2 rounded-full"
-							onclick={() => (showTicketmasterKey = !showTicketmasterKey)}
-						>
-							{showTicketmasterKey ? 'Hide' : 'Show'}
-						</button>
-					</div>
-					<button
-						type="button"
-						class="btn btn-outline btn-sm rounded-full"
-						onclick={() => runTest('ticketmaster', ticketmasterTest)}
-						disabled={ticketmasterTest.testing}
-					>
-						{#if ticketmasterTest.testing}
-							<span class="loading loading-spinner loading-xs"></span>
-						{/if}
-						Test
-					</button>
-				</div>
-				{#if ticketmasterTest.message}
-					<p
-						class="mt-2 text-sm"
-						class:text-success={ticketmasterTest.valid}
-						class:text-error={!ticketmasterTest.valid}
-					>
-						{ticketmasterTest.message}
-					</p>
-				{/if}
-				<a
-					href="https://developer.ticketmaster.com/"
-					target="_blank"
-					rel="noopener noreferrer"
-					class="mt-2 flex w-fit items-center gap-1 text-xs text-base-content/50 transition-colors hover:text-primary"
-				>
-					<ExternalLink class="h-3 w-3" aria-hidden="true" /> Get a free Ticketmaster key
-				</a>
-			</div>
-
-			<!-- Skiddle -->
-			<div class="rounded-xl border border-base-300/50 bg-base-300/20 p-4">
-				<div class="mb-3 flex items-center justify-between">
-					<div>
-						<p class="font-medium">Skiddle</p>
-						<p class="text-xs text-base-content/60">
-							Covers the UK & Ireland: small venues, club nights, festivals.
-						</p>
-					</div>
-					<input
-						type="checkbox"
-						class="toggle toggle-primary"
-						bind:checked={form.data.skiddle_enabled}
-						aria-label="Enable Skiddle"
-					/>
-				</div>
-				<div class="flex items-center gap-2">
-					<div class="relative flex-1">
+						<span class="text-sm">
+							Followed artists only
+							<span class="block text-xs text-base-content/60">
+								Checks the artists people follow. Light on API usage.
+							</span>
+						</span>
+					</label>
+					<label class="flex cursor-pointer items-center gap-3 py-1">
 						<input
-							type={showSkiddleKey ? 'text' : 'password'}
-							class="input input-soft w-full pr-16"
-							bind:value={form.data.skiddle_api_key}
-							placeholder="API key from skiddle.com/api"
-							autocomplete="off"
+							type="radio"
+							class="radio radio-sm"
+							value="library"
+							bind:group={form.data.sweep_scope}
 						/>
-						<button
-							type="button"
-							class="btn btn-ghost btn-xs absolute right-2 top-1/2 -translate-y-1/2 rounded-full"
-							onclick={() => (showSkiddleKey = !showSkiddleKey)}
-						>
-							{showSkiddleKey ? 'Hide' : 'Show'}
-						</button>
-					</div>
-					<button
-						type="button"
-						class="btn btn-outline btn-sm rounded-full"
-						onclick={() => runTest('skiddle', skiddleTest)}
-						disabled={skiddleTest.testing}
-					>
-						{#if skiddleTest.testing}
-							<span class="loading loading-spinner loading-xs"></span>
-						{/if}
-						Test
-					</button>
-				</div>
-				{#if skiddleTest.message}
-					<p
-						class="mt-2 text-sm"
-						class:text-success={skiddleTest.valid}
-						class:text-error={!skiddleTest.valid}
-					>
-						{skiddleTest.message}
-					</p>
-				{/if}
-				<a
-					href="https://www.skiddle.com/api/join.php"
-					target="_blank"
-					rel="noopener noreferrer"
-					class="mt-2 flex w-fit items-center gap-1 text-xs text-base-content/50 transition-colors hover:text-primary"
-				>
-					<ExternalLink class="h-3 w-3" aria-hidden="true" /> Get a free Skiddle key
-				</a>
-			</div>
+						<span class="text-sm">
+							Every artist in the library
+							<span class="block text-xs text-base-content/60">
+								Also checks the whole library and shows those gigs to everyone. Very large libraries
+								are spread across several days to respect API limits.
+							</span>
+						</span>
+					</label>
+				</fieldset>
+			</Card>
 
-			<label class="form-control w-fit">
-				<span
-					class="label-text mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50"
-				>
-					Check for new events daily at
-				</span>
-				<div class="flex items-center gap-2">
-					<input type="time" class="input input-soft w-32" bind:value={form.data.poll_time} />
-					<span class="text-sm text-base-content/60">server time</span>
+			<Card variant="bordered" padding="md">
+				<div class="space-y-3">
+					<div class="flex items-center justify-between">
+						<div>
+							<p class="font-medium">Ticketmaster</p>
+							<p class="text-xs text-base-content/60">
+								Worldwide coverage (USA + most of Europe). Free key, 5,000 calls/day.
+							</p>
+						</div>
+						<input
+							type="checkbox"
+							class="toggle toggle-sm toggle-primary"
+							bind:checked={form.data.ticketmaster_enabled}
+							aria-label="Enable Ticketmaster"
+						/>
+					</div>
+					<SecretField
+						label="Consumer key"
+						mask={TICKETMASTER_KEY_MASK}
+						placeholder="Consumer Key from developer.ticketmaster.com"
+						bind:value={form.data.ticketmaster_api_key}
+					/>
+					<div class="flex flex-wrap items-center gap-3">
+						<Button
+							variant="outline"
+							size="sm"
+							pill
+							loading={ticketmasterTest.testing}
+							onclick={() => runTest('ticketmaster', ticketmasterTest)}
+						>
+							Test
+						</Button>
+						{#if ticketmasterTest.message}
+							<p
+								class="text-sm"
+								class:text-success={ticketmasterTest.valid}
+								class:text-error={!ticketmasterTest.valid}
+							>
+								{ticketmasterTest.message}
+							</p>
+						{/if}
+					</div>
+					<a
+						href="https://developer.ticketmaster.com/"
+						target="_blank"
+						rel="noopener noreferrer"
+						class="flex w-fit items-center gap-1 text-xs text-base-content/50 transition-colors hover:text-primary"
+					>
+						<ExternalLink class="h-3 w-3" aria-hidden="true" /> Get a free Ticketmaster key
+					</a>
 				</div>
-			</label>
+			</Card>
+
+			<Card variant="bordered" padding="md">
+				<div class="space-y-3">
+					<div class="flex items-center justify-between">
+						<div>
+							<p class="font-medium">Skiddle</p>
+							<p class="text-xs text-base-content/60">
+								Covers the UK & Ireland: small venues, club nights, festivals.
+							</p>
+						</div>
+						<input
+							type="checkbox"
+							class="toggle toggle-sm toggle-primary"
+							bind:checked={form.data.skiddle_enabled}
+							aria-label="Enable Skiddle"
+						/>
+					</div>
+					<SecretField
+						label="API key"
+						mask={SKIDDLE_KEY_MASK}
+						placeholder="API key from skiddle.com/api"
+						bind:value={form.data.skiddle_api_key}
+					/>
+					<div class="flex flex-wrap items-center gap-3">
+						<Button
+							variant="outline"
+							size="sm"
+							pill
+							loading={skiddleTest.testing}
+							onclick={() => runTest('skiddle', skiddleTest)}
+						>
+							Test
+						</Button>
+						{#if skiddleTest.message}
+							<p
+								class="text-sm"
+								class:text-success={skiddleTest.valid}
+								class:text-error={!skiddleTest.valid}
+							>
+								{skiddleTest.message}
+							</p>
+						{/if}
+					</div>
+					<a
+						href="https://www.skiddle.com/api/join.php"
+						target="_blank"
+						rel="noopener noreferrer"
+						class="flex w-fit items-center gap-1 text-xs text-base-content/50 transition-colors hover:text-primary"
+					>
+						<ExternalLink class="h-3 w-3" aria-hidden="true" /> Get a free Skiddle key
+					</a>
+				</div>
+			</Card>
+
+			<Field label="Check for new events daily at">
+				{#snippet children(control)}
+					<div class="flex items-center gap-2">
+						<Input
+							{...control}
+							label="Check for new events daily at"
+							type="time"
+							class="w-32"
+							bind:value={form.data!.poll_time}
+						/>
+						<span class="text-sm text-base-content/60">server time</span>
+					</div>
+				{/snippet}
+			</Field>
 
 			{#if form.message}
 				<div
@@ -270,20 +257,12 @@
 			{/if}
 
 			<div class="flex justify-end pt-1">
-				<button
-					type="button"
-					class="btn btn-primary glow-primary-soft gap-2 rounded-full"
-					onclick={() => void form.save()}
-					disabled={form.saving}
-				>
-					{#if form.saving}
-						<span class="loading loading-spinner loading-sm"></span>
-					{/if}
+				<Button variant="primary" pill loading={form.saving} onclick={() => void form.save()}>
 					Save settings
-				</button>
+				</Button>
 			</div>
 		{:else if form.message}
 			<div class="alert alert-error"><span>{form.message}</span></div>
 		{/if}
 	</div>
-</div>
+</Card>

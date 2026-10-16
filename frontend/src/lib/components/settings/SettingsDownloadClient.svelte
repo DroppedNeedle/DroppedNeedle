@@ -19,6 +19,11 @@
 		TestConnectionResult
 	} from '$lib/queries/downloads/DownloadClientQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Input from '$lib/ui/Input.svelte';
+	import SecretField from '$lib/ui/SecretField.svelte';
+	import TextField from '$lib/ui/TextField.svelte';
 
 	import DownloadClientCard from './DownloadClientCard.svelte';
 
@@ -30,7 +35,6 @@
 	let enabled = $state(false);
 	let url = $state('');
 	let apiKey = $state('');
-	let showKey = $state(false);
 	let downloadsSubpath = $state('');
 	let incompleteMount = $state('');
 	// Quality/verification/resilience now live in the shared Download policy block, but the
@@ -210,45 +214,23 @@
 		enableAriaLabel="Enable slskd download client"
 	>
 		<section class="space-y-3">
-			<div class="form-control">
-				<label class="label" for="slskd-url"><span class="label-text">slskd URL</span></label>
-				<input
-					id="slskd-url"
-					class="input input-bordered w-full font-mono text-sm"
-					bind:value={url}
-					placeholder="http://slskd:5030"
-				/>
-			</div>
-			<div class="form-control">
-				<label class="label" for="slskd-key"><span class="label-text">API key</span></label>
-				<div class="join w-full">
-					<input
-						id="slskd-key"
-						type={showKey ? 'text' : 'password'}
-						class="input input-bordered join-item flex-1 font-mono text-sm"
-						bind:value={apiKey}
-						placeholder="slskd API key"
-					/>
-					<button
-						type="button"
-						class="btn join-item"
-						onclick={() => (showKey = !showKey)}
-						aria-label={showKey ? 'Hide API key' : 'Show API key'}
-					>
-						{showKey ? 'Hide' : 'Show'}
-					</button>
-				</div>
-			</div>
+			<TextField label="slskd URL" mono bind:value={url} placeholder="http://slskd:5030" />
+			<SecretField
+				label="API key"
+				mask={configQuery.data?.api_key || undefined}
+				bind:value={apiKey}
+				placeholder="slskd API key"
+			/>
 			<div class="flex flex-wrap items-center gap-3">
-				<button
-					type="button"
-					class="btn btn-outline btn-sm"
+				<Button
+					variant="outline"
+					size="sm"
+					loading={test.isPending}
+					disabled={!url}
 					onclick={handleTest}
-					disabled={test.isPending || !url}
 				>
-					{#if test.isPending}<span class="loading loading-spinner loading-xs"></span>{/if}
 					Test connection
-				</button>
+				</Button>
 				{#if testResult}
 					<span
 						class="flex items-center gap-1.5 text-sm"
@@ -306,50 +288,53 @@
 						</div>
 					</div>
 				{/if}
-				<div class="space-y-1.5 rounded-box border border-base-content/10 bg-base-200/40 p-3">
-					<label class="text-sm font-medium" for="downloads-subpath">
-						Downloads subfolder
-						<span class="badge badge-ghost badge-xs ml-1 align-middle">relative to the mount</span>
-					</label>
-					<p class="text-xs text-base-content/60">
-						The folder inside your mount where slskd saves completed downloads.
-						{#if slskdDownloadsDir}
-							slskd saves to <code class="text-base-content/70">{slskdDownloadsDir}</code>. Set this
-							to the part of that path inside your mount.
-						{/if}
-					</p>
-					{#if mountAlreadyPointsAtSlskd && !downloadsSubpath.trim()}
-						<p class="text-xs text-success">
-							Leave this empty. Your mount already points where slskd saves.
+				<Card variant="bordered" padding="sm">
+					<div class="space-y-1.5">
+						<label class="text-sm font-medium" for="downloads-subpath">
+							Downloads subfolder
+							<span class="badge badge-ghost badge-xs ml-1 align-middle">relative to the mount</span
+							>
+						</label>
+						<p class="text-xs text-base-content/60">
+							The folder inside your mount where slskd saves completed downloads.
+							{#if slskdDownloadsDir}
+								slskd saves to <code class="text-base-content/70">{slskdDownloadsDir}</code>. Set
+								this to the part of that path inside your mount.
+							{/if}
 						</p>
-					{/if}
-					{#if subpathLooksAbsolute}
-						<div class="alert alert-warning items-start py-2 text-xs">
-							<TriangleAlert class="size-4 shrink-0" aria-hidden="true" />
-							<div class="space-y-1.5">
-								<p>
-									This looks like a full path. Type only the part after the mount, or leave it
-									empty.
-								</p>
-								<button type="button" class="btn btn-xs" onclick={trimSubpathToRelative}>
-									Trim to relative
-								</button>
+						{#if mountAlreadyPointsAtSlskd && !downloadsSubpath.trim()}
+							<p class="text-xs text-success">
+								Leave this empty. Your mount already points where slskd saves.
+							</p>
+						{/if}
+						{#if subpathLooksAbsolute}
+							<div class="alert alert-warning items-start py-2 text-xs">
+								<TriangleAlert class="size-4 shrink-0" aria-hidden="true" />
+								<div class="space-y-1.5">
+									<p>
+										This looks like a full path. Type only the part after the mount, or leave it
+										empty.
+									</p>
+									<Button size="xs" onclick={trimSubpathToRelative}>Trim to relative</Button>
+								</div>
 							</div>
+						{/if}
+						<div class="flex flex-wrap items-center gap-2">
+							<Input
+								id="downloads-subpath"
+								label="Downloads subfolder"
+								size="sm"
+								mono
+								class="flex-1"
+								placeholder="e.g. downloads/slskd/complete"
+								bind:value={downloadsSubpath}
+							/>
+							<Button variant="primary" size="sm" onclick={handleSave} disabled={save.isPending}>
+								{save.isPending ? 'Checking…' : 'Save & re-check'}
+							</Button>
 						</div>
-					{/if}
-					<div class="flex flex-wrap items-center gap-2">
-						<input
-							id="downloads-subpath"
-							type="text"
-							class="input input-sm input-bordered flex-1 font-mono"
-							placeholder="e.g. downloads/slskd/complete"
-							bind:value={downloadsSubpath}
-						/>
-						<button class="btn btn-sm btn-primary" onclick={handleSave} disabled={save.isPending}>
-							{save.isPending ? 'Checking…' : 'Save & re-check'}
-						</button>
 					</div>
-				</div>
+				</Card>
 			{:else if mount?.ok && mount.move_supported}
 				<div class="flex items-center gap-2 text-sm text-success">
 					<CircleCheck class="size-4" aria-hidden="true" />
@@ -409,35 +394,36 @@
 			{/if}
 		</section>
 
-		<section class="space-y-1.5 rounded-box border border-base-content/10 bg-base-200/40 p-3">
-			<label class="text-sm font-medium" for="incomplete-mount">
-				Incomplete folder (optional)
-				<span class="badge badge-ghost badge-xs ml-1 align-middle">absolute path</span>
-			</label>
-			<p class="text-xs text-base-content/60">
-				The absolute container path where slskd keeps unfinished downloads. When set, DroppedNeedle
-				spots stranded partial bytes there and retries the missing file instead of reporting it
-				lost. Leave empty to disable.
-			</p>
-			<div class="flex flex-wrap items-center gap-2">
-				<input
-					id="incomplete-mount"
-					type="text"
-					class="input input-sm input-bordered flex-1 font-mono"
-					placeholder="e.g. /data/slskd/incomplete"
-					bind:value={incompleteMount}
-				/>
-				<button class="btn btn-sm btn-primary" onclick={handleSave} disabled={save.isPending}>
-					{save.isPending ? 'Checking…' : 'Save & re-check'}
-				</button>
+		<Card variant="bordered" padding="sm" as="section">
+			<div class="space-y-1.5">
+				<label class="text-sm font-medium" for="incomplete-mount">
+					Incomplete folder (optional)
+					<span class="badge badge-ghost badge-xs ml-1 align-middle">absolute path</span>
+				</label>
+				<p class="text-xs text-base-content/60">
+					The absolute container path where slskd keeps unfinished downloads. When set,
+					DroppedNeedle spots stranded partial bytes there and retries the missing file instead of
+					reporting it lost. Leave empty to disable.
+				</p>
+				<div class="flex flex-wrap items-center gap-2">
+					<Input
+						id="incomplete-mount"
+						label="Incomplete folder (optional)"
+						size="sm"
+						mono
+						class="flex-1"
+						placeholder="e.g. /data/slskd/incomplete"
+						bind:value={incompleteMount}
+					/>
+					<Button variant="primary" size="sm" onclick={handleSave} disabled={save.isPending}>
+						{save.isPending ? 'Checking…' : 'Save & re-check'}
+					</Button>
+				</div>
 			</div>
-		</section>
+		</Card>
 
 		<div class="flex justify-end">
-			<button class="btn btn-primary" onclick={handleSave} disabled={save.isPending}>
-				{#if save.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
-				Save settings
-			</button>
+			<Button variant="primary" loading={save.isPending} onclick={handleSave}>Save settings</Button>
 		</div>
 	</DownloadClientCard>
 {/if}

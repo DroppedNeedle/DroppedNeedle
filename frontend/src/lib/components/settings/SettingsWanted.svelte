@@ -5,6 +5,10 @@
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import type { WantedWatcherSettings } from '$lib/types';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import NumberField from '$lib/ui/NumberField.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	const settingsQuery = getWantedSettingsQuery();
 	const save = saveWantedSettings();
@@ -45,8 +49,8 @@
 	}
 </script>
 
-<section class="card border border-base-300 bg-base-100">
-	<div class="card-body gap-4">
+<Card variant="bordered" as="section">
+	<div class="space-y-4">
 		<div>
 			<h3 class="font-semibold">Wanted watcher</h3>
 			<p class="text-sm text-base-content/70">
@@ -55,71 +59,44 @@
 			</p>
 		</div>
 
-		<label class="label cursor-pointer justify-start gap-3">
-			<input type="checkbox" class="toggle toggle-sm toggle-primary" bind:checked={enabled} />
-			<span class="label-text">Watch failed requests</span>
-		</label>
-		<p class="-mt-3 text-xs text-base-content/60">
-			Turning this off pauses all checking without losing the watchlist.
-		</p>
-
-		<label class="label cursor-pointer justify-start gap-3">
-			<input
-				type="checkbox"
-				class="toggle toggle-sm toggle-primary"
-				bind:checked={autoDownloadOnFind}
-				disabled={!enabled}
-			/>
-			<span class="label-text">Download automatically when a verified copy appears</span>
-		</label>
-		<p class="-mt-3 text-xs text-base-content/60">
-			When off, new copies only show up as candidates to review - nothing downloads by itself.
-		</p>
-
-		<label class="label cursor-pointer justify-start gap-3">
-			<input
-				type="checkbox"
-				class="toggle toggle-sm toggle-primary"
-				bind:checked={watchPartialAlbums}
-				disabled={!enabled}
-			/>
-			<span class="label-text">Also watch albums with missing tracks</span>
-		</label>
+		<ToggleRow
+			label="Watch failed requests"
+			description="Turning this off pauses all checking without losing the watchlist."
+			bind:checked={enabled}
+		/>
+		<ToggleRow
+			label="Download automatically when a verified copy appears"
+			description="When off, new copies only show up as candidates to review - nothing downloads by itself."
+			bind:checked={autoDownloadOnFind}
+			disabled={!enabled}
+		/>
+		<ToggleRow
+			label="Also watch albums with missing tracks"
+			bind:checked={watchPartialAlbums}
+			disabled={!enabled}
+		/>
 
 		<div class="grid gap-4 sm:grid-cols-2">
-			<label class="form-control">
-				<span class="label-text">Albums checked per sweep</span>
-				<input
-					type="number"
-					min="1"
-					max="20"
-					class="input input-bordered input-sm"
-					bind:value={maxChecksPerSweep}
-					disabled={!enabled}
-				/>
-			</label>
-			<label class="form-control">
-				<span class="label-text">Go dormant after (days)</span>
-				<input
-					type="number"
-					min="30"
-					max="3650"
-					class="input input-bordered input-sm"
-					bind:value={dormantAfterDays}
-					disabled={!enabled}
-				/>
-			</label>
+			<NumberField
+				label="Albums checked per sweep"
+				size="sm"
+				min={1}
+				max={20}
+				bind:value={maxChecksPerSweep}
+				disabled={!enabled}
+			/>
+			<NumberField
+				label="Go dormant after (days)"
+				size="sm"
+				min={30}
+				max={3650}
+				bind:value={dormantAfterDays}
+				disabled={!enabled}
+			/>
 		</div>
 
 		<div class="flex justify-end">
-			<button
-				type="button"
-				class="btn btn-primary btn-sm"
-				onclick={onSave}
-				disabled={save.isPending}
-			>
-				Save
-			</button>
+			<Button variant="primary" size="sm" onclick={onSave} disabled={save.isPending}>Save</Button>
 		</div>
 	</div>
-</section>
+</Card>

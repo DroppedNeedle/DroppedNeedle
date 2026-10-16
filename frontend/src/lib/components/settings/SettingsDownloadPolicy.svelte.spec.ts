@@ -89,12 +89,10 @@ vi.mock('$lib/queries/downloads/DownloadClientsQueries.svelte', () => ({
 
 import SettingsDownloadPolicy from './SettingsDownloadPolicy.svelte';
 
-function cutoffSelect(container: HTMLElement): HTMLSelectElement {
-	const el = [...container.querySelectorAll('select')].find((select) =>
-		select.getAttribute('aria-label')?.includes('Upgrade')
-	);
-	if (!el) throw new Error('cutoff select not rendered');
-	return el as HTMLSelectElement;
+function cutoffSelect(): HTMLSelectElement {
+	return page
+		.getByRole('combobox', { name: 'Upgrade until quality reaches' })
+		.element() as HTMLSelectElement;
 }
 
 function rows(container: HTMLElement): HTMLElement[] {
@@ -124,8 +122,8 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 				}
 			]
 		};
-		const { container } = await render(SettingsDownloadPolicy);
-		const cutoff = cutoffSelect(container);
+		await render(SettingsDownloadPolicy);
+		const cutoff = cutoffSelect();
 		await expect.element(cutoff).toHaveValue('mp3_256');
 		expect(
 			[...cutoff.options].filter((option) => !option.disabled).map((option) => option.value)
@@ -220,10 +218,9 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 		await page.getByRole('button', { name: 'Add FLAC recipe entry' }).click();
 		const trigger = page.getByRole('button', { name: 'Apply Best available preset' });
 		await trigger.click();
-		const dialog = container.querySelector('dialog.modal') as HTMLDialogElement | null;
-		expect(dialog?.open).toBe(true);
-		expect(dialog?.getAttribute('aria-labelledby')).toBe('quality-recipe-dialog-title');
-		expect(dialog?.getAttribute('aria-describedby')).toBe('quality-recipe-dialog-description');
+		await expect
+			.element(page.getByRole('dialog', { name: 'Replace this quality recipe?' }))
+			.toBeVisible();
 		expect(
 			[
 				...container.querySelectorAll(

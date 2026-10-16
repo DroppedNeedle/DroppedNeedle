@@ -5,6 +5,8 @@
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import type { DownloadPolicySettings as DownloadPolicyDto } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { untrack } from 'svelte';
 
 	import AdvancedBehaviorSection from './acquisition/AdvancedBehaviorSection.svelte';
@@ -211,19 +213,11 @@
 			<h2 class="font-semibold">Could not load acquisition policy</h2>
 			<p class="text-sm">Your saved policy was not changed. Retry to try loading it again.</p>
 		</div>
-		<button
-			type="button"
-			class="btn btn-sm min-h-11 motion-reduce:transition-none"
-			onclick={() => void policyQuery.refetch()}>Retry</button
-		>
+		<Button size="sm" onclick={() => void policyQuery.refetch()}>Retry</Button>
 	</section>
 {:else if policyQuery.isPending || !policyQuery.data}
-	<section
-		class="card border border-base-300 bg-base-100"
-		aria-busy="true"
-		aria-label="Loading acquisition policy"
-	>
-		<div class="card-body gap-4">
+	<Card variant="bordered" as="section" aria-busy="true" aria-label="Loading acquisition policy">
+		<div class="flex flex-col gap-4">
 			<div class="skeleton h-5 w-48"></div>
 			<div class="skeleton h-4 w-80 max-w-full"></div>
 			<div class="grid gap-3 sm:grid-cols-2">
@@ -232,10 +226,10 @@
 			</div>
 			<div class="skeleton h-32 w-full"></div>
 		</div>
-	</section>
+	</Card>
 {:else}
-	<section class="card border border-base-300 bg-base-100">
-		<div class="card-body min-w-0 gap-4">
+	<Card variant="bordered" as="section">
+		<div class="flex min-w-0 flex-col gap-4">
 			<div>
 				<h2 class="font-semibold">Acquisition quality</h2>
 				<p class="text-sm text-base-content/70">
@@ -296,16 +290,15 @@
 				bind:lossyMaxBitrateKbps
 			/>
 			<div class="flex justify-end border-t border-base-300 pt-4">
-				<button
-					type="button"
-					class="btn btn-primary min-h-11 motion-reduce:transition-none"
+				<Button
+					variant="primary"
 					disabled={saveDisabled}
 					aria-label="Save acquisition policy"
 					onclick={() => void onSave()}
 				>
 					{save.isPending ? 'Saving acquisition policy…' : 'Save acquisition policy'}
-				</button>
+				</Button>
 			</div>
 		</div>
-	</section>
+	</Card>
 {/if}

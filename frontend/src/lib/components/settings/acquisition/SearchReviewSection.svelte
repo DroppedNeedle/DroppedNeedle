@@ -14,12 +14,12 @@
 			<input
 				type="radio"
 				name="acq-search-review"
-				class="radio radio-sm radio-primary"
+				class="radio radio-sm"
 				value={mode.value}
 				bind:group={searchReview}
 			/>
 			<span class="min-w-0">
-				<span class="label-text">{mode.label}</span>
+				<span>{mode.label}</span>
 				<span class="block text-xs whitespace-normal text-base-content/60">{mode.hint}</span>
 			</span>
 		</label>

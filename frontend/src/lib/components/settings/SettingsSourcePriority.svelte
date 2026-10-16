@@ -14,6 +14,8 @@
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import { getPluginSourcesQuery } from '$lib/queries/plugins/PluginSourceQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	const priorityQuery = getSourcePriorityQuery();
 	const reorder = saveSourcePriority();
@@ -91,8 +93,8 @@
 	}
 </script>
 
-<div class="card border border-base-300 bg-base-200">
-	<div class="card-body gap-3">
+<Card variant="bordered">
+	<div class="space-y-3">
 		<div>
 			<h3 class="font-semibold">Source priority</h3>
 			<p class="text-sm text-base-content/70">
@@ -144,27 +146,25 @@
 						{#if meta.sub}<span class="text-sm text-base-content/50"> · {meta.sub}</span>{/if}
 					</span>
 					<div class="flex items-center gap-1">
-						<button
-							type="button"
-							class="btn btn-ghost btn-xs btn-square"
-							onclick={() => move(index, -1)}
+						<IconButton
+							label={`Move ${meta.label} up`}
+							icon={ChevronUp}
+							size="xs"
+							shape="square"
 							disabled={index === 0}
-							aria-label={`Move ${meta.label} up`}
-						>
-							<ChevronUp class="size-4" aria-hidden="true" />
-						</button>
-						<button
-							type="button"
-							class="btn btn-ghost btn-xs btn-square"
-							onclick={() => move(index, 1)}
+							onclick={() => move(index, -1)}
+						/>
+						<IconButton
+							label={`Move ${meta.label} down`}
+							icon={ChevronDown}
+							size="xs"
+							shape="square"
 							disabled={index === order.length - 1}
-							aria-label={`Move ${meta.label} down`}
-						>
-							<ChevronDown class="size-4" aria-hidden="true" />
-						</button>
+							onclick={() => move(index, 1)}
+						/>
 					</div>
 				</li>
 			{/each}
 		</ul>
 	</div>
-</div>
+</Card>

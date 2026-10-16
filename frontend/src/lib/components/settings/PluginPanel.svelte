@@ -5,6 +5,7 @@
 	import { api } from '$lib/api/client';
 	import { PLUGIN_ENDPOINTS } from '$lib/queries/plugins/endpoints';
 	import { fetchPluginSources } from '$lib/queries/plugins/PluginSourceQueries.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		pluginName: string;
@@ -120,22 +121,24 @@
 	});
 </script>
 
-<div class="rounded-xl border border-base-content/10 bg-base-100 p-3">
-	<p class="mb-2 text-xs font-semibold text-base-content/60">{displayName} panel</p>
-	{#if loading}
-		<div class="skeleton h-24 w-full rounded-lg"></div>
-	{:else if loadError}
-		<p class="text-xs text-base-content/50">Panel unavailable: {loadError}</p>
-	{:else}
-		<iframe
-			bind:this={frame}
-			title="{displayName} panel"
-			sandbox="allow-scripts"
-			{src}
-			class="h-48 w-full rounded-lg border border-base-content/10 bg-white"
-		></iframe>
-		<p class="mt-1 text-[11px] text-base-content/40">
-			Sandboxed: no access to this page or your session.
-		</p>
-	{/if}
-</div>
+<Card variant="bordered" padding="sm">
+	<div>
+		<p class="mb-2 text-xs font-semibold text-base-content/60">{displayName} panel</p>
+		{#if loading}
+			<div class="skeleton h-24 w-full rounded-lg"></div>
+		{:else if loadError}
+			<p class="text-xs text-base-content/50">Panel unavailable: {loadError}</p>
+		{:else}
+			<iframe
+				bind:this={frame}
+				title="{displayName} panel"
+				sandbox="allow-scripts"
+				{src}
+				class="h-48 w-full rounded-lg border border-base-content/10 bg-white"
+			></iframe>
+			<p class="mt-1 text-[11px] text-base-content/40">
+				Sandboxed: no access to this page or your session.
+			</p>
+		{/if}
+	</div>
+</Card>

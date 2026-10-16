@@ -1,4 +1,6 @@
 <script lang="ts">
+	import SelectField from '$lib/ui/SelectField.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { QUALITY_TIERS, tierIndex } from '../qualityTiers';
 
 	interface Props {
@@ -32,46 +34,34 @@
 		void maxTier;
 		onBandChange();
 	});
+
+	const cutoffOptions = $derived(
+		QUALITY_TIERS.map((t) => ({
+			value: t.key,
+			label: t.full,
+			disabled: tierIndex(t.key) < tierIndex(minTier) || tierIndex(t.key) > tierIndex(maxTier)
+		}))
+	);
 </script>
 
 <div class="flex flex-col gap-3">
-	<label class="label min-h-11 cursor-pointer justify-start gap-3 p-0">
-		<input type="checkbox" class="toggle toggle-sm toggle-primary" bind:checked={upgradeAllowed} />
-		<span class="label-text">Allow automatic upgrades</span>
-	</label>
-	<p class="text-xs text-base-content/60">
-		When on, DroppedNeedle looks for better-quality copies of anything below your cutoff. It never
-		downgrades anything.
-	</p>
-	<label class="label min-h-11 cursor-pointer justify-start gap-3 p-0">
-		<input
-			type="checkbox"
-			class="toggle toggle-sm toggle-primary"
-			bind:checked={backgroundScan}
+	<ToggleRow
+		label="Allow automatic upgrades"
+		description="When on, DroppedNeedle looks for better-quality copies of anything below your cutoff. It never downgrades anything."
+		bind:checked={upgradeAllowed}
+	/>
+	<ToggleRow
+		label="Scan for upgrades in the background"
+		description="A slow periodic sweep that queues a few upgrades at a time. When off, upgrades run only when you trigger them."
+		bind:checked={backgroundScan}
+		disabled={!upgradeAllowed}
+	/>
+	<div class="max-w-xs">
+		<SelectField
+			label="Upgrade until quality reaches"
+			bind:value={qualityCutoff}
+			options={cutoffOptions}
 			disabled={!upgradeAllowed}
 		/>
-		<span class="label-text">Scan for upgrades in the background</span>
-	</label>
-	<p class="text-xs text-base-content/60">
-		A slow periodic sweep that queues a few upgrades at a time. When off, upgrades run only when you
-		trigger them.
-	</p>
-	<label class="form-control max-w-xs">
-		<span class="label-text">Upgrade until quality reaches</span>
-		<select
-			class="select select-bordered select-sm min-h-11"
-			bind:value={qualityCutoff}
-			disabled={!upgradeAllowed}
-			aria-label="Upgrade until quality reaches"
-		>
-			{#each QUALITY_TIERS as t (t.key)}
-				<option
-					value={t.key}
-					disabled={tierIndex(t.key) < tierIndex(minTier) || tierIndex(t.key) > tierIndex(maxTier)}
-				>
-					{t.full}
-				</option>
-			{/each}
-		</select>
-	</label>
+	</div>
 </div>
