@@ -48,8 +48,7 @@
 					<span class="font-semibold">({latestVersion})</span>
 				{/if}
 			</span>
-			<Button variant="info" size="xs" href={withBasePath('/settings?tab=about')}>Details</Button
-			>
+			<Button variant="info" size="xs" href={withBasePath('/settings?tab=about')}>Details</Button>
 			<IconButton size="sm" icon={X} label="Dismiss update notification" onclick={dismiss} />
 		</div>
 	</div>

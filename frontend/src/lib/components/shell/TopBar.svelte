@@ -33,8 +33,16 @@
 			class="px-2 max-xs:hidden sm:px-4"
 			aria-label="Home"
 		>
-			<img src={withBasePath('/logo_wide.png')} alt="DroppedNeedle" class="dn-logo h-8 hidden sm:block" />
-			<img src={withBasePath('/logo_icon.png')} alt="DroppedNeedle" class="dn-logo h-8 block sm:hidden" />
+			<img
+				src={withBasePath('/logo_wide.png')}
+				alt="DroppedNeedle"
+				class="dn-logo h-8 hidden sm:block"
+			/>
+			<img
+				src={withBasePath('/logo_icon.png')}
+				alt="DroppedNeedle"
+				class="dn-logo h-8 block sm:hidden"
+			/>
 		</Button>
 	</div>
 	<div class="navbar-center min-w-0 grow justify-center px-1 sm:px-4">
