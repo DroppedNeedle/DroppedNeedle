@@ -1083,7 +1083,10 @@ export interface paths {
         put?: never;
         /**
          * Logout. Public so a stale client can always clear its cookie: revokes the
-         *     presented token when it resolves, always clears the cookie, always 204.
+         *     presented sessions that resolve, always clears the cookie under both its
+         *     names, always 204. A Bearer token is the only one presented when sent;
+         *     otherwise the session under each cookie name the request carries ends,
+         *     so a sign-out at the https address leaves no plain cookie signed in.
          */
         post: operations["logout_handler"];
         delete?: never;
