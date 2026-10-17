@@ -64,3 +64,29 @@
 		{/if}
 	</div>
 </QueryProvider>
+
+<style>
+	.droppedneedle-app-shell {
+		position: relative;
+		isolation: isolate;
+		max-width: 100vw;
+		min-height: 100dvh;
+		overflow-x: clip;
+		background:
+			radial-gradient(circle at 50% -12rem, rgb(var(--brand-library) / 0.12), transparent 22rem),
+			var(--color-base-100);
+	}
+
+	/* ultra-faint global grain so every surface shares the same film stock */
+	.droppedneedle-app-shell::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		pointer-events: none;
+		background-image: var(--grain-texture);
+		background-size: 180px 180px;
+		opacity: 0.05;
+		mix-blend-mode: overlay;
+	}
+</style>

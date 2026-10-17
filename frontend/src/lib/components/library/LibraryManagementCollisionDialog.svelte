@@ -4,6 +4,7 @@
 	rechecks both files, and the page moves to it.
 -->
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { goto } from '$app/navigation';
 	import { HardDrive, X } from 'lucide-svelte';
 

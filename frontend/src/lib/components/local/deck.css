@@ -1,0 +1,14 @@
+/* The drop-target glow shared by the local crate and the turntable. */
+
+.deck-droptarget {
+	transition:
+		box-shadow 0.25s ease,
+		transform 0.25s var(--ease-spring);
+}
+
+.deck-droptarget.is-over {
+	box-shadow:
+		0 0 0 3px oklch(from var(--color-accent) l c h / 0.55),
+		0 0 40px oklch(from var(--color-accent) l c h / 0.35);
+	transform: scale(1.01);
+}

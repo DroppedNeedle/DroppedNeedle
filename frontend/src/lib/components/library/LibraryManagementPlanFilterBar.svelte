@@ -4,6 +4,7 @@
 	disclosure. Counts come from the preview's summary.
 -->
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { getLibrarySearchQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import type { LibraryManagementPreviewDetailResponse } from '$lib/queries/library-management/types';
 	import Button from '$lib/ui/Button.svelte';

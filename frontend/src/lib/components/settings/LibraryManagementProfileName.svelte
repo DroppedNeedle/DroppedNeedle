@@ -24,6 +24,7 @@
 </script>
 
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { RotateCcw } from 'lucide-svelte';
 
 	import type { LibraryManagementProfile } from '$lib/queries/library-management/types';

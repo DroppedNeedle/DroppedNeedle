@@ -251,7 +251,7 @@
 		<div class="space-y-3">
 			{#if loading}
 				<div class="flex items-center justify-center py-10">
-					<LoaderCircle class="h-5 w-5 animate-spin text-base-content/40" />
+					<LoaderCircle class="h-5 w-5 animate-spin motion-keep text-base-content/40" />
 				</div>
 			{:else}
 				<div>

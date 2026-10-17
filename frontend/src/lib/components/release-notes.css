@@ -1,0 +1,79 @@
+/* Release notes rendered from markdown, in the What's New dialog and Settings > About. */
+
+.release-notes-prose :is(ul, ol) {
+	padding-left: 1.25em;
+	margin-top: 0.5em;
+	margin-bottom: 0.5em;
+}
+
+.release-notes-prose ul {
+	list-style-type: disc;
+}
+
+.release-notes-prose ol {
+	list-style-type: decimal;
+}
+
+.release-notes-prose li {
+	margin-top: 0.35em;
+	margin-bottom: 0.35em;
+	padding-left: 0.25em;
+}
+
+.release-notes-prose li::marker {
+	color: oklch(from var(--color-accent) l c h / 0.6);
+}
+
+.release-notes-prose :is(h1, h2, h3, h4) {
+	margin-top: 1em;
+	margin-bottom: 0.5em;
+	font-weight: 600;
+}
+
+.release-notes-prose h2 {
+	font-size: 1.1em;
+	border-bottom: 1px solid oklch(from var(--color-base-content) l c h / 0.08);
+	padding-bottom: 0.3em;
+}
+
+.release-notes-prose p {
+	margin-top: 0.4em;
+	margin-bottom: 0.4em;
+}
+
+.release-notes-prose code {
+	background: oklch(from var(--color-base-content) l c h / 0.08);
+	padding: 0.15em 0.35em;
+	border-radius: 0.25em;
+	font-size: 0.875em;
+}
+
+.release-notes-prose a {
+	color: oklch(from var(--color-accent) l c h);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+
+.release-notes-prose a:hover {
+	opacity: 0.8;
+}
+
+.release-notes-prose blockquote {
+	border-left: 3px solid oklch(from var(--color-accent) l c h / 0.3);
+	padding-left: 1em;
+	margin: 0.5em 0;
+	color: oklch(from var(--color-base-content) l c h / 0.6);
+}
+
+.release-notes-prose pre {
+	background: oklch(from var(--color-base-content) l c h / 0.05);
+	padding: 0.75em 1em;
+	border-radius: 0.375em;
+	overflow-x: auto;
+	margin: 0.5em 0;
+}
+
+.release-notes-prose hr {
+	border-color: oklch(from var(--color-base-content) l c h / 0.1);
+	margin: 1em 0;
+}

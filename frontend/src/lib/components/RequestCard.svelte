@@ -274,7 +274,7 @@
 			/>
 			{#if isActive && item.status === 'pending'}
 				<div class="absolute inset-0 bg-base-300/60 flex items-center justify-center">
-					<Loader class="h-5 w-5 text-warning animate-spin" />
+					<Loader class="h-5 w-5 text-warning animate-spin motion-keep" />
 				</div>
 			{/if}
 		</div>

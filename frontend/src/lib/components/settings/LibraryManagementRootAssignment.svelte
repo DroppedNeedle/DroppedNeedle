@@ -4,6 +4,7 @@
 	overrides of the profile's values. Edits go into the tab's draft.
 -->
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import type { LibraryRootSettings } from '$lib/queries/library/LibraryOperationsTypes';
 	import type { LibraryManagementRootOverrides } from '$lib/queries/library-management/types';
 	import Card from '$lib/ui/Card.svelte';

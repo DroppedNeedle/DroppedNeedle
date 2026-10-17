@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { ArrowRight, CircleCheckBig, FileClock, ShieldAlert } from 'lucide-svelte';
 
 	import type { LibraryManagementResultItem } from '$lib/queries/library-management/types';
@@ -130,3 +131,20 @@
 		{/if}
 	</section>
 </div>
+
+<style>
+	.management-journal-chain {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.72rem;
+	}
+
+	.management-journal-chain li {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		color: color-mix(in oklab, var(--color-success) 70%, var(--color-base-content));
+	}
+</style>

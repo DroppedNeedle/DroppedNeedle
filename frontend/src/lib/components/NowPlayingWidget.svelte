@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/now-playing.css';
 	import { Pause, User } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import AudioQualityBadge from '$lib/components/AudioQualityBadge.svelte';

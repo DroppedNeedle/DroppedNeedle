@@ -11,7 +11,7 @@
 	import { ChevronDown, Disc3, Radio, RefreshCw } from 'lucide-svelte';
 	import DiscoveryShelfActions from '$lib/components/discover/DiscoveryShelfActions.svelte';
 	import { tilt } from '$lib/actions/tilt';
-	import { slide } from 'svelte/transition';
+	import { slide } from '$lib/ui/motion';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 

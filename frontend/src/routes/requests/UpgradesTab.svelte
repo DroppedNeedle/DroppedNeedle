@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { fade, fly } from 'svelte/transition';
+	import { fade, fly } from '$lib/ui/motion';
 	import { Check, CircleCheck, TrendingUp, TriangleAlert } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { QUALITY_TIERS } from '$lib/components/settings/qualityTiers';

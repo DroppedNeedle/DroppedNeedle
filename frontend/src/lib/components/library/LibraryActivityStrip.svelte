@@ -202,3 +202,184 @@
 		{/if}
 	</div>
 {/if}
+
+<style>
+	.library-activity-shell {
+		position: sticky;
+		top: var(--droppedneedle-topbar-height, 4rem);
+		z-index: 45;
+		border-block: 1px solid color-mix(in oklab, var(--color-library-index) 24%, transparent);
+		background: linear-gradient(
+			90deg,
+			color-mix(in oklab, var(--color-library-index) 8%, var(--color-base-100)),
+			color-mix(in oklab, var(--color-base-100) 96%, transparent) 48%
+		);
+		backdrop-filter: blur(0.75rem);
+		box-shadow: 0 14px 34px -32px color-mix(in oklab, var(--color-base-content) 60%, transparent);
+	}
+
+	.library-activity-shell[data-effect='file_writing'] {
+		border-color: color-mix(in oklab, var(--color-library-manage) 30%, transparent);
+		background: linear-gradient(
+			90deg,
+			color-mix(in oklab, var(--color-library-manage) 12%, var(--color-base-100)),
+			color-mix(in oklab, var(--color-base-100) 96%, transparent) 48%
+		);
+	}
+
+	.library-activity-shell[data-effect='attention'] {
+		border-color: color-mix(in oklab, var(--color-error) 32%, transparent);
+		background: linear-gradient(
+			90deg,
+			color-mix(in oklab, var(--color-error) 11%, var(--color-base-100)),
+			color-mix(in oklab, var(--color-base-100) 96%, transparent) 48%
+		);
+	}
+
+	.library-activity-primary {
+		display: flex;
+		align-items: center;
+		min-height: 4.7rem;
+		padding-inline: clamp(0.75rem, 2.5vw, 2rem);
+	}
+
+	.library-activity-primary__link {
+		display: flex;
+		min-width: 0;
+		flex: 1;
+		align-items: center;
+		gap: 0.8rem;
+		padding-block: 0.55rem;
+		color: inherit;
+		text-decoration: none;
+	}
+
+	.library-activity-primary__link:hover .library-activity-primary__heading strong,
+	.library-activity-stack__item:hover strong {
+		color: var(--color-primary);
+	}
+
+	.library-activity-primary__link:focus-visible,
+	.library-activity-stack__item:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+
+	.library-activity-primary__icon,
+	.library-activity-stack__icon {
+		display: grid;
+		flex: none;
+		height: 2.35rem;
+		width: 2.35rem;
+		place-items: center;
+		border-radius: 0.85rem;
+		background: color-mix(in oklab, var(--color-library-index) 13%, transparent);
+		color: var(--color-library-index);
+	}
+
+	.library-activity-shell[data-effect='file_writing'] .library-activity-primary__icon {
+		background: color-mix(in oklab, var(--color-library-manage) 15%, transparent);
+		color: var(--color-library-manage);
+	}
+
+	.library-activity-shell[data-effect='attention'] .library-activity-primary__icon {
+		background: color-mix(in oklab, var(--color-error) 14%, transparent);
+		color: var(--color-error);
+	}
+
+	.library-activity-primary__heading {
+		display: flex;
+		min-width: 0;
+		align-items: baseline;
+		gap: 0.55rem;
+		margin-bottom: 0.22rem;
+	}
+
+	.library-activity-primary__heading > span {
+		flex: none;
+		font-family: var(--font-mono);
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		color: color-mix(in oklab, var(--color-base-content) 52%, transparent);
+	}
+
+	.library-activity-primary__heading strong {
+		min-width: 0;
+		font-family: var(--font-display);
+		font-size: 0.92rem;
+		transition: color 160ms ease;
+	}
+
+	.library-activity-primary__heading small {
+		min-width: 0;
+		overflow: hidden;
+		font-size: 0.7rem;
+		color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.library-activity-stack {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+		gap: 0.5rem;
+		border-top: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
+		padding: 0.65rem clamp(0.75rem, 2.5vw, 2rem) 0.8rem;
+	}
+
+	.library-activity-stack__item {
+		display: flex;
+		min-width: 0;
+		align-items: center;
+		gap: 0.65rem;
+		border-radius: 0.85rem;
+		background: color-mix(in oklab, var(--color-base-200) 68%, transparent);
+		padding: 0.65rem 0.75rem;
+		color: inherit;
+		text-decoration: none;
+	}
+
+	.library-activity-stack__icon {
+		height: 2rem;
+		width: 2rem;
+	}
+
+	.library-activity-stack__item strong,
+	.library-activity-stack__item small {
+		display: block;
+	}
+
+	.library-activity-stack__item strong {
+		font-family: var(--font-display);
+		font-size: 0.78rem;
+		transition: color 160ms ease;
+	}
+
+	.library-activity-stack__item small {
+		margin-bottom: 0.2rem;
+		font-size: 0.65rem;
+		color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
+	}
+
+	@media (max-width: 640px) {
+		.library-activity-primary__heading > span,
+		.library-activity-primary__heading small {
+			display: none;
+		}
+
+		.library-activity-primary__heading {
+			margin-bottom: 0.3rem;
+		}
+
+		.library-activity-primary__heading strong {
+			font-size: 0.82rem;
+		}
+
+		.library-activity-primary__icon {
+			height: 2rem;
+			width: 2rem;
+		}
+	}
+</style>

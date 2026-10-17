@@ -12,7 +12,7 @@
 	import { formatBytes } from '$lib/utils/formatting';
 	import type { CrateTrack, LocalAlbumSummary } from '$lib/types';
 	import type { QueueItem } from '$lib/player/types';
-	import { slide } from 'svelte/transition';
+	import { slide } from '$lib/ui/motion';
 	import Turntable from '$lib/components/local/Turntable.svelte';
 	import Crate from '$lib/components/local/Crate.svelte';
 	import QueueDrawer from '$lib/components/QueueDrawer.svelte';
@@ -543,3 +543,17 @@
 </div>
 
 <QueueDrawer bind:open={queueDrawerOpen} onclose={() => (queueDrawerOpen = false)} />
+
+<style>
+	.decade-card {
+		transition:
+			transform 0.2s var(--ease-spring),
+			box-shadow 0.2s var(--ease-spring),
+			border-color 0.2s ease;
+	}
+
+	.decade-card:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 14px 28px -18px oklch(from var(--color-base-100) l c h / 0.9);
+	}
+</style>

@@ -237,7 +237,7 @@
 						onclick={() => loader.abort()}
 						aria-label="Stop loading tracks"
 					>
-						<LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+						<LoaderCircle class="h-3.5 w-3.5 animate-spin motion-keep" aria-hidden="true" />
 						{loader.progressText ?? 'Loading tracks'}
 					</Button>
 				{:else}

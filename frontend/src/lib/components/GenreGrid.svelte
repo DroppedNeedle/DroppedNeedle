@@ -60,3 +60,11 @@
 		{/each}
 	</div>
 </section>
+
+<style>
+	@media (prefers-reduced-motion: reduce) {
+		.genre-tile {
+			transform: none !important;
+		}
+	}
+</style>

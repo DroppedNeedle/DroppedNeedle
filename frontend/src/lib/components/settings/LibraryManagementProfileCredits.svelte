@@ -1,5 +1,6 @@
 <!-- Credits and genres: artist naming, relationship credits and genre sources. -->
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { Plus, Trash2, UsersRound } from 'lucide-svelte';
 
 	import LibraryManagementEditorAdvanced from './LibraryManagementEditorAdvanced.svelte';

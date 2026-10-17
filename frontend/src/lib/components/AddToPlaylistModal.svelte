@@ -1,7 +1,8 @@
 <script lang="ts">
+	import '$lib/components/now-playing.css';
 	import { browser } from '$app/environment';
 	import { Disc3, Search, Plus, Check, CircleCheck, X } from 'lucide-svelte';
-	import { fly } from 'svelte/transition';
+	import { fly } from '$lib/ui/motion';
 	import {
 		queueItemToTrackData,
 		isRedactedPlaylist,

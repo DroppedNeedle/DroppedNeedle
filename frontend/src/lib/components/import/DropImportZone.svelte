@@ -80,7 +80,7 @@
 		aria-label="Import your purchased music"
 	>
 		{#if upload.isPending}
-			<LoaderCircle class="h-8 w-8 animate-spin text-primary" aria-hidden="true" />
+			<LoaderCircle class="h-8 w-8 animate-spin motion-keep text-primary" aria-hidden="true" />
 			<p class="text-sm font-medium">Uploading…</p>
 		{:else}
 			<div

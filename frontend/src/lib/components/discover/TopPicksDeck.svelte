@@ -2,7 +2,7 @@
 	import { coverSrc } from '$lib/api/covers';
 	import { integrationStore } from '$lib/stores/integration';
 	import { ChevronLeft, ChevronRight, Sparkles, ThumbsDown } from 'lucide-svelte';
-	import { fly } from 'svelte/transition';
+	import { fly } from '$lib/ui/motion';
 	import type { TopPickItem, TopPicksSection } from '$lib/types';
 	import { SvelteSet } from 'svelte/reactivity';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';

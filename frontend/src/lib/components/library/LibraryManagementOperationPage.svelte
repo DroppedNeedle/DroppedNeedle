@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import {

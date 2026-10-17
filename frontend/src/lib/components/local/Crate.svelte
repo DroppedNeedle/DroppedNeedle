@@ -1,7 +1,8 @@
 <script lang="ts">
+	import '$lib/components/now-playing.css';
+	import '$lib/components/local/deck.css';
 	import type { CrateTrack, CrateReason, LocalAlbumSummary } from '$lib/types';
-	import { flip } from 'svelte/animate';
-	import { fly } from 'svelte/transition';
+	import { flip, fly } from '$lib/ui/motion';
 	import { crateCoverUrl } from '$lib/queries/local/LocalV3Adapters';
 	import {
 		Sparkles,
@@ -352,3 +353,36 @@
 		{/if}
 	</div>
 </section>
+
+<style>
+	.crate-card {
+		transition:
+			transform 0.2s var(--ease-spring),
+			box-shadow 0.2s var(--ease-spring),
+			border-color 0.2s ease;
+	}
+
+	.crate-card:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 12px 24px -14px oklch(from var(--color-base-100) l c h / 0.9);
+	}
+
+	.crate-card.is-dragging {
+		opacity: 0.4;
+	}
+
+	/* transition matches the 250ms tick interval that updates it */
+	.countdown-ring {
+		transition: stroke-dashoffset 0.25s linear;
+	}
+
+	.crate-sweep {
+		background: linear-gradient(
+			115deg,
+			transparent 28%,
+			oklch(from var(--color-accent) l c h / 0.18) 50%,
+			transparent 72%
+		);
+		animation: crate-sweep 0.75s ease-out;
+	}
+</style>

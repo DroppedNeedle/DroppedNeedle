@@ -3,6 +3,7 @@
 	compatibility, edition acceptance and post-write notifications.
 -->
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { Check, ShieldCheck } from 'lucide-svelte';
 
 	import LibraryManagementEditorAdvanced from './LibraryManagementEditorAdvanced.svelte';

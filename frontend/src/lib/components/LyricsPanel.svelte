@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { X, Music2, LoaderCircle, CircleAlert } from 'lucide-svelte';
-	import { slide } from 'svelte/transition';
+	import { slide } from '$lib/ui/motion';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import type { LyricLine } from '$lib/types';
 
@@ -118,7 +118,7 @@
 			>
 				{#if isLoading}
 					<div class="flex flex-col items-center justify-center py-12 gap-3">
-						<LoaderCircle class="h-6 w-6 animate-spin text-primary" />
+						<LoaderCircle class="h-6 w-6 animate-spin motion-keep text-primary" />
 						<p class="text-sm text-base-content/50">Loading lyrics...</p>
 					</div>
 				{:else if hasError}

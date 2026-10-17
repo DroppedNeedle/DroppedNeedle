@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import {
@@ -728,3 +729,169 @@
 		<button aria-label="Close management runner" disabled={pending}>close</button>
 	</form>
 </dialog>
+
+<style>
+	.management-review-grid span {
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
+	}
+
+	.management-runner {
+		border: 1px solid color-mix(in oklab, var(--color-library-manage) 25%, transparent);
+		background: var(--color-base-100);
+	}
+
+	.management-runner-progress {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		border-bottom: 1px solid color-mix(in oklab, var(--color-base-content) 9%, transparent);
+		background: color-mix(in oklab, var(--color-library-manage) 5%, var(--color-base-100));
+	}
+
+	.management-runner-progress > span {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.35rem;
+		min-height: 3rem;
+		font-family: var(--font-mono);
+		font-size: 0.72rem;
+		color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
+	}
+
+	.management-runner-progress > span[data-state='current'] {
+		background: color-mix(in oklab, var(--color-library-manage) 11%, transparent);
+		color: var(--color-base-content);
+	}
+
+	.management-runner-progress > span[data-state='done'] {
+		color: color-mix(in oklab, var(--color-library-manage) 68%, var(--color-base-content));
+	}
+
+	.management-runner-progress small {
+		font-family: var(--font-sans);
+		font-weight: 700;
+	}
+
+	.management-scope-tabs {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.35rem;
+	}
+
+	.management-scope-tabs button {
+		padding: 0.45rem 0.75rem;
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
+		border-radius: 9999px;
+		font-size: 0.82rem;
+	}
+
+	.management-selected-scope {
+		display: grid;
+		gap: 0.65rem;
+		padding: 0.85rem;
+		border: 1px solid color-mix(in oklab, var(--color-library-manage) 24%, transparent);
+		border-radius: 0.9rem;
+		background: color-mix(in oklab, var(--color-library-manage) 6%, var(--color-base-100));
+	}
+
+	.management-selected-scope[data-wide-scope='true'] {
+		border-color: color-mix(in oklab, var(--color-warning) 38%, transparent);
+		background: color-mix(in oklab, var(--color-warning) 7%, var(--color-base-100));
+	}
+
+	.management-selected-scope__header,
+	.management-selected-scope__item {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
+
+	.management-selected-scope small,
+	.management-selected-scope__item span {
+		display: block;
+	}
+
+	.management-selected-scope small {
+		margin-top: 0.1rem;
+		color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
+	}
+
+	.management-selected-scope__items {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.4rem;
+		max-height: 10rem;
+		overflow-y: auto;
+		overscroll-behavior: contain;
+		padding-right: 0.25rem;
+		scrollbar-gutter: stable;
+	}
+
+	.management-selected-scope__item {
+		min-width: 0;
+		padding: 0.55rem 0.65rem;
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 9%, transparent);
+		border-radius: 0.7rem;
+		background: var(--color-base-100);
+	}
+
+	.management-selected-scope__item span {
+		min-width: 0;
+	}
+
+	.management-selected-scope__item strong,
+	.management-selected-scope__item small {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.management-runner-profile-list {
+		display: grid;
+		gap: 0.5rem;
+		max-height: min(24rem, 48dvh);
+		overflow-y: auto;
+		overscroll-behavior: contain;
+		padding: 0.15rem 0.35rem 0.15rem 0.15rem;
+		scrollbar-gutter: stable;
+	}
+
+	.management-runner-profile-list:focus-visible {
+		border-radius: 0.25rem;
+		outline: 2px solid var(--color-library-manage);
+		outline-offset: 0.2rem;
+	}
+
+	.management-review-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.75rem;
+	}
+
+	.management-review-grid > div {
+		display: grid;
+		gap: 0.2rem;
+		padding: 0.85rem;
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+		border-radius: 0.85rem;
+	}
+
+	@media (max-width: 639px) {
+		.management-runner-progress small {
+			display: none;
+		}
+
+		.management-review-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.management-selected-scope__items {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

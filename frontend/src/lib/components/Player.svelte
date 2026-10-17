@@ -391,3 +391,20 @@
 		onclose={() => (lyricsPanelOpen = false)}
 	/>
 {/if}
+
+<style>
+	.droppedneedle-player-bar {
+		bottom: var(--ms-bottom-nav-offset);
+		height: var(--ms-player-height);
+	}
+
+	.droppedneedle-player-inner {
+		height: 100%;
+	}
+
+	@media (min-width: 768px) {
+		.droppedneedle-player-bar {
+			bottom: 0;
+		}
+	}
+</style>

@@ -345,3 +345,74 @@
 {#if PlaylistModal}
 	<PlaylistModal bind:this={playlistModalRef} />
 {/if}
+
+<style>
+	.droppedneedle-main-content {
+		display: flex;
+		flex-direction: column;
+		/* fill at least the viewport below the topbar so a short page's footer still anchors to the bottom */
+		min-height: calc(100dvh - 4rem - var(--ms-safe-top));
+		max-width: 100vw;
+		min-width: 0;
+		overflow-x: clip;
+		padding-bottom: calc(var(--ms-bottom-nav-offset) + var(--ms-page-bottom-gap));
+	}
+
+	/* The page inside the shell. Global, so a page's own rules keep winning. */
+	:global(.droppedneedle-main-content > *) {
+		min-width: 0;
+	}
+
+	:global(.droppedneedle-main-content :where(p, li, code, pre)) {
+		max-width: 100%;
+		overflow-wrap: anywhere;
+	}
+
+	:global(.droppedneedle-main-content :where(img, video, canvas, svg)) {
+		max-width: 100%;
+	}
+
+	/* app headings use the display face, like modal titles */
+	:global(.droppedneedle-main-content :is(h1, h2)) {
+		font-family: var(--font-display);
+	}
+
+	/* structural labels go uppercase; content names keep their case via .hero-title */
+	:global(.droppedneedle-main-content :is(h1, h2):not(.hero-title)) {
+		text-transform: uppercase;
+		letter-spacing: 0.02em;
+	}
+
+	.droppedneedle-main-content.droppedneedle-player-visible {
+		padding-bottom: calc(
+			var(--ms-bottom-nav-offset) + var(--ms-player-height) + var(--ms-page-bottom-gap)
+		);
+	}
+
+	/* Settings runs as a fixed two-pane app surface at desktop widths: the drawer
+	   column locks to the viewport and the page's own panes scroll instead of the
+	   document, so the shell stops emitting a third whole-page scrollbar. The
+	   footer is omitted on this route, so main-content's fill-the-viewport
+	   min-height would force a phantom document overflow; neutralize it and let
+	   flexbox distribute the locked height instead. */
+	@media (min-width: 1024px) {
+		.drawer-content.droppedneedle-pane-mode {
+			height: 100dvh;
+			overflow: hidden;
+		}
+
+		.droppedneedle-pane-mode .droppedneedle-main-content {
+			min-height: 0;
+		}
+	}
+
+	@media (min-width: 768px) {
+		.droppedneedle-main-content {
+			padding-bottom: 0;
+		}
+
+		.droppedneedle-main-content.droppedneedle-player-visible {
+			padding-bottom: 6rem;
+		}
+	}
+</style>

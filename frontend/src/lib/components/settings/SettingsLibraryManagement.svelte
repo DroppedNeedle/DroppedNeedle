@@ -5,6 +5,7 @@
 	wizard's dry runs instead of saving straight away.
 -->
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { onMount, untrack } from 'svelte';
 	import {
 		Check,
@@ -568,3 +569,87 @@
 	{roots}
 	focusFallback={focusHeading}
 />
+
+<style>
+	.management-settings-shell {
+		overflow: hidden;
+		border: 1px solid color-mix(in oklab, var(--color-library-manage) 28%, transparent);
+		border-radius: var(--radius-box);
+		background:
+			linear-gradient(
+				160deg,
+				color-mix(in oklab, var(--color-library-manage) 5%, var(--color-base-100)),
+				var(--color-base-100) 18rem
+			),
+			var(--color-base-100);
+		box-shadow: 0 1rem 3rem color-mix(in oklab, var(--color-base-content) 5%, transparent);
+	}
+
+	.management-settings-header {
+		display: flex;
+		align-items: flex-start;
+		gap: 1rem;
+		padding: 1.25rem;
+		border-bottom: 1px solid color-mix(in oklab, var(--color-library-manage) 18%, transparent);
+		background: color-mix(in oklab, var(--color-library-manage) 7%, transparent);
+	}
+
+	.management-retention-panel {
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 11%, transparent);
+		border-radius: 0.9rem;
+		background: color-mix(in oklab, var(--color-base-100) 88%, var(--color-base-200));
+	}
+
+	.management-save-bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		padding: 0.85rem 1rem;
+		border: 1px dashed color-mix(in oklab, var(--color-base-content) 16%, transparent);
+		border-radius: 0.9rem;
+		background: color-mix(in oklab, var(--color-base-200) 58%, transparent);
+	}
+
+	.management-retention-panel {
+		padding: 1rem;
+	}
+
+	.management-retention-panel > summary {
+		align-items: center;
+		gap: 0.7rem;
+		list-style: none;
+		cursor: pointer;
+	}
+
+	.management-retention-panel > summary {
+		display: flex;
+	}
+
+	.management-retention-panel > summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.management-save-bar {
+		position: sticky;
+		bottom: 0.75rem;
+		z-index: 2;
+		border-style: solid;
+		border-color: color-mix(in oklab, var(--color-library-manage) 22%, transparent);
+		background: color-mix(in oklab, var(--color-base-100) 92%, transparent);
+		box-shadow: 0 0.75rem 2rem color-mix(in oklab, var(--color-base-content) 8%, transparent);
+		backdrop-filter: blur(0.75rem);
+	}
+
+	@media (max-width: 639px) {
+		.management-settings-header {
+			align-items: stretch;
+			flex-direction: column;
+		}
+
+		.management-save-bar {
+			align-items: stretch;
+			flex-direction: column;
+		}
+	}
+</style>

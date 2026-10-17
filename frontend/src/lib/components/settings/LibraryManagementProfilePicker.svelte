@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { Check, ChevronDown, CornerDownRight, Layers } from 'lucide-svelte';
 
 	import type { LibraryManagementProfile } from '$lib/queries/library-management/types';
@@ -149,3 +150,196 @@
 			</fieldset>
 		</div>{/if}
 </div>
+
+<style>
+	.management-profile-picker {
+		overflow: hidden;
+		border: 1px solid color-mix(in oklab, var(--color-library-manage) 24%, transparent);
+		border-radius: 0.95rem;
+		background: color-mix(in oklab, var(--color-library-manage) 5%, var(--color-base-100));
+	}
+
+	.management-profile-picker-summary {
+		display: grid;
+		width: 100%;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		align-items: start;
+		gap: 0.9rem;
+		padding: 1rem;
+		border: 0;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.management-profile-picker-summary:focus-visible {
+		outline: 2px solid var(--color-library-manage);
+		outline-offset: -2px;
+	}
+
+	.management-profile-picker[data-open='true'] .management-profile-picker-summary {
+		border-bottom: 1px solid color-mix(in oklab, var(--color-library-manage) 18%, transparent);
+		background: color-mix(in oklab, var(--color-library-manage) 7%, var(--color-base-100));
+	}
+
+	.management-profile-picker-mark,
+	.management-profile-option-icon {
+		display: grid;
+		place-items: center;
+		flex: none;
+		border: 1px solid color-mix(in oklab, var(--color-library-manage) 22%, transparent);
+		background: color-mix(in oklab, var(--color-library-manage) 11%, var(--color-base-100));
+		color: color-mix(in oklab, var(--color-library-manage) 68%, var(--color-base-content));
+	}
+
+	.management-profile-picker-mark {
+		width: 2.4rem;
+		height: 2.4rem;
+		border-radius: 0.75rem;
+	}
+
+	.management-profile-picker-name,
+	.management-profile-picker-description {
+		display: block;
+	}
+
+	.management-profile-picker-name {
+		margin-top: 0.1rem;
+		font-size: 1rem;
+	}
+
+	.management-profile-picker-description {
+		margin-top: 0.2rem;
+		max-width: 52rem;
+		color: color-mix(in oklab, var(--color-base-content) 54%, transparent);
+		font-size: 0.75rem;
+		line-height: 1.4;
+	}
+
+	.management-profile-picker-aspects {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.3rem;
+		margin-top: 0.55rem;
+	}
+
+	.management-profile-picker-status {
+		display: flex;
+		align-items: center;
+		justify-content: end;
+		gap: 0.55rem;
+		min-height: 2.4rem;
+	}
+
+	.management-unsaved-badge {
+		border: 1px solid color-mix(in oklab, var(--color-warning) 35%, transparent);
+		border-radius: 9999px;
+		background: color-mix(in oklab, var(--color-warning) 11%, var(--color-base-100));
+		color: color-mix(in oklab, var(--color-warning) 58%, var(--color-base-content));
+		padding: 0.2rem 0.55rem;
+		font-size: 0.65rem;
+		font-weight: 700;
+	}
+
+	:global(.management-profile-picker-chevron) {
+		transition: transform 160ms ease;
+	}
+
+	.management-profile-picker[data-open='true'] :global(.management-profile-picker-chevron) {
+		transform: rotate(180deg);
+	}
+
+	.management-profile-picker-body {
+		display: grid;
+		gap: 0.85rem;
+		padding: 1rem;
+		background: color-mix(in oklab, var(--color-base-200) 45%, var(--color-base-100));
+	}
+
+	.management-profile-options {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+		gap: 0.6rem;
+	}
+
+	.management-profile-option {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		align-items: start;
+		gap: 0.7rem;
+		min-height: 5.5rem;
+		padding: 0.8rem;
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
+		border-radius: 0.8rem;
+		background: var(--color-base-100);
+		cursor: pointer;
+		transition:
+			border-color 140ms ease,
+			background-color 140ms ease,
+			transform 140ms ease;
+	}
+
+	.management-profile-option:hover {
+		border-color: color-mix(in oklab, var(--color-library-manage) 34%, transparent);
+		transform: translateY(-1px);
+	}
+
+	.management-profile-option:has(input:focus-visible) {
+		outline: 2px solid var(--color-library-manage);
+		outline-offset: 2px;
+	}
+
+	.management-profile-option:has(input:checked) {
+		border-color: color-mix(in oklab, var(--color-library-manage) 48%, transparent);
+		background: color-mix(in oklab, var(--color-library-manage) 9%, var(--color-base-100));
+	}
+
+	.management-profile-option-icon {
+		width: 1.8rem;
+		height: 1.8rem;
+		border-radius: 0.55rem;
+	}
+
+	.management-profile-option strong,
+	.management-profile-option small {
+		display: block;
+	}
+
+	.management-profile-option small {
+		margin-top: 0.25rem;
+		color: color-mix(in oklab, var(--color-base-content) 52%, transparent);
+		font-size: 0.7rem;
+		line-height: 1.35;
+	}
+
+	:global(.management-profile-option-check) {
+		margin-top: 0.35rem;
+		color: var(--color-library-manage);
+		opacity: 0;
+	}
+
+	.management-profile-option:has(input:checked) :global(.management-profile-option-check) {
+		opacity: 1;
+	}
+
+	@media (max-width: 767px) {
+		.management-profile-picker-summary {
+			grid-template-columns: auto minmax(0, 1fr);
+		}
+
+		.management-profile-picker-status {
+			grid-column: 1 / -1;
+			justify-content: flex-start;
+			min-height: auto;
+			padding-left: 3.3rem;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.management-profile-option:hover {
+			transform: none;
+		}
+	}
+</style>

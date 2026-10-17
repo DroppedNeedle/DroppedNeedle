@@ -1,5 +1,6 @@
 <!-- Artwork: embedded and external cover art, its sources and its rules. -->
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { ArrowDown, ArrowUp, Image, X } from 'lucide-svelte';
 
 	import LibraryManagementEditorAdvanced from './LibraryManagementEditorAdvanced.svelte';

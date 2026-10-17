@@ -4,6 +4,7 @@
 	wizard; the tab opens it with show().
 -->
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { Check, ChevronRight, Clock3, RefreshCw, ShieldAlert, Square } from 'lucide-svelte';
 
 	import { LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE } from '$lib/queries/library-management/LibraryManagementConfirmation';
@@ -327,3 +328,59 @@
 		<button aria-label="Close organization activation" disabled={wizard.pending}>close</button>
 	</form>
 </dialog>
+
+<style>
+	.management-activation-dialog {
+		border: 1px solid color-mix(in oklab, var(--color-library-manage) 24%, transparent);
+		background:
+			linear-gradient(
+				145deg,
+				color-mix(in oklab, var(--color-library-manage) 5%, var(--color-base-100)),
+				var(--color-base-100) 18rem
+			),
+			var(--color-base-100);
+	}
+
+	.management-activation-step {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0.35rem 0.65rem;
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 11%, transparent);
+		border-radius: 9999px;
+		color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
+		font-size: 0.7rem;
+		font-weight: 700;
+	}
+
+	.management-activation-step[data-state='current'] {
+		border-color: color-mix(in oklab, var(--color-library-manage) 45%, transparent);
+		background: color-mix(in oklab, var(--color-library-manage) 11%, var(--color-base-100));
+		color: var(--color-base-content);
+	}
+
+	.management-activation-step[data-state='done'] {
+		border-color: color-mix(in oklab, var(--color-success) 35%, transparent);
+		color: var(--color-success);
+	}
+
+	.management-mini-stat {
+		display: grid;
+		gap: 0.15rem;
+		padding: 0.7rem;
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 9%, transparent);
+		border-radius: 0.65rem;
+		background: var(--color-base-100);
+	}
+
+	.management-mini-stat span {
+		color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
+		font-size: 0.65rem;
+		text-transform: uppercase;
+	}
+
+	.management-mini-stat strong {
+		font-family: var(--font-mono);
+		font-size: 1.05rem;
+	}
+</style>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { ArrowRight, Eraser, FileClock, Image, RotateCcw, Tags } from 'lucide-svelte';
 
 	import { getApiUrl } from '$lib/api/api-utils';
@@ -491,3 +492,65 @@
 		</section>
 	{/if}
 </div>
+
+<style>
+	.management-diff-row {
+		display: grid;
+		grid-template-columns: minmax(7rem, 0.7fr) minmax(0, 1fr) 7.25rem minmax(0, 1fr);
+		gap: 0.65rem;
+		align-items: start;
+		padding: 0.65rem 0;
+		border-top: 1px solid color-mix(in oklab, var(--color-base-content) 8%, transparent);
+	}
+
+	.management-diff-value {
+		min-width: 0;
+		padding: 0.4rem 0.55rem;
+		border-radius: 0.55rem;
+		overflow-wrap: anywhere;
+		font-family: var(--font-mono);
+		font-size: 0.73rem;
+	}
+
+	.management-diff-value[data-side='before'] {
+		background: color-mix(in oklab, var(--color-management-removed) 8%, transparent);
+	}
+
+	.management-diff-value[data-side='after'] {
+		background: color-mix(in oklab, var(--color-management-added) 8%, transparent);
+	}
+
+	.management-diff-badge[data-operation='preserve'],
+	.management-diff-badge[data-operation='unchanged'] {
+		color: var(--color-management-preserved);
+	}
+
+	.management-diff-badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.3rem;
+		padding: 0.4rem 0.5rem;
+	}
+
+	@media (max-width: 639px) {
+		.management-diff-row {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	/* the narrower diff beside the audit list */
+	@media (min-width: 1024px) {
+		:global(.management-audit-inspector) .management-diff-row {
+			grid-template-columns: minmax(6rem, 0.55fr) minmax(0, 1fr);
+		}
+
+		:global(.management-audit-inspector) .management-diff-row > :nth-child(3) {
+			grid-column: 1;
+		}
+
+		:global(.management-audit-inspector) .management-diff-row > small {
+			grid-column: 1 / -1;
+		}
+	}
+</style>

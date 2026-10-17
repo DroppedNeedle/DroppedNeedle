@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { onMount, type Snippet } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import {
@@ -385,3 +386,281 @@
 		{/if}
 	</div>
 {/if}
+
+<style>
+	.management-audit-toolbar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		padding: 0.6rem 0.75rem;
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 9%, transparent);
+		border-radius: 0.85rem;
+		background: color-mix(in oklab, var(--color-base-200) 55%, transparent);
+	}
+
+	.management-audit-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		font-size: 0.75rem;
+		font-weight: 650;
+		cursor: pointer;
+	}
+
+	.management-audit-layout {
+		display: grid;
+		gap: 1rem;
+	}
+
+	.management-dossier {
+		overflow: clip;
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 11%, transparent);
+		border-radius: 1rem;
+		background: color-mix(in oklab, var(--color-base-100) 94%, transparent);
+		box-shadow: 0 0.5rem 1.4rem color-mix(in oklab, var(--color-base-content) 4%, transparent);
+	}
+
+	.management-dossier-header {
+		display: flex;
+		align-items: center;
+		gap: 0.85rem;
+		padding: 0.85rem;
+		border-bottom: 1px solid color-mix(in oklab, var(--color-base-content) 9%, transparent);
+		background: linear-gradient(
+			105deg,
+			color-mix(in oklab, var(--color-library-manage) 9%, var(--color-base-100)),
+			var(--color-base-100) 68%
+		);
+	}
+
+	.management-dossier-art {
+		position: relative;
+		display: block;
+		width: 3.75rem;
+		height: 3.75rem;
+		flex: 0 0 auto;
+		overflow: hidden;
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+		border-radius: 0.75rem;
+		background: color-mix(in oklab, var(--color-base-200) 78%, var(--color-base-100));
+	}
+
+	.management-dossier-art > :global(div) {
+		width: 100%;
+		height: 100%;
+	}
+
+	.management-dossier-art :global(img) {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	.management-dossier-stats {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.3rem;
+		margin-top: 0.45rem;
+	}
+
+	.management-dossier-stats span {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.15rem 0.4rem;
+		border-radius: 999px;
+		background: color-mix(in oklab, var(--color-base-content) 6%, transparent);
+		color: color-mix(in oklab, var(--color-base-content) 63%, transparent);
+		font-size: 0.66rem;
+		font-weight: 700;
+	}
+
+	.management-dossier-stats span[data-tone='success'] {
+		background: color-mix(in oklab, var(--color-success) 11%, transparent);
+		color: color-mix(in oklab, var(--color-success) 72%, var(--color-base-content));
+	}
+
+	.management-dossier-stats span[data-tone='warning'] {
+		background: color-mix(in oklab, var(--color-warning) 13%, transparent);
+		color: color-mix(in oklab, var(--color-warning) 72%, var(--color-base-content));
+	}
+
+	.management-dossier-stats span[data-tone='error'] {
+		background: color-mix(in oklab, var(--color-error) 11%, transparent);
+		color: color-mix(in oklab, var(--color-error) 72%, var(--color-base-content));
+	}
+
+	.management-dossier-tracks {
+		display: grid;
+	}
+
+	.management-audit-track {
+		position: relative;
+		display: grid;
+		grid-template-columns: 2.5rem auto minmax(0, 1fr) auto auto 1rem;
+		align-items: center;
+		gap: 0.6rem;
+		width: 100%;
+		min-height: 3.75rem;
+		padding: 0.55rem 0.75rem;
+		border-top: 1px solid color-mix(in oklab, var(--color-base-content) 7%, transparent);
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.management-audit-track:first-child {
+		border-top: 0;
+	}
+
+	.management-audit-track::before {
+		position: absolute;
+		inset-block: 0.45rem;
+		left: 0;
+		width: 0.2rem;
+		border-radius: 999px;
+		background: transparent;
+		content: '';
+	}
+
+	.management-audit-track:hover {
+		background: color-mix(in oklab, var(--color-library-manage) 5%, transparent);
+	}
+
+	.management-audit-track:focus-visible {
+		z-index: 1;
+		outline: 2px solid var(--color-library-manage);
+		outline-offset: -2px;
+	}
+
+	.management-audit-track[data-selected='true'] {
+		background: color-mix(in oklab, var(--color-library-manage) 9%, transparent);
+	}
+
+	.management-audit-track[data-selected='true']::before {
+		background: var(--color-library-manage);
+	}
+
+	.management-audit-track[data-tone='error']::before {
+		background: var(--color-error);
+	}
+
+	.management-audit-track[data-tone='warning']:not([data-selected='true'])::before {
+		background: var(--color-warning);
+	}
+
+	.management-audit-track-number {
+		color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+		font-family: var(--font-mono);
+		font-size: 0.72rem;
+		font-variant-numeric: tabular-nums;
+		text-align: right;
+	}
+
+	.management-audit-path {
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+		min-width: 0;
+		margin-top: 0.15rem;
+		overflow-wrap: anywhere;
+		color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
+		font-family: var(--font-mono);
+		font-size: 0.66rem;
+	}
+
+	.management-audit-changes {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: 0.25rem;
+	}
+
+	.management-change-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.2rem;
+		padding: 0.18rem 0.36rem;
+		border: 1px solid color-mix(in oklab, var(--color-library-manage) 18%, transparent);
+		border-radius: 999px;
+		background: color-mix(in oklab, var(--color-library-manage) 6%, transparent);
+		color: color-mix(in oklab, var(--color-library-manage) 72%, var(--color-base-content));
+		font-size: 0.64rem;
+		font-weight: 700;
+	}
+
+	.management-audit-inline-inspector,
+	.management-audit-inspector {
+		border: 1px solid color-mix(in oklab, var(--color-library-manage) 20%, transparent);
+		background: color-mix(in oklab, var(--color-base-100) 97%, transparent);
+	}
+
+	.management-audit-inline-inspector {
+		padding: 0.85rem;
+		border-inline: 0;
+		border-bottom: 0;
+	}
+
+	@media (min-width: 1024px) {
+		.management-audit-layout {
+			grid-template-columns: minmax(0, 1.12fr) minmax(22rem, 0.88fr);
+			align-items: start;
+		}
+
+		.management-audit-inspector {
+			position: sticky;
+			top: calc(
+				var(--droppedneedle-topbar-height, 4rem) +
+					var(--droppedneedle-library-activity-height, 0px) + 1rem
+			);
+			max-height: calc(
+				100dvh - var(--droppedneedle-topbar-height, 4rem) -
+					var(--droppedneedle-library-activity-height, 0px) - 2rem
+			);
+			overflow-y: auto;
+			overscroll-behavior: contain;
+			padding: 1rem;
+			border-radius: 1rem;
+			scrollbar-gutter: stable;
+		}
+
+		.management-audit-layout[data-reserve-sticky-footer='true'] .management-audit-inspector {
+			max-height: calc(
+				100dvh - var(--droppedneedle-topbar-height, 4rem) -
+					var(--droppedneedle-library-activity-height, 0px) -
+					var(--management-sticky-footer-height, 0px) - 2.75rem
+			);
+		}
+	}
+
+	@media (max-width: 639px) {
+		.management-audit-toolbar {
+			align-items: stretch;
+			flex-direction: column;
+		}
+
+		.management-audit-track {
+			grid-template-columns: 2rem auto minmax(0, 1fr) 1rem;
+			gap: 0.45rem;
+			padding-inline: 0.55rem;
+		}
+
+		.management-audit-changes,
+		.management-audit-track > .badge:last-of-type {
+			grid-column: 3;
+			justify-content: flex-start;
+		}
+
+		.management-audit-track > :global(svg:last-child) {
+			grid-column: 4;
+			grid-row: 1;
+		}
+
+		.management-change-chip span {
+			display: none;
+		}
+	}
+</style>

@@ -104,3 +104,23 @@
 	class:is-active={reactive && !reducedMotion}
 	aria-hidden="true"
 ></canvas>
+
+<style>
+	.deck-visualiser {
+		opacity: 0;
+		filter: blur(2px);
+		transition: opacity 0.9s ease;
+		-webkit-mask-image: linear-gradient(to top, #000 0%, #000 42%, transparent 78%);
+		mask-image: linear-gradient(to top, #000 0%, #000 42%, transparent 78%);
+	}
+
+	.deck-visualiser.is-active {
+		opacity: 0.2;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.deck-visualiser {
+			opacity: 0 !important;
+		}
+	}
+</style>

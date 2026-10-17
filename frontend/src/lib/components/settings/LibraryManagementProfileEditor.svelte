@@ -4,6 +4,7 @@
 	draft through a binding.
 -->
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { onMount } from 'svelte';
 	import { RotateCcw, ShieldCheck, Tags, X } from 'lucide-svelte';
 
@@ -320,3 +321,16 @@
 		<button aria-label="Close discard confirmation">close</button>
 	</form>
 </dialog>
+
+<style>
+	.management-profile-editor {
+		border: 1px solid color-mix(in oklab, var(--color-library-manage) 24%, transparent);
+		background:
+			linear-gradient(
+				145deg,
+				color-mix(in oklab, var(--color-library-manage) 5%, var(--color-base-100)),
+				var(--color-base-100) 18rem
+			),
+			var(--color-base-100);
+	}
+</style>

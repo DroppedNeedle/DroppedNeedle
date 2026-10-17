@@ -8,7 +8,7 @@
 		crateCoverUrl,
 		suggestionToCrateTrack
 	} from '$lib/queries/local/LocalV3Adapters';
-	import { fly } from 'svelte/transition';
+	import { fly } from '$lib/ui/motion';
 	import { Search, X, Disc3, Music2, Play, ListPlus, GripVertical, Loader } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
@@ -263,3 +263,21 @@
 		{/if}
 	</div>
 </section>
+
+<style>
+	.search-row {
+		transition:
+			transform 0.2s var(--ease-spring),
+			box-shadow 0.2s var(--ease-spring),
+			border-color 0.2s ease;
+	}
+
+	.search-row:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 12px 24px -14px oklch(from var(--color-base-100) l c h / 0.9);
+	}
+
+	.search-row.is-dragging {
+		opacity: 0.4;
+	}
+</style>

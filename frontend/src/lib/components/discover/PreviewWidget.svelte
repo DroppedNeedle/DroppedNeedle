@@ -72,7 +72,7 @@
 				{/if}
 				{#if deckSampler.status === 'loading'}
 					<div class="absolute inset-0 flex items-center justify-center bg-black/40">
-						<LoaderCircle class="h-6 w-6 animate-spin text-white" />
+						<LoaderCircle class="h-6 w-6 animate-spin motion-keep text-white" />
 					</div>
 				{/if}
 			</div>

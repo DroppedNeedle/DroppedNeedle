@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { FileText } from 'lucide-svelte';
 
 	import type { LibraryManagementPlanItem } from '$lib/queries/library-management/types';

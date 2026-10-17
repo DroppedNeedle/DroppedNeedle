@@ -10,7 +10,7 @@
 		type EqPresetName
 	} from '$lib/stores/eqPresets';
 	import { X, RotateCcw } from 'lucide-svelte';
-	import { fly } from 'svelte/transition';
+	import { fly } from '$lib/ui/motion';
 	import IconButton from '$lib/ui/IconButton.svelte';
 
 	let { open = $bindable(), onclose }: { open: boolean; onclose: () => void } = $props();

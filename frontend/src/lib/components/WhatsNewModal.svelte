@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/release-notes.css';
 	import { goto } from '$app/navigation';
 	import { isWhatsNewDismissed, dismissWhatsNew } from '$lib/stores/version.svelte';
 	import SafeHtml from '$lib/components/SafeHtml.svelte';
@@ -162,5 +163,17 @@
 	.whats-new-content {
 		scrollbar-width: thin;
 		scrollbar-color: oklch(from var(--color-accent) l c h / 0.15) transparent;
+	}
+
+	dialog.whats-new-modal::backdrop {
+		backdrop-filter: blur(16px) saturate(0.8);
+		-webkit-backdrop-filter: blur(16px) saturate(0.8);
+		background: rgba(0, 0, 0, 0.6);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.whats-new-modal .modal-box {
+			opacity: 1 !important;
+		}
 	}
 </style>

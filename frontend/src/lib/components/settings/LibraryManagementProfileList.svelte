@@ -4,6 +4,7 @@
 	copies a profile or opens the import. Deleting asks first.
 -->
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { Copy, FileUp, Link2, Pencil, Share2, Tags, Trash2 } from 'lucide-svelte';
 
 	import {
@@ -292,3 +293,123 @@
 		<button aria-label="Cancel profile deletion" disabled={deleteProfile.isPending}>close</button>
 	</form>
 </dialog>
+
+<style>
+	.management-profile-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+		gap: 0.75rem;
+		max-height: min(28rem, 65vh);
+		overflow-y: auto;
+		overscroll-behavior: contain;
+		padding: 0.15rem 0.35rem 0.75rem 0.15rem;
+		scroll-padding-block-end: 0.75rem;
+		scrollbar-gutter: stable;
+	}
+
+	.management-profile-grid:focus-visible {
+		border-radius: 0.25rem;
+		outline: 2px solid var(--color-library-manage);
+		outline-offset: 0.25rem;
+	}
+
+	.management-profile-card {
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 11%, transparent);
+		border-radius: 0.9rem;
+		background: color-mix(in oklab, var(--color-base-100) 88%, var(--color-base-200));
+	}
+
+	.management-profile-card {
+		display: flex;
+		min-width: 0;
+		flex-direction: column;
+		padding: 1rem;
+		transition:
+			border-color 160ms ease,
+			box-shadow 160ms ease,
+			background-color 160ms ease;
+	}
+
+	.management-profile-card__footer {
+		display: flex;
+		align-items: stretch;
+		flex-direction: column;
+		gap: 0.75rem;
+		margin-top: auto;
+		padding-top: 0.75rem;
+		border-top: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+	}
+
+	.management-profile-card__actions {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: 0.25rem;
+	}
+
+	.management-profile-card[data-default='true'] {
+		border-color: color-mix(in oklab, var(--color-library-manage) 50%, transparent);
+		background: color-mix(in oklab, var(--color-library-manage) 7%, var(--color-base-100));
+		box-shadow:
+			0 0 0 1px color-mix(in oklab, var(--color-library-manage) 20%, transparent),
+			0 0 1.4rem color-mix(in oklab, var(--color-library-manage) 12%, transparent);
+	}
+
+	.management-profile-card__state {
+		display: flex;
+		min-width: 0;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.35rem;
+	}
+
+	.management-profile-default-control {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		min-height: 1.75rem;
+		padding-inline: 0.6rem;
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 13%, transparent);
+		border-radius: 9999px;
+		background: color-mix(in oklab, var(--color-base-200) 65%, var(--color-base-100));
+		color: color-mix(in oklab, var(--color-base-content) 58%, transparent);
+		font-size: 0.7rem;
+		font-weight: 700;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+
+	.management-profile-default-control:has(input:checked) {
+		border-color: color-mix(in oklab, var(--color-library-manage) 38%, transparent);
+		background: color-mix(in oklab, var(--color-library-manage) 12%, var(--color-base-100));
+		color: color-mix(in oklab, var(--color-library-manage) 64%, var(--color-base-content));
+	}
+
+	.management-profile-default-control[data-unsaved='true'] {
+		border-color: color-mix(in oklab, var(--color-warning) 38%, transparent);
+		background: color-mix(in oklab, var(--color-warning) 10%, var(--color-base-100));
+		color: color-mix(in oklab, var(--color-warning) 58%, var(--color-base-content));
+	}
+
+	.management-create-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		padding: 0.85rem 1rem;
+		border: 1px dashed color-mix(in oklab, var(--color-base-content) 16%, transparent);
+		border-radius: 0.9rem;
+		background: color-mix(in oklab, var(--color-base-200) 58%, transparent);
+	}
+
+	@media (max-width: 639px) {
+		.management-create-row {
+			align-items: stretch;
+			flex-direction: column;
+		}
+
+		.management-profile-card__actions {
+			justify-content: flex-start;
+		}
+	}
+</style>

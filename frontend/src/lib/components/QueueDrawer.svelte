@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { fly, fade } from 'svelte/transition';
+	import { fly, fade } from '$lib/ui/motion';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
 	import { X, GripVertical, ListMusic, Shuffle, Trash2 } from 'lucide-svelte';

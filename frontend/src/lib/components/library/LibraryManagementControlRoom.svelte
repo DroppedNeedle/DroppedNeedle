@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
@@ -840,3 +841,59 @@
 		onclose={closeRunner}
 	/>
 {/if}
+
+<style>
+	.management-control-stat {
+		display: grid;
+		gap: 0.2rem;
+		min-height: 7rem;
+		padding: 1rem;
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+		border-radius: 1rem;
+		background: color-mix(in oklab, var(--color-base-200) 40%, transparent);
+	}
+
+	.management-control-stat[data-attention='true'] {
+		border-color: color-mix(in oklab, var(--color-warning) 40%, transparent);
+	}
+
+	.management-control-stat span {
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
+	}
+
+	.management-control-stat strong {
+		font-family: var(--font-display);
+		font-size: 1.15rem;
+	}
+
+	.management-control-stat small {
+		align-self: end;
+		color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
+	}
+
+	.management-active-card {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		border: 1px solid color-mix(in oklab, var(--color-library-manage) 20%, transparent);
+		border-radius: 1rem;
+		background: color-mix(in oklab, var(--color-library-manage) 6%, var(--color-base-100));
+	}
+
+	.management-active-card {
+		flex-wrap: wrap;
+		justify-content: space-between;
+		padding: 1rem;
+	}
+
+	@media (max-width: 639px) {
+		.management-active-card {
+			align-items: stretch;
+			flex-direction: column;
+		}
+	}
+</style>

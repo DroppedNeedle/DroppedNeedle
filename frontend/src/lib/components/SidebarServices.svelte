@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/now-playing.css';
 	import { fromStore } from 'svelte/store';
 	import { Headphones, Disc3 } from 'lucide-svelte';
 	import { integrationStore } from '$lib/stores/integration';

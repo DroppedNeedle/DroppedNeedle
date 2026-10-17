@@ -78,7 +78,7 @@
 						</div>
 						{#if job.status === 'processing'}
 							<span class="badge badge-info gap-1">
-								<LoaderCircle class="h-3 w-3 animate-spin" aria-hidden="true" /> Working…
+								<LoaderCircle class="h-3 w-3 animate-spin motion-keep" aria-hidden="true" /> Working…
 							</span>
 						{:else if job.status === 'failed'}
 							<span class="badge badge-error" title={job.error ?? undefined}>Failed</span>
@@ -125,7 +125,7 @@
 												/>
 											{:else}
 												<LoaderCircle
-													class="h-4 w-4 shrink-0 animate-spin text-info"
+													class="h-4 w-4 shrink-0 animate-spin motion-keep text-info"
 													aria-hidden="true"
 												/>
 											{/if}

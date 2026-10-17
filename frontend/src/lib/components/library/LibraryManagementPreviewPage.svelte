@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import {
@@ -570,3 +571,29 @@
 		recycleAvailable={Boolean(settingsQuery.data?.recycle_bin_path.trim())}
 	/>
 {/if}
+
+<style>
+	.management-apply-bar {
+		position: sticky;
+		bottom: 0.75rem;
+		z-index: 10;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		padding: 0.85rem;
+		border: 1px solid color-mix(in oklab, var(--color-library-manage) 32%, transparent);
+		border-radius: 1rem;
+		background: color-mix(in oklab, var(--color-base-100) 92%, transparent);
+		box-shadow: 0 1rem 2.5rem color-mix(in oklab, var(--color-base-content) 15%, transparent);
+		backdrop-filter: blur(12px);
+	}
+
+	@media (max-width: 639px) {
+		.management-apply-bar {
+			align-items: stretch;
+			flex-direction: column;
+		}
+	}
+</style>

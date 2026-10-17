@@ -107,7 +107,7 @@
 			</Button>
 		{:else if importingAll}
 			<div class="flex shrink-0 items-center gap-2 text-sm text-base-content/60">
-				<LoaderCircle class="h-4 w-4 animate-spin" />
+				<LoaderCircle class="h-4 w-4 animate-spin motion-keep" />
 				{importAllProgress.done}/{importAllProgress.total}
 			</div>
 		{/if}
@@ -193,7 +193,7 @@
 								disabled={!!importing}
 							>
 								{#if isImporting}
-									<LoaderCircle class="h-8 w-8 animate-spin text-white" />
+									<LoaderCircle class="h-8 w-8 animate-spin motion-keep text-white" />
 								{:else}
 									<div class="flex flex-col items-center gap-1 rounded-xl px-3 py-2 text-white">
 										<SpotifyIcon class="h-6 w-6 text-spotify" />

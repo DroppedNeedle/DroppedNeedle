@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/now-playing.css';
 	import { nowPlayingMerged } from '$lib/stores/nowPlayingMerged.svelte';
 
 	const sourceHub: Record<string, string> = {

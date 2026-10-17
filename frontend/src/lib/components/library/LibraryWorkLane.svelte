@@ -52,3 +52,67 @@
 		{/if}
 	</div>
 </div>
+
+<style>
+	.library-work-lane {
+		display: grid;
+		gap: 0.2rem;
+	}
+
+	.library-work-lane__track {
+		position: relative;
+		height: 0.36rem;
+		overflow: hidden;
+		border-radius: 9999px;
+		background: color-mix(in oklab, var(--color-base-content) 12%, transparent);
+	}
+
+	.library-work-lane__fill {
+		display: block;
+		height: 100%;
+		border-radius: inherit;
+		background: var(--color-library-index);
+		transition: width 220ms ease-out;
+	}
+
+	.library-work-lane[data-kind='identification'] .library-work-lane__fill {
+		background: var(--color-library-identify);
+	}
+
+	.library-work-lane__track--indeterminate::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		width: 42%;
+		background: repeating-linear-gradient(
+			110deg,
+			transparent 0 0.35rem,
+			color-mix(in oklab, var(--color-library-index) 52%, transparent) 0.35rem 0.7rem
+		);
+		animation: library-work-indeterminate 1.8s linear infinite;
+	}
+
+	.library-work-lane[data-kind='identification'] .library-work-lane__track--indeterminate::after {
+		background: repeating-linear-gradient(
+			110deg,
+			transparent 0 0.35rem,
+			color-mix(in oklab, var(--color-library-identify) 52%, transparent) 0.35rem 0.7rem
+		);
+	}
+
+	.library-work-lane__track--paused::after {
+		animation-play-state: paused;
+	}
+
+	.library-work-lane__track--failed {
+		box-shadow: inset 0 0 0 1px var(--color-library-failed);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		/* a full, still bar in place of the moving stripe */
+		.library-work-lane__track--indeterminate::after {
+			transform: none !important;
+			width: 100%;
+		}
+	}
+</style>

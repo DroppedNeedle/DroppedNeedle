@@ -2,7 +2,7 @@
 	import { coverSrc } from '$lib/api/covers';
 	import { integrationStore } from '$lib/stores/integration';
 	import { onDestroy, onMount } from 'svelte';
-	import { fly } from 'svelte/transition';
+	import { fly } from '$lib/ui/motion';
 	import {
 		ArrowRight,
 		Check,

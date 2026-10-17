@@ -1,4 +1,6 @@
 <script lang="ts">
+	import '$lib/components/now-playing.css';
+	import '$lib/components/local/deck.css';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { eqStore } from '$lib/stores/eq.svelte';
 	import { scrobbleManager } from '$lib/stores/scrobble.svelte';
@@ -399,3 +401,44 @@
 	artistName={playerStore.nowPlaying?.artistName ?? ''}
 	onclose={() => (lyricsPanelOpen = false)}
 />
+
+<style>
+	.turntable-platter {
+		background:
+			repeating-radial-gradient(
+				circle at center,
+				oklch(from var(--color-base-content) l c h / 0.05) 0px,
+				oklch(from var(--color-base-content) l c h / 0.05) 1px,
+				transparent 2px,
+				transparent 4px
+			),
+			radial-gradient(
+				circle at 33% 27%,
+				oklch(from var(--color-base-content) l c h / 0.1),
+				transparent 58%
+			),
+			radial-gradient(circle at center, var(--color-base-300), var(--color-base-100) 95%);
+		box-shadow:
+			inset 0 0 0 1px oklch(from var(--color-base-content) l c h / 0.08),
+			inset 0 0 40px oklch(from var(--color-base-100) l c h / 0.9),
+			0 30px 60px -22px oklch(from var(--color-base-100) l c h / 0.85);
+	}
+
+	.tonearm {
+		transform-origin: 88% 12%;
+		transform: rotate(-148deg);
+		transition: transform 0.9s var(--ease-overshoot);
+	}
+
+	.tonearm.is-playing {
+		transform: rotate(-117deg);
+	}
+
+	.deck-halo {
+		background: radial-gradient(
+			circle at center,
+			oklch(from var(--color-accent) l c h / 0.16),
+			transparent 66%
+		);
+	}
+</style>

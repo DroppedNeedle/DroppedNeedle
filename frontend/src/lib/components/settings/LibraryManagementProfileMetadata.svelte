@@ -153,3 +153,24 @@
 		{/if}
 	</div>
 </LibraryManagementEditorSection>
+
+<style>
+	.management-field-table {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+		overflow: hidden;
+		border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+		border-radius: 0.75rem;
+	}
+
+	.management-field-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		min-width: 0;
+		padding: 0.45rem 0.65rem;
+		border-bottom: 1px solid color-mix(in oklab, var(--color-base-content) 7%, transparent);
+		background: var(--color-base-100);
+	}
+</style>

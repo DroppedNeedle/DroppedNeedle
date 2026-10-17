@@ -255,7 +255,7 @@
 						</a>
 					{/if}
 					<p class="mt-3 flex items-center gap-2 text-xs text-base-content/50">
-						<LoaderCircle class="h-3.5 w-3.5 animate-spin" /> This page updates automatically.
+						<LoaderCircle class="h-3.5 w-3.5 animate-spin motion-keep" /> This page updates automatically.
 					</p>
 				</div>
 			</div>

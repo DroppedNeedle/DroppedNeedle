@@ -179,7 +179,7 @@
 								: 'group-hover/card:bg-black/25'}"
 						>
 							{#if isActive && deckSampler.status === 'loading'}
-								<LoaderCircle class="h-8 w-8 animate-spin text-white drop-shadow" />
+								<LoaderCircle class="h-8 w-8 animate-spin motion-keep text-white drop-shadow" />
 							{:else if isActive}
 								<svg viewBox="0 0 40 40" class="h-12 w-12 -rotate-90 drop-shadow">
 									<circle

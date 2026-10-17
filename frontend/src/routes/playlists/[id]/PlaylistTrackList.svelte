@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { slide, fly } from 'svelte/transition';
+	import { slide, fly } from '$lib/ui/motion';
 	import type { PlaylistDetail, PlaylistTrack } from '$lib/api/playlists';
 	import {
 		removePlaylistTrackV3,

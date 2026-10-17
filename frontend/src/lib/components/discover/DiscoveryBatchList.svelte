@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { ChevronDown, LoaderCircle, Sparkles, Trash2 } from 'lucide-svelte';
-	import { slide } from 'svelte/transition';
+	import { slide } from '$lib/ui/motion';
 	import { SvelteSet } from 'svelte/reactivity';
 	import {
 		getDiscoveryBatchesV3Query,
@@ -158,7 +158,7 @@
 									</ul>
 								{:else}
 									<div class="flex justify-center py-4">
-										<LoaderCircle class="h-5 w-5 animate-spin text-base-content/40" />
+										<LoaderCircle class="h-5 w-5 animate-spin motion-keep text-base-content/40" />
 									</div>
 								{/if}
 							</div>

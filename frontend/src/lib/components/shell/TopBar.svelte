@@ -71,3 +71,17 @@
 		</a>
 	</div>
 </div>
+
+<style>
+	.droppedneedle-topbar {
+		min-height: calc(4rem + var(--ms-safe-top));
+		padding-top: var(--ms-safe-top);
+	}
+
+	@media (min-width: 768px) {
+		.droppedneedle-topbar {
+			min-height: 4rem;
+			padding-top: 0;
+		}
+	}
+</style>

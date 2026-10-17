@@ -9,7 +9,7 @@
 
 <script lang="ts">
 	import { SvelteSet } from 'svelte/reactivity';
-	import { fade, fly } from 'svelte/transition';
+	import { fade, fly } from '$lib/ui/motion';
 	import { CircleCheck, TriangleAlert } from 'lucide-svelte';
 	import RequestCard from '$lib/components/RequestCard.svelte';
 	import type { RequestKind } from '$lib/constants';

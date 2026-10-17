@@ -1,0 +1,63 @@
+/* The now-playing bars and the spinning vinyl, shared by the sidebar, the
+   player widget, the add-to-playlist dialog, the crate and the turntable. */
+
+.now-playing-bars {
+	display: flex;
+	align-items: flex-end;
+	gap: 2px;
+	height: 16px;
+}
+
+.now-playing-bars span {
+	display: block;
+	width: 3px;
+	border-radius: 1px;
+	background: var(--color-primary);
+	animation: now-playing-bar 1.2s ease-in-out infinite;
+}
+
+.now-playing-bars span:nth-child(1) {
+	height: 60%;
+	animation-delay: 0s;
+}
+
+.now-playing-bars span:nth-child(2) {
+	height: 100%;
+	animation-delay: 0.2s;
+}
+
+.now-playing-bars span:nth-child(3) {
+	height: 40%;
+	animation-delay: 0.4s;
+}
+
+@keyframes now-playing-bar {
+	0%,
+	100% {
+		transform: scaleY(0.3);
+	}
+	50% {
+		transform: scaleY(1);
+	}
+}
+
+.now-playing-bars--paused span {
+	animation-play-state: paused;
+	opacity: 0.4;
+}
+
+.now-playing-bars--sm {
+	height: 10px;
+}
+
+.now-playing-bars--sm span {
+	width: 2px;
+}
+
+.vinyl-spin {
+	animation: spin-vinyl 4.2s linear infinite;
+}
+
+.vinyl-spin.is-paused {
+	animation-play-state: paused;
+}

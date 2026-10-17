@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Search, X, Music2, Play, ArrowUpRight } from 'lucide-svelte';
-	import { fly, fade } from 'svelte/transition';
+	import { fly, fade } from '$lib/ui/motion';
 	import { getLibrarySearchQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';

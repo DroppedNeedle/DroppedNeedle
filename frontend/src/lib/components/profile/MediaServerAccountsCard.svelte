@@ -224,7 +224,7 @@
 
 				{#if connectionsQuery.isPending}
 					<div class="flex items-center justify-center py-10">
-						<LoaderCircle class="h-5 w-5 animate-spin text-base-content/40" />
+						<LoaderCircle class="h-5 w-5 animate-spin motion-keep text-base-content/40" />
 					</div>
 				{:else}
 					{#each rows as row (row.service)}
@@ -289,7 +289,7 @@
 													Cancel
 												</Button>
 												<span class="flex items-center gap-1 text-xs text-base-content/50">
-													<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
+													<LoaderCircle class="h-3.5 w-3.5 animate-spin motion-keep" />
 													Waiting for Plex…
 												</span>
 											</div>

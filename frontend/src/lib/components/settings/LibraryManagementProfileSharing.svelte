@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { tick } from 'svelte';
 	import {
 		TriangleAlert,

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { onMount } from 'svelte';
 	import { ArrowRight, FolderCog, History, ShieldAlert } from 'lucide-svelte';
 

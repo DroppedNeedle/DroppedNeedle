@@ -264,3 +264,30 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.management-script-editor {
+		display: grid;
+		gap: 0.75rem;
+	}
+
+	.management-script-toolbar {
+		display: flex;
+		align-items: flex-end;
+		gap: 0.5rem;
+	}
+
+	.management-script-workbench {
+		padding: 0.85rem;
+		border: 1px solid color-mix(in oklab, var(--color-library-manage) 18%, transparent);
+		border-radius: 0.8rem;
+		background: color-mix(in oklab, var(--color-base-200) 58%, var(--color-base-100));
+	}
+
+	@media (max-width: 639px) {
+		.management-script-toolbar {
+			align-items: stretch;
+			flex-direction: column;
+		}
+	}
+</style>

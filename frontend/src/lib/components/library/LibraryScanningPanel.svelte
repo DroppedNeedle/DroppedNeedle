@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import {
 		FolderSync,
 		FingerprintPattern,
@@ -596,3 +597,23 @@
 		<button aria-label="Close stop dialog">close</button>
 	</form>
 </dialog>
+
+<style>
+	.library-scanning-schedule {
+		min-height: 1.75rem;
+		flex: none;
+		padding: 0.35rem 0.7rem;
+		border: 1px solid color-mix(in oklab, var(--color-library-index) 20%, transparent);
+		border-radius: 9999px;
+		background: color-mix(in oklab, var(--color-library-index) 7%, var(--color-base-100));
+		color: color-mix(in oklab, var(--color-base-content) 58%, transparent);
+		font-size: 0.75rem;
+		font-weight: 650;
+	}
+
+	@media (max-width: 639px) {
+		.library-scanning-schedule {
+			align-self: flex-start;
+		}
+	}
+</style>

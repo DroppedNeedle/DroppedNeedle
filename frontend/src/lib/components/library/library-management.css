@@ -1,0 +1,404 @@
+/* Library management and scanning styles shared by the settings tab, the
+   management pages and their dialogs. A class one component uses lives in
+   that component instead. */
+
+.management-write-mark {
+	display: grid;
+	width: 2.75rem;
+	height: 2.75rem;
+	flex: none;
+	place-items: center;
+	border-radius: 0.9rem;
+}
+
+.library-scanning-kicker,
+.management-kicker,
+.management-step {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+	font-size: 0.68rem;
+	font-weight: 700;
+	letter-spacing: 0.12em;
+	line-height: 1rem;
+	text-transform: uppercase;
+}
+
+.library-scanning-kicker {
+	color: var(--color-library-index);
+}
+
+.management-write-mark,
+.management-editor-icon {
+	background: color-mix(in oklab, var(--color-library-manage) 14%, var(--color-base-100));
+	color: color-mix(in oklab, var(--color-library-manage) 72%, var(--color-base-content));
+}
+
+.management-kicker,
+.management-step {
+	color: color-mix(in oklab, var(--color-library-manage) 68%, var(--color-base-content));
+}
+
+.management-status-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	min-height: 1.75rem;
+	flex: none;
+	padding-inline: 0.7rem;
+	border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
+	border-radius: 9999px;
+	background: var(--color-base-100);
+	color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
+	font-size: 0.7rem;
+	font-weight: 700;
+}
+
+.management-status-badge[data-active='true'] {
+	border-color: color-mix(in oklab, var(--color-library-manage) 32%, transparent);
+	background: color-mix(in oklab, var(--color-library-manage) 11%, var(--color-base-100));
+	color: color-mix(in oklab, var(--color-library-manage) 65%, var(--color-base-content));
+}
+
+.management-editor-section {
+	border: 1px solid color-mix(in oklab, var(--color-base-content) 11%, transparent);
+	border-radius: 0.9rem;
+	background: color-mix(in oklab, var(--color-base-100) 88%, var(--color-base-200));
+}
+
+.management-aspect {
+	border: 1px solid color-mix(in oklab, var(--color-library-manage) 23%, transparent);
+	background: color-mix(in oklab, var(--color-library-manage) 9%, var(--color-base-100));
+	color: color-mix(in oklab, var(--color-library-manage) 60%, var(--color-base-content));
+}
+
+.management-aspect {
+	padding: 0.2rem 0.5rem;
+	border-radius: 9999px;
+	font-size: 0.65rem;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.management-master-toggle,
+.management-trigger {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.7rem;
+	padding: 0.75rem;
+	border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+	border-radius: 0.75rem;
+	background: color-mix(in oklab, var(--color-base-100) 80%, transparent);
+	cursor: pointer;
+}
+
+.management-master-toggle > span,
+.management-trigger > span {
+	display: grid;
+	gap: 0.12rem;
+}
+
+.management-master-toggle small,
+.management-trigger small {
+	color: color-mix(in oklab, var(--color-base-content) 52%, transparent);
+	font-size: 0.7rem;
+	font-weight: 400;
+}
+
+.management-trigger:has(input:checked),
+.management-master-toggle:has(input:checked) {
+	border-color: color-mix(in oklab, var(--color-library-manage) 28%, transparent);
+	background: color-mix(in oklab, var(--color-library-manage) 7%, var(--color-base-100));
+}
+
+.management-trigger:has(input:disabled) {
+	cursor: not-allowed;
+	opacity: 0.52;
+}
+
+.management-editor-section {
+	padding: 1rem;
+}
+
+.management-editor-section {
+	transition:
+		border-color 160ms ease,
+		background-color 160ms ease,
+		box-shadow 160ms ease;
+}
+
+.management-editor-section[data-active='true'] {
+	border-color: color-mix(in oklab, var(--color-library-manage) 24%, transparent);
+	background: color-mix(in oklab, var(--color-library-manage) 3.5%, var(--color-base-100));
+}
+
+.management-editor-section[open] {
+	border-color: color-mix(in oklab, var(--color-library-manage) 38%, transparent);
+	box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-library-manage) 7%, transparent);
+}
+
+.management-editor-icon {
+	display: grid;
+	width: 2rem;
+	height: 2rem;
+	flex: none;
+	place-items: center;
+	border-radius: 0.65rem;
+	background: color-mix(in oklab, var(--color-base-content) 5%, transparent);
+	color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
+}
+
+.management-editor-section[data-active='true'] > summary .management-editor-icon {
+	background: color-mix(in oklab, var(--color-library-manage) 11%, var(--color-base-100));
+	color: color-mix(in oklab, var(--color-library-manage) 72%, var(--color-base-content));
+}
+
+.management-editor-state {
+	display: inline-flex;
+	align-items: center;
+	min-height: 1.55rem;
+	padding-inline: 0.55rem;
+	border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+	border-radius: 9999px;
+	background: color-mix(in oklab, var(--color-base-200) 65%, transparent);
+	color: color-mix(in oklab, var(--color-base-content) 52%, transparent);
+	font-size: 0.65rem;
+	font-weight: 650;
+	line-height: 1.1;
+}
+
+.management-editor-state {
+	min-width: 2.8rem;
+	justify-content: center;
+	letter-spacing: 0.045em;
+	text-transform: uppercase;
+}
+
+.management-editor-state[data-active='true'] {
+	border-color: color-mix(in oklab, var(--color-library-manage) 26%, transparent);
+	background: color-mix(in oklab, var(--color-library-manage) 9%, var(--color-base-100));
+	color: color-mix(in oklab, var(--color-library-manage) 67%, var(--color-base-content));
+}
+
+.management-editor-chevron {
+	color: color-mix(in oklab, var(--color-base-content) 42%, transparent);
+	transition: transform 160ms ease;
+}
+
+details[open] > summary .management-editor-chevron {
+	transform: rotate(90deg);
+}
+
+@media (max-width: 767px) {
+	.management-editor-chevron {
+		grid-column: 3;
+		grid-row: 1;
+	}
+}
+
+.management-profile-editor__header,
+.management-profile-editor__footer {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 1.25rem 1.5rem;
+	border-color: color-mix(in oklab, var(--color-library-manage) 16%, transparent);
+}
+
+.management-profile-editor__header {
+	border-bottom-width: 1px;
+}
+
+.management-profile-editor__footer {
+	align-items: center;
+	border-top-width: 1px;
+	background: color-mix(in oklab, var(--color-base-200) 46%, transparent);
+}
+
+.management-choice-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+	gap: 0.45rem;
+	padding: 0.65rem;
+	border: 1px solid color-mix(in oklab, var(--color-base-content) 9%, transparent);
+	border-radius: 0.75rem;
+	background: color-mix(in oklab, var(--color-base-200) 46%, transparent);
+}
+
+.management-choice-grid > label {
+	display: flex;
+	align-items: center;
+	gap: 0.45rem;
+	min-height: 1.75rem;
+	font-size: 0.75rem;
+	cursor: pointer;
+}
+
+.management-control-room {
+	overflow: hidden;
+	border: 1px solid color-mix(in oklab, var(--color-library-manage) 32%, transparent);
+	border-radius: var(--radius-box);
+	background:
+		linear-gradient(
+			145deg,
+			color-mix(in oklab, var(--color-library-manage) 8%, var(--color-base-100)),
+			var(--color-base-100) 24rem
+		),
+		var(--color-base-100);
+}
+
+.management-history-row {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	border: 1px solid color-mix(in oklab, var(--color-library-manage) 20%, transparent);
+	border-radius: 1rem;
+	background: color-mix(in oklab, var(--color-library-manage) 6%, var(--color-base-100));
+}
+
+.management-history-row {
+	padding: 0.75rem 0.9rem;
+}
+
+.management-history-row:hover {
+	border-color: color-mix(in oklab, var(--color-library-manage) 38%, transparent);
+}
+
+.management-history-row small {
+	display: block;
+	margin-top: 0.1rem;
+	color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
+}
+
+.management-live-dot {
+	width: 0.65rem;
+	height: 0.65rem;
+	margin-top: 0.3rem;
+	border-radius: 9999px;
+	background: var(--color-library-manage);
+	box-shadow: 0 0 0 0.3rem color-mix(in oklab, var(--color-library-manage) 16%, transparent);
+}
+
+.management-selection-card {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.75rem;
+	padding: 0.85rem;
+	border: 1px solid color-mix(in oklab, var(--color-base-content) 11%, transparent);
+	border-radius: 0.9rem;
+	background: color-mix(in oklab, var(--color-base-200) 55%, var(--color-base-100));
+}
+
+.management-selection-card:has(input:checked) {
+	border-color: color-mix(in oklab, var(--color-library-manage) 38%, transparent);
+	background: color-mix(in oklab, var(--color-library-manage) 7%, var(--color-base-100));
+}
+
+.management-selection-card > span {
+	display: grid;
+	gap: 0.15rem;
+}
+
+.management-selection-card small {
+	color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
+}
+
+.management-preview-shell {
+	min-height: calc(100vh - 4rem);
+	background:
+		radial-gradient(
+			circle at 80% 0%,
+			color-mix(in oklab, var(--color-library-manage) 9%, transparent),
+			transparent 28rem
+		),
+		var(--color-base-100);
+}
+
+.management-summary-card {
+	border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+	border-radius: 1rem;
+	background: color-mix(in oklab, var(--color-base-100) 92%, transparent);
+}
+
+.management-summary-card {
+	display: grid;
+	gap: 0.15rem;
+	padding: 0.9rem;
+}
+
+.management-summary-card strong {
+	font-family: var(--font-display);
+	font-size: 1.25rem;
+}
+
+.management-inspector-content {
+	display: grid;
+	gap: 1rem;
+}
+
+.management-inspector-heading {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 0.75rem;
+}
+
+.management-inspector-paths {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.65rem;
+	border-radius: 0.75rem;
+	background: color-mix(in oklab, var(--color-base-200) 62%, transparent);
+}
+
+.management-inspector-paths > div {
+	display: grid;
+	min-width: 0;
+	gap: 0.2rem;
+}
+
+.management-inspector-paths small,
+.management-inspector-section-title {
+	color: color-mix(in oklab, var(--color-base-content) 48%, transparent);
+	font-size: 0.68rem;
+	font-weight: 800;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.management-inspector-paths code {
+	overflow-wrap: anywhere;
+	font-size: 0.68rem;
+}
+
+.management-inspector-section-title {
+	margin-bottom: 0.35rem;
+}
+
+@media (max-width: 639px) {
+	.management-profile-editor__footer {
+		align-items: stretch;
+		flex-direction: column;
+	}
+
+	.management-settings-header .management-status-badge {
+		align-self: flex-start;
+	}
+
+	.management-inspector-heading {
+		align-items: stretch;
+		flex-direction: column;
+	}
+
+	.management-inspector-paths {
+		grid-template-columns: 1fr;
+	}
+
+	.management-inspector-paths > svg {
+		transform: rotate(90deg);
+	}
+}

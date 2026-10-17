@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { TriangleAlert, ArrowRight, CircleCheckBig, FolderCog, ScanSearch } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/client';
 	import {
@@ -622,3 +623,62 @@
 		<button aria-label="Close restore roots dialog">close</button>
 	</form>
 </dialog>
+
+<style>
+	.library-scanning-header {
+		display: flex;
+		align-items: flex-start;
+		gap: 1rem;
+		padding: 1.25rem;
+		border: 1px solid color-mix(in oklab, var(--color-library-index) 22%, transparent);
+		border-radius: var(--radius-box);
+		background:
+			linear-gradient(
+				135deg,
+				color-mix(in oklab, var(--color-library-index) 9%, var(--color-base-100)),
+				color-mix(in oklab, var(--color-library-identify) 5%, var(--color-base-100))
+			),
+			var(--color-base-100);
+	}
+
+	.library-scanning-mark {
+		display: grid;
+		width: 2.75rem;
+		height: 2.75rem;
+		flex: none;
+		place-items: center;
+		border-radius: 0.9rem;
+	}
+
+	.library-scanning-mark {
+		background: color-mix(in oklab, var(--color-library-index) 14%, var(--color-base-100));
+		color: var(--color-library-index);
+	}
+
+	.management-settings-portal {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		padding: 1.25rem;
+		border: 1px solid color-mix(in oklab, var(--color-library-manage) 28%, transparent);
+		border-radius: var(--radius-box);
+		background:
+			linear-gradient(
+				135deg,
+				color-mix(in oklab, var(--color-library-manage) 8%, var(--color-base-100)),
+				var(--color-base-100)
+			),
+			var(--color-base-100);
+	}
+
+	@media (max-width: 639px) {
+		.management-settings-portal {
+			align-items: flex-start;
+			flex-wrap: wrap;
+		}
+
+		.management-settings-portal > :global(.btn) {
+			width: 100%;
+		}
+	}
+</style>

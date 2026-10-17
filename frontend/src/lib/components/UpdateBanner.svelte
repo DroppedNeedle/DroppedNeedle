@@ -68,4 +68,10 @@
 	.banner-enter {
 		animation: slide-down 0.3s ease-out forwards;
 	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.banner-enter {
+			opacity: 1 !important;
+		}
+	}
 </style>

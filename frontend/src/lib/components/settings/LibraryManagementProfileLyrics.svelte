@@ -1,5 +1,6 @@
 <!-- Lyrics and loudness: LRCLIB lyrics and ReplayGain analysis. -->
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { AudioWaveform } from 'lucide-svelte';
 
 	import LibraryManagementEditorAdvanced from './LibraryManagementEditorAdvanced.svelte';

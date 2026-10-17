@@ -5,6 +5,7 @@
 	page moves to the new operation.
 -->
 <script lang="ts">
+	import '$lib/components/library/library-management.css';
 	import { goto } from '$app/navigation';
 	import { CircleCheckBig, ShieldAlert } from 'lucide-svelte';
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { fade, fly } from 'svelte/transition';
+	import { fade, fly } from '$lib/ui/motion';
 	import { Radar, TriangleAlert } from 'lucide-svelte';
 	import WantedRetryingCard from '$lib/components/WantedRetryingCard.svelte';
 	import WantedWatchCard from '$lib/components/WantedWatchCard.svelte';

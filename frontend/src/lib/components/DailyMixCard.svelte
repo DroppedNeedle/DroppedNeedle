@@ -6,7 +6,7 @@
 	import { ChevronDown, Disc3 } from 'lucide-svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { tilt } from '$lib/actions/tilt';
-	import { slide } from 'svelte/transition';
+	import { slide } from '$lib/ui/motion';
 	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {

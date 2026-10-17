@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { SvelteMap } from 'svelte/reactivity';
-	import { fade } from 'svelte/transition';
+	import { fade } from '$lib/ui/motion';
 	import { Clock } from 'lucide-svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
 	import RequestCard from '$lib/components/RequestCard.svelte';

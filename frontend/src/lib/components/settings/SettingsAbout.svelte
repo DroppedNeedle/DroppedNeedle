@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '$lib/components/release-notes.css';
 	import {
 		getVersionQuery,
 		getUpdateCheckQuery,
