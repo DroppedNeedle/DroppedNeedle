@@ -57,7 +57,7 @@ impl IntoResponse for SearchError {
                 (StatusCode::BAD_REQUEST, axum::Json(body)).into_response()
             }
             SearchError::UnknownBucket => {
-                droppedneedle_kernel::error::ApiError::NotFound.into_response()
+                droppedneedle_kernel::error::ApiError::not_found().into_response()
             }
             SearchError::Internal { error_id } => {
                 droppedneedle_kernel::error::ApiError::server_error_response(

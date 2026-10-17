@@ -328,6 +328,46 @@ fn limit_reject(
     response
 }
 
+/// The answer to any 5xx on a compat path, written by the app's request
+/// boundary. It keeps the status and `Retry-After`, adds compat CORS and
+/// drops every other header and the body. Subsonic answers its failed
+/// envelope (code 0, the fixed message) in the format the query asks for,
+/// with no body for HEAD; the open picture address and Jellyfin answer
+/// status only, as every Jellyfin error here does. The query is read for
+/// `f` and `callback` only.
+pub fn server_error_response(
+    path: &str,
+    head_only: bool,
+    raw_query: Option<&str>,
+    status: StatusCode,
+    retry_after: Option<axum::http::HeaderValue>,
+    settings: &Settings,
+) -> Response {
+    let low = path.to_lowercase();
+    let mut response = if low.starts_with("/subsonic") && low != picture::PATH {
+        let (format, callback) = sniff_format(raw_query);
+        let rendered = render_error(
+            crate::subsonic::error::GENERIC,
+            droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE,
+            format,
+            callback.as_deref(),
+            &settings.server_name,
+            &settings.server_version,
+        );
+        rendered_response(&rendered, head_only)
+    } else {
+        Response::new(Body::empty())
+    };
+    *response.status_mut() = status;
+    if let Some(value) = retry_after {
+        response
+            .headers_mut()
+            .insert(axum::http::header::RETRY_AFTER, value);
+    }
+    stamp_cors(&mut response);
+    response
+}
+
 /// Rate-limit layer. Every request first takes the auth-failure lockout
 /// pre-check (else `stream`/`download` would be a brute-force bypass around
 /// backoff). Media and artwork then skip the token buckets. The public-IP

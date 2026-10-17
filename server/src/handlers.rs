@@ -40,22 +40,27 @@ pub async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
 
 /// Unknown routes render the shared 404 envelope, never an empty body.
 pub async fn fallback_404() -> ApiError {
-    ApiError::NotFound
+    ApiError::not_found()
 }
 
 /// Known route, wrong method: the shared 405 envelope, never an empty body.
 pub async fn fallback_405() -> ApiError {
-    ApiError::MethodNotAllowed
+    ApiError::method_not_allowed()
 }
 
 /// Failure hooks for the 5xx-leak tests. Mounted only when the state opts
 /// in; the production binary never does.
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_hooks {
-    use axum::{Extension, Json, http::StatusCode, response::IntoResponse};
+    use axum::{
+        Json,
+        extract::{Path, RawQuery},
+        http::{HeaderValue, StatusCode, header},
+        response::IntoResponse,
+    };
 
     use super::HealthResponse;
-    use droppedneedle_kernel::{error::ApiError, ids::RequestId};
+    use droppedneedle_kernel::error::{ApiError, Unavailable};
 
     /// Marker substrings that must never reach a response body. They look
     /// real on purpose: a filesystem path, an internal host, a secret token.
@@ -65,10 +70,37 @@ pub mod test_hooks {
         "dn-secret-marker-9f31",
     ];
 
-    /// Typed server fault carrying all leak markers in its cause.
-    pub async fn typed_error(Extension(request_id): Extension<RequestId>) -> ApiError {
-        let cause = format!("boom reading {} via {}", LEAK_MARKERS[0], LEAK_MARKERS[1]);
-        ApiError::internal(&cause, &request_id.0)
+    fn leaky_cause() -> String {
+        format!(
+            "boom reading {} via {} ({})",
+            LEAK_MARKERS[0], LEAK_MARKERS[1], LEAK_MARKERS[2]
+        )
+    }
+
+    /// Typed server fault carrying all leak markers in its cause: a 500, or
+    /// with `?status=503` a 503 with `Retry-After: 30`.
+    pub async fn typed_error(RawQuery(query): RawQuery) -> ApiError {
+        if query.as_deref() == Some("status=503") {
+            return ApiError::fault(StatusCode::SERVICE_UNAVAILABLE, leaky_cause())
+                .with_header(header::RETRY_AFTER, HeaderValue::from_static("30"));
+        }
+        ApiError::internal(leaky_cause())
+    }
+
+    /// One closed-list answer, picked by its code, with the leak markers in
+    /// its cause. The GitHub rate limit says 42 seconds.
+    pub async fn unavailable(Path(code): Path<String>) -> ApiError {
+        let variant = match code.as_str() {
+            "SERVER_BUSY" => Unavailable::ServerBusy,
+            "REMOTE_UNAVAILABLE" => Unavailable::MediaServer,
+            "UPSTREAM_REFUSED" => Unavailable::UpstreamRefused,
+            "UPSTREAM_RATE_LIMITED" => Unavailable::UpstreamRateLimited {
+                retry_after: Some(42),
+            },
+            "UPSTREAM_ERROR" => Unavailable::UpstreamError,
+            _ => return ApiError::not_found(),
+        };
+        ApiError::unavailable(variant, leaky_cause())
     }
 
     /// A panicking handler. The middleware must still answer the envelope.
@@ -88,7 +120,8 @@ pub mod test_hooks {
     }
 
     /// A raw 503 with `Retry-After` bypassing `ApiError`. The middleware
-    /// keeps the status and header but still rewrites the body.
+    /// keeps the status and header but still rewrites the body. Also
+    /// mounted under each compat prefix.
     pub async fn raw_503() -> impl IntoResponse {
         let mut response = (
             StatusCode::SERVICE_UNAVAILABLE,

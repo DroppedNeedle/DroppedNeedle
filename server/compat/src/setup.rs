@@ -273,6 +273,26 @@ impl CompatSetup {
         self.router.clone()
     }
 
+    /// The compat answer to a 5xx on `path`, with the Subsonic settings
+    /// read now. See [`server_error_response`](crate::http::server_error_response).
+    pub fn server_error(
+        &self,
+        path: &str,
+        head_only: bool,
+        raw_query: Option<&str>,
+        status: axum::http::StatusCode,
+        retry_after: Option<axum::http::HeaderValue>,
+    ) -> axum::response::Response {
+        crate::http::server_error_response(
+            path,
+            head_only,
+            raw_query,
+            status,
+            retry_after,
+            &self.settings.subsonic(),
+        )
+    }
+
     fn assemble(
         verifier: &SubsonicVerifier,
         store: &SubsonicStore,

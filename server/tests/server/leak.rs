@@ -1,19 +1,14 @@
 //! 5xx-leak brief: every server-fault path answers the fixed generic
-//! envelope naming the request id, and no leak marker (path, host, secret)
-//! reaches the wire.
+//! envelope naming the request id, each closed-list answer its own fixed
+//! sentence, each compat path its protocol's failure shape, and no leak
+//! marker (path, host, secret) reaches the wire.
 
 use crate::common::TestApp;
 
-use axum::{
-    Router,
-    body::Body,
-    http::{Request, StatusCode},
-    response::IntoResponse,
-    routing::get as route_get,
-};
+use axum::http::StatusCode;
 use droppedneedle::handlers::test_hooks::LEAK_MARKERS;
-use droppedneedle_kernel::config::AppConfig;
-use tower::ServiceExt as _;
+use droppedneedle_kernel::{config::AppConfig, error::Unavailable};
+use serde_json::json;
 
 async fn get(uri: &str, request_id: Option<&str>) -> (StatusCode, String, String) {
     let (status, headers, text) = get_full(uri, request_id).await;
@@ -62,6 +57,87 @@ async fn typed_server_fault_stays_generic_and_names_request_id() {
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(header_id, "leak-1");
     assert_fixed_envelope(&text, "leak-1");
+
+    let (status, headers, text) =
+        get_full("/__test__/typed-error?status=503", Some("leak-1b")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(headers.get("retry-after").unwrap(), "30");
+    assert_fixed_envelope(&text, "leak-1b");
+}
+
+#[tokio::test]
+async fn closed_list_answers_pass_the_boundary_with_their_sentence() {
+    let app = TestApp::start_configured("leak-unavailable", AppConfig::with_test_hooks).await;
+    let variants = [
+        Unavailable::ServerBusy,
+        Unavailable::MediaServer,
+        Unavailable::UpstreamRefused,
+        Unavailable::UpstreamRateLimited {
+            retry_after: Some(42),
+        },
+        Unavailable::UpstreamError,
+    ];
+    for variant in variants {
+        // Written out by hand, never read from the kit: a new variant fails
+        // to compile here until it has its row.
+        let (status, code, sentence, retry_after) = match variant {
+            Unavailable::ServerBusy => (
+                503,
+                "SERVER_BUSY",
+                "The server is busy. Try again in a moment.",
+                Some("1"),
+            ),
+            Unavailable::MediaServer => (
+                502,
+                "REMOTE_UNAVAILABLE",
+                "Your media server did not answer or returned an error.",
+                None,
+            ),
+            Unavailable::UpstreamRefused => {
+                (502, "UPSTREAM_REFUSED", "GitHub refused the request", None)
+            }
+            Unavailable::UpstreamRateLimited { .. } => (
+                503,
+                "UPSTREAM_RATE_LIMITED",
+                "GitHub is rate limiting this server, try again later",
+                Some("42"),
+            ),
+            Unavailable::UpstreamError => {
+                (502, "UPSTREAM_ERROR", "GitHub could not be reached", None)
+            }
+        };
+        let request_id = format!("leak-{code}");
+        let (got_status, headers, body) = app
+            .raw(
+                "GET",
+                &format!("/__test__/unavailable/{code}"),
+                &[("x-request-id", request_id.as_str())],
+                None,
+            )
+            .await;
+        assert_eq!(got_status.as_u16(), status, "{code}");
+        assert_eq!(headers.get("x-request-id").unwrap(), request_id.as_str());
+        assert_eq!(
+            headers
+                .get("retry-after")
+                .map(|value| value.to_str().unwrap()),
+            retry_after,
+            "{code}"
+        );
+        let text = String::from_utf8(body).unwrap();
+        let mut details = json!({"error_id": request_id});
+        if code == "UPSTREAM_RATE_LIMITED" {
+            details["retry_after"] = json!(42);
+        }
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&text).unwrap(),
+            json!({"error": {"code": code, "message": sentence, "details": details}}),
+        );
+        for marker in LEAK_MARKERS {
+            assert!(!text.contains(marker), "{code} leaked {marker}");
+        }
+    }
+    app.stop().await;
 }
 
 #[tokio::test]
@@ -90,56 +166,47 @@ async fn raw_503_keeps_status_and_retry_after_with_generic_body() {
 }
 
 #[tokio::test]
-async fn compat_5xx_keeps_protocol_body_status_and_retry_after() {
-    // m4: `/subsonic` + `/jellyfin` 5xx responses are exempt from the
-    // native-envelope rewrite (their shapes are protocol-pinned); native
-    // paths still rewrite. Status and `Retry-After` survive on both.
-    async fn raw_503() -> impl IntoResponse {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            [(axum::http::header::RETRY_AFTER, "7")],
-            "protocol-shaped failure",
-        )
+async fn compat_5xx_answers_the_protocol_shape_with_status_and_retry_after() {
+    let app = TestApp::start_configured("leak-compat", AppConfig::with_test_hooks).await;
+    let cases = [
+        ("/subsonic/rest/__test__/raw-503?f=json", "application/json"),
+        ("/jellyfin/__test__/raw-503", ""),
+    ];
+    for (uri, content_type) in cases {
+        let (status, headers, body) = app.raw("GET", uri, &[], None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+        assert_eq!(headers.get("retry-after").unwrap(), "120", "{uri}");
+        assert_eq!(
+            headers.get("access-control-allow-origin").unwrap(),
+            "*",
+            "{uri}"
+        );
+        assert!(headers.get("x-request-id").is_some(), "{uri}");
+        let text = String::from_utf8(body).unwrap();
+        for marker in LEAK_MARKERS {
+            assert!(!text.contains(marker), "{uri} leaked {marker}");
+        }
+        assert!(!text.contains("INTERNAL_ERROR"), "{uri}: {text}");
+        if content_type.is_empty() {
+            assert!(text.is_empty(), "{uri}: {text}");
+            continue;
+        }
+        assert!(
+            headers
+                .get("content-type")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with(content_type),
+            "{uri}"
+        );
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let reply = &json["subsonic-response"];
+        assert_eq!(reply["status"], "failed", "{text}");
+        assert_eq!(reply["error"]["code"], 0, "{text}");
+        assert_eq!(reply["error"]["message"], "Internal server error", "{text}");
     }
-    let scope = TestApp::start("leak-compat").await;
-    let app = scope.request_scope(
-        Router::new()
-            .route("/subsonic/rest/__test500", route_get(raw_503))
-            .route("/jellyfin/__test500", route_get(raw_503))
-            .route("/native/__test500", route_get(raw_503)),
-    );
-    for uri in ["/subsonic/rest/__test500", "/jellyfin/__test500"] {
-        let response = app
-            .clone()
-            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{uri}");
-        assert_eq!(response.headers().get("retry-after").unwrap(), "7", "{uri}");
-        let body = axum::body::to_bytes(response.into_body(), 1024)
-            .await
-            .unwrap();
-        assert_eq!(body.as_ref(), b"protocol-shaped failure", "{uri}");
-    }
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/native/__test500")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(response.headers().get("retry-after").unwrap(), "7");
-    let request_id = response.headers()["x-request-id"]
-        .to_str()
-        .unwrap()
-        .to_owned();
-    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
-        .await
-        .unwrap();
-    assert_fixed_envelope(core::str::from_utf8(&body).unwrap(), &request_id);
+    app.stop().await;
 }
 
 #[tokio::test]

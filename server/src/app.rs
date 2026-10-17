@@ -214,6 +214,18 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
         )
         .route("/__test__/raw-500", get(handlers::test_hooks::raw_500))
         .route("/__test__/raw-503", get(handlers::test_hooks::raw_503))
+        .route(
+            "/__test__/unavailable/{code}",
+            get(handlers::test_hooks::unavailable),
+        )
+        .route(
+            "/subsonic/rest/__test__/raw-503",
+            get(handlers::test_hooks::raw_503),
+        )
+        .route(
+            "/jellyfin/__test__/raw-503",
+            get(handlers::test_hooks::raw_503),
+        )
     } else {
         app
     };

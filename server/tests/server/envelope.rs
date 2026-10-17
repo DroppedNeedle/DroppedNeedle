@@ -75,6 +75,9 @@ async fn test_hooks_are_absent_without_opt_in() {
         "/__test__/panic",
         "/__test__/raw-500",
         "/__test__/raw-503",
+        "/__test__/unavailable/SERVER_BUSY",
+        "/subsonic/rest/__test__/raw-503",
+        "/jellyfin/__test__/raw-503",
     ] {
         let (status, json, _) = request(&app, "GET", uri).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");

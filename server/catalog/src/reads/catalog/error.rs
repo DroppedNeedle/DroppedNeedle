@@ -80,7 +80,7 @@ impl IntoResponse for CatalogHttpError {
                 envelope_response(StatusCode::BAD_REQUEST, INVALID_INPUT, message, None)
             }
             CatalogError::NotFound => {
-                droppedneedle_kernel::error::ApiError::NotFound.into_response()
+                droppedneedle_kernel::error::ApiError::not_found().into_response()
             }
             CatalogError::Missing(message) => envelope_response(
                 StatusCode::NOT_FOUND,

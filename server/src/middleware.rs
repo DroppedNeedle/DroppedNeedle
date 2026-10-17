@@ -1,41 +1,41 @@
 //! Request-scope middleware: ids, tracing span, and the 5xx boundary.
 //!
 //! The middleware resolves the request id (echoing a caller-supplied
-//! `x-request-id` or minting one), serves the request inside a tracing span
-//! carrying that id, method, and path only (never the query: compat puts
-//! app-password secrets in the query string, so queries must never reach
-//! the logs; the wiring tests fail on any full-target logging), and
-//! guarantees the leak contract on the way out: any
-//! native 5xx response keeps its status and `Retry-After` header but gets
-//! the fixed envelope body naming the request id, and panics become a 500
-//! of that same envelope. Compat (`/subsonic`, `/jellyfin`) 5xx responses
-//! are exempt from the body rewrite (their shapes are fixed by the
-//! protocols), though panics there still become the fixed 500. Handler code can
-//! therefore return raw 5xx bodies only by accident, never to the wire.
+//! `x-request-id` or minting one) and serves the request inside a tracing
+//! span carrying that id, method, and path only (never the query: compat
+//! puts app-password secrets in the query string, so queries must never
+//! reach the logs; the wiring tests fail on any full-target logging).
+//!
+//! It is also the one place a 5xx body is written and logged. On the way
+//! out, every 5xx keeps its status and `Retry-After` and nothing else:
+//! - A native answer from the closed list
+//!   ([`Unavailable`](droppedneedle_kernel::error::Unavailable)) gets that
+//!   answer's code and fixed sentence, with the request id.
+//! - Any other native 5xx gets the fixed internal error naming the request
+//!   id, and a panic becomes that same 500.
+//! - A compat (`/subsonic`, `/jellyfin`) 5xx or panic gets its protocol's
+//!   failure shape, from `CompatSetup::server_error`.
+//!
+//! The cause an [`ApiError`](droppedneedle_kernel::error::ApiError) carried
+//! is logged here once, with the request id.
 
 use axum::{
+    Json,
     extract::{Request, State},
+    http::{HeaderValue, Method, StatusCode, header},
     middleware::Next,
-    response::Response,
+    response::{IntoResponse as _, Response},
 };
+use droppedneedle_compat::shared::path_case::is_compat_path;
 use futures_util::FutureExt as _;
 use std::panic::AssertUnwindSafe;
 use tracing::Instrument as _;
 
 use crate::state::AppState;
 use droppedneedle_kernel::{
-    error::ApiError,
+    error::{ApiError, Fault},
     ids::{REQUEST_ID_HEADER, RequestId},
 };
-
-/// Whether a path belongs to the compat shims (case-insensitive).
-/// Compat 5xx responses keep their protocol-shaped bodies: rewriting
-/// them into the native [`ApiError`](droppedneedle_kernel::error::ApiError) envelope
-/// would break Subsonic/Jellyfin clients parsing their own shape.
-fn is_compat_path(path: &str) -> bool {
-    let folded = path.to_lowercase();
-    folded.starts_with("/subsonic") || folded.starts_with("/jellyfin")
-}
 
 /// Enforce the request scope described in the module docs.
 pub async fn request_scope(
@@ -43,49 +43,98 @@ pub async fn request_scope(
     mut request: Request,
     next: Next,
 ) -> Response {
-    let compat_path = is_compat_path(request.uri().path());
     let request_id = incoming_request_id(&request).unwrap_or_else(|| state.ids.new_id());
     request
         .extensions_mut()
         .insert(RequestId(request_id.clone()));
+    let path = request.uri().path().to_owned();
+    let head = request.method() == Method::HEAD;
+    // Read by the compat failure shape for `f` and `callback` only.
+    let query = request.uri().query().map(str::to_owned);
 
     let span = tracing::info_span!(
         "request",
         request_id = %request_id,
         method = %request.method(),
-        path = %request.uri().path(),
+        path = %path,
     );
 
     let outcome = AssertUnwindSafe(next.run(request).instrument(span))
         .catch_unwind()
         .await;
     let mut response = match outcome {
-        // Compat paths keep status, headers (including `Retry-After`),
-        // and body untouched: their 5xx shapes are protocol-pinned.
-        Ok(response) if response.status().is_server_error() && !compat_path => {
+        Ok(response) if !response.status().is_server_error() => response,
+        Ok(mut response) => {
             let status = response.status();
-            let retry_after = response
-                .headers()
-                .get(axum::http::header::RETRY_AFTER)
-                .cloned();
-            tracing::error!(%request_id, %status, "replaced 5xx body with fixed envelope");
-            let mut rewritten = ApiError::server_error_response(status, &request_id);
-            if let Some(value) = retry_after {
-                rewritten
-                    .headers_mut()
-                    .insert(axum::http::header::RETRY_AFTER, value);
+            let retry_after = response.headers().get(header::RETRY_AFTER).cloned();
+            let fault = response.extensions_mut().remove::<Fault>();
+            if is_compat_path(&path) {
+                log_fault(&request_id, status, fault.as_ref());
+                state
+                    .compat
+                    .server_error(&path, head, query.as_deref(), status, retry_after)
+            } else {
+                native_server_error(&request_id, status, retry_after, fault)
             }
-            rewritten
         }
-        Ok(response) => response,
         Err(_) => {
             tracing::error!(%request_id, "request handler panicked");
-            ApiError::internal_response(&request_id)
+            if is_compat_path(&path) {
+                state.compat.server_error(
+                    &path,
+                    head,
+                    query.as_deref(),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    None,
+                )
+            } else {
+                ApiError::internal_response(&request_id)
+            }
         }
     };
 
     set_request_id_header(&mut response, &request_id);
     response
+}
+
+/// The native 5xx body: the closed-list answer the fault names, or the
+/// fixed internal error. Status and `Retry-After` are kept.
+fn native_server_error(
+    request_id: &str,
+    status: StatusCode,
+    retry_after: Option<HeaderValue>,
+    fault: Option<Fault>,
+) -> Response {
+    log_fault(request_id, status, fault.as_ref());
+    let mut response = match fault.as_ref().and_then(Fault::unavailable) {
+        Some(variant) => {
+            let answer = variant.answer();
+            (answer.status, Json(answer.envelope(Some(request_id)))).into_response()
+        }
+        None => ApiError::server_error_response(status, request_id),
+    };
+    if let Some(value) = retry_after {
+        response.headers_mut().insert(header::RETRY_AFTER, value);
+    }
+    response
+}
+
+/// Log a 5xx once with its request id: a closed-list answer at warn,
+/// anything else at error.
+fn log_fault(request_id: &str, status: StatusCode, fault: Option<&Fault>) {
+    let cause = fault.and_then(Fault::cause).unwrap_or("none given");
+    match fault.and_then(Fault::unavailable) {
+        Some(variant) => {
+            let code = variant.answer().code;
+            tracing::warn!(%request_id, %status, code, cause, "request unavailable");
+        }
+        None if fault.is_some() => {
+            tracing::error!(%request_id, %status, cause, "request failed");
+        }
+        None => {
+            tracing::error!(%request_id, %status, "5xx answered with the fixed body");
+        }
+    }
 }
 
 /// Longest caller-supplied request id kept; longer ones are replaced.
@@ -120,7 +169,7 @@ fn set_request_id_header(response: &mut Response, request_id: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_compat_path, is_safe_request_id};
+    use super::is_safe_request_id;
 
     #[test]
     fn request_ids_are_short_and_plain() {
@@ -129,14 +178,5 @@ mod tests {
         assert!(!is_safe_request_id(&"a".repeat(129)));
         assert!(!is_safe_request_id("id with spaces"));
         assert!(!is_safe_request_id("line\nbreak"));
-    }
-
-    #[test]
-    fn compat_paths_skip_the_5xx_rewrite() {
-        assert!(is_compat_path("/subsonic/rest/ping"));
-        assert!(is_compat_path("/jellyfin/System/Info/Public"));
-        assert!(is_compat_path("/SUBSONIC/rest/ping"));
-        assert!(!is_compat_path("/api/v3/stream/local/x"));
-        assert!(!is_compat_path("/health"));
     }
 }
