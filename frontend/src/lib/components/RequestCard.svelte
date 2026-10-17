@@ -27,12 +27,16 @@
 		Pause,
 		Music,
 		Radar,
-		Upload
+		Upload,
+		Eye
 	} from 'lucide-svelte';
 
 	interface Props {
 		item: RequestItem;
 		mode: 'active' | 'history';
+		// The linked download's own state on an active card (searching, awaiting
+		// review, downloading...), which the request row alone cannot tell.
+		liveStatus?: string;
 		// still being worked on despite the terminal status: 'retrying' = auto-retry
 		// ladder, 'watching' = wanted watcher. Renders a chip linking to the Wanted tab.
 		watchState?: 'retrying' | 'watching';
@@ -50,6 +54,7 @@
 	let {
 		item,
 		mode,
+		liveStatus,
 		watchState,
 		selectable = false,
 		selected = false,
@@ -115,12 +120,13 @@
 	const waitingForSource = $derived(
 		mode === 'active' && item.waiting_reason === 'no_download_source'
 	);
+	const status = $derived(mode === 'active' && liveStatus ? liveStatus : item.status);
 
 	const statusConfig = $derived.by((): StatusConfig => {
 		if (waitingForSource) {
 			return { badgeClass: 'badge-warning', label: 'Waiting', icon: Clock };
 		}
-		switch (item.status) {
+		switch (status) {
 			case 'pending':
 				return {
 					badgeClass: 'badge-warning',
@@ -159,10 +165,12 @@
 				return { badgeClass: 'badge-ghost', label: 'Cancelled', icon: Ban };
 			case 'awaiting_approval':
 				return { badgeClass: 'badge-warning', label: 'Awaiting Approval', icon: Clock };
+			case 'awaiting_review':
+				return { badgeClass: 'badge-warning', label: 'Awaiting Review', icon: Eye };
 			case 'rejected':
 				return { badgeClass: 'badge-error', label: 'Rejected', icon: Ban };
 			default:
-				return { badgeClass: 'badge-ghost', label: item.status, icon: Music };
+				return { badgeClass: 'badge-ghost', label: status, icon: Music };
 		}
 	});
 
@@ -232,7 +240,7 @@
 	const hasProgress = $derived(
 		isActive &&
 			!waitingForSource &&
-			(item.status === 'downloading' || item.status === 'importing' || item.status === 'paused')
+			(status === 'downloading' || status === 'importing' || status === 'paused')
 	);
 	const hasStatusMessages = $derived(
 		isActive && item.status_messages && item.status_messages.length > 0
@@ -272,7 +280,7 @@
 				rounded="lg"
 				className="w-full h-full"
 			/>
-			{#if isActive && item.status === 'pending'}
+			{#if isActive && status === 'pending' && !waitingForSource}
 				<div class="absolute inset-0 bg-base-300/60 flex items-center justify-center">
 					<Loader class="h-5 w-5 text-warning animate-spin motion-keep" />
 				</div>
@@ -363,7 +371,7 @@
 						<div class="progress-track flex-1">
 							<div
 								class="progress-fill"
-								class:progress-fill-paused={item.status === 'paused'}
+								class:progress-fill-paused={status === 'paused'}
 								style="width: {item.progress ?? 0}%"
 							></div>
 						</div>

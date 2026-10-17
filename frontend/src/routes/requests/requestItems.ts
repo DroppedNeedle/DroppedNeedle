@@ -1,5 +1,7 @@
 import type { RequestKind } from '$lib/constants';
+import { derivedDownloadStatus } from '$lib/queries/downloads/downloadStatus';
 import type { RequestItem } from '$lib/queries/requests/types';
+import type { DownloadTask } from '$lib/types';
 
 export type RequestsTab =
 	'active' | 'history' | 'wanted' | 'approvals' | 'auto-download' | 'upgrades';
@@ -14,6 +16,31 @@ export function requestKey(mbid: string, requestKind: RequestKind): string {
 
 export function itemRequestKey(item: Pick<RequestItem, 'musicbrainz_id' | 'request_kind'>): string {
 	return requestKey(item.musicbrainz_id, itemKind(item));
+}
+
+// The request row reads any download still in the queue as "downloading",
+// searching and awaiting review included, so an active card takes its state
+// from the linked download when the queue lists it.
+export function liveRequestStatus(
+	item: Pick<RequestItem, 'status' | 'task_id'>,
+	tasks: ReadonlyMap<string, DownloadTask>
+): string {
+	const task = item.task_id ? tasks.get(item.task_id) : undefined;
+	if (!task) return item.status;
+	switch (derivedDownloadStatus(task)) {
+		case 'searching':
+			return 'pending';
+		case 'awaiting_review':
+			return 'awaiting_review';
+		case 'queued':
+			return 'queued';
+		case 'downloading':
+			return 'downloading';
+		case 'processing':
+			return 'importing';
+		default:
+			return item.status;
+	}
 }
 
 export function timeAgo(epochSeconds: number): string {

@@ -175,7 +175,7 @@ Which edition a request fetches, how single tracks are found, following artists,
 
 ## Download sources
 
-A request made while no download source is turned on is accepted and held. The Requests page shows it as "Waiting: no download source configured", and it starts by itself once an admin turns a source on.
+Request buttons show whether or not a download source is turned on. A request made while none is on is accepted and held. The Requests page shows it as "Waiting: no download source configured", and it starts by itself once an admin turns a source on. From then on its card shows what the download is doing: searching, awaiting review or downloading.
 
 ### slskd
 

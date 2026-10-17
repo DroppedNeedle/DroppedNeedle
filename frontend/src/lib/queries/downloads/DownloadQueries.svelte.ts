@@ -55,6 +55,16 @@ export const getDownloadsQueryOptions = () =>
 
 export const getDownloadsQuery = () => createQuery(() => getDownloadsQueryOptions());
 
+// The requests page reads the same list for its rows' live download state,
+// polling with its active-request list.
+export const getRequestDownloadsQuery = (getEnabled: Getter<boolean>) =>
+	createQuery(() => ({
+		...getDownloadsQueryOptions(),
+		enabled: getEnabled() && !!authStore.user?.id,
+		refetchInterval: 5_000,
+		refetchIntervalInBackground: false
+	}));
+
 // album-scoped: just this release group's tasks (album + per-track). Cheap (indexed
 // on release_group_mbid), and only polls while a task is in flight - it stops itself
 // when everything reaches a terminal state. Used by the album page for live progress.
