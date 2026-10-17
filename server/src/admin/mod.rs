@@ -37,10 +37,10 @@ use droppedneedle_auth::{
     users::{UsersDeps, models::UserRecord, roles::Role},
 };
 use droppedneedle_kernel::db::{BackupService, CheckpointService, DurableWorkWakeups, WriteLane};
+use droppedneedle_kernel::error::ApiError;
 use droppedneedle_providers::{InMemoryProviderCache, Providers};
 
 pub use error::AdminError;
-pub use handlers::AdminHttpError;
 pub use models::{
     BackupListResponse, BackupRunResponse, BackupView, CacheClearBody, CacheClearResponse,
     CacheStatsResponse, CacheSyncCancelResponse, CheckpointView, JobView, PrecacheRunResponse,
@@ -221,9 +221,9 @@ impl AdminSetup {
 async fn signed_in_user(
     admin: &AdminSetup,
     session_user: Option<String>,
-) -> Result<UserRecord, AdminHttpError> {
+) -> Result<UserRecord, ApiError> {
     let missing = || {
-        AdminHttpError(AdminError::Unauthorized {
+        ApiError::from(AdminError::Unauthorized {
             message: "Authentication required".to_owned(),
         })
     };
@@ -231,7 +231,7 @@ async fn signed_in_user(
     match admin.users.users.get_by_id(&user_id).await {
         Ok(Some(user)) => Ok(user),
         Ok(None) => Err(missing()),
-        Err(error) => Err(AdminHttpError(AdminError::internal(&format_args!(
+        Err(error) => Err(ApiError::from(AdminError::internal(&format_args!(
             "session user lookup failed: {error}"
         )))),
     }
@@ -265,7 +265,7 @@ async fn require_curator(
         Err(error) => return error.into_response(),
     };
     if !user.role.is_curator() {
-        return AdminHttpError(AdminError::Forbidden {
+        return ApiError::from(AdminError::Forbidden {
             message: "Curator role required".to_owned(),
         })
         .into_response();
@@ -281,7 +281,7 @@ async fn require_admin(State(admin): State<AdminSetup>, request: Request, next: 
         Err(error) => return error.into_response(),
     };
     if user.role != Role::Admin {
-        return AdminHttpError(AdminError::Forbidden {
+        return ApiError::from(AdminError::Forbidden {
             message: "Admin role required".to_owned(),
         })
         .into_response();

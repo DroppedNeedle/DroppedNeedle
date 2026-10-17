@@ -1,11 +1,10 @@
 //! The admin domain error.
 //!
-//! Admin services return [`AdminError`]; the handlers give it a status and
-//! the shared envelope. Server faults carry an error id whose cause went to
+//! Admin services return [`AdminError`]; its one mapping onto `ApiError`
+//! in the handlers gives it a status. Server faults carry their cause for
 //! the log only.
 
-/// Admin failures. The admin handlers map them to HTTP
-/// ([`super::handlers::AdminHttpError`]).
+/// Admin failures.
 #[derive(Debug)]
 pub enum AdminError {
     /// No usable credential.
@@ -30,23 +29,23 @@ pub enum AdminError {
         /// What is already going.
         message: String,
     },
-    /// A backend this route needs is unwired.
+    /// A backend this route needs is unwired (503).
     Unavailable {
-        /// Which backend is missing.
+        /// Which backend is missing, for the log only.
         message: String,
     },
-    /// Server fault. The id matches the log line.
+    /// Server fault.
     Internal {
-        /// Log correlation id.
-        error_id: String,
+        /// What went wrong, for the log only.
+        cause: String,
     },
 }
 
 impl AdminError {
-    /// Build a server fault, logging the real cause with a fresh id.
+    /// A server fault with its cause for the log.
     pub fn internal(cause: &dyn std::fmt::Display) -> Self {
-        let error_id = uuid::Uuid::new_v4().to_string();
-        tracing::error!(error_id, %cause, "admin request failed");
-        Self::Internal { error_id }
+        Self::Internal {
+            cause: cause.to_string(),
+        }
     }
 }
