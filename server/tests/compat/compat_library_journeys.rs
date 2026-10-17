@@ -1119,6 +1119,22 @@ async fn covered_album(tag: &str) -> (CompatApp, [String; 3]) {
         .save(album.join("cover.png"))
         .expect("cover writes");
     rig.app.add_library_folder("second", &second).await;
+    // The scan run ends before the art sweep that follows it records the
+    // cover, and until then every picture is the placeholder.
+    rig.app
+        .until("the covered album's art is recorded", || async {
+            rig.app
+                .db()
+                .query_row(
+                    "SELECT 1 FROM local_album_artwork w JOIN local_tracks t \
+                     ON t.local_album_id = w.local_album_id \
+                     WHERE t.relative_path = 'Covered/Sleeve/01 Sleeve.flac'",
+                    [],
+                    |_| Ok(()),
+                )
+                .ok()
+        })
+        .await;
     let auth = rig.subsonic_auth("pictures");
     let (_, all) = rig
         .app
