@@ -1,4 +1,7 @@
 <script lang="ts">
+	import Button from '$lib/ui/Button.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
+
 	interface Props {
 		playlistName: string;
 		deleting: boolean;
@@ -7,32 +10,19 @@
 
 	let { playlistName, deleting, onconfirm }: Props = $props();
 
-	let dialogEl = $state<HTMLDialogElement | null>(null);
+	let open = $state(false);
 
 	export function showModal() {
-		dialogEl?.showModal();
+		open = true;
 	}
 </script>
 
-<dialog bind:this={dialogEl} class="modal">
-	<div class="modal-box">
-		<h3 class="text-lg font-bold">Delete "{playlistName}"?</h3>
-		<p class="py-4 text-base-content/70">
-			This will permanently remove the playlist and all its tracks. This action cannot be undone.
-		</p>
-		<div class="modal-action">
-			<form method="dialog">
-				<button class="btn btn-ghost">Cancel</button>
-			</form>
-			<button class="btn btn-error" onclick={onconfirm} disabled={deleting}>
-				{#if deleting}
-					<span class="loading loading-spinner loading-xs"></span>
-				{/if}
-				Delete
-			</button>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button>close</button>
-	</form>
-</dialog>
+<Modal bind:open title={`Delete "${playlistName}"?`} dismissible={!deleting}>
+	<p class="text-base-content/70">
+		This will permanently remove the playlist and all its tracks. This action cannot be undone.
+	</p>
+	{#snippet actions()}
+		<Button variant="ghost" onclick={() => (open = false)} disabled={deleting}>Cancel</Button>
+		<Button variant="danger" loading={deleting} onclick={onconfirm}>Delete</Button>
+	{/snippet}
+</Modal>

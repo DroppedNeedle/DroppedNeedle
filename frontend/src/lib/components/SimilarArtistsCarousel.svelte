@@ -6,6 +6,8 @@
 	import ArtistImage from './ArtistImage.svelte';
 	import { artistHref } from '$lib/utils/entityRoutes';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		artists: SimilarArtist[];
@@ -22,15 +24,21 @@
 	{#if loading}
 		<CarouselSkeleton count={8} cardWidth="w-32" rounded="full" showSubtitle={false} />
 	{:else if !configured}
-		<div class="bg-base-200 rounded-lg p-6 text-center">
+		<Card class="text-center">
 			<p class="text-base-content/70">Connect a music service to see similar artists</p>
-			<a href={withBasePath('/profile#scrobbling')} class="btn btn-primary btn-sm mt-3">Configure</a
+			<Button
+				variant="primary"
+				size="sm"
+				href={withBasePath('/profile#scrobbling')}
+				class="mt-1 self-center"
 			>
-		</div>
+				Configure
+			</Button>
+		</Card>
 	{:else if artists.length === 0}
-		<div class="bg-base-200 rounded-lg p-6 text-center">
+		<Card class="text-center">
 			<p class="text-base-content/70">No similar artists found</p>
-		</div>
+		</Card>
 	{:else}
 		<HorizontalCarousel>
 			{#each artists as artist (artist.musicbrainz_id)}

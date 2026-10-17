@@ -2,6 +2,8 @@
 	import { ExternalLink, Puzzle } from 'lucide-svelte';
 	import { outsideLink } from '$lib/components/outsideLink';
 	import { getAlbumPluginDetailsQuery } from '$lib/queries/albums/GetItQueries.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		releaseGroupMbid: string;
@@ -35,7 +37,7 @@
 </script>
 
 {#if hasContent}
-	<section class="bg-base-200/50 rounded-box p-4 sm:p-6 space-y-3" aria-label="From plugins">
+	<Card as="section" aria-label="From plugins">
 		<div class="flex items-center gap-2">
 			<span class="badge badge-sm badge-ghost gap-1">
 				<Puzzle class="h-3 w-3" />
@@ -56,18 +58,20 @@
 			<ul class="flex flex-wrap gap-2">
 				{#each links as link (link)}
 					<li>
-						<a
+						<Button
+							variant="ghost"
+							size="xs"
+							icon={ExternalLink}
 							href={link}
 							target="_blank"
 							rel="noopener noreferrer"
-							class="btn btn-ghost btn-xs gap-1 min-h-11 sm:min-h-0"
+							class="min-h-11 sm:min-h-0"
 						>
-							<ExternalLink class="h-3 w-3" />
 							{hostOf(link)}
-						</a>
+						</Button>
 					</li>
 				{/each}
 			</ul>
 		{/if}
-	</section>
+	</Card>
 {/if}

@@ -17,6 +17,8 @@
 	import PlaylistCard from '$lib/components/PlaylistCard.svelte';
 	import RedactedPlaylistCard from '$lib/components/RedactedPlaylistCard.svelte';
 	import PlaylistCardSkeleton from '$lib/components/PlaylistCardSkeleton.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Input from '$lib/ui/Input.svelte';
 
 	const connectionsQuery = getConnectionsQuery();
 	const spotifyLinked = $derived(
@@ -90,56 +92,47 @@
 		<h1 class="text-2xl font-bold sm:text-3xl">Playlists</h1>
 		<div class="flex items-center gap-2">
 			{#if spotifyLinked}
-				<a
-					href={withBasePath('/playlists/spotify')}
-					class="btn btn-sm gap-1.5 bg-green-600 text-white hover:bg-green-500"
-				>
-					<SpotifyIcon class="h-3.5 w-3.5" />
+				<Button size="sm" href={withBasePath('/playlists/spotify')}>
+					<SpotifyIcon class="h-3.5 w-3.5 text-spotify" />
 					Import from Spotify
-				</a>
+				</Button>
 			{/if}
-			<button
-				class="btn btn-accent btn-sm"
-				onclick={() => {
-					showNewInput = true;
-				}}
-			>
-				<Plus class="h-4 w-4" />
+			<Button variant="accent" size="sm" icon={Plus} onclick={() => (showNewInput = true)}>
 				New Playlist
-			</button>
+			</Button>
 		</div>
 	</div>
 
 	{#if showNewInput}
 		<div class="flex items-center gap-2">
-			<input
-				type="text"
-				class="input input-sm flex-1"
+			<Input
+				size="sm"
+				label="Playlist name"
 				placeholder="Playlist name..."
-				bind:this={newNameInputEl}
+				class="flex-1"
+				bind:ref={newNameInputEl}
 				bind:value={newName}
 				onkeydown={handleCreateKeydown}
 			/>
-			<button
-				class="btn btn-accent btn-sm"
+			<Button
+				variant="accent"
+				size="sm"
+				loading={createMutation.isPending}
+				disabled={!newName.trim()}
 				onclick={() => void handleCreate()}
-				disabled={!newName.trim() || createMutation.isPending}
 			>
-				{#if createMutation.isPending}
-					<span class="loading loading-spinner loading-xs"></span>
-				{:else}
-					Create
-				{/if}
-			</button>
-			<button
-				class="btn btn-ghost btn-sm"
+				Create
+			</Button>
+			<Button
+				variant="ghost"
+				size="sm"
 				onclick={() => {
 					showNewInput = false;
 					newName = '';
 				}}
 			>
 				Cancel
-			</button>
+			</Button>
 		</div>
 	{/if}
 
@@ -152,21 +145,15 @@
 	{:else if errorMessage}
 		<div role="alert" class="alert alert-error">
 			<span>{errorMessage}</span>
-			<button class="btn btn-sm btn-ghost" onclick={() => void query.refetch()}>Retry</button>
+			<Button variant="ghost" size="sm" onclick={() => void query.refetch()}>Retry</Button>
 		</div>
 	{:else if items.length === 0}
 		<div class="flex flex-col items-center justify-center py-20 gap-4">
 			<ListMusic class="h-16 w-16 text-base-content/20" />
 			<h2 class="text-lg font-semibold text-base-content/60">No playlists yet</h2>
-			<button
-				class="btn btn-accent btn-sm"
-				onclick={() => {
-					showNewInput = true;
-				}}
-			>
-				<Plus class="h-4 w-4" />
+			<Button variant="accent" size="sm" icon={Plus} onclick={() => (showNewInput = true)}>
 				Create your first playlist
-			</button>
+			</Button>
 		</div>
 	{:else}
 		{#if myPlaylists.length > 0}

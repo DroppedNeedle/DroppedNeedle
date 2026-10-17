@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Play, Shuffle, ListPlus, CirclePlus, LoaderCircle } from 'lucide-svelte';
+	import { Play, Shuffle, ListPlus, CirclePlus } from 'lucide-svelte';
 	import { PersistedState } from 'runed';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
@@ -15,6 +15,8 @@
 	import { createArtistTrackLoader } from '$lib/utils/artistTrackLoader.svelte';
 	import type { ReleaseGroup } from '$lib/types';
 	import type { SourceType } from '$lib/player/types';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	type PlaybackSourceType = Exclude<SourceType, 'youtube'>;
 
@@ -124,11 +126,7 @@
 {/snippet}
 
 {#if showBar}
-	<div
-		class="bg-base-200/30 border border-base-content/5 rounded-xl shadow-sm p-3 sm:p-4"
-		role="toolbar"
-		aria-label="Artist playback controls"
-	>
+	<Card variant="bordered" padding="sm" role="toolbar" aria-label="Artist playback controls">
 		<div class="flex flex-col sm:flex-row sm:items-center gap-3">
 			<div class="flex items-center gap-2.5 min-w-0">
 				<span class="text-xs font-medium text-base-content/50 whitespace-nowrap select-none"
@@ -138,25 +136,25 @@
 					<div class="join">
 						{#each availableSources as source (source)}
 							{@const isActive = source === selectedSource}
-							<button
-								type="button"
-								class="join-item btn btn-xs h-8 gap-1.5 border-base-content/10 transition-all duration-150"
-								class:btn-active={isActive}
+							<Button
+								size="sm"
+								class="join-item"
+								active={isActive}
 								style={isActive
 									? `background-color: color-mix(in srgb, ${getSourceColor(source)} 15%, transparent); color: ${getSourceColor(source)}; border-color: color-mix(in srgb, ${getSourceColor(source)} 25%, transparent);`
-									: ''}
+									: undefined}
 								aria-pressed={isActive}
 								onclick={() => setSource(source)}
 							>
 								{@render sourceIcon(source, 'h-3.5 w-3.5')}
 								<span class="hidden md:inline text-xs font-medium">{getSourceLabel(source)}</span>
-							</button>
+							</Button>
 						{/each}
 					</div>
 				{:else if availableSources.length === 1}
 					<span
 						class="badge badge-sm gap-1.5 border-base-content/10"
-						style="color: {getSourceColor(availableSources[0])};"
+						style:color={getSourceColor(availableSources[0])}
 					>
 						{@render sourceIcon(availableSources[0], 'h-3 w-3')}
 						<span class="text-xs font-medium">{getSourceLabel(availableSources[0])}</span>
@@ -165,29 +163,28 @@
 			</div>
 
 			<div class="flex items-center gap-2 sm:ml-auto">
-				<button
-					class="btn btn-sm btn-accent gap-1.5 shadow-sm"
-					disabled={loader.loading}
+				<Button
+					variant="accent"
+					size="sm"
+					icon={Play}
+					class="[&_svg]:fill-current"
+					loading={loader.loading}
 					aria-label="Play all tracks from {artistName}"
 					onclick={() => loader.playAll()}
 				>
-					{#if loader.loading}
-						<LoaderCircle class="h-4 w-4 animate-spin" />
-					{:else}
-						<Play class="h-4 w-4 fill-current" />
-					{/if}
 					Play All
-				</button>
+				</Button>
 
-				<button
-					class="btn btn-sm btn-ghost gap-1.5"
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={Shuffle}
 					disabled={loader.loading}
 					aria-label="Shuffle all tracks from {artistName}"
 					onclick={() => loader.shuffleAll()}
 				>
-					<Shuffle class="h-4 w-4" />
 					Shuffle
-				</button>
+				</Button>
 
 				<ContextMenu items={menuItems} position="end" size="sm" />
 			</div>
@@ -198,5 +195,5 @@
 				{loader.progressText}
 			</p>
 		{/if}
-	</div>
+	</Card>
 {/if}

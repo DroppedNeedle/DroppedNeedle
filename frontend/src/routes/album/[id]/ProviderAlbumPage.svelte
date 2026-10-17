@@ -1,8 +1,11 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { integrationStore } from '$lib/stores/integration';
 	import BackButton from '$lib/components/BackButton.svelte';
-	import Toast from '$lib/components/Toast.svelte';
+	import { toastStore } from '$lib/stores/toast';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import LastFmAlbumEnrichmentComponent from '$lib/components/LastFmAlbumEnrichment.svelte';
 	import DeleteAlbumModal from '$lib/components/DeleteAlbumModal.svelte';
 	import RemoveTrackFileDialog from './RemoveTrackFileDialog.svelte';
@@ -71,6 +74,18 @@
 		return primaryError.status === 0 || primaryError.status === 429 || primaryError.status >= 500;
 	});
 
+	// The page state raises its request and removal toasts as a flag; the
+	// shell's Toaster shows them.
+	$effect(() => {
+		if (!state.showToast) return;
+		const message = state.toastMessage;
+		const type = state.toastType === 'warning' ? 'info' : state.toastType;
+		untrack(() => {
+			state.showToast = false;
+			toastStore.show({ message, type });
+		});
+	});
+
 	$effect(() => {
 		const canonicalId = state.album?.musicbrainz_id;
 		if (canonicalId && canonicalId !== data.albumId) {
@@ -104,9 +119,7 @@
 		<div class="flex items-center justify-center min-h-[50vh]">
 			<div class="alert alert-error">
 				<span>MusicBrainz is temporarily unavailable.</span>
-				<button class="btn btn-sm btn-ghost" onclick={() => void state.refreshAll()}>
-					Retry
-				</button>
+				<Button variant="ghost" size="sm" onclick={() => void state.refreshAll()}>Retry</Button>
 			</div>
 		</div>
 	{:else if state.error || primaryError}
@@ -174,11 +187,8 @@
 			{/each}
 
 			{#if localCopies.length > 1}
-				<section
-					class="rounded-box border border-base-content/10 bg-base-200/35 p-4 sm:p-5"
-					aria-labelledby="owned-copies-title"
-				>
-					<h2 id="owned-copies-title" class="text-lg font-bold">Copies in your library</h2>
+				<Card variant="bordered" padding="md" as="section" aria-label="Copies in your library">
+					<h2 class="text-lg font-bold">Copies in your library</h2>
 					<p class="mt-1 max-w-2xl text-sm text-base-content/55">
 						This MusicBrainz release matches more than one local album. Choose the copy you want to
 						open.
@@ -188,7 +198,7 @@
 							<LibraryAlbumCard album={localCopy} />
 						{/each}
 					</div>
-				</section>
+				</Card>
 			{/if}
 
 			<WhereToBuy releaseGroupMbid={album.musicbrainz_id} enabled={!state.loadingTracks} />
@@ -310,7 +320,7 @@
 					<h2 class="text-xl sm:text-2xl font-bold">Tracks</h2>
 					<div class="alert alert-warning">
 						<span>Couldn't load the track list.</span>
-						<button class="btn btn-sm btn-ghost" onclick={state.retryTracks}> Retry </button>
+						<Button variant="ghost" size="sm" onclick={state.retryTracks}>Retry</Button>
 					</div>
 				</div>
 			{:else}
@@ -318,7 +328,7 @@
 					<h2 class="text-xl sm:text-2xl font-bold">Tracks</h2>
 					<div class="alert alert-warning">
 						<span>No tracks available.</span>
-						<button class="btn btn-sm btn-ghost" onclick={state.retryTracks}> Retry </button>
+						<Button variant="ghost" size="sm" onclick={state.retryTracks}>Retry</Button>
 					</div>
 				</div>
 			{/if}
@@ -356,8 +366,6 @@
 		</div>
 	{/if}
 </div>
-
-<Toast bind:show={state.showToast} message={state.toastMessage} type={state.toastType} />
 
 {#if state.removeFileTarget}
 	<RemoveTrackFileDialog

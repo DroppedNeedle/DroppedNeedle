@@ -3,6 +3,7 @@
 	import { LocalDownloadsApi } from '$lib/queries/local/LocalDownloadsApi';
 	import { downloadAlbumArchive } from '$lib/utils/downloadActions';
 	import { formatBytes } from '$lib/utils/formatting';
+	import Button, { type ButtonSize } from '$lib/ui/Button.svelte';
 
 	interface Props {
 		/** Library string id (preferred); when null the RG-MBID variant is used. */
@@ -15,17 +16,10 @@
 		trackCount: number;
 		/** Server-computed permission bit; false renders nothing. */
 		downloadAllowed: boolean;
-		className?: string;
+		size?: ButtonSize;
 	}
 
-	let {
-		albumId,
-		mbid,
-		totalSizeBytes,
-		trackCount,
-		downloadAllowed,
-		className = ''
-	}: Props = $props();
+	let { albumId, mbid, totalSizeBytes, trackCount, downloadAllowed, size = 'md' }: Props = $props();
 
 	const href = $derived(
 		albumId ? LocalDownloadsApi.album(albumId) : mbid ? LocalDownloadsApi.albumByMbid(mbid) : null
@@ -48,19 +42,16 @@
 </script>
 
 {#if href && downloadAllowed}
-	<button
-		type="button"
-		class="btn btn-primary gap-2 {className}"
-		disabled={pending || trackCount === 0}
+	<Button
+		variant="primary"
+		{size}
+		icon={Download}
+		loading={pending}
+		disabled={trackCount === 0}
 		title={trackCount === 0 ? 'No local files to archive' : undefined}
 		onclick={() => void handleDownload()}
 	>
-		{#if pending}
-			<span class="loading loading-spinner loading-sm"></span>
-		{:else}
-			<Download class="h-4 w-4" />
-		{/if}
 		<span>{pending ? 'Preparing…' : 'Download album'}</span>
 		<span class="text-xs font-normal opacity-70">{caption}</span>
-	</button>
+	</Button>
 {/if}

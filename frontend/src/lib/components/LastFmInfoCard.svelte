@@ -4,6 +4,8 @@
 	import { outsideLink } from '$lib/components/outsideLink';
 	import { formatListenCount } from '$lib/utils/formatting';
 	import { onMount } from 'svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		text: string | null | undefined;
@@ -47,7 +49,7 @@
 </script>
 
 {#if loading}
-	<div class="bg-base-200/50 rounded-box p-4 sm:p-6 space-y-3">
+	<Card>
 		<div class="flex items-center gap-2 mb-3">
 			<div class="skeleton h-5 w-5 rounded-full"></div>
 			<div class="skeleton h-5 w-24"></div>
@@ -60,28 +62,24 @@
 			<div class="skeleton h-6 w-20 rounded-full"></div>
 			<div class="skeleton h-6 w-14 rounded-full"></div>
 		</div>
-	</div>
+	</Card>
 {:else if !enabled}{:else if hasContent}
-	<div class="bg-base-200/50 rounded-box p-4 sm:p-6 space-y-4">
+	<Card>
 		<div class="flex items-center justify-between">
 			<div class="flex items-center gap-2">
-				<span
-					class="badge badge-sm"
-					style="background-color: rgb(var(--brand-lastfm) / 0.15); color: rgb(var(--brand-lastfm));"
-				>
-					Last.fm
-				</span>
+				<span class="badge badge-sm border-transparent bg-lastfm/15 text-lastfm">Last.fm</span>
 			</div>
 			{#if link}
-				<a
+				<Button
+					variant="ghost"
+					size="xs"
+					icon={ExternalLink}
 					href={link}
 					target="_blank"
 					rel="noopener noreferrer"
-					class="btn btn-ghost btn-xs gap-1 opacity-60 hover:opacity-100"
 				>
-					<ExternalLink class="h-3 w-3" />
 					View on Last.fm
-				</a>
+				</Button>
 			{/if}
 		</div>
 
@@ -106,29 +104,31 @@
 			<div class="text-sm sm:text-base text-base-content/80 leading-relaxed">
 				{#if textExpanded}
 					<div>{text}</div>
-					<button
-						class="btn btn-sm btn-ghost mt-2 gap-1 text-xs"
+					<Button
+						variant="ghost"
+						size="sm"
+						icon={ChevronUp}
+						iconPosition="end"
+						class="mt-2"
 						onclick={() => (textExpanded = false)}
 					>
 						Show Less
-						<ChevronUp class="h-3 w-3" />
-					</button>
+					</Button>
 				{:else}
-					<div
-						bind:this={textElement}
-						class="line-clamp-4 overflow-hidden"
-						style="display: -webkit-box; -webkit-box-orient: vertical;"
-					>
+					<div bind:this={textElement} class="line-clamp-4 overflow-hidden">
 						{text}
 					</div>
 					{#if showReadMore}
-						<button
-							class="btn btn-sm btn-ghost mt-2 gap-1 text-xs"
+						<Button
+							variant="ghost"
+							size="sm"
+							icon={ChevronDown}
+							iconPosition="end"
+							class="mt-2"
 							onclick={() => (textExpanded = true)}
 						>
 							Read More
-							<ChevronDown class="h-3 w-3" />
-						</button>
+						</Button>
 					{/if}
 				{/if}
 			</div>
@@ -146,5 +146,5 @@
 				{/each}
 			</div>
 		{/if}
-	</div>
+	</Card>
 {/if}

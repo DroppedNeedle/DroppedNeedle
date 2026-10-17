@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { ChevronUp, ChevronDown } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		description: string | null | undefined;
@@ -29,7 +31,7 @@
 	});
 </script>
 
-<div class="bg-base-200/50 rounded-box p-4 sm:p-6">
+<Card>
 	{#if loading}
 		<div class="space-y-2" data-testid="artist-description-skeleton">
 			<div class="skeleton h-4 w-full"></div>
@@ -40,33 +42,38 @@
 		<div class="text-sm sm:text-base text-base-content/80 leading-relaxed">
 			{#if descriptionExpanded}
 				<div class="whitespace-pre-line">{description}</div>
-				<button
-					class="btn btn-sm mt-3 gap-2 bg-accent text-accent-content"
+				<Button
+					variant="accent"
+					size="sm"
+					icon={ChevronUp}
+					iconPosition="end"
+					class="mt-3"
 					onclick={() => (descriptionExpanded = false)}
 				>
 					Show Less
-					<ChevronUp class="h-4 w-4" />
-				</button>
+				</Button>
 			{:else}
 				<div
 					bind:this={descriptionElement}
 					class="line-clamp-4 overflow-hidden whitespace-pre-line"
-					style="display: -webkit-box; -webkit-box-orient: vertical;"
 				>
 					{description}
 				</div>
 				{#if showViewMore}
-					<button
-						class="btn btn-sm mt-3 gap-2 bg-accent text-accent-content"
+					<Button
+						variant="accent"
+						size="sm"
+						icon={ChevronDown}
+						iconPosition="end"
+						class="mt-3"
 						onclick={() => (descriptionExpanded = true)}
 					>
 						Read More
-						<ChevronDown class="h-4 w-4" />
-					</button>
+					</Button>
 				{/if}
 			{/if}
 		</div>
 	{:else}
 		<p class="text-base-content/50 italic text-sm">No biography available</p>
 	{/if}
-</div>
+</Card>

@@ -14,6 +14,8 @@
 	} from '$lib/queries/library/LibraryQueries.svelte';
 	import { createLibraryContributionMutation } from '$lib/queries/libraryContributions/LibraryContributionMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		artistId: string;
@@ -49,10 +51,12 @@
 <svelte:head><title>{artist?.name ?? 'Artist'} · Library</title></svelte:head>
 
 <main class="container mx-auto p-4 md:p-6 lg:p-8">
-	<button
-		class="btn btn-ghost btn-sm mb-5 gap-2"
-		onclick={() => goto(withBasePath('/library/artists'))}
-		><ChevronLeft class="h-4 w-4" /> Artists</button
+	<Button
+		variant="ghost"
+		size="sm"
+		icon={ChevronLeft}
+		class="mb-5"
+		onclick={() => goto(withBasePath('/library/artists'))}>Artists</Button
 	>
 	{#if artistQuery.isLoading}
 		<div class="flex items-center gap-5">
@@ -61,10 +65,8 @@
 		</div>
 	{:else if artistQuery.isError || !artist}
 		<div class="alert alert-error">
-			<span>Couldn't load this artist.</span><button
-				class="btn btn-sm"
-				onclick={() => artistQuery.refetch()}>Retry</button
-			>
+			<span>Couldn't load this artist.</span>
+			<Button size="sm" onclick={() => artistQuery.refetch()}>Retry</Button>
 		</div>
 	{:else}
 		<header class="flex flex-col gap-5 sm:flex-row sm:items-end">
@@ -102,27 +104,40 @@
 					{/if}
 				</div>
 				{#if artist.musicbrainz_artist_id}
-					<a
-						class="btn btn-ghost btn-sm mt-3 gap-2"
+					<Button
+						variant="ghost"
+						size="sm"
+						icon={ExternalLink}
+						iconPosition="end"
+						class="mt-3"
 						href={`https://musicbrainz.org/artist/${artist.musicbrainz_artist_id}`}
 						target="_blank"
-						rel="noreferrer">Open in MusicBrainz <ExternalLink class="h-3.5 w-3.5" /></a
+						rel="noreferrer">Open in MusicBrainz</Button
 					>
 				{/if}
 				{#if authStore.isTrusted && artist.artist_identity_state === 'local_only' && contributionAlbums.length}
-					<a class="btn btn-outline btn-sm mt-3 gap-2" href="#musicbrainz-albums">
-						<FileSearch class="h-4 w-4" /> Find existing MusicBrainz artist
-					</a>
+					<Button
+						variant="outline"
+						size="sm"
+						icon={FileSearch}
+						class="mt-3"
+						href="#musicbrainz-albums"
+					>
+						Find existing MusicBrainz artist
+					</Button>
 				{/if}
 			</div>
 			{#if authStore.isAdmin}<ArtistMergeDialog {artist} />{/if}
 		</header>
 
 		{#if authStore.isTrusted && contributionAlbums.length}
-			<section
+			<Card
+				as="section"
+				variant="bordered"
+				padding="none"
 				id="musicbrainz-albums"
-				class="mt-8 scroll-mt-6 overflow-hidden rounded-box border border-primary/20 bg-base-200/35"
-				aria-labelledby="musicbrainz-albums-title"
+				class="mt-8 scroll-mt-6 overflow-hidden"
+				aria-label="Contribute through an album"
 			>
 				<div class="border-b border-base-content/10 p-4 sm:p-5">
 					<div class="flex items-start gap-3">
@@ -130,7 +145,7 @@
 							<FileUp class="h-5 w-5" />
 						</div>
 						<div>
-							<h2 id="musicbrainz-albums-title" class="font-bold">Contribute through an album</h2>
+							<h2 class="font-bold">Contribute through an album</h2>
 							<p class="mt-1 max-w-3xl text-sm text-base-content/65">
 								Use one of this artist's local albums to check MusicBrainz. If the release matches,
 								DroppedNeedle can also verify and link its artist credit.
@@ -151,18 +166,20 @@
 									{album.year ?? 'Year unknown'} · {contributionLabel(album.contribution_state)}
 								</p>
 							</div>
-							<button
-								class="btn btn-ghost btn-sm shrink-0 gap-2 sm:self-center"
+							<Button
+								variant="ghost"
+								size="sm"
+								icon={FileSearch}
+								class="shrink-0 sm:self-center"
 								disabled={contributionMutation.isPending}
 								onclick={() => openContribution(album)}
 							>
-								<FileSearch class="h-4 w-4" />
 								{album.contribution_id ? 'Resume' : 'Start with this album'}
-							</button>
+							</Button>
 						</li>
 					{/each}
 				</ul>
-			</section>
+			</Card>
 		{/if}
 
 		{#if artist.appearance_track_count > 0}

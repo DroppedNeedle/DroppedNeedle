@@ -4,6 +4,8 @@
 	import { api } from '$lib/api/client';
 	import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import TrackRow from './TrackRow.svelte';
 	import { SvelteMap } from 'svelte/reactivity';
@@ -133,18 +135,18 @@
 			{/each}
 		</div>
 	{:else if !configured}
-		<div class="bg-base-200 rounded-lg p-4 text-center flex-1 flex items-center justify-center">
-			<div>
+		<Card padding="md" class="flex-1 text-center">
+			<div class="my-auto">
 				<p class="text-base-content/70 text-sm">Connect a music service to see popular songs</p>
-				<a href={withBasePath('/profile#scrobbling')} class="btn btn-primary btn-xs mt-2"
-					>Configure</a
-				>
+				<Button variant="primary" size="xs" href={withBasePath('/profile#scrobbling')} class="mt-2">
+					Configure
+				</Button>
 			</div>
-		</div>
+		</Card>
 	{:else if songs.length === 0}
-		<div class="bg-base-200 rounded-lg p-4 text-center flex-1 flex items-center justify-center">
-			<p class="text-base-content/70 text-sm">No song data available</p>
-		</div>
+		<Card padding="md" class="flex-1 text-center">
+			<p class="my-auto text-base-content/70 text-sm">No song data available</p>
+		</Card>
 	{:else}
 		<div class="space-y-1">
 			{#each songs as song, i (song.recording_mbid || `song-${i}`)}

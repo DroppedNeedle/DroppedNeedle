@@ -24,7 +24,9 @@
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { Music, Download, LoaderCircle } from 'lucide-svelte';
+	import { Music, Download } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import BackButton from '$lib/components/BackButton.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import type { PageData } from './$types';
@@ -366,7 +368,7 @@
 		<div class="space-y-6 sm:space-y-8">
 			<div
 				class="group relative rounded-box playlist-hero"
-				style="--hero-glow-color: var(--brand-hero);"
+				style:--hero-glow-color="var(--brand-hero)"
 			>
 				<div
 					class="absolute inset-0 bg-linear-to-b {heroGradient} transition-all duration-1000 rounded-box"
@@ -404,27 +406,24 @@
 			</div>
 
 			{#if isOwner && missingAlbumCount > 0}
-				<div
-					class="flex items-center gap-3 rounded-xl border border-base-300/40 bg-base-200/40 px-4 py-3"
-				>
-					<Download class="h-4 w-4 shrink-0 text-base-content/50" />
-					<p class="flex-1 text-sm text-base-content/70">
-						{missingAlbumCount}
-						{missingAlbumCount === 1 ? 'album' : 'albums'} not in your library
-					</p>
-					<button
-						class="btn btn-accent btn-sm"
-						onclick={() => void handleRequestMissing()}
-						disabled={requesting}
-					>
-						{#if requesting}
-							<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
-						{:else}
-							<Download class="h-3.5 w-3.5" />
-						{/if}
-						Request {missingAlbumCount === 1 ? 'album' : missingAlbumCount + ' albums'}
-					</button>
-				</div>
+				<Card variant="bordered" padding="sm">
+					<div class="flex items-center gap-3">
+						<Download class="h-4 w-4 shrink-0 text-base-content/50" />
+						<p class="flex-1 text-sm text-base-content/70">
+							{missingAlbumCount}
+							{missingAlbumCount === 1 ? 'album' : 'albums'} not in your library
+						</p>
+						<Button
+							variant="accent"
+							size="sm"
+							icon={Download}
+							loading={requesting}
+							onclick={() => void handleRequestMissing()}
+						>
+							Request {missingAlbumCount === 1 ? 'album' : missingAlbumCount + ' albums'}
+						</Button>
+					</div>
+				</Card>
 			{/if}
 
 			<PlaylistTrackList

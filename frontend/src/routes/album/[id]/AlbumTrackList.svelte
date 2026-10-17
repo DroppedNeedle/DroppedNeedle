@@ -30,7 +30,9 @@
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 	import LibraryFormatBadge from '$lib/components/library/LibraryFormatBadge.svelte';
 	import LibraryTrackRow from '$lib/components/library/LibraryTrackRow.svelte';
-	import { ChevronDown, TriangleAlert, TrendingUp, Check } from 'lucide-svelte';
+	import { ChevronDown, ChevronUp, TriangleAlert, TrendingUp, Check } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import type { LibraryFileMeta, DownloadTask, HeldImport } from '$lib/types';
 	import TrackRequestButton from '$lib/components/downloads/TrackRequestButton.svelte';
@@ -319,14 +321,15 @@
 									<TrackDownloadStatus task={trackTask} />
 								{/if}
 								{#if heldMeta}
-									<button
-										class="btn btn-ghost btn-xs gap-1 text-warning"
+									<Button
+										variant="ghost"
+										size="xs"
 										onclick={() => toggleHeld(row.globalIndex)}
 										aria-expanded={heldOpen.has(row.globalIndex)}
 										title="Downloaded but couldn't verify - review it"
 									>
-										<TriangleAlert class="h-3.5 w-3.5" /> held
-									</button>
+										<TriangleAlert class="size-3.5 text-warning" aria-hidden="true" /> held
+									</Button>
 								{/if}
 								{#if showRequest && track.recording_id}
 									<TrackRequestButton
@@ -342,19 +345,23 @@
 								{/if}
 								{#if showUpgrade && upgradeRecordingId}
 									{#if upgradeQueuedRecordings.has(upgradeRecordingId)}
-										<span class="btn btn-ghost btn-xs gap-1 pointer-events-none text-success">
+										<span
+											class="inline-flex h-6 items-center gap-1 px-2 text-xs font-semibold text-success"
+										>
 											<Check class="h-3.5 w-3.5" /> queued
 										</span>
 									{:else}
-										<button
-											class="btn btn-ghost btn-xs gap-1 text-primary"
+										<Button
+											variant="ghost"
+											size="xs"
+											icon={TrendingUp}
 											disabled={upgradeTrack.isPending}
 											onclick={() =>
 												void handleTrackUpgrade(upgradeRecordingId, track.title, track.length)}
 											title="Below your quality cutoff - find a better copy"
 										>
-											<TrendingUp class="h-3.5 w-3.5" /> upgrade
-										</button>
+											upgrade
+										</Button>
 									{/if}
 								{/if}
 								{#if showPreview}
@@ -461,19 +468,15 @@
 						{/if}
 
 						{#if libMeta}
-							<button
-								class="btn btn-ghost btn-xs btn-circle shrink-0"
-								onclick={() => toggleRow(row.globalIndex)}
-								aria-label={expandedRows.has(row.globalIndex)
+							<IconButton
+								size="xs"
+								icon={expandedRows.has(row.globalIndex) ? ChevronUp : ChevronDown}
+								label={expandedRows.has(row.globalIndex)
 									? 'Hide file details'
 									: 'Show file details'}
-							>
-								<ChevronDown
-									class="h-4 w-4 transition-transform {expandedRows.has(row.globalIndex)
-										? 'rotate-180'
-										: ''}"
-								/>
-							</button>
+								class="shrink-0"
+								onclick={() => toggleRow(row.globalIndex)}
+							/>
 						{/if}
 					</div>
 					{#if editionRow?.yourVersionMs || editionRow?.note}

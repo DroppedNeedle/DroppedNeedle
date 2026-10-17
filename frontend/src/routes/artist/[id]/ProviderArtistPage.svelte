@@ -5,7 +5,8 @@
 	import AlbumGridSkeleton from '$lib/components/AlbumGridSkeleton.svelte';
 	import ArtistWhereToBuy from '$lib/components/ArtistWhereToBuy.svelte';
 	import ReleaseList from '$lib/components/ReleaseList.svelte';
-	import Toast from '$lib/components/Toast.svelte';
+	import { toastStore } from '$lib/stores/toast';
+	import Button from '$lib/ui/Button.svelte';
 	import ArtistHero from '$lib/components/ArtistHero.svelte';
 	import ArtistDescription from '$lib/components/ArtistDescription.svelte';
 	import SimilarArtistsCarousel from '$lib/components/SimilarArtistsCarousel.svelte';
@@ -133,8 +134,6 @@
 		activeSource.current = resolvedSource;
 	});
 
-	let showToast = $state(false);
-	let toastMessage = 'Added to Library';
 	let requestedReleaseIds = $state(new Set<string>());
 	let albumsCollapsed = $state(false);
 	let epsCollapsed = $state(false);
@@ -251,7 +250,7 @@
 					requested: true
 				});
 
-				showToast = true;
+				toastStore.show({ message: 'Added to Library', type: 'success' });
 			}
 		} finally {
 			requestedReleaseIds.delete(releaseId);
@@ -344,9 +343,9 @@
 		<div class="flex items-center justify-center min-h-[50vh]">
 			<div class="alert alert-error">
 				<span>MusicBrainz is temporarily unavailable.</span>
-				<button class="btn btn-sm btn-ghost" onclick={() => void artistBasicQuery.refetch()}>
+				<Button variant="ghost" size="sm" onclick={() => void artistBasicQuery.refetch()}>
 					Retry
-				</button>
+				</Button>
 			</div>
 		</div>
 	{:else if error}
@@ -438,11 +437,15 @@
 
 				{#if downloadableReleaseCount > 0}
 					<div class="flex justify-center sm:justify-start">
-						<button class="btn btn-accent btn-sm gap-1.5" onclick={() => openDiscographyModal()}>
-							<Download class="h-4 w-4" />
+						<Button
+							variant="accent"
+							size="sm"
+							icon={Download}
+							onclick={() => openDiscographyModal()}
+						>
 							Download Discography
 							<span class="badge badge-sm ml-0.5">{downloadableReleaseCount}</span>
-						</button>
+						</Button>
 					</div>
 				{/if}
 
@@ -565,5 +568,3 @@
 		</div>
 	{/if}
 </div>
-
-<Toast bind:show={showToast} message={toastMessage} />

@@ -11,6 +11,8 @@
 	import AlbumOrganizationDialog from '$lib/components/library/AlbumOrganizationDialog.svelte';
 	import LocalAlbumTrackList from '$lib/components/library/LocalAlbumTrackList.svelte';
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { getDownloadAccessQuery } from '$lib/queries/local/DownloadAccessQuery.svelte';
 	import {
 		getAlbumEditionStatusQuery,
@@ -152,12 +154,15 @@
 <svelte:head><title>{album?.title ?? 'Album'} · Library</title></svelte:head>
 
 <main class="container mx-auto p-4 md:p-6 lg:p-8">
-	<button
-		class="btn btn-ghost btn-sm mb-5 gap-2"
+	<Button
+		variant="ghost"
+		size="sm"
+		icon={ChevronLeft}
+		class="mb-5"
 		onclick={() => goto(withBasePath('/library/albums'))}
 	>
-		<ChevronLeft class="h-4 w-4" /> Albums
-	</button>
+		Albums
+	</Button>
 
 	{#if albumQuery.isLoading}
 		<div class="grid gap-6 md:grid-cols-[16rem_1fr]">
@@ -170,10 +175,8 @@
 		</div>
 	{:else if albumQuery.isError || !album}
 		<div class="alert alert-error">
-			<span>Couldn't load this album.</span><button
-				class="btn btn-sm"
-				onclick={() => albumQuery.refetch()}>Retry</button
-			>
+			<span>Couldn't load this album.</span>
+			<Button size="sm" onclick={() => albumQuery.refetch()}>Retry</Button>
 		</div>
 	{:else}
 		<header class="grid gap-6 md:grid-cols-[16rem_1fr] md:items-end">
@@ -219,13 +222,18 @@
 					<EditionPlate copies={[album]} />
 				</div>
 				<div class="mt-5 flex flex-wrap items-center gap-2">
-					<button
-						class="btn btn-primary gap-2"
+					<Button
+						variant="primary"
+						icon={Play}
+						class="[&_svg]:fill-current"
 						disabled={!tracks.length}
-						onclick={() => play(false)}><Play class="h-4 w-4 fill-current" /> Play</button
+						onclick={() => play(false)}>Play</Button
 					>
-					<button class="btn btn-ghost gap-2" disabled={!tracks.length} onclick={() => play(true)}
-						><Shuffle class="h-4 w-4" /> Shuffle</button
+					<Button
+						variant="ghost"
+						icon={Shuffle}
+						disabled={!tracks.length}
+						onclick={() => play(true)}>Shuffle</Button
 					>
 					<AlbumDownloadButton
 						albumId={album.id}
@@ -235,14 +243,14 @@
 						{downloadAllowed}
 					/>
 					{#if authStore.isTrusted && album.album_identity_state === 'local_only'}
-						<button
-							class="btn btn-ghost gap-2"
+						<Button
+							variant="ghost"
+							icon={FileUp}
 							disabled={contributionMutation.isPending}
 							onclick={openContribution}
 						>
-							<FileUp class="h-4 w-4" />
 							{album.contribution_id ? 'Contribution in progress' : 'Contribute to MusicBrainz'}
-						</button>
+						</Button>
 					{/if}
 					{#if authStore.isAdmin}<AlbumOrganizationDialog {album} {tracks} />{/if}
 				</div>
@@ -276,10 +284,10 @@
 			{:else if tracksQuery.isError}
 				<div class="alert alert-error mt-3">Couldn't load tracks.</div>
 			{:else if !tracks.length}
-				<div class="mt-3 rounded-box bg-base-200 p-6 text-center text-base-content/55">
+				<Card class="mt-3 text-center text-base-content/55">
 					<Disc3 class="mx-auto h-8 w-8 opacity-30" />
-					<p class="mt-2">No playable tracks are attached to this album.</p>
-				</div>
+					<p>No playable tracks are attached to this album.</p>
+				</Card>
 			{:else}
 				<LocalAlbumTrackList
 					{tracks}

@@ -1,21 +1,16 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import {
-		LoaderCircle,
-		Music2,
-		ArrowLeft,
-		RefreshCw,
-		CircleCheckBig,
-		Download
-	} from 'lucide-svelte';
+	import { LoaderCircle, ArrowLeft, RefreshCw, CircleCheckBig, Download } from 'lucide-svelte';
+	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import {
 		getSpotifyPlaylistsQuery,
 		createImportSpotifyPlaylistMutation
 	} from '$lib/queries/spotify/SpotifyQueries.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { getApiUrl } from '$lib/api/api-utils';
 
 	const playlistsQuery = getSpotifyPlaylistsQuery();
 	const importMutation = createImportSpotifyPlaylistMutation();
@@ -89,22 +84,27 @@
 
 <div class="space-y-6 px-4 sm:px-6 lg:px-8">
 	<div class="flex items-center gap-3">
-		<a href={withBasePath('/playlists')} class="btn btn-ghost btn-sm btn-circle">
-			<ArrowLeft class="h-4 w-4" />
-		</a>
+		<IconButton
+			size="sm"
+			icon={ArrowLeft}
+			label="Back to playlists"
+			href={withBasePath('/playlists')}
+		/>
 		<h1 class="flex min-w-0 flex-1 items-center gap-2 text-2xl font-bold sm:text-3xl">
 			<SpotifyIcon class="h-6 w-6 shrink-0 text-spotify" />
 			Import from Spotify
 		</h1>
 		{#if unimportedCount > 0 && !importingAll}
-			<button
-				class="btn btn-sm gap-1.5 rounded-full bg-green-600 text-white shadow-sm hover:bg-green-500 shrink-0"
+			<Button
+				size="sm"
+				pill
+				icon={Download}
+				class="shrink-0"
 				onclick={() => void handleImportAll()}
 				disabled={!!importing}
 			>
-				<Download class="h-3.5 w-3.5" />
 				Import all ({unimportedCount})
-			</button>
+			</Button>
 		{:else if importingAll}
 			<div class="flex shrink-0 items-center gap-2 text-sm text-base-content/60">
 				<LoaderCircle class="h-4 w-4 animate-spin" />
@@ -129,11 +129,11 @@
 			</span>
 			<div class="flex gap-2">
 				{#if err instanceof Error && err.message.includes('400')}
-					<a href={withBasePath('/profile')} class="btn btn-sm btn-ghost">Go to Profile</a>
+					<Button variant="ghost" size="sm" href={withBasePath('/profile')}>Go to Profile</Button>
 				{:else}
-					<button class="btn btn-sm btn-ghost" onclick={() => void playlistsQuery.refetch()}>
+					<Button variant="ghost" size="sm" onclick={() => void playlistsQuery.refetch()}>
 						Retry
-					</button>
+					</Button>
 				{/if}
 			</div>
 		</div>
@@ -149,44 +149,46 @@
 				{@const alreadyImported = !!playlist.imported_playlist_id}
 				<div class="group flex flex-col gap-2">
 					<div class="relative aspect-square overflow-hidden rounded-2xl bg-base-300/60">
-						{#if playlist.cover_url}
-							<img
-								src={getApiUrl(playlist.cover_url)}
+						<div
+							class="h-full w-full transition-transform duration-200 motion-safe:group-hover:scale-[1.03]"
+						>
+							<AlbumImage
+								customUrl={playlist.cover_url ?? null}
 								alt={playlist.name}
-								class="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+								size="full"
+								requestSize={250}
+								rounded="none"
+								className="h-full w-full"
 							/>
-						{:else}
-							<div class="flex h-full w-full items-center justify-center">
-								<Music2 class="h-10 w-10 text-base-content/20" />
-							</div>
-						{/if}
+						</div>
 
 						{#if alreadyImported}
 							<div
 								class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 opacity-0 transition-opacity group-hover:opacity-100"
 							>
-								<a
+								<Button
+									size="sm"
+									pill
 									href={withBasePath(`/playlists/${playlist.imported_playlist_id}`)}
-									class="btn btn-sm btn-ghost rounded-full text-white"
 								>
 									View Playlist
-								</a>
-								<button
-									class="btn btn-xs gap-1 rounded-full bg-white/20 text-white hover:bg-white/30"
+								</Button>
+								<Button
+									size="xs"
+									pill
+									icon={RefreshCw}
+									loading={isImporting}
 									onclick={() => void handleImport(playlist)}
 									disabled={!!importing}
 								>
-									{#if isImporting}
-										<LoaderCircle class="h-3 w-3 animate-spin" />
-									{:else}
-										<RefreshCw class="h-3 w-3" />
-									{/if}
 									Re-import
-								</button>
+								</Button>
 							</div>
 						{:else}
 							<button
-								class="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 transition-opacity group-hover:opacity-100 disabled:cursor-not-allowed"
+								type="button"
+								class="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed"
+								aria-label="Import {playlist.name}"
 								onclick={() => void handleImport(playlist)}
 								disabled={!!importing}
 							>
@@ -203,9 +205,9 @@
 
 						{#if alreadyImported && !isImporting}
 							<div
-								class="absolute right-2 top-2 rounded-full bg-green-600 p-0.5 shadow group-hover:opacity-0 transition-opacity"
+								class="absolute right-2 top-2 rounded-full bg-success p-0.5 shadow group-hover:opacity-0 transition-opacity"
 							>
-								<CircleCheckBig class="h-4 w-4 text-white" />
+								<CircleCheckBig class="h-4 w-4 text-success-content" />
 							</div>
 						{/if}
 					</div>

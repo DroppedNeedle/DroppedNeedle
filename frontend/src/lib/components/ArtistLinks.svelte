@@ -85,6 +85,7 @@
 	import { Globe } from 'lucide-svelte';
 	import type { ExternalLink } from '$lib/types';
 	import { outsideLink } from '$lib/components/outsideLink';
+	import Button from '$lib/ui/Button.svelte';
 
 	interface Props {
 		links: ExternalLink[];
@@ -185,12 +186,15 @@
 				</span>
 				{#each group.links as link (link.label)}
 					{@const icon = BRAND_ICONS[link.label]}
-					<a
+					<Button
+						variant="ghost"
+						pill
 						href={link.url}
 						target="_blank"
 						rel="noopener noreferrer"
-						class="btn btn-ghost btn-circle btn-md tooltip tooltip-bottom"
+						class="tooltip tooltip-bottom"
 						data-tip={link.label}
+						aria-label={link.label}
 					>
 						{#if icon}
 							<svg viewBox="0 0 24 24" class="w-5 h-5" fill={icon.fill} aria-hidden="true">
@@ -201,7 +205,7 @@
 						{:else}
 							<Globe class="w-5 h-5 text-base-content" aria-hidden="true" />
 						{/if}
-					</a>
+					</Button>
 				{/each}
 			</div>
 		{/each}

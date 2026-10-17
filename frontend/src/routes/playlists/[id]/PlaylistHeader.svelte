@@ -16,6 +16,9 @@
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 	import { getSourceColor, getSourceLabel } from '$lib/utils/sources';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import Input from '$lib/ui/Input.svelte';
 
 	interface Props {
 		playlist: PlaylistDetail;
@@ -61,7 +64,6 @@
 	let nameInput = $state('');
 	let savingName = $state(false);
 	let nameInputEl = $state<HTMLInputElement | null>(null);
-	let saveBtnEl = $state<HTMLButtonElement | null>(null);
 
 	let coverInput = $state<HTMLInputElement | null>(null);
 	let uploading = $state(false);
@@ -76,17 +78,6 @@
 		if (editingName && nameInputEl) {
 			nameInputEl.focus();
 			nameInputEl.select();
-		}
-	});
-
-	$effect(() => {
-		if (saveBtnEl) {
-			const btn = saveBtnEl;
-			const handler = () => {
-				void saveName();
-			};
-			btn.addEventListener('click', handler);
-			return () => btn.removeEventListener('click', handler);
 		}
 	});
 
@@ -229,24 +220,22 @@
 			<div
 				class="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
 			>
-				<button
-					type="button"
-					class="btn btn-circle btn-xs bg-base-100/80 hover:bg-base-100 border-0"
+				<IconButton
+					variant="neutral"
+					size="xs"
+					icon={Pencil}
+					label="Upload cover image"
 					onclick={triggerCoverUpload}
-					aria-label="Upload cover image"
 					disabled={uploading}
-				>
-					<Pencil class="h-3 w-3" />
-				</button>
+				/>
 				{#if playlist.custom_cover_url}
-					<button
-						type="button"
-						class="btn btn-circle btn-xs bg-base-100/80 hover:bg-error/80 border-0"
+					<IconButton
+						variant="neutral"
+						size="xs"
+						icon={X}
+						label="Remove custom cover"
 						onclick={() => void removeCover()}
-						aria-label="Remove custom cover"
-					>
-						<X class="h-3 w-3" />
-					</button>
+					/>
 				{/if}
 			</div>
 		{/if}
@@ -254,6 +243,7 @@
 			type="file"
 			accept="image/jpeg,image/png,image/webp"
 			class="hidden"
+			aria-label="Cover image"
 			bind:this={coverInput}
 			onchange={handleCoverSelect}
 		/>
@@ -266,29 +256,18 @@
 
 		{#if editingName && canEdit}
 			<div class="flex items-center gap-2">
-				<input
-					type="text"
-					bind:this={nameInputEl}
+				<Input
+					size="sm"
+					label="Playlist name"
+					bind:ref={nameInputEl}
 					bind:value={nameInput}
 					onkeydown={handleNameKeydown}
-					class="input input-sm text-3xl sm:text-4xl font-bold w-full"
+					class="text-3xl sm:text-4xl font-bold w-full"
 					placeholder="Playlist name"
 					maxlength={100}
 				/>
-				<button
-					bind:this={saveBtnEl}
-					class="btn btn-ghost btn-sm btn-circle"
-					aria-label="Save name"
-				>
-					<Check class="h-4 w-4 text-success" />
-				</button>
-				<button
-					onclick={cancelEditName}
-					class="btn btn-ghost btn-sm btn-circle"
-					aria-label="Cancel"
-				>
-					<X class="h-4 w-4 text-error" />
-				</button>
+				<IconButton size="sm" icon={Check} label="Save name" onclick={() => void saveName()} />
+				<IconButton size="sm" icon={X} label="Cancel" onclick={cancelEditName} />
 			</div>
 		{:else if canEdit}
 			<button
@@ -341,33 +320,30 @@
 		</div>
 
 		<div class="flex items-center gap-3 pt-4">
-			<button
-				type="button"
-				class="btn btn-accent"
+			<Button
+				variant="accent"
+				icon={Play}
 				onclick={onplayall}
 				disabled={playlist.track_count === 0}
 			>
-				<Play class="h-4 w-4" />
 				Play All
-			</button>
-			<button
-				type="button"
-				class="btn btn-ghost"
+			</Button>
+			<Button
+				variant="ghost"
+				icon={Shuffle}
 				onclick={onshuffleall}
 				disabled={playlist.track_count < 2}
 			>
-				<Shuffle class="h-4 w-4" />
 				Shuffle
-			</button>
-			<button
-				type="button"
-				class="btn btn-ghost"
+			</Button>
+			<Button
+				variant="ghost"
+				icon={Sparkles}
 				onclick={() => (discoverModalOpen = true)}
 				disabled={playlist.track_count === 0}
 			>
-				<Sparkles class="h-4 w-4" />
 				Discover
-			</button>
+			</Button>
 
 			{#if canEdit}
 				<label
@@ -384,7 +360,7 @@
 					>
 					<input
 						type="checkbox"
-						class="toggle toggle-sm toggle-success"
+						class="toggle toggle-sm toggle-primary"
 						checked={playlist.is_public}
 						disabled={sharePending}
 						onchange={(e) => onshare?.(e.currentTarget.checked)}

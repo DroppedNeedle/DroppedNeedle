@@ -9,6 +9,7 @@
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { api } from '$lib/api/client';
 	import type { YouTubeTrackLink, YouTubeQuotaStatus } from '$lib/types';
+	import Button from '$lib/ui/Button.svelte';
 
 	interface Props {
 		trackNumber: number;
@@ -103,27 +104,18 @@
 </script>
 
 {#if !hasLink && !apiConfigured}{:else if generating}
-	<button
-		class="btn btn-sm btn-ghost rounded-lg gap-1.5 shrink-0"
-		disabled
-		aria-label="Generating link"
-	>
-		<span class="loading loading-spinner loading-xs"></span>
+	<Button variant="ghost" size="sm" class="shrink-0" loading aria-label="Generating link">
 		<YouTubeIcon class="h-4 w-4" />
-	</button>
+	</Button>
 {:else}
-	<button
-		class="btn btn-sm rounded-lg gap-1.5 shrink-0"
-		class:btn-error={hasLink}
-		class:btn-ghost={!hasLink}
+	<Button
+		variant={hasLink ? 'danger' : 'ghost'}
+		size="sm"
+		icon={hasLink ? Play : Download}
+		class="shrink-0 {hasLink ? '[&_svg]:fill-current' : ''}"
 		onclick={handleClick}
 		aria-label={hasLink ? 'Play on YouTube' : 'Generate YouTube link'}
 	>
-		{#if hasLink}
-			<Play class="h-4 w-4 fill-current" />
-		{:else}
-			<Download class="h-4 w-4" />
-		{/if}
 		<YouTubeIcon class="h-4 w-4" />
-	</button>
+	</Button>
 {/if}

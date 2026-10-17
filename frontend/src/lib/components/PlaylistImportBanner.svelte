@@ -12,7 +12,9 @@
 	} from 'lucide-svelte';
 	import { reveal } from '$lib/actions/reveal';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { getApiUrl } from '$lib/api/api-utils';
+	import AlbumImage from './AlbumImage.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		playlists?: SourcePlaylistSummary[];
@@ -47,8 +49,7 @@
 		playlists
 			.slice(0, 4)
 			.map((playlist) => playlist.cover_url)
-			.filter(Boolean)
-			.map((url) => getApiUrl(url))
+			.filter((url): url is string => Boolean(url))
 	);
 	let progressPct = $derived(totalCount > 0 ? (importedCount / totalCount) * 100 : 0);
 
@@ -87,132 +88,149 @@
 	});
 </script>
 
-<section
-	use:reveal
-	role="group"
-	class="relative overflow-hidden rounded-2xl border border-base-content/5 bg-base-200/30 p-5 backdrop-blur-md sm:p-6"
-	aria-live="polite"
-	onpointerenter={() => (isHovered = true)}
-	onpointerleave={() => (isHovered = false)}
->
-	<div
-		class="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/[0.04] via-transparent to-secondary/[0.04]"
-	></div>
+<div use:reveal>
+	<Card
+		as="section"
+		variant="bordered"
+		role="group"
+		class="relative overflow-hidden"
+		aria-live="polite"
+		onpointerenter={() => (isHovered = true)}
+		onpointerleave={() => (isHovered = false)}
+	>
+		<div
+			class="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/[0.04] via-transparent to-secondary/[0.04]"
+		></div>
 
-	<div class="relative flex items-center gap-5">
-		<div class="hidden h-28 w-36 shrink-0 items-center justify-center sm:flex" aria-hidden="true">
-			{#if !loading && !hasError && coverUrls.length > 0}
-				{#each coverUrls as url, index (url)}
+		<div class="relative flex items-center gap-5">
+			<div class="hidden h-28 w-36 shrink-0 items-center justify-center sm:flex" aria-hidden="true">
+				{#if !loading && !hasError && coverUrls.length > 0}
+					{#each coverUrls as url, index (url)}
+						<div
+							class="absolute h-20 w-20 overflow-hidden rounded-xl border-2 border-base-100 shadow-md transition-transform duration-500"
+							style="transform: rotate({isHovered
+								? fanAngles[index] * 1.4
+								: fanAngles[index]}deg) translateX({isHovered
+								? fanOffsets[index] * 1.3
+								: fanOffsets[index]}px); z-index: {index};"
+						>
+							<AlbumImage
+								customUrl={url}
+								alt=""
+								size="full"
+								rounded="none"
+								className="h-full w-full"
+							/>
+						</div>
+					{/each}
+				{:else}
 					<div
-						class="absolute h-20 w-20 overflow-hidden rounded-xl border-2 border-base-100 shadow-md transition-transform duration-500"
-						style="transform: rotate({isHovered
-							? fanAngles[index] * 1.4
-							: fanAngles[index]}deg) translateX({isHovered
-							? fanOffsets[index] * 1.3
-							: fanOffsets[index]}px); z-index: {index};"
+						class="flex h-20 w-20 items-center justify-center rounded-2xl border border-base-content/10 bg-base-100/70 shadow-sm"
 					>
-						<img src={url} alt="" class="h-full w-full object-cover" loading="lazy" />
+						{#if hasError}
+							<CircleAlert class="h-8 w-8 text-warning" />
+						{:else if totalCount === 0 && !loading}
+							<ListMusic class="h-8 w-8 text-base-content/30" />
+						{:else}
+							<Disc3 class="h-8 w-8 text-base-content/20" />
+						{/if}
 					</div>
-				{/each}
-			{:else}
-				<div
-					class="flex h-20 w-20 items-center justify-center rounded-2xl border border-base-content/10 bg-base-100/70 shadow-sm"
-				>
-					{#if hasError}
-						<CircleAlert class="h-8 w-8 text-warning" />
-					{:else if totalCount === 0 && !loading}
-						<ListMusic class="h-8 w-8 text-base-content/30" />
-					{:else}
-						<Disc3 class="h-8 w-8 text-base-content/20" />
-					{/if}
-				</div>
-			{/if}
-		</div>
-
-		<div class="min-w-0 flex-1">
-			<div class="mb-1.5 flex flex-wrap items-center gap-2">
-				{@render sourceIcon()}
-				<span class="text-xs font-medium uppercase tracking-wider text-base-content/50"
-					>{sourceLabel}</span
-				>
-				{#if !loading && !hasError}
-					<span class="badge badge-ghost badge-sm">
-						{accountMode === 'linked' ? accountLabel : 'Shared account'}
-					</span>
 				{/if}
 			</div>
 
-			{#if loading}
-				<div class="space-y-2 py-1">
-					<div class="skeleton h-6 w-64 max-w-full"></div>
-					<div class="skeleton h-4 w-80 max-w-full"></div>
-				</div>
-			{:else}
-				<h3 class="text-lg font-bold leading-tight sm:text-xl">{heading}</h3>
-				<p class="mt-1 max-w-2xl text-sm text-base-content/55">{supportingCopy}</p>
-			{/if}
-
-			{#if !loading}
-				<div class="mt-4 flex flex-wrap items-center gap-2">
-					{#if !hasError && totalCount > 0}
-						<a class="btn btn-primary btn-sm gap-2" href={playlistsHref}>
-							{allImported ? 'View playlists' : 'Browse playlists'}
-							<ArrowRight class="h-4 w-4" />
-						</a>
-					{/if}
-					{#if (!hasError && (accountMode === 'shared' || totalCount === 0)) || relinkRequired}
-						<a class="btn btn-ghost btn-sm gap-2" href={withBasePath('/profile#media-accounts')}>
-							<Link2 class="h-4 w-4" />
-							{relinkRequired
-								? `Reconnect ${sourceLabel}`
-								: accountMode === 'linked'
-									? 'Manage account'
-									: 'Link your account'}
-						</a>
-					{/if}
-					{#if onretry && (hasError || totalCount === 0)}
-						<button type="button" class="btn btn-ghost btn-sm gap-2" onclick={onretry}>
-							<RefreshCw class="h-4 w-4" />
-							Check again
-						</button>
-					{/if}
-				</div>
-			{/if}
-		</div>
-
-		{#if !loading && !hasError && totalCount > 0}
-			<div class="relative hidden shrink-0 sm:block">
-				<svg class="h-[72px] w-[72px] -rotate-90" viewBox="0 0 64 64" fill="none">
-					<circle
-						cx="32"
-						cy="32"
-						r={RING_RADIUS}
-						stroke="currentColor"
-						stroke-width="4"
-						class="text-base-content/10"
-					/>
-					<circle
-						cx="32"
-						cy="32"
-						r={RING_RADIUS}
-						stroke="currentColor"
-						stroke-width="4"
-						stroke-linecap="round"
-						stroke-dasharray={RING_CIRCUMFERENCE}
-						stroke-dashoffset={strokeDashoffset}
-						class={allImported ? 'text-success' : 'text-primary'}
-					/>
-				</svg>
-				<div class="absolute inset-0 flex items-center justify-center">
-					{#if allImported}
-						<CircleCheckBig class="h-6 w-6 text-success" />
-					{:else}
-						<span class="text-xs font-bold tabular-nums text-base-content/70">
-							{importedCount}/{totalCount}
+			<div class="min-w-0 flex-1">
+				<div class="mb-1.5 flex flex-wrap items-center gap-2">
+					{@render sourceIcon()}
+					<span class="text-xs font-medium uppercase tracking-wider text-base-content/50"
+						>{sourceLabel}</span
+					>
+					{#if !loading && !hasError}
+						<span class="badge badge-ghost badge-sm">
+							{accountMode === 'linked' ? accountLabel : 'Shared account'}
 						</span>
 					{/if}
 				</div>
+
+				{#if loading}
+					<div class="space-y-2 py-1">
+						<div class="skeleton h-6 w-64 max-w-full"></div>
+						<div class="skeleton h-4 w-80 max-w-full"></div>
+					</div>
+				{:else}
+					<h3 class="text-lg font-bold leading-tight sm:text-xl">{heading}</h3>
+					<p class="mt-1 max-w-2xl text-sm text-base-content/55">{supportingCopy}</p>
+				{/if}
+
+				{#if !loading}
+					<div class="mt-4 flex flex-wrap items-center gap-2">
+						{#if !hasError && totalCount > 0}
+							<Button
+								variant="primary"
+								size="sm"
+								icon={ArrowRight}
+								iconPosition="end"
+								href={playlistsHref}
+							>
+								{allImported ? 'View playlists' : 'Browse playlists'}
+							</Button>
+						{/if}
+						{#if (!hasError && (accountMode === 'shared' || totalCount === 0)) || relinkRequired}
+							<Button
+								variant="ghost"
+								size="sm"
+								icon={Link2}
+								href={withBasePath('/profile#media-accounts')}
+							>
+								{relinkRequired
+									? `Reconnect ${sourceLabel}`
+									: accountMode === 'linked'
+										? 'Manage account'
+										: 'Link your account'}
+							</Button>
+						{/if}
+						{#if onretry && (hasError || totalCount === 0)}
+							<Button variant="ghost" size="sm" icon={RefreshCw} onclick={onretry}>
+								Check again
+							</Button>
+						{/if}
+					</div>
+				{/if}
 			</div>
-		{/if}
-	</div>
-</section>
+
+			{#if !loading && !hasError && totalCount > 0}
+				<div class="relative hidden shrink-0 sm:block">
+					<svg class="h-[72px] w-[72px] -rotate-90" viewBox="0 0 64 64" fill="none">
+						<circle
+							cx="32"
+							cy="32"
+							r={RING_RADIUS}
+							stroke="currentColor"
+							stroke-width="4"
+							class="text-base-content/10"
+						/>
+						<circle
+							cx="32"
+							cy="32"
+							r={RING_RADIUS}
+							stroke="currentColor"
+							stroke-width="4"
+							stroke-linecap="round"
+							stroke-dasharray={RING_CIRCUMFERENCE}
+							stroke-dashoffset={strokeDashoffset}
+							class={allImported ? 'text-success' : 'text-primary'}
+						/>
+					</svg>
+					<div class="absolute inset-0 flex items-center justify-center">
+						{#if allImported}
+							<CircleCheckBig class="h-6 w-6 text-success" />
+						{:else}
+							<span class="text-xs font-bold tabular-nums text-base-content/70">
+								{importedCount}/{totalCount}
+							</span>
+						{/if}
+					</div>
+				</div>
+			{/if}
+		</div>
+	</Card>
+</div>

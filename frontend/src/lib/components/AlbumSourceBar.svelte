@@ -3,6 +3,8 @@
 	import { Shuffle, Play, ListPlus, ListStart, ListMusic, Download } from 'lucide-svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		sourceLabel: string;
@@ -55,10 +57,10 @@
 	});
 </script>
 
-<div class="bg-base-200/80 rounded-box p-4 shadow-md border border-base-content/5">
+<Card variant="bordered" padding="md">
 	<div class="flex items-center gap-3 flex-wrap">
 		<div class="flex items-center gap-2 mr-1">
-			<span style="color: {sourceColor};">
+			<span style:color={sourceColor}>
 				{@render icon()}
 			</span>
 			<span class="text-sm font-bold">{sourceLabel}</span>
@@ -72,15 +74,17 @@
 
 		{#if hasAnyTracks}
 			<div class="flex items-center gap-2 flex-wrap ml-auto">
-				<button class="btn btn-sm btn-accent gap-1.5 shadow-sm" onclick={onPlayAll}>
-					<Play class="h-4 w-4 fill-current" />
+				<Button
+					variant="accent"
+					size="sm"
+					icon={Play}
+					class="[&_svg]:fill-current"
+					onclick={onPlayAll}
+				>
 					Play All
-				</button>
+				</Button>
 
-				<button class="btn btn-sm btn-ghost gap-1.5" onclick={onShuffle}>
-					<Shuffle class="h-4 w-4" />
-					Shuffle
-				</button>
+				<Button variant="ghost" size="sm" icon={Shuffle} onclick={onShuffle}>Shuffle</Button>
 
 				{#if hasBulkActions}
 					<div class="ml-auto">
@@ -90,4 +94,4 @@
 			</div>
 		{/if}
 	</div>
-</div>
+</Card>

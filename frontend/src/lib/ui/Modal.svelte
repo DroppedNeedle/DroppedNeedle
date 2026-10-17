@@ -8,6 +8,8 @@
 	`size="sheet"` is for a screen-sized task: full height with a sticky header
 	and action bar on a phone, a large centred box from `md` up whose body
 	lays out its own scroll panes. It has a close button in its header.
+	`closeButton` adds the same header close to the other sizes, for a dialog
+	with no Cancel of its own.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -21,6 +23,8 @@
 		size?: 'sm' | 'md' | 'lg' | 'xl' | 'sheet';
 		/** False keeps Escape and the backdrop from closing it, for work in flight. */
 		dismissible?: boolean;
+		/** A close button beside the title; `sheet` always has one. */
+		closeButton?: boolean;
 		onclose?: () => void;
 		children: Snippet;
 		actions?: Snippet;
@@ -32,6 +36,7 @@
 		description,
 		size = 'md',
 		dismissible = true,
+		closeButton = false,
 		onclose,
 		children,
 		actions
@@ -122,7 +127,19 @@
 		</div>
 	{:else}
 		<div class="modal-box {widths[size as keyof typeof widths]}">
-			<h2 id={titleId} class="text-lg font-bold">{title}</h2>
+			{#if closeButton && dismissible}
+				<div class="flex items-start justify-between gap-3">
+					<h2 id={titleId} class="min-w-0 text-lg font-bold">{title}</h2>
+					<button
+						type="button"
+						class="btn btn-square btn-ghost btn-sm -mt-1 -mr-2 shrink-0"
+						aria-label="Close"
+						onclick={() => dialog?.close()}><X class="h-4 w-4" /></button
+					>
+				</div>
+			{:else}
+				<h2 id={titleId} class="text-lg font-bold">{title}</h2>
+			{/if}
 			{#if description}
 				<p id={descriptionId} class="mt-1 text-sm text-base-content/65">{description}</p>
 			{/if}

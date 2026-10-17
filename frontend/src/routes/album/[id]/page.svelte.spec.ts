@@ -324,11 +324,6 @@ vi.mock('$lib/components/AlbumImage.svelte', () => {
 	Comp.prototype = {};
 	return { default: Comp };
 });
-vi.mock('$lib/components/Toast.svelte', () => {
-	const Comp = function () {};
-	Comp.prototype = {};
-	return { default: Comp };
-});
 vi.mock('$lib/components/DiscoveryAlbumCarousel.svelte', () => {
 	const Comp = function () {};
 	Comp.prototype = {};

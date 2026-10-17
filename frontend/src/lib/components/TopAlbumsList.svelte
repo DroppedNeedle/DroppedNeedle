@@ -6,6 +6,9 @@
 	import { libraryStore } from '$lib/stores/library';
 	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import AlbumImage from './AlbumImage.svelte';
 	import LibraryBadge from './LibraryBadge.svelte';
 	import LastFmPlaceholder from './LastFmPlaceholder.svelte';
@@ -91,18 +94,18 @@
 			{/each}
 		</div>
 	{:else if !configured}
-		<div class="bg-base-200 rounded-lg p-4 text-center flex-1 flex items-center justify-center">
-			<div>
+		<Card padding="md" class="flex-1 text-center">
+			<div class="my-auto">
 				<p class="text-base-content/70 text-sm">Connect a music service to see popular albums</p>
-				<a href={withBasePath('/profile#scrobbling')} class="btn btn-primary btn-xs mt-2"
-					>Configure</a
-				>
+				<Button variant="primary" size="xs" href={withBasePath('/profile#scrobbling')} class="mt-2">
+					Configure
+				</Button>
 			</div>
-		</div>
+		</Card>
 	{:else if albums.length === 0}
-		<div class="bg-base-200 rounded-lg p-4 text-center flex-1 flex items-center justify-center">
-			<p class="text-base-content/70 text-sm">No album data available</p>
-		</div>
+		<Card padding="md" class="flex-1 text-center">
+			<p class="my-auto text-base-content/70 text-sm">No album data available</p>
+		</Card>
 	{:else}
 		<div class="space-y-1">
 			{#each albums as album, i (album.release_group_mbid || `album-${i}`)}
@@ -152,23 +155,19 @@
 						</div>
 
 						{#if !isInLibrary(album) && !isRequested(album)}
-							<button
-								type="button"
-								class="btn btn-circle btn-sm opacity-0 group-hover:opacity-100 transition-all shrink-0 hover:scale-110 hover:brightness-110 border-none bg-accent text-accent-content"
-								onclick={(e) => {
+							<IconButton
+								variant="accent"
+								size="sm"
+								icon={Download}
+								label="Request album"
+								class="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+								loading={isRequesting(album)}
+								onclick={(e: MouseEvent) => {
 									e.stopPropagation();
 									e.preventDefault();
 									handleRequest(album);
 								}}
-								disabled={isRequesting(album)}
-								aria-label="Request album"
-							>
-								{#if isRequesting(album)}
-									<span class="loading loading-spinner loading-xs"></span>
-								{:else}
-									<Download class="h-4 w-4" strokeWidth={2.5} />
-								{/if}
-							</button>
+							/>
 						{/if}
 					</a>
 				{:else}

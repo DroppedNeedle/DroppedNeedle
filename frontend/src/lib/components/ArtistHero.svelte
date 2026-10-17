@@ -9,6 +9,7 @@
 	import FollowControl from './FollowControl.svelte';
 	import BackButton from './BackButton.svelte';
 	import HeroBackdrop from './HeroBackdrop.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
 		artist: ArtistInfo;
@@ -65,14 +66,14 @@
 
 	<div class="relative z-10 px-4 sm:px-8 lg:px-12 pt-6 pb-8 sm:pt-8 sm:pb-12">
 		{#if onrefresh && artist.in_library}
-			<button
-				class="absolute top-3 right-3 btn btn-sm btn-ghost btn-circle z-20"
+			<IconButton
+				size="sm"
+				icon={RefreshCw}
+				label="Refresh artist info"
+				class="absolute top-3 right-3 z-20"
+				loading={refreshing}
 				onclick={onrefresh}
-				disabled={refreshing}
-				title="Refresh artist info"
-			>
-				<RefreshCw class="h-5 w-5 {refreshing ? 'animate-spin' : ''}" />
-			</button>
+			/>
 		{/if}
 		<div class="max-w-7xl mx-auto">
 			{#if showBackButton}

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Disc3 } from 'lucide-svelte';
-	import { getApiUrl } from '$lib/api/api-utils';
+	import AlbumImage from './AlbumImage.svelte';
 
 	interface Props {
 		coverUrls?: string[];
@@ -16,96 +16,34 @@
 		rounded = 'rounded-box'
 	}: Props = $props();
 
-	let imageErrors = $state<Record<number, boolean>>({});
-
-	function handleImageError(index: number) {
-		imageErrors[index] = true;
-	}
-
-	let customCoverSrc = $derived(customCoverUrl ? getApiUrl(customCoverUrl) : '');
-	let urls = $derived(coverUrls.slice(0, 4).map((url) => getApiUrl(url)));
+	let urls = $derived(coverUrls.slice(0, 4));
 </script>
 
-{#snippet gridFallback()}
+{#snippet emptyCell()}
 	<div class="bg-base-200 w-full h-full flex items-center justify-center">
 		<Disc3 class="w-1/3 h-1/3 text-base-content/20" />
 	</div>
 {/snippet}
 
+{#snippet cover(url: string, alt: string)}
+	<AlbumImage customUrl={url} {alt} size="full" rounded="none" className="w-full h-full" />
+{/snippet}
+
 <div class="overflow-hidden {rounded} {size}">
 	{#if customCoverUrl}
-		<img
-			src={customCoverSrc}
-			alt="Playlist cover"
-			class="object-cover w-full h-full"
-			loading="lazy"
-		/>
-	{:else if urls.length >= 4}
-		<div class="grid grid-cols-2 grid-rows-2 w-full h-full gap-0">
+		{@render cover(customCoverUrl, 'Playlist cover')}
+	{:else if urls.length >= 2}
+		<div class="grid grid-cols-2 w-full h-full gap-0" class:grid-rows-2={urls.length >= 3}>
 			{#each urls as url, i (`${url}-${i}`)}
-				{#if imageErrors[i]}
-					{@render gridFallback()}
-				{:else}
-					<img
-						src={url}
-						alt=""
-						class="object-cover w-full h-full"
-						loading="lazy"
-						onerror={() => handleImageError(i)}
-					/>
-				{/if}
+				{@render cover(url, '')}
 			{/each}
-		</div>
-	{:else if urls.length === 3}
-		<div class="grid grid-cols-2 grid-rows-2 w-full h-full gap-0">
-			{#each urls as url, i (`${url}-${i}`)}
-				{#if imageErrors[i]}
-					{@render gridFallback()}
-				{:else}
-					<img
-						src={url}
-						alt=""
-						class="object-cover w-full h-full"
-						loading="lazy"
-						onerror={() => handleImageError(i)}
-					/>
-				{/if}
-			{/each}
-			{@render gridFallback()}
-		</div>
-	{:else if urls.length === 2}
-		<div class="grid grid-cols-2 w-full h-full gap-0">
-			{#each urls as url, i (`${url}-${i}`)}
-				{#if imageErrors[i]}
-					{@render gridFallback()}
-				{:else}
-					<img
-						src={url}
-						alt=""
-						class="object-cover w-full h-full"
-						loading="lazy"
-						onerror={() => handleImageError(i)}
-					/>
-				{/if}
-			{/each}
+			{#if urls.length === 3}
+				{@render emptyCell()}
+			{/if}
 		</div>
 	{:else if urls.length === 1}
-		{#if imageErrors[0]}
-			<div class="bg-base-200 w-full h-full flex items-center justify-center">
-				<Disc3 class="w-1/3 h-1/3 text-base-content/20" />
-			</div>
-		{:else}
-			<img
-				src={urls[0]}
-				alt="Playlist cover"
-				class="object-cover w-full h-full"
-				loading="lazy"
-				onerror={() => handleImageError(0)}
-			/>
-		{/if}
+		{@render cover(urls[0], 'Playlist cover')}
 	{:else}
-		<div class="bg-base-200 w-full h-full flex items-center justify-center">
-			<Disc3 class="w-1/3 h-1/3 text-base-content/20" />
-		</div>
+		{@render emptyCell()}
 	{/if}
 </div>

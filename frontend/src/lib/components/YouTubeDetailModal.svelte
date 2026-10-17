@@ -4,7 +4,6 @@
 		Pencil,
 		Trash2,
 		Play,
-		X,
 		ExternalLink,
 		ListPlus,
 		ListStart,
@@ -36,6 +35,9 @@
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import type { YouTubeLink, YouTubeTrackLink } from '$lib/types';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 
 	interface Props {
 		open: boolean;
@@ -300,222 +302,205 @@
 	}
 </script>
 
-{#if open && link}
-	<dialog class="modal modal-open">
-		<div class="modal-box max-w-5xl p-0 overflow-hidden">
-			<div class="flex gap-6 p-6 pb-4">
-				<div class="shrink-0">
-					{#if canNavigate}
-						<button
-							onclick={goToAlbum}
-							class="block rounded-xl overflow-hidden shadow-lg hover:shadow-xl transition-shadow cursor-pointer ring-1 ring-base-content/10"
-							aria-label="Go to album"
-						>
-							<AlbumImage
-								mbid={link.album_id}
-								customUrl={link.cover_url}
-								alt={link.album_name}
-								size="xl"
-								requestSize={250}
-								rounded="none"
-								className="w-52 h-52"
-							/>
-						</button>
-					{:else}
-						<div class="rounded-xl overflow-hidden shadow-lg ring-1 ring-base-content/10">
-							<AlbumImage
-								mbid={link.album_id}
-								customUrl={link.cover_url}
-								alt={link.album_name}
-								size="xl"
-								requestSize={250}
-								rounded="none"
-								className="w-52 h-52"
-							/>
-						</div>
-					{/if}
-				</div>
-
-				<div class="flex flex-col justify-between min-w-0 flex-1 py-1">
-					<div class="flex-1 min-w-0">
-						{#if canNavigate}
-							<button
-								onclick={goToAlbum}
-								class="text-2xl font-bold truncate text-left hover:text-accent transition-colors cursor-pointer block max-w-full"
-							>
-								{link.album_name}
-							</button>
-						{:else}
-							<h3 class="text-2xl font-bold truncate">{link.album_name}</h3>
-						{/if}
-						<button
-							onclick={searchArtist}
-							class="text-base opacity-70 truncate hover:text-accent transition-colors cursor-pointer flex items-center gap-1.5 mt-0.5 group/artist"
-						>
-							{link.artist_name}
-							<Search class="h-3 w-3 opacity-0 group-hover/artist:opacity-100 transition-opacity" />
-						</button>
-						<div class="flex items-center gap-3 mt-3 flex-wrap">
-							<div class="flex items-center gap-1.5">
-								<YouTubeIcon class="h-4 w-4 text-red-500" />
-								<span class="text-xs opacity-50">{formatDate(link.created_at)}</span>
-							</div>
-							{#if link.is_manual}
-								<span class="badge badge-xs badge-ghost">Manual</span>
-							{/if}
-							{#if tracks.length > 0}
-								<span class="badge badge-sm badge-accent">{tracks.length} tracks</span>
-							{/if}
-						</div>
-					</div>
-
-					<div class="flex items-center gap-2 mt-4 flex-wrap">
-						{#if tracks.length > 0}
-							<button class="btn btn-sm btn-accent gap-1.5" onclick={() => playAllTracks(false)}>
-								<Play class="h-4 w-4 fill-current" />
-								Play
-							</button>
-							<button class="btn btn-sm btn-ghost gap-1.5" onclick={() => playAllTracks(true)}>
-								<Shuffle class="h-4 w-4" />
-								Shuffle
-							</button>
-						{/if}
-						{#if link.video_id}
-							<button class="btn btn-sm btn-ghost gap-1.5" onclick={playFullAlbum}>
-								<ExternalLink class="h-4 w-4" />
-								Full Video
-							</button>
-						{/if}
-
-						{#if tracks.length > 0}
-							<ContextMenu items={getBulkMenuItems()} position="end" size="sm" />
-						{/if}
-
-						<div class="flex-1"></div>
-						<button class="btn btn-sm btn-ghost gap-1" onclick={handleEdit}>
-							<Pencil class="h-3.5 w-3.5" />
-							Edit
-						</button>
-						{#if confirmingDelete}
-							<button class="btn btn-sm btn-error gap-1" onclick={handleDelete} disabled={deleting}>
-								{#if deleting}
-									<span class="loading loading-spinner loading-xs"></span>
-								{:else}
-									Confirm
-								{/if}
-							</button>
-							<button
-								class="btn btn-sm btn-ghost"
-								onclick={() => {
-									confirmingDelete = false;
-								}}>Cancel</button
-							>
-						{:else}
-							<button class="btn btn-sm btn-ghost text-error gap-1" onclick={handleDelete}>
-								<Trash2 class="h-3.5 w-3.5" />
-							</button>
-						{/if}
-					</div>
-				</div>
-
-				<button class="btn btn-sm btn-circle btn-ghost self-start -mr-2 -mt-2" onclick={handleClose}
-					><X class="h-4 w-4" /></button
-				>
-			</div>
-
-			<div class="divider my-0 mx-6"></div>
-
-			<div class="px-6 pt-3 pb-5 max-h-128 overflow-y-auto">
-				{#if loadingTracks}
-					<div class="flex justify-center py-8">
-						<span class="loading loading-spinner loading-md"></span>
-					</div>
-				{:else if trackError}
-					<div class="text-center py-10">
-						<div class="alert alert-error max-w-sm mx-auto">
-							<span class="text-sm">Couldn't load the track list</span>
-							<button
-								class="btn btn-sm btn-ghost"
-								onclick={() => link && fetchTracks(link.album_id)}>Retry</button
-							>
-						</div>
-					</div>
-				{:else if tracks.length > 0}
-					<div class="flex flex-col gap-0.5">
-						{#each trackSections as section (section.discNumber)}
-							{#if trackSections.length > 1}
-								<div class="px-3 pt-3 pb-1">
-									<div
-										class="inline-flex items-center gap-2 rounded-full border border-base-content/10 bg-base-200 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] opacity-70"
-									>
-										<span class="h-1.5 w-1.5 rounded-full bg-accent"></span>
-										Disc {section.discNumber}
-									</div>
-								</div>
-							{/if}
-							{#each section.tracks as track (track.track_name + track.disc_number + track.track_number)}
-								{@const isCurrentlyPlaying =
-									playerStore.nowPlaying?.albumId === link.album_id &&
-									(playerStore.currentQueueItem?.discNumber ?? 1) ===
-										normalizeDiscNumber(track.disc_number) &&
-									playerStore.currentQueueItem?.trackNumber === track.track_number &&
-									playerStore.isPlaying}
-								<div
-									class={[
-										'flex items-center gap-3 w-full py-2.5 px-3 rounded-lg transition-colors group/track',
-										isCurrentlyPlaying ? 'bg-accent/8' : 'hover:bg-base-200'
-									]}
-								>
-									<button
-										class="flex items-center gap-3 flex-1 min-w-0 text-left cursor-pointer"
-										onclick={() => playTrack(track)}
-									>
-										<span
-											class="font-mono w-7 text-right text-sm shrink-0 {isCurrentlyPlaying
-												? 'text-accent'
-												: 'opacity-40'}"
-										>
-											{#if isCurrentlyPlaying}
-												<NowPlayingIndicator />
-											{:else}
-												{track.track_number}
-											{/if}
-										</span>
-										<span class="text-sm truncate flex-1 {isCurrentlyPlaying ? 'text-accent' : ''}"
-											>{track.track_name}</span
-										>
-										<Play
-											class="h-4 w-4 shrink-0 transition-opacity {isCurrentlyPlaying
-												? 'opacity-100'
-												: 'opacity-0 group-hover/track:opacity-100'} fill-current text-accent"
-										/>
-									</button>
-
-									<div class="shrink-0">
-										<ContextMenu items={getTrackMenuItems(track)} position="end" size="xs" />
-									</div>
-								</div>
-							{/each}
-						{/each}
-					</div>
-				{:else if !link.video_id}
-					<div class="text-center py-10">
-						<YouTubeIcon class="h-10 w-10 mx-auto opacity-20 mb-2" />
-						<p class="text-sm opacity-50">No tracks linked yet</p>
-						<p class="text-xs opacity-30 mt-1">Add track links to enable per-track playback.</p>
-					</div>
+{#if link}
+	<Modal bind:open title={link.album_name} size="xl" closeButton onclose={handleClose}>
+		<div class="flex gap-6 pb-4">
+			<div class="shrink-0">
+				{#if canNavigate}
+					<button
+						type="button"
+						onclick={goToAlbum}
+						class="block rounded-xl overflow-hidden shadow-lg hover:shadow-xl transition-shadow cursor-pointer ring-1 ring-base-content/10"
+						aria-label="Go to album"
+					>
+						<AlbumImage
+							mbid={link.album_id}
+							customUrl={link.cover_url}
+							alt={link.album_name}
+							size="xl"
+							requestSize={250}
+							rounded="none"
+							className="w-52 h-52"
+						/>
+					</button>
 				{:else}
-					<div class="text-center py-10">
-						<Play class="h-10 w-10 mx-auto opacity-20 mb-2" />
-						<p class="text-sm opacity-50">Album-level link only</p>
-						<p class="text-xs opacity-30 mt-1">Individual tracks are not linked for this album.</p>
+					<div class="rounded-xl overflow-hidden shadow-lg ring-1 ring-base-content/10">
+						<AlbumImage
+							mbid={link.album_id}
+							customUrl={link.cover_url}
+							alt={link.album_name}
+							size="xl"
+							requestSize={250}
+							rounded="none"
+							className="w-52 h-52"
+						/>
 					</div>
 				{/if}
 			</div>
+
+			<div class="flex flex-col justify-between min-w-0 flex-1 py-1">
+				<div class="flex-1 min-w-0">
+					<button
+						type="button"
+						onclick={searchArtist}
+						class="text-base opacity-70 truncate hover:text-accent transition-colors cursor-pointer flex items-center gap-1.5 group/artist"
+					>
+						{link.artist_name}
+						<Search class="h-3 w-3 opacity-0 group-hover/artist:opacity-100 transition-opacity" />
+					</button>
+					<div class="flex items-center gap-3 mt-3 flex-wrap">
+						<div class="flex items-center gap-1.5">
+							<YouTubeIcon class="h-4 w-4 text-red-500" />
+							<span class="text-xs opacity-50">{formatDate(link.created_at)}</span>
+						</div>
+						{#if link.is_manual}
+							<span class="badge badge-xs badge-ghost">Manual</span>
+						{/if}
+						{#if tracks.length > 0}
+							<span class="badge badge-sm badge-accent">{tracks.length} tracks</span>
+						{/if}
+					</div>
+				</div>
+
+				<div class="flex items-center gap-2 mt-4 flex-wrap">
+					{#if tracks.length > 0}
+						<Button
+							variant="accent"
+							size="sm"
+							icon={Play}
+							class="[&_svg]:fill-current"
+							onclick={() => playAllTracks(false)}
+						>
+							Play
+						</Button>
+						<Button variant="ghost" size="sm" icon={Shuffle} onclick={() => playAllTracks(true)}>
+							Shuffle
+						</Button>
+					{/if}
+					{#if link.video_id}
+						<Button variant="ghost" size="sm" icon={ExternalLink} onclick={playFullAlbum}>
+							Full Video
+						</Button>
+					{/if}
+
+					{#if tracks.length > 0}
+						<ContextMenu items={getBulkMenuItems()} position="end" size="sm" />
+					{/if}
+
+					<div class="flex-1"></div>
+					<Button variant="ghost" size="sm" icon={Pencil} onclick={handleEdit}>Edit</Button>
+					{#if confirmingDelete}
+						<Button variant="danger" size="sm" loading={deleting} onclick={handleDelete}>
+							Confirm
+						</Button>
+						<Button
+							variant="ghost"
+							size="sm"
+							onclick={() => {
+								confirmingDelete = false;
+							}}>Cancel</Button
+						>
+					{:else}
+						<IconButton
+							variant="danger-ghost"
+							size="sm"
+							icon={Trash2}
+							label="Delete link"
+							onclick={handleDelete}
+						/>
+					{/if}
+				</div>
+			</div>
 		</div>
 
-		<form method="dialog" class="modal-backdrop">
-			<button onclick={handleClose}>close</button>
-		</form>
-	</dialog>
+		<div class="divider my-0"></div>
+
+		<div class="pt-3 max-h-128 overflow-y-auto">
+			{#if loadingTracks}
+				<div class="flex justify-center py-8">
+					<span class="loading loading-spinner loading-md"></span>
+				</div>
+			{:else if trackError}
+				<div class="text-center py-10">
+					<div class="alert alert-error max-w-sm mx-auto">
+						<span class="text-sm">Couldn't load the track list</span>
+						<Button variant="ghost" size="sm" onclick={() => link && fetchTracks(link.album_id)}
+							>Retry</Button
+						>
+					</div>
+				</div>
+			{:else if tracks.length > 0}
+				<div class="flex flex-col gap-0.5">
+					{#each trackSections as section (section.discNumber)}
+						{#if trackSections.length > 1}
+							<div class="px-3 pt-3 pb-1">
+								<div
+									class="inline-flex items-center gap-2 rounded-full border border-base-content/10 bg-base-200 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] opacity-70"
+								>
+									<span class="h-1.5 w-1.5 rounded-full bg-accent"></span>
+									Disc {section.discNumber}
+								</div>
+							</div>
+						{/if}
+						{#each section.tracks as track (track.track_name + track.disc_number + track.track_number)}
+							{@const isCurrentlyPlaying =
+								playerStore.nowPlaying?.albumId === link.album_id &&
+								(playerStore.currentQueueItem?.discNumber ?? 1) ===
+									normalizeDiscNumber(track.disc_number) &&
+								playerStore.currentQueueItem?.trackNumber === track.track_number &&
+								playerStore.isPlaying}
+							<div
+								class={[
+									'flex items-center gap-3 w-full py-2.5 px-3 rounded-lg transition-colors group/track',
+									isCurrentlyPlaying ? 'bg-accent/8' : 'hover:bg-base-200'
+								]}
+							>
+								<button
+									type="button"
+									class="flex items-center gap-3 flex-1 min-w-0 text-left cursor-pointer"
+									onclick={() => playTrack(track)}
+								>
+									<span
+										class="font-mono w-7 text-right text-sm shrink-0 {isCurrentlyPlaying
+											? 'text-accent'
+											: 'opacity-40'}"
+									>
+										{#if isCurrentlyPlaying}
+											<NowPlayingIndicator />
+										{:else}
+											{track.track_number}
+										{/if}
+									</span>
+									<span class="text-sm truncate flex-1 {isCurrentlyPlaying ? 'text-accent' : ''}"
+										>{track.track_name}</span
+									>
+									<Play
+										class="h-4 w-4 shrink-0 transition-opacity {isCurrentlyPlaying
+											? 'opacity-100'
+											: 'opacity-0 group-hover/track:opacity-100'} fill-current text-accent"
+									/>
+								</button>
+
+								<div class="shrink-0">
+									<ContextMenu items={getTrackMenuItems(track)} position="end" size="xs" />
+								</div>
+							</div>
+						{/each}
+					{/each}
+				</div>
+			{:else if !link.video_id}
+				<div class="text-center py-10">
+					<YouTubeIcon class="h-10 w-10 mx-auto opacity-20 mb-2" />
+					<p class="text-sm opacity-50">No tracks linked yet</p>
+					<p class="text-xs opacity-30 mt-1">Add track links to enable per-track playback.</p>
+				</div>
+			{:else}
+				<div class="text-center py-10">
+					<Play class="h-10 w-10 mx-auto opacity-20 mb-2" />
+					<p class="text-sm opacity-50">Album-level link only</p>
+					<p class="text-xs opacity-30 mt-1">Individual tracks are not linked for this album.</p>
+				</div>
+			{/if}
+		</div>
+	</Modal>
 {/if}

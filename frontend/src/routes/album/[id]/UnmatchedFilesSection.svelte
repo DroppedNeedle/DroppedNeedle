@@ -11,6 +11,9 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import type { UnmatchedFile } from './albumEdition';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
 		files: UnmatchedFile[];
@@ -92,105 +95,100 @@
 </script>
 
 {#if files.length > 0}
-	<section class="card bg-base-200 border-l-4 border-warning">
-		<div class="card-body gap-3 p-4 sm:p-5">
-			<div class="flex flex-wrap items-center gap-2">
-				<TriangleAlert class="h-4 w-4 text-warning" />
-				<h2 class="text-sm font-bold">Unmatched files</h2>
-				<span class="badge badge-sm badge-warning">{files.length}</span>
-				<p class="w-full text-xs opacity-60 sm:w-auto sm:ml-1">
-					Stored under this album, but not on any track of its edition.
-				</p>
-			</div>
+	<Card as="section" padding="md" class="border-l-4 border-warning" aria-label="Unmatched files">
+		<div class="flex flex-wrap items-center gap-2">
+			<TriangleAlert class="h-4 w-4 text-warning" />
+			<h2 class="text-sm font-bold">Unmatched files</h2>
+			<span class="badge badge-sm badge-warning">{files.length}</span>
+			<p class="w-full text-xs opacity-60 sm:w-auto sm:ml-1">
+				Stored under this album, but not on any track of its edition.
+			</p>
+		</div>
 
-			<ul class="divide-y divide-base-300">
-				{#each files as file (file.id)}
-					<li class="py-2.5">
-						<div class="flex flex-wrap items-center gap-3">
-							<button
-								class="btn btn-sm btn-circle btn-ghost"
-								aria-label={activeId === file.id && playing ? 'Pause preview' : 'Play a preview'}
-								onclick={() => togglePreview(file)}
-							>
-								{#if activeId === file.id && playing}
-									<Pause class="h-4 w-4" />
-								{:else}
-									<Play class="h-4 w-4" />
+		<ul class="divide-y divide-base-300">
+			{#each files as file (file.id)}
+				<li class="py-2.5">
+					<div class="flex flex-wrap items-center gap-3">
+						<IconButton
+							size="sm"
+							icon={activeId === file.id && playing ? Pause : Play}
+							label={activeId === file.id && playing ? 'Pause preview' : 'Play a preview'}
+							onclick={() => togglePreview(file)}
+						/>
+						<div class="min-w-0 flex-1">
+							<p class="truncate text-sm font-medium">
+								{file.artistName ? `${file.artistName} - ` : ''}{file.title}
+							</p>
+							<p class="truncate text-xs opacity-60">
+								{file.format?.toUpperCase() ?? '?'}
+								{#if file.lengthMs}
+									• {fmt(seconds(file))}
 								{/if}
-							</button>
-							<div class="min-w-0 flex-1">
-								<p class="truncate text-sm font-medium">
-									{file.artistName ? `${file.artistName} - ` : ''}{file.title}
-								</p>
-								<p class="truncate text-xs opacity-60">
-									{file.format?.toUpperCase() ?? '?'}
-									{#if file.lengthMs}
-										• {fmt(seconds(file))}
-									{/if}
-								</p>
-								{#if file.note}
-									<p class="text-xs text-info">{file.note}</p>
-								{/if}
-							</div>
-							<span class="badge badge-sm badge-warning badge-outline whitespace-nowrap">
-								{file.label}
-							</span>
-							{#if canRemove}
-								{#if confirmingId === file.id}
-									<div class="flex items-center gap-1">
-										<button
-											class="btn btn-xs btn-error gap-1"
-											onclick={() => handleRemove(file)}
-											disabled={remove.isPending}
-										>
-											<Trash2 class="h-3.5 w-3.5" />
-											Remove file
-										</button>
-										<button
-											class="btn btn-xs btn-ghost"
-											aria-label="Keep this file"
-											onclick={() => (confirmingId = null)}
-										>
-											<X class="h-3.5 w-3.5" />
-										</button>
-									</div>
-								{:else}
-									<button
-										class="btn btn-xs btn-ghost text-error gap-1"
+							</p>
+							{#if file.note}
+								<p class="text-xs text-info">{file.note}</p>
+							{/if}
+						</div>
+						<span class="badge badge-sm badge-warning badge-outline whitespace-nowrap">
+							{file.label}
+						</span>
+						{#if canRemove}
+							{#if confirmingId === file.id}
+								<div class="flex items-center gap-1">
+									<Button
+										variant="danger"
+										size="xs"
+										icon={Trash2}
 										onclick={() => handleRemove(file)}
 										disabled={remove.isPending}
 									>
-										<Trash2 class="h-3.5 w-3.5" />
-										Remove
-									</button>
-								{/if}
-							{/if}
-						</div>
-						{#if activeId === file.id}
-							<div class="mt-1.5 flex items-center gap-2 pl-11 pr-1">
-								<input
-									type="range"
-									class="range range-xs range-warning flex-1"
-									aria-label="Scrub preview"
-									min="0"
-									max={mediaDuration || seconds(file)}
-									step="1"
-									value={currentTime}
-									oninput={seek}
-								/>
-								<span class="text-xs tabular-nums opacity-60">
-									{fmt(currentTime)} / {fmt(mediaDuration || seconds(file))}
-								</span>
-							</div>
-							{#if failed}
-								<p class="pl-11 text-xs text-error">Couldn't play this file.</p>
+										Remove file
+									</Button>
+									<IconButton
+										size="xs"
+										shape="square"
+										icon={X}
+										label="Keep this file"
+										onclick={() => (confirmingId = null)}
+									/>
+								</div>
+							{:else}
+								<Button
+									variant="danger-ghost"
+									size="xs"
+									icon={Trash2}
+									onclick={() => handleRemove(file)}
+									disabled={remove.isPending}
+								>
+									Remove
+								</Button>
 							{/if}
 						{/if}
-					</li>
-				{/each}
-			</ul>
-		</div>
-	</section>
+					</div>
+					{#if activeId === file.id}
+						<div class="mt-1.5 flex items-center gap-2 pl-11 pr-1">
+							<input
+								type="range"
+								class="range range-xs range-warning flex-1"
+								aria-label="Scrub preview"
+								min="0"
+								max={mediaDuration || seconds(file)}
+								step="1"
+								value={currentTime}
+								oninput={seek}
+							/>
+							<span class="text-xs tabular-nums opacity-60">
+								{fmt(currentTime)} / {fmt(mediaDuration || seconds(file))}
+							</span>
+						</div>
+						{#if failed}
+							<p class="pl-11 text-xs text-error">Couldn't play this file.</p>
+						{/if}
+					{/if}
+				</li>
+			{/each}
+		</ul>
+	</Card>
 
 	<audio
 		bind:this={audioEl}

@@ -3,6 +3,7 @@
 	import { ChevronDown, Download } from 'lucide-svelte';
 	import { libraryStore } from '$lib/stores/library';
 	import AlbumImage from './AlbumImage.svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import SampleButton from './discover/SampleButton.svelte';
 	import LibraryBadge from './LibraryBadge.svelte';
 	import { getLibraryMembershipQuery } from '$lib/queries/library/LibraryQueries.svelte';
@@ -96,17 +97,20 @@
 				/>
 			</button>
 			{#if onDownloadAll && notInLibraryCount > 0}
-				<button
-					class="btn btn-ghost btn-sm gap-1.5 mr-2 text-accent hover:bg-accent/10"
-					onclick={(e) => {
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={Download}
+					class="mr-2"
+					onclick={(e: MouseEvent) => {
 						e.stopPropagation();
 						onDownloadAll?.();
 					}}
 					title="Download all {title.toLowerCase()}"
+					aria-label="Download all {title.toLowerCase()}"
 				>
-					<Download class="h-4 w-4" />
 					<span class="hidden sm:inline text-xs">Download All</span>
-				</button>
+				</Button>
 			{/if}
 		</div>
 	</div>

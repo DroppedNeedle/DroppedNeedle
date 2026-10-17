@@ -30,6 +30,8 @@
 	import EditionPlate from '$lib/components/library/edition/EditionPlate.svelte';
 	import { editionSheet } from '$lib/components/library/edition/editionSheetState.svelte';
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
 		album: AlbumBasicInfo;
@@ -185,14 +187,14 @@
 
 	<div class="relative z-10 flex flex-col lg:flex-row gap-6 lg:gap-8 p-4 sm:p-6 lg:p-8">
 		{#if (inLibrary || isRequested) && downloadClientConfigured}
-			<button
-				class="absolute top-3 right-3 btn btn-sm btn-ghost btn-circle z-20"
+			<IconButton
+				size="sm"
+				icon={RefreshCw}
+				label="Refresh album status"
+				class="absolute top-3 right-3 z-20"
+				loading={refreshing}
 				onclick={onrefresh}
-				disabled={refreshing}
-				title="Refresh album status"
-			>
-				<RefreshCw class="h-5 w-5 {refreshing ? 'animate-spin' : ''}" />
-			</button>
+			/>
 		{/if}
 		<div class="w-full lg:w-64 xl:w-80 flex-shrink-0">
 			<AlbumImage
@@ -221,7 +223,11 @@
 			{/if}
 
 			<div class="flex flex-wrap items-center gap-2 text-sm">
-				<button onclick={onartistclick} class="font-semibold hover:underline cursor-pointer">
+				<button
+					type="button"
+					onclick={onartistclick}
+					class="font-semibold hover:underline cursor-pointer"
+				>
 					{album.artist_name}
 				</button>
 
@@ -268,25 +274,27 @@
 									: `${libraryTrackCount}/${mbTrackCount}`}
 					</span>
 					{#if authStore.isAdmin}
-						<button
-							class="btn btn-ghost btn-xs gap-1"
+						<Button
+							variant="ghost"
+							size="xs"
+							icon={RefreshCw}
+							loading={rescan.isPending}
 							onclick={handleRescan}
-							disabled={rescan.isPending}
 						>
-							<RefreshCw class="h-3.5 w-3.5 {rescan.isPending ? 'animate-spin' : ''}" />
 							Rescan
-						</button>
+						</Button>
 					{/if}
 					{#if authStore.isTrusted && libraryBelowCutoff && downloadClientConfigured}
-						<button
-							class="btn btn-ghost btn-xs gap-1 text-primary"
+						<Button
+							variant="ghost"
+							size="xs"
+							icon={TrendingUp}
 							onclick={handleUpgrade}
 							disabled={upgrade.isPending || upgradeQueued}
 							title="Some tracks are below your quality cutoff - find a better copy"
 						>
-							<TrendingUp class="h-3.5 w-3.5" />
 							{upgradeQueued ? 'Upgrade queued' : 'Upgrade quality'}
-						</button>
+						</Button>
 					{/if}
 				</div>
 			{/if}
@@ -338,13 +346,12 @@
 								totalSizeBytes={localCopies[0]?.total_size_bytes ?? null}
 								trackCount={libraryTrackCount}
 								{downloadAllowed}
-								className="btn-sm"
+								size="sm"
 							/>
 							{#if authStore.isAdmin}
-								<button class="btn btn-sm btn-error btn-outline gap-1" onclick={ondelete}>
-									<Trash2 class="h-4 w-4" />
+								<Button variant="danger-ghost" size="sm" icon={Trash2} onclick={ondelete}>
 									Remove
-								</button>
+								</Button>
 							{/if}
 						{:else if isRequested}
 							{#if !headerDownloadTask}
@@ -354,30 +361,26 @@
 								</div>
 							{/if}
 							{#if authStore.isAdmin}
-								<button class="btn btn-sm btn-error btn-outline gap-1" onclick={ondelete}>
-									<Trash2 class="h-4 w-4" />
+								<Button variant="danger-ghost" size="sm" icon={Trash2} onclick={ondelete}>
 									Remove
-								</button>
+								</Button>
 							{/if}
 						{:else}
-							<button
-								class="btn btn-lg gap-2 border-none bg-accent text-accent-content"
+							<Button
+								variant="accent"
+								size="lg"
+								icon={Plus}
+								loading={requesting}
 								onclick={() => onrequest()}
-								disabled={requesting}
 							>
-								{#if requesting}
-									<span class="loading loading-spinner loading-sm"></span>
-									Requesting...
-								{:else}
-									<Plus class="h-5 w-5" />
-									Add to Library
-								{/if}
-							</button>
+								{requesting ? 'Requesting...' : 'Add to Library'}
+							</Button>
 						{/if}
 						{#if !inLibrary}
-							<button
-								class="btn btn-lg btn-ghost gap-2 border border-base-content/15"
-								class:btn-active={headerSampling}
+							<Button
+								variant="outline"
+								size="lg"
+								active={headerSampling}
 								onclick={toggleHeaderSample}
 								title="Hear 30-second samples of this album before you grab it"
 							>
@@ -389,7 +392,7 @@
 									<Disc3 class="h-5 w-5" />
 								{/if}
 								{headerSampling ? 'Stop sample' : 'Sample'}
-							</button>
+							</Button>
 						{/if}
 					</div>
 				</div>

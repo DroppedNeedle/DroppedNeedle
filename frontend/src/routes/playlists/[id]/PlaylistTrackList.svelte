@@ -15,12 +15,13 @@
 	import type { SourceType } from '$lib/player/types';
 	import { formatDurationSec, isValidMbid } from '$lib/utils/formatting';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { getApiUrl } from '$lib/api/api-utils';
+	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import SourcePickerDropdown from '$lib/components/SourcePickerDropdown.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import { Music, Trash2, ListPlus, ListStart, GripVertical, Play, X } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 
 	interface Props {
@@ -366,7 +367,7 @@
 				<label class="flex items-center gap-2 cursor-pointer text-xs text-base-content/50">
 					<input
 						type="checkbox"
-						class="checkbox checkbox-xs"
+						class="checkbox checkbox-sm"
 						checked={selectedIds.size === playlist.tracks.length}
 						indeterminate={selectedIds.size > 0 && selectedIds.size < playlist.tracks.length}
 						onchange={toggleSelectAll}
@@ -404,6 +405,7 @@
 				<div class="flex items-center gap-4 w-full">
 					{#if !readonly}
 						<button
+							type="button"
 							class="cursor-grab active:cursor-grabbing p-1 touch-none shrink-0 transition-opacity {selectionMode
 								? 'pointer-events-none opacity-0'
 								: '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100'}"
@@ -439,6 +441,7 @@
 							>{i + 1}</span
 						>
 						<button
+							type="button"
 							class="w-6 text-center shrink-0 hidden group-hover:flex items-center justify-center cursor-pointer"
 							aria-label="Play {track.track_name}"
 							onclick={(e) => {
@@ -450,20 +453,14 @@
 						</button>
 					{/if}
 
-					<div class="w-10 h-10 rounded-md overflow-hidden shrink-0 bg-base-300">
-						{#if track.cover_url}
-							<img
-								src={getApiUrl(track.cover_url)}
-								alt=""
-								class="w-full h-full object-cover"
-								loading="lazy"
-							/>
-						{:else}
-							<div class="w-full h-full flex items-center justify-center">
-								<Music class="h-4 w-4 text-base-content/30" />
-							</div>
-						{/if}
-					</div>
+					<AlbumImage
+						customUrl={track.cover_url ?? null}
+						alt=""
+						size="full"
+						requestSize={250}
+						rounded="md"
+						className="h-10 w-10 shrink-0"
+					/>
 
 					<div class="flex-1 min-w-0">
 						{#if isValidMbid(track.album_id)}
@@ -534,22 +531,16 @@
 			<span class="text-sm font-medium">
 				{selectedIds.size} selected
 			</span>
-			<button class="btn btn-ghost btn-sm" onclick={clearSelection}>
-				<X class="h-4 w-4" />
-				Deselect
-			</button>
-			<button
-				class="btn btn-error btn-sm"
+			<Button variant="ghost" size="sm" icon={X} onclick={clearSelection}>Deselect</Button>
+			<Button
+				variant="danger"
+				size="sm"
+				icon={Trash2}
+				loading={bulkRemoving}
 				onclick={() => void removeSelectedTracks()}
-				disabled={bulkRemoving}
 			>
-				{#if bulkRemoving}
-					<span class="loading loading-spinner loading-xs"></span>
-				{:else}
-					<Trash2 class="h-4 w-4" />
-				{/if}
 				Delete
-			</button>
+			</Button>
 		</div>
 	{/if}
 {/if}

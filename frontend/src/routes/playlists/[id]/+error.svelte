@@ -2,6 +2,7 @@
 	import { Music, ArrowLeft } from 'lucide-svelte';
 	import { page } from '$app/state';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
 </script>
 
 <svelte:head>
@@ -19,11 +20,10 @@
 			{/if}
 		</p>
 		<div class="flex items-center gap-2">
-			<a href={withBasePath('/playlists')} class="btn btn-ghost btn-sm">
-				<ArrowLeft class="h-4 w-4" />
+			<Button variant="ghost" size="sm" icon={ArrowLeft} href={withBasePath('/playlists')}>
 				Back to Playlists
-			</a>
-			<button class="btn btn-accent btn-sm" onclick={() => location.reload()}> Retry </button>
+			</Button>
+			<Button variant="accent" size="sm" onclick={() => location.reload()}>Retry</Button>
 		</div>
 	</div>
 </div>

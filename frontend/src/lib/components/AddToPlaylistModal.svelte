@@ -24,6 +24,8 @@
 		transposeMembership
 	} from '$lib/queries/playlists/playlistV3Adapter';
 	import PlaylistMosaic from './PlaylistMosaic.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import Input from '$lib/ui/Input.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import type { QueueItem } from '$lib/player/types';
 
@@ -210,11 +212,13 @@
 		return `Add to ${p.name}`;
 	}
 
+	const titleId = $props.id();
+
 	let trackLabel = $derived(trackCount === 1 ? '1 track' : `${trackCount} tracks`);
 	let canAdd = $derived(trackCount > 0);
 </script>
 
-<dialog bind:this={dialogEl} class="modal crate-modal">
+<dialog bind:this={dialogEl} class="modal crate-modal" aria-labelledby={titleId}>
 	<div class="modal-box crate-box max-w-2xl overflow-hidden p-0">
 		<div class="crate-halo" aria-hidden="true"></div>
 
@@ -224,52 +228,47 @@
 					<Disc3 class="h-6 w-6 {reducedMotion ? '' : 'vinyl-spin'}" />
 				</div>
 				<div class="min-w-0 flex-1">
-					<h3 class="text-lg font-extrabold leading-tight tracking-tight">Add to the crate</h3>
+					<h3 id={titleId} class="text-lg font-extrabold leading-tight tracking-tight">
+						Add to the crate
+					</h3>
 					<p class="text-xs text-base-content/55">{trackLabel} ready to file</p>
 				</div>
 				<form method="dialog">
-					<button class="btn btn-circle btn-ghost btn-sm" aria-label="Close">
-						<X class="h-4 w-4" />
-					</button>
+					<IconButton type="submit" size="sm" icon={X} label="Close" />
 				</form>
 			</header>
 
-			<!-- Press a new record -->
-			<div class="press-row flex items-center gap-2 rounded-2xl px-3 py-2">
-				<Disc3 class="h-4 w-4 shrink-0 text-base-content/40" />
-				<input
-					type="text"
-					class="grow border-0 bg-transparent text-sm outline-none placeholder:text-base-content/40 focus:ring-0"
+			<div class="flex items-center gap-2">
+				<Input
+					icon={Disc3}
+					label="New playlist name"
 					placeholder="New playlist name"
+					class="grow"
 					bind:value={newName}
 					onkeydown={handleKeydown}
 					disabled={creating}
 				/>
-				<button
-					class="press-btn btn btn-circle btn-accent btn-sm shrink-0"
+				<IconButton
+					variant="accent"
+					size="sm"
+					icon={Plus}
+					label="Create playlist"
+					class="shrink-0"
+					loading={creating}
 					onclick={handleCreate}
-					disabled={!newName.trim() || creating || !canAdd}
-					aria-label="Create playlist"
-					title="Press a new record"
-				>
-					{#if creating}
-						<span class="loading loading-spinner loading-xs"></span>
-					{:else}
-						<Plus class="h-4 w-4" />
-					{/if}
-				</button>
+					disabled={!newName.trim() || !canAdd}
+				/>
 			</div>
 
 			{#if playlists.length > 0}
-				<label class="search-bar flex items-center gap-2 rounded-xl px-3 py-1.5">
-					<Search class="h-4 w-4 shrink-0 text-base-content/40" />
-					<input
-						type="text"
-						class="grow border-0 bg-transparent text-sm outline-none placeholder:text-base-content/40 focus:ring-0"
-						placeholder="Search your crate…"
-						bind:value={search}
-					/>
-				</label>
+				<Input
+					size="sm"
+					icon={Search}
+					label="Search your crate"
+					placeholder="Search your crate…"
+					class="w-full"
+					bind:value={search}
+				/>
 			{/if}
 
 			<div class="crate-scroll scrollbar-hide -mx-1 max-h-[min(56vh,27rem)] overflow-y-auto px-1">
@@ -300,6 +299,7 @@
 						{#each filteredPlaylists as playlist, i (playlist.id)}
 							{@const state = sleeveState(playlist.id)}
 							<button
+								type="button"
 								class="sleeve {state === 'added'
 									? 'is-added'
 									: state === 'adding'
@@ -443,24 +443,6 @@
 	.crate-disc--lg {
 		height: 3.5rem;
 		width: 3.5rem;
-	}
-
-	/* "Press a new record" + search fields styled as inset slots. */
-	.press-row,
-	.search-bar {
-		border: 1px solid oklch(from var(--color-base-content) l c h / 0.08);
-		background: oklch(from var(--color-base-100) l c h / 0.6);
-		transition:
-			border-color 0.2s ease,
-			box-shadow 0.2s ease;
-	}
-	.press-row:focus-within,
-	.search-bar:focus-within {
-		border-color: oklch(from var(--color-primary) l c h / 0.5);
-		box-shadow: 0 0 0 3px oklch(from var(--color-primary) l c h / 0.12);
-	}
-	.press-btn {
-		box-shadow: 0 0 18px oklch(from var(--color-primary) l c h / 0.35);
 	}
 
 	.crate-grid {

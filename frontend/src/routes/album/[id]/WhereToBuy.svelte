@@ -11,6 +11,8 @@
 	import { getPurchaseOptionsQuery } from '$lib/queries/albums/GetItQueries.svelte';
 	import type { PurchaseLink } from '$lib/types';
 	import { outsideLink } from '$lib/components/outsideLink';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		releaseGroupMbid: string;
@@ -60,11 +62,12 @@
 </script>
 
 {#snippet storeLink(link: PurchaseLink, withKindIcon = false)}
-	<a
+	<Button
+		size="xs"
+		pill
 		href={link.url}
 		target="_blank"
 		rel="noopener noreferrer"
-		class="btn btn-xs gap-1 rounded-full border-base-content/15 bg-base-200 hover:border-primary hover:bg-base-100"
 		title={link.kind === 'physical'
 			? `${link.label} - vinyl or CD`
 			: link.kind === 'free'
@@ -77,16 +80,16 @@
 			<Gift class="h-3 w-3 opacity-60" aria-hidden="true" />
 		{/if}
 		{link.label}
-	</a>
+	</Button>
 {/snippet}
 
 <!-- Always renders: worst case it offers the Bandcamp search.
      One line collapsed, above the track list; expand for every store + groups. -->
-<section aria-labelledby="where-to-buy-heading" class="rounded-2xl bg-base-200/40 px-3 py-2">
+<Card as="section" padding="sm" aria-label="Where to buy">
 	<div class="flex flex-wrap items-center gap-2">
 		<div class="flex items-center gap-1.5">
 			<ShoppingBag class="h-4 w-4 text-primary" aria-hidden="true" />
-			<h2 id="where-to-buy-heading" class="text-sm font-semibold">Where to buy</h2>
+			<h2 class="text-sm font-semibold">Where to buy</h2>
 		</div>
 
 		{#if optionsQuery.isLoading}
@@ -97,29 +100,27 @@
 				{@render storeLink(link, true)}
 			{/each}
 			{#if !hasDirectLinks && options?.bandcamp_search_url}
-				<a
+				<Button
+					size="xs"
+					pill
+					icon={Search}
 					href={options.bandcamp_search_url}
 					target="_blank"
 					rel="noopener noreferrer"
-					class="btn btn-xs rounded-full border-dashed border-base-content/25 bg-transparent hover:border-primary"
 				>
-					<Search class="h-3 w-3" aria-hidden="true" />
 					Search Bandcamp
-				</a>
+				</Button>
 			{/if}
 			{#if hasDirectLinks}
-				<button
-					class="btn btn-ghost btn-xs gap-1 text-base-content/60"
+				<Button
+					variant="ghost"
+					size="xs"
+					icon={expanded ? ChevronUp : ChevronDown}
 					onclick={() => (expanded = !expanded)}
 					aria-expanded={expanded}
 				>
-					{#if expanded}
-						<ChevronUp class="h-3.5 w-3.5" aria-hidden="true" /> Less
-					{:else}
-						<ChevronDown class="h-3.5 w-3.5" aria-hidden="true" />
-						{hiddenCount > 0 ? `${hiddenCount} more` : 'Details'}
-					{/if}
-				</button>
+					{expanded ? 'Less' : hiddenCount > 0 ? `${hiddenCount} more` : 'Details'}
+				</Button>
 			{/if}
 		{/if}
 	</div>
@@ -146,15 +147,16 @@
 			{/each}
 
 			{#if options.bandcamp_search_url}
-				<a
+				<Button
+					size="xs"
+					pill
+					icon={Search}
 					href={options.bandcamp_search_url}
 					target="_blank"
 					rel="noopener noreferrer"
-					class="btn btn-xs rounded-full border-dashed border-base-content/25 bg-transparent hover:border-primary"
 				>
-					<Search class="h-3 w-3" aria-hidden="true" />
 					Search Bandcamp
-				</a>
+				</Button>
 			{/if}
 
 			<p class="text-[11px] text-base-content/40">
@@ -162,4 +164,4 @@
 			</p>
 		</div>
 	{/if}
-</section>
+</Card>

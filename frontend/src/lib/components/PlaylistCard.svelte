@@ -14,6 +14,8 @@
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 	import PlaylistMosaic from './PlaylistMosaic.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
 		playlist: PlaylistSummary;
@@ -144,15 +146,13 @@
 	});
 </script>
 
-<div
-	class="card card-sm w-full shadow-sm shrink-0 group relative transition-all duration-200"
-	class:bg-base-100={!sourceType}
+<Card
+	variant="raised"
+	padding="none"
+	class="group relative w-full shrink-0"
 	style={sourceColor
 		? `background: color-mix(in srgb, ${sourceColor} 6%, var(--color-base-100)); border-left: 3px solid color-mix(in srgb, ${sourceColor} 50%, transparent);`
-		: ''}
-	style:--source-glow={sourceColor
-		? `color-mix(in srgb, ${sourceColor} 20%, transparent)`
-		: 'oklch(from var(--color-primary) l c h / 0.15)'}
+		: undefined}
 >
 	<a
 		href={withBasePath(`/playlists/${playlist.id}`)}
@@ -218,60 +218,37 @@
 	</a>
 
 	<div class="flex items-center gap-1 px-3 pb-2.5 pt-1.5">
-		<button
-			class="btn btn-circle btn-sm bg-success text-success-content border-none shadow-md hover:scale-110 active:scale-95 transition-transform duration-150"
+		<IconButton
+			variant="primary"
+			size="sm"
+			icon={Play}
+			label="Play {playlist.name}"
+			class="[&_svg]:fill-current"
+			loading={playLoading}
+			disabled={!hasPlayableTracks}
 			onclick={handlePlay}
-			disabled={!hasPlayableTracks || playLoading}
-			aria-label="Play {playlist.name}"
-			title={hasPlayableTracks ? `Play ${playlist.name}` : 'No playable tracks'}
-		>
-			{#if playLoading}
-				<span class="loading loading-spinner loading-xs"></span>
-			{:else}
-				<Play class="h-4 w-4 fill-current" />
-			{/if}
-		</button>
+		/>
 
-		<button
-			class="btn btn-circle btn-sm btn-ghost text-base-content/50 hover:text-base-content transition-colors duration-150"
+		<IconButton
+			size="sm"
+			icon={Shuffle}
+			label="Shuffle {playlist.name}"
+			loading={shuffleLoading}
+			disabled={!hasPlayableTracks}
 			onclick={handleShuffle}
-			disabled={!hasPlayableTracks || shuffleLoading}
-			aria-label="Shuffle {playlist.name}"
-			title={hasPlayableTracks ? `Shuffle ${playlist.name}` : 'No playable tracks'}
-		>
-			{#if shuffleLoading}
-				<span class="loading loading-spinner loading-xs"></span>
-			{:else}
-				<Shuffle class="h-3.5 w-3.5" />
-			{/if}
-		</button>
+		/>
 
 		{#if canDelete}
 			<div class="ml-auto">
-				<button
-					class="btn btn-circle btn-sm transition-all duration-150 {deleteConfirming
-						? 'btn-error shadow-md animate-pulse'
-						: 'btn-ghost text-base-content/50 hover:text-error'}"
+				<IconButton
+					variant={deleteConfirming ? 'danger' : 'ghost'}
+					size="sm"
+					icon={Trash2}
+					label={deleteConfirming ? `Confirm delete ${playlist.name}` : `Delete ${playlist.name}`}
+					loading={deleting}
 					onclick={handleDeleteClick}
-					disabled={deleting}
-					aria-label={deleteConfirming
-						? `Confirm delete ${playlist.name}`
-						: `Delete ${playlist.name}`}
-					title={deleteConfirming ? 'Click again to delete' : `Delete ${playlist.name}`}
-				>
-					{#if deleting}
-						<span class="loading loading-spinner loading-xs"></span>
-					{:else}
-						<Trash2 class="h-3.5 w-3.5" />
-					{/if}
-				</button>
+				/>
 			</div>
 		{/if}
 	</div>
-</div>
-
-<style>
-	div.card:hover {
-		box-shadow: 0 0 20px var(--source-glow, oklch(from var(--color-primary) l c h / 0.15));
-	}
-</style>
+</Card>

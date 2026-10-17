@@ -28,6 +28,10 @@
 	import { integrationStore } from '$lib/stores/integration';
 	import { libraryStore } from '$lib/stores/library';
 	import { albumHrefOrNull } from '$lib/utils/entityRoutes';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Field from '$lib/ui/Field.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
 		open: boolean;
@@ -205,79 +209,72 @@
 					{/if}
 				</h2>
 			</div>
-			<button
-				type="button"
-				class="btn btn-ghost btn-circle min-h-[44px] min-w-[44px]"
-				onclick={handleClose}
-				aria-label="Close"
-			>
-				<X class="h-5 w-5" />
-			</button>
+			<IconButton icon={X} label="Close" class="min-h-[44px] min-w-[44px]" onclick={handleClose} />
 		</div>
 
 		<div class="flex-1 overflow-y-auto px-6 pb-6">
 			{#if showPicker}
-				<div
-					class="flex flex-col gap-4 py-4 rounded-xl bg-base-200/30 p-4 mt-4 border border-base-content/5"
-				>
+				<Card variant="bordered" padding="md" class="mt-4">
 					<p class="text-sm text-base-content/60">
 						Pick a playlist to get album suggestions based on its contents.
 					</p>
 
 					<div class="flex flex-col sm:flex-row gap-3">
 						<div class="flex-1">
-							<label class="label" for="playlist-select">
-								<span class="label-text font-medium">Playlist</span>
-							</label>
-							{#if playlistsLoading}
-								<div class="flex items-center gap-2 py-2">
-									<span class="loading loading-spinner loading-sm text-primary"></span>
-									<span class="text-sm text-base-content/60">Loading playlists…</span>
-								</div>
-							{:else if playlistListQuery.isError}
-								<p class="text-sm text-error/70 py-2">
-									{playlistListQuery.error instanceof Error
-										? playlistListQuery.error.message
-										: 'Failed to load playlists'}
-								</p>
-							{:else if playlists.length === 0}
-								<p class="text-sm text-base-content/50 py-2">
-									No playlists found. Create one first.
-								</p>
-							{:else}
-								<select
-									id="playlist-select"
-									class="select select-bordered w-full"
-									value=""
-									onchange={handlePlaylistSelect}
-								>
-									<option value="" disabled>Select a playlist</option>
-									{#each playlists as pl (pl.id)}
-										<option value={pl.id}>
-											{pl.name} ({pl.track_count} track{pl.track_count === 1 ? '' : 's'})
-										</option>
-									{/each}
-								</select>
-							{/if}
+							<Field label="Playlist">
+								{#snippet children(control)}
+									{#if playlistsLoading}
+										<div class="flex items-center gap-2 py-2">
+											<span class="loading loading-spinner loading-sm text-primary"></span>
+											<span class="text-sm text-base-content/60">Loading playlists…</span>
+										</div>
+									{:else if playlistListQuery.isError}
+										<span class="text-sm text-error/70 py-2">
+											{playlistListQuery.error instanceof Error
+												? playlistListQuery.error.message
+												: 'Failed to load playlists'}
+										</span>
+									{:else if playlists.length === 0}
+										<span class="text-sm text-base-content/50 py-2">
+											No playlists found. Create one first.
+										</span>
+									{:else}
+										<select
+											{...control}
+											class="select w-full"
+											value=""
+											onchange={handlePlaylistSelect}
+										>
+											<option value="" disabled>Select a playlist</option>
+											{#each playlists as pl (pl.id)}
+												<option value={pl.id}>
+													{pl.name} ({pl.track_count} track{pl.track_count === 1 ? '' : 's'})
+												</option>
+											{/each}
+										</select>
+									{/if}
+								{/snippet}
+							</Field>
 						</div>
 
 						<div class="w-full sm:w-28">
-							<label class="label" for="count-select">
-								<span class="label-text font-medium">Count</span>
-							</label>
-							<select
-								id="count-select"
-								class="select select-bordered w-full"
-								value={String(suggestionCount)}
-								onchange={handleCountChange}
-							>
-								{#each countOptions as c (c)}
-									<option value={String(c)}>{c}</option>
-								{/each}
-							</select>
+							<Field label="Count">
+								{#snippet children(control)}
+									<select
+										{...control}
+										class="select w-full"
+										value={String(suggestionCount)}
+										onchange={handleCountChange}
+									>
+										{#each countOptions as c (c)}
+											<option value={String(c)}>{c}</option>
+										{/each}
+									</select>
+								{/snippet}
+							</Field>
 						</div>
 					</div>
-				</div>
+				</Card>
 			{/if}
 
 			{#if showResults}
@@ -287,7 +284,7 @@
 							<label class="text-sm text-base-content/60" for="count-select-inline">Results:</label>
 							<select
 								id="count-select-inline"
-								class="select select-bordered select-sm w-20"
+								class="select select-sm w-20"
 								value={String(suggestionCount)}
 								onchange={handleCountChange}
 							>
@@ -300,8 +297,10 @@
 
 					{#if isLoading}
 						<div class="flex flex-col gap-5 py-4">
-							<div
-								class="rounded-xl bg-gradient-to-r from-primary/10 via-base-200/60 to-secondary/10 p-4 border border-base-content/10 backdrop-blur-sm"
+							<Card
+								variant="bordered"
+								padding="md"
+								class="bg-gradient-to-r from-primary/10 via-base-200/60 to-secondary/10"
 							>
 								<div class="flex flex-wrap items-center gap-4">
 									<div class="skeleton h-4 w-24 rounded"></div>
@@ -312,7 +311,7 @@
 										<div class="skeleton h-5 w-10 rounded-full"></div>
 									</div>
 								</div>
-							</div>
+							</Card>
 							<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
 								{#each Array(8) as _, i (i)}
 									<div class="flex flex-col gap-2">
@@ -338,14 +337,15 @@
 									Couldn't load suggestions. Try again.
 								</p>
 							{/if}
-							<button
-								type="button"
-								class="btn btn-primary btn-sm mt-4"
+							<Button
+								variant="primary"
+								size="sm"
+								icon={RefreshCw}
+								class="mt-4"
 								onclick={() => suggestionsQuery.refetch()}
 							>
-								<RefreshCw class="h-3.5 w-3.5" />
 								Try Again
-							</button>
+							</Button>
 						</div>
 					{:else if allIgnored}
 						<div class="flex flex-col items-center justify-center py-12 px-8">
@@ -362,8 +362,10 @@
 						</div>
 					{:else}
 						{#if profile}
-							<div
-								class="rounded-xl bg-gradient-to-r from-primary/10 via-base-200/60 to-secondary/10 p-4 mb-5 border border-base-content/10 backdrop-blur-sm"
+							<Card
+								variant="bordered"
+								padding="md"
+								class="mb-5 bg-gradient-to-r from-primary/10 via-base-200/60 to-secondary/10"
 							>
 								<div class="flex flex-wrap items-center gap-4 text-sm">
 									<span class="inline-flex items-center gap-1.5 text-base-content/70">
@@ -391,7 +393,7 @@
 										</div>
 									{/if}
 								</div>
-							</div>
+							</Card>
 						{/if}
 
 						<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
@@ -409,9 +411,7 @@
 											<GenreAlbumCard {album} onclick={() => toggleExpand(album)} />
 										</div>
 										{#if isExpanded}
-											<div
-												class="flex-1 min-w-0 rounded-lg bg-base-200/30 border border-base-content/5 p-2 mt-2 sm:mt-0"
-											>
+											<Card variant="bordered" padding="sm" class="flex-1 min-w-0 mt-2 sm:mt-0">
 												{#if expandLoading}
 													<div class="flex flex-col gap-1.5 py-1">
 														{#each Array(4) as _, i (i)}
@@ -453,7 +453,7 @@
 														No track listing available.
 													</p>
 												{/if}
-											</div>
+											</Card>
 										{/if}
 									</div>
 									<div class="flex items-center justify-center gap-1 mt-2">
@@ -463,13 +463,13 @@
 												album.requested || libraryStore.isRequested(album.mbid)}
 											{#if albumLink}
 												<div class="tooltip tooltip-bottom" data-tip="Go to album">
-													<a
+													<IconButton
+														size="sm"
+														icon={ExternalLink}
+														label="Go to {album.name}"
 														href={albumLink}
-														class="btn btn-circle btn-ghost btn-sm border border-base-content/10 hover:border-primary/30 hover:text-primary min-h-[36px] min-w-[36px]"
-														aria-label="Go to {album.name}"
-													>
-														<ExternalLink class="h-3.5 w-3.5" />
-													</a>
+														class="min-h-[36px] min-w-[36px]"
+													/>
 												</div>
 											{/if}
 
@@ -485,7 +485,9 @@
 											{:else if album.in_library}
 												<div class="tooltip tooltip-bottom" data-tip="In library">
 													<span
-														class="btn btn-circle btn-ghost btn-sm border border-success/30 text-success min-h-[36px] min-w-[36px] cursor-default"
+														class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-success/30 text-success"
+														role="img"
+														aria-label="In library"
 													>
 														<Check class="h-3.5 w-3.5" />
 													</span>
@@ -504,15 +506,13 @@
 												/>
 											{/if}
 										{/if}
-										<button
-											type="button"
-											class="btn btn-circle btn-ghost btn-sm border border-base-content/10 hover:border-error/30 hover:text-error min-h-[36px] min-w-[36px]"
+										<IconButton
+											size="sm"
+											icon={X}
+											label="Ignore suggestion"
+											class="min-h-[36px] min-w-[36px]"
 											onclick={() => ignoreAlbum(album)}
-											title="Ignore suggestion"
-											aria-label="Ignore suggestion"
-										>
-											<X class="h-3.5 w-3.5" />
-										</button>
+										/>
 									</div>
 								</div>
 							{/each}

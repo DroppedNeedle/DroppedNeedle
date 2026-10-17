@@ -10,6 +10,8 @@
 	import { api } from '$lib/api/client';
 	import { Link, Download, Search, Play } from 'lucide-svelte';
 	import type { Track, YouTubeLink, YouTubeTrackLink, YouTubeQuotaStatus } from '$lib/types';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		albumId: string;
@@ -177,7 +179,7 @@
 	}
 </script>
 
-<div class="bg-base-200/80 rounded-box p-4 shadow-md border border-base-content/5">
+<Card variant="bordered" padding="md">
 	<div class="flex items-center gap-3 flex-wrap">
 		<div class="flex items-center gap-2 mr-1">
 			<YouTubeIcon class="h-5 w-5 text-red-500" />
@@ -189,74 +191,65 @@
 
 		<div class="flex gap-2 flex-wrap">
 			{#if hasAnyTrackLinks}
-				<button class="btn btn-sm btn-accent gap-1.5 shadow-sm" onclick={playAll}>
-					<Play class="h-4 w-4 fill-current" />
+				<Button
+					variant="accent"
+					size="sm"
+					icon={Play}
+					class="[&_svg]:fill-current"
+					onclick={playAll}
+				>
 					Play All
-				</button>
+				</Button>
 			{/if}
 
 			{#if albumLink?.video_id}
-				<button class="btn btn-sm btn-ghost gap-1.5" onclick={() => void playAlbumLink()}>
-					<Play class="h-4 w-4 fill-current" />
-					Full Album
-				</button>
-			{:else if apiConfigured}
-				<button
-					class="btn btn-sm gap-1.5"
-					onclick={generateAlbumLink}
-					disabled={generatingAlbumLink}
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={Play}
+					class="[&_svg]:fill-current"
+					onclick={() => void playAlbumLink()}
 				>
-					{#if generatingAlbumLink}
-						<span class="loading loading-spinner loading-sm"></span>
-					{:else}
-						<Link class="h-4 w-4" />
-					{/if}
+					Full Album
+				</Button>
+			{:else if apiConfigured}
+				<Button size="sm" icon={Link} loading={generatingAlbumLink} onclick={generateAlbumLink}>
 					Album Link
-				</button>
+				</Button>
 			{:else}
 				<div
 					class="tooltip tooltip-bottom"
 					data-tip="Enable YouTube API in settings for auto-generation"
 				>
-					<button class="btn btn-sm gap-1.5" disabled aria-disabled="true">
-						<Link class="h-4 w-4" />
-						Album Link
-					</button>
+					<Button size="sm" icon={Link} disabled>Album Link</Button>
 				</div>
 			{/if}
 
 			{#if !allTracksGenerated}
 				{#if apiConfigured}
-					<button class="btn btn-sm gap-1.5" onclick={generateAllTracks} disabled={batchGenerating}>
-						{#if batchGenerating}
-							<span class="loading loading-spinner loading-sm"></span>
-						{:else}
-							<Download class="h-4 w-4" />
-						{/if}
+					<Button size="sm" icon={Download} loading={batchGenerating} onclick={generateAllTracks}>
 						All Tracks
-					</button>
+					</Button>
 				{:else}
 					<div
 						class="tooltip tooltip-bottom"
 						data-tip="Enable YouTube API in settings for auto-generation"
 					>
-						<button class="btn btn-sm gap-1.5" disabled aria-disabled="true">
-							<Download class="h-4 w-4" />
-							All Tracks
-						</button>
+						<Button size="sm" icon={Download} disabled>All Tracks</Button>
 					</div>
 				{/if}
 			{/if}
 
-			<a
+			<Button
+				variant="ghost"
+				size="sm"
+				icon={Search}
 				href={youtubeSearchUrl}
 				target="_blank"
 				rel="noopener noreferrer"
-				class="btn btn-sm btn-ghost gap-1.5"
 			>
-				<Search class="h-4 w-4" />
 				Search
-			</a>
+			</Button>
 		</div>
 	</div>
-</div>
+</Card>
