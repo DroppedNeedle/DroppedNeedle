@@ -17,7 +17,6 @@ use axum::{
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_auth::users::memory::with_test_principal;
 use droppedneedle_kernel::ids::IdGenerator;
 use playback::PlaybackDeps;
 use playback::error::PlaybackError;
@@ -35,6 +34,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
 use crate::common::TestApp;
+use crate::common::auth::with_test_principal;
 use crate::common::compat::{CompatApp, PLAYER, named, rest};
 
 /// Fixed id generator so error ids assert stably.

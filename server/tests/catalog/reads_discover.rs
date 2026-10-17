@@ -1,6 +1,7 @@
 //! Discover routes over the discover ports: the session challenge, input
 //! validation, batch isolation between users, redacted now-playing rows,
-//! and fixed 5xx envelopes.
+//! and fixed 5xx envelopes. Plus the live Last.fm charts reading the
+//! instance key on every call.
 
 use std::sync::Arc;
 
@@ -12,7 +13,6 @@ use axum::{
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_auth::users::memory::with_test_principal;
 use droppedneedle_catalog::reads::discover::fakes::{
     FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio,
     FakeYouTube, ManualClock,
@@ -21,6 +21,8 @@ use droppedneedle_catalog::reads::discover::services::ReadsDeps;
 use droppedneedle_kernel::ids::IdGenerator;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
+
+use crate::common::auth::{AuthRig, with_test_principal};
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -365,4 +367,90 @@ async fn your_top_is_per_user() {
         rig.charts.calls(),
         vec!["your_top:user-9:all_time:listenbrainz"]
     );
+}
+
+/// Last.fm charts read the instance key on every call: no key answers
+/// "not configured", a key saved later serves the chart with it.
+#[tokio::test]
+async fn lastfm_charts_read_the_instance_key_per_call() {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    use axum::{Json, extract::Query, routing::get};
+    use droppedneedle_catalog::reads::discover::adapters::charts::{LastFmCharts, LiveCharts};
+    use droppedneedle_catalog::reads::discover::models::{ChartRange, ChartSource};
+    use droppedneedle_catalog::reads::discover::ports::{ChartsSource as _, ProviderFailure};
+    use droppedneedle_kernel::http_client::HttpClientFactory;
+    use droppedneedle_plugins::scrobble::MemoryListenBrainzLinkStore;
+    use droppedneedle_providers::Providers;
+    use droppedneedle_providers::adapters::{CorePacer, CoreSink};
+    use droppedneedle_providers::lastfm::{self, LastFmClient};
+    use droppedneedle_providers::listenbrainz::ListenBrainzClient;
+
+    let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+    let record = seen.clone();
+    let app = Router::new().route(
+        "/",
+        get(move |Query(query): Query<HashMap<String, String>>| {
+            let record = record.clone();
+            async move {
+                record
+                    .lock()
+                    .unwrap()
+                    .push(query.get("api_key").cloned().unwrap_or_default());
+                Json(json!({"artists": {"artist": [
+                    {"name": "One", "mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711", "playcount": "30"},
+                    {"name": "Two", "mbid": "", "playcount": "20"},
+                    {"name": "Three", "playcount": "10"},
+                ]}}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let http = HttpClientFactory::new().unwrap();
+    let providers = Arc::new(Providers::with_memory_cache());
+    let key: Arc<Mutex<Option<String>>> = Arc::default();
+    let read = key.clone();
+    let auth = AuthRig::new("charts").await;
+    let charts = LiveCharts::new(
+        ListenBrainzClient::new(
+            http.shared().clone(),
+            "http://127.0.0.1:9",
+            CorePacer::for_source(providers.clone(), "listenbrainz").unwrap(),
+            CoreSink,
+        ),
+        Arc::new(MemoryListenBrainzLinkStore::new(auth.deps.crypto.clone())),
+        Some(LastFmCharts::new(
+            LastFmClient::new(
+                http.shared().clone(),
+                &base,
+                CorePacer::for_source(providers, lastfm::SOURCE).unwrap(),
+                CoreSink,
+            ),
+            Arc::new(move || read.lock().unwrap().clone()),
+            auth.deps.clone(),
+        )),
+        sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap(),
+    );
+
+    let off = charts
+        .trending_artists(ChartRange::ThisWeek, 2, 0, ChartSource::Lastfm)
+        .await
+        .unwrap_err();
+    assert!(matches!(off, ProviderFailure::NotConfigured(_)), "{off:?}");
+    assert!(seen.lock().unwrap().is_empty(), "no key, no call");
+
+    *key.lock().unwrap() = Some("instance-key".to_owned());
+    let page = charts
+        .trending_artists(ChartRange::ThisWeek, 2, 0, ChartSource::Lastfm)
+        .await
+        .unwrap();
+    let names: Vec<&str> = page.items.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(names, ["One", "Two"]);
+    assert!(page.has_more);
+    assert_eq!(page.items[1].mbid, None, "artists without an MBID stay");
+    assert_eq!(*seen.lock().unwrap(), ["instance-key"]);
 }

@@ -13,21 +13,22 @@ use axum::http::{Request, StatusCode};
 use droppedneedle::admin::{AdminDb, AdminSetup};
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
-use droppedneedle_auth::users::memory::TestRig;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::db::{DbRuntime, Lane};
 use droppedneedle_providers::ProviderCache as _;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-/// One scratch deployment: migrated runtime, memory auth, wired admin.
+use crate::common::auth::AuthRig;
+
+/// One scratch deployment: migrated runtime, auth on it, wired admin.
 struct Rig {
     /// Held, never read: dropping it would close the pool out from under
     /// the admin handles.
     #[allow(dead_code)]
     runtime: DbRuntime,
     admin: AdminSetup,
-    rig: TestRig,
+    rig: AuthRig,
     admin_id: String,
     user_id: String,
     cache: Arc<droppedneedle_providers::InMemoryProviderCache>,
@@ -48,7 +49,7 @@ impl Rig {
         let scratch = crate::common::ScratchDir::new(&format!("admin-routes-{tag}"));
         let dir = scratch.to_path_buf();
         let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
-        let rig = TestRig::new().expect("rig builds");
+        let rig = AuthRig::on(&runtime);
         let admin_user = rig.seed_user("brenda", Role::Admin).await;
         let plain_user = rig.seed_user("molly", Role::User).await;
         let quota = Arc::new(
@@ -504,7 +505,6 @@ async fn library_image_refresh_reports_progress_and_cancels() {
 #[tokio::test]
 async fn quota_round_trip_set_and_clear() {
     let rig = Rig::open("quota").await;
-    mirror_user_row(&rig, &rig.user_id.clone(), "user").await;
 
     let uri = format!("/admin/users/{}/quota", rig.user_id);
     let (status, body) = call(rig.admin_app(), "GET", &uri, None).await;
@@ -562,7 +562,6 @@ async fn quota_round_trip_set_and_clear() {
 #[tokio::test]
 async fn quota_rejects_out_of_bounds_overrides() {
     let rig = Rig::open("quota-bounds").await;
-    mirror_user_row(&rig, &rig.user_id.clone(), "user").await;
     let uri = format!("/admin/users/{}/quota", rig.user_id);
     for (body, field) in [
         (json!({"request_quota_days": 0}), "request_quota_days"),
@@ -587,7 +586,6 @@ async fn quota_rejects_out_of_bounds_overrides() {
 #[tokio::test]
 async fn quota_usage_counts_asks_and_bytes() {
     let rig = Rig::open("quota-usage").await;
-    mirror_user_row(&rig, &rig.user_id.clone(), "user").await;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock reads")
@@ -646,9 +644,7 @@ async fn quota_usage_counts_asks_and_bytes() {
 #[tokio::test]
 async fn quota_marks_curators_exempt() {
     let rig = Rig::open("quota-exempt").await;
-    mirror_user_row(&rig, &rig.admin_id.clone(), "admin").await;
     let trusted = rig.rig.seed_user("terry", Role::Trusted).await;
-    mirror_user_row(&rig, &trusted.id, "trusted").await;
     for (user_id, exempt) in [
         (&rig.admin_id, true),
         (&trusted.id, true),
@@ -665,7 +661,6 @@ async fn quota_marks_curators_exempt() {
 #[tokio::test]
 async fn quota_overrides_reload_into_the_ledger() {
     let rig = Rig::open("quota-reload").await;
-    mirror_user_row(&rig, &rig.user_id.clone(), "user").await;
     lane_seed(
         &rig,
         "INSERT INTO user_quotas
@@ -685,19 +680,6 @@ async fn quota_overrides_reload_into_the_ledger() {
     assert_eq!(effective.request_count, 12);
     assert_eq!(effective.request_days, 30);
     assert_eq!(effective.storage_gb, 9);
-}
-
-/// Mirror a memory-rig user into the scratch database so FK-backed quota
-/// writes accept it. Production keeps both in one database; the split is a
-/// test-harness artifact.
-async fn mirror_user_row(rig: &Rig, user_id: &str, role: &str) {
-    lane_seed(
-        rig,
-        "INSERT INTO auth_users (id, display_name, role, created_at)
-         VALUES (?1, ?1, ?2, '2026-01-01T00:00:00Z')",
-        &[user_id, role],
-    )
-    .await;
 }
 
 /// One INSERT through the writer lane: the pool is read-only by design, so

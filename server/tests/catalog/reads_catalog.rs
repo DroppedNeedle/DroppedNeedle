@@ -15,8 +15,8 @@ use droppedneedle::middleware::request_scope;
 use droppedneedle_auth::session::middleware::{SessionAuth, require_session};
 use droppedneedle_auth::session::store::{MemorySessionStore, SessionRecord, SessionStore};
 use droppedneedle_auth::session::tokens::hash_token;
-use droppedneedle_auth::users::memory::TestRig;
 use droppedneedle_auth::users::models::LastFmConnection;
+use droppedneedle_auth::users::roles::Role;
 use droppedneedle_catalog::reads::catalog::{
     self, Catalog, CatalogDeps,
     library::LocalCatalog,
@@ -33,9 +33,11 @@ use sqlx::SqlitePool;
 use tower::ServiceExt as _;
 
 use crate::common;
+use crate::common::auth::AuthRig;
 
 const TOKEN: &str = "dn-catalog-test-token-000000000001";
-const USER: &str = "user-1";
+/// The test user: the rig's id for `ada`.
+const USER: &str = "user-ada";
 
 const ARTIST: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
 const OK_COMPUTER: &str = "b1392450-e666-3926-a536-22c65f834433";
@@ -372,10 +374,12 @@ async fn session_auth() -> SessionAuth<MemorySessionStore> {
 
 /// The catalog and search routes behind the session gate and request
 /// scope, with MusicBrainz at `mb_url`. The test user has a Last.fm key.
-async fn app_with(fixtures: &Fixtures, mb_url: String) -> axum::Router {
+/// Hold the rig while the router serves: its database goes with it.
+async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, AuthRig) {
     let (pool, _dir) = crate::common::migrated_pool("reads-catalog").await;
     seed_library(&pool).await;
-    let rig = TestRig::new().unwrap();
+    let rig = AuthRig::new("reads-catalog").await;
+    rig.seed_user("ada", Role::User).await;
     let sealed = rig.deps.crypto.encrypt("test-lastfm-key").unwrap();
     rig.deps
         .lastfm
@@ -405,7 +409,7 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> axum::Router {
         Arc::new(search::ports::UnconfiguredEnrichment),
         ids.clone(),
     );
-    axum::Router::new()
+    let app = axum::Router::new()
         .nest("/api/v3", catalog::router(CatalogDeps { catalog, ids }))
         .merge(search::router(search))
         .layer(middleware::from_fn_with_state(
@@ -416,10 +420,11 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> axum::Router {
             common::hooked_state(),
             request_scope,
         ))
-        .fallback(droppedneedle::handlers::fallback_404)
+        .fallback(droppedneedle::handlers::fallback_404);
+    (app, rig)
 }
 
-async fn app(fixtures: &Fixtures) -> axum::Router {
+async fn app(fixtures: &Fixtures) -> (axum::Router, AuthRig) {
     app_with(fixtures, format!("{}/mb/ws/2", fixtures.base)).await
 }
 
@@ -464,7 +469,7 @@ fn titles(items: &Value) -> Vec<&str> {
 #[tokio::test]
 async fn artist_header_reads_musicbrainz_once_and_flags_the_library() {
     let fixtures = Fixtures::start().await;
-    let app = app(&fixtures).await;
+    let (app, _auth) = app(&fixtures).await;
 
     let uri = format!("/api/v3/artists/{}", ARTIST.to_uppercase());
     let body = get(&app, &uri).await;
@@ -520,7 +525,7 @@ async fn artist_header_reads_musicbrainz_once_and_flags_the_library() {
 #[tokio::test]
 async fn artist_extended_fetches_biography_and_images_for_the_header() {
     let fixtures = Fixtures::start().await;
-    let app = app(&fixtures).await;
+    let (app, _auth) = app(&fixtures).await;
 
     let before = get(&app, &format!("/api/v3/artists/{ARTIST}")).await;
     assert!(
@@ -549,7 +554,7 @@ async fn artist_extended_fetches_biography_and_images_for_the_header() {
 #[tokio::test]
 async fn discography_filters_flags_and_pages() {
     let fixtures = Fixtures::start().await;
-    let app = app(&fixtures).await;
+    let (app, _auth) = app(&fixtures).await;
 
     let first = get(&app, &format!("/api/v3/artists/{ARTIST}/releases?limit=3")).await;
     assert_eq!(titles(&first["albums"]), ["Kid A", "OK Computer"]);
@@ -596,7 +601,7 @@ async fn discography_filters_flags_and_pages() {
 #[tokio::test]
 async fn artist_sections_use_listenbrainz_then_lastfm() {
     let fixtures = Fixtures::start().await;
-    let app = app(&fixtures).await;
+    let (app, _auth) = app(&fixtures).await;
 
     let similar = get(&app, &format!("/api/v3/artists/{ARTIST}/similar?count=5")).await;
     assert_eq!(similar["source"], "listenbrainz");
@@ -684,7 +689,7 @@ async fn artist_sections_use_listenbrainz_then_lastfm() {
 #[tokio::test]
 async fn album_page_shows_the_owned_edition_and_where_to_buy() {
     let fixtures = Fixtures::start().await;
-    let app = app(&fixtures).await;
+    let (app, _auth) = app(&fixtures).await;
 
     let album = get(&app, &format!("/api/v3/albums/{OK_COMPUTER}")).await;
     assert_eq!(album["title"], "OK Computer");
@@ -759,7 +764,7 @@ async fn album_page_shows_the_owned_edition_and_where_to_buy() {
 async fn musicbrainz_outage_falls_back_to_the_library() {
     let fixtures = Fixtures::start().await;
     // Nothing listens on the discard port: every MusicBrainz call fails.
-    let app = app_with(&fixtures, "http://127.0.0.1:9/ws/2".to_owned()).await;
+    let (app, _auth) = app_with(&fixtures, "http://127.0.0.1:9/ws/2".to_owned()).await;
 
     let artist = get(&app, &format!("/api/v3/artists/{ARTIST}")).await;
     assert_eq!(artist["source"], "library");
@@ -798,7 +803,7 @@ async fn musicbrainz_outage_falls_back_to_the_library() {
 #[tokio::test]
 async fn unified_search_joins_musicbrainz_with_the_library() {
     let fixtures = Fixtures::start().await;
-    let app = app(&fixtures).await;
+    let (app, _auth) = app(&fixtures).await;
 
     let body = get(&app, "/api/v3/search?q=ok%20computer").await;
     assert_eq!(body["album_status"], "ok");
@@ -841,7 +846,7 @@ async fn unified_search_joins_musicbrainz_with_the_library() {
 
 #[tokio::test]
 async fn lastfm_reads_fall_back_to_the_instance_key() {
-    let rig = TestRig::new().unwrap();
+    let rig = AuthRig::new("reads-catalog").await;
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
     let upstream = Upstream::new(
         &http,
@@ -864,7 +869,7 @@ async fn lastfm_reads_fall_back_to_the_instance_key() {
 #[tokio::test]
 async fn auth_matrix_rejects_anonymous_callers_and_bad_ids() {
     let fixtures = Fixtures::start().await;
-    let app = app(&fixtures).await;
+    let (app, _auth) = app(&fixtures).await;
     for uri in [
         format!("/api/v3/artists/{ARTIST}"),
         format!("/api/v3/artists/{ARTIST}/extended"),

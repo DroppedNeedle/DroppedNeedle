@@ -15,34 +15,27 @@ use droppedneedle_auth::federated::password_import::PasswordHasher as _;
 use droppedneedle_auth::federated::users::{
     FederatedProfile, FederatedUserStore as _, find_or_create_federated_user,
 };
-use droppedneedle_auth::prod::{
-    Argon2idHasher, OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST, ProdAuth,
-};
+use droppedneedle_auth::prod::{Argon2idHasher, OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST};
 use droppedneedle_auth::session::login::{
     LoginContext, LoginRequest, LoginService, PasswordVerifier as _, TransportParam,
 };
 use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _, now_unix};
 use droppedneedle_auth::session::tokens;
-use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::hibp::{HibpHttp, HibpHttpError, HibpScreen};
-use droppedneedle_auth::users::memory::{
-    CounterIdGenerator, Sha256TestHasher, StaticSecurityPolicy, TestRig,
-};
 use droppedneedle_auth::users::models::{
     AppPasswordRecord, LocalCredential, PasswordReset, UserRecord,
 };
 use droppedneedle_auth::users::roles::{Role, SessionKind as UserSessionKind};
 use droppedneedle_auth::users::services::{self, verify_app_password};
 use droppedneedle_auth::users::stores::{
-    AppPasswordStore as _, BoxFuture, Clock, HibpPolicy, RoleChange, SessionManager as _,
-    UserDeletion, UserStore as _,
+    AppPasswordStore as _, BoxFuture, RoleChange, SessionManager as _, UserDeletion, UserStore as _,
 };
-use droppedneedle_kernel::db::{DbRuntime, Lane};
-use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 use rusqlite::params;
 
-use crate::common::auth_fakes::ManualClock;
+use crate::common::auth::{AuthRig, password_hash};
 
 /// Fixed test clock: 2023-11-14T22:13:20Z.
 const TEST_NOW: i64 = 1_700_000_000;
@@ -51,57 +44,17 @@ const LEGACY_BCRYPT: &str = "$2b$12$H1xO3d1.j6f.mzdNztsl/elXm4PG9ZcXMLsN4nN7jSco
 /// Password behind [`LEGACY_BCRYPT`].
 const LEGACY_PASSWORD: &str = "correct horse battery staple";
 
-struct Fixture {
-    runtime: DbRuntime,
-    auth: ProdAuth,
-    crypto: Arc<Crypto>,
-    clock: Arc<ManualClock>,
-    _scratch: crate::common::ScratchDir,
+async fn fixture(name: &str) -> AuthRig {
+    let rig = AuthRig::new(&format!("stores-{name}")).await;
+    rig.clock.set(TEST_NOW);
+    rig
 }
 
-async fn fixture(name: &str) -> Fixture {
-    let scratch = crate::common::ScratchDir::new(&format!("auth-stores-{name}"));
-    let dir = scratch.to_path_buf();
-    let runtime = crate::common::scratch_runtime(&dir.join("auth.db")).await;
-    let crypto = Arc::new(Crypto::from_key_bytes(&[7u8; 32]).unwrap());
-    let ids: Arc<dyn IdGenerator> = Arc::new(CounterIdGenerator::new("id-"));
-    let clock = Arc::new(ManualClock::new(TEST_NOW));
-    let auth = ProdAuth::new(
-        runtime.pool(),
-        runtime.lane(),
-        Arc::clone(&crypto),
-        ids,
-        Arc::clone(&clock) as Arc<dyn Clock>,
-        &dir,
-    );
-    Fixture {
-        runtime,
-        auth,
-        crypto,
-        clock,
-        _scratch: scratch,
-    }
-}
-
-impl Fixture {
-    /// Users services over the SQLite stores, with the fast test hasher and
-    /// the fixture clock.
-    fn deps(&self) -> UsersDeps {
-        let mut deps = TestRig::new().unwrap().deps;
-        deps.users = Arc::new(self.auth.users.clone());
-        deps.sessions = Arc::new(self.auth.session_manager.clone());
-        deps.app_passwords = Arc::new(self.auth.app_passwords.clone());
-        deps.recovery = Arc::new(self.auth.recovery.clone());
-        deps.clock = Arc::clone(&self.clock) as Arc<dyn Clock>;
-        deps
-    }
-
-    async fn count(&self, sql: &str) -> i64 {
-        sqlx::query_scalar(sql)
-            .fetch_one(self.runtime.pool())
-            .await
-            .unwrap()
-    }
+async fn count(fx: &AuthRig, sql: &str) -> i64 {
+    sqlx::query_scalar(sql)
+        .fetch_one(fx.runtime().pool())
+        .await
+        .unwrap()
 }
 
 fn user_row(id: &str, username: &str, role: Role) -> UserRecord {
@@ -187,7 +140,7 @@ async fn v2_bcrypt_rows_log_in_and_rehash_to_argon2id() {
         .unwrap();
     // v2 verbatim shape: {"password_hash": ...} with no scheme tag.
     let legacy = serde_json::json!({ "password_hash": LEGACY_BCRYPT }).to_string();
-    fx.runtime
+    fx.runtime()
         .lane()
         .write(Lane::Foreground, "test.seed", move |tx| {
             tx.execute(
@@ -305,7 +258,7 @@ async fn logins_sweep_dead_token_rows() {
         .await
         .unwrap();
     assert_eq!(
-        fx.count("SELECT COUNT(*) FROM auth_tokens").await,
+        count(&fx, "SELECT COUNT(*) FROM auth_tokens").await,
         1,
         "the next login removes rows no request can use"
     );
@@ -396,8 +349,7 @@ async fn last_admin_guard_runs_inside_the_write() {
     outcomes.sort_by_key(|outcome| *outcome != RoleChange::Changed);
     assert_eq!(outcomes, vec![RoleChange::Changed, RoleChange::LastAdmin]);
     assert_eq!(
-        fx.count("SELECT COUNT(*) FROM auth_users WHERE role = 'admin'")
-            .await,
+        count(&fx, "SELECT COUNT(*) FROM auth_users WHERE role = 'admin'").await,
         1
     );
     let remaining = if users.get_by_id("admin-1").await.unwrap().unwrap().role == Role::Admin {
@@ -426,7 +378,7 @@ async fn users_named_by_library_history_are_not_deleted() {
         .unwrap();
     // A side connection without foreign-key enforcement seeds the history
     // row without building the artists it names.
-    let side = rusqlite::Connection::open(fx.runtime.path()).unwrap();
+    let side = rusqlite::Connection::open(fx.runtime().path()).unwrap();
     side.busy_timeout(std::time::Duration::from_secs(5))
         .unwrap();
     side.execute_batch("PRAGMA foreign_keys=OFF").unwrap();
@@ -456,7 +408,12 @@ async fn app_password_cap_holds_under_parallel_creates() {
     let mut handles = Vec::new();
     for n in 0..services::MAX_ACTIVE_APP_PASSWORDS + 5 {
         let store = fx.auth.app_passwords.clone();
-        let row = app_password(&format!("ap-{n}"), "user-1", &format!("s-{n}"), &fx.crypto);
+        let row = app_password(
+            &format!("ap-{n}"),
+            "user-1",
+            &format!("s-{n}"),
+            &fx.deps.crypto,
+        );
         handles.push(tokio::spawn(async move {
             store
                 .insert_capped(row, services::MAX_ACTIVE_APP_PASSWORDS)
@@ -475,13 +432,13 @@ async fn app_password_cap_holds_under_parallel_creates() {
 #[tokio::test]
 async fn app_password_verify_is_decrypt_free_and_stamps_use() {
     let fx = fixture("ap-verify").await;
-    let deps = fx.deps();
+    let deps = fx.deps.clone();
     deps.users
         .insert(user_row("user-1", "ada", Role::User))
         .await
         .unwrap();
     let secret = tokens::mint_token().unwrap();
-    let mut row = app_password("ap-1", "user-1", &secret, &fx.crypto);
+    let mut row = app_password("ap-1", "user-1", &secret, &fx.deps.crypto);
     // Verification must never decrypt: a ciphertext from another key still
     // verifies, which is what keeps key rotation safe.
     row.secret_encrypted = "v3:not-decryptable".to_owned();
@@ -522,11 +479,11 @@ async fn federated_tokens_are_sealed_at_rest() {
     assert_eq!(binding.user_id, user.id);
     let raw: String = sqlx::query_scalar("SELECT provider_data FROM auth_providers WHERE id = ?")
         .bind(&binding.id)
-        .fetch_one(fx.runtime.pool())
+        .fetch_one(fx.runtime().pool())
         .await
         .unwrap();
     assert!(raw.starts_with("v3:") && !raw.contains("canary"), "{raw}");
-    assert_eq!(fx.crypto.decrypt(&raw).unwrap(), profile.token_json);
+    assert_eq!(fx.deps.crypto.decrypt(&raw).unwrap(), profile.token_json);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -551,8 +508,7 @@ async fn first_federated_logins_race_to_exactly_one_admin() {
         handle.await.unwrap().unwrap();
     }
     assert_eq!(
-        fx.count("SELECT COUNT(*) FROM auth_users WHERE role = 'admin'")
-            .await,
+        count(&fx, "SELECT COUNT(*) FROM auth_users WHERE role = 'admin'").await,
         1
     );
 }
@@ -640,15 +596,15 @@ impl HibpHttp for CountingHibp {
 #[tokio::test]
 async fn recovery_reset_checks_the_code_first_then_revokes_and_consumes() {
     let fx = fixture("recovery").await;
-    let mut deps = fx.deps();
+    let mut deps = fx.deps.clone();
     let hibp = Arc::new(CountingHibp::default());
     deps.screen = Arc::new(HibpScreen::new(hibp.clone()));
-    deps.security = Arc::new(StaticSecurityPolicy {
-        policy: HibpPolicy {
-            check: true,
-            local_path: String::new(),
-        },
-    });
+    fx.config
+        .save(SecuritySettings {
+            hibp_check: true,
+            ..SecuritySettings::default()
+        })
+        .unwrap();
     deps.users
         .insert(user_row("user-1", "ada", Role::User))
         .await
@@ -658,7 +614,7 @@ async fn recovery_reset_checks_the_code_first_then_revokes_and_consumes() {
             id: "cred-1".to_owned(),
             user_id: "user-1".to_owned(),
             scheme: "argon2id".to_owned(),
-            hash: Sha256TestHasher::test_hash("old password here"),
+            hash: password_hash().to_owned(),
         })
         .await
         .unwrap();
@@ -698,8 +654,7 @@ async fn recovery_reset_checks_the_code_first_then_revokes_and_consumes() {
         "reset kills prior sessions"
     );
     assert_eq!(
-        fx.count("SELECT COUNT(*) FROM auth_password_recovery_codes")
-            .await,
+        count(&fx, "SELECT COUNT(*) FROM auth_password_recovery_codes").await,
         0
     );
 }
@@ -707,7 +662,7 @@ async fn recovery_reset_checks_the_code_first_then_revokes_and_consumes() {
 #[tokio::test]
 async fn oidc_states_consume_once_and_expired_ones_are_swept() {
     let fx = fixture("oidc-states").await;
-    fx.runtime
+    fx.runtime()
         .lane()
         .write(Lane::Foreground, "test.seed", |tx| {
             tx.execute(
@@ -722,7 +677,7 @@ async fn oidc_states_consume_once_and_expired_ones_are_swept() {
     let states = &fx.auth.oidc_states;
     states.store_state("state-1", "verifier-1").await.unwrap();
     assert_eq!(
-        fx.count("SELECT COUNT(*) FROM auth_oidc_states").await,
+        count(&fx, "SELECT COUNT(*) FROM auth_oidc_states").await,
         1,
         "storing a state sweeps expired ones"
     );

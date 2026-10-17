@@ -307,18 +307,18 @@ fn stored_unknown_field_is_dropped_on_read() {
 /// lands beside the original, and a stale revision is refused.
 #[tokio::test]
 async fn profile_create_export_preview_import_round_trip() {
+    use crate::common::auth::AuthRig;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use droppedneedle::settings::wiring::SettingsSetup;
     use droppedneedle_auth::session::extract::Transport;
     use droppedneedle_auth::session::middleware::CurrentSession;
-    use droppedneedle_auth::users::memory::TestRig;
     use droppedneedle_auth::users::roles::{Role, SessionKind};
     use serde_json::{Value, json};
     use std::sync::Arc;
     use tower::ServiceExt as _;
 
-    let rig = TestRig::new().expect("rig builds");
+    let rig = AuthRig::new("settings-profiles").await;
     let admin = rig.seed_user("brenda", Role::Admin).await;
     let settings = SettingsSetup::for_tests(
         Arc::new(FixedIdGenerator::new(common::FIXED_ID)),

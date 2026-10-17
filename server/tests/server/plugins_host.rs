@@ -8,6 +8,7 @@
 //! examples in `plugins_examples`.
 
 use crate::common::ScratchDir;
+use crate::common::auth::with_test_principal;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -19,7 +20,6 @@ use droppedneedle::middleware::request_scope;
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_auth::users::memory::with_test_principal;
 use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::plugin_ticks::{

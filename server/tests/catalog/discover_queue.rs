@@ -14,7 +14,6 @@ use axum::{
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_auth::users::memory::with_test_principal;
 use droppedneedle_catalog::reads::discover::adapters::queue::sources::{
     AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
     QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
@@ -32,6 +31,8 @@ use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_providers::Providers;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
+
+use crate::common::auth::with_test_principal;
 
 const SEED: &str = "11111111-1111-4111-8111-111111111111";
 const SIMILAR: &str = "22222222-2222-4222-8222-222222222222";

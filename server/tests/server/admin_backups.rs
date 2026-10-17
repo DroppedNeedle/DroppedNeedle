@@ -13,19 +13,21 @@ use axum::http::{Request, StatusCode};
 use droppedneedle::admin::{AdminDb, AdminSetup};
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
-use droppedneedle_auth::users::memory::TestRig;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::db::{BACKUP_KEEP, DbRuntime};
 use serde_json::Value;
 use tower::ServiceExt as _;
 
-/// One scratch deployment: migrated runtime, memory auth, wired admin.
+use crate::common::auth::AuthRig;
+
+/// One scratch deployment: migrated runtime, auth on it, wired admin.
 struct Rig {
     /// Held, never read: dropping it would close the pool out from under
     /// the admin handles.
     #[allow(dead_code)]
     runtime: DbRuntime,
     admin: AdminSetup,
+    _auth: AuthRig,
     admin_id: String,
     dir: std::path::PathBuf,
     _scratch: crate::common::ScratchDir,
@@ -36,7 +38,7 @@ impl Rig {
         let scratch = crate::common::ScratchDir::new(&format!("admin-backups-{tag}"));
         let dir = scratch.to_path_buf();
         let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
-        let rig = TestRig::new().expect("rig builds");
+        let rig = AuthRig::on(&runtime);
         let admin_user = rig.seed_user("brenda", Role::Admin).await;
         let quota = Arc::new(
             droppedneedle_acquire::requests::quota::QuotaLedger::unlimited(
@@ -56,6 +58,7 @@ impl Rig {
         Self {
             runtime,
             admin,
+            _auth: rig,
             admin_id: admin_user.id,
             dir,
             _scratch: scratch,

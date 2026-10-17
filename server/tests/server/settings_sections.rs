@@ -3,6 +3,7 @@
 //! scaling, revision checks, the admin gate, the BrainzMash ceremony, the
 //! live probes against a loopback stub, and the cache sweep after a save.
 
+use crate::common::auth::AuthRig;
 use crate::common::{self, ScratchDir};
 
 use std::collections::HashMap;
@@ -25,7 +26,6 @@ use droppedneedle::settings::verify::{
 use droppedneedle::settings::wiring::SettingsSetup;
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
-use droppedneedle_auth::users::memory::TestRig;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::runtime_config::mask::{INDEXER_API_KEY_MASK, JELLYFIN_API_KEY_MASK};
 use droppedneedle_kernel::runtime_config::secret_sections::{JellyfinConnection, TypedLibrary};
@@ -427,11 +427,11 @@ async fn concurrent_library_saves_cannot_both_pass_the_revision_check() {
 
 // --- HTTP journeys -----------------------------------------------------------
 
-/// One scratch deployment: memory auth, scripted probes, wired settings.
+/// One scratch deployment: the auth rig, scripted probes, wired settings.
 struct Rig {
     settings: SettingsSetup,
     #[allow(dead_code)]
-    auth: TestRig,
+    auth: AuthRig,
     admin_id: String,
     user_id: String,
     probes: Arc<FakeProbes>,
@@ -439,7 +439,7 @@ struct Rig {
 
 impl Rig {
     async fn open(passing: bool) -> Self {
-        let rig = TestRig::new().expect("rig builds");
+        let rig = AuthRig::new("settings").await;
         let admin = rig.seed_user("brenda", Role::Admin).await;
         let user = rig.seed_user("molly", Role::User).await;
         let probes = Arc::new(if passing {
@@ -661,7 +661,7 @@ async fn verify_resolves_masks_and_maps_verdicts() {
     assert_eq!(verdict["valid"], false);
 
     // ListenBrainz rate limiting answers 429.
-    let rig = TestRig::new().expect("rig builds");
+    let rig = AuthRig::new("settings").await;
     let admin = rig.seed_user("brenda", Role::Admin).await;
     let probes = Arc::new(FakeProbes {
         calls: Mutex::new(Vec::new()),

@@ -1,8 +1,10 @@
-//! Users routes over the test rig: the behaviors that live in the users
+//! Users routes over the auth rig: the behaviors that live in the users
 //! handlers and services (credentials, ownership, recovery, Last.fm, admin
-//! guards, user import). The test-principal layer stands in for the
-//! session middleware; transactional store guards are pinned on SQLite in
-//! `auth_stores`, and the role matrix in `auth_e2e`.
+//! guards, user import). The test sign-in layer stands in for the session
+//! middleware; transactional store guards are pinned in `auth_stores`, and
+//! the role matrix in `auth_e2e`.
+
+use std::sync::Arc;
 
 use axum::{
     Router,
@@ -11,33 +13,30 @@ use axum::{
 };
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::{
-    Role, admin_router, import,
-    memory::{self, TestRig},
-    models, public_router,
-    stores::{DirectoryUser, SessionManager as _, UserStore as _},
-    users_router,
+    Role, admin_router, import, models, public_router, stores::DirectoryUser, users_router,
 };
+use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-use crate::common::auth_fakes::{FakeHibpHttp, FakeUserDirectory};
+use crate::common::auth::{AuthRig, PASSWORD, TEST_NOW, test_principal, with_test_principal};
+use crate::common::auth_fakes::{FakeHibpHttp, FakeLastFmAuthClient, FakeUserDirectory};
 
-const PASSWORD: &str = "correct horse battery staple";
 const OTHER_PASSWORD: &str = "another fine password here";
 
-fn test_app(rig: &TestRig, principal: Option<CurrentSession>) -> Router {
+fn test_app(rig: &AuthRig, principal: Option<CurrentSession>) -> Router {
     let app = Router::new()
         .nest("/api/v3", users_router(rig.deps.clone()))
         .nest("/api/v3", admin_router(rig.deps.clone()))
         .nest("/api/v3", public_router(rig.deps.clone()));
     match principal {
-        Some(ctx) => memory::with_test_principal(app, ctx),
+        Some(ctx) => with_test_principal(app, ctx),
         None => app,
     }
 }
 
-async fn rig_with_admin() -> (TestRig, models::UserRecord, models::UserRecord) {
-    let rig = TestRig::new().unwrap();
+async fn rig_with_admin() -> (AuthRig, models::UserRecord, models::UserRecord) {
+    let rig = AuthRig::new("users").await;
     let admin = rig.seed_user("admin", Role::Admin).await;
     rig.seed_session(&admin.id, "sess-admin").await;
     let user = rig.seed_user("molly", Role::User).await;
@@ -46,7 +45,7 @@ async fn rig_with_admin() -> (TestRig, models::UserRecord, models::UserRecord) {
 }
 
 fn principal_for(user: &models::UserRecord, session_id: &str) -> CurrentSession {
-    memory::test_principal(user, session_id, false)
+    test_principal(user, session_id, false)
 }
 
 async fn call(app: Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -105,6 +104,7 @@ async fn password_change_needs_the_current_one_and_ends_other_sessions() {
 
     // Every other session died with the old password; this one stays.
     let live: Vec<String> = rig
+        .deps
         .sessions
         .list_for_user(&user.id)
         .await
@@ -118,12 +118,7 @@ async fn password_change_needs_the_current_one_and_ends_other_sessions() {
 #[tokio::test]
 async fn device_tokens_cannot_create_credentials() {
     let (rig, _, user) = rig_with_admin().await;
-    let app = || {
-        test_app(
-            &rig,
-            Some(memory::test_principal(&user, "sess-device", true)),
-        )
-    };
+    let app = || test_app(&rig, Some(test_principal(&user, "sess-device", true)));
     for (uri, body) in [
         ("/api/v3/auth/device-sessions", json!({"label": "Phone"})),
         ("/api/v3/me/app-passwords", json!({"name": "forever"})),
@@ -139,7 +134,7 @@ async fn device_tokens_cannot_create_credentials() {
 
 #[tokio::test]
 async fn first_local_password_is_set_once() {
-    let rig = TestRig::new().unwrap();
+    let rig = AuthRig::new("users").await;
     let user = models::UserRecord {
         id: "user-sso".to_owned(),
         username: Some("sso".to_owned()),
@@ -148,10 +143,10 @@ async fn first_local_password_is_set_once() {
         email: None,
         avatar_url: None,
         role: Role::User,
-        created_at: memory::TEST_NOW,
+        created_at: TEST_NOW,
         last_login_at: None,
     };
-    rig.users.insert(user.clone()).await.unwrap();
+    rig.deps.users.insert(user.clone()).await.unwrap();
     let app = || test_app(&rig, Some(principal_for(&user, "sess-sso")));
     let body = Some(json!({"new_password": OTHER_PASSWORD}));
     let (status, _) = call(app(), "POST", "/api/v3/me/local-password", body.clone()).await;
@@ -266,7 +261,12 @@ async fn recovery_failures_share_one_message() {
 
 #[tokio::test]
 async fn lastfm_link_flow_keeps_secrets_sealed() {
-    let (rig, _, user) = rig_with_admin().await;
+    let (mut rig, _, user) = rig_with_admin().await;
+    let lastfm = Arc::new(FakeLastFmAuthClient::new(
+        "fake-token",
+        "https://www.last.fm/api/auth/?api_key=k&token=fake-token",
+    ));
+    rig.deps.lastfm_client = lastfm.clone();
     let app = || test_app(&rig, Some(principal_for(&user, "sess-molly")));
     let credentials =
         |key: &str, secret: &str| Some(json!({"api_key": key, "shared_secret": secret}));
@@ -291,7 +291,7 @@ async fn lastfm_link_flow_keeps_secrets_sealed() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
-    rig.lastfm_client
+    lastfm
         .approve("fake-token", "mollylfm", "session-key-1")
         .await;
     let (status, body) = call(
@@ -303,8 +303,7 @@ async fn lastfm_link_flow_keeps_secrets_sealed() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({"username": "mollylfm", "linked": true}));
-    use droppedneedle_auth::users::stores::LastFmStore as _;
-    let link = rig.lastfm.get(&user.id).await.unwrap().unwrap();
+    let link = rig.deps.lastfm.get(&user.id).await.unwrap().unwrap();
     assert!(link.session_key_encrypted.unwrap().starts_with("v3:"));
 
     // The mask and an identical resubmit keep the link; a new key unlinks.
@@ -349,19 +348,19 @@ async fn admins_cannot_demote_or_delete_themselves() {
 
 #[tokio::test]
 async fn breached_passwords_reject_when_screening_is_on() {
-    use droppedneedle_auth::users::{hibp::HibpScreen, stores::HibpPolicy};
+    use droppedneedle_auth::users::hibp::HibpScreen;
 
     let (mut rig, _, user) = rig_with_admin().await;
     let digest = droppedneedle_auth::users::hibp::sha1_hex_upper(b"password12xxxx");
-    rig.deps.screen = std::sync::Arc::new(HibpScreen::new(std::sync::Arc::new(
-        FakeHibpHttp::with_hits(&[digest.as_str()]),
-    )));
-    rig.deps.security = std::sync::Arc::new(memory::StaticSecurityPolicy {
-        policy: HibpPolicy {
-            check: true,
-            local_path: String::new(),
-        },
-    });
+    rig.deps.screen = Arc::new(HibpScreen::new(Arc::new(FakeHibpHttp::with_hits(&[
+        digest.as_str(),
+    ]))));
+    rig.config
+        .save(SecuritySettings {
+            hibp_check: true,
+            ..SecuritySettings::default()
+        })
+        .unwrap();
     let (status, _) = call(
         test_app(&rig, Some(principal_for(&user, "sess-molly"))),
         "POST",
@@ -376,7 +375,8 @@ async fn breached_passwords_reject_when_screening_is_on() {
 async fn import_creates_new_accounts_and_reports_known_emails() {
     let (rig, _, _) = rig_with_admin().await;
     let known = rig.seed_user("known", Role::User).await;
-    rig.users
+    rig.deps
+        .users
         .update_email(&known.id, Some("sam@example.com"))
         .await
         .unwrap();

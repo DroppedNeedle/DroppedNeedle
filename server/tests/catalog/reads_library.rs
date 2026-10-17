@@ -3,6 +3,7 @@
 //! favorites adapters over a scratch migrated database.
 
 use crate::common::ScratchDir;
+use crate::common::auth::AuthRig;
 use droppedneedle_catalog::reads::library;
 
 use std::sync::Arc;
@@ -13,7 +14,6 @@ use axum::http::{Request, StatusCode};
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_auth::users::memory::TestRig;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use library::memory::{
     FailingCatalog, FailingFavorites, FailingLyrics, MemoryCatalog, MemoryFavorites, MemoryLyrics,
@@ -265,8 +265,8 @@ fn app(deps: LibraryDeps, user_id: Option<&str>) -> Router {
     }
 }
 
-async fn auth_bundle() -> (TestRig, String) {
-    let rig = TestRig::new().expect("rig builds");
+async fn auth_bundle() -> (AuthRig, String) {
+    let rig = AuthRig::new("reads-library").await;
     let user = rig.seed_user("ada", Role::User).await;
     (rig, user.id)
 }

@@ -3,6 +3,7 @@
 //! save, the save refuses to drop every root under a live catalog, and
 //! the previews count catalog rows the way v2 did.
 
+use crate::common::auth::AuthRig;
 use crate::common::{FIXED_ID, FixedIdGenerator, ScratchDir};
 
 use std::sync::Arc;
@@ -12,7 +13,6 @@ use droppedneedle::settings::models::{
     LibraryPolicyApplyRequest, LibraryRestoreRootsRequest, LibrarySettingsSaveRequest,
 };
 use droppedneedle::settings::wiring::SettingsSetup;
-use droppedneedle_auth::users::memory::TestRig;
 use droppedneedle_kernel::db::{Lane, OpError};
 use droppedneedle_kernel::runtime_config::secret_sections::IdentificationPolicy;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
@@ -51,7 +51,7 @@ async fn removed_root_restores_and_previews_count_the_catalog() {
         .await
         .expect("catalog seeds");
 
-    let rig = TestRig::new().expect("rig builds");
+    let rig = AuthRig::on(&runtime);
     let settings =
         SettingsSetup::for_tests(Arc::new(FixedIdGenerator::new(FIXED_ID)), rig.deps.clone())
             .expect("settings bundle builds")

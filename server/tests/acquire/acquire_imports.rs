@@ -8,6 +8,7 @@
 //! Lidarr, Spotify, slskd, SABnzbd, or indexer.
 
 use crate::common;
+use crate::common::auth::AuthRig;
 use droppedneedle_acquire::imports;
 
 use std::sync::Arc;
@@ -17,7 +18,6 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
-use droppedneedle_auth::users::memory::TestRig;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_testkit::imports::{
     LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_TOKEN, serve_lidarr,
@@ -86,7 +86,7 @@ struct Rig {
     lidarr_probe: Arc<ScriptedLidarr>,
 }
 
-fn rig_for(rig: &TestRig, lidarr_base: &str, api_base: &str, accounts_base: &str) -> Rig {
+fn rig_for(rig: &AuthRig, lidarr_base: &str, api_base: &str, accounts_base: &str) -> Rig {
     let http = http_client();
     let lidarr_settings = Arc::new(MemoryLidarrSettings::new());
     let follows = Arc::new(MemoryFollowStore::new());
@@ -237,8 +237,8 @@ async fn put_json(app: Router, path: &str, payload: Value) -> (StatusCode, Value
     .await
 }
 
-async fn seed_rig() -> (TestRig, String, String) {
-    let rig = TestRig::new().expect("rig builds");
+async fn seed_rig() -> (AuthRig, String, String) {
+    let rig = AuthRig::new("imports").await;
     let admin = rig.seed_user("root", Role::Admin).await;
     let user = rig.seed_user("ada", Role::User).await;
     (rig, admin.id, user.id)
@@ -984,7 +984,6 @@ async fn spotify_tracks_come_from_items_never_legacy_tracks() {
 
 #[tokio::test]
 async fn spotify_cover_fetch_refuses_redirects_and_non_images() {
-    let (_, _, _) = seed_rig().await;
     let (_, _, covers, _) = serve_spotify().await.expect("mock serves");
     let client = SpotifyClient::new(
         http_client(),
@@ -1260,7 +1259,7 @@ async fn spotify_sqlite_stores_persist_and_expire() {
 
 // --- Health smoke + per-source gate tests ---
 
-async fn seed_scripted_bases() -> (TestRig, String, String, Rig) {
+async fn seed_scripted_bases() -> (AuthRig, String, String, Rig) {
     let (rig, admin_id, user_id) = seed_rig().await;
     let (lidarr, _) = serve_lidarr().await.expect("mock serves");
     let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
@@ -1279,7 +1278,7 @@ fn gate<'a>(body: &'a Value, source: &str) -> &'a Value {
 
 #[tokio::test]
 async fn health_smoke_is_not_ready_with_no_source() {
-    let (_, _, user_id, bundle) = seed_scripted_bases().await;
+    let (_auth, _, user_id, bundle) = seed_scripted_bases().await;
 
     let (status, body) = get_json(authed_app(bundle.deps, &user_id), "/acquire/health").await;
     assert_eq!(status, StatusCode::OK);
@@ -1294,7 +1293,7 @@ async fn health_smoke_is_not_ready_with_no_source() {
 
 #[tokio::test]
 async fn slskd_gate_greens_independently() {
-    let (_, _, user_id, bundle) = seed_scripted_bases().await;
+    let (_auth, _, user_id, bundle) = seed_scripted_bases().await;
     bundle.slskd.set(open_client("1.4.3", "slskd 1.4.3"));
 
     let (status, body) = get_json(authed_app(bundle.deps, &user_id), "/acquire/health").await;
@@ -1308,7 +1307,7 @@ async fn slskd_gate_greens_independently() {
 
 #[tokio::test]
 async fn health_degrades_when_an_enabled_path_is_down() {
-    let (_, _, user_id, bundle) = seed_scripted_bases().await;
+    let (_auth, _, user_id, bundle) = seed_scripted_bases().await;
     bundle.slskd.set(ClientProbe {
         enabled: true,
         configured: true,
@@ -1329,7 +1328,7 @@ async fn health_degrades_when_an_enabled_path_is_down() {
 
 #[tokio::test]
 async fn slskd_status_readable_by_any_user() {
-    let (_, _, user_id, bundle) = seed_scripted_bases().await;
+    let (_auth, _, user_id, bundle) = seed_scripted_bases().await;
     bundle.slskd.set(open_client("1.4.3", "slskd 1.4.3"));
 
     let (status, body) = get_json(
@@ -1348,7 +1347,7 @@ async fn slskd_status_readable_by_any_user() {
 
 #[tokio::test]
 async fn sabnzbd_status_is_admin_only_with_mount_hint() {
-    let (_, admin_id, user_id, bundle) = seed_scripted_bases().await;
+    let (_auth, admin_id, user_id, bundle) = seed_scripted_bases().await;
     bundle.sabnzbd.set(
         open_client("4.3.2", "SABnzbd 4.3.2"),
         vec!["music".to_owned(), "audiobooks".to_owned()],
