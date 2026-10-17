@@ -15,20 +15,19 @@ use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::common::library::ScriptedIdentify;
+use crate::common::library::{ScriptedContrib, ScriptedIdentify, library_asking};
 use crate::common::{ScratchDir, TestApp, closed_outbound};
 use axum::http::StatusCode;
 use droppedneedle::bootstrap::Port;
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 use droppedneedle_catalog::reads::collections::store::play_marks::{MarkScope, PlayMarkStore};
-use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
-use droppedneedle_library::contrib::ContribProviders;
 use droppedneedle_library::identify::models::{LocalAlbumFacts, RecallResult};
+use droppedneedle_library::identify::providers::FakeProviders;
 use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseTrack};
 use droppedneedle_library::scan::SqliteScanStore;
-use droppedneedle_library::wiring::{LibrarySetup, TestContribProviders};
+use droppedneedle_library::wiring::LibrarySetup;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -42,7 +41,7 @@ const REL_2: &str = "22222222-2222-4222-8222-222222222222";
 struct Rig {
     app: TestApp,
     identify: Arc<ScriptedIdentify>,
-    contrib: TestContribProviders,
+    contrib: ScriptedContrib,
     scan_store: SqliteScanStore,
     identify_store: SqliteIdentifyStore,
     /// When the last identification job the journey accounted for ended.
@@ -52,13 +51,10 @@ struct Rig {
 impl Rig {
     async fn start(tag: &str) -> Self {
         let identify = ScriptedIdentify::new();
-        let contrib = TestContribProviders::default();
+        let contrib = ScriptedContrib::default();
         let mut outbound = closed_outbound();
         outbound.identify_providers = Port::given(identify.clone());
-        outbound.contribution_providers = Port::given(ContribProviders {
-            discogs: contrib.discogs.clone(),
-            musicbrainz: contrib.musicbrainz.clone(),
-        });
+        outbound.contribution_providers = Port::given(contrib.providers());
         let app = TestApp::start_with(tag, outbound).await;
         let db = &app.config.library_db_path;
         Self {
@@ -1540,9 +1536,11 @@ fn control_revision(activity: &Value) -> u64 {
     })
 }
 
-/// A library test's scratch folder. Derefs to the folder.
+/// A library test's scratch folder, and the MusicBrainz answers its
+/// library identifies with. Derefs to the folder.
 struct Scratch {
     dir: ScratchDir,
+    identify: Arc<FakeProviders>,
 }
 
 impl std::ops::Deref for Scratch {
@@ -1558,6 +1556,7 @@ impl std::ops::Deref for Scratch {
 async fn bare_library(tag: &str) -> (Scratch, LibrarySetup, PathBuf) {
     let scratch = Scratch {
         dir: ScratchDir::new(tag),
+        identify: Arc::new(FakeProviders::default()),
     };
     let connection = droppedneedle_kernel::db::open_connection(&scratch.join("app.db"))
         .expect("scratch db opens");
@@ -1578,12 +1577,7 @@ fn open_library(scratch: &Scratch) -> LibrarySetup {
         )
         .expect("config opens"),
     );
-    LibrarySetup::for_tests_at(
-        Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,
-        &scratch.join("app.db"),
-        config,
-    )
-    .expect("bundle builds")
+    library_asking(&scratch.join("app.db"), config, scratch.identify.clone())
 }
 
 /// Add `music` as the only root and scan it.
@@ -1953,7 +1947,7 @@ async fn automatic_write_keeps_a_manual_identity() {
 async fn failed_approval_leaves_the_review_pending() {
     use droppedneedle_library::service::ServiceError;
 
-    let (_scratch, library, music) = bare_library("lib-approve-fail").await;
+    let (scratch, library, music) = bare_library("lib-approve-fail").await;
     plant(&music, "album/01.flac", "flac_full_01.flac");
     add_music_root(&library, &music).await;
     let track = library
@@ -1961,10 +1955,8 @@ async fn failed_approval_leaves_the_review_pending() {
         .track_at("music", "album/01.flac")
         .expect("track indexed");
     let album = library.scan_store.album_for_track(&track).expect("album");
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
+    scratch
+        .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
     file_edition_review(&library.identify_store, &album);
@@ -2084,12 +2076,8 @@ async fn identification_survives_restarts() {
 
 /// Identify the album, then have a person choose the first of two tied
 /// editions (the automatic pass only keeps a best guess).
-async fn approve_first_candidate(library: &LibrarySetup, album: &str) {
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
-        .set_recall(ambiguous_recall(&library.identify_store, album));
+async fn approve_first_candidate(library: &LibrarySetup, identify: &FakeProviders, album: &str) {
+    identify.set_recall(ambiguous_recall(&library.identify_store, album));
     assert_eq!(library.identify_tick().await, 1);
     choose_first_edition(library, album).await;
 }
@@ -2141,7 +2129,7 @@ async fn undo_restores_values_no_new_edit_could_write() {
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    let (_scratch, library, music) = bare_library("lib-undo-raw").await;
+    let (scratch, library, music) = bare_library("lib-undo-raw").await;
     let file = plant(&music, "album/01.flac", "management_full.flac");
     save_tags(
         &file,
@@ -2157,7 +2145,7 @@ async fn undo_restores_values_no_new_edit_could_write() {
         .track_at("music", "album/01.flac")
         .expect("track indexed");
     let album = library.scan_store.album_for_track(&track).expect("album");
-    approve_first_candidate(&library, &album).await;
+    approve_first_candidate(&library, &scratch.identify, &album).await;
     let before = read_fields(&file).expect("fields read");
 
     let bundle = publish_one(
@@ -2184,7 +2172,7 @@ async fn baseline_restore_removes_fields_added_later() {
     use droppedneedle_library::publish::planner::PlanKind;
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    let (_scratch, library, music) = bare_library("lib-baseline-added").await;
+    let (scratch, library, music) = bare_library("lib-baseline-added").await;
     let file = plant(&music, "album/01.flac", "flac_full_02.flac");
     add_music_root(&library, &music).await;
     let track = library
@@ -2192,7 +2180,7 @@ async fn baseline_restore_removes_fields_added_later() {
         .track_at("music", "album/01.flac")
         .expect("track indexed");
     let album = library.scan_store.album_for_track(&track).expect("album");
-    approve_first_candidate(&library, &album).await;
+    approve_first_candidate(&library, &scratch.identify, &album).await;
     let before = read_fields(&file).expect("fields read");
     assert!(!before.contains_key(&TagField::MusicBrainzReleaseId));
 
@@ -4783,7 +4771,7 @@ async fn library_management_preview_apply_undo() {
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    let (_scratch, library, music) = bare_library("lib-management-jobs").await;
+    let (scratch, library, music) = bare_library("lib-management-jobs").await;
     let first = plant(
         &music,
         "incoming/management track.flac",
@@ -4808,10 +4796,8 @@ async fn library_management_preview_apply_undo() {
         .track_at("music", "incoming/management track.flac")
         .expect("track indexed");
     let album = library.scan_store.album_for_track(&track).expect("album");
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
+    scratch
+        .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
     library
@@ -5454,10 +5440,8 @@ async fn library_management_tools_journey() {
         .track_at("music", "incoming/tool track.flac")
         .expect("track indexed");
     let album = library.scan_store.album_for_track(&track).expect("album");
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
+    scratch
+        .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
     library
@@ -5963,10 +5947,8 @@ async fn library_management_tools_journey() {
         .scan_store
         .album_for_track(&second_track)
         .expect("second album");
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
+    scratch
+        .identify
         .set_recall(ambiguous_recall(&library.identify_store, &second_album));
     library.identify_tick().await;
     droppedneedle_library::operations::service::Operations::new(&library)
@@ -6191,10 +6173,8 @@ async fn library_management_custom_edition_journey() {
         .track_at("music", "custom/sealed track.flac")
         .expect("track indexed");
     let album = library.scan_store.album_for_track(&track).expect("album");
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
+    scratch
+        .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
     library
@@ -6353,10 +6333,8 @@ async fn library_management_artwork_journey() {
         .track_at("music", "art/cover track.m4a")
         .expect("track indexed");
     let album = library.scan_store.album_for_track(&track).expect("album");
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
+    scratch
+        .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
     library
@@ -6756,11 +6734,7 @@ impl ManagedLibrary {
             }
         }
         recall.releases.iter_mut().for_each(&edition);
-        self.library
-            .test_providers
-            .as_ref()
-            .expect("scripted providers")
-            .set_recall(recall);
+        self.scratch.identify.set_recall(recall);
         assert_eq!(self.library.identify_tick().await, 1);
         droppedneedle_library::operations::service::Operations::new(&self.library)
             .confirm_match(&album, "admin")
@@ -10512,12 +10486,8 @@ fn queue_remap_row(library: &LibrarySetup, album: &str, origin: &str) {
 }
 
 /// Answer MusicBrainz with `recall` and run the remap worker once.
-async fn remap_once(library: &LibrarySetup, recall: RecallResult) {
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
-        .set_recall(recall);
+async fn remap_once(library: &LibrarySetup, identify: &FakeProviders, recall: RecallResult) {
+    identify.set_recall(recall);
     assert!(
         droppedneedle_library::operations::service::Operations::new(library)
             .remap_next()
@@ -10590,7 +10560,7 @@ async fn placing_files_never_gives_the_edition_up() {
         Some(("place_only".to_owned(), 0)),
         "queued twice is one row, still place_only"
     );
-    remap_once(&library, RecallResult::default()).await;
+    remap_once(&library, &scratch.identify, RecallResult::default()).await;
     assert_eq!(remap_row(&db, &album), None);
     assert_eq!(choice_row(&db, &album), chosen, "the person's match stays");
     assert_eq!(
@@ -10603,7 +10573,7 @@ async fn placing_files_never_gives_the_edition_up() {
     let chosen = choice_row(&db, &album);
     queue_remap_row(&library, &album, "place_only");
     let recall = unrelated_release(&library, &album);
-    remap_once(&library, recall).await;
+    remap_once(&library, &scratch.identify, recall).await;
     assert_eq!(remap_row(&db, &album), None);
     assert_eq!(choice_row(&db, &album), chosen, "the person's match stays");
     assert_eq!(
@@ -10616,6 +10586,7 @@ async fn placing_files_never_gives_the_edition_up() {
     queue_remap_row(&library, &album, "place_only");
     remap_once(
         &library,
+        &scratch.identify,
         RecallResult {
             provider_deferred: true,
             ..RecallResult::default()
@@ -10644,7 +10615,7 @@ async fn a_match_made_automatic_since_drops_its_queued_placement() {
     )
     .expect("made automatic");
     let recall = fitting_release(&library, &album);
-    remap_once(&library, recall).await;
+    remap_once(&library, &scratch.identify, recall).await;
     assert_eq!(remap_row(&db, &album), None);
     assert!(tracks.iter().all(|track| placement(&db, track).0.is_none()));
 }
@@ -10668,7 +10639,7 @@ async fn leave_unmanaged_since_drops_a_queued_choice() {
     .expect("left unmanaged");
     let left = choice_row(&db, &album);
     let recall = fitting_release(&library, &album);
-    remap_once(&library, recall).await;
+    remap_once(&library, &scratch.identify, recall).await;
     assert_eq!(remap_row(&db, &album), None);
     assert_eq!(
         choice_row(&db, &album),
@@ -10702,7 +10673,7 @@ async fn a_queued_choice_keeps_a_carried_leave_unmanaged() {
     )
     .expect("left unmanaged");
     let recall = fitting_release(&library, &album);
-    remap_once(&library, recall).await;
+    remap_once(&library, &scratch.identify, recall).await;
     assert_eq!(remap_row(&db, &album), None);
     assert!(
         tracks
@@ -11053,7 +11024,12 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     ))
     .expect("edition chosen");
     queue_remap_row(&library, &album, "place_only");
-    remap_once(&library, fitting_release(&library, &album)).await;
+    remap_once(
+        &library,
+        &scratch.identify,
+        fitting_release(&library, &album),
+    )
+    .await;
     for track in &tracks {
         assert_eq!(placement(&db, track).0.as_deref(), Some(REL_1), "placed");
     }
@@ -11118,7 +11094,12 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     ))
     .expect("the listener starred, bookmarked and marked the new track");
     let records = [old_row(&db, o4), old_row(&db, o5)];
-    remap_once(&library, fitting_release(&library, &joined)).await;
+    remap_once(
+        &library,
+        &scratch.identify,
+        fitting_release(&library, &joined),
+    )
+    .await;
 
     for track in [&n4, &n5] {
         assert_eq!(placement(&db, track).0.as_deref(), Some(REL_1), "placed");
@@ -11380,7 +11361,12 @@ async fn a_rated_track_continues_with_its_ratings() {
     ))
     .expect("edition chosen");
     queue_remap_row(&library, &album, "place_only");
-    remap_once(&library, fitting_release(&library, &album)).await;
+    remap_once(
+        &library,
+        &scratch.identify,
+        fitting_release(&library, &album),
+    )
+    .await;
     let old = &tracks[2];
     db.execute_batch(&format!(
         "INSERT INTO library_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
@@ -11403,7 +11389,12 @@ async fn a_rated_track_continues_with_its_ratings() {
         [&new],
     )
     .expect("the curator rated the new track");
-    remap_once(&library, fitting_release(&library, &joined)).await;
+    remap_once(
+        &library,
+        &scratch.identify,
+        fitting_release(&library, &joined),
+    )
+    .await;
 
     let ratings = |track: &str| -> Vec<(String, i64, i64)> {
         db.prepare(
@@ -11478,7 +11469,7 @@ fn album_history(library: &LibrarySetup, album: &str, caller: &str) -> Value {
 async fn an_automatic_album_retagged_and_renamed_keeps_its_history() {
     let (scratch, library, music, album, old) = album_at_rest("lib-continue-automatic", 3).await;
     let db = scratch_db(&scratch);
-    let providers = library.test_providers.as_ref().expect("scripted providers");
+    let providers = &scratch.identify;
     providers.set_recall(fitting_release(&library, &album));
     while library.identify_tick().await > 0 {}
     assert_eq!(choice_row(&db, &album).0, "automatic");
@@ -11527,10 +11518,8 @@ async fn retagged_without_ids(
 ) {
     let (scratch, library, music, album, old) = album_at_rest(tag, 3).await;
     let db = scratch_db(&scratch);
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
+    scratch
+        .identify
         .set_recall(fitting_release(&library, &album));
     while library.identify_tick().await > 0 {}
     db.execute_batch(&format!(
@@ -11579,7 +11568,7 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
     let (scratch, library, album, old, own_row, new) =
         retagged_without_ids("lib-join-approve").await;
     let db = scratch_db(&scratch);
-    let providers = library.test_providers.as_ref().expect("scripted providers");
+    let providers = &scratch.identify;
     let mut tied = fitting_release(&library, &own_row);
     let mut sibling = tied.releases[0].clone();
     sibling.id = REL_2.to_owned();
@@ -11641,7 +11630,7 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
     let (scratch, library, album, old, own_row, new) =
         retagged_without_ids("lib-join-choose").await;
     let db = scratch_db(&scratch);
-    let providers = library.test_providers.as_ref().expect("scripted providers");
+    let providers = &scratch.identify;
     let mut both = fitting_release(&library, &own_row);
     let mut sibling = both.releases[0].clone();
     sibling.id = REL_2.to_owned();
@@ -11681,7 +11670,12 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
     .expect("edition chosen");
     queue_remap_row(&library, &own_row, "place_only");
     assert_eq!(retired_into(&db, &album), None);
-    remap_once(&library, fitting_release(&library, &own_row)).await;
+    remap_once(
+        &library,
+        &scratch.identify,
+        fitting_release(&library, &own_row),
+    )
+    .await;
     assert_eq!(retired_into(&db, &album), Some(own_row));
     assert_eq!(
         (holdings(&db, &old[0])[1], holdings(&db, &new[0])[1]),
@@ -11730,11 +11724,7 @@ impl ManagedLibrary {
                 )
                 .expect("the old album's track");
         }
-        self.library
-            .test_providers
-            .as_ref()
-            .expect("scripted providers")
-            .set_recall(recall);
+        self.scratch.identify.set_recall(recall);
         while self.library.identify_tick().await > 0 {}
     }
 }
@@ -12424,12 +12414,7 @@ async fn a_held_album_is_left_alone_where_the_retag_join_would_leave_it() {
                 let mut recall = fitting_release(&managed.library, &replacement);
                 recall.releases[0].id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee".to_owned();
                 recall.releases[0].release_group_id = "rg-elsewhere".to_owned();
-                managed
-                    .library
-                    .test_providers
-                    .as_ref()
-                    .expect("scripted providers")
-                    .set_recall(recall);
+                managed.scratch.identify.set_recall(recall);
                 while managed.library.identify_tick().await > 0 {}
             }
             _ => managed.identify_as(&replacement, album).await,
@@ -12748,12 +12733,7 @@ async fn a_held_album_matched_after_its_folder_is_let_go_is_judged_at_its_look()
                 let mut recall = fitting_release(&managed.library, replacement);
                 recall.releases[0].id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee".to_owned();
                 recall.releases[0].release_group_id = "rg-elsewhere".to_owned();
-                managed
-                    .library
-                    .test_providers
-                    .as_ref()
-                    .expect("scripted providers")
-                    .set_recall(recall);
+                managed.scratch.identify.set_recall(recall);
                 while managed.library.identify_tick().await > 0 {}
             }
             "folder by hand" => {
@@ -12878,10 +12858,8 @@ async fn a_persons_edition_retagged_without_its_ids_is_left_alone_after_the_join
 async fn a_deleted_copy_leaves_its_history_with_the_copy_that_stays() {
     let (scratch, library, music, album, old) = album_at_rest("lib-continue-copy", 3).await;
     let db = scratch_db(&scratch);
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
+    scratch
+        .identify
         .set_recall(fitting_release(&library, &album));
     while library.identify_tick().await > 0 {}
     let release_track = placement(&db, &old[1]).1.expect("original mapped");
@@ -12925,10 +12903,8 @@ async fn an_imported_track_takes_the_history_of_the_one_it_replaces() {
 
     let (scratch, library, _, album, _) = album_at_rest("lib-continue-import", 3).await;
     let db = scratch_db(&scratch);
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
+    scratch
+        .identify
         .set_recall(fitting_release(&library, &album));
     while library.identify_tick().await > 0 {}
     let release = library
@@ -13013,10 +12989,8 @@ async fn an_approval_continues_a_track_at_once() {
 
     let (scratch, library, music, album, old) = album_at_rest("lib-continue-approve", 3).await;
     let db = scratch_db(&scratch);
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
+    scratch
+        .identify
         .set_recall(fitting_release(&library, &album));
     while library.identify_tick().await > 0 {}
     let release_track = placement(&db, &old[1]).1.expect("original mapped");
@@ -14358,7 +14332,7 @@ async fn a_track_id_from_another_edition_is_corrected() {
         .scan_store
         .album_for_track(&tracks[0])
         .expect("album");
-    let scripted = library.test_providers.as_ref().expect("scripted providers");
+    let scripted = &managed.scratch.identify;
     scripted.set_recall(RecallResult {
         releases: vec![r.clone(), r2.clone()],
         ..RecallResult::default()
@@ -14494,14 +14468,10 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
         .filter(|(index, _)| *index != 2)
         .flat_map(|(_, (r, r2))| [r.clone(), r2.clone()])
         .collect();
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
-        .set_recall(RecallResult {
-            releases,
-            ..RecallResult::default()
-        });
+    scratch.identify.set_recall(RecallResult {
+        releases,
+        ..RecallResult::default()
+    });
     assert_eq!(library.identify_tick().await, 4);
 
     // What the older matcher and people left behind.
@@ -15454,11 +15424,7 @@ async fn a_copy_takes_the_place_of_a_deleted_original_on_an_automatic_edition() 
     let db = scratch_db(&scratch);
     let mut recall = fitting_release(&library, &album);
     recall.releases[0].id = CHOSEN_REL.to_owned();
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
-        .set_recall(recall);
+    scratch.identify.set_recall(recall);
     while library.identify_tick().await > 0 {}
     let release_track = placement(&db, &old[1]).1.expect("original mapped");
     std::fs::copy(
@@ -15981,14 +15947,10 @@ async fn an_identified_album_links_its_artist() {
     let track = indexed_at(&library, "album/01.flac");
     let album = library.scan_store.album_for_track(&track).expect("album");
     let release = tagged_release(&library.identify_store, &album);
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
-        .set_recall(RecallResult {
-            releases: vec![release.clone()],
-            ..RecallResult::default()
-        });
+    scratch.identify.set_recall(RecallResult {
+        releases: vec![release.clone()],
+        ..RecallResult::default()
+    });
     assert_eq!(library.identify_tick().await, 1);
     let db = scratch_db(&scratch);
     assert_eq!(
@@ -16326,15 +16288,10 @@ async fn a_custom_edition_passes_over_the_apps_artist_link() {
     for credit in &mut release.artists {
         credit.id = OTHER.to_owned();
     }
-    managed
-        .library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
-        .set_recall(RecallResult {
-            releases: vec![release],
-            ..RecallResult::default()
-        });
+    managed.scratch.identify.set_recall(RecallResult {
+        releases: vec![release],
+        ..RecallResult::default()
+    });
     let link = |source: &str| {
         db.execute_batch(&format!(
             "DELETE FROM local_artist_external_identities WHERE local_artist_id = '{artist}'; \
@@ -16556,11 +16513,7 @@ impl ManagedLibrary {
             release.id = format!("000000ff-{edition:04x}-4111-8111-111111111111");
             release.release_group_id = format!("rg-ff-{edition}");
         }
-        self.library
-            .test_providers
-            .as_ref()
-            .expect("scripted providers")
-            .set_recall(recall);
+        self.scratch.identify.set_recall(recall);
         while self.library.identify_tick().await > 0 {}
         droppedneedle_library::operations::service::Operations::new(&self.library)
             .confirm_match(album, "admin")
@@ -16728,12 +16681,7 @@ async fn a_custom_edition_replaced_by_hand_is_merged_by_a_person() {
     for release in &mut recall.releases {
         release.release_group_id = group.to_owned();
     }
-    managed
-        .library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
-        .set_recall(recall);
+    managed.scratch.identify.set_recall(recall);
     Operations::new(&managed.library)
         .seal_custom_edition(&album, REL_1, managed.edition_revision(&album), "admin")
         .await

@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::common::auth::AuthRig;
-use crate::common::{ScratchDir, migrated_db};
+use crate::common::library::library_at;
+use crate::common::{ScratchDir, config_store, migrated_db};
 use droppedneedle_library::identify::models::RecallResult;
 use droppedneedle_library::identify::providers::FakeProviders;
 use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService};
@@ -74,12 +74,12 @@ fn snapshot(root: &Path) -> BTreeMap<String, (u64, i64, String)> {
     out
 }
 
-/// Production-wired bundle over a scratch database, with one root, and
-/// the auth rig its users read through.
-async fn bundle(music: &Path) -> (LibrarySetup, AuthRig) {
-    let auth = AuthRig::new("scan").await;
-    let library = LibrarySetup::for_tests(Arc::new(droppedneedle_kernel::ids::UuidGenerator))
-        .expect("library bundle builds");
+/// Production-wired bundle over a database and settings in `scratch`, with
+/// `scratch/music` as its one root.
+fn bundle(scratch: &Path) -> LibrarySetup {
+    migrated_db(&scratch.join("app.db"));
+    let (library, _) = library_at(&scratch.join("app.db"), config_store(scratch));
+    let music = scratch.join("music");
     library
         .add_root(
             Some("music".to_owned()),
@@ -87,7 +87,7 @@ async fn bundle(music: &Path) -> (LibrarySetup, AuthRig) {
             EffectivePolicy::Automatic,
         )
         .expect("root adds");
-    (library, auth)
+    library
 }
 
 /// Request a scan of every root and drive it to the end.
@@ -130,7 +130,7 @@ async fn scan_catalogs_tags_without_touching_files() {
     plant(&music, "Album/CD1/02.mp3", "mp3_full_01.mp3");
     plant(&music, "Loose/untagged.flac", "flac_no_tags.flac");
     let before = snapshot(&music);
-    let (library, _auth) = bundle(&music).await;
+    let library = bundle(&scratch);
 
     let run = scan(&library).await;
     assert_eq!(run.state, ScanState::Completed);
@@ -190,7 +190,7 @@ async fn unchanged_tags_keep_their_revision() {
     let scratch = ScratchDir::new("scan-revision");
     let music = scratch.join("music");
     plant(&music, "Album/01.flac", "management_full.flac");
-    let (library, _auth) = bundle(&music).await;
+    let library = bundle(&scratch);
 
     let run = scan(&library).await;
     assert_eq!(run.state, ScanState::Completed);
@@ -216,7 +216,7 @@ async fn vanished_files_are_marked_missing_and_mass_loss_is_held_back() {
     for n in 0..30 {
         plant(&music, &format!("Album/{n:02}.flac"), "flac_full_01.flac");
     }
-    let (library, _auth) = bundle(&music).await;
+    let library = bundle(&scratch);
     assert_eq!(count(&scan(&library).await, counter_names::INDEXED), 30);
 
     std::fs::remove_file(music.join("Album/00.flac")).expect("remove one");
@@ -292,7 +292,7 @@ async fn a_held_back_folder_is_held_until_a_scan_finds_it_again() {
         plant(&music, &format!("Album/{n:02}.flac"), "flac_full_01.flac");
     }
     plant(&music, "Other/01.flac", "flac_full_01.flac");
-    let (library, _auth) = bundle(&music).await;
+    let library = bundle(&scratch);
     assert_eq!(count(&scan(&library).await, counter_names::INDEXED), 31);
     let held = |library: &LibrarySetup| {
         (
@@ -581,7 +581,7 @@ async fn lyrics_sweep_marks_what_files_carry_and_only_reads() {
     let elsewhere = plant(&scratch.join("elsewhere"), "song.lrc", "lyrics_airbag.lrc");
     symlink(&elsewhere, music.join("Linked/01 Song A.lrc")).expect("lyrics link");
     let before = snapshot(&music);
-    let (library, _auth) = bundle(&music).await;
+    let library = bundle(&scratch);
     let mark = |library: &LibrarySetup, path: &str, source: &str| {
         query(
             library,
@@ -624,7 +624,7 @@ async fn unrecorded_scan_request_is_an_error() {
     let scratch = ScratchDir::new("scan-unrecorded");
     let music = scratch.join("music");
     std::fs::create_dir_all(&music).expect("root");
-    let (library, _auth) = bundle(&music).await;
+    let library = bundle(&scratch);
     // No such user in this database: the auth_users reference fails.
     assert!(library.request_scan(None, "no-such-user").is_err());
 }
@@ -3535,7 +3535,7 @@ async fn hand_merge_removes_an_open_pair() {
     let music = scratch.join("music");
     plant(&music, "a/01.flac", "flac_full_01.flac");
     plant(&music, "b/01.flac", "flac_full_02.flac");
-    let (library, _auth) = bundle(&music).await;
+    let library = bundle(&scratch);
     scan(&library).await;
     let store = &library.scan_store;
     let track = store.track_at("music", "a/01.flac").expect("a/01");
@@ -4792,7 +4792,6 @@ async fn a_join_waits_for_the_rest_of_the_old_album() {
 /// by the app: each pair is recorded once for a person, who merges one.
 #[tokio::test]
 async fn an_album_replaced_on_two_albums_is_left_to_a_person() {
-    use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
     use droppedneedle_library::corrections::Corrections;
     use droppedneedle_library::corrections::models::PairJoinRequest;
 
@@ -4835,19 +4834,7 @@ async fn an_album_replaced_on_two_albums_is_left_to_a_person() {
     assert_eq!(rig.stars_and_aliases(&old_rows[0]).0, 1);
 
     rig.run(PERSON);
-    let config = Arc::new(
-        ConfigStore::open(
-            &rig.scratch.join("config.json"),
-            Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
-        )
-        .expect("config opens"),
-    );
-    let library = LibrarySetup::for_tests_at(
-        Arc::new(droppedneedle_kernel::ids::UuidGenerator),
-        &rig.db(),
-        config,
-    )
-    .expect("bundle builds");
+    let (library, _) = library_at(&rig.db(), config_store(&rig.scratch));
     let corrections = Corrections::new(&library);
     let listed = corrections.retag_pairs().expect("pairs listed");
     assert_eq!(listed.total, 2);

@@ -1,17 +1,28 @@
-//! MusicBrainz and AcoustID as library identification sees them, scripted
-//! by a journey.
+//! The library's outside world as tests script it: MusicBrainz and AcoustID
+//! as identification sees them, Discogs and MusicBrainz as contributions see
+//! them, and library bundles built by the production builder over them.
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use droppedneedle::bootstrap::Port;
+use droppedneedle_kernel::http_client::HttpClientFactory;
+use droppedneedle_kernel::ids::UuidGenerator;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::sections::MusicBrainzSettings;
+use droppedneedle_library::contrib::ContribProviders;
+use droppedneedle_library::contrib::scripted::{ScriptedDiscogs, ScriptedMusicBrainz};
 use droppedneedle_library::identify::models::{LocalAlbumFacts, RecallResult};
-use droppedneedle_library::identify::providers::{IdentifyProviders, RecallOutcome};
+use droppedneedle_library::identify::providers::{FakeProviders, IdentifyProviders, RecallOutcome};
 use droppedneedle_library::identify::sources::{
     ArtistAnswer, EditionPage, EditionQuery, SourceError, Unanswered,
 };
-use droppedneedle_providers::musicbrainz::Criticality;
+use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_providers::Providers;
+use droppedneedle_providers::musicbrainz::{Criticality, SourceFn};
 
 type Recall = Box<dyn Fn(&LocalAlbumFacts) -> RecallResult + Send>;
 
@@ -124,4 +135,58 @@ impl IdentifyProviders for ScriptedIdentify {
             .cloned();
         Box::pin(async move { answer.ok_or_else(Unanswered::cannot_tell) })
     }
+}
+
+/// Discogs and MusicBrainz as contributions see them, scripted by a test.
+/// Nothing is found until it scripts something.
+#[derive(Clone, Default)]
+pub struct ScriptedContrib {
+    pub discogs: Arc<ScriptedDiscogs>,
+    pub musicbrainz: Arc<ScriptedMusicBrainz>,
+}
+
+impl ScriptedContrib {
+    /// The contribution port these scripts answer through.
+    pub fn providers(&self) -> ContribProviders {
+        ContribProviders {
+            discogs: self.discogs.clone(),
+            musicbrainz: self.musicbrainz.clone(),
+        }
+    }
+}
+
+/// A library bundle built the way the app builds it, over the database at
+/// `db_path` and the settings in `config`, with identification answering
+/// from scripted providers. Returns the bundle and those providers.
+pub fn library_at(db_path: &Path, config: Arc<ConfigStore>) -> (LibrarySetup, Arc<FakeProviders>) {
+    let scripted = Arc::new(FakeProviders::default());
+    let library = library_asking(db_path, config, scripted.clone());
+    (library, scripted)
+}
+
+/// As [`library_at`], with identification asking `identify`. Contributions
+/// answer from scripts with nothing scripted, and every other outside
+/// address is closed.
+pub fn library_asking(
+    db_path: &Path,
+    config: Arc<ConfigStore>,
+    identify: Arc<dyn IdentifyProviders>,
+) -> LibrarySetup {
+    let mut outbound = super::closed_outbound();
+    outbound.identify_providers = Port::given(identify);
+    outbound.contribution_providers = Port::given(ScriptedContrib::default().providers());
+    let mb_source: SourceFn = {
+        let outbound = outbound.clone();
+        Arc::new(move || outbound.musicbrainz_source(&MusicBrainzSettings::default()))
+    };
+    LibrarySetup::build(
+        &HttpClientFactory::new().expect("http factory builds"),
+        Arc::new(UuidGenerator),
+        Arc::new(Providers::unpaced()),
+        mb_source,
+        db_path,
+        config,
+        outbound.library(),
+    )
+    .expect("library bundle builds")
 }

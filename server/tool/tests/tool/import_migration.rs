@@ -122,14 +122,14 @@ async fn upgrade_from_0001_keeps_data() {
 async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() {
     use std::sync::Arc;
 
-    use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
     use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
     use droppedneedle_library::identify::models::RecallResult;
     use droppedneedle_library::matching::{Release, ReleaseTrack};
-    use droppedneedle_library::wiring::LibrarySetup;
     use droppedneedle_tool::tooling::fixture::{
         MUSIC_ROOT_ID, V2_ALBUM_ID, build_v2_fixture, delete_orphan_rows,
     };
+
+    use crate::common::library::library_at;
 
     const PASSPHRASE: &str = "operator-passphrase";
     const PINNED: &str = "rel-blue-jp";
@@ -291,47 +291,38 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
         )
         .expect("config opens"),
     );
-    let library = LibrarySetup::for_tests_at(
-        Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,
-        &db_path,
-        config,
-    )
-    .expect("library builds");
+    let (library, scripted) = library_at(&db_path, config);
     let facts = library
         .identify_store
         .album_facts(V2_ALBUM_ID)
         .expect("album facts");
-    library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
-        .set_recall(RecallResult {
-            releases: vec![Release {
-                id: PINNED.to_owned(),
-                release_group_id: "rg-blue".to_owned(),
-                title: facts.title.clone(),
-                tracks: facts
-                    .tracks
-                    .iter()
-                    .enumerate()
-                    .map(|(index, track)| ReleaseTrack {
-                        id: format!("rt-{index}"),
-                        recording_id: track
-                            .recording_mbid
-                            .clone()
-                            .unwrap_or_else(|| format!("rec-{index}")),
-                        title: track.title.clone(),
-                        disc: track.disc_number.max(1),
-                        position: track.track_number,
-                        absolute_position: index as u32 + 1,
-                        length_ms: track.duration_secs.map(|seconds| seconds * 1000),
-                        ..ReleaseTrack::default()
-                    })
-                    .collect(),
-                ..Release::default()
-            }],
-            ..RecallResult::default()
-        });
+    scripted.set_recall(RecallResult {
+        releases: vec![Release {
+            id: PINNED.to_owned(),
+            release_group_id: "rg-blue".to_owned(),
+            title: facts.title.clone(),
+            tracks: facts
+                .tracks
+                .iter()
+                .enumerate()
+                .map(|(index, track)| ReleaseTrack {
+                    id: format!("rt-{index}"),
+                    recording_id: track
+                        .recording_mbid
+                        .clone()
+                        .unwrap_or_else(|| format!("rec-{index}")),
+                    title: track.title.clone(),
+                    disc: track.disc_number.max(1),
+                    position: track.track_number,
+                    absolute_position: index as u32 + 1,
+                    length_ms: track.duration_secs.map(|seconds| seconds * 1000),
+                    ..ReleaseTrack::default()
+                })
+                .collect(),
+            ..Release::default()
+        }],
+        ..RecallResult::default()
+    });
     assert!(
         droppedneedle_library::operations::service::Operations::new(&library)
             .remap_next()

@@ -30,6 +30,7 @@ use droppedneedle_library::wiring::LibrarySetup;
 use futures_util::future::BoxFuture;
 
 use crate::common::auth::{AuthRig, test_principal, with_test_principal};
+use crate::common::library::library_at;
 
 const GOOD_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000001";
 const GOOD_RELEASE: &str = "6d0b7a1e-0000-4000-8000-000000000002";
@@ -194,8 +195,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         )
         .expect("config"),
     );
-    let library =
-        LibrarySetup::for_tests_at(ids, acquire.db.path(), config).expect("library bundle");
+    let (library, _) = library_at(acquire.db.path(), config);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -477,8 +477,7 @@ async fn held_files_import_as_upgrades_or_discard() {
         )
         .expect("config"),
     );
-    let library =
-        LibrarySetup::for_tests_at(ids, acquire.db.path(), config).expect("library bundle");
+    let (library, _) = library_at(acquire.db.path(), config);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -924,8 +923,7 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
         )
         .expect("config"),
     );
-    let library =
-        LibrarySetup::for_tests_at(ids, acquire.db.path(), config).expect("library bundle");
+    let (library, _) = library_at(acquire.db.path(), config);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -1215,9 +1213,7 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
         )
         .expect("config"),
     );
-    let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let library =
-        LibrarySetup::for_tests_at(ids, acquire.db.path(), config).expect("library bundle");
+    let (library, _) = library_at(acquire.db.path(), config);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library

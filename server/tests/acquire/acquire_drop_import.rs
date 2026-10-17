@@ -29,6 +29,7 @@ use droppedneedle_library::wiring::LibrarySetup;
 use futures_util::future::BoxFuture;
 
 use crate::common::auth::AuthRig;
+use crate::common::library::library_at;
 
 const GROUP: &str = "7d0b7a1e-0000-4000-8000-000000000001";
 const RELEASE: &str = "7d0b7a1e-0000-4000-8000-000000000002";
@@ -177,8 +178,7 @@ async fn bundles() -> (
         )
         .expect("config"),
     );
-    let library =
-        LibrarySetup::for_tests_at(ids, acquire.db.path(), config).expect("library bundle");
+    let (library, _) = library_at(acquire.db.path(), config);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library

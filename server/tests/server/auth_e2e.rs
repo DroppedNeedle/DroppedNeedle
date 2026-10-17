@@ -222,10 +222,8 @@ impl E2e {
             .parent()
             .map(|parent| parent.to_path_buf())
             .unwrap_or_else(std::env::temp_dir);
-        let library = droppedneedle_library::wiring::LibrarySetup::for_tests(
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>
-        )
-        .expect("library bundle builds");
+        let (library, _) =
+            crate::common::library::library_at(&self.db_path, Arc::clone(&self.store));
         let (media, _worker) = droppedneedle_media::MediaSetup::build(
             &self.db_path,
             &app_config,

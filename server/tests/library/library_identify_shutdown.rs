@@ -18,7 +18,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use droppedneedle_library::identify::models::{
     IdentifyKind, JobState, LocalAlbumFacts, RecallResult,
 };
@@ -26,6 +25,9 @@ use droppedneedle_library::identify::providers::{IdentifyProviders, RecallOutcom
 use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_providers::musicbrainz::Criticality;
 use tokio::sync::{oneshot, watch};
+
+use crate::common::library::library_asking;
+use crate::common::{ScratchDir, config_store, migrated_db};
 
 /// Empty recall, no side effects: every attempt lands NoCandidate.
 struct EmptyRecall;
@@ -108,18 +110,21 @@ impl IdentifyProviders for GateWait {
     }
 }
 
-/// Scratch library bundle over scripted providers.
+/// Library bundle over scripted providers, on its own scratch database.
 struct Lib {
     library: LibrarySetup,
+    _scratch: ScratchDir,
 }
 
 impl Lib {
     async fn open(providers: Arc<dyn IdentifyProviders>) -> Self {
-        let ids = Arc::new(UuidGenerator);
-        let library =
-            LibrarySetup::for_tests_with_providers(ids as Arc<dyn IdGenerator>, providers)
-                .expect("library bundle builds");
-        Self { library }
+        let scratch = ScratchDir::new("identify-shutdown");
+        migrated_db(&scratch.join("app.db"));
+        let library = library_asking(&scratch.join("app.db"), config_store(&scratch), providers);
+        Self {
+            library,
+            _scratch: scratch,
+        }
     }
 }
 

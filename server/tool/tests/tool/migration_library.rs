@@ -11,7 +11,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
 use droppedneedle_library::identify::models::DecisionSource;
 use droppedneedle_library::tags::save::{TagEdit, save_tags};
@@ -24,6 +23,7 @@ use rusqlite::params;
 use sha2::{Digest as _, Sha256};
 
 use crate::common::ScratchDir;
+use crate::common::library::library_at;
 
 const PASSPHRASE: &str = "operator-passphrase";
 /// The second track: v2 has it, its file changed since, so v3 re-reads it.
@@ -315,12 +315,7 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
         )
         .expect("config opens"),
     );
-    let library = LibrarySetup::for_tests_at(
-        Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,
-        &db_path,
-        config,
-    )
-    .expect("library builds");
+    let (library, _) = library_at(&db_path, config);
     drain_scans(&library).await;
 
     // Ids stay: the unchanged file and the re-read one keep their track,

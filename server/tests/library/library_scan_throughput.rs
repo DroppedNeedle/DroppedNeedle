@@ -20,14 +20,13 @@
 //! catalog writes, not cold disk reads, and not identification.
 
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Instant;
 
-use crate::common::ScratchDir;
+use crate::common::library::library_at;
+use crate::common::{ScratchDir, config_store, migrated_db};
 use droppedneedle_library::scan::{
     EffectivePolicy, ScanKind, ScanRequest, ScanState, ScanTrigger, counter_names,
 };
-use droppedneedle_library::wiring::LibrarySetup;
 
 const FILES_ENV: &str = "DN_SCAN_FILES";
 const ONE_ARTIST_ENV: &str = "DN_SCAN_ONE_ARTIST";
@@ -116,8 +115,8 @@ async fn full_scan_throughput() {
     let one_artist = std::env::var(ONE_ARTIST_ENV).is_ok_and(|value| value == "1");
     let tree_bytes = generate(&music, files, one_artist);
 
-    let library = LibrarySetup::for_tests(Arc::new(droppedneedle_kernel::ids::UuidGenerator))
-        .expect("library bundle builds");
+    migrated_db(&scratch.join("app.db"));
+    let (library, _) = library_at(&scratch.join("app.db"), config_store(&scratch));
     library
         .add_root(
             Some("music".to_owned()),
