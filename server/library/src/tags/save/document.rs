@@ -8,12 +8,10 @@ use std::path::Path;
 use lofty::file::TaggedFileExt as _;
 use lofty::tag::TagType;
 
-use super::id3::{id3_native, id3_read};
-use super::id3_bytes::parse_id3_deep;
-use super::id3_upgrade::as_saved;
-use super::mp4::{mp4_native, mp4_read, parse_mp4_atoms};
-use super::vorbis::{parse_vorbis_truth, vorbis_native, vorbis_read, vorbis_spellings};
-use super::{PictureSpec, Refusal, error_chain, writable};
+use super::id3::Id3;
+use super::mp4::Mp4;
+use super::vorbis::Vorbis;
+use super::{PictureSpec, Refusal, TagFormat, error_chain};
 use crate::tags::fields::TagField;
 use crate::tags::{AudioFormat, TagsError, format_for_path};
 
@@ -47,9 +45,12 @@ pub struct FieldDocument {
 pub fn read_document(path: &Path) -> Result<FieldDocument, TagsError> {
     let format = format_for_path(path)?;
     let mut document = FieldDocument::default();
-    if !writable(format) {
-        return Ok(document);
-    }
+    let list: ListFn = match format {
+        AudioFormat::Mp3 => list_as::<Id3>,
+        AudioFormat::Flac | AudioFormat::Ogg | AudioFormat::Opus => list_as::<Vorbis>,
+        AudioFormat::M4a => list_as::<Mp4>,
+        AudioFormat::Aac | AudioFormat::Wav => return Ok(document),
+    };
     let bytes = fs::read(path).map_err(|source| TagsError::Io {
         path: path.display().to_string(),
         source,
@@ -58,46 +59,22 @@ pub fn read_document(path: &Path) -> Result<FieldDocument, TagsError> {
         path: path.display().to_string(),
         reason: refusal.to_string(),
     };
-    let reads: Vec<(TagField, FieldRead)> = match format {
-        AudioFormat::Mp3 => match parse_id3_deep(&bytes).map_err(unreadable)? {
-            Some(tag) => {
-                let tag = as_saved(tag).map_err(unreadable)?;
-                document.native = id3_native(&tag);
-                TagField::ALL
-                    .into_iter()
-                    .map(|field| (field, id3_read(&tag, field)))
-                    .collect()
-            }
-            None => Vec::new(),
-        },
-        AudioFormat::Flac | AudioFormat::Ogg | AudioFormat::Opus => {
-            match parse_vorbis_truth(format, &bytes).map_err(unreadable)? {
-                Some(truth) => {
-                    document.spellings = vorbis_spellings(&truth);
-                    document.native = vorbis_native(&truth);
-                    TagField::ALL
-                        .into_iter()
-                        .map(|field| (field, vorbis_read(&truth, field)))
-                        .collect()
-                }
-                None => Vec::new(),
-            }
-        }
-        AudioFormat::M4a => match parse_mp4_atoms(&bytes).map_err(unreadable)? {
-            Some(atoms) => {
-                document.native = mp4_native(&atoms, false);
-                TagField::ALL
-                    .into_iter()
-                    .map(|field| (field, mp4_read(&atoms, field)))
-                    .collect()
-            }
-            None => Vec::new(),
-        },
-        AudioFormat::Aac | AudioFormat::Wav => Vec::new(),
-    };
-    collect_reads(&mut document, reads);
+    list(format, &bytes, &mut document).map_err(unreadable)?;
     document.pictures = read_pictures(&bytes, format).map_err(unreadable)?;
     Ok(document)
+}
+
+type ListFn = fn(AudioFormat, &[u8], &mut FieldDocument) -> Result<(), Refusal>;
+
+fn list_as<F: TagFormat>(
+    format: AudioFormat,
+    bytes: &[u8],
+    document: &mut FieldDocument,
+) -> Result<(), Refusal> {
+    match F::parse(format, bytes)? {
+        Some(truth) => F::list(truth, document),
+        None => Ok(()),
+    }
 }
 
 /// A file's embedded pictures in file order. A file lofty cannot read is

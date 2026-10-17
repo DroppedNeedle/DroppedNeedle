@@ -3950,3 +3950,275 @@ fn chapters_move_to_v24_readable() {
         .collect();
     assert_eq!(pictures, vec![picture]);
 }
+
+// ---------------------------------------------------------------------------
+// Scan and the tag editor read one file the same way
+// ---------------------------------------------------------------------------
+
+/// `YYYY`, `YYYY-MM` or `YYYY-MM-DD` from the start of a date, as scan
+/// keeps a release date.
+fn date_prefix(value: &str) -> Option<String> {
+    let value = value.trim();
+    let digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
+    let mut out = value.get(..4).filter(|year| digits(year))?.to_owned();
+    let mut rest = &value[4..];
+    for _ in 0..2 {
+        match rest.strip_prefix('-').and_then(|after| after.get(..2)) {
+            Some(part) if digits(part) => {
+                out.push('-');
+                out.push_str(part);
+                rest = &rest[3..];
+            }
+            _ => break,
+        }
+    }
+    Some(out)
+}
+
+/// Scan reads tags through lofty's generic items, the tag editor through
+/// its own byte parsers. For every committed fixture the editor can
+/// write, both give the same value for each writable field scan reads,
+/// so the catalog and the editor never show one file two ways. The
+/// release date is the editor's date fields put through scan's rule.
+#[test]
+fn scan_and_editor_agree_on_writable_fields() {
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(fixture(""))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    paths.sort();
+    let mut checked = 0;
+    let mut differences: Vec<String> = Vec::new();
+    for path in paths {
+        let Ok(format) = format_for_path(&path) else {
+            continue;
+        };
+        if !tags::save::writable(format) {
+            continue;
+        }
+        checked += 1;
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let (scan, _) = tags::read::read_scan_metadata(&path, format).unwrap();
+        let editor = tags::save::read_document(&path).unwrap();
+        let mut agree = |label: &str, scanned: String, edited: String| {
+            if scanned != edited {
+                differences.push(format!("{name} {label}: scan {scanned}, editor {edited}"));
+            }
+        };
+        // Scan splits values on NUL, trims them and drops repeats.
+        let all = |field: TagField| -> Vec<String> {
+            let mut out: Vec<String> = Vec::new();
+            for value in editor.values.get(&field).into_iter().flatten() {
+                for part in value.split('\0').map(str::trim) {
+                    if !part.is_empty() && !out.iter().any(|seen| seen == part) {
+                        out.push(part.to_owned());
+                    }
+                }
+            }
+            out
+        };
+        let first = |field: TagField| all(field).into_iter().next();
+        let number = |field: TagField| first(field).and_then(|value| value.parse::<u32>().ok());
+        let gain = |field: TagField| {
+            first(field).and_then(|value| {
+                let lower = value.to_lowercase();
+                lower
+                    .strip_suffix("db")
+                    .unwrap_or(&lower)
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+            })
+        };
+        let names = |listed: bool, credits: &[AudioArtistCredit]| -> Vec<String> {
+            if listed {
+                credits.iter().map(|credit| credit.name.clone()).collect()
+            } else {
+                Vec::new()
+            }
+        };
+        for (label, scanned, field) in [
+            ("title", Some(&scan.title), TagField::Title),
+            ("artist", Some(&scan.artist), TagField::Artist),
+            ("album", Some(&scan.album), TagField::Album),
+        ] {
+            let scanned = scanned.filter(|value| !value.is_empty()).cloned();
+            agree(label, format!("{scanned:?}"), format!("{:?}", first(field)));
+        }
+        for (label, scanned, field) in [
+            ("album_artist", &scan.album_artist, TagField::AlbumArtist),
+            ("title_sort", &scan.title_sort, TagField::TitleSort),
+            ("artist_sort", &scan.artist_sort, TagField::ArtistSort),
+            ("album_sort", &scan.album_sort, TagField::AlbumSort),
+            (
+                "album_artist_sort",
+                &scan.album_artist_sort,
+                TagField::AlbumArtistSort,
+            ),
+            ("disc_subtitle", &scan.disc_subtitle, TagField::DiscSubtitle),
+            (
+                "original_date",
+                &scan.original_release_date,
+                TagField::OriginalDate,
+            ),
+            ("release_type", &scan.release_type, TagField::ReleaseType),
+            ("media", &scan.edition.media, TagField::Media),
+            ("barcode", &scan.edition.barcode, TagField::Barcode),
+            (
+                "catalog_number",
+                &scan.edition.catalog_number,
+                TagField::CatalogNumber,
+            ),
+            (
+                "release_country",
+                &scan.edition.release_country,
+                TagField::ReleaseCountry,
+            ),
+            (
+                "release_group_id",
+                &scan.musicbrainz_release_group_id,
+                TagField::MusicBrainzReleaseGroupId,
+            ),
+            (
+                "release_id",
+                &scan.musicbrainz_release_id,
+                TagField::MusicBrainzReleaseId,
+            ),
+            (
+                "recording_id",
+                &scan.musicbrainz_recording_id,
+                TagField::MusicBrainzRecordingId,
+            ),
+            (
+                "release_track_id",
+                &scan.musicbrainz_release_track_id,
+                TagField::MusicBrainzReleaseTrackId,
+            ),
+            ("acoustid_id", &scan.acoustid_id, TagField::AcoustIdId),
+        ] {
+            agree(label, format!("{scanned:?}"), format!("{:?}", first(field)));
+        }
+        for (label, scanned, field) in [
+            ("genres", scan.genres.clone(), TagField::Genre),
+            (
+                "artist_ids",
+                scan.musicbrainz_artist_ids.clone(),
+                TagField::MusicBrainzArtistId,
+            ),
+            (
+                "album_artist_ids",
+                scan.musicbrainz_album_artist_ids.clone(),
+                TagField::MusicBrainzAlbumArtistId,
+            ),
+            (
+                "artists",
+                names(scan.artists_listed, &scan.artists),
+                TagField::Artists,
+            ),
+            (
+                "album_artists",
+                names(scan.album_artists_listed, &scan.album_artists),
+                TagField::AlbumArtists,
+            ),
+        ] {
+            agree(label, format!("{scanned:?}"), format!("{:?}", all(field)));
+        }
+        agree(
+            "compilation",
+            scan.compilation.to_string(),
+            (first(TagField::Compilation).as_deref() == Some("1")).to_string(),
+        );
+        agree(
+            "track_number",
+            scan.track_number.to_string(),
+            number(TagField::TrackNumber).unwrap_or(0).to_string(),
+        );
+        agree(
+            "disc_number",
+            scan.disc_number.to_string(),
+            number(TagField::DiscNumber).unwrap_or(1).to_string(),
+        );
+        agree(
+            "disc_total",
+            format!("{:?}", scan.edition.total_discs),
+            format!(
+                "{:?}",
+                number(TagField::DiscTotal).filter(|total| *total > 0)
+            ),
+        );
+        let date = first(TagField::Date);
+        agree(
+            "year",
+            format!("{:?}", scan.year),
+            format!(
+                "{:?}",
+                date.as_deref()
+                    .and_then(|date| date.get(..4)?.parse::<i32>().ok())
+            ),
+        );
+        for (label, scanned, field) in [
+            (
+                "track_gain",
+                scan.replaygain_track_gain,
+                TagField::ReplayGainTrackGain,
+            ),
+            (
+                "album_gain",
+                scan.replaygain_album_gain,
+                TagField::ReplayGainAlbumGain,
+            ),
+            (
+                "track_peak",
+                scan.replaygain_track_peak,
+                TagField::ReplayGainTrackPeak,
+            ),
+            (
+                "album_peak",
+                scan.replaygain_album_peak,
+                TagField::ReplayGainAlbumPeak,
+            ),
+        ] {
+            agree(label, format!("{scanned:?}"), format!("{:?}", gain(field)));
+        }
+        // Scan's release date rule over what the editor reads: the
+        // release date item, an MP4 date, a Vorbis `YEAR`, then the date
+        // when it is not earlier than the original date.
+        let native = |key: &str| {
+            editor
+                .native
+                .iter()
+                .find(|(held, _)| held.eq_ignore_ascii_case(key))
+                .and_then(|(_, values)| values.first())
+                .and_then(|value| date_prefix(value))
+        };
+        let vorbis = matches!(
+            format,
+            AudioFormat::Flac | AudioFormat::Ogg | AudioFormat::Opus
+        );
+        let release_item = match format {
+            AudioFormat::Mp3 => "id3:TDRL",
+            AudioFormat::M4a => "mp4:----:RELEASEDATE",
+            _ => "vorbis:RELEASEDATE",
+        };
+        let dated = date.as_deref().and_then(date_prefix);
+        let release_date = native(release_item)
+            .or_else(|| dated.clone().filter(|_| format == AudioFormat::M4a))
+            .or_else(|| native("vorbis:YEAR").filter(|_| vorbis))
+            .or_else(|| {
+                let original =
+                    first(TagField::OriginalDate).and_then(|value| date_prefix(&value))?;
+                dated.clone().filter(|date| *date >= original)
+            });
+        agree(
+            "release_date",
+            format!("{:?}", scan.edition.release_date),
+            format!("{release_date:?}"),
+        );
+    }
+    assert!(checked >= 10, "only {checked} writable fixtures found");
+    assert!(
+        differences.is_empty(),
+        "scan and the editor disagree:\n{}",
+        differences.join("\n")
+    );
+}

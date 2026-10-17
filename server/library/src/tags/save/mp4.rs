@@ -1,14 +1,84 @@
-//! MP4 `ilst` items: the atom inventory, field reads, the post-save
-//! verify, and the repair of lofty's generic round-trip.
+//! MP4 `ilst` items as a [`TagFormat`]: the atom inventory, field reads,
+//! and the post-save verify. Edits and their save are in `mp4_edit`.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
-use lofty::mp4::{Atom, AtomData, AtomIdent, Ilst};
+use lofty::file::TaggedFile;
 
-use super::document::{FieldRead, values_or_absent};
-use super::edit::NativeEdit;
-use super::{Refusal, mismatch};
+use super::document::{FieldDocument, FieldRead, collect_reads, values_or_absent};
+use super::mp4_edit::{self, Mp4Edit};
+use super::{PictureSpec, Refusal, TagEdit, TagFormat, mismatch};
+use crate::tags::AudioFormat;
 use crate::tags::fields::{MP4_MEAN, Mp4Target, Slot, TagField};
+
+/// The `ilst` items of an M4A file.
+pub(super) struct Mp4;
+
+impl TagFormat for Mp4 {
+    type Truth = Vec<Mp4AtomTruth>;
+    type Edit = Mp4Edit;
+
+    const PICTURE_BYTES_ONLY: bool = true;
+
+    fn parse(_format: AudioFormat, bytes: &[u8]) -> Result<Option<Vec<Mp4AtomTruth>>, Refusal> {
+        parse_mp4_atoms(bytes)
+    }
+
+    fn list(atoms: Vec<Mp4AtomTruth>, document: &mut FieldDocument) -> Result<(), Refusal> {
+        document.native = mp4_native(&atoms, false);
+        let reads = TagField::ALL
+            .into_iter()
+            .map(|field| (field, mp4_read(&atoms, field)))
+            .collect();
+        collect_reads(document, reads);
+        Ok(())
+    }
+
+    fn resolve_fields(
+        atoms: Option<&Vec<Mp4AtomTruth>>,
+        edits: &[TagEdit],
+    ) -> Result<Vec<Mp4Edit>, Refusal> {
+        mp4_edit::resolve_fields(atoms.map(Vec::as_slice), edits)
+    }
+
+    fn resolve_native(
+        atoms: Option<&Vec<Mp4AtomTruth>>,
+        key: &str,
+        values: &[String],
+        _resolved: &[Mp4Edit],
+    ) -> Result<Mp4Edit, Refusal> {
+        mp4_edit::resolve_native(atoms.map(Vec::as_slice), key, values)
+    }
+
+    fn same_target(a: &Mp4Edit, b: &Mp4Edit) -> bool {
+        a.same_target(b)
+    }
+
+    fn apply(
+        atoms: Option<&Vec<Mp4AtomTruth>>,
+        tagged: &TaggedFile,
+        edits: &[Mp4Edit],
+        pictures: Option<&[PictureSpec]>,
+        temp: &Path,
+    ) -> Result<(), Refusal> {
+        mp4_edit::apply(atoms.map(Vec::as_slice), tagged, edits, pictures, temp)
+    }
+
+    fn verify(
+        before: Option<&Vec<Mp4AtomTruth>>,
+        after: Option<&Vec<Mp4AtomTruth>>,
+        edits: &[Mp4Edit],
+        pictures_edited: bool,
+    ) -> Result<(), Refusal> {
+        verify_mp4(
+            before.map(Vec::as_slice),
+            after.map(Vec::as_slice),
+            edits,
+            pictures_edited,
+        )
+    }
+}
 
 /// MP4 text atoms and iTunes freeforms no writable field owns, or with
 /// `owned_too`, every one that holds text (what a native edit may
@@ -115,7 +185,7 @@ pub(super) struct Mp4AtomTruth {
 
 /// Walk `moov/udta/meta/ilst` and hash every child atom. `Ok(None)` when
 /// the file simply has no `ilst` (untagged); structural trouble is an error.
-pub(super) fn parse_mp4_atoms(bytes: &[u8]) -> Result<Option<Vec<Mp4AtomTruth>>, Refusal> {
+fn parse_mp4_atoms(bytes: &[u8]) -> Result<Option<Vec<Mp4AtomTruth>>, Refusal> {
     let no_inventory = |detail: String| Refusal::NoByteInventory { detail };
     let top = read_boxes(bytes, 0, bytes.len()).map_err(no_inventory)?;
     let Some(moov) = find_box(&top, b"moov") else {
@@ -404,22 +474,13 @@ pub(super) fn mp4_read(atoms: &[Mp4AtomTruth], field: TagField) -> FieldRead {
     }
 }
 
-pub(super) fn verify_mp4(
+fn verify_mp4(
     before: Option<&[Mp4AtomTruth]>,
     after: Option<&[Mp4AtomTruth]>,
-    edits: &[NativeEdit],
+    edits: &[Mp4Edit],
     pictures_edited: bool,
 ) -> Result<(), Refusal> {
-    let mut edited_codes: Vec<[u8; 4]> = edits
-        .iter()
-        .filter_map(|edit| match edit {
-            NativeEdit::Mp4Text { code, .. }
-            | NativeEdit::Mp4Pair { code, .. }
-            | NativeEdit::Mp4Flag { code, .. }
-            | NativeEdit::Mp4Integer { code, .. } => Some(*code),
-            _ => None,
-        })
-        .collect();
+    let mut edited_codes: Vec<[u8; 4]> = edits.iter().filter_map(Mp4Edit::code).collect();
     // Picture bytes are checked on their own.
     if pictures_edited {
         edited_codes.push(*b"covr");
@@ -427,8 +488,11 @@ pub(super) fn verify_mp4(
     let edited_names: Vec<&str> = edits
         .iter()
         .filter_map(|edit| match edit {
-            NativeEdit::Mp4Freeform { name, .. } => Some(name.as_str()),
-            _ => None,
+            Mp4Edit::Freeform { name, .. } => Some(name.as_str()),
+            Mp4Edit::Text { .. }
+            | Mp4Edit::Pair { .. }
+            | Mp4Edit::Flag { .. }
+            | Mp4Edit::Integer { .. } => None,
         })
         .collect();
     let untouched = |atoms: &[Mp4AtomTruth]| {
@@ -478,7 +542,7 @@ pub(super) fn verify_mp4(
     let atoms: &[Mp4AtomTruth] = after.unwrap_or(&[]);
     for edit in edits {
         let (label, landed) = match edit {
-            NativeEdit::Mp4Text { code, values } => {
+            Mp4Edit::Text { code, values } => {
                 let seen: Vec<String> = atoms
                     .iter()
                     .filter(|atom| atom.kind == *code)
@@ -490,7 +554,7 @@ pub(super) fn verify_mp4(
                     .collect();
                 (String::from_utf8_lossy(code).into_owned(), seen == *values)
             }
-            NativeEdit::Mp4Freeform { name, values } => {
+            Mp4Edit::Freeform { name, values } => {
                 let seen: Vec<String> = atoms
                     .iter()
                     .flat_map(|atom| atom.items.iter())
@@ -507,7 +571,7 @@ pub(super) fn verify_mp4(
                     .collect();
                 (name.clone(), seen == *values)
             }
-            NativeEdit::Mp4Pair {
+            Mp4Edit::Pair {
                 code,
                 number,
                 total,
@@ -520,7 +584,7 @@ pub(super) fn verify_mp4(
                 };
                 (String::from_utf8_lossy(code).into_owned(), landed)
             }
-            NativeEdit::Mp4Flag { code, value } => {
+            Mp4Edit::Flag { code, value } => {
                 let seen: Vec<&Mp4Item> = atoms
                     .iter()
                     .filter(|atom| atom.kind == *code)
@@ -532,7 +596,7 @@ pub(super) fn verify_mp4(
                 };
                 (String::from_utf8_lossy(code).into_owned(), landed)
             }
-            NativeEdit::Mp4Integer { code, value } => {
+            Mp4Edit::Integer { code, value } => {
                 let seen: Vec<&Mp4Item> = atoms
                     .iter()
                     .filter(|atom| atom.kind == *code)
@@ -546,7 +610,6 @@ pub(super) fn verify_mp4(
                 };
                 (String::from_utf8_lossy(code).into_owned(), landed)
             }
-            _ => continue,
         };
         if !landed {
             return mismatch(format!("edited atom '{label}' did not land"));
@@ -640,110 +703,4 @@ fn atom_items(atoms: &[Mp4AtomTruth]) -> BTreeMap<[u8; 4], Vec<TypedItem>> {
         });
     }
     map
-}
-
-/// Put every UTF-8 atom and freeform back as the file held it: the
-/// generic round-trip can reorder an item's values (two genres come back
-/// swapped once the tag grows). Items of any other data type, or that
-/// hold anything else, stay as lofty has them.
-pub(super) fn repair_mp4_text(native: &mut Ilst, atoms: &[Mp4AtomTruth]) {
-    let mut texts: Vec<(AtomIdent<'static>, Vec<String>)> = Vec::new();
-    let mut skipped: Vec<AtomIdent<'static>> = Vec::new();
-    for atom in atoms {
-        let utf8 = |index: usize| atom.types.get(index).copied().flatten() == Some(1);
-        let found: Vec<(AtomIdent<'static>, Option<String>)> = if atom.kind == *b"----" {
-            atom.items
-                .iter()
-                .enumerate()
-                .map(|(index, item)| match item {
-                    Mp4Item::Freeform { mean, name, data } => (
-                        AtomIdent::Freeform {
-                            mean: std::borrow::Cow::Owned(mean.clone()),
-                            name: std::borrow::Cow::Owned(name.clone()),
-                        },
-                        std::str::from_utf8(data)
-                            .ok()
-                            .filter(|text| {
-                                utf8(index)
-                                    && !text.is_empty()
-                                    && !mean.is_empty()
-                                    && !name.is_empty()
-                            })
-                            .map(str::to_owned),
-                    ),
-                    _ => (AtomIdent::Fourcc(atom.kind), None),
-                })
-                .collect()
-        } else {
-            atom.items
-                .iter()
-                .enumerate()
-                .map(|(index, item)| match item {
-                    Mp4Item::Text(text) if utf8(index) => {
-                        (AtomIdent::Fourcc(atom.kind), Some(text.clone()))
-                    }
-                    _ => (AtomIdent::Fourcc(atom.kind), None),
-                })
-                .collect()
-        };
-        for (ident, text) in found {
-            match text {
-                Some(text) => match texts.iter_mut().find(|(known, _)| *known == ident) {
-                    Some((_, values)) => values.push(text),
-                    None => texts.push((ident, vec![text])),
-                },
-                None => skipped.push(ident),
-            }
-        }
-    }
-    // An item holding anything that is not text stays as lofty has it.
-    texts.retain(|(ident, _)| !skipped.contains(ident));
-    for (ident, values) in texts {
-        replace_mp4(native, ident, &values);
-    }
-}
-
-/// Put the `ilst` items back in the file's order: lofty's remove swaps
-/// the items left behind, and a replaced item goes to the end. Items the
-/// file did not hold follow, in the order they were added.
-pub(super) fn keep_mp4_order(native: &mut Ilst, atoms: &[Mp4AtomTruth]) {
-    let mut order: Vec<AtomIdent<'static>> = Vec::new();
-    for atom in atoms {
-        if atom.kind == *b"----" {
-            for item in &atom.items {
-                if let Mp4Item::Freeform { mean, name, .. } = item {
-                    order.push(AtomIdent::Freeform {
-                        mean: std::borrow::Cow::Owned(mean.clone()),
-                        name: std::borrow::Cow::Owned(name.clone()),
-                    });
-                }
-            }
-        } else {
-            order.push(AtomIdent::Fourcc(atom.kind));
-        }
-    }
-    let mut held: Vec<Atom<'static>> = std::mem::take(native).into_iter().collect();
-    held.sort_by_key(|atom| {
-        order
-            .iter()
-            .position(|ident| ident == atom.ident())
-            .unwrap_or(order.len())
-    });
-    for atom in held {
-        native.insert(atom);
-    }
-}
-
-/// Swap one `ilst` item's values; no values removes it.
-pub(super) fn replace_mp4(native: &mut Ilst, ident: AtomIdent<'static>, values: &[String]) {
-    let _ = native.remove(&ident).count();
-    let mut values = values.iter();
-    let Some(first) = values.next() else {
-        return;
-    };
-    let mut atom = Atom::new(ident, AtomData::UTF8(first.clone()));
-    for value in values {
-        atom.push_data(AtomData::UTF8(value.clone()));
-    }
-    native.insert(atom);
 }

@@ -1,11 +1,18 @@
 //! Tag reads through lofty's generic items, mirroring v2's field mapping.
 //!
-//! Rule zero (see `save.rs`) cuts both ways: native tags are for writes, and
-//! generic items are for reads. The generic `Tag` lofty builds on read is
-//! complete for every field v2 surfaces (multi-values arrive as separate
-//! items, UFID and TXXX spellings included), while the native round-trip
-//! mangles known `TXXX` description case and drops follow-on values on
-//! several text frames. So reads never touch native tags.
+//! Rule zero (see `save/mod.rs`) cuts both ways: native tags are for
+//! writes, and generic items are for reads. The generic `Tag` lofty builds
+//! on read is complete for every field v2 surfaces (multi-values arrive as
+//! separate items, UFID and TXXX spellings included), while the native
+//! round-trip mangles known `TXXX` description case and drops follow-on
+//! values on several text frames. So reads never touch native tags.
+//!
+//! One gap: lofty 0.25.4 drops a v2.4 `TDRC` frame from an ID3v2.3 tag
+//! when it carries a month or day (`construct_tdrc_from_v3` in
+//! `id3/v2/read.rs`), so such a tag with no `TYER` reads with no recording
+//! date. Only then does the date come from the tag editor's own parse, so
+//! scan, the editor and v2 agree. A tag holding both `TYER` and a full
+//! `TDRC` still reads differently in scan and the editor.
 //!
 //! Two documented divergences from v2: lofty translates numeric ID3 genre
 //! references (`(12)` becomes the named genre) where mutagen returned the
@@ -167,7 +174,7 @@ pub fn read_scan_metadata(
             },
         }
     })?;
-    let tag = select_tag(&tagged, format).map_or_else(AudioTag::default, audio_tag_from_items);
+    let tag = audio_tag_from_file(path, &tagged, format);
     let properties = tagged.properties();
     let duration = properties.duration();
     let lossless = matches!(
@@ -203,7 +210,64 @@ pub fn read_tag_only(path: &Path, format: AudioFormat) -> Result<AudioTag, TagsE
         path: path.display().to_string(),
         reason: error.to_string(),
     })?;
-    Ok(select_tag(&tagged, format).map_or_else(AudioTag::default, audio_tag_from_items))
+    Ok(audio_tag_from_file(path, &tagged, format))
+}
+
+/// The file's preferred tag through the one mapping, with the recording
+/// date lofty leaves out of a mixed ID3v2.3 tag. The file is read again
+/// only for an MP3 whose ID3 tag gave no date.
+fn audio_tag_from_file(path: &Path, tagged: &TaggedFile, format: AudioFormat) -> AudioTag {
+    let Some(tag) = select_tag(tagged, format) else {
+        return AudioTag::default();
+    };
+    let date = if format == AudioFormat::Mp3
+        && tag.tag_type() == TagType::Id3v2
+        && values_for(tag, ItemKey::RecordingDate).is_empty()
+    {
+        read_mixed_v23_date(path)
+    } else {
+        None
+    };
+    audio_tag_from_values(tag.tag_type(), |key| match &date {
+        Some(date) if key == ItemKey::RecordingDate => vec![date.clone()],
+        _ => values_for(tag, key),
+    })
+}
+
+/// The tag editor's date for a mixed ID3v2.3 tag. A file that cannot be
+/// read again gives no date: lofty has already read it once.
+fn read_mixed_v23_date(path: &Path) -> Option<String> {
+    let bytes = std::fs::File::open(path).and_then(|mut file| id3v23_tag_bytes(&mut file));
+    match bytes {
+        Ok(bytes) => bytes
+            .and_then(|bytes| super::save::mixed_v23_date(&bytes))
+            .map(|date| date.trim().to_owned())
+            .filter(|date| !date.is_empty()),
+        Err(error) => {
+            tracing::debug!(path = %path.display(), %error, "ID3v2.3 date not read");
+            None
+        }
+    }
+}
+
+/// The ID3v2 tag at the start of an MP3, header included, when it is
+/// v2.3 and no larger than lofty's own allocation limit. `None` for any
+/// other file; an oversized tag's body is never read.
+fn id3v23_tag_bytes(file: &mut impl std::io::Read) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::Read as _;
+    let mut bytes = Vec::with_capacity(10);
+    (&mut *file).take(10).read_to_end(&mut bytes)?;
+    if bytes.len() < 10 || &bytes[..3] != b"ID3" || bytes[3] != 3 {
+        return Ok(None);
+    }
+    let size = bytes[6..10]
+        .iter()
+        .fold(0usize, |acc, byte| (acc << 7) | usize::from(byte & 0x7F));
+    if size > lofty::config::GlobalOptions::DEFAULT_ALLOCATION_LIMIT {
+        return Ok(None);
+    }
+    file.take(size as u64).read_to_end(&mut bytes)?;
+    Ok(Some(bytes))
 }
 
 /// Preferred tag for the format, else the first tag lofty parsed.
@@ -261,10 +325,6 @@ fn collect_values<'a>(items: impl Iterator<Item = &'a str>, out: &mut Vec<String
             }
         }
     }
-}
-
-fn audio_tag_from_items(tag: &Tag) -> AudioTag {
-    audio_tag_from_values(tag.tag_type(), |key| values_for(tag, key))
 }
 
 fn audio_tag_from_values(
@@ -561,4 +621,35 @@ fn parse_ape_items(
         return None;
     }
     Some(items)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::id3v23_tag_bytes;
+
+    /// Serves an ID3v2.3 header whose tag size is one byte over 16 MiB,
+    /// then zeros, counting every byte it hands out.
+    struct Oversized {
+        served: usize,
+    }
+
+    impl std::io::Read for Oversized {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            const HEADER: &[u8] = b"ID3\x03\x00\x00\x08\x00\x00\x01";
+            for byte in buf.iter_mut() {
+                *byte = HEADER.get(self.served).copied().unwrap_or(0);
+                self.served += 1;
+            }
+            Ok(buf.len())
+        }
+    }
+
+    /// A tag declared larger than the cap gives no date, and its body is
+    /// never read, so a hostile file cannot make a scan allocate it.
+    #[test]
+    fn oversized_id3v23_tag_is_not_read() {
+        let mut reader = Oversized { served: 0 };
+        assert!(id3v23_tag_bytes(&mut reader).unwrap().is_none());
+        assert_eq!(reader.served, 10);
+    }
 }

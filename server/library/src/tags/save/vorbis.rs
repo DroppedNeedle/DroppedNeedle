@@ -1,19 +1,207 @@
-//! Vorbis comments (FLAC, Ogg, Opus): the raw inventory, field reads,
-//! the keys a write updates, and the post-save verify.
+//! Vorbis comments (FLAC, Ogg, Opus) as a [`TagFormat`]: the raw
+//! inventory, field reads, the keys a write updates, the save, and the
+//! post-save verify.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
-use super::document::FieldRead;
-use super::edit::NativeEdit;
-use super::{Refusal, mismatch};
+use lofty::config::WriteOptions;
+use lofty::file::{TaggedFile, TaggedFileExt as _};
+use lofty::ogg::tag::VorbisComments;
+use lofty::tag::{TagExt as _, TagType};
+
+use super::document::{FieldDocument, FieldRead, collect_reads};
+use super::edit::{foreign, supersede};
+use super::{PictureSpec, Refusal, TagEdit, TagFormat, lofty_picture, mismatch, save_failed};
 use crate::tags::AudioFormat;
 use crate::tags::fields::TagField;
+
+/// The Vorbis comment of a FLAC, Ogg or Opus file.
+pub(super) struct Vorbis;
+
+/// One edit at its home in a Vorbis comment: every value of one key (no
+/// values removes it). Keys match without case.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct VorbisEdit {
+    key: String,
+    values: Vec<String>,
+}
+
+impl TagFormat for Vorbis {
+    type Truth = VorbisTruth;
+    type Edit = VorbisEdit;
+
+    fn parse(format: AudioFormat, bytes: &[u8]) -> Result<Option<VorbisTruth>, Refusal> {
+        parse_vorbis_truth(format, bytes)
+    }
+
+    fn list(truth: VorbisTruth, document: &mut FieldDocument) -> Result<(), Refusal> {
+        document.spellings = vorbis_spellings(&truth);
+        document.native = vorbis_native(&truth);
+        let reads = TagField::ALL
+            .into_iter()
+            .map(|field| (field, vorbis_read(&truth, field)))
+            .collect();
+        collect_reads(document, reads);
+        Ok(())
+    }
+
+    fn prepare(truth: VorbisTruth) -> Result<VorbisTruth, Refusal> {
+        if let Some((key, _)) = truth.pairs.iter().find(|(_, value)| value.is_empty()) {
+            return Err(Refusal::EmptyVorbisValue { key: key.clone() });
+        }
+        // Keys with mixed spellings (`title` plus `TITLE`) cannot be
+        // edited without merging them; repeated keys with one spelling
+        // are ordinary multi-values.
+        let mut spellings: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (key, _) in &truth.pairs {
+            let entry = spellings.entry(key.to_ascii_uppercase()).or_default();
+            if !entry.contains(key) {
+                entry.push(key.clone());
+            }
+        }
+        if let Some((upper, variants)) = spellings.iter().find(|(_, variants)| variants.len() > 1) {
+            return Err(Refusal::NoByteInventory {
+                detail: format!("comment key '{upper}' has mixed spellings {variants:?}"),
+            });
+        }
+        Ok(truth)
+    }
+
+    fn resolve_fields(
+        truth: Option<&VorbisTruth>,
+        edits: &[TagEdit],
+    ) -> Result<Vec<VorbisEdit>, Refusal> {
+        let mut resolved: Vec<VorbisEdit> = Vec::new();
+        for edit in edits {
+            if let Some(key) = edit.spelling {
+                supersede::<Self>(
+                    &mut resolved,
+                    VorbisEdit {
+                        key: key.to_owned(),
+                        values: edit.values.clone(),
+                    },
+                );
+                continue;
+            }
+            for key in vorbis_write_keys(edit.field, truth) {
+                supersede::<Self>(
+                    &mut resolved,
+                    VorbisEdit {
+                        key: key.to_owned(),
+                        values: edit.values.clone(),
+                    },
+                );
+            }
+        }
+        Ok(resolved)
+    }
+
+    fn resolve_native(
+        truth: Option<&VorbisTruth>,
+        key: &str,
+        values: &[String],
+        _resolved: &[VorbisEdit],
+    ) -> Result<VorbisEdit, Refusal> {
+        let rest = match key.split_once(':') {
+            Some(("vorbis", rest)) if valid_vorbis_key(rest) => rest,
+            _ => return Err(foreign(key)),
+        };
+        // Spellings are matched without case on write, so a key the file
+        // also spells another way, or holds empty, is refused rather than
+        // touched.
+        let blocked = truth.is_some_and(|truth| {
+            truth.pairs.iter().any(|(held, value)| {
+                held.eq_ignore_ascii_case(rest) && (held != rest || value.is_empty())
+            })
+        });
+        if blocked {
+            return Err(Refusal::NoByteInventory {
+                detail: format!("tag '{key}' is spelled more than one way or holds no value"),
+            });
+        }
+        Ok(VorbisEdit {
+            key: rest.to_owned(),
+            values: values.to_vec(),
+        })
+    }
+
+    fn same_target(a: &VorbisEdit, b: &VorbisEdit) -> bool {
+        a.key.eq_ignore_ascii_case(&b.key)
+    }
+
+    fn apply(
+        truth: Option<&VorbisTruth>,
+        tagged: &TaggedFile,
+        edits: &[VorbisEdit],
+        pictures: Option<&[PictureSpec]>,
+        temp: &Path,
+    ) -> Result<(), Refusal> {
+        let mut native = tagged
+            .tag(TagType::VorbisComments)
+            .cloned()
+            .map(VorbisComments::from)
+            .unwrap_or_default();
+        // Empty every pair (pictures stay in the pictures vec), then push
+        // the raw truth in file order, minus the edited keys, so unknown
+        // fields the generic round-trip dropped come back, then the
+        // edits. Nothing is removed after a push: removal reorders what
+        // is left.
+        let keys: Vec<String> = native.items().map(|(key, _)| key.to_owned()).collect();
+        for key in &keys {
+            native.remove(key).for_each(drop);
+        }
+        if let Some(truth) = truth {
+            for (key, value) in &truth.pairs {
+                let replaced = edits.iter().any(|edit| edit.key.eq_ignore_ascii_case(key));
+                if !is_picture_field(key) && !replaced {
+                    native.push(key.clone(), value.clone());
+                }
+            }
+            native.set_vendor(truth.vendor.clone());
+        }
+        for edit in edits {
+            for value in &edit.values {
+                native.push(edit.key.clone(), value.clone());
+            }
+        }
+        if let Some(pictures) = pictures {
+            use lofty::ogg::OggPictureStorage as _;
+            native.remove_pictures();
+            for spec in pictures {
+                let info = spec.info.map(|[width, height, color_depth, num_colors]| {
+                    lofty::picture::PictureInformation {
+                        width,
+                        height,
+                        color_depth,
+                        num_colors,
+                    }
+                });
+                native
+                    .insert_picture(lofty_picture(spec), info)
+                    .map_err(save_failed)?;
+            }
+        }
+        native
+            .save_to_path(temp, WriteOptions::new())
+            .map_err(save_failed)
+    }
+
+    fn verify(
+        before: Option<&VorbisTruth>,
+        after: Option<&VorbisTruth>,
+        edits: &[VorbisEdit],
+        _pictures_edited: bool,
+    ) -> Result<(), Refusal> {
+        verify_vorbis(before.is_some(), before, after, edits)
+    }
+}
 
 /// Vorbis comments no writable field owns (pictures excluded). A key
 /// the file spells more than one way, or that holds an empty value, is
 /// not listed: an edit of one spelling would touch the others, and an
 /// empty value cannot be written back.
-pub(super) fn vorbis_native(truth: &VorbisTruth) -> BTreeMap<String, Vec<String>> {
+fn vorbis_native(truth: &VorbisTruth) -> BTreeMap<String, Vec<String>> {
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut unlisted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut spelling: BTreeMap<String, &str> = BTreeMap::new();
@@ -62,14 +250,11 @@ pub(super) fn valid_vorbis_key(key: &str) -> bool {
 
 /// Picture fields ride the pictures path, never the pairs path, so they
 /// are neither pushed nor compared as pairs.
-pub(super) fn is_picture_field(key: &str) -> bool {
+fn is_picture_field(key: &str) -> bool {
     key.eq_ignore_ascii_case("METADATA_BLOCK_PICTURE") || key.eq_ignore_ascii_case("COVERART")
 }
 
-pub(super) fn parse_vorbis_truth(
-    format: AudioFormat,
-    bytes: &[u8],
-) -> Result<Option<VorbisTruth>, Refusal> {
+fn parse_vorbis_truth(format: AudioFormat, bytes: &[u8]) -> Result<Option<VorbisTruth>, Refusal> {
     let no_inventory = |detail: String| Refusal::NoByteInventory { detail };
     let payload = match format {
         AudioFormat::Flac => flac_comment_block(bytes).map_err(no_inventory)?,
@@ -257,7 +442,7 @@ fn vorbis_present(truth: Option<&VorbisTruth>, key: &str) -> bool {
 
 /// The Vorbis keys a write of `field` updates: every spelling the file
 /// already uses, or Picard's when it uses none.
-pub(super) fn vorbis_write_keys(field: TagField, truth: Option<&VorbisTruth>) -> Vec<&'static str> {
+fn vorbis_write_keys(field: TagField, truth: Option<&VorbisTruth>) -> Vec<&'static str> {
     let keys = field.vorbis_keys();
     let present: Vec<&'static str> = keys
         .iter()
@@ -317,19 +502,16 @@ pub(super) fn vorbis_spellings(
     spellings
 }
 
-pub(super) fn verify_vorbis(
+fn verify_vorbis(
     had_tag: bool,
     before: Option<&VorbisTruth>,
     after: Option<&VorbisTruth>,
-    edits: &[NativeEdit],
+    edits: &[VorbisEdit],
 ) -> Result<(), Refusal> {
     // Keys compare without case, as the pairs are grouped.
     let expected: Vec<(String, &Vec<String>)> = edits
         .iter()
-        .filter_map(|edit| match edit {
-            NativeEdit::Vorbis { key, values } => Some((key.to_ascii_uppercase(), values)),
-            _ => None,
-        })
+        .map(|edit| (edit.key.to_ascii_uppercase(), &edit.values))
         .collect();
     let edited_keys: Vec<&str> = expected.iter().map(|(key, _)| key.as_str()).collect();
     match (had_tag, before, after) {

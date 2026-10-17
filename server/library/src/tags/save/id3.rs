@@ -1,22 +1,107 @@
-//! ID3 items no field owns, field reads, the homes edits resolve to, the
-//! post-save verify, and the repair of lofty's generic round-trip.
+//! ID3 as a [`TagFormat`]: items no field owns, field reads, and the
+//! post-save verify. Edits and their save are in `id3_edit`.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
-use lofty::TextEncoding;
-use lofty::id3::v2::{ExtendedTextFrame, Frame, FrameId, Id3v2Tag, TextInformationFrame};
+use lofty::file::TaggedFile;
 
-use super::document::{FieldRead, values_or_absent};
-use super::edit::NativeEdit;
+use super::document::{FieldDocument, FieldRead, collect_reads, values_or_absent};
 use super::id3_bytes::{
     DeepId3, Id3FrameTruth, Id3TextTruth, comment_owned, decode_lang_text, decode_uslt,
-    people_pairs, people_sources, performer_pair, performer_text, role_owns,
+    parse_id3_deep, people_pairs, people_sources, performer_pair, performer_text, role_owns,
 };
-use super::{Refusal, mismatch};
+use super::id3_edit::{self, Id3Edit};
+use super::id3_upgrade::as_saved;
+use super::{PictureSpec, Refusal, TagEdit, TagFormat, mismatch};
+use crate::tags::AudioFormat;
 use crate::tags::fields::{Id3Target, Role, Slot, TagField};
 
+/// The ID3v2 tag of an MP3.
+pub(super) struct Id3;
+
+impl TagFormat for Id3 {
+    type Truth = DeepId3;
+    type Edit = Id3Edit;
+
+    fn parse(_format: AudioFormat, bytes: &[u8]) -> Result<Option<DeepId3>, Refusal> {
+        parse_id3_deep(bytes)
+    }
+
+    fn list(tag: DeepId3, document: &mut FieldDocument) -> Result<(), Refusal> {
+        let tag = as_saved(tag)?;
+        document.native = id3_native(&tag);
+        let reads = TagField::ALL
+            .into_iter()
+            .map(|field| (field, id3_read(&tag, field)))
+            .collect();
+        collect_reads(document, reads);
+        Ok(())
+    }
+
+    /// A mixed v2.3 tag's truth becomes the ID3v2.4 tag it is saved as:
+    /// edits resolve to v2.4 homes, and the verify expects version 2.4.
+    fn prepare(tag: DeepId3) -> Result<DeepId3, Refusal> {
+        as_saved(tag)
+    }
+
+    fn resolve_fields(tag: Option<&DeepId3>, edits: &[TagEdit]) -> Result<Vec<Id3Edit>, Refusal> {
+        id3_edit::resolve_fields(tag, edits)
+    }
+
+    fn resolve_native(
+        tag: Option<&DeepId3>,
+        key: &str,
+        values: &[String],
+        resolved: &[Id3Edit],
+    ) -> Result<Id3Edit, Refusal> {
+        id3_edit::resolve_native(tag, key, values, resolved)
+    }
+
+    fn same_target(a: &Id3Edit, b: &Id3Edit) -> bool {
+        a.key() == b.key()
+    }
+
+    fn apply(
+        tag: Option<&DeepId3>,
+        tagged: &TaggedFile,
+        edits: &[Id3Edit],
+        pictures: Option<&[PictureSpec]>,
+        temp: &Path,
+    ) -> Result<(), Refusal> {
+        id3_edit::apply(tag, tagged, edits, pictures, temp)
+    }
+
+    fn verify(
+        before: Option<&DeepId3>,
+        after: Option<&DeepId3>,
+        edits: &[Id3Edit],
+        pictures_edited: bool,
+    ) -> Result<(), Refusal> {
+        verify_id3(before.is_some(), before, after, edits, pictures_edited)
+    }
+
+    fn version(tag: &DeepId3) -> Option<String> {
+        Some(format!("2.{}", tag.major))
+    }
+}
+
+/// The date the tag editor reads from an ID3v2.3 tag that also holds the
+/// v2.4 `TDRC` frame (`tag_bytes` from the start of the file). `None` for
+/// any other tag, or one the editor cannot read.
+pub(crate) fn mixed_v23_date(tag_bytes: &[u8]) -> Option<String> {
+    let tag = parse_id3_deep(tag_bytes).ok()??;
+    if tag.major != 3 || id3_text(&tag, "TDRC").is_none() {
+        return None;
+    }
+    match id3_read(&as_saved(tag).ok()?, TagField::Date) {
+        FieldRead::Values(values) => values.into_iter().next(),
+        FieldRead::Absent | FieldRead::Opaque => None,
+    }
+}
+
 /// ID3 text frames no writable field owns, in either tag version.
-pub(super) fn id3_native(tag: &DeepId3) -> BTreeMap<String, Vec<String>> {
+fn id3_native(tag: &DeepId3) -> BTreeMap<String, Vec<String>> {
     let mut owned: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for field in TagField::ALL {
         for v23 in [true, false] {
@@ -432,27 +517,24 @@ pub(super) fn frame_key(frame: &Id3FrameTruth) -> String {
     frame.id.clone()
 }
 
-pub(super) fn verify_id3(
+fn verify_id3(
     had_tag: bool,
     before: Option<&DeepId3>,
     after: Option<&DeepId3>,
-    edits: &[NativeEdit],
+    edits: &[Id3Edit],
     pictures_edited: bool,
 ) -> Result<(), Refusal> {
-    let mut edited: Vec<String> = edits.iter().filter_map(NativeEdit::id3_key).collect();
+    let mut edited: Vec<String> = edits.iter().map(Id3Edit::key).collect();
     // Picture bytes are checked on their own.
     if pictures_edited {
         edited.push("APIC".to_owned());
     }
     let removal_only = !pictures_edited
         && edits.iter().all(|edit| match edit {
-            NativeEdit::Id3Text { values, .. } | NativeEdit::Id3User { values, .. } => {
-                values.is_empty()
-            }
-            NativeEdit::Id3Ufid { value, .. } => value.is_none(),
-            NativeEdit::Id3Lyrics { text } => text.is_none(),
-            NativeEdit::Id3Raw { payloads, .. } => payloads.is_empty(),
-            _ => true,
+            Id3Edit::Text { values, .. } | Id3Edit::User { values, .. } => values.is_empty(),
+            Id3Edit::Ufid { value, .. } => value.is_none(),
+            Id3Edit::Lyrics { text } => text.is_none(),
+            Id3Edit::Raw { payloads, .. } => payloads.is_empty(),
         });
     match (had_tag, before, after) {
         (false, _, None) if removal_only => return Ok(()),
@@ -521,15 +603,13 @@ pub(super) fn verify_id3(
     }
     let frames: &[Id3FrameTruth] = after.map_or(&[], |after| after.frames.as_slice());
     for edit in edits {
-        let Some(key) = edit.id3_key() else {
-            continue;
-        };
+        let key = edit.key();
         let landed: Vec<&Id3FrameTruth> = frames
             .iter()
             .filter(|frame| frame_key(frame) == key)
             .collect();
         let ok = match edit {
-            NativeEdit::Id3Text { values, .. } | NativeEdit::Id3User { values, .. } => {
+            Id3Edit::Text { values, .. } | Id3Edit::User { values, .. } => {
                 if values.is_empty() {
                     landed.is_empty()
                 } else {
@@ -540,7 +620,7 @@ pub(super) fn verify_id3(
                     seen.as_slice() == [values]
                 }
             }
-            NativeEdit::Id3Ufid { owner, value } => match value {
+            Id3Edit::Ufid { owner, value } => match value {
                 None => landed.is_empty(),
                 Some(value) => {
                     let mut payload = owner.as_bytes().to_vec();
@@ -549,14 +629,14 @@ pub(super) fn verify_id3(
                     landed.len() == 1 && landed[0].payload == payload
                 }
             },
-            NativeEdit::Id3Lyrics { text } => match text {
+            Id3Edit::Lyrics { text } => match text {
                 None => landed.is_empty(),
                 Some(text) => {
                     landed.len() == 1
                         && decode_uslt(&landed[0].payload).ok().as_deref() == Some(text.as_str())
                 }
             },
-            NativeEdit::Id3Raw { payloads, .. } => {
+            Id3Edit::Raw { payloads, .. } => {
                 // Every frame of the id, byte for byte, the ones the edit
                 // left alone included.
                 let mut want: Vec<&[u8]> = payloads.iter().map(Vec::as_slice).collect();
@@ -568,7 +648,6 @@ pub(super) fn verify_id3(
                 got.sort();
                 want == got
             }
-            _ => true,
         };
         if !ok {
             return mismatch(format!("edited frame '{key}' did not land"));
@@ -610,110 +689,4 @@ pub(super) fn key_multiset(frames: &[Id3FrameTruth]) -> BTreeMap<String, usize> 
         *counts.entry(frame_key(frame)).or_insert(0) += 1;
     }
     counts
-}
-
-/// Timestamp ids that alias across ID3 versions: the merge emits v2.4
-/// ids that the writer converts on v2.3 saves, so each family is cleared
-/// as a unit before truth goes back.
-fn timestamp_family(id: &str) -> Option<&'static [&'static str]> {
-    match id {
-        "TDRC" | "TYER" | "TDAT" | "TIME" => Some(&["TDRC", "TYER", "TDAT", "TIME"]),
-        "TDOR" | "TORY" => Some(&["TDOR", "TORY"]),
-        "TDRL" => Some(&["TDRL"]),
-        "TDEN" => Some(&["TDEN"]),
-        "TDTG" => Some(&["TDTG"]),
-        _ => None,
-    }
-}
-
-/// Rebuild every text/TXXX frame from byte truth, undoing the generic
-/// round-trip's mangling (canonicalized descriptions, first-value
-/// truncation, the invalid `WORK` frame). Timestamps go back verbatim as
-/// text under their original ids, which is byte-faithful in both versions.
-pub(super) fn repair_id3_text(native: &mut Id3v2Tag, truth: Option<&DeepId3>) {
-    let Some(truth) = truth else {
-        return;
-    };
-    // Sweep merge-created junk first: the generic round-trip emits
-    // frames no byte inventory contains (notably the invalid `WORK`
-    // frame from lofty-rs#732), which would otherwise abort the save.
-    // Anything not in truth is junk by definition.
-    let truth_ids: std::collections::HashSet<&str> =
-        truth.frames.iter().map(|frame| frame.id.as_str()).collect();
-    let junk: Vec<String> = native
-        .iter()
-        .map(|frame| frame.id().as_str().to_owned())
-        .filter(|id| !truth_ids.contains(id.as_str()))
-        .collect();
-    let mut junk_sorted = junk.clone();
-    junk_sorted.sort();
-    junk_sorted.dedup();
-    for id in &junk_sorted {
-        let _ = native.remove(&FrameId::Valid(std::borrow::Cow::Borrowed(id.as_str())));
-    }
-    let mut families_cleared: Vec<&[&str]> = Vec::new();
-    for frame in &truth.frames {
-        if frame.text.is_none() || frame.text.as_ref().is_some_and(|text| text.desc.is_some()) {
-            continue;
-        }
-        if let Some(family) = timestamp_family(&frame.id)
-            && !families_cleared.contains(&family)
-        {
-            for id in family {
-                let _ = native.remove(&FrameId::Valid(std::borrow::Cow::Borrowed(id)));
-            }
-            families_cleared.push(family);
-        }
-    }
-    let mut txxx_seen = false;
-    for frame in &truth.frames {
-        let Some(text) = &frame.text else {
-            continue;
-        };
-        if let Some(desc) = &text.desc {
-            if !txxx_seen {
-                let _ = native.remove(&FrameId::Valid(std::borrow::Cow::Borrowed("TXXX")));
-                txxx_seen = true;
-            }
-            native.insert(Frame::UserText(ExtendedTextFrame::new(
-                TextEncoding::UTF8,
-                desc.clone(),
-                text.values.join("\0"),
-            )));
-        } else {
-            let _ = native.remove(&FrameId::Valid(std::borrow::Cow::Owned(frame.id.clone())));
-            native.insert(Frame::Text(TextInformationFrame::new(
-                FrameId::Valid(std::borrow::Cow::Owned(frame.id.clone())),
-                TextEncoding::UTF8,
-                text.values.join("\0"),
-            )));
-        }
-    }
-    // Every other frame but `UFID` goes back as the bytes it was. The
-    // generic round-trip in lofty 0.25.4 changes many of them (seen
-    // 2026-10-15 on v2.3 and v2.4 tags): pictures, lyrics and comments
-    // are re-encoded, a `WXXX` URL is written as UTF-16, a `POPM` gains
-    // a play counter and has its rating rounded to stars (an empty email
-    // even becomes "MusicBee"), `ETCO` and `OWNE` cannot be written at
-    // all, and `IPLS` is read as a `TIPL` the sweep above removes. `UFID`
-    // survives, and its edits find it by owner. An edit of any of these
-    // removes them by id after this.
-    let mut raw_ids: Vec<&str> = truth
-        .frames
-        .iter()
-        .filter(|frame| frame.text.is_none() && frame.id != "UFID")
-        .map(|frame| frame.id.as_str())
-        .collect();
-    raw_ids.sort_unstable();
-    raw_ids.dedup();
-    for id in raw_ids {
-        let frame_id = FrameId::Valid(std::borrow::Cow::Owned(id.to_owned()));
-        let _ = native.remove(&frame_id).count();
-        for frame in truth.frames.iter().filter(|frame| frame.id == id) {
-            native.insert(Frame::Binary(lofty::id3::v2::BinaryFrame::new(
-                frame_id.clone(),
-                frame.payload.clone(),
-            )));
-        }
-    }
 }
