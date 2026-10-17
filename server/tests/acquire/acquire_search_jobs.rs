@@ -14,7 +14,9 @@ use droppedneedle_acquire::downloads::sources::SourceHandle;
 use droppedneedle_acquire::downloads::store::{NewTask, TaskDetails};
 use droppedneedle_acquire::requests::quota::QuotaLedger;
 use droppedneedle_acquire::search_jobs::candidates::CandidateTier;
-use droppedneedle_acquire::search_jobs::store::JobStore;
+use droppedneedle_acquire::search_jobs::store::{
+    COMPLETED, JobPayload, JobStore, NewJob, PickRefusal, PickedTask,
+};
 use droppedneedle_acquire::search_jobs::{AlbumSearch, SearchJobError, SearchJobs, StartOutcome};
 use droppedneedle_acquire::slskd::{
     DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
@@ -358,4 +360,72 @@ async fn automatic_download_waits_for_a_pick_when_unsure() {
     let handle: SourceHandle = serde_json::from_str(&handles[0]).expect("handle decodes");
     assert_eq!(handle.username, "halfway");
     drop(rig.staging);
+}
+
+/// A pick while another download of the same album is running is refused
+/// as busy, and nothing of it is kept: the job stays open and no download
+/// starts from it.
+#[tokio::test]
+async fn pick_is_refused_while_the_album_downloads() {
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u1", "U", "user").await.expect("user seeds");
+    let store = JobStore::new(db.clone());
+    let task = |id: &str| NewTask {
+        id: id.to_owned(),
+        user_id: "u1".to_owned(),
+        artist_name: "Massive Attack".to_owned(),
+        album_title: "Blue Lines".to_owned(),
+        release_group_mbid: GROUP.to_owned(),
+        origin: "user".to_owned(),
+        retry_count: 0,
+    };
+    store
+        .insert(NewJob {
+            id: "job-busy".to_owned(),
+            user_id: "u1".to_owned(),
+            artist_name: "Massive Attack".to_owned(),
+            album_title: "Blue Lines".to_owned(),
+            year: Some(1991),
+            release_group_mbid: Some(GROUP.to_owned()),
+            release_mbid: Some(RELEASE.to_owned()),
+        })
+        .await
+        .expect("job inserts");
+    let finished = store
+        .finish("job-busy", COMPLETED, JobPayload::default(), None)
+        .await
+        .expect("job finishes");
+    assert!(finished);
+    let running = task("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    Journal::new(db.clone())
+        .run("test.seed", move |store| {
+            store.insert_task(&running, 1_000.0)
+        })
+        .await
+        .expect("running download seeds");
+
+    let refused = store
+        .pick(
+            "job-busy",
+            PickedTask {
+                task: task("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+                details: TaskDetails::default(),
+                source: "soulseek".to_owned(),
+                username: Some("complete".to_owned()),
+                candidate_index: 0,
+            },
+        )
+        .await
+        .expect("pick answers");
+    assert_eq!(refused, Err(PickRefusal::AlbumBusy));
+    let job = store
+        .get("job-busy")
+        .await
+        .expect("job reads")
+        .expect("job exists");
+    assert_eq!(job.status, COMPLETED);
+    assert_eq!(
+        store.picked_task("job-busy").await.expect("task reads"),
+        None
+    );
 }

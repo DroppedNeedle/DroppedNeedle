@@ -8,8 +8,8 @@ use sqlx::Row;
 
 use super::candidates::Candidate;
 use crate::db::AcquireDb;
-use crate::downloads::store::{DownloadStore, NewTask, TaskDetails};
-use droppedneedle_kernel::db::OpError;
+use crate::downloads::store::{DownloadStore, NewTask, StoreError, TaskDetails};
+use droppedneedle_kernel::db::{DbError, Lane};
 
 /// Job statuses.
 pub const SEARCHING: &str = "searching";
@@ -40,8 +40,8 @@ impl JobPayload {
         serde_json::from_str(blob).ok()
     }
 
-    fn encode(&self) -> Result<String, OpError> {
-        serde_json::to_string(self).map_err(|error| OpError::Abort(error.to_string()))
+    fn encode(&self) -> Result<String, DbError> {
+        Ok(serde_json::to_string(self)?)
     }
 }
 
@@ -91,7 +91,29 @@ pub enum PickRefusal {
     AlbumBusy,
 }
 
-const PICK_REFUSED: &str = "search-job-pick-refused:";
+/// What the pick transaction fails with. A refusal rolls back like any
+/// other failure, and the caller answers it.
+#[derive(Debug, thiserror::Error)]
+enum PickError {
+    #[error("pick refused: {0:?}")]
+    Refused(PickRefusal),
+    #[error(transparent)]
+    Db(#[from] DbError),
+}
+
+impl From<rusqlite::Error> for PickError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Db(error.into())
+    }
+}
+
+/// A download-store failure inside a job write. The text goes to the log.
+fn store_failed(operation: &str, error: StoreError) -> DbError {
+    DbError::WriteFailed {
+        operation: operation.to_owned(),
+        cause: error.to_string(),
+    }
+}
 
 /// The download parked on a job: queued, linked to the job, no candidate
 /// picked yet.
@@ -286,7 +308,7 @@ impl JobStore {
                 match outcome {
                     ReviewOutcome::Take(index, source, username) => DownloadStore::new(tx)
                         .link_candidate(&task_id, &source, username.as_deref(), &job.id, index, at)
-                        .map_err(|error| OpError::Abort(error.to_string()))?,
+                        .map_err(|error| store_failed("search_jobs.review", error))?,
                     ReviewOutcome::Park => {
                         tx.execute(
                             "UPDATE download_tasks SET search_job_id = ?2, updated_at = ?3 \
@@ -321,7 +343,7 @@ impl JobStore {
                 if let Some(task_id) = parked {
                     DownloadStore::new(tx)
                         .cancel_task(&task_id, at)
-                        .map_err(|error| OpError::Abort(error.to_string()))?;
+                        .map_err(|error| store_failed("search_jobs.close", error))?;
                 }
                 Ok(moved > 0)
             })
@@ -398,9 +420,9 @@ impl JobStore {
         let job_id = job_id.to_owned();
         let outcome = self
             .db
-            .write("search_jobs.pick", move |tx| {
+            .lane()
+            .write(Lane::Foreground, "search_jobs.pick", move |tx| {
                 let at = now();
-                let refuse = |refusal: &str| OpError::Abort(format!("{PICK_REFUSED}{refusal}"));
                 let status: Option<String> = tx
                     .query_row(
                         "SELECT status FROM search_jobs WHERE id = ?1",
@@ -410,14 +432,13 @@ impl JobStore {
                     .optional()?;
                 let status = status.unwrap_or_default();
                 if status != COMPLETED {
-                    return Err(refuse(&format!("status:{status}")));
+                    return Err(PickError::Refused(PickRefusal::NotOpen(status)));
                 }
                 let parked: Option<String> = tx
                     .query_row(PARKED_TASK_SQL, params![job_id], |row| row.get(0))
                     .optional()?;
                 let store = DownloadStore::new(tx);
-                let store_error =
-                    |error: crate::downloads::store::StoreError| OpError::Abort(error.to_string());
+                let store_error = |error| PickError::Db(store_failed("search_jobs.pick", error));
                 if let Some(task_id) = parked {
                     store
                         .link_candidate(
@@ -441,7 +462,7 @@ impl JobStore {
                         .map_err(store_error)?
                         .is_some()
                 {
-                    return Err(refuse("busy"));
+                    return Err(PickError::Refused(PickRefusal::AlbumBusy));
                 }
                 store.insert_task(&picked.task, at).map_err(store_error)?;
                 store
@@ -466,15 +487,8 @@ impl JobStore {
             .await;
         match outcome {
             Ok(task_id) => Ok(Ok(task_id)),
-            Err(droppedneedle_kernel::db::DbError::WriteFailed { cause, .. })
-                if cause.starts_with(PICK_REFUSED) =>
-            {
-                Ok(Err(match &cause[PICK_REFUSED.len()..] {
-                    "busy" => PickRefusal::AlbumBusy,
-                    rest => PickRefusal::NotOpen(rest.trim_start_matches("status:").to_owned()),
-                }))
-            }
-            Err(error) => Err(error.to_string()),
+            Err(PickError::Refused(refusal)) => Ok(Err(refusal)),
+            Err(PickError::Db(error)) => Err(error.to_string()),
         }
     }
 }

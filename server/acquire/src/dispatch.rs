@@ -29,7 +29,7 @@ use super::downloads::watchdog::RetryPolicy;
 use super::edition::chosen_edition;
 use super::flows::seams as flows;
 use super::requests::dispatch as requests;
-use droppedneedle_kernel::db::{DbError, Lane, OpError};
+use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
 
 /// Current unix time as the float seconds the journal stores.
@@ -172,8 +172,11 @@ impl Journal {
             .write(lane, name, move |tx| {
                 let store = DownloadStore::new(tx);
                 op(&store).map_err(|error| match error {
-                    StoreError::Sqlite(error) => OpError::Sql(error),
-                    other => OpError::Abort(other.to_string()),
+                    StoreError::Sqlite(error) => DbError::from(error),
+                    other => DbError::WriteFailed {
+                        operation: name.to_owned(),
+                        cause: other.to_string(),
+                    },
                 })
             })
             .await

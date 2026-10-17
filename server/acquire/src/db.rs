@@ -12,7 +12,7 @@ use std::sync::Arc;
 use rusqlite::Transaction;
 use sqlx::SqlitePool;
 
-use droppedneedle_kernel::db::{DbError, DbRuntime, Lane, OpError, WriteLane};
+use droppedneedle_kernel::db::{DbError, DbRuntime, Lane, WriteLane};
 
 /// Reader pool plus writer lane over the application database.
 #[derive(Clone, Debug)]
@@ -57,7 +57,7 @@ impl AcquireDb {
     /// One request-path write transaction.
     pub async fn write<F, R>(&self, name: &'static str, op: F) -> Result<R, DbError>
     where
-        F: FnOnce(&Transaction) -> Result<R, OpError> + Send + 'static,
+        F: FnOnce(&Transaction) -> Result<R, DbError> + Send + 'static,
         R: Send + 'static,
     {
         self.lane.write(Lane::Foreground, name, op).await
@@ -66,7 +66,7 @@ impl AcquireDb {
     /// One background-job write transaction.
     pub async fn write_background<F, R>(&self, name: &'static str, op: F) -> Result<R, DbError>
     where
-        F: FnOnce(&Transaction) -> Result<R, OpError> + Send + 'static,
+        F: FnOnce(&Transaction) -> Result<R, DbError> + Send + 'static,
         R: Send + 'static,
     {
         self.lane.write(Lane::Background, name, op).await
