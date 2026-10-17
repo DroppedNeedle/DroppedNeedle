@@ -597,12 +597,17 @@ pub struct MockSlskd {
 impl MockSlskd {
     /// Serve the mock on an ephemeral loopback port. No live contact ever.
     pub async fn start() -> Result<Self, String> {
+        Self::start_at(SocketAddr::from(([127, 0, 0, 1], 0))).await
+    }
+
+    /// Serve the mock on the given address.
+    pub async fn start_at(addr: SocketAddr) -> Result<Self, String> {
         let state = AppState {
             inner: Arc::new(Mutex::new(MockState::default())),
         };
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let listener = tokio::net::TcpListener::bind(addr)
             .await
-            .map_err(|error| format!("mock binds loopback: {error}"))?;
+            .map_err(|error| format!("mock binds {addr}: {error}"))?;
         let addr = listener
             .local_addr()
             .map_err(|error| format!("mock has an address: {error}"))?;
