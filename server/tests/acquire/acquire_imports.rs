@@ -8,7 +8,7 @@
 //! Lidarr, Spotify, slskd, SABnzbd, or indexer.
 
 use crate::common;
-use crate::common::auth::AuthRig;
+use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 use droppedneedle_acquire::imports;
 
 use std::sync::Arc;
@@ -16,8 +16,6 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_testkit::imports::{
     LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_TOKEN, serve_lidarr,
@@ -86,7 +84,7 @@ struct Rig {
     lidarr_probe: Arc<ScriptedLidarr>,
 }
 
-fn rig_for(rig: &AuthRig, lidarr_base: &str, api_base: &str, accounts_base: &str) -> Rig {
+fn rig_for(lidarr_base: &str, api_base: &str, accounts_base: &str) -> Rig {
     let http = http_client();
     let lidarr_settings = Arc::new(MemoryLidarrSettings::new());
     let follows = Arc::new(MemoryFollowStore::new());
@@ -148,7 +146,6 @@ fn rig_for(rig: &AuthRig, lidarr_base: &str, api_base: &str, accounts_base: &str
             newznab: newznab.clone(),
             lidarr: lidarr_probe.clone(),
         }),
-        auth: rig.deps.clone(),
         ids: Arc::new(FixedIdGenerator),
         base_path: String::new(),
         trusted_proxies: Default::default(),
@@ -170,22 +167,9 @@ fn rig_for(rig: &AuthRig, lidarr_base: &str, api_base: &str, accounts_base: &str
     }
 }
 
-fn authed_app(deps: ImportsDeps, user_id: &str) -> Router {
-    let user_id = user_id.to_owned();
-    imports_router(deps).layer(axum::middleware::from_fn(
-        move |mut req: Request<Body>, next: axum::middleware::Next| {
-            let user_id = user_id.clone();
-            async move {
-                req.extensions_mut().insert(CurrentSession {
-                    user_id,
-                    session_id: "sess-1".to_owned(),
-                    kind: SessionKind::Standard,
-                    transport: Transport::Bearer,
-                });
-                next.run(req).await
-            }
-        },
-    ))
+fn authed_app(deps: ImportsDeps, user_id: &str, role: Role) -> Router {
+    let principal = test_principal(user_id, role, "sess-1", SessionKind::Standard);
+    with_test_principal(imports_router(deps), principal)
 }
 
 fn anon_app(deps: ImportsDeps) -> Router {
@@ -320,19 +304,14 @@ async fn lidarr_transport_errors_never_carry_the_url() {
 
 #[tokio::test]
 async fn lidarr_import_becomes_follows_with_counts() {
-    let (rig, admin_id, _) = seed_rig().await;
+    let (_rig, admin_id, _) = seed_rig().await;
     let (server, _) = serve_lidarr().await.expect("mock serves");
-    let bundle = rig_for(
-        &rig,
-        &server.base_url,
-        "http://127.0.0.1:1",
-        "http://127.0.0.1:1",
-    );
+    let bundle = rig_for(&server.base_url, "http://127.0.0.1:1", "http://127.0.0.1:1");
     bundle.lidarr_settings.seed(&server.base_url, LIDARR_KEY);
     let payload = json!({"selected_mbids": [LIDARR_MBID_ALL, LIDARR_MBID_NONE]});
 
     let (status, body) = post_json(
-        authed_app(bundle.deps.clone(), &admin_id),
+        authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
         "/acquire/lidarr-import/import",
         payload.clone(),
     )
@@ -346,7 +325,7 @@ async fn lidarr_import_becomes_follows_with_counts() {
 
     // Re-import never re-arms or double-counts: disjoint pre-existing subset.
     let (status, body) = post_json(
-        authed_app(bundle.deps.clone(), &admin_id),
+        authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
         "/acquire/lidarr-import/import",
         payload,
     )
@@ -358,7 +337,7 @@ async fn lidarr_import_becomes_follows_with_counts() {
 
     // Candidates now read as already following.
     let (status, body) = get_json(
-        authed_app(bundle.deps, &admin_id),
+        authed_app(bundle.deps, &admin_id, Role::Admin),
         "/acquire/lidarr-import/artists",
     )
     .await;
@@ -395,18 +374,13 @@ async fn lidarr_non_admin_mirror_opens_approval_batch_at_service_level() {
 
 #[tokio::test]
 async fn lidarr_config_round_trip_masks_and_normalizes() {
-    let (rig, admin_id, _) = seed_rig().await;
+    let (_rig, admin_id, _) = seed_rig().await;
     let (server, _) = serve_lidarr().await.expect("mock serves");
-    let bundle = rig_for(
-        &rig,
-        &server.base_url,
-        "http://127.0.0.1:1",
-        "http://127.0.0.1:1",
-    );
+    let bundle = rig_for(&server.base_url, "http://127.0.0.1:1", "http://127.0.0.1:1");
     let pasted = format!("{}/api/v1", server.base_url);
 
     let (status, body) = put_json(
-        authed_app(bundle.deps.clone(), &admin_id),
+        authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
         "/acquire/lidarr-import/config",
         json!({"url": pasted, "api_key": LIDARR_KEY}),
     )
@@ -418,14 +392,14 @@ async fn lidarr_config_round_trip_masks_and_normalizes() {
     // Saving the masked sentinel preserves the stored key: the probe still
     // authenticates afterwards.
     let (status, _) = put_json(
-        authed_app(bundle.deps.clone(), &admin_id),
+        authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
         "/acquire/lidarr-import/config",
         json!({"url": server.base_url, "api_key": "lidarr****"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     let (status, body) = post_json(
-        authed_app(bundle.deps, &admin_id),
+        authed_app(bundle.deps, &admin_id, Role::Admin),
         "/acquire/lidarr-import/test",
         json!({"url": server.base_url, "api_key": "lidarr****"}),
     )
@@ -436,29 +410,24 @@ async fn lidarr_config_round_trip_masks_and_normalizes() {
 
 #[tokio::test]
 async fn lidarr_surface_issues_only_the_two_sanctioned_gets() {
-    let (rig, admin_id, _) = seed_rig().await;
+    let (_rig, admin_id, _) = seed_rig().await;
     let (server, recorder) = serve_lidarr().await.expect("mock serves");
-    let bundle = rig_for(
-        &rig,
-        &server.base_url,
-        "http://127.0.0.1:1",
-        "http://127.0.0.1:1",
-    );
+    let bundle = rig_for(&server.base_url, "http://127.0.0.1:1", "http://127.0.0.1:1");
     bundle.lidarr_settings.seed(&server.base_url, LIDARR_KEY);
 
     let _ = post_json(
-        authed_app(bundle.deps.clone(), &admin_id),
+        authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
         "/acquire/lidarr-import/test",
         json!({"url": server.base_url, "api_key": LIDARR_KEY}),
     )
     .await;
     let _ = get_json(
-        authed_app(bundle.deps.clone(), &admin_id),
+        authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
         "/acquire/lidarr-import/artists",
     )
     .await;
     let _ = post_json(
-        authed_app(bundle.deps, &admin_id),
+        authed_app(bundle.deps, &admin_id, Role::Admin),
         "/acquire/lidarr-import/import",
         json!({"selected_mbids": [LIDARR_MBID_ALL]}),
     )
@@ -479,14 +448,9 @@ async fn lidarr_surface_issues_only_the_two_sanctioned_gets() {
 
 #[tokio::test]
 async fn lidarr_routes_gate_anonymous_and_non_admin() {
-    let (rig, admin_id, user_id) = seed_rig().await;
+    let (_rig, admin_id, user_id) = seed_rig().await;
     let (server, _) = serve_lidarr().await.expect("mock serves");
-    let bundle = rig_for(
-        &rig,
-        &server.base_url,
-        "http://127.0.0.1:1",
-        "http://127.0.0.1:1",
-    );
+    let bundle = rig_for(&server.base_url, "http://127.0.0.1:1", "http://127.0.0.1:1");
     bundle.lidarr_settings.seed(&server.base_url, LIDARR_KEY);
 
     let (status, body) = get_json(
@@ -498,7 +462,7 @@ async fn lidarr_routes_gate_anonymous_and_non_admin() {
     assert_eq!(body["error"]["code"], "UNAUTHORIZED");
 
     let (status, body) = get_json(
-        authed_app(bundle.deps.clone(), &user_id),
+        authed_app(bundle.deps.clone(), &user_id, Role::User),
         "/acquire/lidarr-import/artists",
     )
     .await;
@@ -507,7 +471,7 @@ async fn lidarr_routes_gate_anonymous_and_non_admin() {
 
     // The admin still passes.
     let (status, _) = get_json(
-        authed_app(bundle.deps, &admin_id),
+        authed_app(bundle.deps, &admin_id, Role::Admin),
         "/acquire/lidarr-import/artists",
     )
     .await;
@@ -519,7 +483,7 @@ async fn lidarr_routes_gate_anonymous_and_non_admin() {
 /// Seed the admin Spotify app via the settings route.
 async fn seed_spotify_app(bundle_deps: ImportsDeps, admin_id: &str) {
     let (status, body) = put_json(
-        authed_app(bundle_deps, admin_id),
+        authed_app(bundle_deps, admin_id, Role::Admin),
         "/acquire/spotify/settings",
         json!({
             "client_id": "test-client",
@@ -552,7 +516,7 @@ fn state_from_auth_url(auth_url: &str) -> String {
 /// its state token.
 async fn authorize(bundle_deps: ImportsDeps, user_id: &str) -> (String, String) {
     let (status, body) = get_json(
-        authed_app(bundle_deps, user_id),
+        authed_app(bundle_deps, user_id, Role::User),
         "/acquire/spotify/auth/url",
     )
     .await;
@@ -617,7 +581,7 @@ async fn link_spotify_via(
 async fn poll_job_done(deps: ImportsDeps, user_id: &str, spotify_id: &str) -> Value {
     for _ in 0..100 {
         let (status, body) = get_json(
-            authed_app(deps.clone(), user_id),
+            authed_app(deps.clone(), user_id, Role::User),
             &format!("/acquire/spotify/jobs/{spotify_id}"),
         )
         .await;
@@ -632,13 +596,13 @@ async fn poll_job_done(deps: ImportsDeps, user_id: &str, spotify_id: &str) -> Va
 
 #[tokio::test]
 async fn spotify_settings_round_trip_and_reject_bad_origin() {
-    let (rig, admin_id, user_id) = seed_rig().await;
+    let (_rig, admin_id, user_id) = seed_rig().await;
     let (lidarr, _) = serve_lidarr().await.expect("mock serves");
     let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
 
     let (status, body) = get_json(
-        authed_app(bundle.deps.clone(), &admin_id),
+        authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
         "/acquire/spotify/settings",
     )
     .await;
@@ -648,7 +612,7 @@ async fn spotify_settings_round_trip_and_reject_bad_origin() {
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
 
     let (status, body) = put_json(
-        authed_app(bundle.deps.clone(), &admin_id),
+        authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
         "/acquire/spotify/settings",
         json!({
             "client_id": "test-client",
@@ -663,7 +627,7 @@ async fn spotify_settings_round_trip_and_reject_bad_origin() {
 
     // Non-admins cannot read the app settings.
     let (status, _) = get_json(
-        authed_app(bundle.deps.clone(), &user_id),
+        authed_app(bundle.deps.clone(), &user_id, Role::User),
         "/acquire/spotify/settings",
     )
     .await;
@@ -671,7 +635,7 @@ async fn spotify_settings_round_trip_and_reject_bad_origin() {
 
     // The redirect URI derives through the single source of truth.
     let (status, body) = get_json(
-        authed_app(bundle.deps, &admin_id),
+        authed_app(bundle.deps, &admin_id, Role::Admin),
         "/acquire/spotify/redirect-uri",
     )
     .await;
@@ -699,14 +663,14 @@ fn forwarded_get(path: &str, peer: &str) -> Request<Body> {
 /// link carries, which must be the same.
 async fn callback_addresses(deps: &ImportsDeps, admin_id: &str, peer: &str) -> String {
     let (status, shown) = request_json(
-        authed_app(deps.clone(), admin_id),
+        authed_app(deps.clone(), admin_id, Role::Admin),
         forwarded_get("/acquire/spotify/redirect-uri", peer),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     let shown = shown["redirect_uri"].as_str().expect("address").to_owned();
     let (status, link) = request_json(
-        authed_app(deps.clone(), admin_id),
+        authed_app(deps.clone(), admin_id, Role::Admin),
         forwarded_get("/acquire/spotify/auth/url", peer),
     )
     .await;
@@ -726,10 +690,10 @@ async fn callback_addresses(deps: &ImportsDeps, admin_id: &str, peer: &str) -> S
 async fn spotify_callback_address_follows_a_trusted_proxy_only() {
     const TRUSTED: &str = "127.0.0.1:4000";
     const STRANGER: &str = "203.0.113.9:4000";
-    let (rig, admin_id, _) = seed_rig().await;
+    let (_rig, admin_id, _) = seed_rig().await;
     let (lidarr, _) = serve_lidarr().await.expect("mock serves");
     let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
 
     assert_eq!(
@@ -751,7 +715,7 @@ async fn spotify_callback_address_follows_a_trusted_proxy_only() {
     // No address to work out: an honest 400 that names the field, no guess.
     for path in ["/acquire/spotify/redirect-uri", "/acquire/spotify/auth/url"] {
         let (status, body) = request_json(
-            authed_app(bundle.deps.clone(), &admin_id),
+            authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
             Request::get(path).body(Body::empty()).expect("builds"),
         )
         .await;
@@ -762,7 +726,7 @@ async fn spotify_callback_address_follows_a_trusted_proxy_only() {
     }
 
     let (status, _) = put_json(
-        authed_app(bundle.deps.clone(), &admin_id),
+        authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
         "/acquire/spotify/settings",
         json!({
             "client_id": "test-client",
@@ -783,10 +747,10 @@ async fn spotify_callback_address_follows_a_trusted_proxy_only() {
 
 #[tokio::test]
 async fn spotify_callback_rejects_error_and_replayed_state() {
-    let (rig, admin_id, user_id) = seed_rig().await;
+    let (_rig, admin_id, user_id) = seed_rig().await;
     let (lidarr, _) = serve_lidarr().await.expect("mock serves");
     let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
 
     // Provider-side error redirects plain.
@@ -824,7 +788,7 @@ async fn spotify_callback_rejects_error_and_replayed_state() {
 
     // Bad code names the token reason.
     let (status, body) = get_json(
-        authed_app(bundle.deps.clone(), &user_id),
+        authed_app(bundle.deps.clone(), &user_id, Role::User),
         "/acquire/spotify/auth/url",
     )
     .await;
@@ -878,10 +842,10 @@ async fn spotify_callback_rejects_error_and_replayed_state() {
 
 #[tokio::test]
 async fn spotify_import_answers_fast_then_populates_two_tracks() {
-    let (rig, admin_id, user_id) = seed_rig().await;
+    let (_rig, admin_id, user_id) = seed_rig().await;
     let (lidarr, _) = serve_lidarr().await.expect("mock serves");
     let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
     link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
     bundle
@@ -889,7 +853,7 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
         .seed("Aurora Current", "Neon Meridian", "rg-mbid-1");
 
     let (status, body) = post_json(
-        authed_app(bundle.deps.clone(), &user_id),
+        authed_app(bundle.deps.clone(), &user_id, Role::User),
         "/acquire/spotify/playlists/sp-playlist-1/import",
         json!({"name": "Neon Nights"}),
     )
@@ -921,7 +885,7 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
 
     // Re-import answers the same record and replaces the rows wholesale.
     let (status, body) = post_json(
-        authed_app(bundle.deps.clone(), &user_id),
+        authed_app(bundle.deps.clone(), &user_id, Role::User),
         "/acquire/spotify/playlists/sp-playlist-1/import",
         json!({"name": "Neon Nights"}),
     )
@@ -934,7 +898,7 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
 
     // Playlists now carry the imported mapping.
     let (status, body) = get_json(
-        authed_app(bundle.deps, &user_id),
+        authed_app(bundle.deps, &user_id, Role::User),
         "/acquire/spotify/playlists",
     )
     .await;
@@ -944,15 +908,15 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
 
 #[tokio::test]
 async fn spotify_tracks_come_from_items_never_legacy_tracks() {
-    let (rig, admin_id, user_id) = seed_rig().await;
+    let (_rig, admin_id, user_id) = seed_rig().await;
     let (lidarr, _) = serve_lidarr().await.expect("mock serves");
     let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
     link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
 
     let (status, _) = post_json(
-        authed_app(bundle.deps.clone(), &user_id),
+        authed_app(bundle.deps.clone(), &user_id, Role::User),
         "/acquire/spotify/playlists/sp-playlist-1/import",
         json!({"name": "Neon Nights"}),
     )
@@ -1012,10 +976,10 @@ async fn spotify_cover_fetch_refuses_redirects_and_non_images() {
 
 #[tokio::test]
 async fn spotify_expired_tokens_refresh_transparently() {
-    let (rig, admin_id, user_id) = seed_rig().await;
+    let (_rig, admin_id, user_id) = seed_rig().await;
     let (lidarr, _) = serve_lidarr().await.expect("mock serves");
     let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
     link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
 
@@ -1030,7 +994,7 @@ async fn spotify_expired_tokens_refresh_transparently() {
         .expect("store writes");
 
     let (status, body) = get_json(
-        authed_app(bundle.deps, &user_id),
+        authed_app(bundle.deps, &user_id, Role::User),
         "/acquire/spotify/playlists",
     )
     .await;
@@ -1074,10 +1038,10 @@ async fn linked(links: &MemorySpotifyConnections, user_id: &str) -> SpotifyConne
 /// Disconnect then removes it.
 #[tokio::test]
 async fn spotify_v2_registered_app_links_and_disconnects() {
-    let (rig, admin_id, user_id) = seed_rig().await;
+    let (_rig, admin_id, user_id) = seed_rig().await;
     let (lidarr, _) = serve_lidarr().await.expect("mock serves");
     let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
     recorder.register_redirect_uri(&format!("http://app.test{SPOTIFY_LEGACY_CALLBACK_PATH}"));
 
@@ -1114,7 +1078,7 @@ async fn spotify_v2_registered_app_links_and_disconnects() {
     .await;
     linked(&bundle.spotify_links, &user_id).await;
 
-    let response = authed_app(bundle.deps, &user_id)
+    let response = authed_app(bundle.deps, &user_id, Role::User)
         .oneshot(
             Request::delete("/me/connections/spotify")
                 .body(Body::empty())
@@ -1256,7 +1220,7 @@ async fn seed_scripted_bases() -> (AuthRig, String, String, Rig) {
     let (rig, admin_id, user_id) = seed_rig().await;
     let (lidarr, _) = serve_lidarr().await.expect("mock serves");
     let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
     (rig, admin_id, user_id, bundle)
 }
 
@@ -1273,7 +1237,11 @@ fn gate<'a>(body: &'a Value, source: &str) -> &'a Value {
 async fn health_smoke_is_not_ready_with_no_source() {
     let (_auth, _, user_id, bundle) = seed_scripted_bases().await;
 
-    let (status, body) = get_json(authed_app(bundle.deps, &user_id), "/acquire/health").await;
+    let (status, body) = get_json(
+        authed_app(bundle.deps, &user_id, Role::User),
+        "/acquire/health",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "error");
     assert_eq!(body["ready"], false);
@@ -1289,7 +1257,11 @@ async fn slskd_gate_greens_independently() {
     let (_auth, _, user_id, bundle) = seed_scripted_bases().await;
     bundle.slskd.set(open_client("1.4.3", "slskd 1.4.3"));
 
-    let (status, body) = get_json(authed_app(bundle.deps, &user_id), "/acquire/health").await;
+    let (status, body) = get_json(
+        authed_app(bundle.deps, &user_id, Role::User),
+        "/acquire/health",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(gate(&body, "slskd")["open"], true);
     assert_eq!(gate(&body, "sabnzbd")["open"], false);
@@ -1312,7 +1284,11 @@ async fn health_degrades_when_an_enabled_path_is_down() {
         .sabnzbd
         .set(open_client("4.5.1", "SABnzbd 4.5.1"), Vec::new(), None);
 
-    let (status, body) = get_json(authed_app(bundle.deps, &user_id), "/acquire/health").await;
+    let (status, body) = get_json(
+        authed_app(bundle.deps, &user_id, Role::User),
+        "/acquire/health",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "degraded");
     assert_eq!(body["ready"], true);
@@ -1325,7 +1301,7 @@ async fn slskd_status_readable_by_any_user() {
     bundle.slskd.set(open_client("1.4.3", "slskd 1.4.3"));
 
     let (status, body) = get_json(
-        authed_app(bundle.deps.clone(), &user_id),
+        authed_app(bundle.deps.clone(), &user_id, Role::User),
         "/acquire/slskd/status",
     )
     .await;
@@ -1348,7 +1324,7 @@ async fn sabnzbd_status_is_admin_only_with_mount_hint() {
     );
 
     let (status, body) = get_json(
-        authed_app(bundle.deps.clone(), &admin_id),
+        authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
         "/acquire/sabnzbd/status",
     )
     .await;
@@ -1358,8 +1334,11 @@ async fn sabnzbd_status_is_admin_only_with_mount_hint() {
     assert_eq!(body["categories"], json!(["music", "audiobooks"]));
     assert_eq!(body["complete_dir"], "/completed");
 
-    let (status, body) =
-        get_json(authed_app(bundle.deps, &user_id), "/acquire/sabnzbd/status").await;
+    let (status, body) = get_json(
+        authed_app(bundle.deps, &user_id, Role::User),
+        "/acquire/sabnzbd/status",
+    )
+    .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(body["error"]["code"], "FORBIDDEN");
 }

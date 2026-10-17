@@ -1,9 +1,9 @@
 //! Request intake over the durable ledger: the approval gate, co-requesters,
 //! quotas, the wanted and approval queues, and restart survival.
 //!
-//! Each test mounts the requests router with the test principal header over
-//! a scratch database. The scripted dispatch stands in for the downloads
-//! side; every row it touches is a real SQLite row.
+//! Each test mounts the requests routes, signed in through the test sign-in
+//! layer, over a scratch database. The scripted dispatch stands in for the
+//! downloads side; every row it touches is a real SQLite row.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,13 +42,20 @@ use droppedneedle_acquire::requests::{
     service::RequestsService,
     state::AcquireReadiness,
 };
+use droppedneedle_auth::Role;
+use droppedneedle_auth::session::store::SessionKind;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-const ADA: &str = "u-ada:user:Ada";
-const BOB: &str = "u-bob:user:Bob";
-const TRUSTED: &str = "u-tris:trusted:Tris";
-const ADMIN: &str = "u-root:admin:Root";
+use crate::common::auth::{test_principal, with_test_principal};
+
+/// A signed-in caller: user id, role and display name.
+type Who = (&'static str, Role, &'static str);
+
+const ADA: Who = ("u-ada", Role::User, "Ada");
+const BOB: Who = ("u-bob", Role::User, "Bob");
+const TRUSTED: Who = ("u-tris", Role::Trusted, "Tris");
+const ADMIN: Who = ("u-root", Role::Admin, "Root");
 
 const MBID_A: &str = "11111111-1111-4111-8111-111111111111";
 const MBID_B: &str = "22222222-2222-4222-8222-222222222222";
@@ -82,14 +89,16 @@ async fn call(
     state: &RequestsState,
     method: Method,
     uri: &str,
-    identity: Option<&str>,
+    identity: Option<Who>,
     body: Option<Value>,
 ) -> (StatusCode, Value) {
-    let app: Router = requests::requests_router(state.clone());
-    let mut builder = Request::builder().method(method).uri(uri);
-    if let Some(identity) = identity {
-        builder = builder.header("x-slice-principal", identity);
+    let mut app: Router = requests::requests_routes(state.clone());
+    if let Some((user_id, role, name)) = identity {
+        let principal = test_principal(user_id, role, "sess-test", SessionKind::Standard)
+            .with_display_name(name);
+        app = with_test_principal(app, principal);
     }
+    let mut builder = Request::builder().method(method).uri(uri);
     let body = match body {
         Some(json) => {
             builder = builder.header("content-type", "application/json");
@@ -108,7 +117,7 @@ async fn call(
     )
 }
 
-async fn ask(state: &RequestsState, who: &str, mbid: &str) -> (StatusCode, Value) {
+async fn ask(state: &RequestsState, who: Who, mbid: &str) -> (StatusCode, Value) {
     call(
         state,
         Method::POST,

@@ -21,12 +21,12 @@ use std::sync::{Arc, RwLock};
 
 use serde_json::json;
 
-use super::auth::Role;
 use super::dispatch::DispatchOrigin;
 use super::error::RequestsError;
 use super::ledger::{QuotaGate, QuotaRefusal};
 use super::sqlite::RequestStore;
 use crate::db::{AcquireDb, to_u64};
+use droppedneedle_auth::Role;
 
 /// Global download-policy quota knobs.
 #[derive(Debug, Clone)]

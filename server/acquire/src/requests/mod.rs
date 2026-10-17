@@ -2,10 +2,10 @@
 //! approval queues behind them.
 //!
 //! Clean-slate `/api/v3` surface. The router below mounts paths relative to
-//! `/api/v3`; the app nests it there behind the session middleware with a
-//! principal-translation layer that resolves the role fresh from the user
-//! store, as it does for collections. Handler utoipa annotations carry the
-//! full `/api/v3` paths for the contract document.
+//! `/api/v3`; the app nests it there behind the session gate, and each
+//! handler names who may call it by taking `User`, `Curator` or `Admin`.
+//! Handler utoipa annotations carry the full `/api/v3` paths for the
+//! contract document.
 //!
 //! Seams owned elsewhere: [`dispatch::DownloadDispatch`] (the downloads
 //! module implements durable fetch; intake only starts, cancels, and
@@ -34,17 +34,10 @@ use axum::{Router, routing};
 
 pub use state::RequestsState;
 
-/// The requests routes behind the header test gate, for tests that mount
-/// them without the session middleware. Route posture per handler docs:
-/// reads and intake need any authenticated user, approval verbs need
-/// admin, edition acquire needs curator.
-#[cfg(any(test, feature = "test-support"))]
-pub fn requests_router(state: RequestsState) -> Router {
-    requests_routes(state).layer(axum::middleware::from_fn(auth::gate))
-}
-
-/// Every requests route without an auth layer, including the two
-/// approval-read GETs the app serves from the collections routes instead.
+/// Every requests route, including the two approval-read GETs the app
+/// serves from the collections routes instead. Route posture per handler
+/// docs: reads and intake need any signed-in user, approval verbs need an
+/// admin, edition acquire needs a curator.
 #[cfg(any(test, feature = "test-support"))]
 pub fn requests_routes(state: RequestsState) -> Router {
     requests_core_routes(state.clone()).merge(approval_read_routes(state))

@@ -24,7 +24,8 @@ use super::held_rows::HeldRow;
 use super::queue_rows::Viewer;
 use super::upgrades::{UpgradeAsk, UpgradeError, UpgradeOutcome, Upgrades};
 use crate::flows::seams::DispatchKind;
-use crate::requests::{auth::Principal, error::RequestsError};
+use crate::requests::{auth::is_admin, error::RequestsError};
+use droppedneedle_auth::{Admin, Curator, Principal, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_media::stream::routes::{DirectSpan, content_type_for_extension, file_range};
@@ -236,8 +237,8 @@ pub struct ReviewState {
 
 fn viewer(principal: &Principal) -> Viewer {
     Viewer {
-        user_id: principal.user_id.clone(),
-        admin: principal.role.is_admin(),
+        user_id: principal.user_id().to_owned(),
+        admin: is_admin(principal),
     }
 }
 
@@ -286,7 +287,7 @@ const KEPT_EXISTING: &str =
 )]
 pub async fn list_held_handler(
     State(state): State<ReviewState>,
-    principal: Principal,
+    User(principal): User,
     ValidQuery(query): ValidQuery<HeldListQuery>,
 ) -> Result<Json<HeldListResponse>, ApiError> {
     let group = query.release_group_mbid.filter(|mbid| !mbid.is_empty());
@@ -311,12 +312,12 @@ pub async fn list_held_handler(
 )]
 pub async fn import_held_handler(
     State(state): State<ReviewState>,
-    principal: Principal,
+    User(principal): User,
     Path(id): Path<String>,
 ) -> Result<Json<HeldActionResponse>, ApiError> {
     let placed = state
         .held
-        .import(&viewer(&principal), held_id(&id)?, &principal.user_id)
+        .import(&viewer(&principal), held_id(&id)?, principal.user_id())
         .await?;
     Ok(Json(HeldActionResponse {
         status: "imported".to_owned(),
@@ -336,7 +337,7 @@ pub async fn import_held_handler(
 )]
 pub async fn discard_held_handler(
     State(state): State<ReviewState>,
-    principal: Principal,
+    User(principal): User,
     Path(id): Path<String>,
 ) -> Result<Json<HeldActionResponse>, ApiError> {
     state
@@ -361,12 +362,12 @@ pub async fn discard_held_handler(
 )]
 pub async fn reverify_held_handler(
     State(state): State<ReviewState>,
-    principal: Principal,
+    User(principal): User,
     Path(id): Path<String>,
 ) -> Result<Json<HeldReverifyResponse>, ApiError> {
     let outcome = state
         .held
-        .reverify(&viewer(&principal), held_id(&id)?, &principal.user_id)
+        .reverify(&viewer(&principal), held_id(&id)?, principal.user_id())
         .await?;
     Ok(Json(match outcome {
         Reverified::Imported(placed) => HeldReverifyResponse {
@@ -391,12 +392,12 @@ pub async fn reverify_held_handler(
 )]
 pub async fn reverify_bulk_handler(
     State(state): State<ReviewState>,
-    principal: Principal,
+    User(principal): User,
     ValidJson(body): ValidJson<HeldBulkReverifyRequest>,
 ) -> Result<Json<HeldBulkReverifyResponse>, ApiError> {
     let items = state
         .held
-        .reverify_bulk(&viewer(&principal), body.held_ids, &principal.user_id)
+        .reverify_bulk(&viewer(&principal), body.held_ids, principal.user_id())
         .await?;
     let results = items
         .into_iter()
@@ -442,7 +443,7 @@ pub async fn reverify_bulk_handler(
 )]
 pub async fn held_audio_handler(
     State(state): State<ReviewState>,
-    principal: Principal,
+    User(principal): User,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
@@ -484,14 +485,10 @@ pub async fn held_audio_handler(
 )]
 pub async fn retry_local_handler(
     State(state): State<ReviewState>,
-    principal: Principal,
+    admin: Admin,
     Path(task_id): Path<String>,
 ) -> Result<Json<HeldUnitResponse>, ApiError> {
-    principal.require_admin()?;
-    let files = state
-        .held
-        .retry_local(&viewer(&principal), &task_id)
-        .await?;
+    let files = state.held.retry_local(&viewer(&admin), &task_id).await?;
     Ok(Json(HeldUnitResponse {
         status: "imported".to_owned(),
         files,
@@ -509,14 +506,10 @@ pub async fn retry_local_handler(
 )]
 pub async fn discard_local_handler(
     State(state): State<ReviewState>,
-    principal: Principal,
+    admin: Admin,
     Path(task_id): Path<String>,
 ) -> Result<Json<HeldUnitResponse>, ApiError> {
-    principal.require_admin()?;
-    let files = state
-        .held
-        .discard_local(&viewer(&principal), &task_id)
-        .await?;
+    let files = state.held.discard_local(&viewer(&admin), &task_id).await?;
     Ok(Json(HeldUnitResponse {
         status: "discarded".to_owned(),
         files,
@@ -534,7 +527,7 @@ pub async fn discard_local_handler(
 )]
 pub async fn discard_verdict_handler(
     State(state): State<ReviewState>,
-    principal: Principal,
+    User(principal): User,
     Path(task_id): Path<String>,
 ) -> Result<Json<HeldUnitResponse>, ApiError> {
     let files = state
@@ -557,9 +550,8 @@ pub async fn discard_verdict_handler(
 )]
 pub async fn cutoff_unmet_handler(
     State(state): State<ReviewState>,
-    principal: Principal,
+    _curator: Curator,
 ) -> Result<Json<CutoffUnmetResponse>, ApiError> {
-    principal.require_curator()?;
     let view = state.upgrades.cutoff_unmet().await?;
     Ok(Json(CutoffUnmetResponse {
         items: view
@@ -622,17 +614,16 @@ fn required(value: &str, name: &str) -> Result<String, ApiError> {
 )]
 pub async fn upgrade_album_handler(
     State(state): State<ReviewState>,
-    principal: Principal,
+    curator: Curator,
     body: Bytes,
 ) -> Result<Json<UpgradeRequestResponse>, ApiError> {
-    // The role check comes before the body parse, so a plain user always
-    // hears 403 whatever they sent.
-    principal.require_curator()?;
+    // The role check, in the extractor, comes before the body parse, so a
+    // plain user always hears 403 whatever they sent.
     let body: UpgradeAlbumRequest = parse_body(&body)?;
     let outcome = state
         .upgrades
         .request(UpgradeAsk {
-            user_id: principal.user_id.clone(),
+            user_id: curator.user_id().to_owned(),
             kind: DispatchKind::Album,
             mbid: required(&body.release_group_mbid, "release_group_mbid")?,
             artist: body.artist_name,
@@ -653,17 +644,16 @@ pub async fn upgrade_album_handler(
 )]
 pub async fn upgrade_track_handler(
     State(state): State<ReviewState>,
-    principal: Principal,
+    curator: Curator,
     body: Bytes,
 ) -> Result<Json<UpgradeRequestResponse>, ApiError> {
-    // The role check comes before the body parse, so a plain user always
-    // hears 403 whatever they sent.
-    principal.require_curator()?;
+    // The role check, in the extractor, comes before the body parse, so a
+    // plain user always hears 403 whatever they sent.
     let body: UpgradeTrackRequest = parse_body(&body)?;
     let outcome = state
         .upgrades
         .request(UpgradeAsk {
-            user_id: principal.user_id.clone(),
+            user_id: curator.user_id().to_owned(),
             kind: DispatchKind::Track,
             mbid: required(&body.recording_mbid, "recording_mbid")?,
             artist: body.artist_name,

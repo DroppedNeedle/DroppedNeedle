@@ -20,13 +20,13 @@ use super::RequestsService;
 use crate::downloads::manifest::{PlannedAlbum, ReplaceVersion};
 use crate::edition::{copy_is_held, local_names};
 use crate::flows::stores::UpgradeWorklist;
-use crate::requests::auth::Principal;
 use crate::requests::dispatch::{
     DispatchError, DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTaskState,
 };
 use crate::requests::error::RequestsError;
 use crate::requests::ledger::{EditionMark, now_epoch, validate_mbid};
 use crate::requests::models::EditionAcquireResponse;
+use droppedneedle_auth::Curator;
 use droppedneedle_library::operations::models::OperationError;
 use droppedneedle_library::operations::plan::{EditionPlan, FileFate, PlanTrack};
 
@@ -161,12 +161,11 @@ impl RequestsService {
     /// a file of the copy is another version of, to replace that file.
     pub async fn acquire_edition(
         &self,
-        principal: &Principal,
+        curator: &Curator,
         release_group: &str,
         album_id: Option<&str>,
         replace_versions: bool,
     ) -> Result<EditionAcquireResponse, RequestsError> {
-        principal.require_curator()?;
         let mbid = validate_mbid(release_group)?;
         let now = now_epoch();
         if let Some(busy) = self.album_busy(&mbid).await? {
@@ -180,7 +179,7 @@ impl RequestsService {
             });
         }
         self.quota
-            .check_storage_admission(&principal.user_id, principal.role, DispatchOrigin::Edition)
+            .check_storage_admission(curator.user_id(), curator.role(), DispatchOrigin::Edition)
             .await?;
         let gap = self.gap(album_id, &mbid, replace_versions).await?;
         let (artist_name, title) = match &gap {
@@ -265,7 +264,7 @@ impl RequestsService {
             .get()
             .is_some_and(|readiness| !(readiness.sources_ready)());
         let request = DispatchRequest {
-            user_id: principal.user_id.clone(),
+            user_id: curator.user_id().to_owned(),
             kind: "edition".to_owned(),
             key: mbid.clone(),
             artist_name,

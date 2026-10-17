@@ -91,6 +91,7 @@ enum Origin {
 pub struct Principal {
     user_id: String,
     username: Option<String>,
+    display_name: Option<String>,
     role: Role,
     session_id: String,
     session_kind: SessionKind,
@@ -104,6 +105,7 @@ impl Principal {
     pub(crate) fn from_session(
         user_id: String,
         username: Option<String>,
+        display_name: Option<String>,
         role: Role,
         session_id: String,
         session_kind: SessionKind,
@@ -112,6 +114,7 @@ impl Principal {
         Self {
             user_id,
             username,
+            display_name,
             role,
             session_id,
             session_kind,
@@ -124,14 +127,19 @@ impl Principal {
     /// Weekly Mix standing grant or removing a discovery batch as its owner.
     ///
     /// Only the service that performs the work calls this, never a handler,
-    /// and `user_id` comes from the stored row the work belongs to, never
-    /// from request data. The result is never put in a request. It has no
-    /// session: it cannot create credentials, and `Curator` and `Admin`
-    /// refuse it whatever its role.
-    pub fn acting_for(user_id: impl Into<String>, role: Role) -> Self {
+    /// and `user_id` and `display_name` come from the stored row the work
+    /// belongs to, never from request data. The result is never put in a
+    /// request. It has no session: it cannot create credentials, and
+    /// `Curator` and `Admin` refuse it whatever its role.
+    pub fn acting_for(
+        user_id: impl Into<String>,
+        role: Role,
+        display_name: Option<String>,
+    ) -> Self {
         Self {
             user_id: user_id.into(),
             username: None,
+            display_name,
             role,
             session_id: String::new(),
             session_kind: SessionKind::Companion,
@@ -152,11 +160,19 @@ impl Principal {
         Self::from_session(
             user_id.to_owned(),
             None,
+            None,
             role,
             session_id.to_owned(),
             session_kind,
             Transport::Bearer,
         )
+    }
+
+    /// The same test principal shown under `display_name`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_display_name(mut self, display_name: &str) -> Self {
+        self.display_name = Some(display_name.to_owned());
+        self
     }
 
     /// Owning user id.
@@ -167,6 +183,12 @@ impl Principal {
     /// Login username, when the account has one.
     pub fn username(&self) -> Option<&str> {
         self.username.as_deref()
+    }
+
+    /// The name to show for this user, as in "requested by": the display
+    /// username, else the login, else the user id.
+    pub fn display_name(&self) -> &str {
+        self.display_name.as_deref().unwrap_or(&self.user_id)
     }
 
     /// Account role, read with the token for this request.
@@ -368,7 +390,7 @@ mod tests {
         let standard = Principal::for_tests("u", Role::Admin, "s", SessionKind::Standard);
         assert!(standard.require_standard_session().is_ok());
         assert!(
-            Principal::acting_for("u", Role::Admin)
+            Principal::acting_for("u", Role::Admin, None)
                 .require_standard_session()
                 .is_err()
         );
@@ -434,7 +456,7 @@ mod tests {
 
     #[test]
     fn work_done_for_a_user_never_proves_a_role() {
-        let acting = Principal::acting_for("u", Role::Admin);
+        let acting = Principal::acting_for("u", Role::Admin, None);
         assert_eq!(
             Admin::try_from(acting.clone()).err(),
             Some(RoleRequired::Admin)

@@ -11,7 +11,7 @@ mod edition;
 
 use std::sync::Arc;
 
-use super::auth::Principal;
+use super::auth::{auto_approves, is_admin};
 use super::bridges::FollowDecisionSink;
 use super::dispatch::{
     DispatchError, DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTaskState,
@@ -38,6 +38,7 @@ use super::sqlite::{
 use super::{RequestsState, dispatch::DownloadDispatch};
 use crate::db::AcquireDb;
 use crate::edition::chosen_edition;
+use droppedneedle_auth::{Admin, Principal, Role};
 
 /// Batch row cap (v2 `BatchAlbumRequest` schema `max_length=500`).
 const BATCH_MAX_ITEMS: usize = 500;
@@ -149,7 +150,7 @@ impl RequestsService {
         body: &AlbumIntake,
         granted: bool,
     ) -> Result<IntakeResponse, RequestsError> {
-        let role = principal.role;
+        let role = principal.role();
         let mbid = validate_mbid(&body.musicbrainz_id)?;
         let now = now_epoch();
         // Seam note: v2 resolves provider ids and release aliases through
@@ -177,9 +178,9 @@ impl RequestsService {
             return self.attach_album(principal, &existing, body).await;
         }
 
-        let gate = self.quota.request_gate(&principal.user_id, role, 1)?;
+        let gate = self.quota.request_gate(principal.user_id(), role, 1)?;
         self.quota
-            .check_storage_admission(&principal.user_id, role, DispatchOrigin::User)
+            .check_storage_admission(principal.user_id(), role, DispatchOrigin::User)
             .await?;
 
         // The library's chosen edition wins for an album it holds; the
@@ -191,7 +192,7 @@ impl RequestsService {
             .transpose()?
             .map(|release| release.to_lowercase());
         let release_mbid = self.chosen_release(&mbid).await.or(asked);
-        let needs_approval = !granted && !role.auto_approves();
+        let needs_approval = !granted && !auto_approves(role);
         let record = self.new_album_record(
             principal,
             &mbid,
@@ -204,7 +205,7 @@ impl RequestsService {
         );
         let outcome = self
             .store
-            .begin(record, &principal.user_id, gate)
+            .begin(record, principal.user_id(), gate)
             .await?
             .map_err(|refusal| QuotaLedger::refusal(&refusal))?;
         match outcome {
@@ -232,7 +233,7 @@ impl RequestsService {
                         task_id: None,
                     });
                 }
-                self.dispatch_album(&won, DispatchOrigin::User, &principal.user_id)
+                self.dispatch_album(&won, DispatchOrigin::User, principal.user_id())
                     .await
             }
         }
@@ -244,7 +245,7 @@ impl RequestsService {
         principal: &Principal,
         body: &TrackIntake,
     ) -> Result<TrackIntakeResponse, RequestsError> {
-        let role = principal.role;
+        let role = principal.role();
         let mbid = validate_mbid(&body.recording_mbid)?;
         if let Some(rg) = body.release_group_mbid.as_deref() {
             validate_mbid(rg)?;
@@ -273,20 +274,20 @@ impl RequestsService {
                 .attach_requester(
                     RequestKind::Track,
                     &mbid,
-                    &principal.user_id,
-                    Some(principal.display_name()),
+                    principal.user_id(),
+                    Some(principal.display_name().to_owned()),
                     now,
                 )
                 .await?;
             return Ok(track_duplicate(&existing));
         }
 
-        let gate = self.quota.request_gate(&principal.user_id, role, 1)?;
+        let gate = self.quota.request_gate(principal.user_id(), role, 1)?;
         self.quota
-            .check_storage_admission(&principal.user_id, role, DispatchOrigin::User)
+            .check_storage_admission(principal.user_id(), role, DispatchOrigin::User)
             .await?;
 
-        let needs_approval = !role.auto_approves();
+        let needs_approval = !auto_approves(role);
         let record = RequestRecord {
             key: mbid.to_lowercase(),
             kind: RequestKind::Track,
@@ -299,8 +300,8 @@ impl RequestsService {
             track_title: Some(track_title),
             duration_seconds: body.duration_seconds,
             track_release_group_mbid: body.release_group_mbid.clone(),
-            user_id: Some(principal.user_id.clone()),
-            requested_by_name: Some(principal.display_name()),
+            user_id: Some(principal.user_id().to_owned()),
+            requested_by_name: Some(principal.display_name().to_owned()),
             requesters: Vec::new(),
             requested_at: now,
             completed_at: None,
@@ -314,7 +315,7 @@ impl RequestsService {
         };
         let outcome = self
             .store
-            .begin(record, &principal.user_id, gate)
+            .begin(record, principal.user_id(), gate)
             .await?
             .map_err(|refusal| QuotaLedger::refusal(&refusal))?;
         match outcome {
@@ -325,8 +326,8 @@ impl RequestsService {
                     .attach_requester(
                         RequestKind::Track,
                         &mbid,
-                        &principal.user_id,
-                        Some(principal.display_name()),
+                        principal.user_id(),
+                        Some(principal.display_name().to_owned()),
                         now,
                     )
                     .await?;
@@ -358,12 +359,29 @@ impl RequestsService {
         principal: &Principal,
         body: &BatchIntake,
     ) -> Result<BatchIntakeResponse, RequestsError> {
+        self.file_batch(
+            principal.user_id(),
+            principal.display_name().to_owned(),
+            principal.role(),
+            body,
+        )
+        .await
+    }
+
+    /// File a batch for `user_id`, recorded under `name`. `role` decides
+    /// approval and quotas, as for any ask.
+    pub(crate) async fn file_batch(
+        &self,
+        user_id: &str,
+        name: String,
+        role: Role,
+        body: &BatchIntake,
+    ) -> Result<BatchIntakeResponse, RequestsError> {
         if body.items.len() > BATCH_MAX_ITEMS {
             return Err(RequestsError::InvalidInput {
                 message: format!("Batch must hold at most {BATCH_MAX_ITEMS} items"),
             });
         }
-        let role = principal.role;
         let now = now_epoch();
 
         // Dedupe pass one: raw submitted ids, case-insensitive.
@@ -394,7 +412,7 @@ impl RequestsService {
             }
         }
 
-        let needs_approval = !role.auto_approves();
+        let needs_approval = !auto_approves(role);
         let live = self.store.active_mbids(RequestKind::Album).await?;
         let mut new_items = Vec::new();
         let mut existing_items = Vec::new();
@@ -410,13 +428,7 @@ impl RequestsService {
         if new_items.is_empty() {
             for (mbid, _) in &existing_items {
                 self.store
-                    .attach_requester(
-                        RequestKind::Album,
-                        mbid,
-                        &principal.user_id,
-                        Some(principal.display_name()),
-                        now,
-                    )
+                    .attach_requester(RequestKind::Album, mbid, user_id, Some(name.clone()), now)
                     .await?;
             }
             return Ok(BatchIntakeResponse {
@@ -430,12 +442,12 @@ impl RequestsService {
         }
 
         let gate = self.quota.request_gate(
-            &principal.user_id,
+            user_id,
             role,
             u32::try_from(new_items.len()).unwrap_or(u32::MAX),
         )?;
         self.quota
-            .check_storage_admission(&principal.user_id, role, DispatchOrigin::User)
+            .check_storage_admission(user_id, role, DispatchOrigin::User)
             .await?;
 
         // Name resolution pass: unresolvable rows skip, never fail the batch.
@@ -478,8 +490,8 @@ impl RequestsService {
                 track_title: None,
                 duration_seconds: None,
                 track_release_group_mbid: None,
-                user_id: Some(principal.user_id.clone()),
-                requested_by_name: Some(principal.display_name()),
+                user_id: Some(user_id.to_owned()),
+                requested_by_name: Some(name.clone()),
                 requesters: Vec::new(),
                 requested_at: now,
                 completed_at: None,
@@ -494,7 +506,7 @@ impl RequestsService {
         }
         let outcomes = self
             .store
-            .begin_batch(records, &principal.user_id, gate)
+            .begin_batch(records, user_id, gate)
             .await?
             .map_err(|refusal| QuotaLedger::refusal(&refusal))?;
         let mut created = Vec::new();
@@ -524,13 +536,7 @@ impl RequestsService {
             .chain(existing_items.iter().map(|(mbid, _)| mbid))
         {
             self.store
-                .attach_requester(
-                    RequestKind::Album,
-                    mbid,
-                    &principal.user_id,
-                    Some(principal.display_name()),
-                    now,
-                )
+                .attach_requester(RequestKind::Album, mbid, user_id, Some(name.clone()), now)
                 .await?;
         }
 
@@ -568,7 +574,7 @@ impl RequestsService {
         let mut dispatched = 0_u32;
         for won in &created {
             match self
-                .dispatch_album(won, DispatchOrigin::User, &principal.user_id)
+                .dispatch_album(won, DispatchOrigin::User, user_id)
                 .await
             {
                 Ok(_) => {
@@ -606,7 +612,7 @@ impl RequestsService {
         ids: &[String],
         kind: RequestKind,
     ) -> Result<BatchCancelResponse, RequestsError> {
-        let is_admin = principal.role.is_admin();
+        let is_admin = is_admin(principal);
         let now = now_epoch();
         let mut cancelled = 0_u32;
         let mut failed = 0_u32;
@@ -622,7 +628,7 @@ impl RequestsService {
             let outcome = if is_admin {
                 self.admin_cancel_one(kind, &mbid, now).await?
             } else {
-                self.requester_cancel_one(kind, &mbid, &principal.user_id, now)
+                self.requester_cancel_one(kind, &mbid, principal.user_id(), now)
                     .await?
             };
             if outcome {
@@ -648,11 +654,10 @@ impl RequestsService {
     /// approval loses loudly instead of double-dispatching.
     pub async fn approve_request(
         &self,
-        principal: &Principal,
+        admin: &Admin,
         mbid: &str,
         kind: RequestKind,
     ) -> Result<ActionResponse, RequestsError> {
-        principal.require_admin()?;
         let mbid = validate_mbid(mbid)?;
         let now = now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
@@ -669,7 +674,7 @@ impl RequestsService {
             .claim_approval(
                 kind,
                 &mbid,
-                Some(principal.display_name()),
+                Some(admin.display_name().to_owned()),
                 now,
                 record.generation,
             )
@@ -688,7 +693,7 @@ impl RequestsService {
         let owner = claimed
             .user_id
             .clone()
-            .unwrap_or_else(|| principal.user_id.clone());
+            .unwrap_or_else(|| admin.user_id().to_owned());
         let request = stored_dispatch(&claimed, DispatchOrigin::Approval, &owner);
         match self.dispatch.dispatch(&request).await {
             Err(DispatchError::Validation(message)) => {
@@ -760,11 +765,10 @@ impl RequestsService {
     /// Reject one waiting ask (v2 `reject_request`).
     pub async fn reject_request(
         &self,
-        principal: &Principal,
+        admin: &Admin,
         mbid: &str,
         kind: RequestKind,
     ) -> Result<ActionResponse, RequestsError> {
-        principal.require_admin()?;
         let mbid = validate_mbid(mbid)?;
         let now = now_epoch();
         let Some(record) = self.store.get(kind, &mbid).await? else {
@@ -781,7 +785,7 @@ impl RequestsService {
             .claim_rejection(
                 kind,
                 &mbid,
-                Some(principal.display_name()),
+                Some(admin.display_name().to_owned()),
                 now,
                 record.generation,
             )
@@ -816,9 +820,9 @@ impl RequestsService {
                 message: "Request not found".to_owned(),
             });
         };
-        if !principal.role.is_admin() {
+        if !is_admin(principal) {
             return self
-                .requester_cancel_verbose(kind, &mbid, &record, &principal.user_id, now)
+                .requester_cancel_verbose(kind, &mbid, &record, principal.user_id(), now)
                 .await;
         }
         if record.status == STATUS_AWAITING_APPROVAL {
@@ -908,7 +912,7 @@ impl RequestsService {
             });
         }
         let prior_status = record.status.clone();
-        let can_dispatch = record.dispatch_authorized || principal.role.is_curator();
+        let can_dispatch = record.dispatch_authorized || auto_approves(principal.role());
         let target = if can_dispatch {
             STATUS_PENDING
         } else {
@@ -919,10 +923,10 @@ impl RequestsService {
             .claim_retry(
                 kind,
                 &mbid,
-                &principal.user_id,
+                principal.user_id(),
                 target,
                 can_dispatch,
-                !principal.role.is_admin(),
+                !is_admin(principal),
                 now,
                 record.generation,
             )
@@ -932,11 +936,11 @@ impl RequestsService {
             super::ledger::RetryClaim::Lost => {
                 let current = self.store.get(kind, &mbid).await?;
                 let current_status = current.as_ref().map(|row| row.status.as_str());
-                if !principal.role.is_admin()
+                if !is_admin(principal)
                     && current_status.is_some_and(|s| RETRYABLE_STATUSES.contains(&s))
                     && !self
                         .store
-                        .is_requester(kind, &mbid, &principal.user_id)
+                        .is_requester(kind, &mbid, principal.user_id())
                         .await?
                 {
                     return Err(RequestsError::Forbidden {
@@ -961,7 +965,7 @@ impl RequestsService {
         let owner = record
             .user_id
             .clone()
-            .unwrap_or_else(|| principal.user_id.clone());
+            .unwrap_or_else(|| principal.user_id().to_owned());
         let request = stored_dispatch(&record, DispatchOrigin::Retry, &owner);
         match self.dispatch.dispatch(&request).await {
             Err(DispatchError::Validation(message)) => {
@@ -1025,10 +1029,10 @@ impl RequestsService {
         let Some(record) = self.store.get(kind, &mbid).await? else {
             return Ok(ClearHistoryResponse { success: false });
         };
-        if !principal.role.is_admin()
+        if !is_admin(principal)
             && !self
                 .store
-                .is_requester(kind, &mbid, &principal.user_id)
+                .is_requester(kind, &mbid, principal.user_id())
                 .await?
         {
             return Err(RequestsError::Forbidden {
@@ -1038,10 +1042,10 @@ impl RequestsService {
         if !CLEARABLE_STATUSES.contains(&record.status.as_str()) {
             return Ok(ClearHistoryResponse { success: false });
         }
-        let cleared = if principal.role.is_admin() {
+        let cleared = if is_admin(principal) {
             self.store.delete(kind, &mbid).await?
         } else {
-            self.store.dismiss(kind, &mbid, &principal.user_id).await?
+            self.store.dismiss(kind, &mbid, principal.user_id()).await?
         };
         Ok(ClearHistoryResponse { success: cleared })
     }
@@ -1054,7 +1058,7 @@ impl RequestsService {
         principal: &Principal,
     ) -> Result<ActiveRequestsResponse, RequestsError> {
         self.sync_request_statuses().await?;
-        let owner = (!principal.role.is_admin()).then_some(principal.user_id.as_str());
+        let owner = (!is_admin(principal)).then_some(principal.user_id());
         let rows = self.store.active(owner, None).await?;
         let items = self.to_items(&rows).await;
         Ok(ActiveRequestsResponse {
@@ -1069,7 +1073,7 @@ impl RequestsService {
         principal: &Principal,
     ) -> Result<ActiveCountResponse, RequestsError> {
         self.sync_request_statuses().await?;
-        let owner = (!principal.role.is_admin()).then_some(principal.user_id.as_str());
+        let owner = (!is_admin(principal)).then_some(principal.user_id());
         Ok(ActiveCountResponse {
             count: self.store.active(owner, None).await?.len() as u32,
         })
@@ -1106,7 +1110,7 @@ impl RequestsService {
                 )
             }
         };
-        let owner = (!principal.role.is_admin()).then_some(principal.user_id.as_str());
+        let owner = (!is_admin(principal)).then_some(principal.user_id());
         let offset = page.saturating_sub(1).saturating_mul(page_size);
         let (rows, total) = self
             .store
@@ -1133,9 +1137,8 @@ impl RequestsService {
     /// Rows waiting for review (admin only in v2).
     pub async fn pending_approvals(
         &self,
-        principal: &Principal,
+        _admin: &Admin,
     ) -> Result<ActiveRequestsResponse, RequestsError> {
-        principal.require_admin()?;
         let rows = self.store.pending_approvals().await?;
         let items = self.to_items(&rows).await;
         Ok(ActiveRequestsResponse {
@@ -1148,9 +1151,8 @@ impl RequestsService {
     /// plus personal-mix rows (v2 sums all three sources).
     pub async fn pending_approval_count(
         &self,
-        principal: &Principal,
+        _admin: &Admin,
     ) -> Result<ActiveCountResponse, RequestsError> {
-        principal.require_admin()?;
         let asks = self.store.pending_approvals().await?.len() as u32;
         let follows = self.follows.pending_units().await?;
         let mixes = self.mixes.pending_count().await?;
@@ -1161,10 +1163,10 @@ impl RequestsService {
 
     /// Wanted watches plus the still-retrying set. Admins see every row.
     pub async fn wanted(&self, principal: &Principal) -> Result<WantedResponse, RequestsError> {
-        let is_admin = principal.role.is_admin();
+        let is_admin = is_admin(principal);
         let watches = self
             .wanted
-            .watches_for(&principal.user_id, is_admin)
+            .watches_for(principal.user_id(), is_admin)
             .await?;
         let items = watches
             .into_iter()
@@ -1201,11 +1203,11 @@ impl RequestsService {
         &self,
         principal: &Principal,
     ) -> Result<Vec<WantedRetryingItem>, RequestsError> {
-        let is_admin = principal.role.is_admin();
+        let is_admin = is_admin(principal);
         let mut out = Vec::new();
         for status in [STATUS_FAILED, STATUS_INCOMPLETE] {
             for record in self.store.with_status(RequestKind::Album, status).await? {
-                if !is_admin && !record.has_requester(&principal.user_id) {
+                if !is_admin && !record.has_requester(principal.user_id()) {
                     continue;
                 }
                 let Some(task_id) = record.task_id.as_deref() else {
@@ -1255,7 +1257,7 @@ impl RequestsService {
         let mbid = validate_mbid(mbid)?;
         let change = self
             .wanted
-            .stop(&mbid, &principal.user_id, principal.role.is_admin())
+            .stop(&mbid, principal.user_id(), is_admin(principal))
             .await?;
         watch_action(change)
     }
@@ -1269,12 +1271,7 @@ impl RequestsService {
         let mbid = validate_mbid(mbid)?;
         let change = self
             .wanted
-            .resume(
-                &mbid,
-                &principal.user_id,
-                principal.role.is_admin(),
-                now_epoch(),
-            )
+            .resume(&mbid, principal.user_id(), is_admin(principal), now_epoch())
             .await?;
         watch_action(change)
     }
@@ -1288,7 +1285,7 @@ impl RequestsService {
         let mbid = validate_mbid(mbid)?;
         let change = self
             .wanted
-            .mark_seen(&mbid, &principal.user_id, principal.role.is_admin())
+            .mark_seen(&mbid, principal.user_id(), is_admin(principal))
             .await?;
         watch_action(change)
     }
@@ -1296,9 +1293,8 @@ impl RequestsService {
     /// Pending auto-download approvals (admin).
     pub async fn auto_download_approvals(
         &self,
-        principal: &Principal,
+        _admin: &Admin,
     ) -> Result<AutoDownloadApprovalsResponse, RequestsError> {
-        principal.require_admin()?;
         let items = self
             .follows
             .pending()
@@ -1321,11 +1317,10 @@ impl RequestsService {
     /// Approve one auto-download grant (admin).
     pub async fn approve_auto_download(
         &self,
-        principal: &Principal,
+        admin: &Admin,
         user_id: &str,
         artist_mbid: &str,
     ) -> Result<ActionResponse, RequestsError> {
-        principal.require_admin()?;
         validate_mbid(artist_mbid)?;
         let Some(row) = self
             .follows
@@ -1333,7 +1328,7 @@ impl RequestsService {
                 user_id,
                 artist_mbid,
                 "approved",
-                reviewer(principal),
+                reviewer(admin),
                 now_epoch(),
             )
             .await?
@@ -1354,11 +1349,10 @@ impl RequestsService {
     /// Reject one auto-download ask, keeping the follow (admin; as v2 does).
     pub async fn reject_auto_download(
         &self,
-        principal: &Principal,
+        admin: &Admin,
         user_id: &str,
         artist_mbid: &str,
     ) -> Result<ActionResponse, RequestsError> {
-        principal.require_admin()?;
         validate_mbid(artist_mbid)?;
         if self
             .follows
@@ -1366,7 +1360,7 @@ impl RequestsService {
                 user_id,
                 artist_mbid,
                 "rejected",
-                reviewer(principal),
+                reviewer(admin),
                 now_epoch(),
             )
             .await?
@@ -1388,15 +1382,14 @@ impl RequestsService {
     /// Revoke one auto-download grant, keeping the follow (admin; as v2 does).
     pub async fn revoke_auto_download(
         &self,
-        principal: &Principal,
+        admin: &Admin,
         user_id: &str,
         artist_mbid: &str,
     ) -> Result<ActionResponse, RequestsError> {
-        principal.require_admin()?;
         validate_mbid(artist_mbid)?;
         if self
             .follows
-            .revoke(user_id, artist_mbid, reviewer(principal), now_epoch())
+            .revoke(user_id, artist_mbid, reviewer(admin), now_epoch())
             .await?
             .is_none()
         {
@@ -1416,9 +1409,8 @@ impl RequestsService {
     /// Pending bulk-approval batches (admin).
     pub async fn auto_download_batches(
         &self,
-        principal: &Principal,
+        _admin: &Admin,
     ) -> Result<ApprovalBatchListResponse, RequestsError> {
-        principal.require_admin()?;
         let batches = self
             .follows
             .pending_batches()
@@ -1447,33 +1439,32 @@ impl RequestsService {
     /// Approve one bulk batch (admin).
     pub async fn approve_auto_download_batch(
         &self,
-        principal: &Principal,
+        admin: &Admin,
         batch_id: &str,
     ) -> Result<ActionResponse, RequestsError> {
-        self.decide_batch(principal, batch_id, "approved").await
+        self.decide_batch(admin, batch_id, "approved").await
     }
 
     /// Reject one bulk batch (admin).
     pub async fn reject_auto_download_batch(
         &self,
-        principal: &Principal,
+        admin: &Admin,
         batch_id: &str,
     ) -> Result<ActionResponse, RequestsError> {
-        self.decide_batch(principal, batch_id, "rejected").await
+        self.decide_batch(admin, batch_id, "rejected").await
     }
 
     /// Decide every pending row of one batch and carry the verdict into the
     /// follow rows.
     async fn decide_batch(
         &self,
-        principal: &Principal,
+        admin: &Admin,
         batch_id: &str,
         state: &str,
     ) -> Result<ActionResponse, RequestsError> {
-        principal.require_admin()?;
         let rows = self
             .follows
-            .decide_batch(batch_id, state, reviewer(principal), now_epoch())
+            .decide_batch(batch_id, state, reviewer(admin), now_epoch())
             .await?;
         if rows.is_empty() {
             return Ok(ActionResponse {
@@ -1501,9 +1492,8 @@ impl RequestsService {
     /// Pending personal-mix approvals (admin).
     pub async fn mix_approvals(
         &self,
-        principal: &Principal,
+        _admin: &Admin,
     ) -> Result<PersonalMixApprovalsResponse, RequestsError> {
-        principal.require_admin()?;
         let items = self
             .mixes
             .pending()
@@ -1524,13 +1514,12 @@ impl RequestsService {
     /// Approve one mix auto-request grant (admin).
     pub async fn approve_mix(
         &self,
-        principal: &Principal,
+        admin: &Admin,
         user_id: &str,
     ) -> Result<ActionResponse, RequestsError> {
-        principal.require_admin()?;
         if !self
             .mixes
-            .decide(user_id, "approved", reviewer(principal), now_epoch())
+            .decide(user_id, "approved", reviewer(admin), now_epoch())
             .await?
         {
             return Ok(no_match());
@@ -1544,13 +1533,12 @@ impl RequestsService {
     /// Reject one mix auto-request ask (admin).
     pub async fn reject_mix(
         &self,
-        principal: &Principal,
+        admin: &Admin,
         user_id: &str,
     ) -> Result<ActionResponse, RequestsError> {
-        principal.require_admin()?;
         if !self
             .mixes
-            .decide(user_id, "rejected", reviewer(principal), now_epoch())
+            .decide(user_id, "rejected", reviewer(admin), now_epoch())
             .await?
         {
             return Ok(no_match());
@@ -1568,13 +1556,12 @@ impl RequestsService {
     /// Revoke one mix auto-request grant (admin).
     pub async fn revoke_mix(
         &self,
-        principal: &Principal,
+        admin: &Admin,
         user_id: &str,
     ) -> Result<ActionResponse, RequestsError> {
-        principal.require_admin()?;
         if !self
             .mixes
-            .revoke(user_id, reviewer(principal), now_epoch())
+            .revoke(user_id, reviewer(admin), now_epoch())
             .await?
         {
             return Ok(no_match());
@@ -1601,17 +1588,17 @@ impl RequestsService {
                 message: "Weekly Mix is not available on this server.".to_owned(),
             });
         };
-        if !mixer.is_linked(&principal.user_id).await {
+        if !mixer.is_linked(principal.user_id()).await {
             return Err(RequestsError::InvalidInput {
                 message: "Connect ListenBrainz first to build Your Weekly Mix".to_owned(),
             });
         }
-        if !self.mixes.refresh_start(&principal.user_id)? {
+        if !self.mixes.refresh_start(principal.user_id())? {
             return Ok(RefreshResponse {
                 status: "already_running".to_owned(),
             });
         }
-        mixer.spawn_refresh(principal.user_id.clone());
+        mixer.spawn_refresh(principal.user_id().to_owned());
         Ok(RefreshResponse {
             status: "started".to_owned(),
         })
@@ -1718,8 +1705,8 @@ impl RequestsService {
             .attach_requester(
                 RequestKind::Album,
                 &existing.key,
-                &principal.user_id,
-                Some(principal.display_name()),
+                principal.user_id(),
+                Some(principal.display_name().to_owned()),
                 now_epoch(),
             )
             .await?;
@@ -1781,8 +1768,8 @@ impl RequestsService {
             track_title: None,
             duration_seconds: None,
             track_release_group_mbid: None,
-            user_id: Some(principal.user_id.clone()),
-            requested_by_name: Some(principal.display_name()),
+            user_id: Some(principal.user_id().to_owned()),
+            requested_by_name: Some(principal.display_name().to_owned()),
             requesters: Vec::new(),
             requested_at: now,
             completed_at: None,
@@ -2240,7 +2227,10 @@ async fn cancel_linked(dispatch: &dyn DownloadDispatch, task_id: &str) -> bool {
 
 /// Reviewer stamp for approval decisions: acting id plus display name.
 fn reviewer(principal: &Principal) -> (&str, Option<String>) {
-    (principal.user_id.as_str(), Some(principal.display_name()))
+    (
+        principal.user_id(),
+        Some(principal.display_name().to_owned()),
+    )
 }
 
 /// Map a guarded watch change to the action reply (v2 `_owned_watch`).

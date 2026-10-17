@@ -35,7 +35,7 @@ use super::db::now_epoch;
 use super::dispatch::Journal;
 use super::downloads::store::{NewTask, TaskDetails, TaskRow};
 use super::edition::library_holds;
-use super::requests::auth::Principal;
+use super::requests::auth::is_admin;
 use super::requests::dispatch::DispatchOrigin;
 use super::requests::error::RequestsError;
 use super::requests::ledger::{WATCH_DORMANT, WATCH_FULFILLED, WATCH_STOPPED, WantedWatch};
@@ -43,6 +43,7 @@ use super::requests::quota::QuotaLedger;
 use super::requests::sqlite::WantedStore;
 use super::target::{SearchTarget, Targets};
 use super::worker::{DownloadWorker, Source};
+use droppedneedle_auth::Principal;
 use droppedneedle_kernel::events::{EventSink, SearchJobUpdated, UserNotice, new_event_id};
 
 /// How long one source may take to answer a manual search.
@@ -271,7 +272,7 @@ impl SearchJobs {
         }
         let job = NewJob {
             id: uuid::Uuid::new_v4().simple().to_string(),
-            user_id: principal.user_id.clone(),
+            user_id: principal.user_id().to_owned(),
             artist_name,
             album_title,
             year: ask.year,
@@ -290,7 +291,7 @@ impl SearchJobs {
             let handle = tokio::spawn(Arc::clone(self).run(job));
             running.insert(job_id.clone(), handle.abort_handle());
         }
-        self.announce(&principal.user_id, &job_id, SEARCHING, 0);
+        self.announce(principal.user_id(), &job_id, SEARCHING, 0);
         Ok(StartOutcome::Searching(job_id))
     }
 
@@ -346,8 +347,8 @@ impl SearchJobs {
             .await
             .map_err(SearchJobError::Internal)?
             .ok_or(SearchJobError::NotFound)?;
-        let admin = admin_ok && principal.role.is_admin();
-        if row.user_id != principal.user_id && !admin {
+        let admin = admin_ok && is_admin(principal);
+        if row.user_id != principal.user_id() && !admin {
             return Err(SearchJobError::Forbidden);
         }
         Ok(row)
@@ -420,7 +421,7 @@ impl SearchJobs {
             )));
         }
         self.quota
-            .check_storage_admission(&row.user_id, principal.role, DispatchOrigin::User)
+            .check_storage_admission(&row.user_id, principal.role(), DispatchOrigin::User)
             .await
             .map_err(SearchJobError::Refused)?;
         let task_id = uuid::Uuid::new_v4().simple().to_string();

@@ -22,12 +22,19 @@ use droppedneedle_acquire::requests::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DownloadDispatch as _,
 };
 use droppedneedle_acquire::worker::{DownloadWorker, WorkerConfig};
+use droppedneedle_auth::Role;
+use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_kernel::ids::UuidGenerator;
 use serde_json::Value;
 use tower::ServiceExt as _;
 
-const ADMIN: &str = "u-root:admin:Root";
-const USER: &str = "u-ada:user:Ada";
+use crate::common::auth::{test_principal, with_test_principal};
+
+/// A signed-in caller: user id and role.
+type Who = (&'static str, Role);
+
+const ADMIN: Who = ("u-root", Role::Admin);
+const USER: Who = ("u-ada", Role::User);
 
 fn task(id: &str) -> NewTask {
     NewTask {
@@ -80,14 +87,14 @@ async fn journal() -> Arc<Journal> {
     journal
 }
 
-fn post(uri: &str, identity: &str) -> Request<Body> {
-    Request::builder()
+fn post(uri: &str, who: Who) -> (Request<Body>, Who) {
+    let request = Request::builder()
         .method(Method::POST)
         .uri(uri)
-        .header("x-slice-principal", identity)
         .header("content-type", "application/json")
         .body(Body::empty())
-        .unwrap()
+        .unwrap();
+    (request, who)
 }
 
 /// A worker with the landing attached and no download client configured.
@@ -112,8 +119,9 @@ fn worker_over(journal: &Arc<Journal>) -> Arc<DownloadWorker> {
     )
 }
 
-async fn send(journal: &Arc<Journal>, req: Request<Body>) -> (StatusCode, Value) {
-    let response = downloads_router(worker_over(journal))
+async fn send(journal: &Arc<Journal>, (req, who): (Request<Body>, Who)) -> (StatusCode, Value) {
+    let principal = test_principal(who.0, who.1, "sess-test", SessionKind::Standard);
+    let response = with_test_principal(downloads_router(worker_over(journal)), principal)
         .oneshot(req)
         .await
         .unwrap();
@@ -321,13 +329,13 @@ async fn failed_retry_insert_retries_next_pass() {
     );
 }
 
-fn get(uri: &str, identity: &str) -> Request<Body> {
-    Request::builder()
+fn get(uri: &str, who: Who) -> (Request<Body>, Who) {
+    let request = Request::builder()
         .method(Method::GET)
         .uri(uri)
-        .header("x-slice-principal", identity)
         .body(Body::empty())
-        .unwrap()
+        .unwrap();
+    (request, who)
 }
 
 // The queue journey: a user sees only their own tasks, each failure

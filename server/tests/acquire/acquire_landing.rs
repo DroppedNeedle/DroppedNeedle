@@ -17,6 +17,8 @@ use droppedneedle_acquire::landing::{
 };
 use droppedneedle_acquire::wiring::settled_hook;
 use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, Source, WorkerConfig};
+use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::identify::sources::{ReleaseHit, ReleaseSource, SourceError};
@@ -27,7 +29,7 @@ use droppedneedle_library::tags::save::{TagEdit, save_tags};
 use droppedneedle_library::wiring::LibrarySetup;
 use futures_util::future::BoxFuture;
 
-use crate::common::auth::AuthRig;
+use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 
 const GOOD_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000001";
 const GOOD_RELEASE: &str = "6d0b7a1e-0000-4000-8000-000000000002";
@@ -173,12 +175,9 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
             .expect("reads bundle");
-    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        auth.deps.clone(),
-        ids.clone(),
-        &mut reads.collections,
-    )
-    .expect("acquire bundle");
+    let acquire =
+        droppedneedle_acquire::AcquireSetup::for_tests(ids.clone(), &mut reads.collections)
+            .expect("acquire bundle");
     acquire
         .db
         .add_user("u-ada", "Ada", "user")
@@ -410,21 +409,21 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     assert!(!acquire.flows.library.contains(BAD_GROUP).await);
 }
 
-/// POST or GET one held-import route as `identity` (`user:role:name`).
+/// POST or GET one held-import route as `principal`.
 async fn held_call(
     worker: &Arc<DownloadWorker>,
     method: &str,
     uri: &str,
-    identity: &str,
+    principal: &Principal,
 ) -> (axum::http::StatusCode, serde_json::Value) {
     use tower::ServiceExt as _;
     let request = axum::http::Request::builder()
         .method(method)
         .uri(uri)
-        .header("x-slice-principal", identity)
         .body(axum::body::Body::empty())
         .expect("request");
-    let response = droppedneedle_acquire::downloads::downloads_router(worker.clone())
+    let router = droppedneedle_acquire::downloads::downloads_router(worker.clone());
+    let response = with_test_principal(router, principal.clone())
         .oneshot(request)
         .await
         .expect("response");
@@ -461,12 +460,9 @@ async fn held_files_import_as_upgrades_or_discard() {
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
             .expect("reads bundle");
-    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        auth.deps.clone(),
-        ids.clone(),
-        &mut reads.collections,
-    )
-    .expect("acquire bundle");
+    let acquire =
+        droppedneedle_acquire::AcquireSetup::for_tests(ids.clone(), &mut reads.collections)
+            .expect("acquire bundle");
     acquire
         .db
         .add_user("u-ada", "Ada", "user")
@@ -596,13 +592,13 @@ async fn held_files_import_as_upgrades_or_discard() {
         .await
         .expect("held rows");
     let review = worker(Vec::new());
-    const ADA: &str = "u-ada:user:Ada";
+    let ada = &test_principal("u-ada", Role::User, "sess-ada", SessionKind::Standard);
 
     let import = |id: i64| format!("/downloads/held/{id}/import");
-    let (status, _) = held_call(&review, "POST", &import(seeded[1]), ADA).await;
+    let (status, _) = held_call(&review, "POST", &import(seeded[1]), ada).await;
     assert_eq!(status, 404, "someone else's held file is not found");
 
-    let (status, body) = held_call(&review, "POST", &import(seeded[0]), ADA).await;
+    let (status, body) = held_call(&review, "POST", &import(seeded[0]), ada).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["status"], "imported");
     let new_copy = music.join("Portishead/Dummy/0101 Mysterons.flac");
@@ -620,7 +616,7 @@ async fn held_files_import_as_upgrades_or_discard() {
     assert_eq!(formats, vec!["flac".to_owned()]);
 
     let discard = format!("/downloads/held/{}/discard", seeded[2]);
-    let (status, body) = held_call(&review, "POST", &discard, ADA).await;
+    let (status, body) = held_call(&review, "POST", &discard, ada).await;
     assert_eq!(status, 200, "{body}");
     assert!(
         !held_dir.join("spare.flac").exists(),
@@ -629,7 +625,7 @@ async fn held_files_import_as_upgrades_or_discard() {
 
     // An upgrade file whose quality cannot be read is refused, never taken
     // for "no better" and deleted: the file and its row stay.
-    let (status, body) = held_call(&review, "POST", &import(seeded[3]), ADA).await;
+    let (status, body) = held_call(&review, "POST", &import(seeded[3]), ada).await;
     assert_eq!(status, 409, "{body}");
     assert!(
         held_dir.join("broken.flac").is_file(),
@@ -637,7 +633,7 @@ async fn held_files_import_as_upgrades_or_discard() {
     );
     assert!(new_copy.is_file(), "the library copy is untouched");
 
-    let (status, body) = held_call(&review, "GET", "/downloads/held", ADA).await;
+    let (status, body) = held_call(&review, "GET", "/downloads/held", ada).await;
     assert_eq!(status, 200);
     let left: Vec<i64> = body["items"]
         .as_array()
@@ -659,12 +655,8 @@ async fn bare_acquire() -> (droppedneedle_acquire::AcquireSetup, PathBuf, AuthRi
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
             .expect("reads bundle");
-    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        auth.deps.clone(),
-        ids,
-        &mut reads.collections,
-    )
-    .expect("acquire bundle");
+    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(ids, &mut reads.collections)
+        .expect("acquire bundle");
     acquire
         .db
         .add_user("u-ada", "Ada", "user")
@@ -923,12 +915,9 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
             .expect("reads bundle");
-    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        auth.deps.clone(),
-        ids.clone(),
-        &mut reads.collections,
-    )
-    .expect("acquire bundle");
+    let acquire =
+        droppedneedle_acquire::AcquireSetup::for_tests(ids.clone(), &mut reads.collections)
+            .expect("acquire bundle");
     let dir = acquire
         .db
         .path()

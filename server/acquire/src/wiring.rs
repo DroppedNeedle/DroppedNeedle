@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axum::{Router, extract::Request, middleware::Next, response::Response};
+use axum::Router;
 use futures_util::future::BoxFuture;
 
 use super::db::AcquireDb;
@@ -71,10 +71,7 @@ use super::usenet::policy::{QualityTier, UsenetPolicy};
 use super::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
 use super::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
 use super::worker::{DownloadWorker, Source, SourceSet, WorkerConfig, run_startup_recovery};
-use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_auth::users::roles::Role as AuthRole;
-use droppedneedle_auth::users::stores::StoreError;
 use droppedneedle_catalog::reads::collections::state::CollectionsState;
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::db::{DurableWorkWakeups, JobState, WriteLane};
@@ -405,8 +402,6 @@ pub struct AcquireSetup {
     pub requests: RequestsState,
     /// Imports deps (config-backed settings, bridged follows).
     pub imports: ImportsDeps,
-    /// Auth bundle, for principal translation and admin refresh.
-    pub users: UsersDeps,
     /// Unified dispatch behind both dispatch spellings.
     pub dispatch: Arc<UnifiedDispatch>,
     /// Shared download journal.
@@ -773,7 +768,6 @@ impl AcquireSetup {
             jobs,
             executor,
             probes: Arc::new(LiveProbes::bundle(&probes)),
-            auth: users.clone(),
             ids: ids.clone(),
             base_path: config.base_path.clone(),
             trusted_proxies: config.trusted_proxies.clone(),
@@ -850,7 +844,6 @@ impl AcquireSetup {
             db,
             requests: core.requests,
             imports,
-            users,
             dispatch: core.dispatch,
             journal: core.journal,
             flows: core.flows,
@@ -917,7 +910,6 @@ impl AcquireSetup {
     /// production. Call inside a tokio runtime.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(
-        users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
         collections: &mut CollectionsState,
     ) -> Result<Self, String> {
@@ -1023,7 +1015,6 @@ impl AcquireSetup {
                 newznab: Arc::new(ScriptedNewznab::new()),
                 lidarr: Arc::new(ScriptedLidarr::new()),
             }),
-            auth: users.clone(),
             ids: ids.clone(),
             base_path: String::new(),
             trusted_proxies: Default::default(),
@@ -1077,7 +1068,6 @@ impl AcquireSetup {
             db,
             requests: core.requests,
             imports,
-            users,
             dispatch: core.dispatch,
             journal: core.journal,
             flows: core.flows,
@@ -1095,9 +1085,7 @@ impl AcquireSetup {
     }
 
     /// Relative-path routers for nesting under `/api/v3` inside the
-    /// session gate. The requests and task legs share one
-    /// principal-translation layer (both extract the requests
-    /// `Principal`) so their handlers keep working unchanged.
+    /// session gate. Each handler names who may call it.
     pub fn gated_router(&self) -> Router {
         let upgrades = super::downloads::upgrades::Upgrades::new(
             self.flows.worklist.clone(),
@@ -1115,13 +1103,7 @@ impl AcquireSetup {
             .merge(super::drop_import::http::drop_import_routes(
                 self.drops.clone(),
             ));
-        let requests = legs.layer(axum::middleware::from_fn_with_state(
-            self.users.clone(),
-            translate_principal,
-        ));
-        Router::new()
-            .merge(requests)
-            .merge(imports_gated_router(self.imports.clone()))
+        legs.merge(imports_gated_router(self.imports.clone()))
     }
 
     /// Spotify OAuth callback for mounting under `/api/v3` outside the
@@ -1275,51 +1257,6 @@ impl AcquireSetup {
             }
         }))
     }
-}
-
-/// Resolve the requests principal from the stashed session, mirroring the
-/// reads collections translation: the role rereads the user row every
-/// request, and a session whose account is gone reads as stale (401).
-async fn translate_principal(
-    axum::extract::State(users): axum::extract::State<UsersDeps>,
-    mut request: Request,
-    next: Next,
-) -> Response {
-    use super::requests::auth::Principal;
-    use axum::response::IntoResponse;
-    use droppedneedle_kernel::error::{ApiError, Unavailable};
-
-    let missing = || ApiError::unauthorized("Authentication required").into_response();
-    let Some(session) = request.extensions().get::<CurrentSession>().cloned() else {
-        return missing();
-    };
-    let user = match users.users.get_by_id(&session.user_id).await {
-        Ok(Some(user)) => user,
-        Ok(None) => return missing(),
-        Err(StoreError::Conflict) => {
-            return ApiError::conflict("Conflicting state").into_response();
-        }
-        Err(StoreError::Busy) => {
-            return ApiError::unavailable(
-                Unavailable::ServerBusy,
-                "acquire.auth.user: database busy",
-            )
-            .into_response();
-        }
-        Err(StoreError::Internal(cause)) => {
-            return ApiError::internal(format_args!("user lookup failed: {cause}")).into_response();
-        }
-    };
-    request.extensions_mut().insert(Principal {
-        user_id: user.id,
-        username: user.username_display.or(user.username),
-        role: match user.role {
-            AuthRole::User => super::requests::auth::Role::User,
-            AuthRole::Trusted => super::requests::auth::Role::Trusted,
-            AuthRole::Admin => super::requests::auth::Role::Admin,
-        },
-    });
-    next.run(request).await
 }
 
 /// Flows bundle over the shared durable stores and live settings.

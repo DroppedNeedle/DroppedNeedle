@@ -145,7 +145,8 @@ impl SessionStore for SqliteSessionStore {
         // gone matches nothing, and the role is the one for this request.
         let row = sqlx::query(
             "SELECT t.id, t.user_id, t.token_hash, t.session_kind, t.user_agent, t.issued_at, \
-             t.expires_at, t.last_seen_at, t.revoked, u.username, u.role \
+             t.expires_at, t.last_seen_at, t.revoked, u.username, \
+             COALESCE(u.username_display, u.username) AS display_name, u.role \
              FROM auth_tokens t JOIN auth_users u ON u.id = t.user_id WHERE t.token_hash = ?",
         )
         .bind(token_hash)
@@ -221,6 +222,7 @@ impl SessionStore for SqliteSessionStore {
                 user_agent,
             },
             username: row.get("username"),
+            display_name: row.get("display_name"),
             role: Role::from_stored(&role),
         }))
     }

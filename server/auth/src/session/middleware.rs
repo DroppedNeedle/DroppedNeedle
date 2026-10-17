@@ -237,6 +237,7 @@ where
     request.extensions_mut().insert(Principal::from_session(
         record.user_id,
         valid.username,
+        valid.display_name,
         valid.role,
         record.id,
         record.kind,

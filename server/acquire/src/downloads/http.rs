@@ -29,10 +29,11 @@ use super::queue_rows::{ListFilter, Viewer};
 use super::state::TaskStatus;
 use super::store::QuarantineRow;
 use super::upgrades::Upgrades;
-use crate::requests::{auth::Principal, error::RequestsError};
+use crate::requests::{auth::is_admin, error::RequestsError};
 use crate::search_jobs::candidates::SearchCandidateView;
 use crate::search_jobs::{AlbumSearch, JobView, SearchJobError, SearchJobs, StartOutcome};
 use crate::worker::{DownloadWorker, ReimportError};
+use droppedneedle_auth::{Admin, Principal, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
@@ -430,8 +431,8 @@ pub struct DownloadsState {
 
 fn viewer(principal: &Principal) -> Viewer {
     Viewer {
-        user_id: principal.user_id.clone(),
-        admin: principal.role.is_admin(),
+        user_id: principal.user_id().to_owned(),
+        admin: is_admin(principal),
     }
 }
 
@@ -469,7 +470,7 @@ fn page_of(value: Option<i64>, default: i64, max: i64, name: &str) -> Result<i64
 )]
 pub async fn list_tasks_handler(
     State(state): State<DownloadsState>,
-    principal: Principal,
+    User(principal): User,
     ValidQuery(query): ValidQuery<DownloadListQuery>,
 ) -> Result<Json<DownloadListResponse>, ApiError> {
     let status = match query.status.as_deref() {
@@ -504,7 +505,7 @@ pub async fn list_tasks_handler(
 )]
 pub async fn get_task_handler(
     State(state): State<DownloadsState>,
-    principal: Principal,
+    User(principal): User,
     Path(task_id): Path<String>,
 ) -> Result<Json<DownloadTaskResponse>, ApiError> {
     let view = state.queue.get(&viewer(&principal), &task_id).await?;
@@ -522,7 +523,7 @@ pub async fn get_task_handler(
 )]
 pub async fn task_files_handler(
     State(state): State<DownloadsState>,
-    principal: Principal,
+    User(principal): User,
     Path(task_id): Path<String>,
 ) -> Result<Json<DownloadFilesResponse>, ApiError> {
     let (row, files) = state.queue.files(&viewer(&principal), &task_id).await?;
@@ -556,7 +557,7 @@ pub async fn task_files_handler(
 )]
 pub async fn cancel_task_handler(
     State(state): State<DownloadsState>,
-    principal: Principal,
+    User(principal): User,
     Path(task_id): Path<String>,
 ) -> Result<Json<DownloadActionResponse>, ApiError> {
     state.queue.cancel(&viewer(&principal), &task_id).await?;
@@ -576,7 +577,7 @@ pub async fn cancel_task_handler(
 )]
 pub async fn next_source_handler(
     State(state): State<DownloadsState>,
-    principal: Principal,
+    User(principal): User,
     Path(task_id): Path<String>,
     ValidJson(body): ValidJson<NextSourceRequest>,
 ) -> Result<Json<NextSourceResponse>, ApiError> {
@@ -603,7 +604,7 @@ pub async fn next_source_handler(
 )]
 pub async fn retry_task_handler(
     State(state): State<DownloadsState>,
-    principal: Principal,
+    User(principal): User,
     Path(task_id): Path<String>,
 ) -> Result<Json<RetryDownloadResponse>, ApiError> {
     let task_id = state.queue.retry(&viewer(&principal), &task_id).await?;
@@ -623,7 +624,7 @@ pub async fn retry_task_handler(
 )]
 pub async fn clear_handler(
     State(state): State<DownloadsState>,
-    principal: Principal,
+    User(principal): User,
 ) -> Result<Json<ClearDownloadsResponse>, ApiError> {
     let cleared = state.queue.clear(&viewer(&principal)).await?;
     Ok(Json(ClearDownloadsResponse { cleared }))
@@ -639,7 +640,7 @@ pub async fn clear_handler(
 )]
 pub async fn stop_all_retries_handler(
     State(state): State<DownloadsState>,
-    principal: Principal,
+    User(principal): User,
 ) -> Result<Json<StopRetriesResponse>, ApiError> {
     let stopped = state.queue.stop_all_retries(&viewer(&principal)).await?;
     Ok(Json(StopRetriesResponse { stopped }))
@@ -655,7 +656,7 @@ pub async fn stop_all_retries_handler(
 )]
 pub async fn retry_all_failed_handler(
     State(state): State<DownloadsState>,
-    principal: Principal,
+    User(principal): User,
 ) -> Result<Json<RetryAllResponse>, ApiError> {
     let retried = state.queue.retry_all_failed(&viewer(&principal)).await?;
     Ok(Json(RetryAllResponse { retried }))
@@ -671,7 +672,7 @@ pub async fn retry_all_failed_handler(
 )]
 pub async fn activity_summary_handler(
     State(state): State<DownloadsState>,
-    principal: Principal,
+    User(principal): User,
 ) -> Result<Json<DownloadActivitySummaryResponse>, ApiError> {
     let summary = state.queue.activity(&viewer(&principal)).await?;
     Ok(Json(DownloadActivitySummaryResponse {
@@ -694,10 +695,9 @@ pub async fn activity_summary_handler(
 )]
 pub async fn list_quarantine_handler(
     State(state): State<DownloadsState>,
-    principal: Principal,
+    _admin: Admin,
     ValidQuery(query): ValidQuery<QuarantineQuery>,
 ) -> Result<Json<QuarantineListResponse>, ApiError> {
-    principal.require_admin()?;
     let page = page_of(query.page, 1, i64::MAX, "page")?;
     let page_size = page_of(query.page_size, 50, 200, "page_size")?;
     let rows = state.queue.quarantine(page, page_size).await?;
@@ -718,12 +718,11 @@ pub async fn list_quarantine_handler(
 )]
 pub async fn delete_quarantine_handler(
     State(state): State<DownloadsState>,
-    principal: Principal,
+    _admin: Admin,
     Path(quarantine_id): Path<String>,
 ) -> Result<Json<DownloadActionResponse>, ApiError> {
-    // The role check comes before the id parse, so a non-admin always
-    // hears 403 whatever the id.
-    principal.require_admin()?;
+    // The role check, in the extractor, comes before the id parse, so a
+    // non-admin always hears 403 whatever the id.
     let id = quarantine_id
         .parse::<i64>()
         .map_err(|_| ApiError::from(RequestsError::NotFound))?;
@@ -745,10 +744,9 @@ pub async fn delete_quarantine_handler(
 )]
 pub async fn reimport_task_handler(
     State(state): State<DownloadsState>,
-    principal: Principal,
+    _admin: Admin,
     Path(task_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    principal.require_admin()?;
     let row = state
         .worker
         .reimport(&task_id)
@@ -768,8 +766,7 @@ pub async fn reimport_task_handler(
     }))
 }
 
-/// Queue routes without an auth layer. The app mounts this inside the
-/// session gate under the shared principal-translation layer.
+/// Queue routes. The app mounts this inside the session gate.
 pub fn downloads_core_routes(worker: Arc<DownloadWorker>, upgrades: Upgrades) -> Router {
     let review = ReviewState {
         held: HeldImports::new(worker.clone()),
@@ -877,7 +874,7 @@ pub fn downloads_core_routes(worker: Arc<DownloadWorker>, upgrades: Upgrades) ->
         .merge(review)
 }
 
-/// Queue routes behind the header test gate, with upgrades switched off.
+/// Queue routes with upgrades switched off, for tests.
 #[cfg(any(test, feature = "test-support"))]
 pub fn downloads_router(worker: Arc<DownloadWorker>) -> Router {
     let upgrades = Upgrades::new(
@@ -886,7 +883,6 @@ pub fn downloads_router(worker: Arc<DownloadWorker>) -> Router {
         Arc::new(crate::flows::seams::ScriptedDownloads::new()),
     );
     downloads_core_routes(worker, upgrades)
-        .layer(axum::middleware::from_fn(crate::requests::auth::gate))
 }
 
 // Manual album searches.
@@ -1020,7 +1016,7 @@ impl From<JobView> for SearchJobResponse {
 )]
 pub async fn search_album_handler(
     State(search): State<Arc<SearchJobs>>,
-    principal: Principal,
+    User(principal): User,
     ValidJson(body): ValidJson<SearchAlbumRequest>,
 ) -> Result<Json<SearchAlbumResponse>, ApiError> {
     let ask = AlbumSearch {
@@ -1053,7 +1049,7 @@ pub async fn search_album_handler(
 )]
 pub async fn search_job_handler(
     State(search): State<Arc<SearchJobs>>,
-    principal: Principal,
+    User(principal): User,
     Path(job_id): Path<String>,
 ) -> Result<Json<SearchJobResponse>, ApiError> {
     Ok(Json(search.get(&principal, &job_id).await?.into()))
@@ -1071,7 +1067,7 @@ pub async fn search_job_handler(
 )]
 pub async fn pick_candidate_handler(
     State(search): State<Arc<SearchJobs>>,
-    principal: Principal,
+    User(principal): User,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<PickRequest>,
 ) -> Result<Json<PickResponse>, ApiError> {
@@ -1092,7 +1088,7 @@ pub async fn pick_candidate_handler(
 )]
 pub async fn dismiss_search_handler(
     State(search): State<Arc<SearchJobs>>,
-    principal: Principal,
+    User(principal): User,
     Path(job_id): Path<String>,
 ) -> Result<Json<DismissSearchResponse>, ApiError> {
     let state = search.dismiss(&principal, &job_id).await?;
@@ -1113,7 +1109,7 @@ pub async fn dismiss_search_handler(
 )]
 pub async fn cancel_search_handler(
     State(search): State<Arc<SearchJobs>>,
-    principal: Principal,
+    User(principal): User,
     Path(job_id): Path<String>,
 ) -> Result<Json<DownloadActionResponse>, ApiError> {
     search.cancel(&principal, &job_id).await?;

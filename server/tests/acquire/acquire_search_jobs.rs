@@ -12,7 +12,6 @@ use droppedneedle_acquire::dispatch::Journal;
 use droppedneedle_acquire::downloads::manifest::ManifestCodec;
 use droppedneedle_acquire::downloads::sources::SourceHandle;
 use droppedneedle_acquire::downloads::store::{NewTask, TaskDetails};
-use droppedneedle_acquire::requests::auth::{Principal, Role};
 use droppedneedle_acquire::requests::quota::QuotaLedger;
 use droppedneedle_acquire::search_jobs::candidates::CandidateTier;
 use droppedneedle_acquire::search_jobs::store::JobStore;
@@ -24,9 +23,13 @@ use droppedneedle_acquire::sources::SlskdSource;
 use droppedneedle_acquire::target::Targets;
 use droppedneedle_acquire::target::lookup::{AlbumRelease, AlbumTrack, FixedAlbums};
 use droppedneedle_acquire::worker::{DownloadWorker, Source, WorkerConfig};
+use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_auth::{Principal, Role};
 use droppedneedle_kernel::events::{EventHub, EventSink};
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use serde_json::{Value, json};
+
+use crate::common::auth::test_principal;
 
 const RELEASE: &str = "22222222-2222-4222-8222-222222222222";
 const GROUP: &str = "33333333-3333-4333-8333-333333333333";
@@ -142,11 +145,7 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
 }
 
 fn principal(user_id: &str) -> Principal {
-    Principal {
-        user_id: user_id.to_owned(),
-        username: None,
-        role: Role::User,
-    }
+    test_principal(user_id, Role::User, "sess-test", SessionKind::Standard)
 }
 
 #[tokio::test]
@@ -165,7 +164,7 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
         events,
     } = rig(&mock, false).await;
     let owner = principal("u1");
-    let mut updates = events.subscribe(&owner.user_id);
+    let mut updates = events.subscribe(owner.user_id());
     let stranger = principal("u2");
 
     let started = jobs

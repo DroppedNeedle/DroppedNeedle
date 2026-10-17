@@ -5,12 +5,11 @@
 
 use futures_util::future::BoxFuture;
 
-use super::auth::{Principal, Role};
 use super::error::{QUOTA_EXCEEDED, RequestsError, STORAGE_FULL};
 use super::models::{BatchIntake, BatchItem, RequestKind};
 use super::service::RequestsService;
 use super::{RequestsState, ledger::STATUS_FAILED};
-use droppedneedle_auth::users::roles::Role as UserRole;
+use droppedneedle_auth::{Principal, Role};
 use droppedneedle_catalog::reads::discover::adapters::batches::{
     BatchAlbum, BatchCaller, BatchRequests,
 };
@@ -29,18 +28,6 @@ impl DiscoveryBatchRequests {
     /// (`None` leaves landed albums in place and counts them as kept).
     pub fn new(requests: RequestsState, library: Option<LibrarySetup>) -> Self {
         Self { requests, library }
-    }
-}
-
-fn principal(caller: &BatchCaller) -> Principal {
-    Principal {
-        user_id: caller.user_id.clone(),
-        username: caller.username.clone(),
-        role: match caller.role {
-            UserRole::User => Role::User,
-            UserRole::Trusted => Role::Trusted,
-            UserRole::Admin => Role::Admin,
-        },
     }
 }
 
@@ -90,8 +77,12 @@ impl BatchRequests for DiscoveryBatchRequests {
                 monitor_artist: false,
                 auto_download_artist: false,
             };
+            let name = caller
+                .username
+                .clone()
+                .unwrap_or_else(|| caller.user_id.clone());
             let response = RequestsService::new(&self.requests)
-                .request_batch(&principal(caller), &body)
+                .file_batch(&caller.user_id, name, caller.role, &body)
                 .await
                 .map_err(batch_failure)?;
             if response.status == STATUS_FAILED && response.requested == 0 {
@@ -114,11 +105,7 @@ impl BatchRequests for DiscoveryBatchRequests {
             // Act as the owner with plain rights, whoever removes the
             // batch: the owner detaches from a shared request and only a
             // request that is theirs alone is cancelled.
-            let owner = Principal {
-                user_id: owner_id.to_owned(),
-                username: None,
-                role: Role::User,
-            };
+            let owner = Principal::acting_for(owner_id, Role::User, None);
             let ids = [release_group_mbid.to_owned()];
             RequestsService::new(&self.requests)
                 .cancel_batch(&owner, &ids, RequestKind::Album)
@@ -134,7 +121,7 @@ impl BatchRequests for DiscoveryBatchRequests {
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<bool, String>> {
         Box::pin(async move {
-            if caller.role != UserRole::Admin {
+            if !caller.role.is_admin() {
                 return Err("only admins recycle batch albums".to_owned());
             }
             let Some(library) = self.library.clone() else {

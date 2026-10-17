@@ -22,7 +22,8 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::store::{ItemRecord, JobRecord};
 use super::{DropError, DropImports, MAX_FILES_PER_DROP, Viewer, extract};
-use crate::requests::{auth::Principal, error::RequestsError};
+use crate::requests::{auth::is_admin, error::RequestsError};
+use droppedneedle_auth::Curator;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
@@ -153,12 +154,11 @@ fn item_number(raw: &str) -> Result<i64, ApiError> {
         .map_err(|_| ApiError::from(RequestsError::NotFound))
 }
 
-fn curator(principal: &Principal) -> Result<Viewer, ApiError> {
-    principal.require_curator()?;
-    Ok(Viewer {
-        user_id: principal.user_id.clone(),
-        admin: principal.role.is_admin(),
-    })
+fn viewer(curator: &Curator) -> Viewer {
+    Viewer {
+        user_id: curator.user_id().to_owned(),
+        admin: is_admin(curator),
+    }
 }
 
 /// Upload files to import: audio files or `.zip` archives, at most 25
@@ -173,10 +173,10 @@ fn curator(principal: &Principal) -> Result<Viewer, ApiError> {
 )]
 pub async fn upload_handler(
     State(service): State<Arc<DropImports>>,
-    principal: Principal,
+    curator: Curator,
     multipart: Result<Multipart, MultipartRejection>,
 ) -> Result<(StatusCode, Json<DropImportJobResponse>), ApiError> {
-    let viewer = curator(&principal)?;
+    let viewer = viewer(&curator);
     let multipart = multipart.map_err(|_| invalid("Send the files as a multipart form."))?;
     let incoming = service.incoming_dir();
     let mut staged = Incoming::default();
@@ -184,7 +184,7 @@ pub async fn upload_handler(
     let job = service
         .create_job(
             &viewer.user_id,
-            &principal.display_name(),
+            curator.display_name(),
             staged.files.clone(),
         )
         .await?;
@@ -292,10 +292,10 @@ async fn receive(
 )]
 pub async fn list_jobs_handler(
     State(service): State<Arc<DropImports>>,
-    principal: Principal,
+    curator: Curator,
     ValidQuery(query): ValidQuery<DropImportJobsQuery>,
 ) -> Result<Json<DropImportJobsResponse>, ApiError> {
-    let viewer = curator(&principal)?;
+    let viewer = viewer(&curator);
     let jobs = service.list_jobs(&viewer, query.all).await?;
     Ok(Json(DropImportJobsResponse {
         jobs: jobs.into_iter().map(Into::into).collect(),
@@ -312,10 +312,10 @@ pub async fn list_jobs_handler(
 )]
 pub async fn get_job_handler(
     State(service): State<Arc<DropImports>>,
-    principal: Principal,
+    curator: Curator,
     Path(job_id): Path<String>,
 ) -> Result<Json<DropImportJobResponse>, ApiError> {
-    let viewer = curator(&principal)?;
+    let viewer = viewer(&curator);
     Ok(Json(service.get_job(&viewer, &job_id).await?.into()))
 }
 
@@ -331,11 +331,11 @@ pub async fn get_job_handler(
 )]
 pub async fn match_item_handler(
     State(service): State<Arc<DropImports>>,
-    principal: Principal,
+    curator: Curator,
     Path(item_id): Path<String>,
     ValidJson(body): ValidJson<DropImportMatchRequest>,
 ) -> Result<Json<DropImportItemResponse>, ApiError> {
-    let viewer = curator(&principal)?;
+    let viewer = viewer(&curator);
     let item_id = item_number(&item_id)?;
     let item = service
         .match_item(&viewer, item_id, &body.release_group_mbid)
@@ -354,10 +354,10 @@ pub async fn match_item_handler(
 )]
 pub async fn discard_item_handler(
     State(service): State<Arc<DropImports>>,
-    principal: Principal,
+    curator: Curator,
     Path(item_id): Path<String>,
 ) -> Result<Json<DropImportItemResponse>, ApiError> {
-    let viewer = curator(&principal)?;
+    let viewer = viewer(&curator);
     let item_id = item_number(&item_id)?;
     Ok(Json(service.discard_item(&viewer, item_id).await?.into()))
 }

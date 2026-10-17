@@ -20,11 +20,11 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 
 use super::RequestsState;
-use super::auth::{Principal, Role};
 use super::error::RequestsError;
 use super::models::AlbumIntake;
 use super::service::RequestsService;
 
+use droppedneedle_auth::{Principal, Role};
 use droppedneedle_catalog::reads::catalog::library::LocalCatalog;
 use droppedneedle_catalog::reads::collections::store::playlists::{
     NewEntry, PlaylistStore, Written,
@@ -388,7 +388,7 @@ impl PersonalMixBuilder {
         }
         self.match_library_files(&mut mix).await?;
 
-        let Some(role) = self.role_of(user_id).await? else {
+        let Some((role, name)) = self.owner_of(user_id).await? else {
             return Ok(MixOutcome::skipped(SkipReason::UserNotFound, None));
         };
         let playlist_id = self
@@ -397,7 +397,7 @@ impl PersonalMixBuilder {
         let requested = if self.prefs.get(user_id).await.auto_request_personal_mix
             && self.granted(user_id, role).await?
         {
-            self.request_missing(user_id, role, &mix).await
+            self.request_missing(user_id, role, name, &mix).await
         } else {
             0
         };
@@ -698,13 +698,15 @@ impl PersonalMixBuilder {
     /// Request up to [`MAX_AUTO_REQUESTS`] missing albums under the
     /// standing grant. A quota or storage refusal ends the walk: every
     /// further ask would be refused the same way.
-    async fn request_missing(&self, user_id: &str, role: Role, mix: &[MixTrack]) -> u32 {
+    async fn request_missing(
+        &self,
+        user_id: &str,
+        role: Role,
+        name: Option<String>,
+        mix: &[MixTrack],
+    ) -> u32 {
         let service = RequestsService::new(&self.requests);
-        let principal = Principal {
-            user_id: user_id.to_owned(),
-            username: None,
-            role,
-        };
+        let principal = Principal::acting_for(user_id, role, name);
         let mut requested = 0u32;
         let mut seen: HashSet<&str> = HashSet::new();
         for track in mix {
@@ -740,13 +742,19 @@ impl PersonalMixBuilder {
         requested
     }
 
-    async fn role_of(&self, user_id: &str) -> Result<Option<Role>, RequestsError> {
-        let role: Option<String> = sqlx::query_scalar("SELECT role FROM auth_users WHERE id = ?")
-            .bind(user_id)
-            .fetch_optional(self.requests.library.pool())
-            .await
-            .map_err(|error| RequestsError::internal(&error))?;
-        Ok(role.map(|role| Role::parse(&role).unwrap_or(Role::User)))
+    /// The mix owner's role and the name their requests show.
+    async fn owner_of(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<(Role, Option<String>)>, RequestsError> {
+        let row: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT role, COALESCE(username_display, username) FROM auth_users WHERE id = ?",
+        )
+        .bind(user_id)
+        .fetch_optional(self.requests.library.pool())
+        .await
+        .map_err(|error| RequestsError::internal(&error))?;
+        Ok(row.map(|(role, name)| (Role::from_stored(&role), name)))
     }
 }
 
@@ -829,7 +837,7 @@ impl droppedneedle_plugins::scrobble::MixApprovalHook for MixGrantHooks {
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             if let Some(builder) = self.slot.get() {
-                let role = Role::parse(role).unwrap_or(Role::User);
+                let role = Role::from_stored(role);
                 builder.on_toggle(user_id, role, enabled).await;
             }
         })
@@ -844,7 +852,7 @@ impl droppedneedle_plugins::scrobble::MixStateReader for MixGrantHooks {
         toggle_on: bool,
     ) -> BoxFuture<'a, String> {
         Box::pin(async move {
-            let role = Role::parse(role).unwrap_or(Role::User);
+            let role = Role::from_stored(role);
             match self.slot.get() {
                 Some(builder) => builder.auto_request_state(user_id, role, toggle_on).await,
                 None if toggle_on && role == Role::Admin => "approved".to_owned(),

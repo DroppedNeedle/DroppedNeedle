@@ -164,12 +164,9 @@ async fn bundles() -> (
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
             .expect("reads bundle");
-    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        auth.deps.clone(),
-        ids.clone(),
-        &mut reads.collections,
-    )
-    .expect("acquire bundle");
+    let acquire =
+        droppedneedle_acquire::AcquireSetup::for_tests(ids.clone(), &mut reads.collections)
+            .expect("acquire bundle");
     for (id, name) in [("u-curator", "Cora"), ("u-asker", "Asa")] {
         acquire.db.add_user(id, name, "user").await.expect("user");
     }
