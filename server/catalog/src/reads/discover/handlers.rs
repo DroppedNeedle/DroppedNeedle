@@ -6,9 +6,10 @@
 
 use axum::{
     Json,
-    extract::{FromRequestParts, Path, State},
-    http::{StatusCode, request::Parts},
+    extract::{Path, State},
+    http::StatusCode,
 };
+use droppedneedle_auth::User;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::Deserialize;
@@ -28,43 +29,6 @@ use super::{
     },
     services::{self, ReadsDeps},
 };
-use droppedneedle_auth::session::middleware::CurrentSession;
-
-/// The authenticated caller. The deny-by-default session middleware stashes
-/// the session; this extractor reads it without a store round-trip (all
-/// discover routes are plain authenticated-user routes, no role gating).
-///
-/// Stale sessions need no user-row re-read here: `auth_tokens.user_id`
-/// references `auth_users(id)` ON DELETE CASCADE (migration 0001), so
-/// deleting an account revokes its sessions and the middleware 401s before
-/// any handler runs (pinned by the journey_b E2E). The library/collections
-/// extractors re-read the row only to resolve role and username fresh.
-#[derive(Debug, Clone)]
-pub struct AuthenticatedUser {
-    /// Owning user id.
-    pub user_id: String,
-}
-
-impl AuthenticatedUser {
-    /// Reject unauthenticated callers with the 401 envelope.
-    pub fn require(parts: &Parts) -> Result<Self, ApiError> {
-        parts
-            .extensions
-            .get::<CurrentSession>()
-            .map(|session| Self {
-                user_id: session.user_id.clone(),
-            })
-            .ok_or_else(|| ApiError::unauthorized("Authentication required"))
-    }
-}
-
-impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedUser {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        Self::require(parts)
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Query shapes
@@ -162,9 +126,9 @@ pub struct RemoveBatchQuery {
 )]
 pub async fn get_discover(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
 ) -> Result<Json<DiscoverResponse>, ApiError> {
-    services::discover(&deps, &user.user_id)
+    services::discover(&deps, user.user_id())
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -182,9 +146,9 @@ pub async fn get_discover(
 )]
 pub async fn refresh_discover(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
 ) -> Result<(StatusCode, Json<RefreshResponse>), ApiError> {
-    services::refresh_discover(&deps, &user.user_id)
+    services::refresh_discover(&deps, user.user_id())
         .await
         .map(|body| (StatusCode::ACCEPTED, Json(body)))
         .map_err(ApiError::from)
@@ -204,10 +168,10 @@ pub async fn refresh_discover(
 )]
 pub async fn record_activity(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidJson(body): ValidJson<DiscoverActivityRequest>,
 ) -> Result<Json<DiscoverActivityResponse>, ApiError> {
-    services::record_activity(&deps, &user.user_id, &body)
+    services::record_activity(&deps, user.user_id(), &body)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -229,10 +193,10 @@ pub async fn record_activity(
 )]
 pub async fn discover_radio(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidJson(body): ValidJson<RadioRequest>,
 ) -> Result<Json<ChartSection>, ApiError> {
-    services::radio_shelf(&deps, &user.user_id, &body)
+    services::radio_shelf(&deps, user.user_id(), &body)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -254,10 +218,10 @@ pub async fn discover_radio(
 )]
 pub async fn radio_plan(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidJson(body): ValidJson<RadioPlanRequest>,
 ) -> Result<Json<RadioPlanResponse>, ApiError> {
-    services::radio_plan(&deps, &user.user_id, &body)
+    services::radio_plan(&deps, user.user_id(), &body)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -279,10 +243,10 @@ pub async fn radio_plan(
 )]
 pub async fn playlist_suggestions(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidJson(body): ValidJson<PlaylistSuggestionsRequest>,
 ) -> Result<Json<PlaylistSuggestionsResponse>, ApiError> {
-    services::playlist_suggestions(&deps, &user.user_id, &body)
+    services::playlist_suggestions(&deps, user.user_id(), &body)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -307,10 +271,10 @@ pub async fn playlist_suggestions(
 )]
 pub async fn get_queue(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidQuery(query): ValidQuery<QueueQuery>,
 ) -> Result<Json<DiscoverQueueResponse>, ApiError> {
-    services::queue(&deps, &user.user_id, query.count)
+    services::queue(&deps, user.user_id(), query.count)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -329,9 +293,9 @@ pub async fn get_queue(
 )]
 pub async fn queue_status(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
 ) -> Json<DiscoverQueueStatusResponse> {
-    Json(services::queue_status(&deps, &user.user_id).await)
+    Json(services::queue_status(&deps, user.user_id()).await)
 }
 
 /// Start a background queue build. `action` says what happened:
@@ -350,10 +314,10 @@ pub async fn queue_status(
 )]
 pub async fn queue_generate(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidJson(body): ValidJson<QueueGenerateRequest>,
 ) -> Json<QueueGenerateResponse> {
-    Json(services::queue_generate(&deps, &user.user_id, &body).await)
+    Json(services::queue_generate(&deps, user.user_id(), &body).await)
 }
 
 /// Details behind one queue card: tags, release date, country, artist
@@ -371,10 +335,10 @@ pub async fn queue_generate(
 )]
 pub async fn enrich_queue_item(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     Path(release_group_mbid): Path<String>,
 ) -> Result<Json<QueueEnrichment>, ApiError> {
-    services::enrich_queue_item(&deps, &user.user_id, &release_group_mbid)
+    services::enrich_queue_item(&deps, user.user_id(), &release_group_mbid)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -396,7 +360,7 @@ pub async fn enrich_queue_item(
 )]
 pub async fn preview_queue_item(
     State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
+    _user: User,
     Path(release_group_mbid): Path<String>,
 ) -> Result<Json<DiscoverQueuePreview>, ApiError> {
     services::preview_queue_item(&deps, &release_group_mbid)
@@ -421,10 +385,10 @@ pub async fn preview_queue_item(
 )]
 pub async fn ignore_queue_item(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidJson(body): ValidJson<QueueIgnoreRequest>,
 ) -> Result<StatusCode, ApiError> {
-    services::ignore_queue_item(&deps, &user.user_id, &body)
+    services::ignore_queue_item(&deps, user.user_id(), &body)
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(ApiError::from)
@@ -443,9 +407,9 @@ pub async fn ignore_queue_item(
 )]
 pub async fn ignored_releases(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
 ) -> Result<Json<IgnoredReleasesResponse>, ApiError> {
-    services::ignored_releases(&deps, &user.user_id)
+    services::ignored_releases(&deps, user.user_id())
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -466,7 +430,7 @@ pub async fn ignored_releases(
 )]
 pub async fn validate_queue(
     State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
+    _user: User,
     ValidJson(body): ValidJson<QueueValidateRequest>,
 ) -> Result<Json<QueueValidateResponse>, ApiError> {
     services::validate_queue(&deps, &body)
@@ -494,7 +458,7 @@ pub async fn validate_queue(
 )]
 pub async fn youtube_search(
     State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
+    _user: User,
     ValidQuery(query): ValidQuery<YouTubeAlbumQuery>,
 ) -> Result<Json<YouTubeSearchResponse>, ApiError> {
     services::youtube_search(&deps, &query.artist, &query.album)
@@ -522,7 +486,7 @@ pub async fn youtube_search(
 )]
 pub async fn youtube_track_search(
     State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
+    _user: User,
     ValidQuery(query): ValidQuery<YouTubeTrackQuery>,
 ) -> Result<Json<YouTubeSearchResponse>, ApiError> {
     services::youtube_track_search(&deps, &query.artist, &query.track)
@@ -544,7 +508,7 @@ pub async fn youtube_track_search(
 )]
 pub async fn youtube_quota(
     State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
+    _user: User,
 ) -> Result<Json<YouTubeQuotaResponse>, ApiError> {
     services::youtube_quota(&deps)
         .await
@@ -566,7 +530,7 @@ pub async fn youtube_quota(
 )]
 pub async fn youtube_cache_check(
     State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
+    _user: User,
     ValidJson(body): ValidJson<TrackCacheCheckRequest>,
 ) -> Result<Json<TrackCacheCheckResponse>, ApiError> {
     services::youtube_cache_check(&deps, &body)
@@ -592,7 +556,7 @@ pub async fn youtube_cache_check(
 )]
 pub async fn track_preview(
     State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
+    _user: User,
     ValidQuery(query): ValidQuery<TrackPreviewQuery>,
 ) -> Result<Json<TrackPreviewResponse>, ApiError> {
     services::track_preview(&deps, &query.artist, &query.track)
@@ -620,7 +584,7 @@ pub async fn track_preview(
 )]
 pub async fn album_preview(
     State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
+    _user: User,
     ValidQuery(query): ValidQuery<AlbumPreviewQuery>,
 ) -> Result<Json<AlbumPreviewResponse>, ApiError> {
     services::album_preview(&deps, &query.artist, &query.album, query.count)
@@ -652,10 +616,10 @@ pub async fn album_preview(
 )]
 pub async fn create_batch(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidJson(body): ValidJson<DiscoveryBatchCreate>,
 ) -> Result<(StatusCode, Json<DiscoveryBatchDetail>), ApiError> {
-    services::create_batch(&deps, &user.user_id, &body)
+    services::create_batch(&deps, user.user_id(), &body)
         .await
         .map(|detail| (StatusCode::ACCEPTED, Json(detail)))
         .map_err(ApiError::from)
@@ -674,9 +638,9 @@ pub async fn create_batch(
 )]
 pub async fn list_batches(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
 ) -> Result<Json<DiscoveryBatchListResponse>, ApiError> {
-    services::list_batches(&deps, &user.user_id)
+    services::list_batches(&deps, user.user_id())
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -697,10 +661,10 @@ pub async fn list_batches(
 )]
 pub async fn get_batch(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     Path(batch_id): Path<String>,
 ) -> Result<Json<DiscoveryBatchDetail>, ApiError> {
-    services::get_batch(&deps, &user.user_id, &batch_id)
+    services::get_batch(&deps, user.user_id(), &batch_id)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -726,13 +690,13 @@ pub async fn get_batch(
 )]
 pub async fn remove_batch(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     Path(batch_id): Path<String>,
     ValidQuery(query): ValidQuery<RemoveBatchQuery>,
 ) -> Result<Json<DiscoveryBatchRemoveResult>, ApiError> {
     services::remove_batch(
         &deps,
-        &user.user_id,
+        user.user_id(),
         &batch_id,
         query.remove_albums.unwrap_or(true),
     )
@@ -757,9 +721,9 @@ pub async fn remove_batch(
 )]
 pub async fn get_home(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
 ) -> Result<Json<HomeResponse>, ApiError> {
-    services::home(&deps, &user.user_id)
+    services::home(&deps, user.user_id())
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -778,7 +742,7 @@ pub async fn get_home(
 )]
 pub async fn integration_status(
     State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
+    _user: User,
 ) -> Result<Json<IntegrationStatus>, ApiError> {
     services::integration_status(&deps)
         .await
@@ -805,7 +769,7 @@ pub async fn integration_status(
 )]
 pub async fn genre_detail(
     State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
+    _user: User,
     Path(genre_name): Path<String>,
     ValidQuery(query): ValidQuery<GenreQuery>,
 ) -> Result<Json<GenreDetailResponse>, ApiError> {
@@ -842,7 +806,7 @@ pub async fn genre_detail(
 )]
 pub async fn trending_artists(
     State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
+    _user: User,
     ValidQuery(query): ValidQuery<ChartQuery>,
 ) -> Result<Json<TrendingArtistsPage>, ApiError> {
     services::trending_artists(
@@ -877,7 +841,7 @@ pub async fn trending_artists(
 )]
 pub async fn popular_albums(
     State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
+    _user: User,
     ValidQuery(query): ValidQuery<ChartQuery>,
 ) -> Result<Json<PopularAlbumsPage>, ApiError> {
     services::popular_albums(
@@ -912,12 +876,12 @@ pub async fn popular_albums(
 )]
 pub async fn your_top_albums(
     State(deps): State<ReadsDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidQuery(query): ValidQuery<ChartQuery>,
 ) -> Result<Json<PopularAlbumsPage>, ApiError> {
     services::your_top_albums(
         &deps,
-        &user.user_id,
+        user.user_id(),
         query.range.as_deref(),
         query.limit,
         query.offset,
@@ -943,10 +907,7 @@ pub async fn your_top_albums(
         (status = 401, description = "Not authenticated"),
     )
 )]
-pub async fn now_playing(
-    State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
-) -> Json<NowPlayingSnapshot> {
+pub async fn now_playing(State(deps): State<ReadsDeps>, _user: User) -> Json<NowPlayingSnapshot> {
     Json(services::now_playing(&deps))
 }
 

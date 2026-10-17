@@ -4,10 +4,8 @@
 //! returns the domain [`error::CollectionsError`], `store` reads and
 //! writes SQLite, `http` is the one place an error meets a status code.
 //! The router mounts paths relative to `/api/v3`; the app nests it there
-//! behind the session middleware and builds [`auth::Principal`] from the
-//! session.
+//! behind the session gate, whose principal the handlers read.
 
-pub mod auth;
 pub mod db;
 pub mod error;
 pub mod handlers;
@@ -22,18 +20,10 @@ use axum::{Router, routing};
 
 pub use state::CollectionsState;
 
-/// The collections routes behind the header test gate, for tests that
-/// mount them without the session middleware. Route posture per handler
-/// docs: playlists, favorites, ratings and follows need any authenticated user,
-/// approvals need admin.
-#[cfg(any(test, feature = "test-support"))]
-pub fn collections_router(state: CollectionsState) -> Router {
-    collections_routes(state).layer(axum::middleware::from_fn(auth::gate))
-}
-
-/// Build the collections routes without an auth layer. The app mounts this
-/// inside the session gate with a principal-translation layer.
-/// Registration order is specific routes first, then parameterized ones.
+/// The collections routes. Playlists, favorites, ratings and follows take
+/// any signed-in user, approvals an admin. The app mounts them inside the
+/// session gate. Registration order is specific routes first, then
+/// parameterized ones.
 pub fn collections_routes(state: CollectionsState) -> Router {
     Router::new()
         .route(

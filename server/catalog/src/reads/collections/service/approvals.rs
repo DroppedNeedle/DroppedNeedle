@@ -9,13 +9,13 @@ use std::collections::BTreeMap;
 
 use super::CollectionsService;
 use super::follows::derive_state;
-use crate::reads::collections::auth::Principal;
 use crate::reads::collections::error::CollectionsError;
 use crate::reads::collections::models::{
     ApprovalBatchItem, ApprovalBatchListResponse, AutoDownloadApprovalItem,
     AutoDownloadApprovalListResponse,
 };
 use crate::reads::collections::state::AutoDownloadState;
+use droppedneedle_auth::Admin;
 
 /// What produced a batch of follow-sourced asks.
 const FOLLOW_SOURCE: &str = "follow_request";
@@ -48,9 +48,8 @@ impl CollectionsService<'_> {
     /// Pending auto-download asks across users.
     pub async fn list_approvals(
         &self,
-        caller: &Principal,
+        _admin: &Admin,
     ) -> Result<AutoDownloadApprovalListResponse, CollectionsError> {
-        caller.require_admin()?;
         let items = match &self.state.acquire_approvals {
             Some(source) => source
                 .pending_approvals()
@@ -74,9 +73,8 @@ impl CollectionsService<'_> {
     /// Pending asks grouped as batch cards.
     pub async fn list_approval_batches(
         &self,
-        caller: &Principal,
+        _admin: &Admin,
     ) -> Result<ApprovalBatchListResponse, CollectionsError> {
-        caller.require_admin()?;
         let mut batches = match &self.state.acquire_approvals {
             Some(source) => source
                 .pending_batches()

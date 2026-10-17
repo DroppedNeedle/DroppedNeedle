@@ -18,7 +18,7 @@ use super::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, StoreError,
     TagRead, TrackFilter, TrackRecord, TrackSort, UpgradePolicy,
 };
-use droppedneedle_auth::users::roles::Role;
+use droppedneedle_auth::Admin;
 
 /// Domain failures. Handlers convert these; nothing here names HTTP.
 #[derive(Debug, PartialEq, Eq)]
@@ -885,12 +885,9 @@ pub async fn membership(
 /// outside the library roots a 403.
 pub async fn track_tags(
     deps: &LibraryDeps,
-    role: Role,
+    _admin: &Admin,
     track_id: &str,
 ) -> Result<TrackTags, LibraryFailure> {
-    if role != Role::Admin {
-        return Err(LibraryFailure::Forbidden("Admin role required".to_owned()));
-    }
     match deps.tags.read(track_id).await? {
         TagRead::Found(tag) => Ok(TrackTags::from(*tag)),
         TagRead::Unknown => Err(LibraryFailure::NotFound),

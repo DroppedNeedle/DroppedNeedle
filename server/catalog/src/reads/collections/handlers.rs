@@ -10,10 +10,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use droppedneedle_auth::{Admin, User};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 use super::{
-    auth::Principal,
     http::HttpResult,
     models::{
         AddTracksBody, AddTracksResponse, ApprovalBatchListResponse,
@@ -51,11 +51,11 @@ fn ok(message: &str) -> StatusResponse {
 )]
 pub async fn list_playlists_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
 ) -> HttpResult<Json<PlaylistListResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .list_playlists(&caller.user_id)
+            .list_playlists(caller.user_id())
             .await?,
     ))
 }
@@ -74,11 +74,11 @@ pub async fn list_playlists_handler(
 )]
 pub async fn create_playlist_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     ValidJson(body): ValidJson<CreatePlaylistBody>,
 ) -> HttpResult<(StatusCode, Json<PlaylistDetail>)> {
     let detail = CollectionsService::new(&state)
-        .create_playlist(&caller.user_id, &body)
+        .create_playlist(caller.user_id(), &body)
         .await?;
     Ok((StatusCode::CREATED, Json(detail)))
 }
@@ -97,12 +97,12 @@ pub async fn create_playlist_handler(
 )]
 pub async fn get_playlist_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path(playlist_id): Path<String>,
 ) -> HttpResult<Json<PlaylistDetail>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .get_playlist(&caller.user_id, &playlist_id)
+            .get_playlist(caller.user_id(), &playlist_id)
             .await?,
     ))
 }
@@ -124,13 +124,13 @@ pub async fn get_playlist_handler(
 )]
 pub async fn update_playlist_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path(playlist_id): Path<String>,
     ValidJson(body): ValidJson<UpdatePlaylistBody>,
 ) -> HttpResult<Json<PlaylistDetail>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .update_playlist(&caller.user_id, &playlist_id, &body)
+            .update_playlist(caller.user_id(), &playlist_id, &body)
             .await?,
     ))
 }
@@ -150,11 +150,11 @@ pub async fn update_playlist_handler(
 )]
 pub async fn delete_playlist_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path(playlist_id): Path<String>,
 ) -> HttpResult<Json<StatusResponse>> {
     CollectionsService::new(&state)
-        .delete_playlist(&caller.user_id, &playlist_id)
+        .delete_playlist(caller.user_id(), &playlist_id)
         .await?;
     Ok(Json(ok("Playlist deleted")))
 }
@@ -176,13 +176,13 @@ pub async fn delete_playlist_handler(
 )]
 pub async fn set_visibility_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path(playlist_id): Path<String>,
     ValidJson(body): ValidJson<VisibilityBody>,
 ) -> HttpResult<Json<PlaylistSummary>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .set_visibility(&caller.user_id, &playlist_id, body.is_public)
+            .set_visibility(caller.user_id(), &playlist_id, body.is_public)
             .await?,
     ))
 }
@@ -204,13 +204,13 @@ pub async fn set_visibility_handler(
 )]
 pub async fn add_tracks_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path(playlist_id): Path<String>,
     ValidJson(body): ValidJson<AddTracksBody>,
 ) -> HttpResult<Json<AddTracksResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .add_tracks(&caller.user_id, &playlist_id, &body)
+            .add_tracks(caller.user_id(), &playlist_id, &body)
             .await?,
     ))
 }
@@ -232,12 +232,12 @@ pub async fn add_tracks_handler(
 )]
 pub async fn remove_tracks_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path(playlist_id): Path<String>,
     ValidJson(body): ValidJson<RemoveTracksBody>,
 ) -> HttpResult<Json<RemoveTracksResponse>> {
     let removed = CollectionsService::new(&state)
-        .remove_entries(&caller.user_id, &playlist_id, &body.track_ids)
+        .remove_entries(caller.user_id(), &playlist_id, &body.track_ids)
         .await?;
     Ok(Json(RemoveTracksResponse {
         status: "ok".to_owned(),
@@ -264,11 +264,11 @@ pub async fn remove_tracks_handler(
 )]
 pub async fn remove_track_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path((playlist_id, track_id)): Path<(String, String)>,
 ) -> HttpResult<Json<StatusResponse>> {
     CollectionsService::new(&state)
-        .remove_entry(&caller.user_id, &playlist_id, &track_id)
+        .remove_entry(caller.user_id(), &playlist_id, &track_id)
         .await?;
     Ok(Json(ok("Track removed")))
 }
@@ -290,13 +290,13 @@ pub async fn remove_track_handler(
 )]
 pub async fn reorder_track_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path(playlist_id): Path<String>,
     ValidJson(body): ValidJson<ReorderBody>,
 ) -> HttpResult<Json<ReorderResponse>> {
     let actual_position = CollectionsService::new(&state)
         .move_entry(
-            &caller.user_id,
+            caller.user_id(),
             &playlist_id,
             &body.track_id,
             body.new_position,
@@ -329,13 +329,13 @@ pub async fn reorder_track_handler(
 )]
 pub async fn update_track_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path((playlist_id, track_id)): Path<(String, String)>,
     ValidJson(body): ValidJson<UpdateTrackBody>,
 ) -> HttpResult<Json<PlaylistTrack>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .update_track(&caller.user_id, &playlist_id, &track_id, &body)
+            .update_track(caller.user_id(), &playlist_id, &track_id, &body)
             .await?,
     ))
 }
@@ -354,12 +354,12 @@ pub async fn update_track_handler(
 )]
 pub async fn check_tracks_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     ValidJson(body): ValidJson<CheckTracksBody>,
 ) -> HttpResult<Json<CheckTracksResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .check_track_membership(&caller.user_id, &body)
+            .check_track_membership(caller.user_id(), &body)
             .await?,
     ))
 }
@@ -378,12 +378,12 @@ pub async fn check_tracks_handler(
 )]
 pub async fn resolve_sources_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path(playlist_id): Path<String>,
 ) -> HttpResult<Json<ResolveSourcesResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .resolve_sources(&caller.user_id, &playlist_id)
+            .resolve_sources(caller.user_id(), &playlist_id)
             .await?,
     ))
 }
@@ -405,12 +405,12 @@ pub async fn resolve_sources_handler(
 )]
 pub async fn upload_cover_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path(playlist_id): Path<String>,
     ValidJson(body): ValidJson<CoverUploadBody>,
 ) -> HttpResult<Json<CoverUploadResponse>> {
     let cover_url = CollectionsService::new(&state)
-        .upload_cover(&caller.user_id, &playlist_id, &body)
+        .upload_cover(caller.user_id(), &playlist_id, &body)
         .await?;
     Ok(Json(CoverUploadResponse { cover_url }))
 }
@@ -429,11 +429,11 @@ pub async fn upload_cover_handler(
 )]
 pub async fn get_cover_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path(playlist_id): Path<String>,
 ) -> HttpResult<Response> {
     let cover = CollectionsService::new(&state)
-        .cover(&caller.user_id, &playlist_id)
+        .cover(caller.user_id(), &playlist_id)
         .await?;
     Ok((
         StatusCode::OK,
@@ -458,11 +458,11 @@ pub async fn get_cover_handler(
 )]
 pub async fn remove_cover_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path(playlist_id): Path<String>,
 ) -> HttpResult<Json<StatusResponse>> {
     CollectionsService::new(&state)
-        .remove_cover(&caller.user_id, &playlist_id)
+        .remove_cover(caller.user_id(), &playlist_id)
         .await?;
     Ok(Json(ok("Cover removed")))
 }
@@ -481,12 +481,12 @@ pub async fn remove_cover_handler(
 )]
 pub async fn list_favorites_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     ValidQuery(query): ValidQuery<FavoriteQuery>,
 ) -> HttpResult<Json<FavoriteListResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .list_favorites(&caller.user_id, query.kind.as_deref())
+            .list_favorites(caller.user_id(), query.kind.as_deref())
             .await?,
     ))
 }
@@ -509,13 +509,13 @@ pub async fn list_favorites_handler(
 )]
 pub async fn set_favorite_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path((kind, item_id)): Path<(String, String)>,
     ValidJson(body): ValidJson<SetFavoriteBody>,
 ) -> HttpResult<Json<FavoriteStatusResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .set_favorite(&caller.user_id, &kind, &item_id, body.favorited, body.name)
+            .set_favorite(caller.user_id(), &kind, &item_id, body.favorited, body.name)
             .await?,
     ))
 }
@@ -543,13 +543,13 @@ pub async fn set_favorite_handler(
 )]
 pub async fn set_rating_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path((kind, item_id)): Path<(String, String)>,
     ValidJson(body): ValidJson<SetRatingBody>,
 ) -> HttpResult<Json<RatingStatusResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .rate(&caller.user_id, &kind, &item_id, body.rating)
+            .rate(caller.user_id(), &kind, &item_id, body.rating)
             .await?,
     ))
 }
@@ -571,12 +571,12 @@ pub async fn set_rating_handler(
 )]
 pub async fn rating_lookup_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     ValidJson(body): ValidJson<RatingLookupBody>,
 ) -> HttpResult<Json<RatingLookupResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .rating_lookup(&caller.user_id, &body)
+            .rating_lookup(caller.user_id(), &body)
             .await?,
     ))
 }
@@ -594,12 +594,12 @@ pub async fn rating_lookup_handler(
 )]
 pub async fn get_follow_status_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path(artist_mbid): Path<String>,
 ) -> HttpResult<Json<FollowStatusResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .follow_status(&caller.user_id, &artist_mbid)
+            .follow_status(caller.user_id(), &artist_mbid)
             .await?,
     ))
 }
@@ -619,14 +619,14 @@ pub async fn get_follow_status_handler(
 )]
 pub async fn set_follow_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path(artist_mbid): Path<String>,
     ValidJson(body): ValidJson<FollowBody>,
 ) -> HttpResult<Json<FollowStatusResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
             .set_follow(
-                &caller.user_id,
+                caller.user_id(),
                 &artist_mbid,
                 body.followed,
                 body.artist_name,
@@ -652,7 +652,7 @@ pub async fn set_follow_handler(
 )]
 pub async fn set_auto_download_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     Path(artist_mbid): Path<String>,
     ValidJson(body): ValidJson<AutoDownloadBody>,
 ) -> HttpResult<Json<FollowStatusResponse>> {
@@ -675,11 +675,11 @@ pub async fn set_auto_download_handler(
 )]
 pub async fn list_followed_artists_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
 ) -> HttpResult<Json<FollowedArtistListResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .list_followed(&caller.user_id)
+            .list_followed(caller.user_id())
             .await?,
     ))
 }
@@ -698,12 +698,12 @@ pub async fn list_followed_artists_handler(
 )]
 pub async fn list_new_releases_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     ValidQuery(query): ValidQuery<NewReleasePageQuery>,
 ) -> HttpResult<Json<NewReleaseListResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .new_releases(&caller.user_id, &query)
+            .new_releases(caller.user_id(), &query)
             .await?,
     ))
 }
@@ -722,12 +722,12 @@ pub async fn list_new_releases_handler(
 )]
 pub async fn list_recent_releases_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
     ValidQuery(query): ValidQuery<RecentReleasesQuery>,
 ) -> HttpResult<Json<NewReleaseListResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .recent_releases(&caller.user_id, &query)
+            .recent_releases(caller.user_id(), &query)
             .await?,
     ))
 }
@@ -744,11 +744,11 @@ pub async fn list_recent_releases_handler(
 )]
 pub async fn unseen_count_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
 ) -> HttpResult<Json<UnseenCountResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .unseen_count(&caller.user_id)
+            .unseen_count(caller.user_id())
             .await?,
     ))
 }
@@ -765,11 +765,11 @@ pub async fn unseen_count_handler(
 )]
 pub async fn mark_seen_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    User(caller): User,
 ) -> HttpResult<Json<UnseenCountResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .mark_seen(&caller.user_id)
+            .mark_seen(caller.user_id())
             .await?,
     ))
 }
@@ -787,11 +787,11 @@ pub async fn mark_seen_handler(
 )]
 pub async fn list_approvals_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    admin: Admin,
 ) -> HttpResult<Json<AutoDownloadApprovalListResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .list_approvals(&caller)
+            .list_approvals(&admin)
             .await?,
     ))
 }
@@ -809,11 +809,11 @@ pub async fn list_approvals_handler(
 )]
 pub async fn list_approval_batches_handler(
     State(state): State<CollectionsState>,
-    caller: Principal,
+    admin: Admin,
 ) -> HttpResult<Json<ApprovalBatchListResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .list_approval_batches(&caller)
+            .list_approval_batches(&admin)
             .await?,
     ))
 }

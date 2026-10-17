@@ -1,14 +1,12 @@
 //! Thin handlers for the six concerts routes, and the one place a concerts
 //! failure meets a status code.
 //!
-//! Every route is a plain signed-in-user route; the session middleware has
-//! already turned anonymous callers away, so the caller extractor only
-//! reads the stashed session.
+//! Every route is a plain signed-in-user route that takes `User`.
 
 use axum::{
     Json, Router,
-    extract::{FromRequestParts, State},
-    http::{StatusCode, request::Parts},
+    extract::State,
+    http::StatusCode,
     routing::{get, post},
 };
 
@@ -17,7 +15,7 @@ use super::models::{
 };
 use super::service::{ConcertsError, ConcertsService};
 use crate::reads::collections::models::UnseenCountResponse;
-use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::User;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
@@ -38,21 +36,6 @@ impl From<ConcertsError> for ApiError {
 }
 
 type HttpResult<T> = Result<Json<T>, ApiError>;
-
-/// The signed-in caller.
-pub struct Caller(String);
-
-impl<S: Send + Sync> FromRequestParts<S> for Caller {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts
-            .extensions
-            .get::<CurrentSession>()
-            .map(|session| Self(session.user_id.clone()))
-            .ok_or_else(|| ApiError::unauthorized("Authentication required"))
-    }
-}
 
 /// The concerts routes, relative to `/api/v3`.
 pub fn router(service: ConcertsService) -> Router {
@@ -81,9 +64,9 @@ pub fn router(service: ConcertsService) -> Router {
 )]
 pub async fn list_concerts(
     State(service): State<ConcertsService>,
-    Caller(user_id): Caller,
+    User(caller): User,
 ) -> HttpResult<ConcertsResponse> {
-    Ok(Json(service.list(&user_id).await?))
+    Ok(Json(service.list(caller.user_id()).await?))
 }
 
 /// The caller's saved cities in picker order.
@@ -98,9 +81,9 @@ pub async fn list_concerts(
 )]
 pub async fn list_event_cities(
     State(service): State<ConcertsService>,
-    Caller(user_id): Caller,
+    User(caller): User,
 ) -> HttpResult<EventCitiesResponse> {
-    Ok(Json(service.cities(&user_id).await?))
+    Ok(Json(service.cities(caller.user_id()).await?))
 }
 
 /// Replace the caller's cities with the submitted list, in order.
@@ -117,10 +100,12 @@ pub async fn list_event_cities(
 )]
 pub async fn replace_event_cities(
     State(service): State<ConcertsService>,
-    Caller(user_id): Caller,
+    User(caller): User,
     ValidJson(body): ValidJson<EventCitiesUpdate>,
 ) -> HttpResult<EventCitiesResponse> {
-    Ok(Json(service.replace_cities(&user_id, body.items).await?))
+    Ok(Json(
+        service.replace_cities(caller.user_id(), body.items).await?,
+    ))
 }
 
 /// City suggestions for the picker. An empty list means no such place; a
@@ -139,7 +124,7 @@ pub async fn replace_event_cities(
 )]
 pub async fn search_cities(
     State(service): State<ConcertsService>,
-    Caller(_user_id): Caller,
+    _caller: User,
     ValidQuery(query): ValidQuery<CitySearchQuery>,
 ) -> HttpResult<CitySearchResponse> {
     Ok(Json(service.search_cities(&query.q).await?))
@@ -157,10 +142,10 @@ pub async fn search_cities(
 )]
 pub async fn unseen_concerts(
     State(service): State<ConcertsService>,
-    Caller(user_id): Caller,
+    User(caller): User,
 ) -> HttpResult<UnseenCountResponse> {
     Ok(Json(UnseenCountResponse {
-        count: service.unseen_count(&user_id).await?,
+        count: service.unseen_count(caller.user_id()).await?,
     }))
 }
 
@@ -176,8 +161,8 @@ pub async fn unseen_concerts(
 )]
 pub async fn mark_concerts_seen(
     State(service): State<ConcertsService>,
-    Caller(user_id): Caller,
+    User(caller): User,
 ) -> HttpResult<UnseenCountResponse> {
-    service.mark_seen(&user_id).await?;
+    service.mark_seen(caller.user_id()).await?;
     Ok(Json(UnseenCountResponse { count: 0 }))
 }

@@ -4,11 +4,10 @@
 
 use axum::{
     Json,
-    extract::{FromRequestParts, Path, State},
-    http::request::Parts,
+    extract::{Path, State},
 };
 
-use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::User;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidQuery;
 
@@ -24,21 +23,6 @@ use super::models::{
 };
 
 type Answer<T> = Result<Json<T>, ApiError>;
-
-/// The signed-in user's id, from the session the gate stashed.
-pub struct SessionUser(pub String);
-
-impl<S: Send + Sync> FromRequestParts<S> for SessionUser {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts
-            .extensions
-            .get::<CurrentSession>()
-            .map(|session| Self(session.user_id.clone()))
-            .ok_or_else(|| ApiError::unauthorized("Authentication required"))
-    }
-}
 
 fn answer<T>(result: Result<T, CatalogError>) -> Answer<T> {
     result.map(Json).map_err(ApiError::from)
@@ -71,10 +55,10 @@ fn count(value: Option<u32>, default: u32, max: u32) -> Result<u32, ApiError> {
 )]
 pub async fn artist(
     State(deps): State<CatalogDeps>,
-    SessionUser(user): SessionUser,
+    User(user): User,
     Path(mbid): Path<String>,
 ) -> Answer<ArtistInfo> {
-    answer(deps.catalog.artist(&user, &mbid).await)
+    answer(deps.catalog.artist(user.user_id(), &mbid).await)
 }
 
 /// Biography, portrait and artist images.
@@ -136,14 +120,14 @@ pub async fn artist_releases(
 )]
 pub async fn similar_artists(
     State(deps): State<CatalogDeps>,
-    SessionUser(user): SessionUser,
+    User(user): User,
     Path(mbid): Path<String>,
     ValidQuery(query): ValidQuery<DiscoveryQuery>,
 ) -> Answer<SimilarArtistsResponse> {
     let count = count(query.count, 15, 50)?;
     answer(
         deps.catalog
-            .similar_artists(&user, &mbid, count, query.source)
+            .similar_artists(user.user_id(), &mbid, count, query.source)
             .await,
     )
 }
@@ -162,14 +146,14 @@ pub async fn similar_artists(
 )]
 pub async fn top_songs(
     State(deps): State<CatalogDeps>,
-    SessionUser(user): SessionUser,
+    User(user): User,
     Path(mbid): Path<String>,
     ValidQuery(query): ValidQuery<DiscoveryQuery>,
 ) -> Answer<TopSongsResponse> {
     let count = count(query.count, 10, 50)?;
     answer(
         deps.catalog
-            .top_songs(&user, &mbid, count, query.source)
+            .top_songs(user.user_id(), &mbid, count, query.source)
             .await,
     )
 }
@@ -188,14 +172,14 @@ pub async fn top_songs(
 )]
 pub async fn top_albums(
     State(deps): State<CatalogDeps>,
-    SessionUser(user): SessionUser,
+    User(user): User,
     Path(mbid): Path<String>,
     ValidQuery(query): ValidQuery<DiscoveryQuery>,
 ) -> Answer<TopAlbumsResponse> {
     let count = count(query.count, 10, 50)?;
     answer(
         deps.catalog
-            .top_albums(&user, &mbid, count, query.source)
+            .top_albums(user.user_id(), &mbid, count, query.source)
             .await,
     )
 }
@@ -214,13 +198,13 @@ pub async fn top_albums(
 )]
 pub async fn artist_lastfm(
     State(deps): State<CatalogDeps>,
-    SessionUser(user): SessionUser,
+    User(user): User,
     Path(mbid): Path<String>,
     ValidQuery(query): ValidQuery<ArtistLastFmQuery>,
 ) -> Answer<LastFmArtistEnrichment> {
     answer(
         deps.catalog
-            .artist_lastfm(&user, &mbid, &query.artist_name)
+            .artist_lastfm(user.user_id(), &mbid, &query.artist_name)
             .await,
     )
 }
@@ -390,14 +374,14 @@ pub async fn album_refresh(
 )]
 pub async fn similar_albums(
     State(deps): State<CatalogDeps>,
-    SessionUser(user): SessionUser,
+    User(user): User,
     Path(id): Path<String>,
     ValidQuery(query): ValidQuery<AlbumArtistQuery>,
 ) -> Answer<SimilarAlbumsResponse> {
     let count = count(query.count, 10, 30)?;
     answer(
         deps.catalog
-            .similar_albums(&user, &id, &query.artist_id, count)
+            .similar_albums(user.user_id(), &id, &query.artist_id, count)
             .await,
     )
 }
@@ -441,13 +425,13 @@ pub async fn more_by_artist(
 )]
 pub async fn album_lastfm(
     State(deps): State<CatalogDeps>,
-    SessionUser(user): SessionUser,
+    User(user): User,
     Path(id): Path<String>,
     ValidQuery(query): ValidQuery<AlbumLastFmQuery>,
 ) -> Answer<LastFmAlbumEnrichment> {
     answer(
         deps.catalog
-            .album_lastfm(&user, &id, &query.artist_name, &query.album_name)
+            .album_lastfm(user.user_id(), &id, &query.artist_name, &query.album_name)
             .await,
     )
 }

@@ -12,7 +12,7 @@ use axum::{
 
 use crate::reads::collections::db::StoreError;
 use crate::reads::discover::error::NOT_CONFIGURED;
-use crate::reads::discover::handlers::AuthenticatedUser;
+use droppedneedle_auth::User;
 use droppedneedle_kernel::error::{ApiError, NOT_FOUND, RATE_LIMITED, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
 
@@ -65,7 +65,7 @@ pub fn router(links: YouTubeLinks) -> Router {
 )]
 pub async fn generate_link(
     State(links): State<YouTubeLinks>,
-    _user: AuthenticatedUser,
+    _user: User,
     ValidJson(body): ValidJson<YouTubeLinkGenerateRequest>,
 ) -> Reply<Json<YouTubeLinkResponse>> {
     let link = links.generate_link(body).await.map_err(ApiError::from)?;
@@ -87,7 +87,7 @@ pub async fn generate_link(
 )]
 pub async fn get_link(
     State(links): State<YouTubeLinks>,
-    _user: AuthenticatedUser,
+    _user: User,
     Path(album_id): Path<String>,
 ) -> Reply<Response> {
     let link = links.link(&album_id).await.map_err(ApiError::from)?;
@@ -109,7 +109,7 @@ pub async fn get_link(
 )]
 pub async fn list_links(
     State(links): State<YouTubeLinks>,
-    _user: AuthenticatedUser,
+    _user: User,
 ) -> Reply<Json<Vec<YouTubeLink>>> {
     links.links().await.map(Json).map_err(ApiError::from)
 }
@@ -127,7 +127,7 @@ pub async fn list_links(
 )]
 pub async fn delete_link(
     State(links): State<YouTubeLinks>,
-    _user: AuthenticatedUser,
+    _user: User,
     Path(album_id): Path<String>,
 ) -> Reply<StatusCode> {
     links
@@ -153,7 +153,7 @@ pub async fn delete_link(
 )]
 pub async fn update_link(
     State(links): State<YouTubeLinks>,
-    _user: AuthenticatedUser,
+    _user: User,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<YouTubeLinkUpdateRequest>,
 ) -> Reply<Json<YouTubeLink>> {
@@ -178,7 +178,7 @@ pub async fn update_link(
 )]
 pub async fn save_manual_link(
     State(links): State<YouTubeLinks>,
-    _user: AuthenticatedUser,
+    _user: User,
     ValidJson(body): ValidJson<YouTubeManualLinkRequest>,
 ) -> Reply<Json<YouTubeLink>> {
     links
@@ -206,7 +206,7 @@ pub async fn save_manual_link(
 )]
 pub async fn generate_track_link(
     State(links): State<YouTubeLinks>,
-    _user: AuthenticatedUser,
+    _user: User,
     ValidJson(body): ValidJson<YouTubeTrackLinkGenerateRequest>,
 ) -> Reply<Json<YouTubeTrackLinkResponse>> {
     let track_link = links
@@ -232,7 +232,7 @@ pub async fn generate_track_link(
 )]
 pub async fn generate_track_links(
     State(links): State<YouTubeLinks>,
-    _user: AuthenticatedUser,
+    _user: User,
     ValidJson(body): ValidJson<YouTubeTrackLinkBatchGenerateRequest>,
 ) -> Reply<Json<YouTubeTrackLinkBatchResponse>> {
     let (track_links, failed) = links
@@ -260,7 +260,7 @@ pub async fn generate_track_links(
 )]
 pub async fn list_track_links(
     State(links): State<YouTubeLinks>,
-    _user: AuthenticatedUser,
+    _user: User,
     Path(album_id): Path<String>,
 ) -> Reply<Json<Vec<YouTubeTrackLink>>> {
     links
@@ -288,7 +288,7 @@ pub async fn list_track_links(
 )]
 pub async fn delete_track_link(
     State(links): State<YouTubeLinks>,
-    _user: AuthenticatedUser,
+    _user: User,
     path: Result<Path<(String, i64, i64)>, PathRejection>,
 ) -> Reply<StatusCode> {
     let Path((album_id, disc_number, track_number)) =
@@ -310,10 +310,7 @@ pub async fn delete_track_link(
         (status = 401, description = "Not authenticated"),
     )
 )]
-pub async fn get_quota(
-    State(links): State<YouTubeLinks>,
-    _user: AuthenticatedUser,
-) -> Json<YouTubeQuotaStatus> {
+pub async fn get_quota(State(links): State<YouTubeLinks>, _user: User) -> Json<YouTubeQuotaStatus> {
     Json(links.quota().await)
 }
 

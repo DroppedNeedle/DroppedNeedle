@@ -2,7 +2,7 @@
 //! the routes, the same-era suggestion pool, and the SQLite catalog and
 //! favorites adapters over a scratch migrated database.
 
-use crate::common::auth::AuthRig;
+use crate::common::auth::{test_principal, with_test_principal};
 use crate::common::{ScratchDir, TestApp};
 use droppedneedle_catalog::reads::library;
 
@@ -11,9 +11,6 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
-use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use library::memory::{
     FailingCatalog, FailingFavorites, FailingLyrics, MemoryCatalog, MemoryFavorites, MemoryLyrics,
@@ -213,7 +210,6 @@ fn deps(
     catalog: Arc<dyn LibraryCatalog>,
     favorites: Arc<dyn FavoriteReads>,
     lyrics: Arc<dyn LyricsPort>,
-    auth: &UsersDeps,
 ) -> LibraryDeps {
     LibraryDeps {
         catalog,
@@ -222,39 +218,22 @@ fn deps(
         lookups: Arc::new(library::memory::EmptyLookups),
         upgrade_policy: Arc::new(library::stores::UpgradePolicy::default),
         tags: Arc::new(library::tags::UnwiredTagReader),
-        auth: auth.clone(),
     }
 }
 
-/// Router with a stashed session for `user_id`, or anonymous when None.
-fn app(deps: LibraryDeps, user_id: Option<&str>) -> Router {
+/// The signed-in user the seeded favorites belong to.
+const ADA: (&str, Role) = ("user-ada", Role::User);
+
+/// Router signed in as `caller`, or anonymous when None.
+fn app(deps: LibraryDeps, caller: Option<(&str, Role)>) -> Router {
     let router = library_router(deps);
-    match user_id {
-        Some(user_id) => {
-            let user_id = user_id.to_owned();
-            router.layer(axum::middleware::from_fn(
-                move |mut req: Request<Body>, next: axum::middleware::Next| {
-                    let user_id = user_id.clone();
-                    async move {
-                        req.extensions_mut().insert(CurrentSession {
-                            user_id,
-                            session_id: "sess-1".to_owned(),
-                            kind: SessionKind::Standard,
-                            transport: Transport::Bearer,
-                        });
-                        next.run(req).await
-                    }
-                },
-            ))
-        }
+    match caller {
+        Some((user_id, role)) => with_test_principal(
+            router,
+            test_principal(user_id, role, "sess-1", SessionKind::Standard),
+        ),
         None => router,
     }
-}
-
-async fn auth_bundle() -> (AuthRig, String) {
-    let rig = AuthRig::new("reads-library").await;
-    let user = rig.seed_user("ada", Role::User).await;
-    (rig, user.id)
 }
 
 async fn get(app: Router, path: &str) -> (StatusCode, Value) {
@@ -301,7 +280,6 @@ const ROUTES: &[&str] = &[
 
 #[tokio::test]
 async fn suggestions_same_era_pool_tags_era_picks() {
-    let (rig, user_id) = auth_bundle().await;
     let catalog = MemoryCatalog::new().with_tracks(vec![
         track(
             "u1",
@@ -349,9 +327,8 @@ async fn suggestions_same_era_pool_tags_era_picks() {
             Arc::new(catalog),
             Arc::new(MemoryFavorites::new()),
             Arc::new(MemoryLyrics::new()),
-            &rig.deps,
         ),
-        Some(&user_id),
+        Some(ADA),
     );
     let (status, json) = get(app, "/local-library/suggestions?limit=4&decade=1990").await;
     assert_eq!(status, StatusCode::OK);
@@ -368,15 +345,13 @@ async fn suggestions_same_era_pool_tags_era_picks() {
 
 #[tokio::test]
 async fn bad_input_stays_in_the_envelope() {
-    let (rig, user_id) = auth_bundle().await;
     let app = app(
         deps(
             Arc::new(seeded_catalog()),
             Arc::new(seeded_favorites()),
             Arc::new(seeded_lyrics()),
-            &rig.deps,
         ),
-        Some(&user_id),
+        Some(ADA),
     );
     for path in [
         "/library/albums?sort=nope",
@@ -399,23 +374,19 @@ async fn bad_input_stays_in_the_envelope() {
 
 #[tokio::test]
 async fn auth_matrix_every_route_401s_anonymous_and_admits_users() {
-    let (rig, user_id) = auth_bundle().await;
-    let admin = rig.seed_user("root", Role::Admin).await;
     let authenticated = app(
         deps(
             Arc::new(seeded_catalog()),
             Arc::new(seeded_favorites()),
             Arc::new(seeded_lyrics()),
-            &rig.deps,
         ),
-        Some(&user_id),
+        Some(ADA),
     );
     let anonymous = app(
         deps(
             Arc::new(seeded_catalog()),
             Arc::new(seeded_favorites()),
             Arc::new(seeded_lyrics()),
-            &rig.deps,
         ),
         None,
     );
@@ -448,9 +419,8 @@ async fn auth_matrix_every_route_401s_anonymous_and_admits_users() {
             Arc::new(seeded_catalog()),
             Arc::new(seeded_favorites()),
             Arc::new(seeded_lyrics()),
-            &rig.deps,
         ),
-        Some(&admin.id),
+        Some(("user-root", Role::Admin)),
     );
     let (status, _) = get(as_admin, "/library/stats").await;
     assert_eq!(status, StatusCode::OK);
@@ -458,16 +428,14 @@ async fn auth_matrix_every_route_401s_anonymous_and_admits_users() {
 
 #[tokio::test]
 async fn every_route_hides_store_faults() {
-    let (rig, user_id) = auth_bundle().await;
     let scope = TestApp::start("reads-library-faults").await;
     let app = scope.request_scope(app(
         deps(
             Arc::new(FailingCatalog::new()),
             Arc::new(FailingFavorites::new()),
             Arc::new(FailingLyrics::new()),
-            &rig.deps,
         ),
-        Some(&user_id),
+        Some(ADA),
     ));
     for path in ROUTES {
         let response = app

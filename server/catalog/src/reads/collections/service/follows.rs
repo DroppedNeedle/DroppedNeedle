@@ -7,7 +7,6 @@
 //! so a grant survives a re-follow (v2 rule).
 
 use super::CollectionsService;
-use crate::reads::collections::auth::{Principal, Role};
 use crate::reads::collections::error::CollectionsError;
 use crate::reads::collections::models::{
     FollowStatusResponse, FollowedArtist, FollowedArtistListResponse, NewReleaseItem,
@@ -15,6 +14,7 @@ use crate::reads::collections::models::{
 };
 use crate::reads::collections::state::AutoDownloadState;
 use crate::reads::collections::store::follows::{FollowRow, ReleaseFilter, ReleaseRow};
+use droppedneedle_auth::{Principal, Role};
 
 /// To-do list page size: default and largest (v2 `/new-releases`).
 const PAGE_DEFAULT: usize = 50;
@@ -155,7 +155,7 @@ impl CollectionsService<'_> {
         enabled: bool,
     ) -> Result<FollowStatusResponse, CollectionsError> {
         let follows = &self.state.stores.follows;
-        let Some(row) = follows.get(&caller.user_id, artist_mbid).await? else {
+        let Some(row) = follows.get(caller.user_id(), artist_mbid).await? else {
             return Err(if enabled {
                 CollectionsError::Conflict {
                     message: "Follow the artist before enabling auto-download".to_owned(),
@@ -165,20 +165,20 @@ impl CollectionsService<'_> {
             });
         };
         follows
-            .set_intent(&caller.user_id, &[artist_mbid.to_owned()], enabled)
+            .set_intent(caller.user_id(), &[artist_mbid.to_owned()], enabled)
             .await?;
         if let Some(sink) = &self.state.approval_seeds {
-            if enabled && !caller.role.is_curator() {
-                sink.seed_approval(&caller.user_id, artist_mbid, &row.artist_name)
+            if enabled && !caller.role().is_curator() {
+                sink.seed_approval(caller.user_id(), artist_mbid, &row.artist_name)
                     .await
                     .map_err(|cause| CollectionsError::internal(&cause))?;
             } else if !enabled {
-                sink.withdraw_approval(&caller.user_id, artist_mbid)
+                sink.withdraw_approval(caller.user_id(), artist_mbid)
                     .await
                     .map_err(|cause| CollectionsError::internal(&cause))?;
             }
         }
-        self.follow_status(&caller.user_id, artist_mbid).await
+        self.follow_status(caller.user_id(), artist_mbid).await
     }
 
     /// The caller's followed artists, newest first.

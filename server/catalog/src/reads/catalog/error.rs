@@ -22,9 +22,6 @@ pub enum CatalogError {
     /// what.
     #[error("missing: {0}")]
     Missing(String),
-    /// The caller's role does not allow this.
-    #[error("forbidden")]
-    Forbidden,
     /// The request conflicts with the library's state.
     #[error("conflict: {0}")]
     Conflict(String),
@@ -51,7 +48,6 @@ impl From<CatalogError> for ApiError {
             CatalogError::Missing(message) => {
                 ApiError::new(StatusCode::NOT_FOUND, NOT_FOUND, message)
             }
-            CatalogError::Forbidden => ApiError::forbidden("Curator access required"),
             CatalogError::Conflict(message) => ApiError::conflict(message),
             CatalogError::Unavailable(cause) => {
                 ApiError::fault(StatusCode::SERVICE_UNAVAILABLE, cause)

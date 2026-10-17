@@ -13,8 +13,7 @@ use axum::routing::get;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_catalog::concerts::{ConcertsEvents, ConcertsNew, ConcertsSetup, Endpoints};
 use droppedneedle_kernel::db::Lane;
@@ -22,6 +21,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::EventsSettings;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
 
 use crate::common::ScratchDir;
+use crate::common::auth::{test_principal, with_test_principal};
 
 const MBID: &str = "AAAAAAAA-1111-2222-3333-444444444444";
 
@@ -214,12 +214,10 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
         },
     )
     .with_events(recorder.clone());
-    let app = setup.gated_router().layer(axum::Extension(CurrentSession {
-        user_id: "u1".to_owned(),
-        session_id: "s1".to_owned(),
-        kind: SessionKind::Standard,
-        transport: Transport::Bearer,
-    }));
+    let app = with_test_principal(
+        setup.gated_router(),
+        test_principal("u1", Role::User, "s1", SessionKind::Standard),
+    );
     let stop = tokio::sync::Notify::new();
     let sweep = setup.sweep().expect("wired concerts sweep").without_delay();
 

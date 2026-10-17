@@ -1,6 +1,6 @@
 //! Collections routes (playlists, favorites, follows, approvals, edition
-//! pins) over a scratch SQLite database, mounted with the test principal
-//! header: private playlists redact for other users, rows never leak across
+//! pins) over a scratch SQLite database, signed in with the test principal
+//! layer: private playlists redact for other users, rows never leak across
 //! users, everything survives a restart, pins never write identity, and
 //! store faults stay hidden.
 
@@ -9,6 +9,8 @@ use std::sync::Arc;
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::requests::sqlite::FollowApprovalStore;
 use droppedneedle_acquire::settings::{ApprovalSeedBridge, RequestsPendingSource};
+use droppedneedle_auth::Role;
+use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_catalog::reads::collections::{self, CollectionsState, db::CollectionsDb};
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, open_runtime};
 
@@ -20,12 +22,16 @@ use axum::{
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
+use crate::common::auth::{test_principal, with_test_principal};
 use crate::common::{ScratchDir, TestApp};
 
-const ADA: &str = "u-ada:user:ada";
-const BOB: &str = "u-bob:user:bob";
-const TRUSTED: &str = "u-tris:trusted:tris";
-const ADMIN: &str = "u-root:admin:root";
+/// A signed-in caller: user id and role.
+type Identity = (&'static str, Role);
+
+const ADA: Identity = ("u-ada", Role::User);
+const BOB: Identity = ("u-bob", Role::User);
+const TRUSTED: Identity = ("u-tris", Role::Trusted);
+const ADMIN: Identity = ("u-root", Role::Admin);
 
 /// One-pixel PNG, base64.
 const PIXEL_PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -85,7 +91,7 @@ impl Rig {
     }
 
     fn app(&self) -> Router {
-        collections::collections_router(self.state())
+        collections::collections_routes(self.state())
     }
 
     /// Close the database and open it again, as a server restart does.
@@ -97,16 +103,8 @@ impl Rig {
     }
 }
 
-fn request(
-    method: Method,
-    uri: &str,
-    identity: Option<&str>,
-    body: Option<Value>,
-) -> Request<Body> {
+fn request(method: Method, uri: &str, body: Option<Value>) -> Request<Body> {
     let mut builder = Request::builder().method(method).uri(uri);
-    if let Some(identity) = identity {
-        builder = builder.header("x-slice-principal", identity);
-    }
     let body = match body {
         Some(json) => {
             builder = builder.header("content-type", "application/json");
@@ -117,8 +115,20 @@ fn request(
     builder.body(body).unwrap()
 }
 
-async fn send(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, Vec<u8>) {
-    let response = app.clone().oneshot(req).await.unwrap();
+/// Send `req` to `app`, signed in as `identity` when there is one.
+async fn send(
+    app: &Router,
+    identity: Option<Identity>,
+    req: Request<Body>,
+) -> (StatusCode, HeaderMap, Vec<u8>) {
+    let app = match identity {
+        Some((user_id, role)) => with_test_principal(
+            app.clone(),
+            test_principal(user_id, role, "sess-test", SessionKind::Standard),
+        ),
+        None => app.clone(),
+    };
+    let response = app.oneshot(req).await.unwrap();
     let status = response.status();
     let headers = response.headers().clone();
     let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
@@ -132,10 +142,10 @@ async fn call(
     app: &Router,
     method: Method,
     uri: &str,
-    identity: Option<&str>,
+    identity: Option<Identity>,
     body: Option<Value>,
 ) -> (StatusCode, Value) {
-    let (status, _, bytes) = send(app, request(method, uri, identity, body)).await;
+    let (status, _, bytes) = send(app, identity, request(method, uri, body)).await;
     (
         status,
         serde_json::from_slice(&bytes).unwrap_or(Value::Null),
@@ -151,7 +161,7 @@ async fn playlist_auth_matrix() {
     let rig = Rig::open().await;
     let app = rig.app();
 
-    let (status, headers, _) = send(&app, request(Method::GET, "/playlists", None, None)).await;
+    let (status, headers, _) = send(&app, None, request(Method::GET, "/playlists", None)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(headers.get("www-authenticate").unwrap(), "Bearer");
 
@@ -299,12 +309,8 @@ async fn playlists_favorites_and_follows_survive_a_restart() {
     );
     let (status, headers, bytes) = send(
         &app,
-        request(
-            Method::GET,
-            &format!("/playlists/{id}/cover"),
-            Some(ADA),
-            None,
-        ),
+        Some(ADA),
+        request(Method::GET, &format!("/playlists/{id}/cover"), None),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -464,7 +470,7 @@ async fn follow_auto_download_states_and_admin_reads() {
         } else {
             "pending"
         };
-        assert_eq!(body["auto_download_state"], want, "{identity} {mbid}");
+        assert_eq!(body["auto_download_state"], want, "{identity:?} {mbid}");
     }
 
     for uri in [
@@ -579,7 +585,7 @@ async fn remote_playlist_import_lands_in_the_users_playlists() {
 #[tokio::test]
 async fn store_faults_render_fixed_500_envelopes() {
     let scope = TestApp::start("reads-collections-faults").await;
-    let app = scope.request_scope(collections::collections_router(CollectionsState::unwired()));
+    let app = scope.request_scope(collections::collections_routes(CollectionsState::unwired()));
     for uri in [
         "/playlists",
         "/favorites",
@@ -587,7 +593,7 @@ async fn store_faults_render_fixed_500_envelopes() {
         "/requests/auto-download-approvals",
     ] {
         let (status, headers, bytes) =
-            send(&app, request(Method::GET, uri, Some(ADMIN), None)).await;
+            send(&app, Some(ADMIN), request(Method::GET, uri, None)).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{uri}");
         let body: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["error"]["message"], "Internal server error");

@@ -5,14 +5,9 @@
 //! [`ApiError`]. Bodies and query strings parse through the kernel's
 //! [`ValidJson`] and [`ValidQuery`].
 
-use axum::{
-    Json,
-    extract::{FromRequestParts, State},
-    http::{StatusCode, request::Parts},
-};
+use axum::{Json, extract::State, http::StatusCode};
 
 use super::{
-    error::PlaybackError,
     models::{
         NowPlayingDeleteQuery, NowPlayingHeartbeat, PlaybackProgressRequest,
         PlaybackProgressResponse, PlaybackStartRequest, PlaybackStartResponse, PlaybackStopRequest,
@@ -20,45 +15,10 @@ use super::{
     },
     services::{self, PlaybackDeps},
 };
-use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::User;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::events::NowPlayingSnapshot;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
-
-/// The authenticated caller. The deny-by-default session middleware stashes
-/// the session; this extractor reads it without a store round-trip (all
-/// playback routes are plain authenticated-user routes, no role gating).
-#[derive(Debug, Clone)]
-pub struct AuthenticatedUser {
-    /// Owning user id.
-    pub user_id: String,
-    /// Authenticating session id.
-    pub session_id: String,
-}
-
-impl AuthenticatedUser {
-    /// Reject unauthenticated callers with the 401 envelope.
-    pub fn require(parts: &Parts) -> Result<Self, PlaybackError> {
-        parts
-            .extensions
-            .get::<CurrentSession>()
-            .map(|session| Self {
-                user_id: session.user_id.clone(),
-                session_id: session.session_id.clone(),
-            })
-            .ok_or_else(|| PlaybackError::Unauthorized {
-                message: "Authentication required".to_owned(),
-            })
-    }
-}
-
-impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedUser {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        Self::require(parts).map_err(ApiError::from)
-    }
-}
 
 fn map(error: services::ServiceError) -> ApiError {
     error.into_playback_error().into()
@@ -83,10 +43,10 @@ fn map(error: services::ServiceError) -> ApiError {
 )]
 pub async fn start_playback(
     State(deps): State<PlaybackDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidJson(body): ValidJson<PlaybackStartRequest>,
 ) -> Result<Json<PlaybackStartResponse>, ApiError> {
-    services::start_playback(&deps, &user.user_id, &body)
+    services::start_playback(&deps, user.user_id(), &body)
         .map(Json)
         .map_err(map)
 }
@@ -106,10 +66,10 @@ pub async fn start_playback(
 )]
 pub async fn report_progress(
     State(deps): State<PlaybackDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidJson(body): ValidJson<PlaybackProgressRequest>,
 ) -> Result<Json<PlaybackProgressResponse>, ApiError> {
-    services::report_progress(&deps, &user.user_id, &body)
+    services::report_progress(&deps, user.user_id(), &body)
         .map(Json)
         .map_err(map)
 }
@@ -129,10 +89,10 @@ pub async fn report_progress(
 )]
 pub async fn stop_playback(
     State(deps): State<PlaybackDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidJson(body): ValidJson<PlaybackStopRequest>,
 ) -> Result<Json<PlaybackStopResponse>, ApiError> {
-    services::stop_playback(&deps, &user.user_id, &body)
+    services::stop_playback(&deps, user.user_id(), &body)
         .map(Json)
         .map_err(map)
 }
@@ -155,10 +115,10 @@ pub async fn stop_playback(
 )]
 pub async fn submit_scrobble(
     State(deps): State<PlaybackDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidJson(body): ValidJson<ScrobbleSubmitRequest>,
 ) -> Result<Json<ScrobbleResponse>, ApiError> {
-    services::submit_scrobble(&deps, &user.user_id, &body)
+    services::submit_scrobble(&deps, user.user_id(), &body)
         .map(Json)
         .map_err(map)
 }
@@ -177,10 +137,10 @@ pub async fn submit_scrobble(
 )]
 pub async fn forward_now_playing(
     State(deps): State<PlaybackDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidJson(body): ValidJson<ScrobbleNowPlayingRequest>,
 ) -> Result<Json<ScrobbleResponse>, ApiError> {
-    services::forward_sink_now_playing(&deps, &user.user_id, &body)
+    services::forward_sink_now_playing(&deps, user.user_id(), &body)
         .map(Json)
         .map_err(map)
 }
@@ -201,7 +161,7 @@ pub async fn forward_now_playing(
 )]
 pub async fn now_playing(
     State(deps): State<PlaybackDeps>,
-    _user: AuthenticatedUser,
+    _user: User,
 ) -> Json<NowPlayingSnapshot> {
     Json(services::snapshot(&deps))
 }
@@ -220,10 +180,10 @@ pub async fn now_playing(
 )]
 pub async fn heartbeat(
     State(deps): State<PlaybackDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidJson(body): ValidJson<NowPlayingHeartbeat>,
 ) -> StatusCode {
-    services::heartbeat(&deps, &user.user_id, &body);
+    services::heartbeat(&deps, user.user_id(), &body);
     StatusCode::NO_CONTENT
 }
 
@@ -241,11 +201,11 @@ pub async fn heartbeat(
 )]
 pub async fn clear_now_playing(
     State(deps): State<PlaybackDeps>,
-    user: AuthenticatedUser,
+    User(user): User,
     ValidQuery(query): ValidQuery<NowPlayingDeleteQuery>,
 ) -> StatusCode {
     let device = query.device.as_deref().unwrap_or("web");
-    services::clear_presence(&deps, &user.user_id, device);
+    services::clear_presence(&deps, user.user_id(), device);
     StatusCode::NO_CONTENT
 }
 

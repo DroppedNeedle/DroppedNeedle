@@ -9,10 +9,6 @@
 //! [`ReadsSetup::wrapped_router`] mounts under `/api/v3` outside the gate
 //! with only its `X-Wrapped-API-Key` extractor. Sessions never satisfy the
 //! wrapped routes and the wrapped key never satisfies the session gate.
-//!
-//! Collections and requests take a local `Principal`; [`translate_principal`]
-//! builds it from the real session by resolving the role fresh from the
-//! user store, mirroring the users role extractors.
 
 pub mod catalog;
 pub mod collections;
@@ -25,12 +21,9 @@ pub mod youtube;
 
 use std::sync::Arc;
 
-use axum::{Router, extract::Request, middleware::Next, response::Response};
+use axum::Router;
 
-use droppedneedle_auth::{
-    session::middleware::CurrentSession,
-    users::{UsersDeps, stores::StoreError},
-};
+use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::ids::IdGenerator;
 
 /// Everything `create_app` needs to mount the reads routes, built once.
@@ -63,7 +56,8 @@ pub struct ReadsSetup {
 
 impl ReadsSetup {
     /// Build the production bundle. `pool` serves library and search reads;
-    /// `users` resolves library favorites and collections roles;
+    /// `users` gives wrapped its display names and discover its batch
+    /// callers and Last.fm links;
     /// `inputs` carries what cover art, the version check, wrapped and
     /// discover read from the composition root; `enrichment`
     /// carries the live provider pair (`None` keeps the
@@ -124,7 +118,6 @@ impl ReadsSetup {
             lookups: Arc::new(library::lookups::SqliteLookups::new(&library_db)),
             upgrade_policy: upgrade_policy_source(inputs_config.clone()),
             tags: Arc::new(library::tags::UnwiredTagReader),
-            auth: users.clone(),
         };
         let search_enrichment: Arc<dyn search::ports::EnrichmentPort> = match &enrichment {
             Some(pair) => pair.search.clone(),
@@ -149,9 +142,10 @@ impl ReadsSetup {
 
     /// Test bundle over unwired adapters. Library answers from empty memory
     /// stores, search from a lazy pool, and wrapped denies everything; the
-    /// hooked-state suites that use this never touch reads routes.
+    /// hooked-state suites that use this never touch reads routes. Nothing
+    /// here reads `_users`.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
+    pub fn for_tests(_users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:")
             .map_err(|error| format!("test reads pool: {error}"))?;
         let discover = test_discover_deps();
@@ -164,7 +158,6 @@ impl ReadsSetup {
                 lookups: Arc::new(library::memory::EmptyLookups),
                 upgrade_policy: Arc::new(library::stores::UpgradePolicy::default),
                 tags: Arc::new(library::tags::UnwiredTagReader),
-                auth: users,
             },
             search: search::SearchDeps::new(
                 search::service::SearchService::new(pool),
@@ -228,16 +221,12 @@ impl ReadsSetup {
     }
 
     /// Relative-path routers for nesting under `/api/v3` inside the session
-    /// gate. The collections leg carries the principal-translation layer so
-    /// its handlers keep their `Principal` extractor against the real gate.
+    /// gate.
     pub fn gated_router(&self) -> Router {
-        let collections = collections::collections_routes(self.collections.clone()).layer(
-            axum::middleware::from_fn_with_state(self.library.auth.clone(), translate_principal),
-        );
         let router = Router::new()
             .merge(library::library_router(self.library.clone()))
             .merge(discover::reads_router(self.discover.clone()))
-            .merge(collections)
+            .merge(collections::collections_routes(self.collections.clone()))
             .merge(platform::session_router(&self.platform))
             .merge(youtube::router(self.youtube.clone()));
         match &self.catalog {
@@ -466,45 +455,4 @@ impl catalog::ports::FollowLookup for CollectionsFollows {
             }
         })
     }
-}
-
-/// Resolve the collections principal from the stashed session, mirroring
-/// the users role extractors: the role rereads the user row every request
-/// so role changes take effect immediately. A session whose account is gone
-/// reads as stale (401), never as its last-known role.
-async fn translate_principal(
-    axum::extract::State(users): axum::extract::State<UsersDeps>,
-    mut request: Request,
-    next: Next,
-) -> Response {
-    use axum::response::IntoResponse;
-    use collections::auth::Principal;
-    use droppedneedle_kernel::error::{ApiError, Unavailable};
-
-    let missing = || ApiError::unauthorized("Authentication required").into_response();
-    let Some(session) = request.extensions().get::<CurrentSession>().cloned() else {
-        return missing();
-    };
-    let user = match users.users.get_by_id(&session.user_id).await {
-        Ok(Some(user)) => user,
-        Ok(None) => return missing(),
-        Err(StoreError::Conflict) => {
-            return ApiError::conflict("Conflicting state").into_response();
-        }
-        Err(StoreError::Busy) => {
-            return ApiError::unavailable(Unavailable::ServerBusy, StoreError::Busy)
-                .into_response();
-        }
-        Err(StoreError::Internal(cause)) => return ApiError::internal(cause).into_response(),
-    };
-    request.extensions_mut().insert(Principal {
-        user_id: user.id,
-        username: user.username,
-        role: match user.role {
-            droppedneedle_auth::users::roles::Role::User => collections::auth::Role::User,
-            droppedneedle_auth::users::roles::Role::Trusted => collections::auth::Role::Trusted,
-            droppedneedle_auth::users::roles::Role::Admin => collections::auth::Role::Admin,
-        },
-    });
-    next.run(request).await
 }

@@ -30,10 +30,10 @@ use tokio::time::Instant;
 
 use super::{
     extract::extract,
-    middleware::CurrentSession,
     store::{SessionStore, now_unix},
     tokens::hash_token,
 };
+use crate::users::roles::User;
 use droppedneedle_kernel::events::{EventHub, Subscription};
 
 /// Reconnect delay the stream asks browsers for (v2 `_MUX_RETRY_MS`).
@@ -114,18 +114,12 @@ pub fn router(hub: EventHub, sessions: SessionCheck) -> Router {
 )]
 pub async fn stream(
     State(route): State<StreamRoute>,
-    session: Option<axum::Extension<CurrentSession>>,
+    User(caller): User,
     headers: HeaderMap,
 ) -> Response {
-    let Some(axum::Extension(session)) = session else {
-        return droppedneedle_kernel::error::ApiError::unauthorized_without_challenge(
-            "Not authenticated",
-        )
-        .into_response();
-    };
     let token_hash = extract(&headers).map(|(raw, _)| hash_token(&raw));
     let state = Stream {
-        subscription: route.hub.subscribe(&session.user_id),
+        subscription: route.hub.subscribe(caller.user_id()),
         sessions: route.sessions,
         token_hash,
         opened: false,

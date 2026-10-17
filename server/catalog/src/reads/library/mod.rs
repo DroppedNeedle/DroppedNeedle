@@ -35,8 +35,6 @@ use axum::{
     Router,
     routing::{get, post},
 };
-use droppedneedle_auth::users::UsersDeps;
-
 use stores::{
     FavoriteReads, LibraryCatalog, LibraryLookups, LyricsPort, TrackTagReader, UpgradePolicySource,
 };
@@ -56,14 +54,13 @@ pub struct LibraryDeps {
     pub upgrade_policy: UpgradePolicySource,
     /// Tag reads from the files on disk (admin tag view).
     pub tags: Arc<dyn TrackTagReader>,
-    /// Auth bundle, used only to resolve the caller for favorite flags.
-    pub auth: UsersDeps,
 }
 
-/// Authenticated read routes. The session middleware authenticates before
-/// these run; every handler takes the library user extractor, so every
-/// route 401s anonymously and admits any signed-in role. The two POSTs
-/// (membership, resolve-tracks) are reads that take their ids in a body.
+/// Authenticated read routes. The session gate authenticates before these
+/// run; every handler takes `User`, so every route 401s anonymously and
+/// admits any signed-in role, except the tag view, which takes `Admin`.
+/// The two POSTs (membership, resolve-tracks) are reads that take their
+/// ids in a body.
 pub fn library_router(deps: LibraryDeps) -> Router {
     Router::new()
         .route("/library/albums", get(handlers::list_albums))
