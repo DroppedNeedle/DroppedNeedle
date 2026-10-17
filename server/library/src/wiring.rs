@@ -4,9 +4,9 @@
 //! and queue, the contribution service and worker, and the publish
 //! cell, plus the HTTP state (preview seals) and the background
 //! loops. `build` binds everything over the production provider
-//! clients; `for_tests` binds the same shape over scripted providers
-//! and memory stores. The routers nest under `/api/v3` inside the
-//! deny-by-default session gate.
+//! clients, or over the provider ports a test gives in [`Endpoints`].
+//! The routers nest under `/api/v3` inside the deny-by-default session
+//! gate.
 //!
 //! Store durability: roots, scan state, identification, contributions,
 //! and the publish journal live in the application database.
@@ -23,8 +23,6 @@ use super::clock::now_unix;
 use super::contrib::ContribProviders;
 use super::contrib::service::ContributionService;
 use super::contrib::worker::VerificationWorker;
-#[cfg(any(test, feature = "test-support"))]
-use super::identify::providers::FakeProviders;
 use super::identify::service::{IdentifyDeps, IdentifyService};
 use super::identify::sqlite::SqliteIdentifyStore;
 use super::loops::{identify_loop, publish_loop, scan_loop, watcher_loop};
@@ -41,27 +39,6 @@ use super::service::ServiceError;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
-
-/// Scratch database (a copy of the migrated template) plus config store in a
-/// directory that goes away when the last bundle clone drops.
-#[cfg(any(test, feature = "test-support"))]
-fn scratch_state() -> Result<
-    (
-        Arc<droppedneedle_kernel::db::scratch::ScratchDir>,
-        Arc<ConfigStore>,
-    ),
-    String,
-> {
-    let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("library")
-        .map_err(|error| error.to_string())?;
-    let db_path = dir.path().join("app.db");
-    droppedneedle_kernel::schema::template::copy_to(&db_path)?;
-    let crypto = droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
-        .map_err(|error| error.to_string())?;
-    let config = ConfigStore::open(&dir.path().join("config.json"), crypto)
-        .map_err(|error| error.to_string())?;
-    Ok((Arc::new(dir), Arc::new(config)))
-}
 
 /// Scan coordinator over the wired seams.
 pub type ScanCoordinator = LibraryScanCoordinator<LoftyTagReader>;
@@ -99,31 +76,6 @@ struct ProviderParts {
 
 type ProviderFactory =
     Box<dyn FnOnce(ProviderParts) -> Arc<dyn super::identify::providers::IdentifyProviders>>;
-
-/// A factory handing out the scripted providers of a test bundle.
-#[cfg(any(test, feature = "test-support"))]
-fn scripted_factory(scripted: Arc<FakeProviders>) -> ProviderFactory {
-    Box::new(move |_| scripted as Arc<dyn super::identify::providers::IdentifyProviders>)
-}
-
-/// Scripted Discogs and MusicBrainz reads behind a test bundle's
-/// contribution service; journeys script them through this handle.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Clone, Default)]
-pub struct TestContribProviders {
-    pub discogs: Arc<super::contrib::scripted::ScriptedDiscogs>,
-    pub musicbrainz: Arc<super::contrib::scripted::ScriptedMusicBrainz>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl TestContribProviders {
-    fn providers(&self) -> ContribProviders {
-        ContribProviders {
-            discogs: self.discogs.clone(),
-            musicbrainz: self.musicbrainz.clone(),
-        }
-    }
-}
 
 /// Startup recovery report.
 #[derive(Debug, Clone, Default)]
@@ -173,23 +125,16 @@ pub struct LibrarySetup {
     pub identify_store: Arc<SqliteIdentifyStore>,
     /// Identify service.
     pub identify: Arc<IdentifyService>,
-    /// Scripted providers (test bundles only).
-    #[cfg(any(test, feature = "test-support"))]
-    pub test_providers: Option<Arc<FakeProviders>>,
     /// MusicBrainz releases for importing finished downloads: search and
-    /// release lookups, identity-critical like identification. `None` in
-    /// test bundles unless a test scripts one.
+    /// release lookups, identity-critical like identification.
     pub releases: Option<Arc<dyn super::identify::sources::ReleaseSource>>,
     /// AcoustID for files being imported, keyed per call and keeping
-    /// nothing; off while no AcoustID key is set. `None` in test bundles.
+    /// nothing; off while no AcoustID key is set.
     pub fingerprints: Option<Arc<dyn super::identify::sources::FingerprintSource>>,
     /// Contribution service.
     pub contrib: Arc<ContributionService>,
     /// Contribution verification worker.
     pub contrib_worker: Arc<VerificationWorker>,
-    /// Scripted contribution providers (test bundles only).
-    #[cfg(any(test, feature = "test-support"))]
-    pub test_contrib: Option<TestContribProviders>,
     /// Publish cell (empty until a usable root exists).
     pub publish: Arc<std::sync::Mutex<PublishCell>>,
     /// Placement modes of the open publish session, readable without the
@@ -214,11 +159,11 @@ pub struct LibrarySetup {
     /// kick), set at boot.
     pub scan_completed: ScanCompletedSlot,
     /// The shared outbound HTTP client, for media-server refreshes after a
-    /// management run. `None` in test bundles.
+    /// management run.
     pub http: Option<reqwest::Client>,
     /// The settings page's Library Management service, attached at boot so
-    /// an activation dry run saves through it. Empty in test bundles: a
-    /// private one is used then.
+    /// an activation dry run saves through it. Until then a private one
+    /// is used.
     pub management_settings: std::sync::Arc<
         std::sync::OnceLock<
             std::sync::Arc<crate::management::settings::service::LibraryManagementService>,
@@ -229,9 +174,6 @@ pub struct LibrarySetup {
     /// bundles until a test scripts it; planning then treats every outside
     /// source as unavailable.
     pub enrichment: super::management::enrich::EnrichmentSlot,
-    /// Scratch state of a test bundle, removed with the last clone.
-    #[cfg(any(test, feature = "test-support"))]
-    pub scratch: Option<Arc<droppedneedle_kernel::db::scratch::ScratchDir>>,
 }
 
 impl LibrarySetup {
@@ -337,73 +279,6 @@ impl LibrarySetup {
         Ok(setup)
     }
 
-    /// Test bundle over scripted providers on a fresh scratch database
-    /// and config file under the temp dir.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
-        let scripted = Arc::new(FakeProviders::default());
-        let (dir, config) = scratch_state()?;
-        let contrib = TestContribProviders::default();
-        let mut setup = Self::assemble(
-            ids,
-            scripted_factory(scripted.clone()),
-            contrib.providers(),
-            &dir.path().join("app.db"),
-            config,
-        )?;
-        setup.test_providers = Some(scripted);
-        setup.scratch = Some(dir);
-        setup.test_contrib = Some(contrib);
-        Ok(setup)
-    }
-
-    /// Test bundle over scripted providers on an existing application
-    /// database and config store, exactly like production. Journeys
-    /// that act as real users need this (scan runs reference
-    /// `auth_users`), and so do restart tests that rebuild the bundle
-    /// over the same state.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests_at(
-        ids: Arc<dyn IdGenerator>,
-        db_path: &Path,
-        config: Arc<ConfigStore>,
-    ) -> Result<Self, String> {
-        let scripted = Arc::new(FakeProviders::default());
-        let contrib = TestContribProviders::default();
-        let mut setup = Self::assemble(
-            ids,
-            scripted_factory(scripted.clone()),
-            contrib.providers(),
-            db_path,
-            config,
-        )?;
-        setup.test_providers = Some(scripted);
-        setup.test_contrib = Some(contrib);
-        Ok(setup)
-    }
-
-    /// Test bundle over caller-supplied identify providers. Focused
-    /// shutdown tests script provider timing here; the shared
-    /// `for_tests` shape stays the default everywhere else.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests_with_providers(
-        ids: Arc<dyn IdGenerator>,
-        providers: Arc<dyn super::identify::providers::IdentifyProviders>,
-    ) -> Result<Self, String> {
-        let (dir, config) = scratch_state()?;
-        let contrib = TestContribProviders::default();
-        let mut setup = Self::assemble(
-            ids,
-            Box::new(move |_| providers),
-            contrib.providers(),
-            &dir.path().join("app.db"),
-            config,
-        )?;
-        setup.scratch = Some(dir);
-        setup.test_contrib = Some(contrib);
-        Ok(setup)
-    }
-
     fn assemble(
         ids: Arc<dyn IdGenerator>,
         make_providers: ProviderFactory,
@@ -505,14 +380,10 @@ impl LibrarySetup {
             wakeups,
             identify_store,
             identify,
-            #[cfg(any(test, feature = "test-support"))]
-            test_providers: None,
             releases: None,
             fingerprints: None,
             contrib,
             contrib_worker,
-            #[cfg(any(test, feature = "test-support"))]
-            test_contrib: None,
             publish: Arc::new(std::sync::Mutex::new(publish)),
             placement,
             held_bundles: super::manage::HeldBundles::new(db_path),
@@ -526,8 +397,6 @@ impl LibrarySetup {
             http: None,
             management_settings: Default::default(),
             enrichment: Default::default(),
-            #[cfg(any(test, feature = "test-support"))]
-            scratch: None,
         })
     }
 
