@@ -3,8 +3,8 @@
 
 use axum::{
     Json,
-    extract::{FromRequest, Query, Request},
-    http::StatusCode,
+    extract::{FromRequest, FromRequestParts, Query, Request},
+    http::{StatusCode, request::Parts},
 };
 use serde::de::DeserializeOwned;
 
@@ -30,14 +30,15 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
     }
 }
 
-/// A query string. A malformed one is 400 `INVALID_INPUT`.
+/// A query string. A malformed one is 400 `INVALID_INPUT`. It reads only
+/// the request parts, so it may sit before a body extractor.
 pub struct ValidQuery<T>(pub T);
 
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidQuery<T> {
+impl<T: DeserializeOwned, S: Send + Sync> FromRequestParts<S> for ValidQuery<T> {
     type Rejection = ApiError;
 
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Query::<T>::from_request(req, state)
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        Query::<T>::from_request_parts(parts, state)
             .await
             .map(|Query(value)| Self(value))
             .map_err(|cause| ApiError::invalid_input(format!("Invalid query string: {cause}")))
