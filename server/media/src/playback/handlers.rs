@@ -1,17 +1,15 @@
 //! Thin Axum handlers and route assembly.
 //!
 //! Every handler answers one route: extract the caller, call the service,
-//! render. Status mapping lives in [`PlaybackError`](super::error::PlaybackError).
-//! Bodies parse through [`ValidJson`] and query strings through [`ValidQuery`],
-//! which keep malformed input inside the shared error envelope instead of
-//! Axum's default plain-text 400.
+//! render. Status mapping lives in the `From<PlaybackError>` impl for
+//! [`ApiError`]. Bodies and query strings parse through the kernel's
+//! [`ValidJson`] and [`ValidQuery`].
 
 use axum::{
     Json,
-    extract::{FromRequest, FromRequestParts, State},
+    extract::{FromRequestParts, State},
     http::{StatusCode, request::Parts},
 };
-use serde::de::DeserializeOwned;
 
 use super::{
     error::PlaybackError,
@@ -23,7 +21,9 @@ use super::{
     services::{self, PlaybackDeps},
 };
 use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::events::NowPlayingSnapshot;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 /// The authenticated caller. The deny-by-default session middleware stashes
 /// the session; this extractor reads it without a store round-trip (all
@@ -53,47 +53,15 @@ impl AuthenticatedUser {
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedUser {
-    type Rejection = PlaybackError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        Self::require(parts)
+        Self::require(parts).map_err(ApiError::from)
     }
 }
 
-/// JSON body extractor that renders failures in the shared envelope.
-pub struct ValidJson<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
-    type Rejection = PlaybackError;
-
-    async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
-        Json::<T>::from_request(req, state)
-            .await
-            .map(|Json(value)| Self(value))
-            .map_err(|cause| PlaybackError::InvalidInput {
-                message: format!("Invalid request body: {cause}"),
-            })
-    }
-}
-
-/// Query extractor that renders failures in the shared envelope.
-pub struct ValidQuery<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidQuery<T> {
-    type Rejection = PlaybackError;
-
-    async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
-        axum::extract::Query::<T>::from_request(req, state)
-            .await
-            .map(|axum::extract::Query(value)| Self(value))
-            .map_err(|cause| PlaybackError::InvalidInput {
-                message: format!("Invalid query string: {cause}"),
-            })
-    }
-}
-
-fn map(error: services::ServiceError, deps: &PlaybackDeps) -> PlaybackError {
-    error.into_playback_error(deps.ids.as_ref())
+fn map(error: services::ServiceError, deps: &PlaybackDeps) -> ApiError {
+    error.into_playback_error(deps.ids.as_ref()).into()
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +85,7 @@ pub async fn start_playback(
     State(deps): State<PlaybackDeps>,
     user: AuthenticatedUser,
     ValidJson(body): ValidJson<PlaybackStartRequest>,
-) -> Result<Json<PlaybackStartResponse>, PlaybackError> {
+) -> Result<Json<PlaybackStartResponse>, ApiError> {
     services::start_playback(&deps, &user.user_id, &body)
         .map(Json)
         .map_err(|error| map(error, &deps))
@@ -140,7 +108,7 @@ pub async fn report_progress(
     State(deps): State<PlaybackDeps>,
     user: AuthenticatedUser,
     ValidJson(body): ValidJson<PlaybackProgressRequest>,
-) -> Result<Json<PlaybackProgressResponse>, PlaybackError> {
+) -> Result<Json<PlaybackProgressResponse>, ApiError> {
     services::report_progress(&deps, &user.user_id, &body)
         .map(Json)
         .map_err(|error| map(error, &deps))
@@ -163,7 +131,7 @@ pub async fn stop_playback(
     State(deps): State<PlaybackDeps>,
     user: AuthenticatedUser,
     ValidJson(body): ValidJson<PlaybackStopRequest>,
-) -> Result<Json<PlaybackStopResponse>, PlaybackError> {
+) -> Result<Json<PlaybackStopResponse>, ApiError> {
     services::stop_playback(&deps, &user.user_id, &body)
         .map(Json)
         .map_err(|error| map(error, &deps))
@@ -189,7 +157,7 @@ pub async fn submit_scrobble(
     State(deps): State<PlaybackDeps>,
     user: AuthenticatedUser,
     ValidJson(body): ValidJson<ScrobbleSubmitRequest>,
-) -> Result<Json<ScrobbleResponse>, PlaybackError> {
+) -> Result<Json<ScrobbleResponse>, ApiError> {
     services::submit_scrobble(&deps, &user.user_id, &body)
         .map(Json)
         .map_err(|error| map(error, &deps))
@@ -211,7 +179,7 @@ pub async fn forward_now_playing(
     State(deps): State<PlaybackDeps>,
     user: AuthenticatedUser,
     ValidJson(body): ValidJson<ScrobbleNowPlayingRequest>,
-) -> Result<Json<ScrobbleResponse>, PlaybackError> {
+) -> Result<Json<ScrobbleResponse>, ApiError> {
     services::forward_sink_now_playing(&deps, &user.user_id, &body)
         .map(Json)
         .map_err(|error| map(error, &deps))

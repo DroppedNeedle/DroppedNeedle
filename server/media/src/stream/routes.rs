@@ -1,7 +1,7 @@
 //! Stream-gateway routes: one source-keyed GET/HEAD surface over the engine.
 //!
 //! This file owns the HTTP layer only: route shapes, the typed query, range
-//! parsing, byte-exact 200/206/416/HEAD headers, and the error envelope. Byte
+//! parsing, byte-exact 200/206/416/HEAD headers, and the error mapping. Byte
 //! sourcing, leases, and transcode execution live in the engine behind the
 //! [`StreamEngine`] seam below.
 //!
@@ -22,7 +22,7 @@
 //!
 //! Players link to `/api/v3/stream/{source}/{key}` with those three query
 //! keys. The shapes stay small and stable: one handler shape
-//! `(State, StreamUser, Path, HeaderMap, ValidatedQuery)`, path params only
+//! `(State, StreamUser, Path, HeaderMap, ValidQuery)`, path params only
 //! for identity, query only for transcode hints. A new gateway capability
 //! should be a new query key, not a new route.
 //!
@@ -30,7 +30,7 @@
 //!
 //! * Engine: [`StreamEngine`] is the engine seam; [`super::gateway::Gateway`]
 //!   implements it (leases + `Transcoder` + direct/transcode reads). The
-//!   range/HEAD/envelope/header logic stays in this file.
+//!   range/HEAD/error/header logic stays in this file.
 //! * Streaming reads: routes call [`StreamEngine::open_stream`], which
 //!   hands back a [`MediaBody`]: a local file read by range on demand, a
 //!   transcode read chunk by chunk, or in-memory bytes (remote objects and
@@ -65,7 +65,7 @@ use futures_util::stream::BoxStream;
 use axum::{
     Router,
     body::Body,
-    extract::{FromRequest, FromRequestParts, Path, Query, Request, State},
+    extract::{FromRequestParts, Path, State},
     http::{
         HeaderMap, HeaderValue, StatusCode,
         header::{self},
@@ -75,33 +75,24 @@ use axum::{
     routing::get,
 };
 use droppedneedle_auth::session::middleware::CurrentSession;
-use droppedneedle_kernel::error::{ErrorBody, ErrorEnvelope};
+use droppedneedle_kernel::error::{ApiError, Unavailable};
+use droppedneedle_kernel::extract::ValidQuery;
 use droppedneedle_kernel::ids::IdGenerator;
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 use serde_json::json;
 
 // ---------------------------------------------------------------------------
 // Error codes (SCREAMING_SNAKE, shared envelope)
 // ---------------------------------------------------------------------------
 
-/// Missing session. Carries the `WWW-Authenticate` challenge.
-pub const UNAUTHORIZED: &str = "UNAUTHORIZED";
 /// Unknown file/item id. Message follows the v2 404 detail per source.
 pub const STREAM_NOT_FOUND: &str = "STREAM_NOT_FOUND";
 /// Playback refused, or a local path outside the music directory.
 pub const STREAM_FORBIDDEN: &str = "STREAM_FORBIDDEN";
-/// Bad query string, unknown source, or unsupported audio format.
-pub const INVALID_INPUT: &str = "INVALID_INPUT";
 /// Range header present but unsatisfiable. Carries `Content-Range: bytes */N`.
 pub const RANGE_NOT_SATISFIABLE: &str = "RANGE_NOT_SATISFIABLE";
 /// Direct or transcode leases exhausted. Carries `Retry-After: 1`.
 pub const STREAM_CAPACITY_EXHAUSTED: &str = "STREAM_CAPACITY_EXHAUSTED";
-/// The remote source failed the read.
-pub const UPSTREAM_UNAVAILABLE: &str = "UPSTREAM_UNAVAILABLE";
-
-/// Challenge sent on every 401, matching the other routes.
-pub const WWW_AUTHENTICATE_BEARER: &str = "Bearer";
 /// Retry hint on every 429 (v2 sends 1; duplicates the transcode constant).
 pub const RETRY_AFTER_SECONDS: u64 = 1;
 
@@ -109,8 +100,9 @@ pub const RETRY_AFTER_SECONDS: u64 = 1;
 // Audio sources
 // ---------------------------------------------------------------------------
 
-/// The four stream sources behind one gateway. Display names feed the 502
-/// message only; wire identity is the lowercase route segment.
+/// The stream sources behind one gateway. Display names feed the logged
+/// cause of a failed read only; wire identity is the lowercase route
+/// segment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AudioSource {
     /// Local library file bytes.
@@ -149,7 +141,7 @@ impl AudioSource {
         }
     }
 
-    /// Human name for the 502 message (safe: fixed strings only).
+    /// Human name for the logged cause of a failed read.
     fn display_name(self) -> &'static str {
         match self {
             Self::Local => "local file",
@@ -299,9 +291,9 @@ pub enum StreamFault {
     },
     /// Direct or transcode leases exhausted. Routes answer 429 + Retry-After.
     Capacity,
-    /// The remote source failed the read.
+    /// The source failed the read.
     Upstream {
-        /// Which source failed, for the 502 message.
+        /// Which source failed.
         source: AudioSource,
     },
     /// Server fault. The cause reaches the log only, never the wire.
@@ -427,7 +419,7 @@ pub fn parse_range(header: &str, total_len: u64) -> Option<ByteRange> {
 pub struct StreamState<E> {
     /// Byte sourcing, leases, and transcode execution.
     pub engine: Arc<E>,
-    /// Fresh error ids for the 5xx envelope.
+    /// Not read by the routes.
     pub ids: Arc<dyn IdGenerator>,
 }
 
@@ -449,7 +441,7 @@ pub struct StreamUser {
 }
 
 impl<E: Send + Sync> FromRequestParts<StreamState<E>> for StreamUser {
-    type Rejection = StreamError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -461,8 +453,11 @@ impl<E: Send + Sync> FromRequestParts<StreamState<E>> for StreamUser {
             .map(|session| Self {
                 user_id: session.user_id.clone(),
             })
-            .ok_or(StreamError::Unauthorized {
-                message: "Authentication required".to_owned(),
+            .ok_or_else(|| {
+                StreamError::Unauthorized {
+                    message: "Authentication required".to_owned(),
+                }
+                .into()
             })
     }
 }
@@ -485,23 +480,6 @@ pub struct StreamQuery {
     /// Seek offset in seconds (`-ss`, transcode only).
     #[serde(default)]
     pub start_seconds: f64,
-}
-
-/// Query extractor that renders failures in the shared envelope instead of
-/// Axum's default plain-text 400.
-pub struct ValidatedQuery<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidatedQuery<T> {
-    type Rejection = StreamError;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Query::<T>::from_request(req, state)
-            .await
-            .map(|Query(value)| Self(value))
-            .map_err(|cause| StreamError::InvalidInput {
-                message: format!("Invalid query string: {cause}"),
-            })
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -538,100 +516,73 @@ pub enum StreamError {
     },
     /// Leases exhausted. Renders 429 plus `Retry-After: 1`.
     Capacity,
-    /// The remote source failed the read.
+    /// The source failed the read. A remote media server answers the
+    /// closed-list `REMOTE_UNAVAILABLE`; a local file or a plugin a plain 502.
     Upstream {
-        /// "Failed to stream local file" or "Failed to stream from {Name}".
-        message: String,
+        /// Which source failed.
+        source: AudioSource,
     },
-    /// Server fault. Fixed body plus the request-tied id.
+    /// Server fault. The cause reaches the log only.
     Internal {
-        /// Ties the wire response to the server log line.
-        error_id: String,
+        /// Log-only cause.
+        cause: String,
     },
 }
 
 impl StreamError {
-    /// Build a 500, logging the real cause with its id.
-    pub fn internal(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
-        let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "stream gateway failed");
-        Self::Internal { error_id }
-    }
-
-    fn status(&self) -> StatusCode {
-        match self {
-            Self::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
-            Self::NotFound { .. } => StatusCode::NOT_FOUND,
-            Self::Forbidden { .. } => StatusCode::FORBIDDEN,
-            Self::InvalidInput { .. } => StatusCode::BAD_REQUEST,
-            Self::Unsatisfiable { .. } => StatusCode::RANGE_NOT_SATISFIABLE,
-            Self::Capacity => StatusCode::TOO_MANY_REQUESTS,
-            Self::Upstream { .. } => StatusCode::BAD_GATEWAY,
-            Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
-        }
-    }
-
-    fn envelope(&self) -> ErrorEnvelope {
-        let (code, message, details) = match self {
-            Self::Unauthorized { message } => (UNAUTHORIZED.to_owned(), message.clone(), None),
-            Self::NotFound { message } => (STREAM_NOT_FOUND.to_owned(), message.clone(), None),
-            Self::Forbidden { message } => (STREAM_FORBIDDEN.to_owned(), message.clone(), None),
-            Self::InvalidInput { message } => (INVALID_INPUT.to_owned(), message.clone(), None),
-            Self::Unsatisfiable { .. } => (
-                RANGE_NOT_SATISFIABLE.to_owned(),
-                "Range not satisfiable".to_owned(),
-                None,
-            ),
-            Self::Capacity => (
-                STREAM_CAPACITY_EXHAUSTED.to_owned(),
-                "Stream capacity exhausted".to_owned(),
-                Some(json!({ "retry_after": RETRY_AFTER_SECONDS })),
-            ),
-            Self::Upstream { message } => (UPSTREAM_UNAVAILABLE.to_owned(), message.clone(), None),
-            Self::Internal { error_id } => (
-                droppedneedle_kernel::error::INTERNAL_ERROR.to_owned(),
-                droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE.to_owned(),
-                Some(json!({ "error_id": error_id })),
-            ),
-        };
-        ErrorEnvelope {
-            error: ErrorBody {
-                code,
-                message,
-                details,
-            },
+    /// A 500 whose cause the request boundary logs.
+    pub fn internal(cause: impl std::fmt::Display) -> Self {
+        Self::Internal {
+            cause: cause.to_string(),
         }
     }
 }
 
-impl IntoResponse for StreamError {
-    fn into_response(self) -> Response {
-        let status = self.status();
-        let mut response = (status, axum::Json(self.envelope())).into_response();
-        let headers = response.headers_mut();
-        match &self {
-            Self::Unsatisfiable { total_len } => {
-                if let Ok(value) = HeaderValue::from_str(&format!("bytes */{total_len}")) {
-                    headers.insert(header::CONTENT_RANGE, value);
+/// 416 with `Content-Range: bytes */N`, shared with the download routes.
+pub(crate) fn unsatisfiable(total_len: u64) -> ApiError {
+    let error = ApiError::new(
+        StatusCode::RANGE_NOT_SATISFIABLE,
+        RANGE_NOT_SATISFIABLE,
+        "Range not satisfiable",
+    );
+    match HeaderValue::from_str(&format!("bytes */{total_len}")) {
+        Ok(value) => error.with_header(header::CONTENT_RANGE, value),
+        Err(_) => error,
+    }
+}
+
+impl From<StreamError> for ApiError {
+    fn from(error: StreamError) -> Self {
+        match error {
+            StreamError::Unauthorized { message } => ApiError::unauthorized(message),
+            StreamError::NotFound { message } => {
+                ApiError::new(StatusCode::NOT_FOUND, STREAM_NOT_FOUND, message)
+            }
+            StreamError::Forbidden { message } => {
+                ApiError::new(StatusCode::FORBIDDEN, STREAM_FORBIDDEN, message)
+            }
+            StreamError::InvalidInput { message } => ApiError::invalid_input(message),
+            StreamError::Unsatisfiable { total_len } => unsatisfiable(total_len),
+            StreamError::Capacity => ApiError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                STREAM_CAPACITY_EXHAUSTED,
+                "Stream capacity exhausted",
+            )
+            .with_details(json!({ "retry_after": RETRY_AFTER_SECONDS }))
+            .with_header(header::RETRY_AFTER, RETRY_AFTER_SECONDS.into()),
+            StreamError::Upstream { source } => {
+                let cause = format!("failed to stream from {}", source.display_name());
+                match source {
+                    AudioSource::Jellyfin | AudioSource::Navidrome | AudioSource::Plex => {
+                        ApiError::unavailable(Unavailable::MediaServer, cause)
+                    }
+                    AudioSource::Local | AudioSource::Plugin => {
+                        ApiError::fault(StatusCode::BAD_GATEWAY, cause)
+                    }
                 }
             }
-            Self::Capacity => {
-                if let Ok(value) = HeaderValue::from_str(&RETRY_AFTER_SECONDS.to_string()) {
-                    headers.insert(header::RETRY_AFTER, value);
-                }
-            }
-            Self::Unauthorized { .. } => {
-                if let Ok(challenge) = HeaderValue::from_str(WWW_AUTHENTICATE_BEARER) {
-                    headers.insert(header::WWW_AUTHENTICATE, challenge);
-                }
-            }
-            Self::NotFound { .. }
-            | Self::Forbidden { .. }
-            | Self::InvalidInput { .. }
-            | Self::Upstream { .. }
-            | Self::Internal { .. } => {}
+            StreamError::Internal { cause } => ApiError::internal(cause),
         }
-        response
     }
 }
 
@@ -685,9 +636,9 @@ pub(crate) async fn stream_get<E: StreamEngine>(
     user: StreamUser,
     Path((source, key)): Path<(String, String)>,
     headers: HeaderMap,
-    ValidatedQuery(query): ValidatedQuery<StreamQuery>,
-) -> Result<Response, StreamError> {
-    serve(&state, &user, &source, &key, &headers, &query, false).await
+    ValidQuery(query): ValidQuery<StreamQuery>,
+) -> Result<Response, ApiError> {
+    Ok(serve(&state, &user, &source, &key, &headers, &query, false).await?)
 }
 
 /// Same headers as GET, no body.
@@ -714,9 +665,9 @@ pub(crate) async fn stream_head<E: StreamEngine>(
     user: StreamUser,
     Path((source, key)): Path<(String, String)>,
     headers: HeaderMap,
-    ValidatedQuery(query): ValidatedQuery<StreamQuery>,
-) -> Result<Response, StreamError> {
-    serve(&state, &user, &source, &key, &headers, &query, true).await
+    ValidQuery(query): ValidQuery<StreamQuery>,
+) -> Result<Response, ApiError> {
+    Ok(serve(&state, &user, &source, &key, &headers, &query, true).await?)
 }
 
 /// Shared GET/HEAD implementation: open the object, then apply the HTTP
@@ -751,7 +702,7 @@ async fn serve<E: StreamEngine>(
             head_only,
         )
         .await
-        .map_err(|fault| map_fault(fault, source, state.ids.as_ref()))?;
+        .map_err(|fault| map_fault(fault, source))?;
 
     // The direct lease the open took rides inside the body, so the slot
     // stays held until the last byte is sent or the client goes away.
@@ -762,13 +713,7 @@ async fn serve<E: StreamEngine>(
         None => chunks,
     };
     if media.transcoded {
-        return transcode_response(
-            media,
-            hold,
-            query.estimate_content_length,
-            head_only,
-            state.ids.as_ref(),
-        );
+        return transcode_response(media, hold, query.estimate_content_length, head_only);
     }
 
     let span = DirectSpan::for_request(headers.get(header::RANGE), media.total_len).ok_or(
@@ -788,7 +733,7 @@ async fn serve<E: StreamEngine>(
     let body = if head_only {
         Body::empty()
     } else {
-        direct_body(media.body, span.start, span.len, hold, state.ids.as_ref())?
+        direct_body(media.body, span.start, span.len, hold)?
     };
 
     let mut response = (span.status(), body).into_response();
@@ -875,7 +820,6 @@ fn direct_body(
     start: u64,
     len: u64,
     hold: impl FnOnce(ChunkStream) -> ChunkStream,
-    ids: &dyn IdGenerator,
 ) -> Result<Body, StreamError> {
     match body {
         MediaBody::Bytes(bytes) => {
@@ -887,17 +831,16 @@ fn direct_body(
             if from == 0 && to == bytes.len() {
                 return Ok(Body::from(bytes));
             }
-            let slice = bytes.get(from..to).ok_or_else(|| {
-                StreamError::internal(&"engine short-read the ranged object", ids)
-            })?;
+            let slice = bytes
+                .get(from..to)
+                .ok_or_else(|| StreamError::internal("engine short-read the ranged object"))?;
             Ok(Body::from(slice.to_vec()))
         }
         MediaBody::File(path) => Ok(Body::from_stream(hold(file_range(path, start, len)))),
         MediaBody::Spans(open) => Ok(Body::from_stream(hold(open(start, len)))),
-        MediaBody::Chunks(_) | MediaBody::Empty => Err(StreamError::internal(
-            &"engine returned no direct body",
-            ids,
-        )),
+        MediaBody::Chunks(_) | MediaBody::Empty => {
+            Err(StreamError::internal("engine returned no direct body"))
+        }
     }
 }
 
@@ -970,7 +913,6 @@ fn transcode_response(
     hold: impl FnOnce(ChunkStream) -> ChunkStream,
     want_estimate: bool,
     head_only: bool,
-    ids: &dyn IdGenerator,
 ) -> Result<Response, StreamError> {
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
@@ -989,13 +931,13 @@ fn transcode_response(
         None
     };
     if let Some(len) = estimated {
-        response_headers.insert(header::CONTENT_LENGTH, header_value(&len.to_string(), ids)?);
+        response_headers.insert(header::CONTENT_LENGTH, header_value(&len.to_string())?);
     } else if let (true, MediaBody::Bytes(bytes)) = (head_only, &media.body) {
         // A whole-object engine knows the length: pin it on HEAD for
         // GET/HEAD parity (GET's buffered body gets it stamped).
         response_headers.insert(
             header::CONTENT_LENGTH,
-            header_value(&bytes.len().to_string(), ids)?,
+            header_value(&bytes.len().to_string())?,
         );
     }
     let body = if head_only {
@@ -1018,7 +960,7 @@ fn transcode_response(
 
 /// Map an engine fault to the wire. Messages stay fixed or user-safe; only
 /// the internal cause reaches the log.
-fn map_fault(fault: StreamFault, source: AudioSource, ids: &dyn IdGenerator) -> StreamError {
+fn map_fault(fault: StreamFault, source: AudioSource) -> StreamError {
     match fault {
         StreamFault::NotFound => StreamError::NotFound {
             message: match source {
@@ -1029,21 +971,15 @@ fn map_fault(fault: StreamFault, source: AudioSource, ids: &dyn IdGenerator) -> 
         StreamFault::Forbidden { message } => StreamError::Forbidden { message },
         StreamFault::InvalidInput { message } => StreamError::InvalidInput { message },
         StreamFault::Capacity => StreamError::Capacity,
-        StreamFault::Upstream { source } => StreamError::Upstream {
-            message: match source {
-                AudioSource::Local => "Failed to stream local file".to_owned(),
-                _ => format!("Failed to stream from {}", source.display_name()),
-            },
-        },
-        StreamFault::Internal { cause } => StreamError::internal(&cause, ids),
+        StreamFault::Upstream { source } => StreamError::Upstream { source },
+        StreamFault::Internal { cause } => StreamError::Internal { cause },
     }
 }
 
 /// Fallible header construction without panics: only ASCII digits and fixed
 /// tokens reach here, so failure is an internal error by construction.
-fn header_value(text: &str, ids: &dyn IdGenerator) -> Result<HeaderValue, StreamError> {
-    HeaderValue::from_str(text)
-        .map_err(|_| StreamError::internal(&"stream header failed to render", ids))
+fn header_value(text: &str) -> Result<HeaderValue, StreamError> {
+    HeaderValue::from_str(text).map_err(|_| StreamError::internal("stream header failed to render"))
 }
 
 /// Upstream content type, infallible: remotes resolve their own type, and an
@@ -1055,14 +991,6 @@ fn upstream_content_type(content_type: &str) -> HeaderValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    struct TestIds;
-
-    impl IdGenerator for TestIds {
-        fn new_id(&self) -> String {
-            "test-id".to_owned()
-        }
-    }
 
     fn transcode_media() -> StreamMedia {
         let bytes = b"fake-transcoded-mp3-bytes".to_vec();
@@ -1078,17 +1006,13 @@ mod tests {
 
     #[test]
     fn transcode_response_sets_length_only_with_estimate() {
-        let ids = TestIds;
-
-        let estimated =
-            transcode_response(transcode_media(), |c| c, true, false, &ids).expect("renders");
+        let estimated = transcode_response(transcode_media(), |c| c, true, false).expect("renders");
         assert_eq!(
             estimated.headers().get(header::CONTENT_LENGTH),
             Some(&HeaderValue::from_static("25"))
         );
 
-        let plain =
-            transcode_response(transcode_media(), |c| c, false, false, &ids).expect("renders");
+        let plain = transcode_response(transcode_media(), |c| c, false, false).expect("renders");
         assert_eq!(plain.headers().get(header::CONTENT_LENGTH), None);
         assert_eq!(
             plain.headers().get(header::ACCEPT_RANGES),

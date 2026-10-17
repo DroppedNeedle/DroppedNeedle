@@ -19,7 +19,6 @@ use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_kernel::ids::IdGenerator;
 use playback::PlaybackDeps;
-use playback::error::PlaybackError;
 use playback::fakes::{
     FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeRemotes, FakeSinks, FakeWarmup, ManualClock,
 };
@@ -37,7 +36,7 @@ use crate::common::TestApp;
 use crate::common::auth::with_test_principal;
 use crate::common::compat::{CompatApp, PLAYER, named, rest};
 
-/// Fixed id generator so error ids assert stably.
+/// Fixed id generator.
 #[derive(Debug, Clone)]
 struct FixedIds;
 
@@ -548,29 +547,6 @@ async fn warmup_loops_use_honest_cadences() {
             task.await.unwrap();
         }
         assert!(!registry.is_live(scope));
-    }
-}
-
-#[tokio::test]
-async fn server_faults_hide_causes() {
-    use axum::response::IntoResponse as _;
-
-    let ids = FixedIds;
-    for error in [
-        PlaybackError::internal(&"db file is gone", &ids),
-        PlaybackError::upstream(&"plex://10.0.0.9 blew up", &ids),
-    ] {
-        let response = error.into_response();
-        assert!(response.status().is_server_error());
-        let bytes = axum::body::to_bytes(response.into_body(), 1024)
-            .await
-            .unwrap();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
-        assert!(!body["error"]["message"].as_str().unwrap().contains('/'));
-        assert_eq!(
-            body["error"]["details"]["error_id"],
-            "123e4567-e89b-12d3-a456-426614174000"
-        );
     }
 }
 

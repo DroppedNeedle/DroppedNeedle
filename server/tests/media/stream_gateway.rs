@@ -24,7 +24,7 @@ use gateway::{
 use serde_json::Value;
 use tower::ServiceExt as _;
 
-/// Fixed error id asserted in 5xx envelopes. A valid UUID.
+/// Fixed id for the state's generator. A valid UUID.
 const FIXED_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
 /// Id generator returning one fixed value.
@@ -424,7 +424,7 @@ async fn query_hints_and_principal_reach_engine() {
 }
 
 // ---------------------------------------------------------------------------
-// Fault mapping: 404/403/429/502/500
+// Fault mapping: 404/403/429/502
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -494,40 +494,26 @@ async fn lease_exhaustion_answers_429_with_retry_after() {
     assert_eq!(json["error"]["details"]["retry_after"], 1);
 }
 
+/// A failed read is a 502: the closed-list `REMOTE_UNAVAILABLE` for a media
+/// server, a plain fault for a local file or a plugin. The request boundary
+/// writes the bodies (see `media_journey`).
 #[tokio::test]
-async fn upstream_failure_answers_502_naming_source() {
-    let engine = FakeEngine::with(vec![(
-        "plex/part-9",
-        Script::Fault(StreamFault::Upstream {
-            source: AudioSource::Plex,
-        }),
-    )]);
-    let (status, _, body) = get(app(engine, true), "/stream/plex/part-9", &[]).await;
-
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
-    let json = envelope(&body);
-    assert_eq!(json["error"]["code"], "UPSTREAM_UNAVAILABLE");
-    assert_eq!(json["error"]["message"], "Failed to stream from Plex");
-}
-
-#[tokio::test]
-async fn internal_fault_is_fixed_envelope_with_error_id() {
-    let engine = FakeEngine::with(vec![(
-        "local/broken",
-        Script::Fault(StreamFault::Internal {
-            cause: "disk exploded at /secret/path".to_owned(),
-        }),
-    )]);
-    let (status, _, body) = get(app(engine, true), "/stream/local/broken", &[]).await;
-
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    let text = String::from_utf8(body).expect("utf8 envelope");
-    assert!(!text.contains("exploded"), "{text}");
-    assert!(!text.contains("/secret/path"), "{text}");
-    let json: Value = serde_json::from_str(&text).expect("json envelope");
-    assert_eq!(json["error"]["code"], "INTERNAL_ERROR");
-    assert_eq!(json["error"]["message"], "Internal server error");
-    assert_eq!(json["error"]["details"]["error_id"], FIXED_ID);
+async fn upstream_failure_answers_502() {
+    let upstream = |source| Script::Fault(StreamFault::Upstream { source });
+    let engine = FakeEngine::with(vec![
+        ("plex/part-9", upstream(AudioSource::Plex)),
+        ("local/song", upstream(AudioSource::Local)),
+        ("plugin/mbid", upstream(AudioSource::Plugin)),
+    ]);
+    for (uri, code) in [
+        ("/stream/plex/part-9", "REMOTE_UNAVAILABLE"),
+        ("/stream/local/song", "INTERNAL_ERROR"),
+        ("/stream/plugin/mbid", "INTERNAL_ERROR"),
+    ] {
+        let (status, _, body) = get(app(Arc::clone(&engine), true), uri, &[]).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{uri}");
+        assert_eq!(envelope(&body)["error"]["code"], code, "{uri}");
+    }
 }
 
 // ---------------------------------------------------------------------------

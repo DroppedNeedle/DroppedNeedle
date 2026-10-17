@@ -38,16 +38,17 @@ use axum::{
 };
 use futures_util::{StreamExt as _, stream};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use utoipa::ToSchema;
 
 use super::gateway::OUTSIDE_MESSAGE;
 use super::local_files::{AlbumFiles, CatalogFile, LibraryFiles, LocateError, PathRefusal};
-use super::routes::{ChunkStream, DirectSpan, content_type_for_extension, file_range};
+use super::routes::{
+    ChunkStream, DirectSpan, content_type_for_extension, file_range, unsatisfiable,
+};
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::roles::Role;
-use droppedneedle_kernel::error::{ErrorBody, ErrorEnvelope};
+use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 
@@ -74,23 +75,21 @@ pub struct DownloadState {
     library: Option<LibraryFiles>,
     access: AccessSource,
     users: UsersDeps,
-    ids: Arc<dyn IdGenerator>,
 }
 
 impl DownloadState {
     /// Downloads from the library catalog and roots. `None` (unwired
-    /// builds) serves nothing.
+    /// builds) serves nothing. The id generator is not read.
     pub fn new(
         library: Option<LibraryFiles>,
         access: AccessSource,
         users: UsersDeps,
-        ids: Arc<dyn IdGenerator>,
+        _ids: Arc<dyn IdGenerator>,
     ) -> Self {
         Self {
             library,
             access,
             users,
-            ids,
         }
     }
 }
@@ -137,79 +136,34 @@ pub enum DownloadError {
         /// File length.
         total_len: u64,
     },
-    /// Server fault; the cause is logged with this id.
+    /// Server fault. The cause reaches the log only.
     Internal {
-        /// Ties the response to the log line.
-        error_id: String,
+        /// Log-only cause.
+        cause: String,
     },
 }
 
 impl DownloadError {
-    fn internal(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
-        let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "library download failed");
-        Self::Internal { error_id }
+    fn internal(cause: impl std::fmt::Display) -> Self {
+        Self::Internal {
+            cause: cause.to_string(),
+        }
     }
 }
 
-impl IntoResponse for DownloadError {
-    fn into_response(self) -> Response {
-        let content_range = match &self {
-            Self::Unsatisfiable { total_len } => {
-                HeaderValue::from_str(&format!("bytes */{total_len}")).ok()
-            }
-            _ => None,
-        };
-        let (status, code, message, details) = match self {
-            Self::Unauthorized => (
-                StatusCode::UNAUTHORIZED,
-                droppedneedle_kernel::error::UNAUTHORIZED,
-                "Authentication required".to_owned(),
-                None,
-            ),
-            Self::Forbidden(message) => (
-                StatusCode::FORBIDDEN,
-                droppedneedle_kernel::error::FORBIDDEN,
-                message.to_owned(),
-                None,
-            ),
-            Self::NotFound(message) => (
+impl From<DownloadError> for ApiError {
+    fn from(error: DownloadError) -> Self {
+        match error {
+            DownloadError::Unauthorized => ApiError::unauthorized("Authentication required"),
+            DownloadError::Forbidden(message) => ApiError::forbidden(message),
+            DownloadError::NotFound(message) => ApiError::new(
                 StatusCode::NOT_FOUND,
                 droppedneedle_kernel::error::NOT_FOUND,
-                message.to_owned(),
-                None,
-            ),
-            Self::Unsatisfiable { .. } => (
-                StatusCode::RANGE_NOT_SATISFIABLE,
-                super::routes::RANGE_NOT_SATISFIABLE,
-                "Range not satisfiable".to_owned(),
-                None,
-            ),
-            Self::Internal { error_id } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                droppedneedle_kernel::error::INTERNAL_ERROR,
-                droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE.to_owned(),
-                Some(json!({ "error_id": error_id })),
-            ),
-        };
-        let envelope = ErrorEnvelope {
-            error: ErrorBody {
-                code: code.to_owned(),
                 message,
-                details,
-            },
-        };
-        let mut response = (status, Json(envelope)).into_response();
-        if let Some(value) = content_range {
-            response.headers_mut().insert(header::CONTENT_RANGE, value);
+            ),
+            DownloadError::Unsatisfiable { total_len } => unsatisfiable(total_len),
+            DownloadError::Internal { cause } => ApiError::internal(cause),
         }
-        if status == StatusCode::UNAUTHORIZED {
-            response.headers_mut().insert(
-                header::WWW_AUTHENTICATE,
-                HeaderValue::from_static(super::routes::WWW_AUTHENTICATE_BEARER),
-            );
-        }
-        response
     }
 }
 
@@ -222,7 +176,7 @@ impl IntoResponse for DownloadError {
 pub struct DownloadUser(Role);
 
 impl FromRequestParts<DownloadState> for DownloadUser {
-    type Rejection = DownloadError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -237,7 +191,7 @@ impl FromRequestParts<DownloadState> for DownloadUser {
             .users
             .get_by_id(&session.user_id)
             .await
-            .map_err(|error| DownloadError::internal(&format!("{error:?}"), state.ids.as_ref()))?
+            .map_err(|error| DownloadError::internal(format!("{error:?}")))?
             .ok_or(DownloadError::Unauthorized)?;
         Ok(Self(user.role))
     }
@@ -247,7 +201,7 @@ impl FromRequestParts<DownloadState> for DownloadUser {
 fn allowed(state: &DownloadState, role: Role) -> Result<bool, DownloadError> {
     (state.access)()
         .map(|security| security.download_allowed(role.as_str()))
-        .map_err(|cause| DownloadError::internal(&cause, state.ids.as_ref()))
+        .map_err(DownloadError::internal)
 }
 
 fn require_allowed(state: &DownloadState, role: Role) -> Result<(), DownloadError> {
@@ -276,7 +230,7 @@ fn require_allowed(state: &DownloadState, role: Role) -> Result<(), DownloadErro
 pub async fn download_access(
     State(state): State<DownloadState>,
     DownloadUser(role): DownloadUser,
-) -> Result<Json<LibraryDownloadAccess>, DownloadError> {
+) -> Result<Json<LibraryDownloadAccess>, ApiError> {
     Ok(Json(LibraryDownloadAccess {
         allowed: allowed(&state, role)?,
     }))
@@ -304,7 +258,7 @@ pub async fn download_track(
     DownloadUser(role): DownloadUser,
     UrlPath(id): UrlPath<String>,
     request_headers: HeaderMap,
-) -> Result<Response, DownloadError> {
+) -> Result<Response, ApiError> {
     require_allowed(&state, role)?;
     let library = state
         .library
@@ -322,12 +276,12 @@ pub async fn download_track(
                 tracing::warn!(track_id = %id, "download refused: file resolves outside the library roots");
                 DownloadError::Forbidden(OUTSIDE_MESSAGE)
             }
-            LocateError::Internal(cause) => DownloadError::internal(&cause, state.ids.as_ref()),
+            LocateError::Internal(cause) => DownloadError::internal(cause),
         })?;
     let probe = path.clone();
     let size = tokio::task::spawn_blocking(move || std::fs::metadata(probe))
         .await
-        .map_err(|cause| DownloadError::internal(&cause, state.ids.as_ref()))?
+        .map_err(DownloadError::internal)?
         .map_err(|_| DownloadError::NotFound("Track file not found on disk"))?
         .len();
     let span = DirectSpan::for_request(request_headers.get(header::RANGE), size)
@@ -370,13 +324,13 @@ pub async fn download_album(
     State(state): State<DownloadState>,
     DownloadUser(role): DownloadUser,
     UrlPath(id): UrlPath<String>,
-) -> Result<Response, DownloadError> {
+) -> Result<Response, ApiError> {
     require_allowed(&state, role)?;
     let library = state
         .library
         .as_ref()
         .ok_or(DownloadError::NotFound("Album or track files not found"))?;
-    album_archive(&state, library, &id).await
+    Ok(album_archive(library, &id).await?)
 }
 
 /// An album's streamable files as a ZIP, by MusicBrainz release-group (or
@@ -397,7 +351,7 @@ pub async fn download_album_by_mbid(
     State(state): State<DownloadState>,
     DownloadUser(role): DownloadUser,
     UrlPath(mbid): UrlPath<String>,
-) -> Result<Response, DownloadError> {
+) -> Result<Response, ApiError> {
     require_allowed(&state, role)?;
     let library = state
         .library
@@ -407,9 +361,9 @@ pub async fn download_album_by_mbid(
         .catalog()
         .album_by_mbid(&mbid)
         .await
-        .map_err(|cause| DownloadError::internal(&cause, state.ids.as_ref()))?
+        .map_err(DownloadError::internal)?
         .ok_or(DownloadError::NotFound("Album or track files not found"))?;
-    album_archive(&state, library, &album_id).await
+    Ok(album_archive(library, &album_id).await?)
 }
 
 // ---------------------------------------------------------------------------
@@ -436,23 +390,19 @@ struct Member {
 }
 
 /// Plan, then stream, one album archive.
-async fn album_archive(
-    state: &DownloadState,
-    library: &LibraryFiles,
-    album_id: &str,
-) -> Result<Response, DownloadError> {
+async fn album_archive(library: &LibraryFiles, album_id: &str) -> Result<Response, DownloadError> {
     let album = library
         .catalog()
         .album(album_id)
         .await
-        .map_err(|cause| DownloadError::internal(&cause, state.ids.as_ref()))?
+        .map_err(DownloadError::internal)?
         .ok_or(DownloadError::NotFound("Album or track files not found"))?;
     let library = library.clone();
     let album_id = album_id.to_owned();
     let (archive_name, members) =
         tokio::task::spawn_blocking(move || plan_members(&library.registry(), &album_id, album))
             .await
-            .map_err(|cause| DownloadError::internal(&cause, state.ids.as_ref()))?;
+            .map_err(DownloadError::internal)?;
     if members.is_empty() {
         return Err(DownloadError::NotFound("Album or track files not found"));
     }

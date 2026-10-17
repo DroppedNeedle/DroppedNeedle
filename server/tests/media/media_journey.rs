@@ -172,6 +172,55 @@ async fn media_connect_browse_play_seek_stop() {
     app.stop().await;
 }
 
+/// A player streaming from a media server that refuses connections reads
+/// the closed-list `REMOTE_UNAVAILABLE`, not the generic internal error.
+#[tokio::test]
+async fn a_stream_from_a_server_that_is_down_answers_remote_unavailable() {
+    let app = TestApp::start("media-plex-down").await;
+    let auth = app.login_admin().await;
+    let closed = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("loopback binds");
+    let plex_url = format!("http://{}", closed.local_addr().expect("has an address"));
+    drop(closed);
+    let (status, body) = app
+        .call(
+            "PUT",
+            "/api/v3/settings/plex",
+            &[("authorization", auth.as_str())],
+            Some(json!({
+                "plex_url": plex_url,
+                "plex_token": PLEX_TOKEN,
+                "enabled": true,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (status, _, bytes) = app
+        .raw(
+            "GET",
+            "/api/v3/stream/plex/library/parts/1/file.mp3",
+            &[
+                ("authorization", auth.as_str()),
+                ("x-request-id", "stream-down-1"),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("body is json");
+    assert_eq!(
+        body,
+        json!({"error": {
+            "code": "REMOTE_UNAVAILABLE",
+            "message": "Your media server did not answer or returned an error.",
+            "details": {"error_id": "stream-down-1"},
+        }})
+    );
+    app.stop().await;
+}
+
 /// Minimal artist/album/track rows behind the playback lifecycle.
 fn seed_track(app: &TestApp) {
     let seed = [
