@@ -28,7 +28,7 @@ use super::models::{QuotaOverrideView, QuotaResponse};
 use super::{AdminDb, error::AdminError, models::QuotaOverrideBody};
 use droppedneedle_acquire::requests::quota::{QuotaLedger, QuotaOverride};
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_kernel::db::writer::Lane;
+use droppedneedle_kernel::db::{DbError, writer::Lane};
 
 /// Top of every quota bound (the v2 1M ceiling).
 const QUOTA_MAX: u64 = 1_000_000;
@@ -163,6 +163,31 @@ async fn read_override(db: &AdminDb, user_id: &str) -> Result<Option<QuotaOverri
     }))
 }
 
+/// Why an override write failed.
+#[derive(Debug, thiserror::Error)]
+enum OverrideWriteError {
+    /// No `auth_users` row to hang the override on: the foreign key refused
+    /// it. The user is known to the user store but not mirrored yet.
+    #[error("no such user")]
+    UnknownUser,
+    /// Any other failure, the lane's own included.
+    #[error(transparent)]
+    Db(#[from] DbError),
+}
+
+impl From<rusqlite::Error> for OverrideWriteError {
+    fn from(error: rusqlite::Error) -> Self {
+        match &error {
+            rusqlite::Error::SqliteFailure(failure, _)
+                if failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY =>
+            {
+                Self::UnknownUser
+            }
+            _ => Self::Db(error.into()),
+        }
+    }
+}
+
 /// Persist one override row through the writer lane. All-`None` deletes the
 /// row back to pure inherit.
 async fn write_override(
@@ -201,12 +226,10 @@ async fn write_override(
         })
         .await
         .map_err(|error| match error {
-            droppedneedle_kernel::db::error::DbError::WriteFailed { cause, .. }
-                if cause.contains("FOREIGN KEY") =>
-            {
-                AdminError::NotFound
+            OverrideWriteError::UnknownUser => AdminError::NotFound,
+            OverrideWriteError::Db(other) => {
+                AdminError::internal(&format_args!("quota override write failed: {other}"))
             }
-            other => AdminError::internal(&format_args!("quota override write failed: {other}")),
         })?;
     Ok(())
 }

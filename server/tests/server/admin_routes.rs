@@ -656,6 +656,34 @@ async fn quota_marks_curators_exempt() {
     }
 }
 
+/// An override for a user the user store knows but whose row is not in
+/// this database is refused by the foreign key and answers 404.
+#[tokio::test]
+async fn quota_override_for_an_unmirrored_user_is_not_found() {
+    let rig = Rig::open("quota-unmirrored").await;
+    let elsewhere = AuthRig::new("quota-unmirrored-users").await;
+    let user = elsewhere.seed_user("ursula", Role::User).await;
+    let providers = Arc::new(droppedneedle_providers::Providers::new(rig.cache.clone()));
+    let admin = AdminSetup::new(
+        elsewhere.deps.clone(),
+        rig.quota.clone(),
+        rig.cache.clone(),
+        providers,
+    )
+    .with_db(AdminDb::new(
+        rig.runtime.pool().clone(),
+        rig.runtime.lane().clone(),
+    ));
+    let app = with_test_principal(
+        admin.gated_router(),
+        test_principal(&rig.admin_id, Role::Admin, "sess-1", SessionKind::Standard),
+    );
+    let uri = format!("/admin/users/{}/quota", user.id);
+    let (status, body) = call(app, "PUT", &uri, Some(json!({"request_quota_count": 3}))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["code"], Value::from("NOT_FOUND"));
+}
+
 #[tokio::test]
 async fn quota_overrides_reload_into_the_ledger() {
     let rig = Rig::open("quota-reload").await;
@@ -693,7 +721,7 @@ async fn lane_seed(rig: &Rig, sql: &str, params: &[&str]) {
                 .map(|value| value as &dyn rusqlite::ToSql)
                 .collect();
             tx.execute(&sql, refs.as_slice())?;
-            Ok(())
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
         })
         .await
         .expect("seed writes");
