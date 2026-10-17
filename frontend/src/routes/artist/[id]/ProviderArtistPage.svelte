@@ -5,7 +5,6 @@
 	import AlbumGridSkeleton from '$lib/components/AlbumGridSkeleton.svelte';
 	import ArtistWhereToBuy from '$lib/components/ArtistWhereToBuy.svelte';
 	import ReleaseList from '$lib/components/ReleaseList.svelte';
-	import { toastStore } from '$lib/stores/toast';
 	import Button from '$lib/ui/Button.svelte';
 	import ArtistHero from '$lib/components/ArtistHero.svelte';
 	import ArtistDescription from '$lib/components/ArtistDescription.svelte';
@@ -256,8 +255,6 @@
 					id: releaseId,
 					requested: true
 				});
-
-				toastStore.show({ message: 'Added to Library', type: 'success' });
 			}
 		} finally {
 			requestedReleaseIds.delete(releaseId);

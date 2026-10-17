@@ -25,7 +25,6 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import { toastStore } from '$lib/stores/toast';
 
 	interface Props {
 		data: { query: string };
@@ -113,10 +112,6 @@
 	function retryRemoteSearch() {
 		if (loading || !normalizedQuery) return;
 		resetAndLoad();
-	}
-
-	function handleAlbumAdded() {
-		toastStore.show({ message: 'Added to Library', type: 'success' });
 	}
 
 	$effect(() => {
@@ -213,7 +208,6 @@
 					<AlbumCard
 						{album}
 						{enrichmentSource}
-						onadded={handleAlbumAdded}
 						onenrichmentrequest={() => enrichCollector.requestAlbum(album)}
 					/>
 				{/each}

@@ -18,8 +18,6 @@ export interface EventHandlerDeps {
 	setRequesting: (v: boolean) => void;
 	getRequesting: () => boolean;
 	setShowDeleteModal: (v: boolean) => void;
-	setToast: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void;
-	setShowToast: (v: boolean) => void;
 	onRequestSuccess?: () => void;
 }
 
@@ -69,8 +67,6 @@ export function createEventHandlers(deps: EventHandlerDeps) {
 				current.requested = true;
 				deps.setAlbum(current);
 				deps.albumBasicCacheSet(current, deps.getAlbumId());
-				deps.setToast('Added to Library', 'success');
-				deps.setShowToast(true);
 				deps.onRequestSuccess?.();
 			}
 		} finally {

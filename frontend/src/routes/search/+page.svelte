@@ -27,7 +27,6 @@
 	import SearchTopResult from '$lib/components/SearchTopResult.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import { toastStore } from '$lib/stores/toast';
 
 	interface Props {
 		data: { query: string };
@@ -102,10 +101,6 @@
 		if (normalizedQuery) {
 			goto(withBasePath(`/search/${bucket}?q=${encodeURIComponent(normalizedQuery)}`));
 		}
-	}
-
-	function handleAlbumAdded() {
-		toastStore.show({ message: 'Added to Library', type: 'success' });
 	}
 
 	$effect(() => {
@@ -251,7 +246,6 @@
 							<AlbumCard
 								{album}
 								{enrichmentSource}
-								onadded={handleAlbumAdded}
 								onenrichmentrequest={() => enrichCollector.requestAlbum(album)}
 							/>
 						{/each}

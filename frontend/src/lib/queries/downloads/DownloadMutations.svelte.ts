@@ -1,4 +1,5 @@
 import { createMutation } from '@tanstack/svelte-query';
+import { get } from 'svelte/store';
 
 import { api } from '$lib/api/client';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
@@ -7,10 +8,15 @@ import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
 import { RequestQueryKeyFactory } from '$lib/queries/requests/RequestQueryKeyFactory';
 import type { IntakeResponse, TrackIntakeResponse } from '$lib/queries/requests/types';
 import { authStore } from '$lib/stores/authStore.svelte';
+import { integrationStore } from '$lib/stores/integration';
 import { libraryStore } from '$lib/stores/library';
 import { toastStore } from '$lib/stores/toast';
 // Request-surface copy lives beside the other acquisition label mappings.
-import { batchRequestCopy, requestStatusCopy } from '$lib/utils/acquisitionLabels';
+import {
+	WAITING_FOR_SOURCE_COPY,
+	batchRequestCopy,
+	requestStatusCopy
+} from '$lib/utils/acquisitionLabels';
 import { albumRequestOutcome } from '$lib/utils/requestOutcome';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_HELD_ENDPOINTS, DOWNLOAD_TASKS_ENDPOINTS } from './endpoints';
@@ -56,6 +62,13 @@ const invalidateTasks = () =>
 	invalidateQueriesWithPersister({
 		queryKey: DownloadQueryKeyFactory.tasks(authStore.user?.id)
 	});
+
+// A request accepted while no download source is set up waits for one; the
+// toast says so instead of claiming a search began.
+function noSourceReady(): boolean {
+	const status = get(integrationStore);
+	return status.loaded && !status.download_client;
+}
 
 function errorMessage(err: unknown, fallback: string): string {
 	return err instanceof Error && err.message ? err.message : fallback;
@@ -120,9 +133,12 @@ export function requestAlbum() {
 				});
 				return data;
 			}
-			const outcome = albumRequestOutcome(data);
+			const outcome = albumRequestOutcome(data) ?? 'dispatched';
 			toastStore.show({
-				message: requestStatusCopy(outcome ?? 'dispatched'),
+				message:
+					outcome === 'dispatched' && noSourceReady()
+						? WAITING_FOR_SOURCE_COPY
+						: requestStatusCopy(outcome),
 				type: outcome === 'duplicate_active' || outcome === 'in_library' ? 'info' : 'success'
 			});
 			return data;
@@ -215,7 +231,9 @@ export function requestTrack() {
 						? 'That track is already in your library'
 						: data.status === 'awaiting_approval'
 							? 'Track request submitted for admin approval'
-							: 'Track requested - searching for downloads',
+							: noSourceReady()
+								? WAITING_FOR_SOURCE_COPY
+								: 'Track requested - searching for downloads',
 				type: 'success'
 			});
 			void invalidateTasks();

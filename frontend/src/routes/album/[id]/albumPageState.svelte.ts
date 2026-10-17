@@ -98,7 +98,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	let loadingTracks = $state(true);
 	let tracksError = $state(false);
 	let showToast = $state(false);
-	let toastMessage = $state('Added to Library');
+	let toastMessage = $state('');
 	let toastType = $state<'success' | 'error' | 'info' | 'warning'>('success');
 	let requesting = $state(false);
 	let showDeleteModal = $state(false);
@@ -742,11 +742,6 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		setRequesting: (v) => (requesting = v),
 		getRequesting: () => requesting,
 		setShowDeleteModal: (v) => (showDeleteModal = v),
-		setToast: (msg, type) => {
-			toastMessage = msg;
-			toastType = type;
-		},
-		setShowToast: (v) => (showToast = v),
 		onRequestSuccess: () => {
 			albumSourceMatchCache.remove(albumSourceMatchCacheKey(albumIdGetter()));
 			// pick up the freshly-created download task so the header strip + polling kick in

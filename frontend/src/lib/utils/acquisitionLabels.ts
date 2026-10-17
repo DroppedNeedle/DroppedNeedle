@@ -121,6 +121,9 @@ export type RequestStatusToken = 'dispatched' | 'submitted' | 'duplicate_active'
 /** Verbatim previous wording for an already-owned album (backend request_service). */
 export const ALREADY_IN_LIBRARY_COPY = 'Album is already in the library';
 
+/** A request accepted while no download source is set up: it is held, not started. */
+export const WAITING_FOR_SOURCE_COPY = 'Requested - waiting for a download source.';
+
 export const SUBMITTED_FOR_APPROVAL_COPY =
 	'Submitted for approval. The current server policy will apply when approved.';
 
