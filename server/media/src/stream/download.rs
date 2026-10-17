@@ -48,8 +48,8 @@ use super::routes::{
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::roles::Role;
-use droppedneedle_kernel::error::ApiError;
-use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_auth::users::stores::StoreError;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 
 use droppedneedle_library::scan::roots::RootRegistry;
@@ -79,13 +79,8 @@ pub struct DownloadState {
 
 impl DownloadState {
     /// Downloads from the library catalog and roots. `None` (unwired
-    /// builds) serves nothing. The id generator is not read.
-    pub fn new(
-        library: Option<LibraryFiles>,
-        access: AccessSource,
-        users: UsersDeps,
-        _ids: Arc<dyn IdGenerator>,
-    ) -> Self {
+    /// builds) serves nothing.
+    pub fn new(library: Option<LibraryFiles>, access: AccessSource, users: UsersDeps) -> Self {
         Self {
             library,
             access,
@@ -191,7 +186,13 @@ impl FromRequestParts<DownloadState> for DownloadUser {
             .users
             .get_by_id(&session.user_id)
             .await
-            .map_err(|error| DownloadError::internal(format!("{error:?}")))?
+            .map_err(|error| match error {
+                StoreError::Busy => ApiError::unavailable(
+                    Unavailable::ServerBusy,
+                    "download gate: users store busy",
+                ),
+                other => DownloadError::internal(format!("{other:?}")).into(),
+            })?
             .ok_or(DownloadError::Unauthorized)?;
         Ok(Self(user.role))
     }

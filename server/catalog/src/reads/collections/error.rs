@@ -1,8 +1,8 @@
 //! The collections domain error.
 //!
 //! Services return [`CollectionsError`]; `super::http` maps it to HTTP.
-//! Unexpected failures carry an error id whose cause went to the log, never
-//! to the caller.
+//! Unexpected failures carry their cause to the request boundary, which
+//! logs it; it never reaches the caller.
 
 use super::db::StoreError;
 
@@ -33,22 +33,22 @@ pub enum CollectionsError {
     },
     /// The database stayed locked past its timeout. Retryable.
     Busy {
-        /// Ties the wire response to the log line.
-        error_id: String,
+        /// The operation that waited, for the log only.
+        operation: String,
     },
     /// Server fault.
     Internal {
-        /// Ties the wire response to the log line.
-        error_id: String,
+        /// What went wrong, for the log only.
+        cause: String,
     },
 }
 
 impl CollectionsError {
-    /// A server fault, logging the real cause with a fresh id.
+    /// A server fault whose cause the request boundary logs.
     pub fn internal(cause: &dyn std::fmt::Display) -> Self {
-        let error_id = uuid::Uuid::new_v4().to_string();
-        tracing::error!(error_id, %cause, "collections request failed");
-        Self::Internal { error_id }
+        Self::Internal {
+            cause: cause.to_string(),
+        }
     }
 
     /// Bad input with a user-safe message.
@@ -62,11 +62,7 @@ impl CollectionsError {
 impl From<StoreError> for CollectionsError {
     fn from(error: StoreError) -> Self {
         match error {
-            StoreError::Busy(operation) => {
-                let error_id = uuid::Uuid::new_v4().to_string();
-                tracing::warn!(error_id, operation, "collections database busy");
-                Self::Busy { error_id }
-            }
+            StoreError::Busy(operation) => Self::Busy { operation },
             StoreError::Internal(cause) => Self::internal(&cause),
         }
     }

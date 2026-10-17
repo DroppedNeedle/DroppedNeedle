@@ -4,7 +4,10 @@
 //! `server/openapi/check.sh` generates TypeScript from it, and CI fails on
 //! drift between the committed files and a fresh generation.
 
-use utoipa::OpenApi;
+use utoipa::{
+    Modify, OpenApi, ToSchema,
+    openapi::{Content, RefOr, Response, schema::Ref},
+};
 
 use crate::{
     admin::{
@@ -1380,6 +1383,42 @@ use droppedneedle_plugins::{
         title = "DroppedNeedle v3",
         version = "3.0.0",
         description = "Native API contract. Generated clients must never be hand-edited."
-    )
+    ),
+    modifiers(&ErrorBodies)
 )]
 pub struct ApiDoc;
+
+/// Every 4xx and 5xx answer is the shared error envelope, so the document
+/// names its schema once here instead of on each route.
+struct ErrorBodies;
+
+impl Modify for ErrorBodies {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let envelope = Ref::from_schema_name(ErrorEnvelope::name());
+        for item in openapi.paths.paths.values_mut() {
+            let operations = [
+                &mut item.get,
+                &mut item.put,
+                &mut item.post,
+                &mut item.delete,
+                &mut item.options,
+                &mut item.head,
+                &mut item.patch,
+                &mut item.trace,
+            ];
+            for operation in operations.into_iter().flatten() {
+                for (status, response) in &mut operation.responses.responses {
+                    if let RefOr::T(Response { content, .. }) = response
+                        && (status.starts_with('4') || status.starts_with('5'))
+                        && content.is_empty()
+                    {
+                        content.insert(
+                            "application/json".to_owned(),
+                            Content::new(Some(envelope.clone())),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

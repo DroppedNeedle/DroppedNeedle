@@ -17,7 +17,6 @@ use axum::{
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_kernel::ids::IdGenerator;
 use playback::PlaybackDeps;
 use playback::fakes::{
     FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeRemotes, FakeSinks, FakeWarmup, ManualClock,
@@ -35,16 +34,6 @@ use tower::ServiceExt as _;
 use crate::common::TestApp;
 use crate::common::auth::with_test_principal;
 use crate::common::compat::{CompatApp, PLAYER, named, rest};
-
-/// Fixed id generator.
-#[derive(Debug, Clone)]
-struct FixedIds;
-
-impl IdGenerator for FixedIds {
-    fn new_id(&self) -> String {
-        "123e4567-e89b-12d3-a456-426614174000".to_owned()
-    }
-}
 
 const NOW: i64 = 1_790_000_000;
 
@@ -78,7 +67,6 @@ fn rig_with_sinks(sinks: FakeSinks) -> Rig {
         dedup: ScrobbleDedup::new(),
         mixed: MixedDedup::new(),
         clock: Arc::new(clock.clone()),
-        ids: Arc::new(FixedIds),
         events: std::sync::Arc::new(droppedneedle_media::playback::ports::NoPlayEvents),
     };
     Rig {

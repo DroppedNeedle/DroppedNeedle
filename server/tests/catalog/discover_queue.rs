@@ -27,7 +27,6 @@ use droppedneedle_catalog::reads::discover::fakes::{
 use droppedneedle_catalog::reads::discover::ports::{BoxFuture, SystemClock};
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
 use droppedneedle_kernel::db::DbRuntime;
-use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_providers::Providers;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -291,7 +290,6 @@ fn queue_app(runtime: &DbRuntime) -> Router {
         youtube: Arc::new(FakeYouTube::unconfigured()),
         radio: Arc::new(FakeRadio),
         now_playing: Arc::new(FakeNowPlaying),
-        ids: Arc::new(UuidGenerator),
         clock: Arc::new(SystemClock),
     };
     let router = Router::new().nest(

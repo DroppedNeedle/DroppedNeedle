@@ -24,19 +24,6 @@ use gateway::{
 use serde_json::Value;
 use tower::ServiceExt as _;
 
-/// Fixed id for the state's generator. A valid UUID.
-const FIXED_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
-
-/// Id generator returning one fixed value.
-#[derive(Debug, Clone)]
-struct FixedIds;
-
-impl droppedneedle_kernel::ids::IdGenerator for FixedIds {
-    fn new_id(&self) -> String {
-        FIXED_ID.to_owned()
-    }
-}
-
 /// What the fake engine observed on one open (principal + hints).
 #[derive(Debug, Clone)]
 struct Seen {
@@ -120,10 +107,7 @@ fn fixture_bytes(len: usize) -> Vec<u8> {
 
 /// Router with a stashed session for `user-1`, or anonymous when false.
 fn app(engine: Arc<FakeEngine>, authed: bool) -> Router {
-    let state = StreamState {
-        engine,
-        ids: Arc::new(FixedIds),
-    };
+    let state = StreamState { engine };
     let router = stream_routes(state);
     if !authed {
         return router;
@@ -499,7 +483,12 @@ async fn lease_exhaustion_answers_429_with_retry_after() {
 /// writes the bodies (see `media_journey`).
 #[tokio::test]
 async fn upstream_failure_answers_502() {
-    let upstream = |source| Script::Fault(StreamFault::Upstream { source });
+    let upstream = |source| {
+        Script::Fault(StreamFault::Upstream {
+            source,
+            cause: "scripted".to_owned(),
+        })
+    };
     let engine = FakeEngine::with(vec![
         ("plex/part-9", upstream(AudioSource::Plex)),
         ("local/song", upstream(AudioSource::Local)),

@@ -20,7 +20,6 @@ use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::roles::Role;
-use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::plugin_ticks::{
     MemoryTickStore, TickHost as JobsTickHost, TickPlugin as JobsTickPlugin,
 };
@@ -41,16 +40,6 @@ use droppedneedle_plugins::ticks::{
 };
 use serde_json::json;
 use tower::ServiceExt as _;
-
-/// Fixed id generator so error ids assert stably.
-#[derive(Debug, Clone)]
-struct FixedIds;
-
-impl IdGenerator for FixedIds {
-    fn new_id(&self) -> String {
-        "123e4567-e89b-12d3-a456-426614174000".to_owned()
-    }
-}
 
 fn write_plugin(dir: &Path, folder: &str, manifest: &str) {
     let plugin_dir = dir.join("plugins").join(folder);
@@ -96,7 +85,6 @@ fn deps_for(rig: &Rig, fetcher: Arc<FakeFetcher>, unpacker: Arc<FakeUnpacker>) -
         host: Arc::clone(&rig.host),
         config: Arc::clone(&rig.config),
         roles,
-        ids: Arc::new(FixedIds),
         github: droppedneedle::bootstrap::Outbound::live().plugin_hosts(),
         fetcher,
         unpacker,

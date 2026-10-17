@@ -31,11 +31,12 @@ use crate::settings::musicbrainz::MusicBrainzLifecycle;
 use crate::settings::section_prefs::{LinkStatus, SectionPrefsStore};
 use crate::settings::services::{PolicyImpactBuckets, SettingsService};
 use crate::settings::verify::{LiveProbes, VerifyProbes};
+use droppedneedle_auth::users::stores::StoreError;
 use droppedneedle_auth::{
     session::middleware::CurrentSession,
     users::{UsersDeps, roles::Role},
 };
-use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
@@ -526,6 +527,13 @@ async fn require_admin(
     let user = match settings.users.users.get_by_id(&session.user_id).await {
         Ok(Some(user)) => user,
         Ok(None) => return missing(),
+        Err(StoreError::Busy) => {
+            return ApiError::unavailable(
+                Unavailable::ServerBusy,
+                "settings gate: users store busy",
+            )
+            .into_response();
+        }
         Err(error) => {
             return ApiError::internal(format_args!("settings gate lookup failed: {error}"))
                 .into_response();

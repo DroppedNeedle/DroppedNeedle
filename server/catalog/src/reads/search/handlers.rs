@@ -138,7 +138,7 @@ pub async fn enrich_batch(
     State(deps): State<super::SearchDeps>,
     ValidJson(body): ValidJson<EnrichmentBatchRequest>,
 ) -> Json<super::models::EnrichmentResponse> {
-    Json(enrich_with_degradation(deps.enrichment.as_ref(), deps.ids.as_ref(), body).await)
+    Json(enrich_with_degradation(deps.enrichment.as_ref(), body).await)
 }
 
 /// Cap a unified-search limit at its default and ceiling.

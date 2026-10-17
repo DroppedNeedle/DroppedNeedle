@@ -19,7 +19,6 @@ use axum::Router;
 
 use droppedneedle_auth::users::{UsersDeps, roles::Role};
 use droppedneedle_kernel::db::WriteLane;
-use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::plugin_ticks::SqliteTickStore;
 use droppedneedle_kernel::jobs::registry::JobRegistry;
 use droppedneedle_kernel::jobs::registry::StoreKind;
@@ -161,7 +160,6 @@ impl PluginsSetup {
         host: Arc<PluginHost>,
         users: UsersDeps,
         http: reqwest::Client,
-        ids: Arc<dyn IdGenerator>,
         crypto: Arc<Crypto>,
         cache: Arc<dyn ProviderCache>,
         registry: JobRegistry<StoreKind>,
@@ -176,7 +174,6 @@ impl PluginsSetup {
             http,
             github,
             listenbrainz,
-            ids,
             cache,
             registry,
             TickStoreKind::Sqlite(SqliteTickStore::new(pool.clone(), lane.clone())),
@@ -189,11 +186,7 @@ impl PluginsSetup {
     /// plugin runtimes (no subprocesses), memory tick and scrobble stores,
     /// the production verifier, and tick loops over the caller's registry.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(
-        users: UsersDeps,
-        ids: Arc<dyn IdGenerator>,
-        registry: JobRegistry<StoreKind>,
-    ) -> Result<Self, String> {
+    pub fn for_tests(users: UsersDeps, registry: JobRegistry<StoreKind>) -> Result<Self, String> {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         use super::fakes::FakeLauncher;
@@ -234,7 +227,6 @@ impl PluginsSetup {
                 codeload: super::install::CODELOAD_BASE.to_owned(),
             },
             droppedneedle_providers::listenbrainz::DEFAULT_BASE_URL,
-            ids,
             cache,
             registry,
             TickStoreKind::Memory(MemoryTickStore::new()),
@@ -254,7 +246,6 @@ impl PluginsSetup {
         http: reqwest::Client,
         github: GitHubHosts,
         listenbrainz: &str,
-        ids: Arc<dyn IdGenerator>,
         cache: Arc<dyn ProviderCache>,
         registry: JobRegistry<StoreKind>,
         ticks: TickStoreKind,
@@ -271,7 +262,6 @@ impl PluginsSetup {
             host: Arc::clone(&host),
             config: Arc::clone(host.config()),
             roles: Arc::clone(&roles),
-            ids: Arc::clone(&ids),
             github,
             fetcher: Arc::new(ReqwestFetcher::new(http.clone())),
             unpacker: Arc::new(ZipUnpacker),
@@ -288,7 +278,6 @@ impl PluginsSetup {
             ),
             roles,
             mix_state: Arc::new(StaticMixState),
-            ids,
         };
         Self {
             host,

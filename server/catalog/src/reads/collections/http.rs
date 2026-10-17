@@ -16,12 +16,12 @@ impl From<CollectionsError> for ApiError {
             CollectionsError::NotFound => ApiError::not_found(),
             CollectionsError::InvalidInput { message } => ApiError::invalid_input(message),
             CollectionsError::Conflict { message } => ApiError::conflict(message),
-            CollectionsError::Busy { error_id } => ApiError::unavailable(
+            CollectionsError::Busy { operation } => ApiError::unavailable(
                 Unavailable::ServerBusy,
-                format!("collections database busy (error id {error_id})"),
+                format!("collections database busy during {operation}"),
             ),
-            CollectionsError::Internal { error_id } => {
-                ApiError::internal(format!("collections failed (error id {error_id})"))
+            CollectionsError::Internal { cause } => {
+                ApiError::internal(format!("collections failed: {cause}"))
             }
         }
     }

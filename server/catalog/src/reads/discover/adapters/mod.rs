@@ -30,7 +30,6 @@ use crate::reads::discover::{
 };
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::WriteLane;
-use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::AdvancedSettings};
 use droppedneedle_media::remotes::connections::{
     ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
@@ -78,7 +77,7 @@ pub struct DiscoverInputs {
 }
 
 /// Build the production discover deps.
-pub fn production_deps(inputs: DiscoverInputs, ids: Arc<dyn IdGenerator>) -> ReadsDeps {
+pub fn production_deps(inputs: DiscoverInputs) -> ReadsDeps {
     let lastfm_charts = match CorePacer::for_source(inputs.providers.clone(), lastfm::SOURCE) {
         Some(pacer) => Some(charts::LastFmCharts::new(
             LastFmClient::new(
@@ -179,7 +178,6 @@ pub fn production_deps(inputs: DiscoverInputs, ids: Arc<dyn IdGenerator>) -> Rea
         youtube,
         radio: Arc::new(radio),
         now_playing: Arc::new(unbuilt::NoPresence),
-        ids,
         clock: Arc::new(SystemClock),
     }
 }

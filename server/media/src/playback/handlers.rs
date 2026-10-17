@@ -60,8 +60,8 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedUser {
     }
 }
 
-fn map(error: services::ServiceError, deps: &PlaybackDeps) -> ApiError {
-    error.into_playback_error(deps.ids.as_ref()).into()
+fn map(error: services::ServiceError) -> ApiError {
+    error.into_playback_error().into()
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ pub async fn start_playback(
 ) -> Result<Json<PlaybackStartResponse>, ApiError> {
     services::start_playback(&deps, &user.user_id, &body)
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(map)
 }
 
 /// Record a heartbeat for a live session.
@@ -111,7 +111,7 @@ pub async fn report_progress(
 ) -> Result<Json<PlaybackProgressResponse>, ApiError> {
     services::report_progress(&deps, &user.user_id, &body)
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(map)
 }
 
 /// Close a session, counting the play past threshold.
@@ -134,7 +134,7 @@ pub async fn stop_playback(
 ) -> Result<Json<PlaybackStopResponse>, ApiError> {
     services::stop_playback(&deps, &user.user_id, &body)
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(map)
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ pub async fn submit_scrobble(
 ) -> Result<Json<ScrobbleResponse>, ApiError> {
     services::submit_scrobble(&deps, &user.user_id, &body)
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(map)
 }
 
 /// Forward one native now-playing report to the linked accounts.
@@ -182,7 +182,7 @@ pub async fn forward_now_playing(
 ) -> Result<Json<ScrobbleResponse>, ApiError> {
     services::forward_sink_now_playing(&deps, &user.user_id, &body)
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(map)
 }
 
 // ---------------------------------------------------------------------------

@@ -94,13 +94,10 @@ impl ReadsSetup {
             artwork: None,
         };
         let (platform, artwork) = platform_state(pool, &users, inputs);
-        let discover = discover::adapters::production_deps(
-            discover::adapters::DiscoverInputs {
-                artwork: Some(artwork.clone()),
-                ..discover_inputs
-            },
-            ids.clone(),
-        );
+        let discover = discover::adapters::production_deps(discover::adapters::DiscoverInputs {
+            artwork: Some(artwork.clone()),
+            ..discover_inputs
+        });
         let youtube = unwired_youtube(&discover, ids.clone());
         let library_db = library::sqlite::LibraryDb::new(pool);
         let catalog: Arc<dyn library::stores::LibraryCatalog> =
@@ -136,7 +133,6 @@ impl ReadsSetup {
         let search = search::SearchDeps::new(
             search::service::SearchService::new(pool.clone()),
             search_enrichment,
-            ids.clone(),
         );
         Self {
             library,
@@ -158,9 +154,9 @@ impl ReadsSetup {
     pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:")
             .map_err(|error| format!("test reads pool: {error}"))?;
-        let discover = test_discover_deps(ids.clone());
+        let discover = test_discover_deps();
         Ok(Self {
-            youtube: unwired_youtube(&discover, ids.clone()),
+            youtube: unwired_youtube(&discover, ids),
             library: library::LibraryDeps {
                 catalog: Arc::new(library::memory::MemoryCatalog::new()),
                 favorites: Arc::new(library::memory::MemoryFavorites::new()),
@@ -173,7 +169,6 @@ impl ReadsSetup {
             search: search::SearchDeps::new(
                 search::service::SearchService::new(pool),
                 Arc::new(search::ports::UnconfiguredEnrichment),
-                ids.clone(),
             ),
             discover,
             collections: collections::CollectionsState::unwired(),
@@ -300,7 +295,7 @@ fn unwired_youtube(
 
 /// Test discover deps: every port runs its fake.
 #[cfg(any(test, feature = "test-support"))]
-fn test_discover_deps(ids: Arc<dyn IdGenerator>) -> discover::ReadsDeps {
+fn test_discover_deps() -> discover::ReadsDeps {
     use discover::fakes::{
         FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio,
         FakeYouTube, ManualClock,
@@ -316,7 +311,6 @@ fn test_discover_deps(ids: Arc<dyn IdGenerator>) -> discover::ReadsDeps {
         youtube: Arc::new(FakeYouTube::unconfigured()),
         radio: Arc::new(FakeRadio),
         now_playing: Arc::new(FakeNowPlaying),
-        ids,
         clock: Arc::new(discover::ports::SystemClock),
     }
 }

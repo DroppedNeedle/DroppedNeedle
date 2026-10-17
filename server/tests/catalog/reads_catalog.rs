@@ -29,7 +29,6 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tower::ServiceExt as _;
 
-use crate::common;
 use crate::common::TestApp;
 use crate::common::auth::AuthRig;
 
@@ -381,12 +380,9 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRi
         fixtures.endpoints(),
     );
     let catalog = Catalog::new(upstream, LocalCatalog::new(pool.clone()));
-    let ids: Arc<dyn droppedneedle_kernel::ids::IdGenerator> =
-        Arc::new(common::FixedIdGenerator::new(common::FIXED_ID));
     let search = SearchDeps::new(
         SearchService::new(pool).with_remote(catalog.clone()),
         Arc::new(search::ports::UnconfiguredEnrichment),
-        ids,
     );
     let scope = TestApp::start("reads-catalog").await;
     let app = scope

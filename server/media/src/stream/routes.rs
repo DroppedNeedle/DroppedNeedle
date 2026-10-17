@@ -77,7 +77,6 @@ use axum::{
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidQuery;
-use droppedneedle_kernel::ids::IdGenerator;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -295,6 +294,8 @@ pub enum StreamFault {
     Upstream {
         /// Which source failed.
         source: AudioSource,
+        /// Log-only cause.
+        cause: String,
     },
     /// Server fault. The cause reaches the log only, never the wire.
     Internal {
@@ -415,19 +416,16 @@ pub fn parse_range(header: &str, total_len: u64) -> Option<ByteRange> {
 // Handler state, principal, and typed query (no bare Query)
 // ---------------------------------------------------------------------------
 
-/// Everything the stream handlers need: the engine plus id generation.
+/// Everything the stream handlers need.
 pub struct StreamState<E> {
     /// Byte sourcing, leases, and transcode execution.
     pub engine: Arc<E>,
-    /// Not read by the routes.
-    pub ids: Arc<dyn IdGenerator>,
 }
 
 impl<E> Clone for StreamState<E> {
     fn clone(&self) -> Self {
         Self {
             engine: Arc::clone(&self.engine),
-            ids: Arc::clone(&self.ids),
         }
     }
 }
@@ -521,6 +519,8 @@ pub enum StreamError {
     Upstream {
         /// Which source failed.
         source: AudioSource,
+        /// Log-only cause.
+        cause: String,
     },
     /// Server fault. The cause reaches the log only.
     Internal {
@@ -570,8 +570,8 @@ impl From<StreamError> for ApiError {
             )
             .with_details(json!({ "retry_after": RETRY_AFTER_SECONDS }))
             .with_header(header::RETRY_AFTER, RETRY_AFTER_SECONDS.into()),
-            StreamError::Upstream { source } => {
-                let cause = format!("failed to stream from {}", source.display_name());
+            StreamError::Upstream { source, cause } => {
+                let cause = format!("failed to stream from {}: {cause}", source.display_name());
                 match source {
                     AudioSource::Jellyfin | AudioSource::Navidrome | AudioSource::Plex => {
                         ApiError::unavailable(Unavailable::MediaServer, cause)
@@ -971,7 +971,7 @@ fn map_fault(fault: StreamFault, source: AudioSource) -> StreamError {
         StreamFault::Forbidden { message } => StreamError::Forbidden { message },
         StreamFault::InvalidInput { message } => StreamError::InvalidInput { message },
         StreamFault::Capacity => StreamError::Capacity,
-        StreamFault::Upstream { source } => StreamError::Upstream { source },
+        StreamFault::Upstream { source, cause } => StreamError::Upstream { source, cause },
         StreamFault::Internal { cause } => StreamError::Internal { cause },
     }
 }

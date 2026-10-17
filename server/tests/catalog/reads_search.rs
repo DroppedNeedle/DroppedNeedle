@@ -5,7 +5,6 @@
 
 use droppedneedle_catalog::reads::search;
 
-use crate::common;
 use crate::common::TestApp;
 use crate::common::auth::AuthRig;
 
@@ -128,11 +127,7 @@ async fn seed_catalog(pool: &SqlitePool) {
 }
 
 fn search_deps(pool: SqlitePool, enrichment: Arc<dyn EnrichmentPort>) -> SearchDeps {
-    SearchDeps::new(
-        SearchService::new(pool),
-        enrichment,
-        Arc::new(common::FixedIdGenerator::new(common::FIXED_ID)),
-    )
+    SearchDeps::new(SearchService::new(pool), enrichment)
 }
 
 /// What a test's router needs alive: the rig its session lives in and the

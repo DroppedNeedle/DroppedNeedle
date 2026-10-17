@@ -18,7 +18,6 @@ use droppedneedle_catalog::reads::discover::fakes::{
     FakeYouTube, ManualClock,
 };
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
-use droppedneedle_kernel::ids::IdGenerator;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -28,16 +27,6 @@ use crate::common::auth::{AuthRig, with_test_principal};
 // ---------------------------------------------------------------------------
 // Harness
 // ---------------------------------------------------------------------------
-
-/// Fixed id generator so error ids assert stably.
-#[derive(Debug, Clone)]
-struct FixedIds;
-
-impl IdGenerator for FixedIds {
-    fn new_id(&self) -> String {
-        "123e4567-e89b-12d3-a456-426614174000".to_owned()
-    }
-}
 
 struct Rig {
     deps: ReadsDeps,
@@ -69,7 +58,6 @@ fn rig_with_youtube(configured: bool) -> Rig {
         youtube,
         radio: Arc::new(FakeRadio),
         now_playing: Arc::new(FakeNowPlaying),
-        ids: Arc::new(FixedIds),
         clock: Arc::new(clock.clone()),
     };
     Rig {

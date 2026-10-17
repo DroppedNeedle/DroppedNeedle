@@ -29,11 +29,7 @@ fn rated_kind(raw: &str) -> Result<RatedKind, CollectionsError> {
 
 fn library_error(error: LibraryStoreError) -> CollectionsError {
     match error {
-        LibraryStoreError::Busy(operation) => {
-            let error_id = uuid::Uuid::new_v4().to_string();
-            tracing::warn!(error_id, operation, "library database busy");
-            CollectionsError::Busy { error_id }
-        }
+        LibraryStoreError::Busy(operation) => CollectionsError::Busy { operation },
         LibraryStoreError::Internal(cause) => CollectionsError::internal(&cause),
     }
 }

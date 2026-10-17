@@ -477,12 +477,12 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                         },
                         lease: None,
                     }),
-                    Some(total) => {
-                        tracing::warn!(%plugin, bytes = total, "plugin stream URL is over the size cap");
-                        Err(StreamFault::Upstream {
-                            source: AudioSource::Plugin,
-                        })
-                    }
+                    Some(total) => Err(StreamFault::Upstream {
+                        source: AudioSource::Plugin,
+                        cause: format!(
+                            "plugin {plugin} stream URL is over the size cap ({total} bytes)"
+                        ),
+                    }),
                     // No size: served like a landing, whole and unranged.
                     None => Ok(StreamMedia {
                         content_type,
@@ -532,11 +532,11 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         let response = plugin_url_response(client, plugin, url, None).await?;
         let spool = plugin_url::Spool::fill(response, format)
             .await
-            .map_err(|error| {
-                tracing::warn!(%plugin, %error, "plugin stream URL could not be fetched for transcoding");
-                StreamFault::Upstream {
-                    source: AudioSource::Plugin,
-                }
+            .map_err(|error| StreamFault::Upstream {
+                source: AudioSource::Plugin,
+                cause: format!(
+                    "plugin {plugin} stream URL could not be fetched for transcoding: {error}"
+                ),
             })?;
         let stream = self
             .transcoder
@@ -654,9 +654,12 @@ async fn plugin_url_response(
         StreamFault::NotFound
     })?;
     if !response.status().is_success() {
-        tracing::warn!(%plugin, status = %response.status(), "plugin stream URL failed");
         return Err(StreamFault::Upstream {
             source: AudioSource::Plugin,
+            cause: format!(
+                "plugin {plugin} stream URL failed with {}",
+                response.status()
+            ),
         });
     }
     Ok(response)
@@ -752,8 +755,8 @@ fn io_fault(error: std::io::Error) -> StreamFault {
 }
 
 /// Map a transcode failure onto the routes' fault spelling. Capacity keeps
-/// its 429 meaning; everything else is a fixed-message 5xx with the cause
-/// in the log only (callers log through `StreamError::internal`).
+/// its 429 meaning; everything else is a fixed-message 5xx whose cause
+/// reaches the log only.
 fn transcode_fault(error: TranscodeError) -> StreamFault {
     match error {
         TranscodeError::Capacity => StreamFault::Capacity,

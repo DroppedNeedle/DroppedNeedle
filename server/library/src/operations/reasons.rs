@@ -339,11 +339,8 @@ pub fn review_reason(code: &str) -> Reason {
     }
 }
 
-pub const MUSICBRAINZ_UNAVAILABLE: Reason = reason(
-    "MUSICBRAINZ_UNAVAILABLE",
-    "MusicBrainz is not answering right now.",
-    "Try again in a few minutes.",
-);
+/// The retry code a held choice keeps while MusicBrainz is not answering.
+pub const MUSICBRAINZ_UNAVAILABLE: &str = "MUSICBRAINZ_UNAVAILABLE";
 
 /// Why a job ended where it did, by its stored terminal code.
 pub fn terminal(code: &str) -> Reason {

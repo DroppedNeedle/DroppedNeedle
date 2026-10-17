@@ -15,7 +15,6 @@ use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, Lane, open_runtime};
-use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_plugins::fakes::{FakeRoles, FakeVerifier};
 use droppedneedle_plugins::handlers::{ScrobbleHttpDeps, scrobble_router};
@@ -27,16 +26,6 @@ use droppedneedle_plugins::scrobble::{
 };
 use droppedneedle_providers::listenbrainz::{HttpListenBrainzVerifier, VerifyOutcome};
 use tower::ServiceExt as _;
-
-/// Fixed id generator so error ids assert stably.
-#[derive(Debug, Clone)]
-struct FixedIds;
-
-impl IdGenerator for FixedIds {
-    fn new_id(&self) -> String {
-        "123e4567-e89b-12d3-a456-426614174000".to_owned()
-    }
-}
 
 fn test_crypto() -> Arc<Crypto> {
     Arc::new(Crypto::from_key_bytes(&[11u8; 32]).unwrap())
@@ -79,7 +68,6 @@ fn rig() -> Rig {
         ),
         roles,
         mix_state: Arc::new(StaticMixState),
-        ids: Arc::new(FixedIds),
     };
     Rig {
         deps,

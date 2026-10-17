@@ -23,7 +23,6 @@ use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidJson;
-use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 
 use super::capabilities::routes::ROUTE_BODY_MAX_BYTES;
@@ -64,8 +63,6 @@ pub struct PluginsDeps {
     pub config: Arc<ConfigStore>,
     /// Role lookups for admin gating.
     pub roles: Arc<dyn UserRoles>,
-    /// Not read by the routes.
-    pub ids: Arc<dyn IdGenerator>,
     /// Where installs reach GitHub.
     pub github: super::install::GitHubHosts,
     /// Install archive fetcher.
@@ -86,8 +83,6 @@ pub struct ScrobbleHttpDeps {
     pub roles: Arc<dyn UserRoles>,
     /// Standing-grant state reader.
     pub mix_state: Arc<dyn MixStateReader>,
-    /// Not read by the routes.
-    pub ids: Arc<dyn IdGenerator>,
 }
 
 impl Clone for ScrobbleHttpDeps {
@@ -103,7 +98,6 @@ impl Clone for ScrobbleHttpDeps {
             },
             roles: Arc::clone(&self.roles),
             mix_state: Arc::clone(&self.mix_state),
-            ids: Arc::clone(&self.ids),
         }
     }
 }

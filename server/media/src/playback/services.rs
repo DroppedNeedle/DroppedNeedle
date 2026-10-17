@@ -31,7 +31,6 @@ use super::{
     },
 };
 use droppedneedle_kernel::events::{NowPlayingEntry, NowPlayingSnapshot};
-use droppedneedle_kernel::ids::IdGenerator;
 
 /// Session time-to-live in seconds (v2 `_SESSION_TTL_SECONDS`, 2h).
 pub const SESSION_TTL_SECS: i64 = 2 * 60 * 60;
@@ -147,7 +146,7 @@ pub enum ServiceError {
 
 impl ServiceError {
     /// Render into the playback envelope.
-    pub fn into_playback_error(self, _ids: &dyn IdGenerator) -> PlaybackError {
+    pub fn into_playback_error(self) -> PlaybackError {
         match self {
             Self::TrackNotFound => PlaybackError::NotFound,
             Self::InvalidInput(message) => PlaybackError::InvalidInput { message },
@@ -857,8 +856,6 @@ pub struct PlaybackDeps {
     pub mixed: MixedDedup,
     /// Clock for TTLs and timestamps.
     pub clock: Arc<dyn Clock>,
-    /// Ids for error correlation.
-    pub ids: Arc<dyn IdGenerator>,
     /// Listeners for accepted plays (plugins).
     pub events: Arc<dyn PlayEvents>,
 }

@@ -18,7 +18,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use axum::{Extension, Router, body::Body, http::Request, response::Response, routing::get};
+use axum::{
+    Router,
+    body::Body,
+    http::Request,
+    response::{IntoResponse as _, Response},
+    routing::get,
+};
 use droppedneedle_kernel::{
     db::{
         BACKGROUND_QUEUE_CAPACITY, BACKUP_KEEP, Budget, CancelFlag, CheckpointMode, Db, DbConfig,
@@ -26,8 +32,8 @@ use droppedneedle_kernel::{
         WakeupChannel, WriteLane, block_on, filesystem_is_local, map_sqlx_busy, open_runtime,
         sqlx_is_busy,
     },
-    error::{FIXED_INTERNAL_MESSAGE, INTERNAL_ERROR, busy_response},
-    ids::{REQUEST_ID_HEADER, RequestId},
+    error::{ApiError, Unavailable},
+    ids::REQUEST_ID_HEADER,
     jobs::{JobRegistry, checkpoint, registry::DurableRegistryStore},
     schema::latest_version,
 };
@@ -552,8 +558,8 @@ async fn busy_path_returns_503_with_retry_after_and_no_spin() {
     let_go.send(()).unwrap();
     holder.await.unwrap();
 
-    async fn busy_handler(Extension(RequestId(id)): Extension<RequestId>) -> Response {
-        busy_response("brief-busy", &id)
+    async fn busy_handler() -> Response {
+        ApiError::unavailable(Unavailable::ServerBusy, "brief-busy").into_response()
     }
     let scope = TestApp::start("busy-path").await;
     let app = scope.request_scope(Router::new().route("/busy", get(busy_handler)));
@@ -578,8 +584,8 @@ async fn busy_path_returns_503_with_retry_after_and_no_spin() {
         json,
         serde_json::json!({
             "error": {
-                "code": INTERNAL_ERROR,
-                "message": FIXED_INTERNAL_MESSAGE,
+                "code": "SERVER_BUSY",
+                "message": "The server is busy. Try again in a moment.",
                 "details": { "error_id": request_id },
             }
         })

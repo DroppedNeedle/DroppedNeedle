@@ -19,7 +19,6 @@ use axum::http::{HeaderMap, Request, StatusCode};
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::roles::SessionKind;
-use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use futures_util::StreamExt as _;
 use serde_json::Value;
 use stream::gateway::{Gateway, RemoteMedia, RemoteReader};
@@ -558,7 +557,6 @@ impl StreamEngine for TranscodedEngine {
 fn stream_app<E: StreamEngine + Send + Sync + 'static>(engine: E) -> Router {
     let state = StreamState {
         engine: Arc::new(engine),
-        ids: Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,
     };
     stream_routes(state).layer(axum::middleware::from_fn(
         |mut req: Request<Body>, next: axum::middleware::Next| async move {

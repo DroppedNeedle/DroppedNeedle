@@ -80,8 +80,11 @@ impl From<CollectionsError> for CompatError {
             }
             CollectionsError::InvalidInput { message } => Self::Invalid(message),
             CollectionsError::Conflict { message } => Self::Conflict(message),
-            CollectionsError::Busy { error_id } | CollectionsError::Internal { error_id } => {
-                Self::Internal(format!("collections failed (error id {error_id})"))
+            CollectionsError::Busy { operation } => {
+                Self::Internal(format!("collections database busy during {operation}"))
+            }
+            CollectionsError::Internal { cause } => {
+                Self::Internal(format!("collections failed: {cause}"))
             }
         }
     }

@@ -127,7 +127,6 @@ impl MediaSetup {
             library.clone(),
             access_from_config(config.clone()),
             users.clone(),
-            ids.clone(),
         );
         let resolver = Arc::new(
             ConnectionResolver::new(
@@ -181,7 +180,6 @@ impl MediaSetup {
         };
         let stream = StreamState {
             engine: Arc::new(engine),
-            ids: ids.clone(),
         };
         let db = Arc::new(PlaybackDb::open(db_path, ids.clone())?);
         let (queue, rx) = ReportQueue::channel();
@@ -200,7 +198,6 @@ impl MediaSetup {
             dedup: ScrobbleDedup::new(),
             mixed: MixedDedup::new(),
             clock: Arc::new(SystemClock),
-            ids: ids.clone(),
             events: std::sync::Arc::new(crate::playback::ports::NoPlayEvents),
         };
         let worker = MediaWorkers {
@@ -224,7 +221,7 @@ impl MediaSetup {
     /// configured, the catalog is empty (so reads 404), attribution drops,
     /// and ffmpeg is absent, so every transcode decision lands direct.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
+    pub fn for_tests(users: UsersDeps) -> Result<Self, String> {
         use crate::playback::fakes::{FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeSinks};
         use crate::remotes::adapter::MemoryImportSink;
         use crate::remotes::connections::{MemoryConnectionStore, NoServers};
@@ -249,7 +246,6 @@ impl MediaSetup {
                 Ok(droppedneedle_kernel::runtime_config::sections::SecuritySettings::default())
             }),
             users.clone(),
-            ids.clone(),
         );
         let remotes = RemotesDeps {
             service: RemotesService::new(
@@ -276,7 +272,6 @@ impl MediaSetup {
             remotes,
             stream: StreamState {
                 engine: Arc::new(engine),
-                ids: ids.clone(),
             },
             download,
             playback: PlaybackDeps {
@@ -291,7 +286,6 @@ impl MediaSetup {
                 dedup: ScrobbleDedup::new(),
                 mixed: MixedDedup::new(),
                 clock: Arc::new(SystemClock),
-                ids,
                 events: std::sync::Arc::new(crate::playback::ports::NoPlayEvents),
             },
         })

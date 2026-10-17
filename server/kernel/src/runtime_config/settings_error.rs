@@ -11,7 +11,7 @@
 //! [`ConfigError::Validation`]: crate::runtime_config::ConfigError::Validation
 //! [`ConfigError::SectionDecode`]: crate::runtime_config::ConfigError::SectionDecode
 
-use crate::error::{ApiError, RATE_LIMITED};
+use crate::error::{ApiError, RATE_LIMITED, Unavailable};
 use axum::http::StatusCode;
 
 /// Expected revision does not match the stored one; refresh and retry.
@@ -55,6 +55,11 @@ pub enum SettingsError {
     /// A backend this route needs is unwired (503).
     Unavailable {
         /// Which backend is missing, for the log only.
+        cause: String,
+    },
+    /// The database was too busy to answer in time (503 `SERVER_BUSY`).
+    Busy {
+        /// Which read or write waited, for the log only.
         cause: String,
     },
     /// Server fault.
@@ -110,6 +115,7 @@ impl From<SettingsError> for ApiError {
             SettingsError::Unavailable { cause } => {
                 ApiError::fault(StatusCode::SERVICE_UNAVAILABLE, cause)
             }
+            SettingsError::Busy { cause } => ApiError::unavailable(Unavailable::ServerBusy, cause),
             SettingsError::Internal { cause } => ApiError::internal(cause),
         }
     }

@@ -17,7 +17,7 @@ use sqlx::{Row as _, SqlitePool};
 
 use super::models::{SectionPrefItem, SectionPrefsResponse, SectionPrefsUpdate};
 use droppedneedle_auth::users::stores::{LastFmStore, StoreError};
-use droppedneedle_kernel::db::{Lane, WriteLane};
+use droppedneedle_kernel::db::{DbError, Lane, WriteLane, sqlx_is_busy};
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Visible pages.
@@ -422,7 +422,13 @@ impl SectionPrefsStore for SqliteSectionPrefsStore {
             .bind(page)
             .fetch_all(&self.pool)
             .await
-            .map_err(|cause| StoreError::Internal(cause.to_string()))?;
+            .map_err(|cause| {
+                if sqlx_is_busy(&cause) {
+                    StoreError::Busy
+                } else {
+                    StoreError::Internal(cause.to_string())
+                }
+            })?;
             Ok(rows
                 .iter()
                 .map(|row| row.get::<String, _>("section_key"))
@@ -463,7 +469,10 @@ impl SectionPrefsStore for SqliteSectionPrefsStore {
                 },
             )
             .await
-            .map_err(|cause| StoreError::Internal(cause.to_string()))
+            .map_err(|cause| match cause {
+                DbError::Busy { .. } => StoreError::Busy,
+                other => StoreError::Internal(other.to_string()),
+            })
         })
     }
 }
@@ -482,7 +491,7 @@ pub async fn page(
     let disabled = store
         .get_disabled(user_id, page)
         .await
-        .map_err(|cause| SettingsError::internal(&cause.to_string()))?;
+        .map_err(|cause| store_failure("section prefs read", cause))?;
     let listenbrainz = links.is_listenbrainz_linked(user_id).await;
     let lastfm = lastfm_master && links.is_lastfm_linked(user_id).await;
     let availability: HashMap<&str, bool> = HashMap::from([
@@ -569,8 +578,18 @@ pub async fn save_page(
     store
         .set_disabled(user_id, &update.page, &disabled)
         .await
-        .map_err(|cause| SettingsError::internal(&cause.to_string()))?;
+        .map_err(|cause| store_failure("section prefs write", cause))?;
     page(store, links, user_id, &update.page, lastfm_master).await
+}
+
+/// A busy database answers `SERVER_BUSY`; anything else is a 500.
+fn store_failure(operation: &str, cause: StoreError) -> SettingsError {
+    match cause {
+        StoreError::Busy => SettingsError::Busy {
+            cause: format!("{operation}: database busy"),
+        },
+        other => SettingsError::internal(&format_args!("{operation}: {other}")),
+    }
 }
 
 /// In-memory disabled sets, one per user page. Test wiring only: the

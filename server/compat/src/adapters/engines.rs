@@ -93,7 +93,8 @@ fn backend_error(fault: StreamFault) -> BackendError {
         StreamFault::NotFound => BackendError::failed("audio item not found"),
         StreamFault::Forbidden { message } => BackendError::failed(message),
         StreamFault::InvalidInput { message } => BackendError::failed(message),
-        StreamFault::Upstream { source } => {
+        StreamFault::Upstream { source, cause } => {
+            tracing::warn!(%cause, "compat audio upstream failed");
             BackendError::failed(format!("upstream {} failed", source.as_str()))
         }
         StreamFault::Internal { cause } => {
@@ -302,6 +303,14 @@ impl<E> GatewayStream<E> {
         .await
         .map_err(|fault| match fault {
             StreamFault::Capacity => status(429, vec![("Retry-After".to_owned(), "1".to_owned())]),
+            StreamFault::Upstream { source, cause } => {
+                tracing::warn!(source = source.as_str(), %cause, "jellyfin audio upstream failed");
+                status(404, Vec::new())
+            }
+            StreamFault::Internal { cause } => {
+                tracing::error!(%cause, "jellyfin audio backend failed");
+                status(404, Vec::new())
+            }
             _ => status(404, Vec::new()),
         })
     }

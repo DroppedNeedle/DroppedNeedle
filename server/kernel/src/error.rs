@@ -58,8 +58,6 @@ pub const METHOD_NOT_ALLOWED_MESSAGE: &str = "Method not allowed";
 /// Fixed 5xx message. This string is the whole body contract for server
 /// faults: no cause text, hosts, or paths may join it.
 pub const FIXED_INTERNAL_MESSAGE: &str = "Internal server error";
-/// Fixed upstream-fault message. Never carries cause text, hosts, or paths.
-pub const FIXED_UPSTREAM_MESSAGE: &str = "Upstream service error";
 /// Fixed 413 message.
 pub const FIXED_TOO_LARGE_MESSAGE: &str = "Request body too large";
 /// Fixed 429 message.
@@ -81,54 +79,6 @@ pub struct ErrorBody {
 pub struct ErrorEnvelope {
     /// The single error payload.
     pub error: ErrorBody,
-}
-
-/// Render one error envelope. Native error bodies are built here and
-/// nowhere else, so every module emits the same shape.
-pub fn envelope_response(
-    status: StatusCode,
-    code: &str,
-    message: impl Into<String>,
-    details: Option<Value>,
-) -> Response {
-    let body = ErrorEnvelope {
-        error: ErrorBody {
-            code: code.to_owned(),
-            message: message.into(),
-            details,
-        },
-    };
-    (status, Json(body)).into_response()
-}
-
-/// A server or upstream fault: fixed message, the error id in `details`.
-pub fn fault_response(status: StatusCode, code: &str, message: &str, error_id: &str) -> Response {
-    envelope_response(status, code, message, Some(json!({ "error_id": error_id })))
-}
-
-/// 401 in the shared envelope with the `WWW-Authenticate: Bearer` challenge.
-pub fn unauthorized_response(message: impl Into<String>) -> Response {
-    let mut response = envelope_response(StatusCode::UNAUTHORIZED, UNAUTHORIZED, message, None);
-    response
-        .headers_mut()
-        .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
-    response
-}
-
-/// 503 with `Retry-After: 1` for lock contention that outlived the busy
-/// timeout. The body is the fixed 5xx envelope, so the request-scope
-/// rewrite leaves it unchanged. The operation name is logged, never sent.
-pub fn busy_response(operation: &str, request_id: &str) -> Response {
-    tracing::warn!(
-        operation,
-        request_id,
-        "database busy; answering 503 with retry"
-    );
-    let mut response = ApiError::server_error_response(StatusCode::SERVICE_UNAVAILABLE, request_id);
-    response
-        .headers_mut()
-        .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
-    response
 }
 
 /// The closed list of 5xx answers that reach the client with their own
@@ -420,7 +370,14 @@ impl ApiError {
     /// body is fixed; the status keeps its distinct 5xx meaning (a 503 stays
     /// a 503). Callers pass a server-error status.
     pub fn server_error_response(status: StatusCode, error_id: &str) -> Response {
-        fault_response(status, INTERNAL_ERROR, FIXED_INTERNAL_MESSAGE, error_id)
+        let body = ErrorEnvelope {
+            error: ErrorBody {
+                code: INTERNAL_ERROR.to_owned(),
+                message: FIXED_INTERNAL_MESSAGE.to_owned(),
+                details: Some(json!({ "error_id": error_id })),
+            },
+        };
+        (status, Json(body)).into_response()
     }
 }
 
@@ -480,12 +437,5 @@ mod tests {
         let response = ApiError::new(StatusCode::BAD_GATEWAY, CONFLICT, "secret").into_response();
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
         assert!(response.extensions().get::<Fault>().is_some());
-    }
-
-    #[test]
-    fn busy_response_carries_503_and_retry_after() {
-        let response = busy_response("op", "req-1");
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(response.headers().get(header::RETRY_AFTER).unwrap(), "1");
     }
 }

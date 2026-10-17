@@ -23,7 +23,6 @@ use crate::reads::discover::{
         RadioPlanner, YouTubeSource,
     },
 };
-use droppedneedle_kernel::ids::IdGenerator;
 
 /// Max cards served from one queue read.
 pub const QUEUE_COUNT_MAX: i64 = 20;
@@ -113,8 +112,6 @@ pub struct ReadsDeps {
     pub radio: Arc<dyn RadioPlanner>,
     /// Live presence.
     pub now_playing: Arc<dyn NowPlayingStore>,
-    /// Fresh error ids.
-    pub ids: Arc<dyn IdGenerator>,
     /// Clock for TTL math.
     pub clock: Arc<dyn Clock>,
 }

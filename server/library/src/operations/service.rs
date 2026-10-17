@@ -745,7 +745,7 @@ impl Operations {
             match placed {
                 Ok(()) => decisions::bump_catalog(tx)?,
                 Err(OperationError::Unavailable(_)) => {
-                    choice::retry_remap(tx, &pending, reasons::MUSICBRAINZ_UNAVAILABLE.code, now)?
+                    choice::retry_remap(tx, &pending, reasons::MUSICBRAINZ_UNAVAILABLE, now)?
                 }
                 // The album's files are out of reach for now (a scan may
                 // be moving them): never a reason to drop the choice.

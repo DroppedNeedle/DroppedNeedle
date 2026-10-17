@@ -35,15 +35,13 @@ pub const MAX_SUGGEST_LIMIT: u32 = 10;
 
 /// Search dependencies, built once and injected by constructor. The pool
 /// serves local catalog reads; the port answers enrichment (unconfigured
-/// when no providers are wired); the ids mint error ids.
+/// when no providers are wired).
 #[derive(Clone)]
 pub struct SearchDeps {
     /// Local catalog search over the baseline pool.
     pub service: service::SearchService,
     /// Enrichment seam (the provider adapters implement this).
     pub enrichment: Arc<dyn ports::EnrichmentPort>,
-    /// Fresh ids for error correlation.
-    pub ids: Arc<dyn droppedneedle_kernel::ids::IdGenerator>,
 }
 
 impl SearchDeps {
@@ -51,12 +49,10 @@ impl SearchDeps {
     pub fn new(
         service: service::SearchService,
         enrichment: Arc<dyn ports::EnrichmentPort>,
-        ids: Arc<dyn droppedneedle_kernel::ids::IdGenerator>,
     ) -> Self {
         Self {
             service,
             enrichment,
-            ids,
         }
     }
 }

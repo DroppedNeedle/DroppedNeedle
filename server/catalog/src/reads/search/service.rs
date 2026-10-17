@@ -600,7 +600,6 @@ impl SearchService {
 /// absent counts and source `none`. The cause goes to the log only.
 pub async fn enrich_with_degradation(
     port: &dyn EnrichmentPort,
-    ids: &dyn droppedneedle_kernel::ids::IdGenerator,
     request: EnrichmentBatchRequest,
 ) -> EnrichmentResponse {
     let artists: Vec<super::models::ArtistEnrichmentRequest> = request
@@ -622,8 +621,7 @@ pub async fn enrich_with_degradation(
     match port.enrich_batch(trimmed).await {
         Ok(response) => response,
         Err(error) => {
-            let error_id = ids.new_id();
-            tracing::error!(error_id, source = %error.source, cause = %error.message, "search enrichment degraded");
+            tracing::error!(source = %error.source, cause = %error.message, "search enrichment degraded");
             EnrichmentResponse {
                 artists: artists
                     .into_iter()

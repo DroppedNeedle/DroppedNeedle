@@ -167,7 +167,6 @@ impl CompatSetup {
         users: UsersDeps,
         scan: LibrarySetup,
         reads: &ReadsSetup,
-        ids: Arc<dyn droppedneedle_kernel::ids::IdGenerator>,
     ) -> Result<Self, String> {
         use std::path::PathBuf;
 
@@ -224,7 +223,6 @@ impl CompatSetup {
             dedup: ScrobbleDedup::new(),
             mixed: MixedDedup::new(),
             clock: Arc::new(SystemClock),
-            ids,
             events: std::sync::Arc::new(droppedneedle_media::playback::ports::NoPlayEvents),
         };
         Ok(Self::build(CompatDeps::over_reads(

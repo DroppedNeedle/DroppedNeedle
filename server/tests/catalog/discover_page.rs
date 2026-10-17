@@ -34,7 +34,6 @@ use droppedneedle_catalog::reads::discover::fakes::{
 use droppedneedle_catalog::reads::discover::ports::{BoxFuture, SystemClock};
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
 use droppedneedle_kernel::db::{DbRuntime, Lane};
-use droppedneedle_kernel::ids::UuidGenerator;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -418,7 +417,6 @@ fn page_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
         youtube: Arc::new(FakeYouTube::unconfigured()),
         radio: Arc::new(FakeRadio),
         now_playing: Arc::new(FakeNowPlaying),
-        ids: Arc::new(UuidGenerator),
         clock: Arc::new(SystemClock),
     };
     let router = Router::new().nest(

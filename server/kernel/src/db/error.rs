@@ -6,9 +6,9 @@
 //! retryable [`DbError::Busy`]. The lane answers the same way when a
 //! foreground write finds its queue full or has waited 5 s for its turn, and
 //! a read when it has waited 5 s for a pooled connection.
-//! Handlers render that as HTTP 503 with
-//! `Retry-After: 1` through [`crate::error::busy_response`]. The client
-//! retries; this process never spins.
+//! Handlers answer it as the closed-list
+//! [`crate::error::Unavailable::ServerBusy`]: HTTP 503 with
+//! `Retry-After: 1`. The client retries; this process never spins.
 
 use std::path::PathBuf;
 

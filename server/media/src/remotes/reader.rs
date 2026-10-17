@@ -82,7 +82,10 @@ impl RemotesRemoteReader {
                 // Without a usable connection the item is unresolvable,
                 // which reads as unknown rather than forbidden.
                 ResolveError::NotConfigured => StreamFault::NotFound,
-                ResolveError::Stale => StreamFault::Upstream { source },
+                ResolveError::Stale => StreamFault::Upstream {
+                    source,
+                    cause: error.to_string(),
+                },
                 ResolveError::Store(cause) => StreamFault::Internal { cause },
             })?;
         Ok(match name {
@@ -252,13 +255,16 @@ fn content_type(response: &reqwest::Response) -> String {
 }
 
 /// Map an adapter failure onto the gateway fault spelling. Upstream detail
-/// stays in the log (callers log through `StreamError::internal`); only
-/// the invalid-key message is user-facing.
+/// rides as the fault's cause to the log; only the invalid-key message is
+/// user-facing.
 fn map_fault(source: AudioSource, error: AdapterError) -> StreamFault {
     match error {
         AdapterError::NotConfigured | AdapterError::NotFound => StreamFault::NotFound,
         AdapterError::Auth | AdapterError::Api(_) | AdapterError::Transport(_) => {
-            StreamFault::Upstream { source }
+            StreamFault::Upstream {
+                source,
+                cause: error.to_string(),
+            }
         }
         AdapterError::Unsupported(message) => StreamFault::InvalidInput { message },
     }

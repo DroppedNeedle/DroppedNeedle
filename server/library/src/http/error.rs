@@ -14,8 +14,6 @@ use crate::operations::reasons::Reason;
 /// Handler-layer errors with their status mapping.
 #[derive(Debug)]
 pub enum LibraryError {
-    /// No usable credential.
-    Unauthorized { message: String },
     /// Credential lacks rights.
     Forbidden { message: String },
     /// Missing resource (also used to hide private resources).
@@ -43,7 +41,6 @@ impl LibraryError {
 impl From<LibraryError> for ApiError {
     fn from(error: LibraryError) -> Self {
         match error {
-            LibraryError::Unauthorized { message } => ApiError::unauthorized(message),
             LibraryError::Forbidden { message } => ApiError::forbidden(message),
             LibraryError::NotFound => ApiError::not_found(),
             LibraryError::InvalidInput { message } => ApiError::invalid_input(message),
