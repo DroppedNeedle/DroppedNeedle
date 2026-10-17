@@ -11,10 +11,11 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 use super::auth::Principal;
 use super::error::RequestsError;
-use super::http::{HttpError, ValidJson, ValidQuery};
 use super::models::{
     ActionResponse, AlbumIntake, BatchCancelBody, BatchCancelResponse, BatchIntake,
     BatchIntakeResponse, ClearHistoryResponse, EditionAcquireQuery, EditionAcquireResponse,
@@ -47,7 +48,7 @@ pub async fn request_album_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     ValidJson(body): ValidJson<AlbumIntake>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     let response = RequestsService::new(&state)
         .request_album(&principal, &body)
         .await?;
@@ -67,7 +68,7 @@ pub async fn request_track_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     ValidJson(body): ValidJson<TrackIntake>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     let response = RequestsService::new(&state)
         .request_track(&principal, &body)
         .await?;
@@ -87,7 +88,7 @@ pub async fn request_batch_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     ValidJson(body): ValidJson<BatchIntake>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     let response = RequestsService::new(&state)
         .request_batch(&principal, &body)
         .await?;
@@ -108,7 +109,7 @@ pub async fn cancel_batch_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     ValidJson(body): ValidJson<BatchCancelBody>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     let kind = match body.kind.as_deref() {
         None => RequestKind::Album,
         Some(value) => RequestKind::parse(value).ok_or_else(|| RequestsError::InvalidInput {
@@ -135,7 +136,7 @@ pub async fn cancel_one_handler(
     principal: Principal,
     Path(musicbrainz_id): Path<String>,
     ValidQuery(query): ValidQuery<KindQuery>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     let kind = resolve_kind(&query)?;
     let response = RequestsService::new(&state)
         .cancel_one(&principal, &musicbrainz_id, kind)
@@ -158,7 +159,7 @@ pub async fn retry_one_handler(
     principal: Principal,
     Path(musicbrainz_id): Path<String>,
     ValidQuery(query): ValidQuery<KindQuery>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     let kind = resolve_kind(&query)?;
     let response = RequestsService::new(&state)
         .retry_request(&principal, &musicbrainz_id, kind)
@@ -180,7 +181,7 @@ pub async fn clear_history_handler(
     principal: Principal,
     Path(musicbrainz_id): Path<String>,
     ValidQuery(query): ValidQuery<KindQuery>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     let kind = resolve_kind(&query)?;
     let response = RequestsService::new(&state)
         .clear_history_item(&principal, &musicbrainz_id, kind)
@@ -208,7 +209,7 @@ pub async fn acquire_edition_handler(
     principal: Principal,
     Path(album_id): Path<String>,
     ValidQuery(query): ValidQuery<EditionAcquireQuery>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     let response = RequestsService::new(&state)
         .acquire_edition(
             &principal,

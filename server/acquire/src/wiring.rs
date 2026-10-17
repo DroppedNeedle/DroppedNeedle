@@ -1255,37 +1255,29 @@ async fn translate_principal(
     mut request: Request,
     next: Next,
 ) -> Response {
-    use super::requests::{auth::Principal, error::RequestsError, http::HttpError};
+    use super::requests::auth::Principal;
     use axum::response::IntoResponse;
+    use droppedneedle_kernel::error::{ApiError, Unavailable};
 
-    let missing = || {
-        HttpError(RequestsError::Unauthorized {
-            message: "Authentication required".to_owned(),
-        })
-    };
+    let missing = || ApiError::unauthorized("Authentication required").into_response();
     let Some(session) = request.extensions().get::<CurrentSession>().cloned() else {
-        return missing().into_response();
+        return missing();
     };
     let user = match users.users.get_by_id(&session.user_id).await {
         Ok(Some(user)) => user,
-        Ok(None) => return missing().into_response(),
+        Ok(None) => return missing(),
         Err(StoreError::Conflict) => {
-            return HttpError(RequestsError::Conflict {
-                message: "Conflicting state".to_owned(),
-            })
-            .into_response();
+            return ApiError::conflict("Conflicting state").into_response();
         }
         Err(StoreError::Busy) => {
-            return HttpError(RequestsError::Busy {
-                operation: "acquire.auth.user".to_owned(),
-            })
+            return ApiError::unavailable(
+                Unavailable::ServerBusy,
+                "acquire.auth.user: database busy",
+            )
             .into_response();
         }
         Err(StoreError::Internal(cause)) => {
-            return HttpError(RequestsError::internal(&format_args!(
-                "user lookup failed: {cause}"
-            )))
-            .into_response();
+            return ApiError::internal(format_args!("user lookup failed: {cause}")).into_response();
         }
     };
     request.extensions_mut().insert(Principal {

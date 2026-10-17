@@ -24,11 +24,9 @@ use super::held_rows::HeldRow;
 use super::queue_rows::Viewer;
 use super::upgrades::{UpgradeAsk, UpgradeError, UpgradeOutcome, Upgrades};
 use crate::flows::seams::DispatchKind;
-use crate::requests::{
-    auth::Principal,
-    error::RequestsError,
-    http::{HttpError, ValidJson, ValidQuery},
-};
+use crate::requests::{auth::Principal, error::RequestsError};
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_media::stream::routes::{DirectSpan, content_type_for_extension, file_range};
 
 /// One held file.
@@ -243,9 +241,9 @@ fn viewer(principal: &Principal) -> Viewer {
     }
 }
 
-impl From<HeldError> for HttpError {
+impl From<HeldError> for ApiError {
     fn from(error: HeldError) -> Self {
-        HttpError(match error {
+        ApiError::from(match error {
             HeldError::NotFound(_) => RequestsError::NotFound,
             HeldError::Refused(message) => RequestsError::Conflict { message },
             HeldError::Unavailable(cause) => RequestsError::internal(&cause),
@@ -253,17 +251,18 @@ impl From<HeldError> for HttpError {
     }
 }
 
-impl From<UpgradeError> for HttpError {
+impl From<UpgradeError> for ApiError {
     fn from(error: UpgradeError) -> Self {
-        HttpError(match error {
+        ApiError::from(match error {
             UpgradeError::Unavailable(cause) => RequestsError::internal(&cause),
         })
     }
 }
 
 /// Held ids arrive as path text; a non-number is simply not found.
-fn held_id(text: &str) -> Result<i64, HttpError> {
-    text.parse().map_err(|_| HttpError(RequestsError::NotFound))
+fn held_id(text: &str) -> Result<i64, ApiError> {
+    text.parse()
+        .map_err(|_| ApiError::from(RequestsError::NotFound))
 }
 
 fn path_text(placed: &Placed) -> Option<String> {
@@ -289,7 +288,7 @@ pub async fn list_held_handler(
     State(state): State<ReviewState>,
     principal: Principal,
     ValidQuery(query): ValidQuery<HeldListQuery>,
-) -> Result<Json<HeldListResponse>, HttpError> {
+) -> Result<Json<HeldListResponse>, ApiError> {
     let group = query.release_group_mbid.filter(|mbid| !mbid.is_empty());
     let rows = state
         .held
@@ -314,7 +313,7 @@ pub async fn import_held_handler(
     State(state): State<ReviewState>,
     principal: Principal,
     Path(id): Path<String>,
-) -> Result<Json<HeldActionResponse>, HttpError> {
+) -> Result<Json<HeldActionResponse>, ApiError> {
     let placed = state
         .held
         .import(&viewer(&principal), held_id(&id)?, &principal.user_id)
@@ -339,7 +338,7 @@ pub async fn discard_held_handler(
     State(state): State<ReviewState>,
     principal: Principal,
     Path(id): Path<String>,
-) -> Result<Json<HeldActionResponse>, HttpError> {
+) -> Result<Json<HeldActionResponse>, ApiError> {
     state
         .held
         .discard(&viewer(&principal), held_id(&id)?)
@@ -364,7 +363,7 @@ pub async fn reverify_held_handler(
     State(state): State<ReviewState>,
     principal: Principal,
     Path(id): Path<String>,
-) -> Result<Json<HeldReverifyResponse>, HttpError> {
+) -> Result<Json<HeldReverifyResponse>, ApiError> {
     let outcome = state
         .held
         .reverify(&viewer(&principal), held_id(&id)?, &principal.user_id)
@@ -394,7 +393,7 @@ pub async fn reverify_bulk_handler(
     State(state): State<ReviewState>,
     principal: Principal,
     ValidJson(body): ValidJson<HeldBulkReverifyRequest>,
-) -> Result<Json<HeldBulkReverifyResponse>, HttpError> {
+) -> Result<Json<HeldBulkReverifyResponse>, ApiError> {
     let items = state
         .held
         .reverify_bulk(&viewer(&principal), body.held_ids, &principal.user_id)
@@ -446,11 +445,11 @@ pub async fn held_audio_handler(
     principal: Principal,
     Path(id): Path<String>,
     headers: HeaderMap,
-) -> Result<Response, HttpError> {
+) -> Result<Response, ApiError> {
     let row = state.held.get(&viewer(&principal), held_id(&id)?).await?;
     let path = std::path::PathBuf::from(&row.held_path);
     let Ok(meta) = tokio::fs::metadata(&path).await else {
-        return Err(HttpError(RequestsError::NotFound));
+        return Err(ApiError::from(RequestsError::NotFound));
     };
     let total = meta.len();
     let Some(span) = DirectSpan::for_request(headers.get(header::RANGE), total) else {
@@ -487,7 +486,7 @@ pub async fn retry_local_handler(
     State(state): State<ReviewState>,
     principal: Principal,
     Path(task_id): Path<String>,
-) -> Result<Json<HeldUnitResponse>, HttpError> {
+) -> Result<Json<HeldUnitResponse>, ApiError> {
     principal.require_admin()?;
     let files = state
         .held
@@ -512,7 +511,7 @@ pub async fn discard_local_handler(
     State(state): State<ReviewState>,
     principal: Principal,
     Path(task_id): Path<String>,
-) -> Result<Json<HeldUnitResponse>, HttpError> {
+) -> Result<Json<HeldUnitResponse>, ApiError> {
     principal.require_admin()?;
     let files = state
         .held
@@ -537,7 +536,7 @@ pub async fn discard_verdict_handler(
     State(state): State<ReviewState>,
     principal: Principal,
     Path(task_id): Path<String>,
-) -> Result<Json<HeldUnitResponse>, HttpError> {
+) -> Result<Json<HeldUnitResponse>, ApiError> {
     let files = state
         .held
         .discard_verdict(&viewer(&principal), &task_id)
@@ -559,7 +558,7 @@ pub async fn discard_verdict_handler(
 pub async fn cutoff_unmet_handler(
     State(state): State<ReviewState>,
     principal: Principal,
-) -> Result<Json<CutoffUnmetResponse>, HttpError> {
+) -> Result<Json<CutoffUnmetResponse>, ApiError> {
     principal.require_curator()?;
     let view = state.upgrades.cutoff_unmet().await?;
     Ok(Json(CutoffUnmetResponse {
@@ -594,18 +593,18 @@ fn upgrade_response(outcome: UpgradeOutcome) -> UpgradeRequestResponse {
     }
 }
 
-fn parse_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, HttpError> {
+fn parse_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, ApiError> {
     serde_json::from_slice(body).map_err(|cause| {
-        HttpError(RequestsError::InvalidInput {
+        ApiError::from(RequestsError::InvalidInput {
             message: format!("Invalid request body: {cause}"),
         })
     })
 }
 
-fn required(value: &str, name: &str) -> Result<String, HttpError> {
+fn required(value: &str, name: &str) -> Result<String, ApiError> {
     let value = value.trim();
     if value.is_empty() {
-        return Err(HttpError(RequestsError::InvalidInput {
+        return Err(ApiError::from(RequestsError::InvalidInput {
             message: format!("{name} is required"),
         }));
     }
@@ -625,7 +624,7 @@ pub async fn upgrade_album_handler(
     State(state): State<ReviewState>,
     principal: Principal,
     body: Bytes,
-) -> Result<Json<UpgradeRequestResponse>, HttpError> {
+) -> Result<Json<UpgradeRequestResponse>, ApiError> {
     // The role check comes before the body parse, so a plain user always
     // hears 403 whatever they sent.
     principal.require_curator()?;
@@ -656,7 +655,7 @@ pub async fn upgrade_track_handler(
     State(state): State<ReviewState>,
     principal: Principal,
     body: Bytes,
-) -> Result<Json<UpgradeRequestResponse>, HttpError> {
+) -> Result<Json<UpgradeRequestResponse>, ApiError> {
     // The role check comes before the body parse, so a plain user always
     // hears 403 whatever they sent.
     principal.require_curator()?;

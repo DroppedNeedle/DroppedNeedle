@@ -1,7 +1,7 @@
 //! Requests domain errors.
 //!
-//! Services and stores return [`RequestsError`]; only the handler layer
-//! ([`super::http`]) maps it to a status and the shared error envelope.
+//! Services and stores return [`RequestsError`]; only its one mapping onto
+//! `ApiError` in [`super::http`] chooses a status.
 
 use serde_json::Value;
 
@@ -29,17 +29,15 @@ pub enum RequestsError {
     StorageFull { message: String, details: Value },
     /// The database stayed locked past its busy timeout. Retryable.
     Busy { operation: String },
-    /// Server fault. The id matches the log line.
-    Internal { error_id: String },
+    /// Server fault. The cause is for the log only.
+    Internal { cause: String },
 }
 
 impl RequestsError {
-    /// Build a server fault, logging the real cause with a fresh id. The id
-    /// is minted here because these routes have no request-scope id of
-    /// their own.
+    /// A server fault with its cause for the log.
     pub fn internal(cause: &dyn std::fmt::Display) -> Self {
-        let error_id = uuid::Uuid::new_v4().to_string();
-        tracing::error!(error_id, %cause, "requests operation failed");
-        Self::Internal { error_id }
+        Self::Internal {
+            cause: cause.to_string(),
+        }
     }
 }

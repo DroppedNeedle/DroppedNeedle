@@ -577,8 +577,9 @@ impl RequestsService {
                 Err(RequestsError::InvalidInput { .. }) => {
                     // Admission fault: the row already reads failed.
                 }
-                Err(_) => {
+                Err(error) => {
                     // One row's dispatch fault never fails its siblings.
+                    tracing::warn!(key = %won.key, ?error, "batch dispatch failed");
                 }
             }
         }

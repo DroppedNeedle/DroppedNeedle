@@ -16,8 +16,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use droppedneedle_kernel::error::ApiError;
+
 use super::error::RequestsError;
-use super::http::HttpError;
 
 /// Account role. Meanings match v2 and the session roles: `user` requests wait
 /// for approval; `trusted` and `admin` auto-approve and skip quotas.
@@ -111,14 +112,14 @@ impl Principal {
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for Principal {
-    type Rejection = HttpError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts.extensions.get::<Principal>().cloned().ok_or_else(|| {
-            HttpError(RequestsError::Unauthorized {
-                message: "Authentication required".to_owned(),
-            })
-        })
+        parts
+            .extensions
+            .get::<Principal>()
+            .cloned()
+            .ok_or_else(|| ApiError::unauthorized("Authentication required"))
     }
 }
 
@@ -163,9 +164,6 @@ pub async fn gate(mut req: Request, next: Next) -> Response {
             req.extensions_mut().insert(principal);
             next.run(req).await
         }
-        None => HttpError(RequestsError::Unauthorized {
-            message: "Authentication required".to_owned(),
-        })
-        .into_response(),
+        None => ApiError::unauthorized("Authentication required").into_response(),
     }
 }

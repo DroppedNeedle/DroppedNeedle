@@ -1,28 +1,15 @@
-//! Typed errors rendered into the shared envelope.
+//! Import route errors and their one mapping onto [`ApiError`].
 //!
-//! Every failure renders as `{"error": {code, message, details}}` with a
-//! SCREAMING_SNAKE code. Statuses match the other modules: 401 carries
-//! the `Bearer` challenge, 4xx messages are user-safe, and 5xx bodies stay
-//! fixed with only an error id while the cause goes to the structured log.
+//! 4xx answers keep their codes and user-safe messages; 401 carries the
+//! `Bearer` challenge. An upstream failure keeps its 502 with the fixed
+//! body, a busy database is `SERVER_BUSY`, and every cause goes to the log
+//! only, written once by the request boundary.
 
-use axum::{
-    extract::{FromRequest, Query, Request},
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
-use droppedneedle_kernel::error::{
-    ApiError, CONFLICT, FORBIDDEN, INVALID_INPUT, NOT_FOUND, NOT_FOUND_MESSAGE, busy_response,
-    envelope_response, unauthorized_response,
-};
-use droppedneedle_kernel::ids::IdGenerator;
-use serde::de::DeserializeOwned;
+use axum::http::StatusCode;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 
 /// No connection or settings stored for this import (Lidarr/Spotify).
 pub const IMPORT_NOT_CONFIGURED: &str = "IMPORT_NOT_CONFIGURED";
-/// The stored credential was rejected upstream (Lidarr 401/403).
-pub const IMPORT_AUTH_FAILED: &str = "IMPORT_AUTH_FAILED";
-/// The upstream answered with an error or garbage.
-pub const IMPORT_UNAVAILABLE: &str = "IMPORT_UNAVAILABLE";
 
 /// Every failure the imports routes can return to a caller.
 #[derive(Debug)]
@@ -54,111 +41,57 @@ pub enum ImportsError {
         /// Which import is missing, e.g. "Lidarr is not connected".
         message: String,
     },
-    /// Upstream rejected the stored credential. Reconfigure, do not retry.
+    /// Upstream rejected the stored credential (502). Reconfigure, do not
+    /// retry. The caller is signed in, so no Bearer challenge.
     AuthFailed {
-        /// Which import rejected, without credential detail.
-        message: String,
+        /// Which import rejected, for the log only.
+        cause: String,
     },
-    /// Upstream error or unreachable. User-safe summary only.
+    /// Upstream error or unreachable (502).
     Unavailable {
-        /// Short summary, e.g. "Lidarr answered with an error".
-        message: String,
+        /// What failed, for the log only.
+        cause: String,
     },
-    /// The database was too busy to answer in time: 503 with `Retry-After`.
+    /// The database was too busy to answer in time.
     Busy {
         /// Operation name for the log line.
         operation: String,
     },
-    /// Server fault. Fixed body plus the request-tied id.
+    /// Server fault.
     Internal {
-        /// Ties the wire response to the server log line.
-        error_id: String,
+        /// What went wrong, for the log only.
+        cause: String,
     },
 }
 
 impl ImportsError {
-    /// Build a 500, logging the real cause with its id.
-    pub fn internal(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
-        let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "imports request failed");
-        Self::Internal { error_id }
-    }
-
-    fn status(&self) -> StatusCode {
-        match self {
-            Self::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
-            Self::Forbidden { .. } => StatusCode::FORBIDDEN,
-            Self::NotFound => StatusCode::NOT_FOUND,
-            Self::InvalidInput { .. } | Self::NotConfigured { .. } => StatusCode::BAD_REQUEST,
-            Self::Conflict { .. } => StatusCode::CONFLICT,
-            // Upstream credential rejection is a gateway failure, not a
-            // caller-auth failure: the caller IS authenticated here, so no
-            // Bearer challenge must fire.
-            Self::AuthFailed { .. } => StatusCode::BAD_GATEWAY,
-            Self::Unavailable { .. } => StatusCode::BAD_GATEWAY,
-            Self::Busy { .. } => StatusCode::SERVICE_UNAVAILABLE,
-            Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+    /// A 500 with its cause for the log.
+    pub fn internal(cause: &dyn std::fmt::Display) -> Self {
+        Self::Internal {
+            cause: cause.to_string(),
         }
     }
 }
 
-impl IntoResponse for ImportsError {
-    fn into_response(self) -> Response {
-        let status = self.status();
-        match self {
-            Self::Unauthorized { message } => unauthorized_response(message),
-            Self::Forbidden { message } => envelope_response(status, FORBIDDEN, message, None),
-            Self::NotFound => envelope_response(status, NOT_FOUND, NOT_FOUND_MESSAGE, None),
-            Self::InvalidInput { message } => {
-                envelope_response(status, INVALID_INPUT, message, None)
+impl From<ImportsError> for ApiError {
+    fn from(error: ImportsError) -> Self {
+        match error {
+            ImportsError::Unauthorized { message } => ApiError::unauthorized(message),
+            ImportsError::Forbidden { message } => ApiError::forbidden(message),
+            ImportsError::NotFound => ApiError::not_found(),
+            ImportsError::InvalidInput { message } => ApiError::invalid_input(message),
+            ImportsError::Conflict { message } => ApiError::conflict(message),
+            ImportsError::NotConfigured { message } => {
+                ApiError::new(StatusCode::BAD_REQUEST, IMPORT_NOT_CONFIGURED, message)
             }
-            Self::Conflict { message } => envelope_response(status, CONFLICT, message, None),
-            Self::NotConfigured { message } => {
-                envelope_response(status, IMPORT_NOT_CONFIGURED, message, None)
+            ImportsError::AuthFailed { cause } | ImportsError::Unavailable { cause } => {
+                ApiError::fault(StatusCode::BAD_GATEWAY, cause)
             }
-            Self::AuthFailed { message } => {
-                envelope_response(status, IMPORT_AUTH_FAILED, message, None)
-            }
-            Self::Unavailable { message } => {
-                envelope_response(status, IMPORT_UNAVAILABLE, message, None)
-            }
-            Self::Busy { operation } => {
-                busy_response(&operation, &uuid::Uuid::new_v4().to_string())
-            }
-            Self::Internal { error_id } => ApiError::server_error_response(status, &error_id),
+            ImportsError::Busy { operation } => ApiError::unavailable(
+                Unavailable::ServerBusy,
+                format_args!("database busy: {operation}"),
+            ),
+            ImportsError::Internal { cause } => ApiError::internal(cause),
         }
-    }
-}
-
-/// Query extractor that renders failures in the shared envelope instead of
-/// Axum's default plain-text 400.
-pub struct ValidQuery<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidQuery<T> {
-    type Rejection = ImportsError;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Query::<T>::from_request(req, state)
-            .await
-            .map(|Query(value)| Self(value))
-            .map_err(|cause| ImportsError::InvalidInput {
-                message: format!("Invalid query string: {cause}"),
-            })
-    }
-}
-
-/// JSON body extractor with the same envelope guarantee.
-pub struct ValidJson<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
-    type Rejection = ImportsError;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        axum::Json::<T>::from_request(req, state)
-            .await
-            .map(|axum::Json(value)| Self(value))
-            .map_err(|cause| ImportsError::InvalidInput {
-                message: format!("Invalid request body: {cause}"),
-            })
     }
 }

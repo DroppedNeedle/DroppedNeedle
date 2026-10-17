@@ -11,10 +11,11 @@ use axum::{
     extract::{Path, State},
     response::IntoResponse,
 };
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::ValidQuery;
 
 use super::auth::Principal;
 use super::error::RequestsError;
-use super::http::{HttpError, ValidQuery};
 use super::models::{
     ActionResponse, ActiveCountResponse, ActiveRequestsResponse, ApprovalBatchListResponse,
     AutoDownloadApprovalsResponse, HistoryQuery, HistoryResponse, KindQuery,
@@ -44,7 +45,7 @@ fn resolve_kind(query: &KindQuery) -> Result<RequestKind, RequestsError> {
 pub async fn active_handler(
     State(state): State<RequestsState>,
     principal: Principal,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(RequestsService::new(&state).active(&principal).await?))
 }
 
@@ -58,7 +59,7 @@ pub async fn active_handler(
 pub async fn active_count_handler(
     State(state): State<RequestsState>,
     principal: Principal,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .active_count(&principal)
@@ -77,7 +78,7 @@ pub async fn history_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     ValidQuery(query): ValidQuery<HistoryQuery>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .history(&principal, &query)
@@ -95,7 +96,7 @@ pub async fn history_handler(
 pub async fn approvals_handler(
     State(state): State<RequestsState>,
     principal: Principal,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .pending_approvals(&principal)
@@ -114,7 +115,7 @@ pub async fn approvals_handler(
 pub async fn approvals_count_handler(
     State(state): State<RequestsState>,
     principal: Principal,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .pending_approval_count(&principal)
@@ -136,7 +137,7 @@ pub async fn approve_handler(
     principal: Principal,
     Path(musicbrainz_id): Path<String>,
     ValidQuery(query): ValidQuery<KindQuery>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     let kind = resolve_kind(&query)?;
     Ok(Json(
         RequestsService::new(&state)
@@ -159,7 +160,7 @@ pub async fn reject_handler(
     principal: Principal,
     Path(musicbrainz_id): Path<String>,
     ValidQuery(query): ValidQuery<KindQuery>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     let kind = resolve_kind(&query)?;
     Ok(Json(
         RequestsService::new(&state)
@@ -179,7 +180,7 @@ pub async fn reject_handler(
 pub async fn wanted_handler(
     State(state): State<RequestsState>,
     principal: Principal,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(RequestsService::new(&state).wanted(&principal).await?))
 }
 
@@ -195,7 +196,7 @@ pub async fn wanted_stop_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     Path(musicbrainz_id): Path<String>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .wanted_stop(&principal, &musicbrainz_id)
@@ -216,7 +217,7 @@ pub async fn wanted_resume_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     Path(musicbrainz_id): Path<String>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .wanted_resume(&principal, &musicbrainz_id)
@@ -237,7 +238,7 @@ pub async fn wanted_seen_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     Path(musicbrainz_id): Path<String>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .wanted_seen(&principal, &musicbrainz_id)
@@ -256,7 +257,7 @@ pub async fn wanted_seen_handler(
 pub async fn auto_download_approvals_handler(
     State(state): State<RequestsState>,
     principal: Principal,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .auto_download_approvals(&principal)
@@ -281,7 +282,7 @@ pub async fn approve_auto_download_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     Path((user_id, artist_mbid)): Path<(String, String)>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .approve_auto_download(&principal, &user_id, &artist_mbid)
@@ -306,7 +307,7 @@ pub async fn reject_auto_download_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     Path((user_id, artist_mbid)): Path<(String, String)>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .reject_auto_download(&principal, &user_id, &artist_mbid)
@@ -331,7 +332,7 @@ pub async fn revoke_auto_download_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     Path((user_id, artist_mbid)): Path<(String, String)>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .revoke_auto_download(&principal, &user_id, &artist_mbid)
@@ -350,7 +351,7 @@ pub async fn revoke_auto_download_handler(
 pub async fn auto_download_batches_handler(
     State(state): State<RequestsState>,
     principal: Principal,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .auto_download_batches(&principal)
@@ -372,7 +373,7 @@ pub async fn approve_auto_download_batch_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     Path(batch_id): Path<String>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .approve_auto_download_batch(&principal, &batch_id)
@@ -394,7 +395,7 @@ pub async fn reject_auto_download_batch_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     Path(batch_id): Path<String>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .reject_auto_download_batch(&principal, &batch_id)
@@ -413,7 +414,7 @@ pub async fn reject_auto_download_batch_handler(
 pub async fn mix_approvals_handler(
     State(state): State<RequestsState>,
     principal: Principal,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .mix_approvals(&principal)
@@ -435,7 +436,7 @@ pub async fn approve_mix_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     Path(user_id): Path<String>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .approve_mix(&principal, &user_id)
@@ -457,7 +458,7 @@ pub async fn reject_mix_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     Path(user_id): Path<String>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .reject_mix(&principal, &user_id)
@@ -479,7 +480,7 @@ pub async fn revoke_mix_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     Path(user_id): Path<String>,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .revoke_mix(&principal, &user_id)
@@ -504,7 +505,7 @@ pub async fn revoke_mix_handler(
 pub async fn refresh_mix_handler(
     State(state): State<RequestsState>,
     principal: Principal,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         RequestsService::new(&state)
             .refresh_personal_mix(&principal)
@@ -523,7 +524,7 @@ pub async fn refresh_mix_handler(
 pub async fn sync_handler(
     State(state): State<RequestsState>,
     principal: Principal,
-) -> Result<impl IntoResponse, HttpError> {
+) -> Result<impl IntoResponse, ApiError> {
     principal.require_admin()?;
     Ok(Json(
         RequestsService::new(&state).sync_request_statuses().await?,

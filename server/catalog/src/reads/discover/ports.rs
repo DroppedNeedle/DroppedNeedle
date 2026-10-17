@@ -282,7 +282,7 @@ pub struct BatchRefusal {
     /// HTTP status the requests routes answer with (429 or 403).
     pub status: u16,
     /// Stable code (`QUOTA_EXCEEDED`, `STORAGE_FULL`).
-    pub code: String,
+    pub code: &'static str,
     /// User-facing sentence.
     pub message: String,
     /// The usage numbers behind the refusal, when there are any.

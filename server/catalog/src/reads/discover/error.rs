@@ -16,10 +16,6 @@ pub const NOT_CONFIGURED: &str = "NOT_CONFIGURED";
 /// The feature is not built in this version yet (409).
 pub const NOT_AVAILABLE: &str = "NOT_AVAILABLE";
 
-/// Codes the requests routes refuse a batch with.
-const QUOTA_EXCEEDED: &str = "QUOTA_EXCEEDED";
-const STORAGE_FULL: &str = "STORAGE_FULL";
-
 impl From<ServiceError> for ApiError {
     fn from(error: ServiceError) -> Self {
         match error {
@@ -44,13 +40,8 @@ impl From<ServiceError> for ApiError {
 /// A batch the request rules refused, answered with the status, code and
 /// details the requests routes give.
 fn refused(refusal: BatchRefusal) -> ApiError {
-    let code = match refusal.code.as_str() {
-        QUOTA_EXCEEDED => QUOTA_EXCEEDED,
-        STORAGE_FULL => STORAGE_FULL,
-        other => return ApiError::internal(format!("unknown batch refusal code {other}")),
-    };
     let status = StatusCode::from_u16(refusal.status).unwrap_or(StatusCode::FORBIDDEN);
-    let error = ApiError::new(status, code, refusal.message);
+    let error = ApiError::new(status, refusal.code, refusal.message);
     match refusal.details {
         Some(details) => error.with_details(details),
         None => error,

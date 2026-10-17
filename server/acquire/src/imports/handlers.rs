@@ -1,15 +1,16 @@
 //! Native `/api/v3` import + health handlers and the router constructor.
 //!
 //! Handlers are thin: extract the caller, call one service, render the
-//! shape. Status mapping lives in [`ImportsError`](super::error::ImportsError);
-//! query strings parse through [`ValidQuery`] and bodies through [`ValidJson`]
-//! so malformed input stays inside the shared envelope. The app mounts
-//! [`imports_gated_router`] inside the session gate and the Spotify OAuth
-//! callback outside it; every gated handler also takes a user extractor, so
-//! those routes 401 anonymously (the callback is identified by its state
-//! token, exactly like v2). The callback also answers on its v2 path for
-//! Spotify apps registered against v2; either way it exchanges the code
-//! with the redirect URI stored next to the state at authorize time.
+//! shape. Status mapping lives in [`ImportsError`](super::error::ImportsError)'s
+//! one mapping onto `ApiError`; query strings parse through [`ValidQuery`] and
+//! bodies through [`ValidJson`] so malformed input stays inside the shared
+//! envelope. The app mounts [`imports_gated_router`] inside the session gate
+//! and the Spotify OAuth callback outside it; every gated handler also takes
+//! a user extractor, so those routes 401 anonymously (the callback is
+//! identified by its state token, exactly like v2). The callback also
+//! answers on its v2 path for Spotify apps registered against v2; either
+//! way it exchanges the code with the redirect URI stored next to the state
+//! at authorize time.
 
 use std::sync::Arc;
 
@@ -26,12 +27,14 @@ use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::roles::{AuthContext, Role};
 use droppedneedle_auth::users::stores::StoreError as UserStoreError;
 use droppedneedle_kernel::config::TrustedProxies;
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::http_client::read_capped;
 use droppedneedle_kernel::ids::IdGenerator;
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use super::error::{ImportsError, ValidJson, ValidQuery};
+use super::error::ImportsError;
 use super::health::HealthProbes;
 use super::jobs::{
     JobRegistry, JobState, QueuedSpotifyImport, SpotifyImportExecutor, import_job_key,
@@ -88,7 +91,7 @@ pub struct ImportsDeps {
     pub probes: Arc<HealthProbes>,
     /// Auth bundle, used only to resolve the caller.
     pub auth: UsersDeps,
-    /// Fresh ids for 5xx error ids.
+    /// Fresh ids, the OAuth state fallback when the OS RNG fails.
     pub ids: Arc<dyn IdGenerator>,
     /// Deployment base path (between origin and callback, exactly once).
     pub base_path: String,
@@ -184,7 +187,7 @@ pub fn imports_legacy_callback_router(deps: ImportsDeps) -> axum::Router {
 pub struct ImportsUser(pub AuthContext);
 
 impl FromRequestParts<ImportsDeps> for ImportsUser {
-    type Rejection = ImportsError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
@@ -200,7 +203,7 @@ impl FromRequestParts<ImportsDeps> for ImportsUser {
 pub struct ImportsAdmin(pub AuthContext);
 
 impl FromRequestParts<ImportsDeps> for ImportsAdmin {
-    type Rejection = ImportsError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
@@ -210,7 +213,8 @@ impl FromRequestParts<ImportsDeps> for ImportsAdmin {
         if ctx.role != Role::Admin {
             return Err(ImportsError::Forbidden {
                 message: "Admin access required".to_owned(),
-            });
+            }
+            .into());
         }
         Ok(Self(ctx))
     }
@@ -239,7 +243,7 @@ async fn auth_context(
             UserStoreError::Busy => ImportsError::Busy {
                 operation: "imports.auth.user".to_owned(),
             },
-            UserStoreError::Internal(cause) => ImportsError::internal(&cause, state.ids.as_ref()),
+            UserStoreError::Internal(cause) => ImportsError::internal(&cause),
         })?
         .ok_or(ImportsError::Unauthorized {
             message: "Authentication required".to_owned(),
@@ -255,31 +259,23 @@ async fn auth_context(
 }
 
 /// Map a Lidarr service failure to the wire. Upstream detail reaches the
-/// log only; callers get a fixed user-safe summary.
-fn lidarr_failed(
-    error: ServiceError,
-    ids: &dyn droppedneedle_kernel::ids::IdGenerator,
-) -> ImportsError {
+/// log only.
+fn lidarr_failed(error: ServiceError) -> ImportsError {
     match error {
         ServiceError::Approvals(cause) => {
-            ImportsError::internal(&format_args!("approval batch failed: {cause}"), ids)
+            ImportsError::internal(&format_args!("approval batch failed: {cause}"))
         }
         ServiceError::NotConnected => ImportsError::NotConfigured {
             message: LIDARR_NOT_CONNECTED.to_owned(),
         },
         ServiceError::Lidarr(LidarrError::Auth) => ImportsError::AuthFailed {
-            message: "Lidarr rejected the stored API key; check Settings".to_owned(),
+            cause: "Lidarr rejected the stored API key".to_owned(),
         },
-        ServiceError::Lidarr(LidarrError::Unavailable(detail)) => {
-            tracing::warn!(%detail, "lidarr import failed");
-            ImportsError::Unavailable {
-                message: "Lidarr answered with an error".to_owned(),
-            }
-        }
+        ServiceError::Lidarr(LidarrError::Unavailable(detail)) => ImportsError::Unavailable {
+            cause: format!("lidarr import failed: {detail}"),
+        },
         ServiceError::Follows(cause) => {
-            let error_id = uuid::Uuid::new_v4().to_string();
-            tracing::error!(error_id, %cause, "lidarr import follow write failed");
-            ImportsError::Internal { error_id }
+            ImportsError::internal(&format_args!("lidarr import follow write failed: {cause}"))
         }
     }
 }
@@ -357,12 +353,13 @@ pub async fn test_lidarr(
 pub async fn list_lidarr_artists(
     State(deps): State<ImportsDeps>,
     ImportsAdmin(ctx): ImportsAdmin,
-) -> Result<Json<LidarrArtistListResponse>, ImportsError> {
-    deps.lidarr_service()
+) -> Result<Json<LidarrArtistListResponse>, ApiError> {
+    let artists = deps
+        .lidarr_service()
         .list_candidates(&ctx.user_id)
         .await
-        .map(Json)
-        .map_err(|error| lidarr_failed(error, deps.ids.as_ref()))
+        .map_err(lidarr_failed)?;
+    Ok(Json(artists))
 }
 
 /// Import selected Lidarr artists into the caller's follows.
@@ -373,15 +370,16 @@ pub async fn import_lidarr(
     State(deps): State<ImportsDeps>,
     ImportsAdmin(ctx): ImportsAdmin,
     ValidJson(body): ValidJson<LidarrImportRequest>,
-) -> Result<Json<LidarrImportResponse>, ImportsError> {
+) -> Result<Json<LidarrImportResponse>, ApiError> {
     // ImportsAdmin guarantees an admin caller, so the flag is always true
     // here; the service keeps it for a future non-admin import route whose
     // auto-download mirror needs an approval batch instead.
-    deps.lidarr_service()
+    let summary = deps
+        .lidarr_service()
         .import_artists(&ctx.user_id, ctx.role == Role::Admin, &body.selected_mbids)
         .await
-        .map(Json)
-        .map_err(|error| lidarr_failed(error, deps.ids.as_ref()))
+        .map_err(lidarr_failed)?;
+    Ok(Json(summary))
 }
 
 /// Masked Spotify app settings.
@@ -403,7 +401,7 @@ pub async fn put_spotify_settings(
     State(deps): State<ImportsDeps>,
     ImportsAdmin(_): ImportsAdmin,
     ValidJson(body): ValidJson<SpotifySettings>,
-) -> Result<Json<SpotifySettings>, ImportsError> {
+) -> Result<Json<SpotifySettings>, ApiError> {
     deps.spotify_settings
         .save(&body)
         .map_err(|message| ImportsError::InvalidInput { message })?;
@@ -420,7 +418,7 @@ pub async fn get_spotify_redirect_uri(
     State(deps): State<ImportsDeps>,
     ImportsAdmin(_): ImportsAdmin,
     request: Request,
-) -> Result<Json<SpotifyRedirectUri>, ImportsError> {
+) -> Result<Json<SpotifyRedirectUri>, ApiError> {
     Ok(Json(SpotifyRedirectUri {
         redirect_uri: callback_uri(&deps, &request)?,
     }))
@@ -466,7 +464,7 @@ pub async fn get_spotify_auth_url(
     State(deps): State<ImportsDeps>,
     ImportsUser(ctx): ImportsUser,
     request: Request,
-) -> Result<Json<SpotifyAuthUrlResponse>, ImportsError> {
+) -> Result<Json<SpotifyAuthUrlResponse>, ApiError> {
     let uri = callback_uri(&deps, &request)?;
     let state = fresh_state(&deps);
     let response = deps
@@ -480,7 +478,7 @@ pub async fn get_spotify_auth_url(
     deps.spotify_states
         .store_state(&state, &pending)
         .await
-        .map_err(|cause| ImportsError::internal(&cause, deps.ids.as_ref()))?;
+        .map_err(|cause| ImportsError::internal(&cause))?;
     Ok(Json(response))
 }
 
@@ -613,12 +611,12 @@ async fn finish_spotify_link(deps: &ImportsDeps, query: SpotifyCallbackQuery) ->
 pub async fn disconnect_spotify(
     State(deps): State<ImportsDeps>,
     ImportsUser(ctx): ImportsUser,
-) -> Result<StatusCode, ImportsError> {
+) -> Result<StatusCode, ApiError> {
     let removed = deps
         .spotify_links
         .remove(&ctx.user_id)
         .await
-        .map_err(|cause| ImportsError::internal(&cause, deps.ids.as_ref()))?;
+        .map_err(|cause| ImportsError::internal(&cause))?;
     if removed {
         tracing::info!(user_id = %ctx.user_id, "spotify link removed");
     }
@@ -632,28 +630,26 @@ pub async fn disconnect_spotify(
 pub async fn list_spotify_playlists(
     State(deps): State<ImportsDeps>,
     ImportsUser(ctx): ImportsUser,
-) -> Result<Json<SpotifyPlaylistListResponse>, ImportsError> {
-    deps.spotify_service()
+) -> Result<Json<SpotifyPlaylistListResponse>, ApiError> {
+    let playlists = deps
+        .spotify_service()
         .list_playlists(&ctx.user_id)
         .await
-        .map(Json)
-        .map_err(|error| spotify_failed(error, deps.ids.as_ref()))
+        .map_err(spotify_failed)?;
+    Ok(Json(playlists))
 }
 
 /// Map a Spotify service failure to the wire (v2 400 not-linked, 502
 /// upstream); store failures are server faults.
-fn spotify_failed(error: SpotifyError, ids: &dyn IdGenerator) -> ImportsError {
+fn spotify_failed(error: SpotifyError) -> ImportsError {
     match error {
         SpotifyError::NotLinked => ImportsError::NotConfigured {
             message: "Spotify account not linked".to_owned(),
         },
-        SpotifyError::Unavailable(detail) => {
-            tracing::warn!(%detail, "spotify playlist list failed");
-            ImportsError::Unavailable {
-                message: "Failed to fetch playlists from Spotify".to_owned(),
-            }
-        }
-        SpotifyError::Store(cause) => ImportsError::internal(&cause, ids),
+        SpotifyError::Unavailable(detail) => ImportsError::Unavailable {
+            cause: format!("spotify playlist list failed: {detail}"),
+        },
+        SpotifyError::Store(cause) => ImportsError::internal(&cause),
     }
 }
 
@@ -669,17 +665,18 @@ pub async fn import_spotify_playlist(
     ImportsUser(ctx): ImportsUser,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<SpotifyImportRequest>,
-) -> Result<Json<SpotifyImportResponse>, ImportsError> {
+) -> Result<Json<SpotifyImportResponse>, ApiError> {
     if id.trim().is_empty() {
         return Err(ImportsError::InvalidInput {
             message: "Spotify playlist id must not be empty".to_owned(),
-        });
+        }
+        .into());
     }
     let playlist_id = deps
         .spotify_service()
         .ensure_playlist_record(&ctx.user_id, &id, &body.name)
         .await
-        .map_err(|error| spotify_failed(error, deps.ids.as_ref()))?;
+        .map_err(spotify_failed)?;
     let key = import_job_key(&ctx.user_id, &id);
     if !deps.jobs.is_running(&key) {
         deps.executor.execute(QueuedSpotifyImport {
@@ -700,7 +697,7 @@ pub async fn get_spotify_job(
     State(deps): State<ImportsDeps>,
     ImportsUser(ctx): ImportsUser,
     Path(id): Path<String>,
-) -> Result<Json<SpotifyJobStatus>, ImportsError> {
+) -> Result<Json<SpotifyJobStatus>, ApiError> {
     let key = import_job_key(&ctx.user_id, &id);
     match deps.jobs.state_for(&key) {
         Some(JobState::Running { playlist_id }) => Ok(Json(SpotifyJobStatus {
@@ -727,7 +724,7 @@ pub async fn get_spotify_job(
             track_count: None,
             message: Some(message),
         })),
-        None => Err(ImportsError::NotFound),
+        None => Err(ImportsError::NotFound.into()),
     }
 }
 

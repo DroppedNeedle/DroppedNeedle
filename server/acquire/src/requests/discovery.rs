@@ -50,13 +50,13 @@ fn batch_failure(error: RequestsError) -> BatchFailure {
     match error {
         RequestsError::QuotaExceeded { message, details } => BatchFailure::Refused(BatchRefusal {
             status: 429,
-            code: QUOTA_EXCEEDED.to_owned(),
+            code: QUOTA_EXCEEDED,
             message,
             details: Some(details),
         }),
         RequestsError::StorageFull { message, details } => BatchFailure::Refused(BatchRefusal {
             status: 403,
-            code: STORAGE_FULL.to_owned(),
+            code: STORAGE_FULL,
             message,
             details: Some(details),
         }),

@@ -22,11 +22,9 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::store::{ItemRecord, JobRecord};
 use super::{DropError, DropImports, MAX_FILES_PER_DROP, Viewer, extract};
-use crate::requests::{
-    auth::Principal,
-    error::RequestsError,
-    http::{HttpError, ValidJson, ValidQuery},
-};
+use crate::requests::{auth::Principal, error::RequestsError};
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 /// The largest upload accepted in one request (all files together).
 const MAX_UPLOAD_BYTES: usize = 8 * (1 << 30);
@@ -131,9 +129,9 @@ impl From<JobRecord> for DropImportJobResponse {
     }
 }
 
-impl From<DropError> for HttpError {
+impl From<DropError> for ApiError {
     fn from(error: DropError) -> Self {
-        HttpError(match error {
+        ApiError::from(match error {
             DropError::Invalid(message) => RequestsError::InvalidInput { message },
             DropError::NotFound => RequestsError::NotFound,
             DropError::Conflict(message) => RequestsError::Conflict { message },
@@ -142,20 +140,21 @@ impl From<DropError> for HttpError {
     }
 }
 
-fn invalid(message: impl Into<String>) -> HttpError {
-    HttpError(RequestsError::InvalidInput {
+fn invalid(message: impl Into<String>) -> ApiError {
+    ApiError::from(RequestsError::InvalidInput {
         message: message.into(),
     })
 }
 
 /// Item ids are numbers; anything else names no item. Parsed after the
 /// role check, so a plain user always sees 403.
-fn item_number(raw: &str) -> Result<i64, HttpError> {
-    raw.parse().map_err(|_| HttpError(RequestsError::NotFound))
+fn item_number(raw: &str) -> Result<i64, ApiError> {
+    raw.parse()
+        .map_err(|_| ApiError::from(RequestsError::NotFound))
 }
 
-fn curator(principal: &Principal) -> Result<Viewer, HttpError> {
-    principal.require_curator().map_err(HttpError)?;
+fn curator(principal: &Principal) -> Result<Viewer, ApiError> {
+    principal.require_curator()?;
     Ok(Viewer {
         user_id: principal.user_id.clone(),
         admin: principal.role.is_admin(),
@@ -176,7 +175,7 @@ pub async fn upload_handler(
     State(service): State<Arc<DropImports>>,
     principal: Principal,
     multipart: Result<Multipart, MultipartRejection>,
-) -> Result<(StatusCode, Json<DropImportJobResponse>), HttpError> {
+) -> Result<(StatusCode, Json<DropImportJobResponse>), ApiError> {
     let viewer = curator(&principal)?;
     let multipart = multipart.map_err(|_| invalid("Send the files as a multipart form."))?;
     let incoming = service.incoming_dir();
@@ -232,10 +231,10 @@ async fn receive(
     mut multipart: Multipart,
     incoming: &std::path::Path,
     staged: &mut Vec<(String, PathBuf)>,
-) -> Result<(), HttpError> {
+) -> Result<(), ApiError> {
     tokio::fs::create_dir_all(incoming)
         .await
-        .map_err(|error| HttpError(RequestsError::internal(&error)))?;
+        .map_err(|error| ApiError::from(RequestsError::internal(&error)))?;
     while let Some(mut field) = multipart
         .next_field()
         .await
@@ -262,7 +261,7 @@ async fn receive(
         staged.push((name, path.clone()));
         let mut file = tokio::fs::File::create(&path)
             .await
-            .map_err(|error| HttpError(RequestsError::internal(&error)))?;
+            .map_err(|error| ApiError::from(RequestsError::internal(&error)))?;
         while let Some(chunk) = field
             .chunk()
             .await
@@ -270,11 +269,11 @@ async fn receive(
         {
             file.write_all(&chunk)
                 .await
-                .map_err(|error| HttpError(RequestsError::internal(&error)))?;
+                .map_err(|error| ApiError::from(RequestsError::internal(&error)))?;
         }
         file.sync_all()
             .await
-            .map_err(|error| HttpError(RequestsError::internal(&error)))?;
+            .map_err(|error| ApiError::from(RequestsError::internal(&error)))?;
     }
     if staged.is_empty() {
         return Err(invalid("No files were uploaded."));
@@ -295,7 +294,7 @@ pub async fn list_jobs_handler(
     State(service): State<Arc<DropImports>>,
     principal: Principal,
     ValidQuery(query): ValidQuery<DropImportJobsQuery>,
-) -> Result<Json<DropImportJobsResponse>, HttpError> {
+) -> Result<Json<DropImportJobsResponse>, ApiError> {
     let viewer = curator(&principal)?;
     let jobs = service.list_jobs(&viewer, query.all).await?;
     Ok(Json(DropImportJobsResponse {
@@ -315,7 +314,7 @@ pub async fn get_job_handler(
     State(service): State<Arc<DropImports>>,
     principal: Principal,
     Path(job_id): Path<String>,
-) -> Result<Json<DropImportJobResponse>, HttpError> {
+) -> Result<Json<DropImportJobResponse>, ApiError> {
     let viewer = curator(&principal)?;
     Ok(Json(service.get_job(&viewer, &job_id).await?.into()))
 }
@@ -335,7 +334,7 @@ pub async fn match_item_handler(
     principal: Principal,
     Path(item_id): Path<String>,
     ValidJson(body): ValidJson<DropImportMatchRequest>,
-) -> Result<Json<DropImportItemResponse>, HttpError> {
+) -> Result<Json<DropImportItemResponse>, ApiError> {
     let viewer = curator(&principal)?;
     let item_id = item_number(&item_id)?;
     let item = service
@@ -357,7 +356,7 @@ pub async fn discard_item_handler(
     State(service): State<Arc<DropImports>>,
     principal: Principal,
     Path(item_id): Path<String>,
-) -> Result<Json<DropImportItemResponse>, HttpError> {
+) -> Result<Json<DropImportItemResponse>, ApiError> {
     let viewer = curator(&principal)?;
     let item_id = item_number(&item_id)?;
     Ok(Json(service.discard_item(&viewer, item_id).await?.into()))
