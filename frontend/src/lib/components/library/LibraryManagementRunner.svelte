@@ -801,6 +801,12 @@
 		font-size: 0.82rem;
 	}
 
+	.management-scope-tabs button[aria-pressed='true'] {
+		border-color: color-mix(in oklab, var(--color-library-manage) 42%, transparent);
+		background: color-mix(in oklab, var(--color-library-manage) 12%, transparent);
+		font-weight: 700;
+	}
+
 	.management-selected-scope {
 		display: grid;
 		gap: 0.65rem;

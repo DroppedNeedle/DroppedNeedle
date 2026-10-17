@@ -107,9 +107,9 @@
 			<CircleCheck class="h-6 w-6 shrink-0 text-success" aria-hidden="true" />
 			<span>This is your edition now: {name}</span>
 		</h3>
-		<AsyncButton class="btn btn-ghost btn-sm gap-1" onclick={onundo}>
-			<Undo2 class="h-4 w-4" aria-hidden="true" /> Undo this change
-		</AsyncButton>
+		<AsyncButton variant="ghost" size="sm" icon={Undo2} onclick={onundo}
+			>Undo this change</AsyncButton
+		>
 	</div>
 	{#if error}
 		<p class="text-sm text-error" role="alert">{error}</p>

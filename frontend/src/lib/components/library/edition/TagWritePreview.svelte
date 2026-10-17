@@ -90,9 +90,7 @@
 	{#if written}
 		<span class="flex flex-wrap items-center gap-2">
 			<span>Tags written.</span>
-			<AsyncButton class="btn btn-ghost btn-xs gap-1" onclick={undoWrite}
-				><Undo2 class="h-3.5 w-3.5" aria-hidden="true" />Undo</AsyncButton
-			>
+			<AsyncButton variant="ghost" size="xs" icon={Undo2} onclick={undoWrite}>Undo</AsyncButton>
 		</span>
 	{:else}
 		<span class="text-base-content/80"
@@ -134,13 +132,14 @@
 				<span class="text-base-content/60">{alreadyTaggedSentence(unchanged)}</span>
 			{/if}
 			{#if changed.length}
-				<AsyncButton class="btn btn-primary btn-sm" onclick={writeTags}
+				<AsyncButton variant="primary" size="sm" onclick={writeTags}
 					>{writeTagsLabel(changed.length)}</AsyncButton
 				>
 			{/if}
 		{:else}
 			<AsyncButton
-				class="btn btn-outline btn-sm"
+				variant="outline"
+				size="sm"
 				disabled={placing}
 				aria-describedby={placing ? placingSentenceId : undefined}
 				onclick={showPreview}>Preview the new tags</AsyncButton

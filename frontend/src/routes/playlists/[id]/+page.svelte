@@ -352,9 +352,7 @@
 			<h2 class="text-lg font-semibold text-base-content/80">Couldn't load this playlist</h2>
 			<p class="text-sm text-base-content/60">{loadError}</p>
 			<div class="flex items-center gap-2">
-				<button class="btn btn-sm btn-accent" onclick={() => void detailQuery.refetch()}>
-					Retry
-				</button>
+				<Button variant="accent" size="sm" onclick={() => void detailQuery.refetch()}>Retry</Button>
 				<BackButton fallback={withBasePath('/playlists')} />
 			</div>
 		</div>

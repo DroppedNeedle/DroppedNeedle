@@ -64,7 +64,8 @@
 	{:else if outcome?.error}
 		<p class="text-error" role="alert">{outcome.error}</p>
 		<AsyncButton
-			class="btn btn-outline btn-sm"
+			variant="outline"
+			size="sm"
 			onclick={() => onacquire(outcome?.replaceVersions ?? false)}>Try again</AsyncButton
 		>
 	{:else if outcome}
@@ -76,12 +77,12 @@
 	{:else}
 		<div class="flex flex-wrap gap-2">
 			{#if missing > 0}
-				<AsyncButton class="btn btn-outline btn-sm" onclick={() => onacquire(false)}
+				<AsyncButton variant="outline" size="sm" onclick={() => onacquire(false)}
 					>{getMissingLabel(missing)}</AsyncButton
 				>
 			{/if}
 			{#if versions > 0}
-				<AsyncButton class="btn btn-outline btn-sm" onclick={() => onacquire(true)}
+				<AsyncButton variant="outline" size="sm" onclick={() => onacquire(true)}
 					>{replaceVersionsLabel(versions)}</AsyncButton
 				>
 			{/if}

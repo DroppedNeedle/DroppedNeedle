@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
 	import { Search } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 
 	interface Props {
@@ -47,17 +48,14 @@
 	/>
 	{#if !pasted}
 		<TextField label="Artist" bind:value={artist} />
-		<button
+		<Button
 			type="submit"
-			class="btn btn-sm btn-outline mt-1 gap-2 self-start"
-			disabled={searching || !title.trim()}
+			variant="outline"
+			size="sm"
+			icon={Search}
+			loading={searching}
+			disabled={!title.trim()}
+			class="mt-1 self-start">Search MusicBrainz</Button
 		>
-			{#if searching}
-				<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-			{:else}
-				<Search class="h-3.5 w-3.5" aria-hidden="true" />
-			{/if}
-			Search MusicBrainz
-		</button>
 	{/if}
 </form>

@@ -334,14 +334,8 @@
 }
 
 /* colour derives from --color-primary, so a rebrand only needs the theme token changed */
-@utility glow-primary {
-	box-shadow: 0 0 20px oklch(from var(--color-primary) l c h / 0.15);
-}
 @utility glow-primary-soft {
 	box-shadow: 0 0 24px oklch(from var(--color-primary) l c h / 0.12);
-}
-@utility glow-primary-strong {
-	box-shadow: 0 0 25px oklch(from var(--color-primary) l c h / 0.2);
 }
 
 /* film-grain overlay; sits behind content, opacity set per surface via --grain-opacity */
@@ -455,23 +449,6 @@ textarea {
 	}
 }
 
-@utility input-soft {
-	border-radius: 0.85rem;
-	background: oklch(from var(--color-base-100) l c h / 0.7);
-	border: 1px solid oklch(from var(--color-base-content) l c h / 0.12);
-	transition:
-		border-color 0.2s ease,
-		box-shadow 0.2s ease,
-		background 0.2s ease;
-	&:focus,
-	&:focus-visible {
-		outline: none;
-		border-color: oklch(from var(--color-primary) l c h / 0.5);
-		box-shadow: 0 0 0 3px oklch(from var(--color-primary) l c h / 0.16);
-		background: oklch(from var(--color-base-100) l c h / 0.92);
-	}
-}
-
 @utility scrollbar-hide {
 	-ms-overflow-style: none;
 	scrollbar-width: none;
@@ -496,24 +473,6 @@ textarea {
 	}
 	@media (min-width: 1280px) {
 		grid-template-columns: repeat(6, minmax(0, 1fr));
-	}
-}
-
-@utility grid-cards-dense {
-	display: grid;
-	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 0.75rem;
-	@media (min-width: 640px) {
-		grid-template-columns: repeat(4, minmax(0, 1fr));
-	}
-	@media (min-width: 768px) {
-		grid-template-columns: repeat(6, minmax(0, 1fr));
-	}
-	@media (min-width: 1024px) {
-		grid-template-columns: repeat(8, minmax(0, 1fr));
-	}
-	@media (min-width: 1280px) {
-		grid-template-columns: repeat(10, minmax(0, 1fr));
 	}
 }
 

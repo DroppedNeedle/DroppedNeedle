@@ -7,7 +7,7 @@
 		toPlexTrack
 	} from '$lib/queries/remotes/remoteAdapters';
 	import { fetchLocalAlbumMatch } from '$lib/queries/albumMatch';
-	import { Shuffle, Play, X, ListPlus, ListStart, ListMusic, Info, Download } from 'lucide-svelte';
+	import { Shuffle, Play, ListPlus, ListStart, ListMusic, Info, Download } from 'lucide-svelte';
 	import { goto } from '$app/navigation';
 	import { LocalDownloadsApi } from '$lib/queries/local/LocalDownloadsApi';
 	import { gatewayStreamUrl } from '$lib/player/playbackGateway';
@@ -22,6 +22,8 @@
 	import AddToPlaylistModal from '$lib/components/AddToPlaylistModal.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import MetadataPanel from '$lib/components/MetadataPanel.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
 	import {
 		buildQueueItem,
 		buildQueueItemsFromJellyfin,
@@ -529,232 +531,210 @@
 	}
 </script>
 
-{#if open && album}
-	<dialog class="modal modal-open">
-		<div class="modal-box max-w-4xl p-0 overflow-hidden">
-			<div class="flex gap-5 p-6 pb-4">
-				<div class="shrink-0">
-					{#if canNavigate}
-						<button
-							onclick={goToAlbum}
-							class="block rounded-lg overflow-hidden shadow-lg hover:shadow-xl transition-shadow cursor-pointer"
-							aria-label="Go to album"
-						>
-							<AlbumImage
-								mbid={mbid ?? albumId}
-								customUrl={coverUrl || null}
-								alt={albumName}
-								size="xl"
-								requestSize={250}
-								rounded="none"
-								className="w-36 h-36"
-							/>
-						</button>
-					{:else}
-						<div class="rounded-lg overflow-hidden shadow-lg">
-							<AlbumImage
-								mbid={albumId}
-								customUrl={coverUrl || null}
-								alt={albumName}
-								size="xl"
-								requestSize={250}
-								rounded="none"
-								className="w-36 h-36"
-							/>
-						</div>
-					{/if}
-				</div>
-
-				<div class="flex flex-col justify-center min-w-0 flex-1">
-					{#if canNavigate}
-						<button
-							onclick={goToAlbum}
-							class="text-xl font-bold truncate text-left hover:text-accent transition-colors cursor-pointer"
-						>
-							{albumName}
-						</button>
-					{:else}
-						<h3 class="text-xl font-bold truncate">{albumName}</h3>
-					{/if}
-					{#if canNavigateArtist}
-						<button
-							onclick={goToArtist}
-							class="text-base opacity-70 truncate text-left hover:text-accent transition-colors cursor-pointer"
-						>
-							{artistName}
-						</button>
-					{:else}
-						<p class="text-base opacity-70 truncate">{artistName}</p>
-					{/if}
-					<div class="flex items-center gap-2 mt-2 flex-wrap">
-						{#if year}
-							<span class="badge badge-sm badge-ghost">{year}</span>
-						{/if}
-						{#if sourceType === 'jellyfin'}
-							<span class="badge badge-sm badge-info">Jellyfin</span>
-						{:else if sourceType === 'navidrome'}
-							<span class="badge badge-sm badge-primary">Navidrome</span>
-						{:else if sourceType === 'plex'}
-							<span class="badge badge-sm badge-warning">Plex</span>
-						{:else}
-							{@const localAlbum = album as LocalAlbumSummary}
-							<span class="badge badge-sm badge-accent">Local</span>
-							{#if localAlbum.primary_format}
-								<span class="badge badge-sm badge-ghost">{localAlbum.primary_format}</span>
-							{/if}
-							{#if localAlbum.total_size_bytes > 0}
-								<span class="badge badge-sm badge-ghost"
-									>{formatSize(localAlbum.total_size_bytes)}</span
-								>
-							{/if}
-						{/if}
-						{#if !mbid && albumName}
-							<span class="badge badge-sm badge-info badge-outline">Search result</span>
-						{/if}
-					</div>
-				</div>
-
-				<button class="btn btn-sm btn-circle btn-ghost self-start -mr-2 -mt-2" onclick={handleClose}
-					><X class="h-4 w-4" /></button
-				>
-			</div>
-
-			<div class="flex items-center gap-2 px-6 pb-4 flex-wrap">
-				{#if trackCount > 0}
-					<button class="btn btn-sm btn-accent gap-1" onclick={() => playAll(false)}>
-						<Play class="h-4 w-4 fill-current" />
-						Play All
+{#if album}
+	<Modal bind:open title={albumName} size="xl" closeButton {onclose}>
+		<div class="flex gap-4 sm:gap-5">
+			<div class="shrink-0">
+				{#if canNavigate}
+					<button
+						type="button"
+						onclick={goToAlbum}
+						class="block cursor-pointer overflow-hidden rounded-lg shadow-lg transition-shadow hover:shadow-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+						aria-label="Go to album"
+					>
+						<AlbumImage
+							mbid={mbid ?? albumId}
+							customUrl={coverUrl || null}
+							alt={albumName}
+							size="xl"
+							requestSize={250}
+							rounded="none"
+							className="w-36 h-36"
+						/>
 					</button>
-					<button class="btn btn-sm btn-ghost gap-1" onclick={() => playAll(true)}>
-						<Shuffle class="h-4 w-4" />
-						Shuffle
-					</button>
-					{#if sourceType === 'jellyfin'}
-						<button
-							class="btn btn-sm btn-outline gap-1"
-							onclick={launchInstantMix}
-							disabled={mixLoading}
-						>
-							<span class:animate-pulse={mixLoading}>
-								<Radio class="h-4 w-4" />
-							</span>
-							Instant Mix
-						</button>
-					{/if}
-					{#if sourceType === 'navidrome'}
-						<button
-							class="btn btn-sm btn-ghost gap-1"
-							onclick={openAlbumInfo}
-							disabled={infoLoading}
-						>
-							<Info class="h-4 w-4" />
-							Info
-						</button>
-					{/if}
-					<ContextMenu items={getBulkMenuItems()} position="end" size="sm" />
-				{/if}
-			</div>
-
-			<div class="divider my-0 px-6"></div>
-
-			<div class="px-6 pt-3 pb-5 max-h-112 overflow-y-auto">
-				{#if loadingTracks}
-					<div class="flex justify-center py-6">
-						<span class="loading loading-spinner loading-md"></span>
-					</div>
-				{:else if trackError}
-					<div role="alert" class="alert alert-error alert-soft">
-						<span>{trackError}</span>
-						<button class="btn btn-sm btn-ghost" onclick={fetchTracks}>Try again</button>
-					</div>
-				{:else if trackCount > 0}
-					<div class="flex flex-col">
-						{#each { length: trackCount } as _, i (`track-${i}`)}
-							{@const trackNum = getTrackNumber(i)}
-							{@const discNum = getTrackDiscNumber(i)}
-							{@const playing = isTrackPlaying(trackNum, discNum)}
-							<div
-								class="group/row flex items-center gap-2 w-full py-1 px-1 rounded-lg transition-colors {playing
-									? 'bg-accent/10'
-									: 'hover:bg-base-200'}"
-							>
-								<button
-									class="flex items-center gap-3 flex-1 py-1.5 px-1 rounded-lg text-left group/track"
-									onclick={() => playTrack(i)}
-								>
-									<span
-										class="font-mono w-6 text-right text-sm shrink-0 {playing
-											? 'text-accent'
-											: 'opacity-40'}"
-									>
-										{#if playing}
-											<NowPlayingIndicator />
-										{:else}
-											{trackNum}
-										{/if}
-									</span>
-									<span class="text-sm truncate flex-1 {playing ? 'text-accent' : ''}"
-										>{getTrackName(i)}</span
-									>
-									{#if sourceType === 'jellyfin'}
-										{@const dur = jellyfinTracks[i]?.duration_seconds}
-										{#if dur}
-											<span class="text-xs opacity-40 shrink-0">{formatDuration(dur)}</span>
-										{/if}
-									{:else if sourceType === 'navidrome'}
-										{@const dur = navidromeTracks[i]?.duration_seconds}
-										{#if dur}
-											<span class="text-xs opacity-40 shrink-0">{formatDuration(dur)}</span>
-										{/if}
-									{:else if sourceType === 'plex'}
-										{@const dur = plexTracks[i]?.duration_seconds}
-										{@const pt = plexTracks[i]}
-										{#if dur}
-											<span class="text-xs opacity-40 shrink-0">{formatDuration(dur)}</span>
-										{/if}
-										{#if pt}
-											<span class="hidden sm:inline-flex shrink-0">
-												<AudioQualityBadge
-													codec={pt.codec}
-													bitrate={pt.bitrate}
-													audioChannels={pt.audio_channels}
-													container={pt.container}
-													compact
-												/>
-											</span>
-										{/if}
-									{:else}
-										{@const lt = localTracks[i]}
-										{#if lt?.duration_seconds}
-											<span class="text-xs opacity-40 shrink-0"
-												>{formatDuration(lt.duration_seconds)}</span
-											>
-										{/if}
-									{/if}
-									<span class={playing ? 'text-accent' : ''}>
-										<Play
-											class="h-4 w-4 shrink-0 transition-opacity {playing
-												? 'opacity-100'
-												: 'text-accent opacity-0 group-hover/track:opacity-100'} fill-current"
-										/>
-									</span>
-								</button>
-								<div>
-									<ContextMenu items={getTrackContextMenuItems(i)} position="end" size="xs" />
-								</div>
-							</div>
-						{/each}
-					</div>
 				{:else}
-					<p class="text-sm opacity-50 text-center py-6">No tracks found for this album.</p>
+					<div class="overflow-hidden rounded-lg shadow-lg">
+						<AlbumImage
+							mbid={albumId}
+							customUrl={coverUrl || null}
+							alt={albumName}
+							size="xl"
+							requestSize={250}
+							rounded="none"
+							className="w-36 h-36"
+						/>
+					</div>
 				{/if}
+			</div>
+
+			<div class="flex min-w-0 flex-1 flex-col justify-center">
+				{#if canNavigateArtist}
+					<button
+						type="button"
+						onclick={goToArtist}
+						class="cursor-pointer truncate text-left text-base opacity-70 transition-colors hover:text-accent"
+					>
+						{artistName}
+					</button>
+				{:else}
+					<p class="truncate text-base opacity-70">{artistName}</p>
+				{/if}
+				<div class="mt-2 flex flex-wrap items-center gap-2">
+					{#if year}
+						<span class="badge badge-sm badge-ghost">{year}</span>
+					{/if}
+					{#if sourceType === 'jellyfin'}
+						<span class="badge badge-sm badge-info">Jellyfin</span>
+					{:else if sourceType === 'navidrome'}
+						<span class="badge badge-sm badge-primary">Navidrome</span>
+					{:else if sourceType === 'plex'}
+						<span class="badge badge-sm badge-warning">Plex</span>
+					{:else}
+						{@const localAlbum = album as LocalAlbumSummary}
+						<span class="badge badge-sm badge-accent">Local</span>
+						{#if localAlbum.primary_format}
+							<span class="badge badge-sm badge-ghost">{localAlbum.primary_format}</span>
+						{/if}
+						{#if localAlbum.total_size_bytes > 0}
+							<span class="badge badge-sm badge-ghost"
+								>{formatSize(localAlbum.total_size_bytes)}</span
+							>
+						{/if}
+					{/if}
+					{#if !mbid && albumName}
+						<span class="badge badge-sm badge-info badge-outline">Search result</span>
+					{/if}
+				</div>
 			</div>
 		</div>
 
-		<form method="dialog" class="modal-backdrop">
-			<button onclick={handleClose}>Close</button>
-		</form>
-	</dialog>
+		{#if trackCount > 0}
+			<div class="mt-4 flex flex-wrap items-center gap-2">
+				<Button variant="accent" size="sm" onclick={() => playAll(false)}>
+					<Play class="size-4 fill-current" aria-hidden="true" />
+					Play All
+				</Button>
+				<Button variant="ghost" size="sm" icon={Shuffle} onclick={() => playAll(true)}
+					>Shuffle</Button
+				>
+				{#if sourceType === 'jellyfin'}
+					<Button
+						variant="outline"
+						size="sm"
+						icon={Radio}
+						loading={mixLoading}
+						onclick={launchInstantMix}>Instant Mix</Button
+					>
+				{/if}
+				{#if sourceType === 'navidrome'}
+					<Button
+						variant="ghost"
+						size="sm"
+						icon={Info}
+						disabled={infoLoading}
+						onclick={openAlbumInfo}>Info</Button
+					>
+				{/if}
+				<ContextMenu items={getBulkMenuItems()} position="end" size="sm" />
+			</div>
+		{/if}
+
+		<div class="divider my-2"></div>
+
+		<div class="max-h-112 overflow-y-auto">
+			{#if loadingTracks}
+				<div class="flex justify-center py-6">
+					<span class="loading loading-spinner loading-md"></span>
+				</div>
+			{:else if trackError}
+				<div role="alert" class="alert alert-error alert-soft">
+					<span>{trackError}</span>
+					<Button variant="ghost" size="sm" onclick={fetchTracks}>Try again</Button>
+				</div>
+			{:else if trackCount > 0}
+				<div class="flex flex-col">
+					{#each { length: trackCount } as _, i (`track-${i}`)}
+						{@const trackNum = getTrackNumber(i)}
+						{@const discNum = getTrackDiscNumber(i)}
+						{@const playing = isTrackPlaying(trackNum, discNum)}
+						<div
+							class="group/row flex items-center gap-2 w-full py-1 px-1 rounded-lg transition-colors {playing
+								? 'bg-accent/10'
+								: 'hover:bg-base-200'}"
+						>
+							<button
+								type="button"
+								class="flex items-center gap-3 flex-1 min-w-0 py-1.5 px-1 rounded-lg text-left group/track"
+								onclick={() => playTrack(i)}
+							>
+								<span
+									class="font-mono w-6 text-right text-sm shrink-0 {playing
+										? 'text-accent'
+										: 'opacity-40'}"
+								>
+									{#if playing}
+										<NowPlayingIndicator />
+									{:else}
+										{trackNum}
+									{/if}
+								</span>
+								<span class="text-sm truncate flex-1 {playing ? 'text-accent' : ''}"
+									>{getTrackName(i)}</span
+								>
+								{#if sourceType === 'jellyfin'}
+									{@const dur = jellyfinTracks[i]?.duration_seconds}
+									{#if dur}
+										<span class="text-xs opacity-40 shrink-0">{formatDuration(dur)}</span>
+									{/if}
+								{:else if sourceType === 'navidrome'}
+									{@const dur = navidromeTracks[i]?.duration_seconds}
+									{#if dur}
+										<span class="text-xs opacity-40 shrink-0">{formatDuration(dur)}</span>
+									{/if}
+								{:else if sourceType === 'plex'}
+									{@const dur = plexTracks[i]?.duration_seconds}
+									{@const pt = plexTracks[i]}
+									{#if dur}
+										<span class="text-xs opacity-40 shrink-0">{formatDuration(dur)}</span>
+									{/if}
+									{#if pt}
+										<span class="hidden sm:inline-flex shrink-0">
+											<AudioQualityBadge
+												codec={pt.codec}
+												bitrate={pt.bitrate}
+												audioChannels={pt.audio_channels}
+												container={pt.container}
+												compact
+											/>
+										</span>
+									{/if}
+								{:else}
+									{@const lt = localTracks[i]}
+									{#if lt?.duration_seconds}
+										<span class="text-xs opacity-40 shrink-0"
+											>{formatDuration(lt.duration_seconds)}</span
+										>
+									{/if}
+								{/if}
+								<span class={playing ? 'text-accent' : ''}>
+									<Play
+										class="h-4 w-4 shrink-0 transition-opacity {playing
+											? 'opacity-100'
+											: 'text-accent opacity-0 group-hover/track:opacity-100'} fill-current"
+									/>
+								</span>
+							</button>
+							<div>
+								<ContextMenu items={getTrackContextMenuItems(i)} position="end" size="xs" />
+							</div>
+						</div>
+					{/each}
+				</div>
+			{:else}
+				<p class="text-sm opacity-50 text-center py-6">No tracks found for this album.</p>
+			{/if}
+		</div>
+	</Modal>
 {/if}
 
 <AddToPlaylistModal bind:this={playlistModalRef} />

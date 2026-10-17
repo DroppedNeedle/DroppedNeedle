@@ -9,6 +9,7 @@
 	import { ChevronLeft } from 'lucide-svelte';
 	import Modal from '$lib/ui/Modal.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -695,11 +696,12 @@
 				aria-label="Selected edition"
 				role="region"
 			>
-				<button
-					type="button"
-					class="btn btn-ghost btn-sm -ml-2 gap-1 self-start md:hidden"
-					onclick={() => (step = 'list')}
-					><ChevronLeft class="h-4 w-4" aria-hidden="true" /> All editions</button
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={ChevronLeft}
+					class="-ml-2 self-start md:hidden"
+					onclick={() => (step = 'list')}>All editions</Button
 				>
 				{#if view === 'next' && chosen}
 					<EditionNextSteps
@@ -726,7 +728,7 @@
 							</p>
 						{:else if pickedName}
 							<p>DroppedNeedle picked {pickedName}.</p>
-							<AsyncButton class="btn btn-ghost btn-sm" onclick={undoChange}>Undo</AsyncButton>
+							<AsyncButton variant="ghost" size="sm" onclick={undoChange}>Undo</AsyncButton>
 						{:else if status}
 							<p>{status.reason.message}</p>
 						{/if}
@@ -780,20 +782,21 @@
 					{@render primaryAction()}
 				{/if}
 			</div>
-			<button type="button" class="btn btn-sm" onclick={finish}>Done</button>
+			<Button size="sm" onclick={finish}>Done</Button>
 		</div>
 	{/snippet}
 </Modal>
 
 {#snippet primaryAction()}
 	{#if primaryKind === 'keep'}
-		<AsyncButton class="btn btn-primary btn-sm" pending={confirm.isPending} onclick={keepEdition}
+		<AsyncButton variant="primary" size="sm" pending={confirm.isPending} onclick={keepEdition}
 			>Keep this edition</AsyncButton
 		>
 	{:else if primaryKind === 'use'}
 		{@const noneFit = selectedPlan ? fitsNoFile(selectedPlan) : false}
 		<AsyncButton
-			class="btn btn-primary btn-sm"
+			variant="primary"
+			size="sm"
 			pending={choose.isPending}
 			pendingLabel="Matching your files..."
 			disabled={!selectedPlan || noneFit}
@@ -809,12 +812,12 @@
 
 {#snippet footerLinks()}
 	{#if canEdit && letChooseLabel && view !== 'handedBack'}
-		<AsyncButton class="btn btn-ghost btn-sm" pending={handBack.isPending} onclick={letChoose}
+		<AsyncButton variant="ghost" size="sm" pending={handBack.isPending} onclick={letChoose}
 			>{letChooseLabel}</AsyncButton
 		>
 	{/if}
 	{#if canEdit && status?.undo_available && view === 'compare'}
-		<AsyncButton class="btn btn-ghost btn-sm" pending={undo.isPending} onclick={undoChange}
+		<AsyncButton variant="ghost" size="sm" pending={undo.isPending} onclick={undoChange}
 			>Undo last change</AsyncButton
 		>
 	{/if}

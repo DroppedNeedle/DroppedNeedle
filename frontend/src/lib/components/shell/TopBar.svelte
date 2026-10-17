@@ -58,7 +58,13 @@
 	<div class="navbar-end w-auto pr-1 sm:pr-2">
 		<ServiceHealthIndicator />
 		<!-- An avatar in a round button: the kit's IconButton takes only an icon. -->
-		<a href={withBasePath('/profile')} class="btn btn-ghost btn-circle btn-md" aria-label="Profile">
+		<Button
+			href={withBasePath('/profile')}
+			variant="ghost"
+			pill
+			class="size-10 px-0"
+			aria-label="Profile"
+		>
 			{#if authStore.user?.avatar_url}
 				<img
 					src={getApiUrl(authStore.user.avatar_url)}
@@ -66,9 +72,9 @@
 					class="h-7 w-7 rounded-full object-cover"
 				/>
 			{:else}
-				<UserRound class="h-6 w-6" />
+				<UserRound class="h-6 w-6" aria-hidden="true" />
 			{/if}
-		</a>
+		</Button>
 	</div>
 </div>
 

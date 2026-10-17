@@ -12,6 +12,7 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { outsideLink } from '$lib/components/outsideLink';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -139,7 +140,7 @@
 							? error.message
 							: "This edition couldn't be compared with your files."}
 				</p>
-				<button type="button" class="btn btn-sm btn-outline" onclick={retry}>Retry</button>
+				<Button variant="outline" size="sm" onclick={retry}>Retry</Button>
 			</div>
 			{#if primary}
 				<div class="hidden flex-wrap items-center gap-3 md:flex">
@@ -255,11 +256,12 @@
 			{#if isCurrent && canEdit && (extras.length > 0 || putBackCount)}
 				<section class="flex flex-col gap-2 text-sm" aria-label="Files not on this edition">
 					{#if extras.length > 0 && !confirmExtras}
-						<button
-							type="button"
-							class="btn btn-ghost btn-sm gap-2 self-start"
-							onclick={() => (confirmExtras = true)}
-							><Trash2 class="h-4 w-4" aria-hidden="true" /> {extrasButton(extras.length)}</button
+						<Button
+							variant="ghost"
+							size="sm"
+							icon={Trash2}
+							class="self-start"
+							onclick={() => (confirmExtras = true)}>{extrasButton(extras.length)}</Button
 						>
 					{/if}
 					{#if confirmExtras}
@@ -282,21 +284,22 @@
 								Nothing is deleted: the files go to the recycle bin, and you can put them back.
 							</p>
 							<div class="mt-2 flex flex-wrap gap-2">
-								<AsyncButton class="btn btn-warning btn-sm" onclick={removeExtras}
+								<AsyncButton variant="warning" size="sm" onclick={removeExtras}
 									>Move to recycle bin</AsyncButton
 								>
-								<button
-									type="button"
-									class="btn btn-ghost btn-sm"
-									onclick={() => (confirmExtras = false)}>Keep them</button
+								<Button variant="ghost" size="sm" onclick={() => (confirmExtras = false)}
+									>Keep them</Button
 								>
 							</div>
 						</div>
 					{/if}
 					{#if putBackCount}
-						<AsyncButton class="btn btn-ghost btn-sm gap-2 self-start" onclick={onputback}
-							><Undo2 class="h-4 w-4" aria-hidden="true" />
-							{putBackButton(putBackCount)}</AsyncButton
+						<AsyncButton
+							variant="ghost"
+							size="sm"
+							icon={Undo2}
+							class="self-start"
+							onclick={onputback}>{putBackButton(putBackCount)}</AsyncButton
 						>
 					{/if}
 				</section>

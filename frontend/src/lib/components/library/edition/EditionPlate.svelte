@@ -8,6 +8,7 @@
 	import { page } from '$app/state';
 	import { ChevronRight, Hand } from 'lucide-svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import type { LibraryAlbumSummary } from '$lib/types';
 	import {
 		getAlbumEditionStatusQuery,
@@ -92,9 +93,7 @@
 {:else if statusQuery.isError && !status}
 	<p class="flex items-center gap-2 text-sm text-base-content/60">
 		The album's edition couldn't be loaded.
-		<button type="button" class="btn btn-ghost btn-xs" onclick={() => statusQuery.refetch()}
-			>Retry</button
-		>
+		<Button variant="ghost" size="xs" onclick={() => statusQuery.refetch()}>Retry</Button>
 	</p>
 {:else if lines}
 	{#if canEdit}
