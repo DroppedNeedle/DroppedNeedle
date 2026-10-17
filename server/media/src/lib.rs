@@ -159,7 +159,6 @@ impl MediaSetup {
         let remotes = RemotesDeps {
             service,
             auth: users,
-            ids: ids.clone(),
         };
         let reader = RemotesRemoteReader::with_resolver(
             http_factory.remote_audio().clone(),
@@ -260,7 +259,6 @@ impl MediaSetup {
                 Arc::new(MemoryImportSink::new()),
             ),
             auth: users,
-            ids: ids.clone(),
         };
         let reader = RemotesRemoteReader::with_resolver(http, resolver);
         let transcoder = FfmpegTranscoder::new(

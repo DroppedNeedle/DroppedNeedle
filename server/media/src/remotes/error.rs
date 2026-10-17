@@ -1,40 +1,18 @@
-//! Typed errors rendered into the shared envelope.
+//! Remote-source route errors and their one mapping onto [`ApiError`].
 //!
-//! Every failure renders as `{"error": {code, message, details}}` with a
-//! SCREAMING_SNAKE code. Statuses match the reads routes: 401 carries the
-//! `Bearer` challenge, 4xx messages are user-safe, and 5xx bodies stay fixed
-//! with only an error id while the cause goes to the structured log.
+//! 4xx messages are user-safe. A media server that is down answers the
+//! closed-list `REMOTE_UNAVAILABLE`, a busy database `SERVER_BUSY`, and any
+//! other fault the fixed internal error; their detail goes to the log only.
 
-use axum::{
-    Json,
-    extract::{FromRequest, Query, Request},
-    http::{HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
-};
-use droppedneedle_kernel::error::{ErrorBody, ErrorEnvelope};
-use droppedneedle_kernel::ids::IdGenerator;
-use serde::de::DeserializeOwned;
-use serde_json::json;
+use axum::http::{HeaderValue, StatusCode, header};
+use droppedneedle_kernel::error::{ApiError, CONFLICT, INVALID_INPUT, Unavailable};
 
-/// Missing or invalid session.
-pub const UNAUTHORIZED: &str = "UNAUTHORIZED";
-/// Unknown id. Always the same fixed message.
-pub const NOT_FOUND: &str = "NOT_FOUND";
-/// The request itself is wrong. The message is user-facing.
-pub const INVALID_INPUT: &str = "INVALID_INPUT";
-/// Valid input against the wrong state (duplicate import, bad folder mode).
-pub const CONFLICT: &str = "CONFLICT";
 /// No credential stored for this source, or the source is disabled.
 pub const REMOTE_NOT_CONFIGURED: &str = "REMOTE_NOT_CONFIGURED";
 /// The stored credential was rejected upstream (HTTP 401/403, Subsonic 40/41).
 pub const REMOTE_AUTH_FAILED: &str = "REMOTE_AUTH_FAILED";
-/// The upstream answered with an error or garbage.
-pub const REMOTE_UNAVAILABLE: &str = "REMOTE_UNAVAILABLE";
 /// The source has no such capability (Plex similar, Jellyfin top songs).
 pub const REMOTE_UNSUPPORTED: &str = "REMOTE_UNSUPPORTED";
-
-/// Challenge sent on every 401.
-pub const WWW_AUTHENTICATE_BEARER: &str = "Bearer";
 
 /// Every failure the remotes routes can return to a caller.
 #[derive(Debug)]
@@ -66,140 +44,51 @@ pub enum RemotesError {
         /// Which source rejected, without credential detail.
         message: String,
     },
-    /// Upstream error or unreachable. User-safe summary only.
+    /// Upstream error or unreachable.
     Unavailable {
-        /// Short summary, e.g. "Jellyfin answered with an error".
-        message: String,
+        /// What went wrong, for the log only.
+        cause: String,
     },
     /// Capability the source lacks.
     Unsupported {
         /// What is missing where, e.g. "Plex has no similar-tracks endpoint".
         message: String,
     },
-    /// The database was too busy to answer in time: 503 with `Retry-After`.
-    Busy {
-        /// Ties the wire response to the server log line.
-        error_id: String,
-    },
-    /// Server fault. Fixed body plus the request-tied id.
+    /// The database was too busy to answer in time.
+    Busy,
+    /// Server fault.
     Internal {
-        /// Ties the wire response to the server log line.
-        error_id: String,
+        /// What went wrong, for the log only.
+        cause: String,
     },
 }
 
-impl RemotesError {
-    /// Build a 500, logging the real cause with its id.
-    pub fn internal(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
-        let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "remotes request failed");
-        Self::Internal { error_id }
-    }
-
-    /// Build a busy 503, logged as a warning with its id.
-    pub fn busy(ids: &dyn IdGenerator) -> Self {
-        let error_id = ids.new_id();
-        tracing::warn!(error_id, "remotes request busy; answering 503 with retry");
-        Self::Busy { error_id }
-    }
-
-    fn status(&self) -> StatusCode {
-        match self {
-            Self::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
-            Self::NotFound => StatusCode::NOT_FOUND,
-            Self::InvalidInput { .. }
-            | Self::Conflict { .. }
-            | Self::Unsupported { .. }
-            | Self::NotConfigured { .. } => StatusCode::BAD_REQUEST,
-            Self::AuthFailed { .. } => StatusCode::UNAUTHORIZED,
-            Self::Unavailable { .. } => StatusCode::BAD_GATEWAY,
-            Self::Busy { .. } => StatusCode::SERVICE_UNAVAILABLE,
-            Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
-        }
-    }
-
-    fn envelope(&self) -> ErrorEnvelope {
-        let (code, message, details) = match self {
-            Self::Unauthorized { message } => (UNAUTHORIZED.to_owned(), message.clone(), None),
-            Self::NotFound => (
-                NOT_FOUND.to_owned(),
-                droppedneedle_kernel::error::NOT_FOUND_MESSAGE.to_owned(),
-                None,
-            ),
-            Self::InvalidInput { message } => (INVALID_INPUT.to_owned(), message.clone(), None),
-            Self::Conflict { message } => (CONFLICT.to_owned(), message.clone(), None),
-            Self::NotConfigured { message } => {
-                (REMOTE_NOT_CONFIGURED.to_owned(), message.clone(), None)
+impl From<RemotesError> for ApiError {
+    fn from(error: RemotesError) -> Self {
+        match error {
+            RemotesError::Unauthorized { message } => ApiError::unauthorized(message),
+            RemotesError::NotFound => ApiError::not_found(),
+            RemotesError::InvalidInput { message } => {
+                ApiError::new(StatusCode::BAD_REQUEST, INVALID_INPUT, message)
             }
-            Self::AuthFailed { message } => (REMOTE_AUTH_FAILED.to_owned(), message.clone(), None),
-            Self::Unavailable { message } => (REMOTE_UNAVAILABLE.to_owned(), message.clone(), None),
-            Self::Unsupported { message } => (REMOTE_UNSUPPORTED.to_owned(), message.clone(), None),
-            Self::Busy { error_id } | Self::Internal { error_id } => (
-                droppedneedle_kernel::error::INTERNAL_ERROR.to_owned(),
-                droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE.to_owned(),
-                Some(json!({ "error_id": error_id })),
-            ),
-        };
-        ErrorEnvelope {
-            error: ErrorBody {
-                code,
-                message,
-                details,
-            },
+            RemotesError::Conflict { message } => {
+                ApiError::new(StatusCode::BAD_REQUEST, CONFLICT, message)
+            }
+            RemotesError::NotConfigured { message } => {
+                ApiError::new(StatusCode::BAD_REQUEST, REMOTE_NOT_CONFIGURED, message)
+            }
+            RemotesError::AuthFailed { message } => {
+                ApiError::new(StatusCode::UNAUTHORIZED, REMOTE_AUTH_FAILED, message)
+                    .with_header(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"))
+            }
+            RemotesError::Unavailable { cause } => {
+                ApiError::unavailable(Unavailable::MediaServer, cause)
+            }
+            RemotesError::Unsupported { message } => {
+                ApiError::new(StatusCode::BAD_REQUEST, REMOTE_UNSUPPORTED, message)
+            }
+            RemotesError::Busy => ApiError::from(Unavailable::ServerBusy),
+            RemotesError::Internal { cause } => ApiError::internal(cause),
         }
-    }
-}
-
-impl IntoResponse for RemotesError {
-    fn into_response(self) -> Response {
-        let status = self.status();
-        let mut response = (status, Json(self.envelope())).into_response();
-        if status == StatusCode::SERVICE_UNAVAILABLE {
-            response.headers_mut().insert(
-                axum::http::header::RETRY_AFTER,
-                HeaderValue::from_static("1"),
-            );
-        }
-        if status == StatusCode::UNAUTHORIZED
-            && let Ok(challenge) = HeaderValue::from_str(WWW_AUTHENTICATE_BEARER)
-        {
-            response
-                .headers_mut()
-                .insert(axum::http::header::WWW_AUTHENTICATE, challenge);
-        }
-        response
-    }
-}
-
-/// Query extractor that renders failures in the shared envelope instead of
-/// Axum's default plain-text 400.
-pub struct ValidQuery<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidQuery<T> {
-    type Rejection = RemotesError;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Query::<T>::from_request(req, state)
-            .await
-            .map(|Query(value)| Self(value))
-            .map_err(|cause| RemotesError::InvalidInput {
-                message: format!("Invalid query string: {cause}"),
-            })
-    }
-}
-
-/// JSON body extractor with the same envelope guarantee.
-pub struct ValidJson<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
-    type Rejection = RemotesError;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        axum::Json::<T>::from_request(req, state)
-            .await
-            .map(|axum::Json(value)| Self(value))
-            .map_err(|cause| RemotesError::InvalidInput {
-                message: format!("Invalid request body: {cause}"),
-            })
     }
 }

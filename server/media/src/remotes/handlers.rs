@@ -2,14 +2,13 @@
 //!
 //! Each handler parses the caller, the path, and the query, calls one
 //! [`RemotesService`] method, and renders the result. Failures map to the
-//! shared envelope in [`render`]; query strings parse through
-//! [`ValidQuery`] and bodies through [`ValidJson`] so malformed input stays
-//! inside the envelope. `MediaSetup` mounts [`remotes_router`] inside the
-//! session gate, and every handler takes the [`RemotesUser`] extractor, so
-//! every route 401s anonymously. Operation ids carry a `remotes_` prefix so
-//! they never collide with the library routes of the same shape.
-
-use std::sync::Arc;
+//! routes' error in [`render`] and from there onto `ApiError`; query
+//! strings parse through [`ValidQuery`] and bodies through [`ValidJson`] so
+//! malformed input stays inside the envelope. `MediaSetup` mounts
+//! [`remotes_router`] inside the session gate, and every handler takes the
+//! [`RemotesUser`] extractor, so every route 401s anonymously. Operation ids
+//! carry a `remotes_` prefix so they never collide with the library routes
+//! of the same shape.
 
 use axum::{
     Json,
@@ -21,10 +20,11 @@ use axum::{
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::stores::StoreError as UserStoreError;
-use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 use super::adapter::{AlbumBrowse, ArtistBrowse, TrackBrowse};
-use super::error::{RemotesError, ValidJson, ValidQuery};
+use super::error::RemotesError;
 use super::jellyfin::MixSeed;
 use super::models::{
     AlbumBrowseQuery, AlbumPage, AlbumView, AnalyticsView, ArtistBrowseQuery, ArtistIndex,
@@ -44,8 +44,6 @@ pub struct RemotesDeps {
     pub service: RemotesService,
     /// Auth bundle, used only to resolve the caller.
     pub auth: UsersDeps,
-    /// Fresh ids for 5xx error ids.
-    pub ids: Arc<dyn IdGenerator>,
 }
 
 /// Authenticated router. Paths are relative: the app nests this under
@@ -122,7 +120,7 @@ pub fn remotes_router(deps: RemotesDeps) -> axum::Router {
 pub struct RemotesUser(pub String);
 
 impl FromRequestParts<RemotesDeps> for RemotesUser {
-    type Rejection = RemotesError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
@@ -144,19 +142,19 @@ impl FromRequestParts<RemotesDeps> for RemotesUser {
                 UserStoreError::Conflict => RemotesError::InvalidInput {
                     message: "Conflicting state".to_owned(),
                 },
-                UserStoreError::Busy => RemotesError::busy(state.ids.as_ref()),
-                UserStoreError::Internal(cause) => {
-                    RemotesError::internal(&cause, state.ids.as_ref())
-                }
+                UserStoreError::Busy => RemotesError::Busy,
+                UserStoreError::Internal(cause) => RemotesError::Internal {
+                    cause: cause.to_string(),
+                },
             })?
             .ok_or_else(unauthorized)?;
         Ok(Self(user.id))
     }
 }
 
-/// Map a service failure to the wire. Upstream detail reaches the log
-/// only; callers get a fixed user-safe summary per source.
-fn render(failure: RemotesFailure, ids: &dyn IdGenerator) -> RemotesError {
+/// Map a service failure to the routes' error. Upstream detail reaches the
+/// log only, through the request boundary.
+fn render(failure: RemotesFailure) -> RemotesError {
     match failure {
         RemotesFailure::NotConfigured(source) => RemotesError::NotConfigured {
             message: format!("{} is not connected", source.display()),
@@ -167,23 +165,19 @@ fn render(failure: RemotesFailure, ids: &dyn IdGenerator) -> RemotesError {
                 source.display()
             ),
         },
-        RemotesFailure::Upstream { source, detail } => {
-            tracing::warn!(source = source.as_str(), %detail, "remote API error");
-            RemotesError::Unavailable {
-                message: format!("{} answered with an error", source.display()),
-            }
-        }
-        RemotesFailure::Unreachable { source, detail } => {
-            tracing::warn!(source = source.as_str(), %detail, "remote unreachable");
-            RemotesError::Unavailable {
-                message: format!("{} is unreachable", source.display()),
-            }
-        }
+        RemotesFailure::Upstream { source, detail } => RemotesError::Unavailable {
+            cause: format!("{} answered with an error: {detail}", source.display()),
+        },
+        RemotesFailure::Unreachable { source, detail } => RemotesError::Unavailable {
+            cause: format!("{} is unreachable: {detail}", source.display()),
+        },
         RemotesFailure::NotFound => RemotesError::NotFound,
         RemotesFailure::Unsupported(message) => RemotesError::Unsupported { message },
         RemotesFailure::InvalidInput(message) => RemotesError::InvalidInput { message },
         RemotesFailure::Conflict(message) => RemotesError::Conflict { message },
-        RemotesFailure::Internal(cause) => RemotesError::internal(&cause, ids),
+        RemotesFailure::Internal(cause) => RemotesError::Internal {
+            cause: cause.to_string(),
+        },
     }
 }
 
@@ -195,13 +189,8 @@ fn parse_source(raw: &str) -> Result<SourceName, RemotesError> {
 }
 
 /// Shorthand for the handlers below: render a service result as JSON.
-fn reply<T>(
-    deps: &RemotesDeps,
-    result: Result<T, RemotesFailure>,
-) -> Result<Json<T>, RemotesError> {
-    result
-        .map(Json)
-        .map_err(|failure| render(failure, deps.ids.as_ref()))
+fn reply<T>(result: Result<T, RemotesFailure>) -> Result<Json<T>, ApiError> {
+    result.map(Json).map_err(|failure| render(failure).into())
 }
 
 /// The caller's linked accounts across every service.
@@ -210,7 +199,7 @@ fn reply<T>(
 pub async fn list_links(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
-) -> Result<Json<LinkedAccounts>, RemotesError> {
+) -> Result<Json<LinkedAccounts>, ApiError> {
     let links = deps.service.links(&user).await.map(|links| LinkedAccounts {
         connections: links
             .into_iter()
@@ -221,7 +210,7 @@ pub async fn list_links(
             })
             .collect(),
     });
-    reply(&deps, links)
+    reply(links)
 }
 
 /// Hub highlights for one source.
@@ -232,9 +221,9 @@ pub async fn get_hub(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
-) -> Result<Json<HubView>, RemotesError> {
+) -> Result<Json<HubView>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.hub(&user, source).await)
+    reply(deps.service.hub(&user, source).await)
 }
 
 /// Library totals for one source.
@@ -245,9 +234,9 @@ pub async fn get_stats(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
-) -> Result<Json<StatsView>, RemotesError> {
+) -> Result<Json<StatsView>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.stats(&user, source).await)
+    reply(deps.service.stats(&user, source).await)
 }
 
 /// One page of albums.
@@ -259,7 +248,7 @@ pub async fn list_albums(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<AlbumBrowseQuery>,
-) -> Result<Json<AlbumPage>, RemotesError> {
+) -> Result<Json<AlbumPage>, ApiError> {
     let source = parse_source(&source)?;
     let browse = AlbumBrowse {
         limit: query.limit.unwrap_or(50).clamp(1, 500),
@@ -273,7 +262,7 @@ pub async fn list_albums(
         tags: query.tags.unwrap_or_default(),
         studios: query.studios.unwrap_or_default(),
     };
-    reply(&deps, deps.service.albums(&user, source, browse).await)
+    reply(deps.service.albums(&user, source, browse).await)
 }
 
 /// One album by id.
@@ -285,9 +274,9 @@ pub async fn get_album(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
-) -> Result<Json<AlbumView>, RemotesError> {
+) -> Result<Json<AlbumView>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.album(&user, source, id).await)
+    reply(deps.service.album(&user, source, id).await)
 }
 
 /// Tracks of one album.
@@ -300,9 +289,9 @@ pub async fn list_album_tracks(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
-) -> Result<Json<TrackPage>, RemotesError> {
+) -> Result<Json<TrackPage>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.album_tracks(&user, source, id).await)
+    reply(deps.service.album_tracks(&user, source, id).await)
 }
 
 /// One page of artists.
@@ -314,7 +303,7 @@ pub async fn list_artists(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<ArtistBrowseQuery>,
-) -> Result<Json<ArtistPage>, RemotesError> {
+) -> Result<Json<ArtistPage>, ApiError> {
     let source = parse_source(&source)?;
     let browse = ArtistBrowse {
         limit: query.limit.unwrap_or(50).clamp(1, 500),
@@ -323,7 +312,7 @@ pub async fn list_artists(
         descending: matches!(query.sort_order.as_deref(), Some("desc")),
         search: query.search.unwrap_or_default(),
     };
-    reply(&deps, deps.service.artists(&user, source, browse).await)
+    reply(deps.service.artists(&user, source, browse).await)
 }
 
 /// Full alphabetic artist index.
@@ -335,14 +324,14 @@ pub async fn get_artist_index(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
-) -> Result<Json<ArtistIndex>, RemotesError> {
+) -> Result<Json<ArtistIndex>, ApiError> {
     let source = parse_source(&source)?;
     let index = deps
         .service
         .artist_index(&user, source)
         .await
         .map(|index| ArtistIndex { index });
-    reply(&deps, index)
+    reply(index)
 }
 
 /// One artist by id.
@@ -354,9 +343,9 @@ pub async fn get_artist(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
-) -> Result<Json<ArtistView>, RemotesError> {
+) -> Result<Json<ArtistView>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.artist(&user, source, id).await)
+    reply(deps.service.artist(&user, source, id).await)
 }
 
 /// One page of tracks.
@@ -368,7 +357,7 @@ pub async fn list_tracks(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<TrackBrowseQuery>,
-) -> Result<Json<TrackPage>, RemotesError> {
+) -> Result<Json<TrackPage>, ApiError> {
     let source = parse_source(&source)?;
     let browse = TrackBrowse {
         limit: query.limit.unwrap_or(50).clamp(1, 500),
@@ -378,7 +367,7 @@ pub async fn list_tracks(
         search: query.search.unwrap_or_default(),
         genre: query.genre.unwrap_or_default(),
     };
-    reply(&deps, deps.service.tracks(&user, source, browse).await)
+    reply(deps.service.tracks(&user, source, browse).await)
 }
 
 /// Unified search across artists, albums, and tracks.
@@ -390,13 +379,10 @@ pub async fn search(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<SearchQuery>,
-) -> Result<Json<SearchResults>, RemotesError> {
+) -> Result<Json<SearchResults>, ApiError> {
     let source = parse_source(&source)?;
     let limit = query.limit.unwrap_or(20).clamp(1, 100);
-    reply(
-        &deps,
-        deps.service.search(&user, source, query.q, limit).await,
-    )
+    reply(deps.service.search(&user, source, query.q, limit).await)
 }
 
 /// Recently played albums.
@@ -408,10 +394,10 @@ pub async fn get_recent(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<PageQuery>,
-) -> Result<Json<Vec<AlbumView>>, RemotesError> {
+) -> Result<Json<Vec<AlbumView>>, ApiError> {
     let source = parse_source(&source)?;
     let (limit, _) = query.clamped();
-    reply(&deps, deps.service.recent(&user, source, limit).await)
+    reply(deps.service.recent(&user, source, limit).await)
 }
 
 /// Recently added albums.
@@ -424,13 +410,10 @@ pub async fn get_recently_added(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<PageQuery>,
-) -> Result<Json<Vec<AlbumView>>, RemotesError> {
+) -> Result<Json<Vec<AlbumView>>, ApiError> {
     let source = parse_source(&source)?;
     let (limit, _) = query.clamped();
-    reply(
-        &deps,
-        deps.service.recently_added(&user, source, limit).await,
-    )
+    reply(deps.service.recently_added(&user, source, limit).await)
 }
 
 /// Favorite artists, albums, and tracks.
@@ -442,12 +425,9 @@ pub async fn get_favorites(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<FavoritesQuery>,
-) -> Result<Json<FavoritesView>, RemotesError> {
+) -> Result<Json<FavoritesView>, ApiError> {
     let source = parse_source(&source)?;
-    reply(
-        &deps,
-        deps.service.favorites(&user, source, query.clamped()).await,
-    )
+    reply(deps.service.favorites(&user, source, query.clamped()).await)
 }
 
 /// Genre labels.
@@ -458,9 +438,9 @@ pub async fn list_genres(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
-) -> Result<Json<Vec<String>>, RemotesError> {
+) -> Result<Json<Vec<String>>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.genres(&user, source).await)
+    reply(deps.service.genres(&user, source).await)
 }
 
 /// Tracks carrying one genre label.
@@ -473,7 +453,7 @@ pub async fn list_genre_songs(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<GenreSongsQuery>,
-) -> Result<Json<TrackPage>, RemotesError> {
+) -> Result<Json<TrackPage>, ApiError> {
     let source = parse_source(&source)?;
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
     let offset = query.offset.unwrap_or(0).max(0);
@@ -487,7 +467,6 @@ pub async fn list_genre_songs(
         .map(str::to_owned)
         .collect();
     reply(
-        &deps,
         deps.service
             .genre_songs(&user, source, genres, limit, offset)
             .await,
@@ -502,9 +481,9 @@ pub async fn list_moods(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
-) -> Result<Json<Vec<String>>, RemotesError> {
+) -> Result<Json<Vec<String>>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.moods(&user, source).await)
+    reply(deps.service.moods(&user, source).await)
 }
 
 /// Album filter facets (Jellyfin).
@@ -515,9 +494,9 @@ pub async fn get_filters(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
-) -> Result<Json<FilterFacetsView>, RemotesError> {
+) -> Result<Json<FilterFacetsView>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.filters(&user, source).await)
+    reply(deps.service.filters(&user, source).await)
 }
 
 /// Most-played albums (Jellyfin).
@@ -530,10 +509,9 @@ pub async fn list_most_played_albums(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<MostPlayedQuery>,
-) -> Result<Json<Vec<AlbumView>>, RemotesError> {
+) -> Result<Json<Vec<AlbumView>>, ApiError> {
     let source = parse_source(&source)?;
     reply(
-        &deps,
         deps.service
             .most_played_albums(&user, source, query.clamped())
             .await,
@@ -550,10 +528,9 @@ pub async fn list_most_played_artists(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<MostPlayedQuery>,
-) -> Result<Json<Vec<ArtistView>>, RemotesError> {
+) -> Result<Json<Vec<ArtistView>>, ApiError> {
     let source = parse_source(&source)?;
     reply(
-        &deps,
         deps.service
             .most_played_artists(&user, source, query.clamped())
             .await,
@@ -568,9 +545,9 @@ pub async fn list_playlists(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
-) -> Result<Json<PlaylistCollection>, RemotesError> {
+) -> Result<Json<PlaylistCollection>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.playlists(&user, source).await)
+    reply(deps.service.playlists(&user, source).await)
 }
 
 /// One playlist with its tracks.
@@ -583,9 +560,9 @@ pub async fn get_playlist(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
-) -> Result<Json<PlaylistDetail>, RemotesError> {
+) -> Result<Json<PlaylistDetail>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.playlist(&user, source, id).await)
+    reply(deps.service.playlist(&user, source, id).await)
 }
 
 /// Import one remote playlist into the caller's playlists.
@@ -598,9 +575,9 @@ pub async fn import_playlist(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
-) -> Result<Json<ImportResult>, RemotesError> {
+) -> Result<Json<ImportResult>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.import_playlist(&user, source, id).await)
+    reply(deps.service.import_playlist(&user, source, id).await)
 }
 
 /// Artist info passthrough.
@@ -613,9 +590,9 @@ pub async fn get_artist_info(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
-) -> Result<Json<InfoView>, RemotesError> {
+) -> Result<Json<InfoView>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.artist_info(&user, source, id).await)
+    reply(deps.service.artist_info(&user, source, id).await)
 }
 
 /// Album info passthrough.
@@ -628,9 +605,9 @@ pub async fn get_album_info(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
-) -> Result<Json<InfoView>, RemotesError> {
+) -> Result<Json<InfoView>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.album_info(&user, source, id).await)
+    reply(deps.service.album_info(&user, source, id).await)
 }
 
 /// Lyrics for one track.
@@ -643,10 +620,9 @@ pub async fn get_lyrics(
     RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
     ValidQuery(query): ValidQuery<LyricsQuery>,
-) -> Result<Json<LyricsView>, RemotesError> {
+) -> Result<Json<LyricsView>, ApiError> {
     let source = parse_source(&source)?;
     reply(
-        &deps,
         deps.service
             .lyrics(&user, source, id, query.artist, query.title)
             .await,
@@ -663,13 +639,10 @@ pub async fn get_top_songs(
     RemotesUser(user): RemotesUser,
     Path((source, artist)): Path<(String, String)>,
     ValidQuery(query): ValidQuery<PageQuery>,
-) -> Result<Json<TrackPage>, RemotesError> {
+) -> Result<Json<TrackPage>, ApiError> {
     let source = parse_source(&source)?;
     let (limit, _) = query.clamped();
-    reply(
-        &deps,
-        deps.service.top_songs(&user, source, artist, limit).await,
-    )
+    reply(deps.service.top_songs(&user, source, artist, limit).await)
 }
 
 /// Tracks similar to one track.
@@ -682,10 +655,10 @@ pub async fn get_similar(
     RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
     ValidQuery(query): ValidQuery<PageQuery>,
-) -> Result<Json<TrackPage>, RemotesError> {
+) -> Result<Json<TrackPage>, ApiError> {
     let source = parse_source(&source)?;
     let (limit, _) = query.clamped();
-    reply(&deps, deps.service.similar(&user, source, id, limit).await)
+    reply(deps.service.similar(&user, source, id, limit).await)
 }
 
 /// Random tracks, optionally filtered by genre. Limits mirror the v2
@@ -698,11 +671,10 @@ pub async fn get_random(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<RandomQuery>,
-) -> Result<Json<TrackPage>, RemotesError> {
+) -> Result<Json<TrackPage>, ApiError> {
     let source = parse_source(&source)?;
     let limit = query.limit.unwrap_or(20).clamp(1, 50);
     reply(
-        &deps,
         deps.service
             .random(&user, source, limit, query.genre.unwrap_or_default())
             .await,
@@ -718,10 +690,10 @@ pub async fn get_discovery(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<DiscoveryQuery>,
-) -> Result<Json<DiscoveryView>, RemotesError> {
+) -> Result<Json<DiscoveryView>, ApiError> {
     let source = parse_source(&source)?;
     let count = query.count.unwrap_or(10).clamp(1, 20);
-    reply(&deps, deps.service.discovery(&user, source, count).await)
+    reply(deps.service.discovery(&user, source, count).await)
 }
 
 /// Instant mix for an item, artist, or genre id (Jellyfin).
@@ -734,7 +706,7 @@ pub async fn get_mix(
     RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
     ValidQuery(query): ValidQuery<MixQuery>,
-) -> Result<Json<TrackPage>, RemotesError> {
+) -> Result<Json<TrackPage>, ApiError> {
     let source = parse_source(&source)?;
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
     let seed = match query.kind.as_deref().unwrap_or("item") {
@@ -744,10 +716,11 @@ pub async fn get_mix(
         other => {
             return Err(RemotesError::InvalidInput {
                 message: format!("Unknown mix kind '{other}': want item, artist, or genre"),
-            });
+            }
+            .into());
         }
     };
-    reply(&deps, deps.service.mix(&user, source, seed, limit).await)
+    reply(deps.service.mix(&user, source, seed, limit).await)
 }
 
 /// Active audio sessions.
@@ -758,9 +731,9 @@ pub async fn list_sessions(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
-) -> Result<Json<SessionsView>, RemotesError> {
+) -> Result<Json<SessionsView>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.sessions(&user, source).await)
+    reply(deps.service.sessions(&user, source).await)
 }
 
 /// Listening history, newest first.
@@ -772,13 +745,10 @@ pub async fn list_history(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<HistoryQuery>,
-) -> Result<Json<HistoryPage>, RemotesError> {
+) -> Result<Json<HistoryPage>, ApiError> {
     let source = parse_source(&source)?;
     let (limit, offset) = query.clamped();
-    reply(
-        &deps,
-        deps.service.history(&user, source, limit, offset).await,
-    )
+    reply(deps.service.history(&user, source, limit, offset).await)
 }
 
 /// Listening analytics over the history (Plex).
@@ -789,9 +759,9 @@ pub async fn get_analytics(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
-) -> Result<Json<AnalyticsView>, RemotesError> {
+) -> Result<Json<AnalyticsView>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.analytics(&user, source).await)
+    reply(deps.service.analytics(&user, source).await)
 }
 
 /// Item image bytes. Immutable and cacheable for a year: image URLs carry
@@ -805,13 +775,13 @@ pub async fn get_image(
     RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
     ValidQuery(query): ValidQuery<ImageQuery>,
-) -> Result<Response, RemotesError> {
+) -> Result<Response, ApiError> {
     let source = parse_source(&source)?;
     let (bytes, content_type) = deps
         .service
         .image(&user, source, id, query.clamped())
         .await
-        .map_err(|failure| render(failure, deps.ids.as_ref()))?;
+        .map_err(render)?;
     bytes_response(
         source,
         bytes,
@@ -831,13 +801,13 @@ pub async fn get_playlist_cover(
     RemotesUser(user): RemotesUser,
     Path((source, id)): Path<(String, String)>,
     ValidQuery(query): ValidQuery<ImageQuery>,
-) -> Result<Response, RemotesError> {
+) -> Result<Response, ApiError> {
     let source = parse_source(&source)?;
     let (bytes, content_type) = deps
         .service
         .playlist_cover(&user, source, id, query.clamped())
         .await
-        .map_err(|failure| render(failure, deps.ids.as_ref()))?;
+        .map_err(render)?;
     bytes_response(source, bytes, &content_type, "private, no-store")
 }
 
@@ -868,7 +838,7 @@ fn bytes_response(
     bytes: Vec<u8>,
     content_type: &str,
     cache_control: &'static str,
-) -> Result<Response, RemotesError> {
+) -> Result<Response, ApiError> {
     let Some(content_type) = image_content_type(content_type) else {
         let sent: String = content_type.chars().take(100).collect();
         tracing::warn!(
@@ -876,7 +846,7 @@ fn bytes_response(
             content_type = %sent,
             "remote image has a content type that is not an image, treating it as missing"
         );
-        return Err(RemotesError::NotFound);
+        return Err(ApiError::not_found());
     };
     Ok((
         StatusCode::OK,
@@ -909,12 +879,9 @@ pub async fn match_album(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidQuery(query): ValidQuery<MatchQuery>,
-) -> Result<Json<MatchView>, RemotesError> {
+) -> Result<Json<MatchView>, ApiError> {
     let source = parse_source(&source)?;
-    reply(
-        &deps,
-        deps.service.match_album(&user, source, query.mbid).await,
-    )
+    reply(deps.service.match_album(&user, source, query.mbid).await)
 }
 
 /// Connection status for one source. Never carries credential material.
@@ -926,9 +893,9 @@ pub async fn get_connection(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
-) -> Result<Json<ConnectionStatus>, RemotesError> {
+) -> Result<Json<ConnectionStatus>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.connection(&user, source).await)
+    reply(deps.service.connection(&user, source).await)
 }
 
 /// Link the caller's own Navidrome or Jellyfin account. The password is
@@ -943,13 +910,13 @@ pub async fn put_connection(
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
     ValidJson(payload): ValidJson<ConnectionSave>,
-) -> Result<Json<ConnectionStatus>, RemotesError> {
+) -> Result<Json<ConnectionStatus>, ApiError> {
     let source = parse_source(&source)?;
     let login = AccountLogin {
         username: payload.username,
         password: payload.password,
     };
-    reply(&deps, deps.service.connect(&user, source, login).await)
+    reply(deps.service.connect(&user, source, login).await)
 }
 
 /// Remove the caller's own link for one source.
@@ -961,9 +928,9 @@ pub async fn delete_connection(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     Path(source): Path<String>,
-) -> Result<Json<ConnectionStatus>, RemotesError> {
+) -> Result<Json<ConnectionStatus>, ApiError> {
     let source = parse_source(&source)?;
-    reply(&deps, deps.service.disconnect(&user, source).await)
+    reply(deps.service.disconnect(&user, source).await)
 }
 
 /// Navidrome folder preference resolution for the caller.
@@ -973,8 +940,8 @@ pub async fn delete_connection(
 pub async fn get_folders(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
-) -> Result<Json<FolderResolutionView>, RemotesError> {
-    reply(&deps, deps.service.folders(&user).await)
+) -> Result<Json<FolderResolutionView>, ApiError> {
+    reply(deps.service.folders(&user).await)
 }
 
 /// Save the Navidrome folder preference.
@@ -986,9 +953,8 @@ pub async fn put_folders(
     State(deps): State<RemotesDeps>,
     RemotesUser(user): RemotesUser,
     ValidJson(payload): ValidJson<FolderSave>,
-) -> Result<Json<FolderResolutionView>, RemotesError> {
+) -> Result<Json<FolderResolutionView>, ApiError> {
     reply(
-        &deps,
         deps.service
             .save_folders(&user, &payload.mode, &payload.selected_folder_ids)
             .await,

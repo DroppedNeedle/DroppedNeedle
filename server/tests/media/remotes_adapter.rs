@@ -37,19 +37,6 @@ use remotes::service::RemotesService;
 use serde_json::Value;
 use tower::ServiceExt as _;
 
-/// Fixed error id for leak-envelope assertions. A valid UUID.
-const FIXED_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
-
-/// Id generator returning one fixed value.
-#[derive(Debug, Clone)]
-struct FixedIdGenerator;
-
-impl droppedneedle_kernel::ids::IdGenerator for FixedIdGenerator {
-    fn new_id(&self) -> String {
-        FIXED_ID.to_owned()
-    }
-}
-
 fn test_crypto() -> Crypto {
     Crypto::from_key_bytes(&[9u8; 32]).expect("test key builds")
 }
@@ -79,7 +66,6 @@ fn deps_for(rig: &AuthRig, servers: FixedServers) -> RemotesDeps {
             Arc::new(MemoryImportSink::new()),
         ),
         auth: rig.deps.clone(),
-        ids: Arc::new(FixedIdGenerator),
     }
 }
 
@@ -850,6 +836,57 @@ async fn routes_report_unconfigured_sources() {
     let (status, body) = get_json(app, "/remotes/plex/hub").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(error_code(&body), "REMOTE_NOT_CONFIGURED");
+}
+
+/// A media server that refuses connections answers the closed-list
+/// `REMOTE_UNAVAILABLE` through the whole app: the session gate and the rate
+/// limiter pass the cause on to the request boundary, which writes the body.
+#[tokio::test]
+async fn routes_answer_remote_unavailable_when_the_server_is_down() {
+    let app = crate::common::TestApp::start("remotes-down").await;
+    let auth = app.login_admin().await;
+    let closed = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("loopback binds");
+    let plex_url = format!("http://{}", closed.local_addr().expect("has an address"));
+    drop(closed);
+    let (status, body) = app
+        .call(
+            "PUT",
+            "/api/v3/settings/plex",
+            &[("authorization", auth.as_str())],
+            Some(serde_json::json!({
+                "plex_url": plex_url,
+                "plex_token": PLEX_TOKEN,
+                "enabled": true,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (status, headers, bytes) = app
+        .raw(
+            "GET",
+            "/api/v3/remotes/plex/albums",
+            &[
+                ("authorization", auth.as_str()),
+                ("x-request-id", "remote-down-1"),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(headers.get("x-request-id").unwrap(), "remote-down-1");
+    let body: Value = serde_json::from_slice(&bytes).expect("body is json");
+    assert_eq!(
+        body,
+        serde_json::json!({"error": {
+            "code": "REMOTE_UNAVAILABLE",
+            "message": "Your media server did not answer or returned an error.",
+            "details": {"error_id": "remote-down-1"},
+        }})
+    );
+    app.stop().await;
 }
 
 #[tokio::test]
