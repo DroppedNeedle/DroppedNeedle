@@ -49,12 +49,12 @@ impl LibraryPolicyService {
         self.catalog
             .as_deref()
             .ok_or_else(|| SettingsError::Unavailable {
-                message: "Library policy previews need the catalog database.".to_owned(),
+                cause: "Library policy previews need the catalog database.".to_owned(),
             })
     }
 
     fn catalog_error(&self, cause: String) -> SettingsError {
-        SettingsError::internal(&cause, self.settings.ids.as_ref())
+        SettingsError::internal(&cause)
     }
 
     /// Run `op` on the blocking pool with the saved settings normalized.
@@ -70,10 +70,9 @@ impl LibraryPolicyService {
         });
         match task.await {
             Ok(result) => result,
-            Err(cause) => Err(SettingsError::internal(
-                &format!("library policy task failed: {cause}"),
-                self.settings.ids.as_ref(),
-            )),
+            Err(cause) => Err(SettingsError::internal(&format!(
+                "library policy task failed: {cause}"
+            ))),
         }
     }
 

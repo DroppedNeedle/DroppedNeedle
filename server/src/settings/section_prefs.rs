@@ -18,7 +18,6 @@ use sqlx::{Row as _, SqlitePool};
 use super::models::{SectionPrefItem, SectionPrefsResponse, SectionPrefsUpdate};
 use droppedneedle_auth::users::stores::{LastFmStore, StoreError};
 use droppedneedle_kernel::db::{Lane, WriteLane};
-use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Visible pages.
@@ -476,7 +475,6 @@ impl SectionPrefsStore for SqliteSectionPrefsStore {
 pub async fn page(
     store: &dyn SectionPrefsStore,
     links: &dyn LinkStatus,
-    ids: &dyn IdGenerator,
     user_id: &str,
     page: &str,
     lastfm_master: bool,
@@ -484,7 +482,7 @@ pub async fn page(
     let disabled = store
         .get_disabled(user_id, page)
         .await
-        .map_err(|cause| SettingsError::internal(&cause.to_string(), ids))?;
+        .map_err(|cause| SettingsError::internal(&cause.to_string()))?;
     let listenbrainz = links.is_listenbrainz_linked(user_id).await;
     let lastfm = lastfm_master && links.is_lastfm_linked(user_id).await;
     let availability: HashMap<&str, bool> = HashMap::from([
@@ -514,7 +512,6 @@ pub async fn page(
 pub async fn full_response(
     store: &dyn SectionPrefsStore,
     links: &dyn LinkStatus,
-    ids: &dyn IdGenerator,
     user_id: &str,
     lastfm_master: bool,
 ) -> Result<SectionPrefsResponse, SettingsError> {
@@ -522,7 +519,7 @@ pub async fn full_response(
     for page_key in PAGES {
         pages.insert(
             (*page_key).to_owned(),
-            page(store, links, ids, user_id, page_key, lastfm_master).await?,
+            page(store, links, user_id, page_key, lastfm_master).await?,
         );
     }
     Ok(SectionPrefsResponse { pages })
@@ -536,7 +533,6 @@ pub async fn full_response(
 pub async fn save_page(
     store: &dyn SectionPrefsStore,
     links: &dyn LinkStatus,
-    ids: &dyn IdGenerator,
     user_id: &str,
     update: &SectionPrefsUpdate,
     lastfm_master: bool,
@@ -573,8 +569,8 @@ pub async fn save_page(
     store
         .set_disabled(user_id, &update.page, &disabled)
         .await
-        .map_err(|cause| SettingsError::internal(&cause.to_string(), ids))?;
-    page(store, links, ids, user_id, &update.page, lastfm_master).await
+        .map_err(|cause| SettingsError::internal(&cause.to_string()))?;
+    page(store, links, user_id, &update.page, lastfm_master).await
 }
 
 /// In-memory disabled sets, one per user page. Test wiring only: the

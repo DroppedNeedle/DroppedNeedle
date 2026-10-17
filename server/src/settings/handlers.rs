@@ -28,6 +28,8 @@ use super::models::{
 };
 use super::wiring::{AdminUser, SettingsSetup};
 use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::runtime_config::Masked;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     EventsSettings, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
@@ -39,7 +41,7 @@ use droppedneedle_kernel::runtime_config::sections::{
     LibraryManagementProfile, LibraryScanSchedule, LyricsSettings, PrimaryMusicSource,
     PublicAddress, ScrobbleSettings, SecuritySettings, UserPreferences, WantedWatcher,
 };
-use droppedneedle_kernel::runtime_config::settings_error::{SettingsError, ValidJson, ValidQuery};
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::management::settings::{ActivationHealth, ChangeImpact, PresetDiff};
 use droppedneedle_library::settings_models::{
     LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
@@ -48,7 +50,7 @@ use droppedneedle_library::settings_models::{
     LibraryPolicyImpactResponse, LibraryPolicyTreeResponse, LibrarySettingsResponse,
 };
 
-type JsonResult<T> = Result<Json<T>, SettingsError>;
+type JsonResult<T> = Result<Json<T>, ApiError>;
 
 // --- plain sections ------------------------------------------------------------
 
@@ -60,7 +62,7 @@ type JsonResult<T> = Result<Json<T>, SettingsError>;
     responses((status = 200, description = "Release-type filters", body = UserPreferences))
 )]
 pub async fn get_preferences(State(settings): State<SettingsSetup>) -> JsonResult<UserPreferences> {
-    settings.service().get().map(Json)
+    settings.service().get().map(Json).map_err(ApiError::from)
 }
 
 /// Save the release-type filters.
@@ -75,7 +77,12 @@ pub async fn put_preferences(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<UserPreferences>,
 ) -> JsonResult<UserPreferences> {
-    settings.service().save(body).await.map(Json)
+    settings
+        .service()
+        .save(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the scan schedule plus the server timezone label.
@@ -88,7 +95,11 @@ pub async fn put_preferences(
 pub async fn get_schedule(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<LibraryScanScheduleResponse> {
-    settings.service().get_schedule().map(Json)
+    settings
+        .service()
+        .get_schedule()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the scan schedule.
@@ -103,7 +114,12 @@ pub async fn put_schedule(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<LibraryScanSchedule>,
 ) -> JsonResult<LibraryScanScheduleResponse> {
-    settings.service().save_schedule(body).await.map(Json)
+    settings
+        .service()
+        .save_schedule(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the filesystem poller knobs.
@@ -114,7 +130,7 @@ pub async fn put_schedule(
     responses((status = 200, description = "Filesystem poller knobs", body = FilesystemWatcher))
 )]
 pub async fn get_watcher(State(settings): State<SettingsSetup>) -> JsonResult<FilesystemWatcher> {
-    settings.service().get().map(Json)
+    settings.service().get().map(Json).map_err(ApiError::from)
 }
 
 /// Save the filesystem poller knobs.
@@ -129,7 +145,12 @@ pub async fn put_watcher(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<FilesystemWatcher>,
 ) -> JsonResult<FilesystemWatcher> {
-    settings.service().save(body).await.map(Json)
+    settings
+        .service()
+        .save(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the scrobble targets.
@@ -140,7 +161,7 @@ pub async fn put_watcher(
     responses((status = 200, description = "Scrobble targets", body = ScrobbleSettings))
 )]
 pub async fn get_scrobble(State(settings): State<SettingsSetup>) -> JsonResult<ScrobbleSettings> {
-    settings.service().get().map(Json)
+    settings.service().get().map(Json).map_err(ApiError::from)
 }
 
 /// Save the scrobble targets.
@@ -155,7 +176,12 @@ pub async fn put_scrobble(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<ScrobbleSettings>,
 ) -> JsonResult<ScrobbleSettings> {
-    settings.service().save(body).await.map(Json)
+    settings
+        .service()
+        .save(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the online lyrics lookup switch.
@@ -168,7 +194,7 @@ pub async fn put_scrobble(
 pub async fn get_lyrics_settings(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<LyricsSettings> {
-    settings.service().get().map(Json)
+    settings.service().get().map(Json).map_err(ApiError::from)
 }
 
 /// Save the online lyrics lookup switch.
@@ -183,7 +209,12 @@ pub async fn put_lyrics_settings(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<LyricsSettings>,
 ) -> JsonResult<LyricsSettings> {
-    settings.service().save(body).await.map(Json)
+    settings
+        .service()
+        .save(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the primary music source.
@@ -196,7 +227,7 @@ pub async fn put_lyrics_settings(
 pub async fn get_primary_source(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<PrimaryMusicSource> {
-    settings.service().get().map(Json)
+    settings.service().get().map(Json).map_err(ApiError::from)
 }
 
 /// Save the primary music source.
@@ -211,7 +242,12 @@ pub async fn put_primary_source(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<PrimaryMusicSource>,
 ) -> JsonResult<PrimaryMusicSource> {
-    settings.service().save(body).await.map(Json)
+    settings
+        .service()
+        .save(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the Last.fm switch and the instance app key pair (masked unless
@@ -225,7 +261,11 @@ pub async fn put_primary_source(
 pub async fn get_lastfm(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<Masked<LastFmSettings>> {
-    settings.service().get_masked().map(Json)
+    settings
+        .service()
+        .get_masked()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the Last.fm switch and the instance app key pair (a masked value
@@ -241,7 +281,12 @@ pub async fn put_lastfm(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<LastFmSettings>>,
 ) -> JsonResult<Masked<LastFmSettings>> {
-    settings.service().save_masked(body).await.map(Json)
+    settings
+        .service()
+        .save_masked(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the store-region settings.
@@ -252,7 +297,7 @@ pub async fn put_lastfm(
     responses((status = 200, description = "Store-region settings", body = GetIt))
 )]
 pub async fn get_get_it(State(settings): State<SettingsSetup>) -> JsonResult<GetIt> {
-    settings.service().get().map(Json)
+    settings.service().get().map(Json).map_err(ApiError::from)
 }
 
 /// Save the store-region settings.
@@ -267,7 +312,12 @@ pub async fn put_get_it(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<GetIt>,
 ) -> JsonResult<GetIt> {
-    settings.service().save(body).await.map(Json)
+    settings
+        .service()
+        .save(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the edition preferences.
@@ -280,7 +330,7 @@ pub async fn put_get_it(
 pub async fn get_edition_preferences(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<EditionPreferences> {
-    settings.service().get().map(Json)
+    settings.service().get().map(Json).map_err(ApiError::from)
 }
 
 /// Save the edition preferences.
@@ -295,7 +345,12 @@ pub async fn put_edition_preferences(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<EditionPreferences>,
 ) -> JsonResult<EditionPreferences> {
-    settings.service().save(body).await.map(Json)
+    settings
+        .service()
+        .save(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the home page settings.
@@ -307,7 +362,7 @@ pub async fn put_edition_preferences(
     responses((status = 200, description = "Home page settings", body = HomeSettings))
 )]
 pub async fn get_home(State(settings): State<SettingsSetup>) -> JsonResult<HomeSettings> {
-    settings.service().get().map(Json)
+    settings.service().get().map(Json).map_err(ApiError::from)
 }
 
 /// Save the home page settings. The save clears the cached home rows.
@@ -325,7 +380,12 @@ pub async fn put_home(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<HomeSettings>,
 ) -> JsonResult<HomeSettings> {
-    settings.service().save(body).await.map(Json)
+    settings
+        .service()
+        .save(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the security posture settings.
@@ -336,7 +396,7 @@ pub async fn put_home(
     responses((status = 200, description = "Security settings", body = SecuritySettings))
 )]
 pub async fn get_security(State(settings): State<SettingsSetup>) -> JsonResult<SecuritySettings> {
-    settings.service().get().map(Json)
+    settings.service().get().map(Json).map_err(ApiError::from)
 }
 
 /// Save the security posture settings.
@@ -351,7 +411,12 @@ pub async fn put_security(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<SecuritySettings>,
 ) -> JsonResult<SecuritySettings> {
-    settings.service().save(body).await.map(Json)
+    settings
+        .service()
+        .save(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Check the submitted HIBP hash-list path (must exist and start with
@@ -367,7 +432,12 @@ pub async fn verify_hibp(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<SecuritySettings>,
 ) -> JsonResult<VerifyConnectionResponse> {
-    settings.service().verify_hibp(body).await.map(Json)
+    settings
+        .service()
+        .verify_hibp(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the addresses stated as this server's own.
@@ -380,7 +450,7 @@ pub async fn verify_hibp(
 pub async fn get_public_address(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<PublicAddress> {
-    settings.service().get().map(Json)
+    settings.service().get().map(Json).map_err(ApiError::from)
 }
 
 /// Replace the addresses stated as this server's own. The session origin
@@ -399,7 +469,12 @@ pub async fn put_public_address(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<PublicAddress>,
 ) -> JsonResult<PublicAddress> {
-    settings.service().save(body).await.map(Json)
+    settings
+        .service()
+        .save(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the inbound Connect Apps config.
@@ -410,7 +485,7 @@ pub async fn put_public_address(
     responses((status = 200, description = "Connect Apps config", body = ConnectApps))
 )]
 pub async fn get_connect_apps(State(settings): State<SettingsSetup>) -> JsonResult<ConnectApps> {
-    settings.service().get().map(Json)
+    settings.service().get().map(Json).map_err(ApiError::from)
 }
 
 /// Save the inbound Connect Apps config.
@@ -425,7 +500,12 @@ pub async fn put_connect_apps(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<ConnectApps>,
 ) -> JsonResult<ConnectApps> {
-    settings.service().save(body).await.map(Json)
+    settings
+        .service()
+        .save(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the wanted watcher toggles.
@@ -436,7 +516,7 @@ pub async fn put_connect_apps(
     responses((status = 200, description = "Wanted watcher toggles", body = WantedWatcher))
 )]
 pub async fn get_wanted(State(settings): State<SettingsSetup>) -> JsonResult<WantedWatcher> {
-    settings.service().get().map(Json)
+    settings.service().get().map(Json).map_err(ApiError::from)
 }
 
 /// Save the wanted watcher toggles.
@@ -451,7 +531,12 @@ pub async fn put_wanted(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<WantedWatcher>,
 ) -> JsonResult<WantedWatcher> {
-    settings.service().save(body).await.map(Json)
+    settings
+        .service()
+        .save(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the acquisition source try-order.
@@ -464,7 +549,11 @@ pub async fn put_wanted(
 pub async fn get_source_priority(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<SourcePriorityOrder> {
-    settings.service().get_source_priority().map(Json)
+    settings
+        .service()
+        .get_source_priority()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the acquisition source try-order.
@@ -484,6 +573,7 @@ pub async fn put_source_priority(
         .save_source_priority(body)
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the active Usenet search backend.
@@ -496,7 +586,11 @@ pub async fn put_source_priority(
 pub async fn get_search_backend(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<UsenetSearchBackend> {
-    settings.service().get_usenet_backend().map(Json)
+    settings
+        .service()
+        .get_usenet_backend()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the active Usenet search backend. Unknown values are a 400.
@@ -511,7 +605,12 @@ pub async fn put_search_backend(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<UsenetSearchBackend>,
 ) -> JsonResult<UsenetSearchBackend> {
-    settings.service().save_usenet_backend(body).await.map(Json)
+    settings
+        .service()
+        .save_usenet_backend(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 // --- library settings -------------------------------------------------------------
@@ -526,7 +625,12 @@ pub async fn put_search_backend(
 pub async fn get_library(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<LibrarySettingsResponse> {
-    settings.service().get_library().await.map(Json)
+    settings
+        .service()
+        .get_library()
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the typed library settings. The expected revision must match
@@ -547,7 +651,12 @@ pub async fn put_library(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<LibrarySettingsSaveRequest>,
 ) -> JsonResult<LibrarySettingsResponse> {
-    settings.library_policy().save(body).await.map(Json)
+    settings
+        .library_policy()
+        .save(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Add one library root path. The path must be a directory on this
@@ -568,6 +677,7 @@ pub async fn add_library_path(
         .add_library_path(&body.path)
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Remove every library root at one path. Unknown paths are a silent
@@ -591,6 +701,7 @@ pub async fn remove_library_path(
         .remove_path(&query.path)
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// The saved roots and their path rules as a tree, with catalog file
@@ -604,7 +715,12 @@ pub async fn remove_library_path(
 pub async fn get_library_policy_tree(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<LibraryPolicyTreeResponse> {
-    settings.library_policy().policy_tree().await.map(Json)
+    settings
+        .library_policy()
+        .policy_tree()
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Preview what saving candidate library settings would change. Nothing
@@ -628,6 +744,7 @@ pub async fn preview_library_policy_impact(
         .preview_impact(body)
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Preview a reconcile of saved policy scopes: how many catalog files
@@ -653,6 +770,7 @@ pub async fn preview_library_policy_apply(
         .preview_apply(body)
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Roots the catalog still holds tracks for that the settings no longer
@@ -669,7 +787,12 @@ pub async fn preview_library_policy_apply(
 pub async fn get_restorable_library_roots(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<LibraryRestorableRootsResponse> {
-    settings.library_policy().restorable_roots().await.map(Json)
+    settings
+        .library_policy()
+        .restorable_roots()
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Put every removed root back into the settings.
@@ -694,6 +817,7 @@ pub async fn restore_library_roots(
         .restore_roots(body)
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Dry run: map every catalog file path to a saved root.
@@ -709,7 +833,12 @@ pub async fn restore_library_roots(
 pub async fn get_library_path_mapping(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<LibraryPathMappingReport> {
-    settings.library_policy().path_mapping().await.map(Json)
+    settings
+        .library_policy()
+        .path_mapping()
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 // --- advanced + cache TTLs ---------------------------------------------------------
@@ -724,7 +853,11 @@ pub async fn get_library_path_mapping(
 pub async fn get_advanced(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<AdvancedSettingsForm> {
-    settings.service().get_advanced().map(Json)
+    settings
+        .service()
+        .get_advanced()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the advanced tunables. Unknown fields are a 400: the shape is a
@@ -740,7 +873,12 @@ pub async fn put_advanced(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<AdvancedSettingsForm>,
 ) -> JsonResult<AdvancedSettingsForm> {
-    settings.service().save_advanced(body).await.map(Json)
+    settings
+        .service()
+        .save_advanced(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the frontend cache TTLs in stored units (milliseconds).
@@ -753,7 +891,11 @@ pub async fn put_advanced(
 pub async fn get_cache_ttls(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<FrontendCacheTTLs> {
-    settings.service().get_cache_ttls().map(Json)
+    settings
+        .service()
+        .get_cache_ttls()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 // --- connections (secret sections) --------------------------------------------------
@@ -768,7 +910,11 @@ pub async fn get_cache_ttls(
 pub async fn get_jellyfin(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<Masked<JellyfinConnection>> {
-    settings.service().get_masked().map(Json)
+    settings
+        .service()
+        .get_masked()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the Jellyfin connection (a masked key keeps the stored one).
@@ -783,7 +929,12 @@ pub async fn put_jellyfin(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<JellyfinConnection>>,
 ) -> JsonResult<Masked<JellyfinConnection>> {
-    settings.service().save_masked(body).await.map(Json)
+    settings
+        .service()
+        .save_masked(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Test the submitted Jellyfin values (a masked key tests the stored
@@ -799,7 +950,12 @@ pub async fn verify_jellyfin(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<JellyfinConnection>>,
 ) -> JsonResult<JellyfinVerifyResponse> {
-    settings.service().verify_jellyfin(body).await.map(Json)
+    settings
+        .service()
+        .verify_jellyfin(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the Navidrome connection (password masked unless unset).
@@ -812,7 +968,11 @@ pub async fn verify_jellyfin(
 pub async fn get_navidrome(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<Masked<NavidromeConnection>> {
-    settings.service().get_masked().map(Json)
+    settings
+        .service()
+        .get_masked()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the Navidrome connection (a masked password keeps the stored one).
@@ -827,7 +987,12 @@ pub async fn put_navidrome(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<NavidromeConnection>>,
 ) -> JsonResult<Masked<NavidromeConnection>> {
-    settings.service().save_masked(body).await.map(Json)
+    settings
+        .service()
+        .save_masked(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Test the submitted Navidrome values (a masked password tests the
@@ -843,7 +1008,12 @@ pub async fn verify_navidrome(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<NavidromeConnection>>,
 ) -> JsonResult<VerifyConnectionResponse> {
-    settings.service().verify_navidrome(body).await.map(Json)
+    settings
+        .service()
+        .verify_navidrome(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the Plex connection (token masked unless unset).
@@ -854,7 +1024,11 @@ pub async fn verify_navidrome(
     responses((status = 200, description = "Plex connection", body = PlexConnection))
 )]
 pub async fn get_plex(State(settings): State<SettingsSetup>) -> JsonResult<Masked<PlexConnection>> {
-    settings.service().get_masked().map(Json)
+    settings
+        .service()
+        .get_masked()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the Plex connection (a masked token keeps the stored one).
@@ -869,7 +1043,12 @@ pub async fn put_plex(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<PlexConnection>>,
 ) -> JsonResult<Masked<PlexConnection>> {
-    settings.service().save_masked(body).await.map(Json)
+    settings
+        .service()
+        .save_masked(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Test the submitted Plex values (a masked token tests the stored
@@ -885,7 +1064,12 @@ pub async fn verify_plex(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<PlexConnection>>,
 ) -> JsonResult<PlexVerifyResponse> {
-    settings.service().verify_plex(body).await.map(Json)
+    settings
+        .service()
+        .verify_plex(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// List Plex music libraries over the stored connection. Unconfigured
@@ -903,7 +1087,12 @@ pub async fn verify_plex(
 pub async fn get_plex_libraries(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<Vec<PlexLibrarySectionInfo>> {
-    settings.service().plex_libraries().await.map(Json)
+    settings
+        .service()
+        .plex_libraries()
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the ListenBrainz connection (token masked unless unset).
@@ -916,7 +1105,11 @@ pub async fn get_plex_libraries(
 pub async fn get_listenbrainz(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<Masked<ListenBrainzConnection>> {
-    settings.service().get_masked().map(Json)
+    settings
+        .service()
+        .get_masked()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the ListenBrainz connection (a masked token keeps the stored one).
@@ -931,7 +1124,12 @@ pub async fn put_listenbrainz(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<ListenBrainzConnection>>,
 ) -> JsonResult<Masked<ListenBrainzConnection>> {
-    settings.service().save_masked(body).await.map(Json)
+    settings
+        .service()
+        .save_masked(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Test the submitted ListenBrainz values (a masked token tests the
@@ -950,7 +1148,12 @@ pub async fn verify_listenbrainz(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<ListenBrainzConnection>>,
 ) -> JsonResult<VerifyConnectionResponse> {
-    settings.service().verify_listenbrainz(body).await.map(Json)
+    settings
+        .service()
+        .verify_listenbrainz(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the YouTube connection (key masked unless unset).
@@ -963,7 +1166,11 @@ pub async fn verify_listenbrainz(
 pub async fn get_youtube(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<Masked<YouTubeConnection>> {
-    settings.service().get_masked().map(Json)
+    settings
+        .service()
+        .get_masked()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the YouTube connection (a masked key keeps the stored one).
@@ -978,7 +1185,12 @@ pub async fn put_youtube(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<YouTubeConnection>>,
 ) -> JsonResult<Masked<YouTubeConnection>> {
-    settings.service().save_masked(body).await.map(Json)
+    settings
+        .service()
+        .save_masked(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Test the submitted YouTube key (a masked key tests the stored one).
@@ -993,7 +1205,12 @@ pub async fn verify_youtube(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<YouTubeConnection>>,
 ) -> JsonResult<VerifyConnectionResponse> {
-    settings.service().verify_youtube(body).await.map(Json)
+    settings
+        .service()
+        .verify_youtube(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the events sources (keys masked unless unset).
@@ -1006,7 +1223,11 @@ pub async fn verify_youtube(
 pub async fn get_events(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<Masked<EventsSettings>> {
-    settings.service().get_masked().map(Json)
+    settings
+        .service()
+        .get_masked()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the events sources (masked keys keep the stored ones) and kick
@@ -1022,7 +1243,12 @@ pub async fn put_events(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<EventsSettings>>,
 ) -> JsonResult<Masked<EventsSettings>> {
-    settings.service().save_masked(body).await.map(Json)
+    settings
+        .service()
+        .save_masked(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Test the submitted Ticketmaster key (a masked key tests the stored one).
@@ -1037,7 +1263,12 @@ pub async fn test_ticketmaster(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<EventsSettings>>,
 ) -> JsonResult<VerifyConnectionResponse> {
-    settings.service().verify_ticketmaster(body).await.map(Json)
+    settings
+        .service()
+        .verify_ticketmaster(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Test the submitted Skiddle key (a masked key tests the stored one).
@@ -1052,7 +1283,12 @@ pub async fn test_skiddle(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<EventsSettings>>,
 ) -> JsonResult<VerifyConnectionResponse> {
-    settings.service().verify_skiddle(body).await.map(Json)
+    settings
+        .service()
+        .verify_skiddle(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the wrapped settings (key masked unless unset).
@@ -1065,7 +1301,11 @@ pub async fn test_skiddle(
 pub async fn get_wrapped(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<Masked<WrappedSettings>> {
-    settings.service().get_masked().map(Json)
+    settings
+        .service()
+        .get_masked()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the wrapped settings (a masked key keeps the stored one).
@@ -1080,7 +1320,12 @@ pub async fn put_wrapped(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<WrappedSettings>>,
 ) -> JsonResult<Masked<WrappedSettings>> {
-    settings.service().save_masked(body).await.map(Json)
+    settings
+        .service()
+        .save_masked(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the OIDC connection (secret masked unless unset).
@@ -1091,7 +1336,11 @@ pub async fn put_wrapped(
     responses((status = 200, description = "OIDC connection", body = OidcConnection))
 )]
 pub async fn get_oidc(State(settings): State<SettingsSetup>) -> JsonResult<Masked<OidcConnection>> {
-    settings.service().get_masked().map(Json)
+    settings
+        .service()
+        .get_masked()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the OIDC connection (a masked secret keeps the stored one).
@@ -1106,7 +1355,12 @@ pub async fn put_oidc(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<OidcConnection>>,
 ) -> JsonResult<Masked<OidcConnection>> {
-    settings.service().save_masked(body).await.map(Json)
+    settings
+        .service()
+        .save_masked(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Test the submitted OIDC issuer (fetches its discovery document).
@@ -1121,7 +1375,12 @@ pub async fn verify_oidc(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<OidcConnection>>,
 ) -> JsonResult<VerifyConnectionResponse> {
-    settings.service().verify_oidc(body).await.map(Json)
+    settings
+        .service()
+        .verify_oidc(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the slskd connection (key masked unless unset).
@@ -1134,7 +1393,11 @@ pub async fn verify_oidc(
 pub async fn get_slskd(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<Masked<SlskdConnection>> {
-    settings.service().get_masked().map(Json)
+    settings
+        .service()
+        .get_masked()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the slskd connection (a masked key keeps the stored one).
@@ -1149,7 +1412,12 @@ pub async fn put_slskd(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<SlskdConnection>>,
 ) -> JsonResult<Masked<SlskdConnection>> {
-    settings.service().save_masked(body).await.map(Json)
+    settings
+        .service()
+        .save_masked(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Test the submitted slskd values (a masked key tests the stored one).
@@ -1164,7 +1432,12 @@ pub async fn test_slskd(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<SlskdConnection>>,
 ) -> JsonResult<TestConnectionResponse> {
-    settings.service().verify_slskd(body).await.map(Json)
+    settings
+        .service()
+        .verify_slskd(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the SABnzbd connection (key masked unless unset).
@@ -1177,7 +1450,11 @@ pub async fn test_slskd(
 pub async fn get_sabnzbd(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<Masked<SabnzbdConnection>> {
-    settings.service().get_sabnzbd().map(Json)
+    settings
+        .service()
+        .get_sabnzbd()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the SABnzbd connection (a masked key keeps the stored one).
@@ -1192,7 +1469,12 @@ pub async fn put_sabnzbd(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<SabnzbdConnection>>,
 ) -> JsonResult<Masked<SabnzbdConnection>> {
-    settings.service().save_sabnzbd(body).await.map(Json)
+    settings
+        .service()
+        .save_sabnzbd(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Test the submitted SABnzbd values (a masked key tests the stored
@@ -1208,7 +1490,12 @@ pub async fn test_sabnzbd(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<SabnzbdConnection>>,
 ) -> JsonResult<SabnzbdTestResponse> {
-    settings.service().verify_sabnzbd(body).await.map(Json)
+    settings
+        .service()
+        .verify_sabnzbd(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Read the Prowlarr connection (key masked unless unset).
@@ -1221,7 +1508,11 @@ pub async fn test_sabnzbd(
 pub async fn get_prowlarr(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<Masked<ProwlarrConnection>> {
-    settings.service().get_masked().map(Json)
+    settings
+        .service()
+        .get_masked()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the Prowlarr connection (a masked key keeps the stored one).
@@ -1236,7 +1527,12 @@ pub async fn put_prowlarr(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<ProwlarrConnection>>,
 ) -> JsonResult<Masked<ProwlarrConnection>> {
-    settings.service().save_masked(body).await.map(Json)
+    settings
+        .service()
+        .save_masked(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Test the submitted Prowlarr values (a masked key tests the stored one).
@@ -1251,7 +1547,12 @@ pub async fn test_prowlarr(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<ProwlarrConnection>>,
 ) -> JsonResult<ProwlarrTestResponse> {
-    settings.service().verify_prowlarr(body).await.map(Json)
+    settings
+        .service()
+        .verify_prowlarr(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 // --- download policy --------------------------------------------------------------
@@ -1264,7 +1565,11 @@ pub async fn test_prowlarr(
     responses((status = 200, description = "Acquisition policy", body = DownloadPolicyView))
 )]
 pub async fn get_policy(State(settings): State<SettingsSetup>) -> JsonResult<DownloadPolicyView> {
-    settings.service().get_policy().map(Json)
+    settings
+        .service()
+        .get_policy()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the acquisition policy. Read-only verdict fields in the body are
@@ -1280,7 +1585,12 @@ pub async fn put_policy(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<DownloadPolicy>,
 ) -> JsonResult<DownloadPolicyView> {
-    settings.service().save_policy(body).await.map(Json)
+    settings
+        .service()
+        .save_policy(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Safe policy summary for the settings page: the contract sentence
@@ -1294,7 +1604,11 @@ pub async fn put_policy(
 pub async fn get_policy_summary(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<PolicySummaryResponse> {
-    settings.service().policy_summary().map(Json)
+    settings
+        .service()
+        .policy_summary()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Impact preview of an unsaved policy body against persisted rows.
@@ -1316,13 +1630,14 @@ pub async fn post_policy_impact(
     let buckets = settings
         .buckets()
         .ok_or_else(|| SettingsError::Unavailable {
-            message: "Policy impact needs the database.".to_owned(),
+            cause: "Policy impact needs the database.".to_owned(),
         })?;
     settings
         .service()
         .policy_impact(buckets.as_ref(), body)
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 // --- indexers ---------------------------------------------------------------------
@@ -1337,7 +1652,11 @@ pub async fn post_policy_impact(
 pub async fn list_indexers(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<Vec<Masked<NewznabIndexer>>> {
-    settings.service().list_indexers().map(Json)
+    settings
+        .service()
+        .list_indexers()
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save one indexer (create when the id is blank, else update).
@@ -1352,7 +1671,12 @@ pub async fn create_indexer(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<NewznabIndexer>>,
 ) -> JsonResult<IndexerSavedResponse> {
-    settings.service().save_indexer(body, None).await.map(Json)
+    settings
+        .service()
+        .save_indexer(body, None)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save one indexer; the path id wins over the body id.
@@ -1374,6 +1698,7 @@ pub async fn update_indexer(
         .save_indexer(body, Some(id))
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Delete one indexer. Unknown ids are a silent no-op.
@@ -1424,7 +1749,12 @@ pub async fn test_indexer(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<NewznabIndexer>>,
 ) -> JsonResult<IndexerTestResponse> {
-    settings.service().verify_indexer(body).await.map(Json)
+    settings
+        .service()
+        .verify_indexer(body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 // --- musicbrainz + brainzmash -------------------------------------------------------
@@ -1439,7 +1769,7 @@ pub async fn test_indexer(
 pub async fn get_musicbrainz(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<MusicBrainzSettingsView> {
-    settings.lifecycle().get().map(Json)
+    settings.lifecycle().get().map(Json).map_err(ApiError::from)
 }
 
 /// Persist one normalized source change (BrainzMash moves through the
@@ -1455,7 +1785,12 @@ pub async fn put_musicbrainz(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<MusicBrainzSettingsUpdate>,
 ) -> JsonResult<MusicBrainzSettingsView> {
-    settings.lifecycle().save_update(&body).await.map(Json)
+    settings
+        .lifecycle()
+        .save_update(&body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Stage a BrainzMash proposal without probing upstream.
@@ -1473,6 +1808,7 @@ pub async fn stage_brainzmash(
         .stage()
         .await
         .map(|(view, _)| Json(view))
+        .map_err(ApiError::from)
 }
 
 /// Record consent for the exact staged proposal. A stale proposal or
@@ -1496,6 +1832,7 @@ pub async fn consent_brainzmash(
         .lifecycle()
         .consent(&body, &admin.user_id)
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Verify a BrainzMash binding or probe a plain tier. A failed probe is
@@ -1520,6 +1857,7 @@ pub async fn verify_musicbrainz(
         .verify(settings.service().probes(), &body)
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Promote the exact verified proposal to the active binding.
@@ -1537,7 +1875,12 @@ pub async fn activate_brainzmash(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<MusicBrainzBindingRequest>,
 ) -> JsonResult<MusicBrainzSettingsView> {
-    settings.lifecycle().activate(&body).await.map(Json)
+    settings
+        .lifecycle()
+        .activate(&body)
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 // --- library management -------------------------------------------------------------
@@ -1556,6 +1899,7 @@ pub async fn get_library_management(
         .management(|service| service.get_settings())
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Save the Library Management settings under CAS. Giving an automatic
@@ -1581,6 +1925,7 @@ pub async fn put_library_management(
         })
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Dry-run activation health for the active automatic roots.
@@ -1597,6 +1942,7 @@ pub async fn get_library_management_activation_health(
         .management(|service| service.activation_health())
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Classify a candidate without saving it.
@@ -1617,6 +1963,7 @@ pub async fn preview_library_management_impact(
         })
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Validate a candidate: the same check and verdict as the impact
@@ -1651,6 +1998,7 @@ pub async fn get_library_management_profile(
         .management(move |service| service.get_profile(&profile_id))
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Create a profile as a copy of the default profile.
@@ -1675,6 +2023,7 @@ pub async fn create_library_management_profile(
         })
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Copy one profile under a new name.
@@ -1697,6 +2046,7 @@ pub async fn copy_library_management_profile(
         })
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Replace one profile. The body id must match the path id.
@@ -1719,6 +2069,7 @@ pub async fn update_library_management_profile(
         })
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Delete one custom profile that is neither the default nor assigned.
@@ -1741,6 +2092,7 @@ pub async fn delete_library_management_profile(
         })
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Which groups of a preset-tracking profile differ from the preset.
@@ -1759,6 +2111,7 @@ pub async fn get_library_management_preset_diff(
         .management(move |service| service.preset_diff(&profile_id))
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Export one profile as a share bundle.
@@ -1781,6 +2134,7 @@ pub async fn export_library_management_profile(
         })
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Preview importing a shared profile (document or share code).
@@ -1801,6 +2155,7 @@ pub async fn preview_library_management_profile_import(
         })
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 /// Import a reviewed shared profile.
@@ -1829,6 +2184,7 @@ pub async fn import_library_management_profile(
         })
         .await
         .map(Json)
+        .map_err(ApiError::from)
 }
 
 // --- dropped sections (410) ------------------------------------------------------
@@ -1870,7 +2226,7 @@ pub async fn get_section_prefs(
     Extension(session): Extension<CurrentSession>,
 ) -> JsonResult<SectionPrefsResponse> {
     let prefs = settings.prefs().ok_or_else(|| SettingsError::Unavailable {
-        message: "Section prefs need the database.".to_owned(),
+        cause: "Section prefs need the database.".to_owned(),
     })?;
     let lastfm_master = settings
         .service()
@@ -1880,12 +2236,12 @@ pub async fn get_section_prefs(
     super::section_prefs::full_response(
         prefs.store.as_ref(),
         prefs.links.as_ref(),
-        &*settings.service().ids,
         &session.user_id,
         lastfm_master,
     )
     .await
     .map(Json)
+    .map_err(ApiError::from)
 }
 
 /// Replace one page of the caller's section prefs. Unknown pages and
@@ -1906,7 +2262,7 @@ pub async fn put_section_prefs(
     ValidJson(body): ValidJson<SectionPrefsUpdate>,
 ) -> JsonResult<SectionPrefsResponse> {
     let prefs = settings.prefs().ok_or_else(|| SettingsError::Unavailable {
-        message: "Section prefs need the database.".to_owned(),
+        cause: "Section prefs need the database.".to_owned(),
     })?;
     let lastfm_master = settings
         .service()
@@ -1916,7 +2272,6 @@ pub async fn put_section_prefs(
     let items = super::section_prefs::save_page(
         prefs.store.as_ref(),
         prefs.links.as_ref(),
-        &*settings.service().ids,
         &session.user_id,
         &body,
         lastfm_master,

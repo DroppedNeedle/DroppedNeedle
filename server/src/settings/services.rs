@@ -51,7 +51,7 @@ pub struct SettingsService {
     pub store: Arc<ConfigStore>,
     /// Post-save fan-out.
     pub effects: Arc<dyn SaveEffects>,
-    /// Error-id mint.
+    /// Id mint for new library roots.
     pub ids: Arc<dyn IdGenerator>,
     /// `TZ` from the deployment config, when set.
     pub timezone: Option<String>,
@@ -89,7 +89,7 @@ impl SettingsService {
     }
 
     fn config(&self, error: ConfigError) -> SettingsError {
-        SettingsError::from_config(error, self.ids.as_ref())
+        SettingsError::from_config(error)
     }
 
     /// Run one store write on the blocking pool (it writes and fsyncs the
@@ -102,10 +102,9 @@ impl SettingsService {
         let store = self.store.clone();
         match tokio::task::spawn_blocking(move || op(&store)).await {
             Ok(result) => result.map_err(|error| self.config(error)),
-            Err(cause) => Err(SettingsError::internal(
-                &format!("settings write task failed: {cause}"),
-                self.ids.as_ref(),
-            )),
+            Err(cause) => Err(SettingsError::internal(&format!(
+                "settings write task failed: {cause}"
+            ))),
         }
     }
 
@@ -274,11 +273,10 @@ impl SettingsService {
     /// pool.
     pub async fn get_library(&self) -> Result<LibrarySettingsResponse, SettingsError> {
         let store = self.store.clone();
-        let ids = self.ids.clone();
         self.library_blocking(move || {
             let stored = store
                 .get_masked::<TypedLibrary>()
-                .map_err(|error| SettingsError::from_config(error, ids.as_ref()))?;
+                .map_err(SettingsError::from_config)?;
             let resolved = stored.map(|library| library_policy::resolve_stored(&library));
             Ok(library_policy::settings_response(resolved))
         })
@@ -384,7 +382,6 @@ impl SettingsService {
         F: FnOnce(TypedLibrary) -> Result<TypedLibrary, SettingsError> + Send + 'static,
     {
         let store = self.store.clone();
-        let ids = self.ids.clone();
         let response = self
             .library_blocking(move || {
                 let saved = store
@@ -393,9 +390,7 @@ impl SettingsService {
                     })
                     .map_err(|error| match error {
                         UpdateError::Rejected(error) => error,
-                        UpdateError::Config(error) => {
-                            SettingsError::from_config(error, ids.as_ref())
-                        }
+                        UpdateError::Config(error) => SettingsError::from_config(error),
                     })?;
                 let resolved = saved.try_map(|library| library_policy::resolve(&library))?;
                 Ok(library_policy::settings_response(resolved))
@@ -414,10 +409,9 @@ impl SettingsService {
     {
         match tokio::task::spawn_blocking(op).await {
             Ok(result) => result,
-            Err(cause) => Err(SettingsError::internal(
-                &format!("library settings task failed: {cause}"),
-                self.ids.as_ref(),
-            )),
+            Err(cause) => Err(SettingsError::internal(&format!(
+                "library settings task failed: {cause}"
+            ))),
         }
     }
 
@@ -535,7 +529,7 @@ impl SettingsService {
         let counts = buckets
             .counts()
             .await
-            .map_err(|cause| SettingsError::internal(&cause, self.ids.as_ref()))?;
+            .map_err(|cause| SettingsError::internal(&cause))?;
         Ok(PolicyImpactResponse {
             manual_search_jobs: counts.manual_search_jobs,
             queued_without_attempts: counts.queued_without_attempts,
@@ -657,7 +651,7 @@ impl SettingsService {
                 if message == "Plex is not configured." {
                     SettingsError::InvalidInput { message }
                 } else {
-                    SettingsError::Upstream { message }
+                    SettingsError::Upstream { cause: message }
                 }
             })?;
         Ok(plex_sections(libraries))
@@ -740,10 +734,7 @@ impl SettingsService {
             tokio::task::spawn_blocking(move || check_hibp_file(&security.hibp_local_path))
                 .await
                 .map_err(|cause| {
-                    SettingsError::internal(
-                        &format!("hibp check task failed: {cause}"),
-                        self.ids.as_ref(),
-                    )
+                    SettingsError::internal(&format!("hibp check task failed: {cause}"))
                 })?;
         Ok(verdict_response(verdict.valid, verdict.message))
     }

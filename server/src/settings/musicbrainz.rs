@@ -20,7 +20,6 @@ use super::models::{
 };
 use super::verify::{VerifyProbes, require_service_url};
 use crate::bootstrap::Outbound;
-use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::sections::{
     BRAINZMASH_CONCURRENT_SEARCHES, BRAINZMASH_ENDPOINT, BRAINZMASH_RATE_LIMIT, MbSourceMode,
@@ -97,8 +96,6 @@ pub struct MusicBrainzLifecycle {
     pub op: Mutex<()>,
     /// Transient pending proposal.
     pub pending: Mutex<Option<PendingProposal>>,
-    /// Error-id mint.
-    pub ids: std::sync::Arc<dyn IdGenerator>,
     /// Post-save fan-out (source changes invalidate the cache root).
     pub effects: std::sync::Arc<dyn SaveEffects>,
     /// Where the two built-in sources are probed.
@@ -106,11 +103,10 @@ pub struct MusicBrainzLifecycle {
 }
 
 impl MusicBrainzLifecycle {
-    /// Build over the shared store, ids, and save fan-out. `outbound`
+    /// Build over the shared store and save fan-out. `outbound`
     /// says where the two built-in sources are probed.
     pub fn new(
         store: std::sync::Arc<ConfigStore>,
-        ids: std::sync::Arc<dyn IdGenerator>,
         effects: std::sync::Arc<dyn SaveEffects>,
         outbound: Outbound,
     ) -> Self {
@@ -118,22 +114,18 @@ impl MusicBrainzLifecycle {
             store,
             op: Mutex::new(()),
             pending: Mutex::new(None),
-            ids,
             effects,
             outbound,
         }
     }
 
     fn config(&self, error: droppedneedle_kernel::runtime_config::ConfigError) -> SettingsError {
-        SettingsError::from_config(error, self.ids.as_ref())
+        SettingsError::from_config(error)
     }
 
     fn begin_op(&self) -> Result<std::sync::MutexGuard<'_, ()>, SettingsError> {
         self.op.lock().map_err(|cause| {
-            SettingsError::internal(
-                &format!("musicbrainz lifecycle lock poisoned: {cause}"),
-                self.ids.as_ref(),
-            )
+            SettingsError::internal(&format!("musicbrainz lifecycle lock poisoned: {cause}"))
         })
     }
 
@@ -157,10 +149,7 @@ impl MusicBrainzLifecycle {
         &self,
     ) -> Result<std::sync::MutexGuard<'_, Option<PendingProposal>>, SettingsError> {
         self.pending.lock().map_err(|cause| {
-            SettingsError::internal(
-                &format!("musicbrainz proposal lock poisoned: {cause}"),
-                self.ids.as_ref(),
-            )
+            SettingsError::internal(&format!("musicbrainz proposal lock poisoned: {cause}"))
         })
     }
 
@@ -513,7 +502,7 @@ impl MusicBrainzLifecycle {
                 let verdict = probes.musicbrainz(&self.outbound.brainzmash).await;
                 if !verdict.valid {
                     return Err(SettingsError::Upstream {
-                        message: verdict.message,
+                        cause: verdict.message,
                     });
                 }
                 if !self.proposal_is_current(binding) {
@@ -546,7 +535,7 @@ impl MusicBrainzLifecycle {
                 let verdict = probes.musicbrainz(&api_url).await;
                 if !verdict.valid {
                     return Err(SettingsError::Upstream {
-                        message: verdict.message,
+                        cause: verdict.message,
                     });
                 }
                 self.get()

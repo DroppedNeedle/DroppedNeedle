@@ -20,7 +20,6 @@ use uuid::Uuid;
 use super::invalid;
 use super::normalize::normalize;
 use super::script::ScriptCompiler;
-use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::sections::{
     ArtistStandardization, ArtworkProvider, FieldMode, LibraryManagement, LibraryManagementProfile,
     Mp3ApePolicy, NamingScript, RawAacTagPolicy, ReplayGainMode, SourceCleanupMode, TaggingScript,
@@ -258,7 +257,6 @@ pub fn export_profile_bundle(
     profile: &LibraryManagementProfile,
     naming_scripts: &[NamingScript],
     tagging_scripts: &[TaggingScript],
-    ids: &dyn IdGenerator,
 ) -> Result<EncodedProfileBundle, SettingsError> {
     let naming_by_id: BTreeMap<&str, &NamingScript> = naming_scripts
         .iter()
@@ -337,13 +335,13 @@ pub fn export_profile_bundle(
         "checksum": format!("sha256:{digest}"),
     });
     let mut document = serde_json::to_string_pretty(&document_value)
-        .map_err(|cause| SettingsError::internal(&cause, ids))?;
+        .map_err(|cause| SettingsError::internal(&cause))?;
     document.push('\n');
     if document.len() > MAX_PROFILE_BUNDLE_BYTES {
         return Err(invalid("This profile is too large to share."));
     }
     let canonical = bundle_canonical_json(&document_value);
-    let share_code = encode_share_code(canonical.as_bytes(), ids)?;
+    let share_code = encode_share_code(canonical.as_bytes())?;
     if share_code.len() > MAX_PROFILE_SHARE_CODE_CHARS {
         return Err(invalid(
             "This profile is too large to encode as a share code.",
@@ -358,17 +356,17 @@ pub fn export_profile_bundle(
 
 /// Compress a canonical document into a share code (zlib level 9,
 /// base64url without padding, behind the `DNLP1:` prefix).
-fn encode_share_code(document: &[u8], ids: &dyn IdGenerator) -> Result<String, SettingsError> {
+fn encode_share_code(document: &[u8]) -> Result<String, SettingsError> {
     use base64::Engine;
     use flate2::{Compression, write::ZlibEncoder};
     use std::io::Write;
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
     encoder
         .write_all(document)
-        .map_err(|cause| SettingsError::internal(&cause, ids))?;
+        .map_err(|cause| SettingsError::internal(&cause))?;
     let compressed = encoder
         .finish()
-        .map_err(|cause| SettingsError::internal(&cause, ids))?;
+        .map_err(|cause| SettingsError::internal(&cause))?;
     Ok(format!(
         "{PROFILE_SHARE_CODE_PREFIX}{}",
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&compressed)

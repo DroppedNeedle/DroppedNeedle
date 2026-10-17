@@ -88,10 +88,8 @@ fn golden_tagging() -> Vec<TaggingScript> {
 
 #[test]
 fn export_matches_v2_golden_bytes() {
-    let ids = FixedIdGenerator::new(common::FIXED_ID);
-    let bundle =
-        export_profile_bundle(&golden_profile(), &golden_naming(), &golden_tagging(), &ids)
-            .expect("golden profile exports");
+    let bundle = export_profile_bundle(&golden_profile(), &golden_naming(), &golden_tagging())
+        .expect("golden profile exports");
     assert_eq!(
         bundle.bundle_hash,
         "c901f186baa1376804a62f00d254a781967a46682fe60f42bff0f57275896045"

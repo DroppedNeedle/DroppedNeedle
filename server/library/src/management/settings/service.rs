@@ -65,7 +65,6 @@ const STALE_SETTINGS: &str =
 /// Library Management operations over the config store.
 pub struct LibraryManagementService {
     store: Arc<ConfigStore>,
-    ids: Arc<dyn IdGenerator>,
     compiler: Arc<dyn ScriptCompiler>,
     /// Serializes read-compare-write so two saves with the same expected
     /// revision cannot both land.
@@ -73,31 +72,27 @@ pub struct LibraryManagementService {
 }
 
 impl LibraryManagementService {
-    /// Build over the shared store, the error-id mint, and a script
-    /// compiler.
+    /// Build over the shared store and a script compiler. `_ids` is no
+    /// longer read: errors carry their cause to the request boundary.
     pub fn new(
         store: Arc<ConfigStore>,
-        ids: Arc<dyn IdGenerator>,
+        _ids: Arc<dyn IdGenerator>,
         compiler: Arc<dyn ScriptCompiler>,
     ) -> Self {
         Self {
             store,
-            ids,
             compiler,
             write: Mutex::new(()),
         }
     }
 
     fn config(&self, error: droppedneedle_kernel::runtime_config::ConfigError) -> SettingsError {
-        SettingsError::from_config(error, self.ids.as_ref())
+        SettingsError::from_config(error)
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, ()>, SettingsError> {
         self.write.lock().map_err(|cause| {
-            SettingsError::internal(
-                &format!("library management write lock poisoned: {cause}"),
-                self.ids.as_ref(),
-            )
+            SettingsError::internal(&format!("library management write lock poisoned: {cause}"))
         })
     }
 
@@ -460,12 +455,8 @@ impl LibraryManagementService {
         let settings = self.load()?;
         let settings_revision = self.require_current(&settings, expected_settings_revision)?;
         let profile = find_profile(&settings, profile_id)?;
-        let bundle = export_profile_bundle(
-            profile,
-            &settings.naming_scripts,
-            &settings.tagging_scripts,
-            self.ids.as_ref(),
-        )?;
+        let bundle =
+            export_profile_bundle(profile, &settings.naming_scripts, &settings.tagging_scripts)?;
         Ok(LibraryManagementProfileExportResponse {
             filename: profile_bundle_filename(&profile.name),
             mime_type: PROFILE_BUNDLE_MIME_TYPE.to_owned(),

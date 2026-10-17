@@ -35,6 +35,7 @@ use droppedneedle_auth::{
     session::middleware::CurrentSession,
     users::{UsersDeps, roles::Role},
 };
+use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
@@ -113,12 +114,7 @@ impl SettingsSetup {
             policy: Arc::new(LibraryPolicyService::new(service.clone(), None)),
             service,
             users,
-            lifecycle: Arc::new(MusicBrainzLifecycle::new(
-                store.clone(),
-                ids.clone(),
-                effects,
-                outbound,
-            )),
+            lifecycle: Arc::new(MusicBrainzLifecycle::new(store.clone(), effects, outbound)),
             management: Arc::new(LibraryManagementService::new(
                 store,
                 ids,
@@ -245,10 +241,9 @@ impl SettingsSetup {
         let management = self.management.clone();
         match tokio::task::spawn_blocking(move || op(&management)).await {
             Ok(result) => result,
-            Err(cause) => Err(SettingsError::internal(
-                &format!("library management task failed: {cause}"),
-                &*self.service.ids,
-            )),
+            Err(cause) => Err(SettingsError::internal(&format!(
+                "library management task failed: {cause}"
+            ))),
         }
     }
 
@@ -525,28 +520,20 @@ async fn require_admin(
     mut request: Request,
     next: Next,
 ) -> Response {
-    let missing = || SettingsError::Unauthorized {
-        message: "Authentication required".to_owned(),
-    };
+    let missing = || ApiError::unauthorized("Authentication required").into_response();
     let Some(session) = request.extensions().get::<CurrentSession>().cloned() else {
-        return missing().into_response();
+        return missing();
     };
     let user = match settings.users.users.get_by_id(&session.user_id).await {
         Ok(Some(user)) => user,
-        Ok(None) => return missing().into_response(),
+        Ok(None) => return missing(),
         Err(error) => {
-            return SettingsError::internal(
-                &format!("settings gate lookup failed: {error}"),
-                &*settings.service.ids,
-            )
-            .into_response();
+            return ApiError::internal(format_args!("settings gate lookup failed: {error}"))
+                .into_response();
         }
     };
     if user.role != Role::Admin {
-        return SettingsError::Forbidden {
-            message: "Admin role required".to_owned(),
-        }
-        .into_response();
+        return ApiError::forbidden("Admin role required").into_response();
     }
     request
         .extensions_mut()
