@@ -1728,31 +1728,456 @@ async fn history_orders_page_like_one_sort() {
     assert_eq!(recent, ["al1", "al5", "al2", "al3"]);
 }
 
+/// Per album, whether it is played for the listener whose track values
+/// are `by_track`: it has an indexed track, and every indexed track on it
+/// has a play count above 0.
+async fn rule_played(
+    pool: &SqlitePool,
+    by_track: &HashMap<String, (u64, Option<i64>)>,
+) -> HashMap<String, bool> {
+    let tracks: Vec<(String, String, bool)> =
+        sqlx::query_as("SELECT id, local_album_id, availability = 'indexed' FROM local_tracks")
+            .fetch_all(pool)
+            .await
+            .expect("tracks read");
+    let mut played: HashMap<String, bool> = HashMap::new();
+    let mut indexed: HashMap<String, bool> = HashMap::new();
+    for (track, album, streamable) in tracks {
+        if !streamable {
+            continue;
+        }
+        indexed.insert(album.clone(), true);
+        let counted = by_track.get(&track).is_some_and(|(count, _)| *count > 0);
+        let entry = played.entry(album).or_insert(true);
+        *entry = *entry && counted;
+    }
+    played.retain(|album, _| indexed.contains_key(album));
+    played
+}
+
+/// The album play summary holds, for every listener with a play or a mark,
+/// exactly the albums whose play count by the rule is above 0, with the
+/// rule's count, last play (milliseconds) and played flag, and no row for
+/// anyone else; every album's `has_indexed_track` says whether it has an
+/// indexed track.
+async fn assert_album_summary(pool: &SqlitePool, step: &str) {
+    let users: Vec<String> = sqlx::query_scalar(
+        "SELECT user_id FROM library_play_history \
+         UNION SELECT user_id FROM library_user_play_marks",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("listeners read");
+    for user in &users {
+        let (by_track, by_album) = rule_values(pool, user).await;
+        let played = rule_played(pool, &by_track).await;
+        let mut expected: Vec<(String, i64, Option<i64>, bool)> = by_album
+            .into_iter()
+            .filter(|(_, (count, _))| *count > 0)
+            .map(|(album, (count, last))| {
+                let flag = played.get(&album).copied().unwrap_or(false);
+                (album, count as i64, last.map(|at| at * 1000), flag)
+            })
+            .collect();
+        expected.sort();
+        let got: Vec<(String, i64, Option<i64>, bool)> = sqlx::query_as(
+            "SELECT local_album_id, plays, last_played_at, played \
+             FROM library_user_album_plays WHERE user_id = ? ORDER BY local_album_id",
+        )
+        .bind(user)
+        .fetch_all(pool)
+        .await
+        .expect("summary reads");
+        assert_eq!(got, expected, "{step}: {user}");
+    }
+    let others: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM library_user_album_plays WHERE user_id NOT IN \
+         (SELECT user_id FROM library_play_history \
+          UNION SELECT user_id FROM library_user_play_marks)",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("summary reads");
+    assert_eq!(others, 0, "{step}: rows for no listener");
+    let wrong: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM local_albums a WHERE has_indexed_track IS NOT EXISTS \
+         (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \
+          AND t.availability = 'indexed')",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("albums read");
+    assert!(
+        wrong.is_empty(),
+        "{step}: has_indexed_track wrong on {wrong:?}"
+    );
+}
+
+/// A track row on the small fixture's root, for the summary steps.
+fn track_values(id: &str, album: &str, availability: &str) -> String {
+    format!(
+        "('{id}', '{album}', 'r1', '/m/{id}.flac', '{id}.flac', 'h-{id}', 1000, 1, 's-{id}', \
+         '{id}', '{id}', 'Aurora', 'aurora', 'x', 'x', 'Aurora', 'aurora', 1, 1, 2001, 100.0, \
+         'flac', '{availability}', 'scan', 3000.0, 'automatic')"
+    )
+}
+
+const TRACK_INSERT: &str = "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, \
+     relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+     artist_name, artist_name_folded, album_title, album_title_folded, album_artist_name, \
+     album_artist_name_folded, disc_number, track_number, year, duration_seconds, file_format, \
+     availability, ingest_source, imported_at, membership_source) VALUES ";
+
+/// A play recorded the way playback records one: the track's album and
+/// first credited artist looked up with it, all empty for an unknown track.
+fn recorded_play(id: &str, user: &str, track: &str, at: &str) -> String {
+    format!(
+        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         local_artist_id, track_name, artist_name, album_name, recording_mbid, \
+         release_group_mbid, duration_ms, source, played_at) \
+         SELECT '{id}', '{user}', t.id, t.local_album_id, \
+         COALESCE((SELECT x.local_artist_id FROM local_track_artists x \
+                   WHERE x.local_track_id = t.id ORDER BY x.position LIMIT 1), a.album_artist_id), \
+         'x', 'x', NULL, NULL, NULL, NULL, NULL, '{at}' \
+         FROM (SELECT 1) LEFT JOIN local_tracks t ON t.id = '{track}' \
+         LEFT JOIN local_albums a ON a.id = t.local_album_id;"
+    )
+}
+
+/// A mark as a Jellyfin app sets one: `tracks` selects the track ids it
+/// covers, `at` is the server's time in milliseconds.
+fn marked(user: &str, tracks: &str, played: bool, at: i64) -> String {
+    let (values, update) = if played {
+        ("?2, NULL", "marked_played_at = excluded.marked_played_at")
+    } else {
+        (
+            "NULL, ?2",
+            "marked_unplayed_at = excluded.marked_unplayed_at, marked_played_at = NULL",
+        )
+    };
+    let values = values.replace("?2", &at.to_string());
+    format!(
+        "INSERT INTO library_user_play_marks \
+         (user_id, local_track_id, marked_played_at, marked_unplayed_at) \
+         SELECT '{user}', id, {values} FROM ({tracks}) WHERE true \
+         ON CONFLICT (user_id, local_track_id) DO UPDATE SET {update};"
+    )
+}
+
+/// The album play summary and `has_indexed_track` equal the rule worked
+/// out from the plays, marks and tracks after every kind of write that
+/// changes them, each in the shape of the statement that makes it.
+#[tokio::test]
+async fn album_play_summary_follows_every_write() {
+    let fixture = seed_small().await;
+    let pool = &fixture.pool;
+    let flag = |user: &'static str, album: &'static str| async move {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT played FROM library_user_album_plays WHERE user_id = ? AND local_album_id = ?",
+        )
+        .bind(user)
+        .bind(album)
+        .fetch_optional(pool)
+        .await
+        .expect("summary reads")
+    };
+
+    // Plays with a track, with only an album, in every v2 time form, and
+    // marks.
+    seed_small_plays(&fixture).await;
+    seed_small_marks(&fixture).await;
+    assert_album_summary(pool, "seeded").await;
+
+    // A new play, and one of a track the library does not have.
+    let sql = recorded_play("new-1", "u2", "t9", "2026-02-01T00:00:00+00:00")
+        + &recorded_play("new-2", "u2", "nope", "2026-02-01T00:00:01+00:00");
+    write_batch(&fixture, "summary new play", sql).await;
+    assert_album_summary(pool, "new play").await;
+
+    // Plays that named nothing, filed by the repair (three ids at once)
+    // and by the import's link step (the track, then the album).
+    write_batch(
+        &fixture,
+        "summary loose plays",
+        "INSERT INTO library_play_history (id, user_id, track_name, artist_name, played_at) \
+         VALUES ('loose-1', 'u2', 'x', 'x', '2026-02-02T00:00:00Z'), \
+         ('loose-2', 'u3', 'x', 'x', '2026-02-03 08:00:00'); \
+         UPDATE library_play_history SET local_track_id = t.id, \
+         local_album_id = t.local_album_id, \
+         local_artist_id = COALESCE((SELECT x.local_artist_id FROM local_track_artists x \
+                                     WHERE x.local_track_id = t.id ORDER BY x.position LIMIT 1), \
+                                    a.album_artist_id) \
+         FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
+         WHERE t.id = 't1' \
+         AND library_play_history.rowid = (SELECT rowid FROM library_play_history \
+                                           WHERE id = 'loose-1') \
+         AND library_play_history.local_track_id IS NULL \
+         AND library_play_history.local_album_id IS NULL \
+         AND library_play_history.local_artist_id IS NULL; \
+         INSERT INTO import_pending_links (target_table, target_key, ref_column, ref_kind, \
+         v2_id, mode) VALUES \
+         ('library_play_history', json_array('loose-2'), 'local_track_id', 'track', 't6', \
+          'until_resolved'), \
+         ('library_play_history', json_array('loose-2'), 'local_album_id', 'album', 'al3', \
+          'until_resolved');"
+            .to_owned(),
+    )
+    .await;
+    assert_album_summary(pool, "repair").await;
+    let fill = |column: &str| {
+        let pending = format!(
+            "FROM main.import_pending_links p WHERE p.target_table = 'library_play_history' \
+             AND p.ref_column = '{column}' AND p.mode = 'until_resolved' \
+             AND p.target_key = json_array(t.\"id\")"
+        );
+        format!(
+            "UPDATE main.\"library_play_history\" AS t SET \"{column}\" = \
+             (SELECT p.v2_id {pending}) WHERE t.\"{column}\" IS NULL AND EXISTS (SELECT 1 {pending})"
+        )
+    };
+    write_batch(&fixture, "summary link track", fill("local_track_id")).await;
+    assert_album_summary(pool, "link fill, track").await;
+    write_batch(&fixture, "summary link album", fill("local_album_id")).await;
+    assert_album_summary(pool, "link fill, album").await;
+
+    // Played and unplayed marks, on one track and on a whole album, and a
+    // listener with marks alone.
+    let one = |id: &str| format!("SELECT id FROM local_tracks WHERE id = '{id}'");
+    let album = |id: &str| {
+        format!(
+            "SELECT id FROM local_tracks WHERE local_album_id = '{id}' \
+             AND id NOT IN (SELECT alias FROM local_track_aliases)"
+        )
+    };
+    let sql = "INSERT INTO auth_users (id, display_name, role, created_at) \
+               VALUES ('u4', 'Four', 'user', 'now');"
+        .to_owned()
+        + &marked("u3", &one("t4"), true, 1_800_000_000_000)
+        + &marked("u1", &album("al2"), false, 1_800_000_001_000)
+        + &marked("u1", &one("t3"), true, 1_800_000_002_000)
+        + &marked("u3", &one("t3"), true, 1_800_000_003_000)
+        + &marked("u4", &album("al3"), true, 1_800_000_004_000);
+    write_batch(&fixture, "summary marks", sql).await;
+    assert_album_summary(pool, "marks").await;
+    write_batch(
+        &fixture,
+        "summary mark again",
+        marked("u1", &album("al2"), true, 1_800_000_005_000),
+    )
+    .await;
+    assert_album_summary(pool, "marked played after unplayed").await;
+
+    // A missing track continues into the track that took its place: its
+    // plays move, one listener's mark moves, another's merges into the
+    // mark already on the new track.
+    let sql = format!("{TRACK_INSERT}{};", track_values("t10", "al1", "indexed"))
+        + &marked("u3", &one("t10"), false, 1_800_000_006_000)
+        + "UPDATE library_play_history SET local_track_id = 't10' WHERE local_track_id = 't3'; \
+           UPDATE library_user_play_marks SET local_track_id = 't10' \
+           WHERE user_id = 'u1' AND local_track_id = 't3'; \
+           UPDATE library_user_play_marks SET marked_played_at = NULL, \
+           marked_unplayed_at = 1800000006000 WHERE user_id = 'u3' AND local_track_id = 't10'; \
+           DELETE FROM library_user_play_marks WHERE user_id = 'u3' AND local_track_id = 't3';";
+    write_batch(&fixture, "summary continuation", sql).await;
+    assert_album_summary(pool, "continuation").await;
+
+    // A track moved to another album by hand, then an album merged into
+    // another: its tracks move, it is retired, and the plays filed under
+    // it with no track follow.
+    write_batch(
+        &fixture,
+        "summary track move",
+        "UPDATE local_tracks SET local_album_id = 'al4', membership_source = 'manual', \
+         membership_locked = 1, row_revision = row_revision + 1 WHERE id IN ('t7')"
+            .to_owned(),
+    )
+    .await;
+    assert_album_summary(pool, "track moved").await;
+    write_batch(
+        &fixture,
+        "summary album merge",
+        "UPDATE local_tracks SET local_album_id = 'al2' WHERE local_album_id = 'al5'; \
+         UPDATE local_albums SET retired_into_album_id = 'al2', grouping_locked = 1, \
+         updated_at = 5000, row_revision = row_revision + 1 WHERE id = 'al5'; \
+         UPDATE library_play_history SET local_album_id = 'al2' WHERE local_album_id = 'al5';"
+            .to_owned(),
+    )
+    .await;
+    assert_album_summary(pool, "album merged").await;
+
+    // A track going missing completes its album, then comes back; the
+    // album is excluded by review and let back in; an update that sets
+    // availability to itself.
+    let sql = "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+               album_artist_name, album_artist_name_folded, album_artist_id, year, \
+               grouping_source, created_at, updated_at) VALUES \
+               ('al6', 'r1', 'g6', 'Sixth', 'sixth', 'Aurora', 'aurora', 'a1', 2001, \
+               'automatic', 3000, 3000);"
+        .to_owned()
+        + &format!(
+            "{TRACK_INSERT}{}, {};",
+            track_values("t11", "al6", "indexed"),
+            track_values("t12", "al6", "indexed")
+        )
+        + &recorded_play("new-3", "u3", "t11", "2026-02-04T00:00:00Z");
+    write_batch(&fixture, "summary sixth album", sql).await;
+    assert_album_summary(pool, "sixth album").await;
+    assert_eq!(flag("u3", "al6").await, Some(false));
+    write_batch(
+        &fixture,
+        "summary missing",
+        "UPDATE local_tracks SET availability = 'missing', missing_since = 4000 \
+         WHERE root_id = 'r1' AND relative_path = 't12.flac' AND availability = 'indexed'"
+            .to_owned(),
+    )
+    .await;
+    assert_album_summary(pool, "missing").await;
+    assert_eq!(flag("u3", "al6").await, Some(true), "its last track went");
+    write_batch(
+        &fixture,
+        "summary back",
+        "UPDATE local_tracks SET availability = 'indexed', missing_since = NULL \
+         WHERE id = 't12'"
+            .to_owned(),
+    )
+    .await;
+    assert_album_summary(pool, "back").await;
+    assert_eq!(flag("u3", "al6").await, Some(false), "the track is back");
+    write_batch(
+        &fixture,
+        "summary excluded",
+        "UPDATE local_tracks SET manual_excluded = 1, \
+         availability = CASE WHEN availability = 'indexed' THEN 'excluded' \
+                        ELSE availability END, \
+         excluded_at = 4100, row_revision = row_revision + 1 \
+         WHERE local_album_id = 'al6' AND manual_excluded = 0"
+            .to_owned(),
+    )
+    .await;
+    assert_album_summary(pool, "excluded").await;
+    write_batch(
+        &fixture,
+        "summary let back in",
+        "UPDATE local_tracks SET manual_excluded = 0, \
+         availability = CASE WHEN availability = 'excluded' AND applied_policy <> 'excluded' \
+                        THEN 'indexed' ELSE availability END, \
+         excluded_at = CASE WHEN applied_policy = 'excluded' THEN excluded_at ELSE NULL END, \
+         row_revision = row_revision + 1 \
+         WHERE manual_excluded = 1 AND local_album_id = 'al6'"
+            .to_owned(),
+    )
+    .await;
+    assert_album_summary(pool, "let back in").await;
+    write_batch(
+        &fixture,
+        "summary no-op",
+        "UPDATE local_tracks SET availability = availability".to_owned(),
+    )
+    .await;
+    assert_album_summary(pool, "no-op").await;
+
+    // A replaced file's track retires (missing, its path hidden), and the
+    // new file's track takes its path on the same album.
+    let sql = "UPDATE local_tracks SET availability = 'missing', missing_since = 4200, \
+               relative_path = '.dn/replaced/t11/t11.flac', file_path = '/m/.dn/t11.flac', \
+               path_hash = 'h-hidden', row_revision = row_revision + 1 \
+               WHERE id = 't11' AND root_id = 'r1' AND relative_path = 't11.flac';"
+        .to_owned()
+        + &format!(
+            "{TRACK_INSERT}{};",
+            track_values("t13", "al6", "indexed").replace("'t13.flac'", "'t11.flac'")
+        );
+    write_batch(&fixture, "summary retire", sql).await;
+    assert_album_summary(pool, "retired").await;
+
+    // A track with only a mark is deleted (the mark goes with it), then
+    // its emptied album.
+    let sql = "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+               album_artist_name, album_artist_name_folded, album_artist_id, year, \
+               grouping_source, created_at, updated_at) VALUES \
+               ('al7', 'r1', 'g7', 'Seventh', 'seventh', 'Aurora', 'aurora', 'a1', 2001, \
+               'automatic', 3000, 3000);"
+        .to_owned()
+        + &format!("{TRACK_INSERT}{};", track_values("t14", "al7", "indexed"))
+        + &marked("u1", &one("t14"), true, 1_800_000_007_000);
+    write_batch(&fixture, "summary seventh album", sql).await;
+    assert_album_summary(pool, "seventh album").await;
+    assert_eq!(flag("u1", "al7").await, Some(true));
+    write_batch(
+        &fixture,
+        "summary track deleted",
+        "DELETE FROM local_tracks WHERE id = 't14'".to_owned(),
+    )
+    .await;
+    assert_album_summary(pool, "track deleted").await;
+    assert_eq!(
+        flag("u1", "al7").await,
+        None,
+        "the mark went with its track"
+    );
+    write_batch(
+        &fixture,
+        "summary album deleted",
+        "DELETE FROM local_albums WHERE id = 'al7'".to_owned(),
+    )
+    .await;
+    assert_album_summary(pool, "album deleted").await;
+
+    // Deleted listeners take their marks and keep their plays.
+    write_batch(
+        &fixture,
+        "summary users deleted",
+        "DELETE FROM auth_users WHERE id IN ('u3', 'u4')".to_owned(),
+    )
+    .await;
+    assert_album_summary(pool, "users deleted").await;
+    let left: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT user_id FROM library_user_album_plays ORDER BY user_id",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("summary reads");
+    assert_eq!(left, ["u1", "u2", "u3"], "u4 had marks alone");
+}
+
 /// Every statement that reads the play history or the marks for Jellyfin
 /// reads them by key alone: the plays through the per-listener index over
 /// listener, track and time, or the small one of plays with an album and
 /// no track, and the marks through their primary key. Neither is ever
 /// scanned, nor is any other table: only subqueries are read whole, and an
-/// unplayed page walks the catalog's ids and stops at the page. This holds
-/// whether the planner has statistics on the history table or not (a fresh
+/// unplayed page walks the catalog's ids and stops at the page. The album
+/// statements read neither: only the listener's album play summary, by its
+/// key or one of its two order indexes, and no album page looks into the
+/// tracks. This holds whether the planner has statistics or not (a fresh
 /// install has none until the daily ANALYZE after the first plays).
 /// Subsonic's album lists and play counts read the plays alone, through
 /// the same two indexes.
 async fn assert_history_plans(pool: &SqlitePool, state: &str) {
     use library::player::{
-        HistorySource, ValueScope, album_page_values_sql, history_albums_sql, play_stats_sql,
-        played_albums_sql, played_tracks_sql, track_values_sql,
+        AlbumOrder, AlbumQuery, HistorySource, ValueScope, album_clause, album_page_sql,
+        album_page_values_sql, history_albums_sql, play_stats_sql, played_albums_sql,
+        played_tracks_sql, track_values_sql,
     };
     const BY_TRACK: &str = "idx_play_history_user_track (user_id=?";
     const NO_TRACK: &str = "idx_play_history_user_album_no_track (user_id=?";
     const MARKS: &str = "sqlite_autoindex_library_user_play_marks_1 (user_id=?";
+    const SUMMARY: [&str; 3] = [
+        "USING PRIMARY KEY (user_id=?",
+        "idx_user_album_plays_last_played (user_id=?",
+        "idx_user_album_plays_count (user_id=?",
+    ];
 
     let listener = ExplainBind::Text(Some("u1"));
     let id = ExplainBind::Text(Some("al1"));
-    let page = |listeners: usize, page: bool| {
-        let mut binds = vec![listener; listeners];
+    let (limit, offset) = (ExplainBind::Int(100), ExplainBind::Int(0));
+    // The listener in every place the statement takes one, and the page
+    // last: a statement's own count of them, so the plans read here are
+    // the statements production runs.
+    let page = |sql: &str, page: bool| {
+        let marks = sql.matches('?').count() - if page { 2 } else { 0 };
+        let mut binds = vec![listener; marks];
         if page {
-            binds.extend([ExplainBind::Int(100), ExplainBind::Int(0)]);
+            binds.extend([limit, offset]);
         }
         binds
     };
@@ -1777,35 +2202,27 @@ async fn assert_history_plans(pool: &SqlitePool, state: &str) {
     let list = ExplainBind::Text(Some("[]"));
     let tracks = HistorySource::tracks("local_tracks t");
     let albums = HistorySource::albums();
-    let (track_rows, album_rows) = (
-        "+t.availability = 'indexed'",
-        "+a.retired_into_album_id IS NULL",
-    );
-    let statements: Vec<(&str, String, Vec<ExplainBind<'_>>)> = vec![
-        (
-            "tracks played by last play",
-            tracks.played_sql(track_rows, "v.played_at", true),
-            page(2, true),
-        ),
-        (
-            "tracks played by play count",
-            tracks.played_sql(track_rows, "v.plays", true),
-            page(2, true),
-        ),
-        (
-            "tracks played count",
-            tracks.played_count_sql(track_rows),
-            vec![list],
-        ),
-        (
-            "tracks unplayed",
-            tracks.unplayed_sql(track_rows, true, false),
-            page(3, true),
-        ),
+    let track_rows = "+t.availability = 'indexed'";
+    // The browsable albums, as every album page filters them.
+    let album_rows = album_clause(&AlbumQuery::default(), None).render();
+    let album_rows = album_rows.as_str();
+    let sql = tracks.played_sql(track_rows, "v.played_at", true);
+    let mut statements: Vec<(&str, String, Vec<ExplainBind<'_>>)> =
+        vec![("tracks played by last play", sql.clone(), page(&sql, true))];
+    let sql = tracks.played_sql(track_rows, "v.plays", true);
+    statements.push(("tracks played by play count", sql.clone(), page(&sql, true)));
+    statements.push((
+        "tracks played count",
+        tracks.played_count_sql(track_rows),
+        vec![list],
+    ));
+    let sql = tracks.unplayed_sql(track_rows, true, false);
+    statements.push(("tracks unplayed", sql.clone(), page(&sql, true)));
+    statements.extend([
         (
             "tracks unplayed after a count",
             tracks.unplayed_sql(track_rows, true, true),
-            vec![list, ExplainBind::Int(100), ExplainBind::Int(0)],
+            vec![list, limit, offset],
         ),
         (
             "tracks unplayed count",
@@ -1813,67 +2230,100 @@ async fn assert_history_plans(pool: &SqlitePool, state: &str) {
             vec![list],
         ),
         (
-            "albums played by last play",
-            albums.played_sql(album_rows, "v.played_at", true),
-            page(3, true),
+            "played tracks",
+            played_tracks_sql(),
+            page(&played_tracks_sql(), false),
         ),
         (
-            "albums played by play count",
-            albums.played_sql(album_rows, "v.plays", true),
-            page(3, true),
+            "played track ids",
+            tracks.played_ids_sql().to_owned(),
+            page(tracks.played_ids_sql(), false),
         ),
         (
-            "albums played count",
-            albums.played_count_sql(album_rows),
-            vec![list],
+            "track values",
+            track_values_sql(ValueScope::Tracks(ids)),
+            with_ids(&[listener, ids_mark], &[listener, ids_mark]),
         ),
-        (
-            "albums unplayed",
-            albums.unplayed_sql(album_rows, true, false),
-            page(4, true),
-        ),
+    ]);
+    let track_statements = statements.len();
+    let sql = albums.played_sql(album_rows, "v.played_at", true);
+    statements.push(("albums played by last play", sql.clone(), page(&sql, true)));
+    let sql = albums.played_sql(album_rows, "v.plays", true);
+    statements.push(("albums played by play count", sql.clone(), page(&sql, true)));
+    statements.push((
+        "albums played count",
+        albums.played_count_sql(album_rows),
+        vec![list],
+    ));
+    let sql = albums.unplayed_sql(album_rows, true, false);
+    statements.push(("albums unplayed", sql.clone(), page(&sql, true)));
+    statements.extend([
         (
             "albums unplayed after a count",
             albums.unplayed_sql(album_rows, true, true),
-            vec![list, ExplainBind::Int(100), ExplainBind::Int(0)],
+            vec![list, limit, offset],
         ),
         (
             "albums unplayed count",
             albums.unplayed_count_sql(album_rows),
             vec![list],
         ),
-        ("played tracks", played_tracks_sql(), page(3, false)),
-        (
-            "played track ids",
-            tracks.played_ids_sql().to_owned(),
-            page(3, false),
-        ),
         (
             "played album ids",
             albums.played_ids_sql().to_owned(),
-            page(4, false),
+            page(albums.played_ids_sql(), false),
         ),
-        ("played albums", played_albums_sql(), page(3, false)),
         (
-            "track values",
-            track_values_sql(ValueScope::Tracks(ids)),
-            with_ids(&[listener, ids_mark], &[listener, ids_mark]),
+            "played albums",
+            played_albums_sql(),
+            page(&played_albums_sql(), false),
         ),
         (
             "album values",
             album_page_values_sql(ids),
-            with_ids(
-                &[ids_mark, listener, ids_mark, listener],
-                &[listener, ids_mark],
-            ),
+            with_ids(&[listener, ids_mark], &[]),
         ),
-    ];
-    for (what, sql, binds) in &statements {
+        (
+            "albums page by title",
+            album_page_sql(album_rows, AlbumOrder::Title),
+            vec![limit, offset],
+        ),
+        (
+            "albums page shuffled",
+            album_page_sql(album_rows, AlbumOrder::Shuffle(7)),
+            vec![limit, offset],
+        ),
+    ]);
+    for (index, (what, sql, binds)) in statements.iter().enumerate() {
         let plan = explain(pool, sql, binds).await;
         let what = format!("{what}, {state}: {plan:?}");
+        let album = index >= track_statements;
         let mut read = (0, 0);
         for line in &plan {
-            if line.starts_with("SEARCH h ") || line.starts_with("SCAN h") {
+            let plays = line.starts_with("SEARCH h ")
+                || line.starts_with("SCAN h")
+                || line.contains("library_play_history");
+            let marks = line.starts_with("SEARCH m ")
+                || line.starts_with("SCAN m")
+                || line.contains("library_user_play_marks");
+            if album {
+                assert!(
+                    !plays && !marks,
+                    "an album statement reads neither plays nor marks: {line}; {what}"
+                );
+                if line.contains("library_user_album_plays") {
+                    assert!(
+                        line.starts_with("SEARCH ") && SUMMARY.iter().any(|key| line.contains(key)),
+                        "the summary is read by the listener's key: {line}; {what}"
+                    );
+                }
+                assert!(
+                    !line.starts_with("SEARCH t "),
+                    "an album statement does not look into the tracks: {line}; {what}"
+                );
+                continue;
+            }
+            if plays {
                 read.0 += 1;
                 assert!(
                     line.starts_with("SEARCH h ")
@@ -1881,7 +2331,7 @@ async fn assert_history_plans(pool: &SqlitePool, state: &str) {
                     "plays are read through a per-listener index: {line}; {what}"
                 );
             }
-            if line.starts_with("SEARCH m ") || line.starts_with("SCAN m") {
+            if marks {
                 read.1 += 1;
                 assert!(
                     line.starts_with("SEARCH m ") && line.contains(MARKS),
@@ -1890,12 +2340,22 @@ async fn assert_history_plans(pool: &SqlitePool, state: &str) {
             }
         }
         // A count, and the half after it, read the played ids the page
-        // read once, as a list.
-        let listed = what.contains("count");
-        assert!(
-            listed || (read.0 > 0 && read.1 > 0),
-            "plays and marks are read: {what}"
-        );
+        // read once, as a list; album pages read no plays.
+        let listed = what.contains("count") || what.contains("page");
+        if album {
+            assert!(
+                listed
+                    || plan
+                        .iter()
+                        .any(|line| line.contains("library_user_album_plays")),
+                "the summary is read: {what}"
+            );
+        } else {
+            assert!(
+                listed || (read.0 > 0 && read.1 > 0),
+                "plays and marks are read: {what}"
+            );
+        }
         let subqueries: Vec<&str> = plan
             .iter()
             .filter_map(|line| {
@@ -1903,17 +2363,17 @@ async fn assert_history_plans(pool: &SqlitePool, state: &str) {
                     .or_else(|| line.strip_prefix("MATERIALIZE "))
             })
             .collect();
-        let unplayed = what.contains("unplayed");
+        let walks = what.contains("unplayed") || what.contains("page");
         assert!(
             plan.iter()
                 .filter_map(|line| line.strip_prefix("SCAN "))
                 .all(|scanned| subqueries.contains(&scanned)
                     || scanned.contains("VIRTUAL TABLE")
-                    || (unplayed && matches!(scanned.split(' ').next(), Some("t" | "a")))),
-            "no table is scanned but the catalog an unplayed half walks: {what}"
+                    || (walks && matches!(scanned.split(' ').next(), Some("t" | "a")))),
+            "no table is scanned but the catalog an unplayed half or a page walks: {what}"
         );
         // The played ids are one list read once.
-        if unplayed && !what.contains("count,") {
+        if what.contains("unplayed") && !what.contains("count,") {
             assert!(
                 !plan
                     .iter()
@@ -1922,12 +2382,22 @@ async fn assert_history_plans(pool: &SqlitePool, state: &str) {
                 "the unplayed page is neither sorted nor probed per row: {what}"
             );
         }
-        if what.contains(" played") && !what.contains("count") {
+        if what.contains(" played by") {
             assert!(
                 plan.iter()
                     .any(|line| line.starts_with("SEARCH t USING")
                         || line.starts_with("SEARCH a USING")),
                 "each played row is looked up by id: {what}"
+            );
+        }
+        // An album's played page walks the order index for its key and
+        // stops at the page.
+        if album && what.contains(" played by") {
+            assert!(
+                !plan
+                    .iter()
+                    .any(|line| line.contains("TEMP B-TREE FOR ORDER BY")),
+                "the played albums are not sorted: {what}"
             );
         }
     }
@@ -1938,7 +2408,7 @@ async fn assert_history_plans(pool: &SqlitePool, state: &str) {
         ("most played", history_albums_sql(true)),
     ];
     for (what, sql) in &subsonic {
-        let plan = explain(pool, sql, &page(2, true)).await;
+        let plan = explain(pool, sql, &page(sql, true)).await;
         let what = format!("albums {what}, {state}: {plan:?}");
         let history: Vec<&String> = plan
             .iter()

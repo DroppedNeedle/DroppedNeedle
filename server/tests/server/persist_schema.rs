@@ -61,13 +61,13 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 160);
+    assert_eq!(table_names(&pool).await.len(), 161);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(triggers, 37);
+    assert_eq!(triggers, 47);
 
     let catalog: (i64, i64) =
         sqlx::query_as("SELECT singleton, value FROM library_catalog_revision")
@@ -3114,6 +3114,199 @@ async fn parked_reidentifications_go_back_to_the_queue() {
         .await
         .unwrap();
     assert!(stamped >= 64 && stamped == latest_version(), "{stamped}");
+}
+
+/// Migration 0065 works out every listener's album play values and each
+/// album's `has_indexed_track` from the plays, marks and tracks already
+/// there, and changes none of them. A play counts for its track's album,
+/// not the album stored on it; a play with an unreadable time counts with
+/// no time; a play with only an album counts for it; a play naming neither
+/// counts for none; a played mark counts once. A play by a user id with no
+/// account keeps its row up to date afterwards.
+#[tokio::test]
+async fn album_play_summary_arrives_worked_out_from_the_plays() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 65)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    let track = |id: &str, album: &str, availability: &str| {
+        format!(
+            "('{id}', '{album}', 'r1', '/m/{id}.flac', '{id}.flac', 'h-{id}', 1, 0, 's', 'T', \
+             't', 'T', 't', 'flac', '{availability}', 'scan', 0, 'automatic')"
+        )
+    };
+    sqlx::raw_sql(&format!(
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
+         ('u1', 'One', 'user', 'now'), ('u2', 'Two', 'user', 'now'); \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('al2', 'r1', 'g2', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('al3', 'r1', 'g3', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, availability, ingest_source, \
+         imported_at, membership_source) VALUES {}, {}, {}; \
+         INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         track_name, artist_name, played_at) VALUES \
+         ('p1', 'u1', 't1', 'al2', 'x', 'x', '2026-01-01T00:00:00+00:00'), \
+         ('p2', 'u1', 't2', 'al1', 'x', 'x', 'not a time'), \
+         ('p3', 'u1', NULL, 'al3', 'x', 'x', '2026-01-03T00:00:00Z'), \
+         ('p4', 'u2', NULL, NULL, 'x', 'x', '2026-01-04T00:00:00Z'), \
+         ('p5', 'u2', 't3', 'al2', 'x', 'x', '2026-01-02 12:00:00'), \
+         ('p6', 'ghost', 't1', 'al1', 'x', 'x', '2026-01-04T00:00:00+00:00'); \
+         INSERT INTO library_user_play_marks (user_id, local_track_id, marked_played_at, \
+         marked_unplayed_at) VALUES ('u2', 't1', 1767312000123, NULL);",
+        track("t1", "al1", "indexed"),
+        track("t2", "al1", "indexed"),
+        track("t3", "al2", "missing"),
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    async fn counts(pool: &SqlitePool) -> (i64, i64, i64) {
+        sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM library_play_history), \
+             (SELECT COUNT(*) FROM library_user_play_marks), (SELECT COUNT(*) FROM local_tracks)",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+    async fn summary(pool: &SqlitePool) -> Vec<(String, String, i64, Option<i64>, i64)> {
+        sqlx::query_as(
+            "SELECT user_id, local_album_id, plays, last_played_at, played \
+             FROM library_user_album_plays ORDER BY user_id, local_album_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    assert_eq!(counts(&pool).await, (6, 1, 3));
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 65 && stamped == latest_version(), "{stamped}");
+    assert_eq!(counts(&pool).await, (6, 1, 3));
+    let flags: Vec<i64> =
+        sqlx::query_scalar("SELECT has_indexed_track FROM local_albums ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(flags, [1, 0, 0]);
+    // Midnight UTC on 2026-01-{day}, in milliseconds.
+    let day = |day: i64| Some((1_767_225_600 + (day - 1) * 86_400) * 1000);
+    let row = |user: &str, album: &str, plays: i64, last: Option<i64>, played: i64| {
+        (user.to_owned(), album.to_owned(), plays, last, played)
+    };
+    assert_eq!(
+        summary(&pool).await,
+        [
+            row("ghost", "al1", 1, day(4), 0),
+            // p1 counts for t1's album; p2 counts with no time.
+            row("u1", "al1", 2, day(1), 1),
+            row("u1", "al3", 1, day(3), 0),
+            // The played mark, in whole seconds, on an album with an
+            // unplayed track.
+            row("u2", "al1", 1, day(2), 0),
+            // A missing track's play: no indexed track, so not played.
+            row("u2", "al2", 1, day(2).map(|at| at + 43_200_000), 0),
+        ]
+    );
+
+    let table = "library_user_album_plays";
+    assert_eq!(
+        column_names(&pool, table).await,
+        [
+            "user_id",
+            "local_album_id",
+            "plays",
+            "last_played_at",
+            "played"
+        ]
+    );
+    let shape: (String, i64, i64) =
+        sqlx::query_as("SELECT type, strict, wr FROM pragma_table_list WHERE name = ?")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(shape, ("table".to_owned(), 1, 1), "STRICT, WITHOUT ROWID");
+    let key: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM pragma_table_info('library_user_album_plays') WHERE pk > 0 ORDER BY pk",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(key, ["user_id", "local_album_id"]);
+    for (index, columns) in [
+        ("idx_user_album_plays_album", "local_album_id"),
+        (
+            "idx_user_album_plays_last_played",
+            "user_id,last_played_at,local_album_id",
+        ),
+        ("idx_user_album_plays_count", "user_id,plays,local_album_id"),
+    ] {
+        let found: String = sqlx::query_scalar(
+            "SELECT group_concat(name, ',') FROM (SELECT name FROM pragma_index_info(?1) \
+             ORDER BY seqno)",
+        )
+        .bind(index)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(found, columns, "{index}");
+    }
+    let keys: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT \"from\", \"table\", on_delete \
+         FROM pragma_foreign_key_list('library_user_album_plays')",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        keys,
+        [(
+            "local_album_id".to_owned(),
+            "local_albums".to_owned(),
+            "CASCADE".to_owned()
+        )]
+    );
+
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         track_name, artist_name, played_at) \
+         VALUES ('p7', 'ghost', 't2', 'al1', 'x', 'x', '2026-01-05T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        summary(&pool).await[0],
+        row("ghost", "al1", 2, day(5), 1),
+        "a play by a user id with no account moves its row"
+    );
 }
 
 /// Every table in the migrated schema is listed once in

@@ -603,7 +603,7 @@ fn like_pattern(raw: &str) -> String {
 
 /// A WHERE clause plus its binds, built from optional filters.
 #[derive(Default)]
-struct Clause {
+pub(super) struct Clause {
     sql: Vec<String>,
     binds: Vec<Bind>,
 }
@@ -619,7 +619,7 @@ impl Clause {
         self.binds.extend(binds);
     }
 
-    fn render(&self) -> String {
+    pub(super) fn render(&self) -> String {
         if self.sql.is_empty() {
             "1 = 1".to_owned()
         } else {
@@ -869,9 +869,6 @@ pub(super) enum ValueScope {
     All,
     /// Some track ids. Binds: the listener, the ids, the listener, the ids.
     Tracks(usize),
-    /// The tracks on some album ids. Binds: the ids, the listener, the ids,
-    /// the listener.
-    Albums(usize),
 }
 
 /// The listener's [`PlayedValues`] per track, one row each with a play
@@ -882,6 +879,10 @@ pub(super) enum ValueScope {
 /// probe per played track. Only a track marked unplayed has its plays read
 /// again, from the same index, for those after the mark. A track marked
 /// played with no play at all comes from the marks by key.
+///
+/// This rule for a track also lives in the refresh of migration 0065, which
+/// keeps the album values in `library_user_album_plays`. Changing it takes a
+/// migration that recreates that refresh and runs its backfill again.
 pub(super) fn track_values_sql(scope: ValueScope) -> String {
     let (plays, marks) = match scope {
         ValueScope::All => (
@@ -893,21 +894,6 @@ pub(super) fn track_values_sql(scope: ValueScope) -> String {
             (
                 format!("FROM {PLAYS} WHERE h.user_id = ? AND h.local_track_id IN ({ids})"),
                 format!("FROM {MARKS} WHERE m.user_id = ? AND m.local_track_id IN ({ids})"),
-            )
-        }
-        ValueScope::Albums(count) => {
-            let ids = placeholders(count);
-            (
-                format!(
-                    "FROM local_tracks pt CROSS JOIN {PLAYS} \
-                     WHERE pt.local_album_id IN ({ids}) AND h.user_id = ? \
-                     AND h.local_track_id = pt.id"
-                ),
-                format!(
-                    "FROM local_tracks pt CROSS JOIN {MARKS} \
-                     WHERE pt.local_album_id IN ({ids}) AND m.user_id = ? \
-                     AND m.local_track_id = pt.id"
-                ),
             )
         }
     };
@@ -955,63 +941,21 @@ pub(super) fn played_tracks_sql() -> String {
     )
 }
 
-/// The ids of the albums that are played for the listener: those with a
-/// streamable track, all of whose streamable tracks are played. Binds: the
-/// listener three times.
+/// The ids of the albums that are played for the listener, from the album
+/// play summary (migration 0065). Binds: the listener.
 pub(super) fn played_albums_sql() -> String {
-    format!(
-        "SELECT pt.local_album_id AS id FROM ({}) p CROSS JOIN local_tracks pt \
-         WHERE pt.id = p.id AND pt.availability = 'indexed' GROUP BY pt.local_album_id \
-         HAVING COUNT(*) = (SELECT COUNT(*) FROM local_tracks c \
-         WHERE c.local_album_id = pt.local_album_id AND c.availability = 'indexed')",
-        played_tracks_sql()
-    )
+    "SELECT local_album_id FROM library_user_album_plays WHERE user_id = ? AND played = 1"
+        .to_owned()
 }
 
-/// The plays filed under an album with no track, per album: `id`, `plays`
-/// and `played_at`, from the small index that holds only those. A mark
-/// never cuts them off.
-fn trackless_plays_sql(albums: Option<usize>) -> String {
-    let only = albums.map_or_else(
-        || "h.local_album_id IS NOT NULL".to_owned(),
-        |count| format!("h.local_album_id IN ({})", placeholders(count)),
-    );
-    format!(
-        "SELECT h.local_album_id AS id, COUNT(*) AS plays, MAX({PLAY_SECONDS}) AS played_at \
-         FROM library_play_history h INDEXED BY idx_play_history_user_album_no_track \
-         WHERE h.user_id = ? AND h.local_track_id IS NULL AND {only} \
-         GROUP BY h.local_album_id"
-    )
-}
-
-/// The listener's [`PlayedValues`] per album, one row each with a play
-/// count above 0: `id`, `plays` and `played_at`. A track counts for the
-/// album it is on now, streamable or not. Binds: the listener three times.
-pub(super) fn album_values_sql() -> String {
-    format!(
-        "SELECT id, SUM(plays) AS plays, MAX(played_at) AS played_at FROM (\
-         SELECT pt.local_album_id AS id, tv.plays AS plays, tv.played_at AS played_at \
-         FROM ({}) tv CROSS JOIN local_tracks pt WHERE pt.id = tv.id \
-         UNION ALL {}) GROUP BY id",
-        track_values_sql(ValueScope::All),
-        trackless_plays_sql(None)
-    )
-}
-
-/// The listener's [`PlayedValues`] for `count` album ids: `id`, `plays`,
-/// `played_at` and `played`. Binds: the ids, the listener, the ids, the
-/// listener, then the listener and the ids.
+/// The listener's [`PlayedValues`] for `count` album ids, from the album
+/// play summary: `id`, `plays`, `played_at` (whole seconds) and `played`.
+/// Binds: the listener, then the ids.
 pub(super) fn album_page_values_sql(count: usize) -> String {
     format!(
-        "SELECT x.id AS id, SUM(x.plays) AS plays, MAX(x.played_at) AS played_at, \
-         SUM(x.indexed) > 0 AND SUM(x.indexed) = (SELECT COUNT(*) FROM local_tracks c \
-         WHERE c.local_album_id = x.id AND c.availability = 'indexed') AS played FROM (\
-         SELECT pt.local_album_id AS id, tv.plays AS plays, tv.played_at AS played_at, \
-         pt.availability = 'indexed' AS indexed \
-         FROM ({}) tv CROSS JOIN local_tracks pt WHERE pt.id = tv.id \
-         UNION ALL SELECT id, plays, played_at, 0 FROM ({})) x GROUP BY x.id",
-        track_values_sql(ValueScope::Albums(count)),
-        trackless_plays_sql(Some(count))
+        "SELECT local_album_id AS id, plays, last_played_at / 1000 AS played_at, played \
+         FROM library_user_album_plays WHERE user_id = ? AND local_album_id IN ({})",
+        placeholders(count)
     )
 }
 
@@ -1081,19 +1025,19 @@ impl<'a> HistorySource<'a> {
         }
     }
 
-    /// Albums, as `a`.
+    /// Albums, as `a`, from the album play summary (migration 0065): its
+    /// rows are the albums with a play count above 0, and its order indexes
+    /// let a played page walk the listener's rows in order and stop at the
+    /// page. `played_at` is the stored milliseconds, which order as the
+    /// seconds do.
     pub(super) fn albums() -> Self {
         Self {
-            values: album_values_sql(),
-            played_ids: format!(
-                "SELECT pt.local_album_id AS id FROM ({}) p CROSS JOIN local_tracks pt \
-                 WHERE pt.id = p.id \
-                 UNION SELECT h.local_album_id \
-                 FROM library_play_history h INDEXED BY idx_play_history_user_album_no_track \
-                 WHERE h.user_id = ? AND h.local_track_id IS NULL AND h.local_album_id IS NOT NULL",
-                played_tracks_sql()
-            ),
-            listeners: (3, 4),
+            values: "SELECT local_album_id AS id, plays, last_played_at AS played_at \
+                     FROM library_user_album_plays WHERE user_id = ?"
+                .to_owned(),
+            played_ids: "SELECT local_album_id FROM library_user_album_plays WHERE user_id = ?"
+                .to_owned(),
+            listeners: (1, 1),
             rows: "local_albums a",
             alias: "a",
         }
@@ -1197,9 +1141,7 @@ pub(super) fn history_albums_sql(frequent: bool) -> String {
     };
     format!(
         "SELECT a.id FROM ({ALBUM_PLAYS}) h CROSS JOIN local_albums a WHERE a.id = h.id \
-         AND EXISTS (SELECT 1 FROM local_tracks t \
-         WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
-         ORDER BY {order}, a.id LIMIT ? OFFSET ?"
+         AND a.has_indexed_track = 1 ORDER BY {order}, a.id LIMIT ? OFFSET ?"
     )
 }
 
@@ -1478,13 +1420,15 @@ fn track_order_sql(order: TrackOrder) -> String {
 /// The WHERE clause for an album query. `played` is the listener's played
 /// albums as a JSON list, read once per request with [`played_albums_sql`],
 /// for the played filter.
-fn album_clause(query: &AlbumQuery, played: Option<&str>) -> Clause {
+pub(super) fn album_clause(query: &AlbumQuery, played: Option<&str>) -> Clause {
     let mut clause = Clause::default();
     // The unary plus keeps the planner off the retired index, so the
     // ordered pages walk the title and created-at indexes and stop early.
+    // On `has_indexed_track` (kept by migration 0065's triggers) it keeps
+    // the planner from guessing the column leaves few albums, which with
+    // statistics turns the id walk of an unplayed page into a sort.
     clause.push(
-        "+a.retired_into_album_id IS NULL AND EXISTS (SELECT 1 FROM local_tracks t \
-         WHERE t.local_album_id = a.id AND t.availability = 'indexed')",
+        "+a.retired_into_album_id IS NULL AND +a.has_indexed_track = 1",
         [],
     );
     if let Some(q) = &query.q {
@@ -1544,6 +1488,15 @@ fn album_clause(query: &AlbumQuery, played: Option<&str>) -> Clause {
         );
     }
     clause
+}
+
+/// One page of album ids in `order`, over the albums that pass `filters`.
+/// Binds: the filters, limit, offset.
+pub(super) fn album_page_sql(filters: &str, order: AlbumOrder) -> String {
+    format!(
+        "SELECT a.id FROM local_albums a WHERE {filters} ORDER BY {} LIMIT ? OFFSET ?",
+        album_order_sql(order)
+    )
 }
 
 fn album_order_sql(order: AlbumOrder) -> String {
@@ -1824,8 +1777,6 @@ impl SqlitePlayerCatalog {
         let listener = query.listener.as_deref().unwrap_or_default();
         let ids: Vec<String> = sqlx::query_scalar(&played_albums_sql())
             .bind(listener)
-            .bind(listener)
-            .bind(listener)
             .fetch_all(pool)
             .await
             .map_err(read_error("player.albums.played"))?;
@@ -1863,11 +1814,7 @@ impl SqlitePlayerCatalog {
             )
             .await?
         } else {
-            let sql = format!(
-                "SELECT a.id FROM local_albums a WHERE {} ORDER BY {} LIMIT ? OFFSET ?",
-                clause.render(),
-                album_order_sql(order)
-            );
+            let sql = album_page_sql(&clause.render(), order);
             clause
                 .bind_scalar(sqlx::query_scalar(&sql))
                 .bind(limit.min(i64::MAX as u64) as i64)
@@ -2121,18 +2068,12 @@ impl PlayerCatalog for SqlitePlayerCatalog {
                             half.clone().chain(half).collect(),
                         )
                     }
-                    "album" => {
-                        let ids = chunk.iter().map(String::as_str);
-                        let half = ids.clone().chain(std::iter::once(user_id));
-                        (
-                            album_page_values_sql(chunk.len()),
-                            half.clone()
-                                .chain(half)
-                                .chain(std::iter::once(user_id))
-                                .chain(ids)
-                                .collect(),
-                        )
-                    }
+                    "album" => (
+                        album_page_values_sql(chunk.len()),
+                        std::iter::once(user_id)
+                            .chain(chunk.iter().map(String::as_str))
+                            .collect(),
+                    ),
                     _ => return Ok(HashMap::new()),
                 };
                 let mut query = sqlx::query(&sql);
