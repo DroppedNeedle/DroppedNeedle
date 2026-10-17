@@ -16,8 +16,7 @@
 //! [`Argon2idHasher`][prod-hasher] (bcrypt verify, Argon2id hash,
 //! opportunistic rehash on login). The `auth_providers` scheme tag lives in
 //! the `provider_data` JSON (`{"password_hash", "scheme"}`); no migration
-//! added a scheme column. The test hasher in `memory.rs` must never be
-//! constructed outside tests.
+//! added a scheme column.
 //!
 //! [wiring-setup]: super::wiring::AuthSetup
 //! [prod-hasher]: super::prod::Argon2idHasher
@@ -29,8 +28,6 @@ pub mod import;
 pub mod lastfm_http;
 pub mod lastfm_models;
 pub mod lastfm_pending;
-#[cfg(any(test, feature = "test-support"))]
-pub mod memory;
 pub mod models;
 pub mod roles;
 pub mod services;
