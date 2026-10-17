@@ -65,9 +65,30 @@ async fn typed_server_fault_stays_generic_and_names_request_id() {
     assert_fixed_envelope(&text, "leak-1b");
 }
 
+/// The closed list as the plan tables it: code, status, fixed sentence. A
+/// new pass-through code is an edit to this table.
+const CLOSED_LIST: &[(&str, u16, &str)] = &[
+    (
+        "SERVER_BUSY",
+        503,
+        "The server is busy. Try again in a moment.",
+    ),
+    (
+        "REMOTE_UNAVAILABLE",
+        502,
+        "Your media server did not answer or returned an error.",
+    ),
+    ("UPSTREAM_REFUSED", 502, "GitHub refused the request"),
+    (
+        "UPSTREAM_RATE_LIMITED",
+        503,
+        "GitHub is rate limiting this server, try again later",
+    ),
+    ("UPSTREAM_ERROR", 502, "GitHub could not be reached"),
+];
+
 #[tokio::test]
 async fn closed_list_answers_pass_the_boundary_with_their_sentence() {
-    let app = TestApp::start_configured("leak-unavailable", AppConfig::with_test_hooks).await;
     let variants = [
         Unavailable::ServerBusy,
         Unavailable::MediaServer,
@@ -77,35 +98,27 @@ async fn closed_list_answers_pass_the_boundary_with_their_sentence() {
         },
         Unavailable::UpstreamError,
     ];
-    for variant in variants {
-        // Written out by hand, never read from the kit: a new variant fails
-        // to compile here until it has its row.
-        let (status, code, sentence, retry_after) = match variant {
-            Unavailable::ServerBusy => (
-                503,
-                "SERVER_BUSY",
-                "The server is busy. Try again in a moment.",
-                Some("1"),
-            ),
-            Unavailable::MediaServer => (
-                502,
-                "REMOTE_UNAVAILABLE",
-                "Your media server did not answer or returned an error.",
-                None,
-            ),
-            Unavailable::UpstreamRefused => {
-                (502, "UPSTREAM_REFUSED", "GitHub refused the request", None)
-            }
-            Unavailable::UpstreamRateLimited { .. } => (
-                503,
-                "UPSTREAM_RATE_LIMITED",
-                "GitHub is rate limiting this server, try again later",
-                Some("42"),
-            ),
-            Unavailable::UpstreamError => {
-                (502, "UPSTREAM_ERROR", "GitHub could not be reached", None)
-            }
-        };
+    // Written out by hand, never read from the kit: a new variant fails to
+    // compile here, and once listed above it needs its row in the table.
+    let retry_after_of = |variant: Unavailable| match variant {
+        Unavailable::ServerBusy => Some("1"),
+        Unavailable::MediaServer | Unavailable::UpstreamRefused | Unavailable::UpstreamError => {
+            None
+        }
+        Unavailable::UpstreamRateLimited { .. } => Some("42"),
+    };
+    let kit: Vec<(&str, u16, &str)> = variants
+        .iter()
+        .map(|variant| {
+            let answer = variant.answer();
+            (answer.code, answer.status.as_u16(), answer.sentence)
+        })
+        .collect();
+    assert_eq!(kit, CLOSED_LIST);
+
+    let app = TestApp::start_configured("leak-unavailable", AppConfig::with_test_hooks).await;
+    for (variant, &(code, status, sentence)) in variants.into_iter().zip(CLOSED_LIST) {
+        let retry_after = retry_after_of(variant);
         let request_id = format!("leak-{code}");
         let (got_status, headers, body) = app
             .raw(
