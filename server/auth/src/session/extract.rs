@@ -1,20 +1,10 @@
-//! Credential extraction plus the 401/403 response shapes.
+//! Credential extraction.
 //!
 //! Extraction order is Bearer-then-cookie (v2 semantics): an explicit
 //! `Authorization: Bearer` header wins when present, otherwise the session
-//! cookie. Every 401 carries `WWW-Authenticate: Bearer` (v2 parity) and the
-//! shared error envelope with `UNAUTHORIZED`/`FORBIDDEN` codes, rendered
-//! through the crate's `error` module (no local envelope duplicate).
-//!
-//! The user-owned-resource matrix this preserves: no valid session -> 401,
-//! valid session without rights -> 403 (or 404 where the resource must stay
-//! hidden), owner ok, admin ok. The 401 and 403 rows live here; per-resource
-//! 403-or-404 choices land with the role extractors.
+//! cookie.
 
-use axum::{
-    http::{HeaderMap, StatusCode},
-    response::Response,
-};
+use axum::http::HeaderMap;
 
 /// Which transport carried the credential. Cookie sessions are ambient (CSRF
 /// exposure, hence the origin check); Bearer is explicit and exempt.
@@ -25,8 +15,6 @@ pub enum Transport {
     /// The session cookie, under either of its names.
     Cookie,
 }
-
-pub use droppedneedle_kernel::error::{FORBIDDEN, UNAUTHORIZED};
 
 /// Extract the presented credential, Bearer-then-cookie. Returns the raw token
 /// and the transport that carried it.
@@ -69,16 +57,6 @@ fn strip_bearer_prefix(value: &str) -> Option<&str> {
     prefix
         .eq_ignore_ascii_case("bearer ")
         .then(|| &value[PREFIX_LEN..])
-}
-
-/// 401 response: shared envelope, `WWW-Authenticate: Bearer`.
-pub fn unauthorized_response(message: &str) -> Response {
-    droppedneedle_kernel::error::unauthorized_response(message)
-}
-
-/// 403 response: shared envelope, no auth challenge (the session is valid).
-pub fn forbidden_response(message: &str) -> Response {
-    droppedneedle_kernel::error::envelope_response(StatusCode::FORBIDDEN, FORBIDDEN, message, None)
 }
 
 #[cfg(test)]

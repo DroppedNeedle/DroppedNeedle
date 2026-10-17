@@ -26,10 +26,9 @@ use crate::federated::users::FederatedUserStore;
 use crate::routes::native::PeerAddr;
 use crate::session::cookies;
 use crate::session::middleware::CurrentSession;
-use crate::session::rate_limit::{LOGIN_CLASS, RateLimiter, rate_limited_response};
+use crate::session::rate_limit::{LOGIN_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
 use crate::session::tokens::{constant_time_eq, hash_token};
-use crate::users::handlers::ValidJson;
 use axum::{
     Json, Router,
     extract::{FromRequestParts, State},
@@ -38,9 +37,10 @@ use axum::{
     routing::{get, post},
 };
 use droppedneedle_kernel::config::TrustedProxies;
-use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
-use super::error::{AuthRouteError, ValidQuery};
+use super::error::AuthRouteError;
 use super::models::{
     AuthProvidersBody, FederatedUserView, JellyfinLoginBody, OidcAuthorizeBody, OidcCallbackQuery,
     OidcExchangeBody, PlexConnectPollResult, PlexLinkPollResult, PlexLoginPollBody,
@@ -72,7 +72,7 @@ pub const PLEX_NOT_CONFIGURED: &str = "Plex is not configured by the administrat
 pub struct AuthenticatedSession(pub CurrentSession);
 
 impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedSession {
-    type Rejection = AuthRouteError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
         parts
@@ -80,7 +80,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedSession {
             .get::<CurrentSession>()
             .cloned()
             .map(AuthenticatedSession)
-            .ok_or_else(|| AuthRouteError::unauthorized("Authentication required"))
+            .ok_or_else(|| ApiError::unauthorized("Authentication required"))
     }
 }
 
@@ -133,8 +133,6 @@ pub struct OidcRouteState<S, I, T, E, N, F> {
     pub login: OidcLogin<S, I, T, E, N>,
     /// Live settings source.
     pub config: F,
-    /// Fresh ids for 5xx log correlation.
-    pub ids: Arc<dyn IdGenerator>,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
     /// Proxies trusted to set `X-Forwarded-Proto` for the cookie `Secure`
@@ -155,16 +153,10 @@ where
     F: OidcConfigSource,
 {
     /// Wire the state from the login service plus its HTTP ports.
-    pub fn new(
-        login: OidcLogin<S, I, T, E, N>,
-        config: F,
-        ids: Arc<dyn IdGenerator>,
-        base_path: &str,
-    ) -> Self {
+    pub fn new(login: OidcLogin<S, I, T, E, N>, config: F, base_path: &str) -> Self {
         Self {
             login,
             config,
-            ids,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
             stated: StatedAddresses::default(),
@@ -227,7 +219,7 @@ pub async fn oidc_authorize_handler<S, I, T, E, N, F>(
     uri: Uri,
     headers: HeaderMap,
     peer: PeerAddr,
-) -> Result<Response, AuthRouteError>
+) -> Result<Response, ApiError>
 where
     S: FederatedUserStore,
     I: OidcIdp,
@@ -257,7 +249,7 @@ where
             insert_no_store(response.headers_mut());
             Ok(response)
         }
-        Err(error) => Err(federated_unavailable(&error, state.ids.as_ref())),
+        Err(error) => Err(federated_unavailable(&error).into()),
     }
 }
 
@@ -282,7 +274,7 @@ pub async fn oidc_callback_handler<S, I, T, E, N, F>(
     State(state): State<OidcRouteState<S, I, T, E, N, F>>,
     headers: HeaderMap,
     ValidQuery(query): ValidQuery<OidcCallbackQuery>,
-) -> Result<Response, AuthRouteError>
+) -> Result<Response, ApiError>
 where
     S: FederatedUserStore,
     I: OidcIdp,
@@ -297,7 +289,7 @@ where
         .is_some_and(|cookie| constant_time_eq(&cookie, &hash_token(&query.state)));
     if !bound {
         tracing::debug!("oidc callback without the matching state cookie");
-        return Err(AuthRouteError::auth_failed(OIDC_FAILED));
+        return Err(AuthRouteError::auth_failed(OIDC_FAILED).into());
     }
     let config = state.config.current().await;
     let user_agent = user_agent_of(&headers);
@@ -309,10 +301,7 @@ where
         Ok(exchange_code) => {
             let location = format!("{}/auth/callback?code={exchange_code}", state.base_path);
             let value = HeaderValue::from_str(&location).map_err(|_| {
-                AuthRouteError::internal(
-                    &"callback redirect is not a header value",
-                    state.ids.as_ref(),
-                )
+                AuthRouteError::internal(&"callback redirect is not a header value")
             })?;
             let mut response = StatusCode::FOUND.into_response();
             let response_headers = response.headers_mut();
@@ -326,9 +315,9 @@ where
         }
         Err(FederatedError::Authentication(cause)) => {
             tracing::debug!(%cause, "oidc callback rejected");
-            Err(AuthRouteError::auth_failed(OIDC_FAILED))
+            Err(AuthRouteError::auth_failed(OIDC_FAILED).into())
         }
-        Err(error) => Err(federated_unavailable(&error, state.ids.as_ref())),
+        Err(error) => Err(federated_unavailable(&error).into()),
     }
 }
 
@@ -351,7 +340,7 @@ pub async fn oidc_exchange_handler<S, I, T, E, N, F>(
     headers: HeaderMap,
     peer: PeerAddr,
     ValidJson(body): ValidJson<OidcExchangeBody>,
-) -> Result<Response, AuthRouteError>
+) -> Result<Response, ApiError>
 where
     S: FederatedUserStore,
     I: OidcIdp,
@@ -363,7 +352,7 @@ where
     match state.login.exchange_code(&body.code).await {
         Ok((user, raw_token)) => {
             let body_value = serde_json::to_value(FederatedUserView::from(&user))
-                .map_err(|cause| AuthRouteError::internal(&cause, state.ids.as_ref()))?;
+                .map_err(|cause| AuthRouteError::internal(&cause))?;
             Ok(federated_login_response(
                 &Handoff {
                     base_path: &state.base_path,
@@ -381,9 +370,9 @@ where
         }
         Err(FederatedError::Authentication(cause)) => {
             tracing::debug!(%cause, "oidc exchange rejected");
-            Err(AuthRouteError::auth_failed(OIDC_BAD_CODE))
+            Err(AuthRouteError::auth_failed(OIDC_BAD_CODE).into())
         }
-        Err(error) => Err(federated_unavailable(&error, state.ids.as_ref())),
+        Err(error) => Err(federated_unavailable(&error).into()),
     }
 }
 
@@ -392,8 +381,6 @@ where
 pub struct JellyfinRouteState<S, I, L, N> {
     /// Jellyfin login service.
     pub login: JellyfinLogin<S, I, L, N>,
-    /// Fresh ids for 5xx log correlation.
-    pub ids: Arc<dyn IdGenerator>,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
     /// Proxies trusted to set `X-Forwarded-Proto` for the cookie `Secure`
@@ -415,17 +402,9 @@ where
     N: SessionIssuer,
 {
     /// Wire the state from its ports.
-    pub fn new(
-        users: S,
-        idp: I,
-        links: L,
-        sessions: N,
-        ids: Arc<dyn IdGenerator>,
-        base_path: &str,
-    ) -> Self {
+    pub fn new(users: S, idp: I, links: L, sessions: N, base_path: &str) -> Self {
         Self {
             login: JellyfinLogin::new(users, idp, links, sessions),
-            ids,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
             stated: StatedAddresses::default(),
@@ -486,7 +465,7 @@ pub async fn jellyfin_login_handler<S, I, L, N>(
     headers: HeaderMap,
     peer: PeerAddr,
     ValidJson(body): ValidJson<JellyfinLoginBody>,
-) -> Result<Response, AuthRouteError>
+) -> Result<Response, ApiError>
 where
     S: FederatedUserStore,
     I: JellyfinIdp,
@@ -496,7 +475,7 @@ where
     let username_key = format!("jellyfin-username:{}", body.username.trim().to_lowercase());
     let budget = state.limits.check(LOGIN_CLASS, &username_key);
     if !budget.allowed {
-        return Ok(rate_limited_response(LOGIN_CLASS, budget.retry_after_secs));
+        return Err(rate_limited(LOGIN_CLASS, budget.retry_after_secs));
     }
     let user_agent = user_agent_of(&headers);
     match state
@@ -506,7 +485,7 @@ where
     {
         Ok((user, raw_token)) => {
             let body_value = serde_json::to_value(FederatedUserView::from(&user))
-                .map_err(|cause| AuthRouteError::internal(&cause, state.ids.as_ref()))?;
+                .map_err(|cause| AuthRouteError::internal(&cause))?;
             Ok(federated_login_response(
                 &Handoff {
                     base_path: &state.base_path,
@@ -524,9 +503,9 @@ where
         }
         Err(FederatedError::Authentication(cause)) => {
             tracing::debug!(%cause, "jellyfin login rejected");
-            Err(AuthRouteError::unauthorized(JELLYFIN_INVALID))
+            Err(AuthRouteError::unauthorized(JELLYFIN_INVALID).into())
         }
-        Err(error) => Err(federated_unavailable(&error, state.ids.as_ref())),
+        Err(error) => Err(federated_unavailable(&error).into()),
     }
 }
 
@@ -535,8 +514,6 @@ where
 pub struct PlexRouteState<S, C, L, N> {
     /// Unified Plex journey.
     pub journey: PlexJourney<S, C, L, N>,
-    /// Fresh ids for 5xx log correlation.
-    pub ids: Arc<dyn IdGenerator>,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
     /// Proxies trusted to set `X-Forwarded-Proto` for the cookie `Secure`
@@ -555,17 +532,9 @@ where
     N: SessionIssuer,
 {
     /// Wire the state from its ports.
-    pub fn new(
-        users: S,
-        client: C,
-        links: L,
-        sessions: N,
-        ids: Arc<dyn IdGenerator>,
-        base_path: &str,
-    ) -> Self {
+    pub fn new(users: S, client: C, links: L, sessions: N, base_path: &str) -> Self {
         Self {
             journey: PlexJourney::new(users, client, links, sessions),
-            ids,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
             stated: StatedAddresses::default(),
@@ -612,7 +581,7 @@ async fn start_rendered<S, C, L, N>(
     state: &PlexRouteState<S, C, L, N>,
     purpose: PlexPurpose,
     caller: Option<&str>,
-) -> Result<Json<PlexStartBody>, AuthRouteError>
+) -> Result<Json<PlexStartBody>, ApiError>
 where
     S: FederatedUserStore,
     C: PlexPinClient,
@@ -627,19 +596,18 @@ where
         })),
         Err(PlexStartDenied::NotConfigured) => Err(AuthRouteError::InvalidInput {
             message: PLEX_NOT_CONFIGURED.to_owned(),
-        }),
+        }
+        .into()),
         Err(PlexStartDenied::Forbidden) => Err(AuthRouteError::Forbidden {
             message: "Admin access required".to_owned(),
-        }),
+        }
+        .into()),
         // No caller credential is at fault here: the IdP is down, the
         // server lookup failed, or login is switched off.
-        Err(PlexStartDenied::StartFailed(error)) => {
-            Err(federated_unavailable(&error, state.ids.as_ref()))
+        Err(PlexStartDenied::StartFailed(error)) => Err(federated_unavailable(&error).into()),
+        Err(PlexStartDenied::Busy) => {
+            Err(AuthRouteError::unavailable(&"too many Plex sign-ins are waiting").into())
         }
-        Err(PlexStartDenied::Busy) => Err(AuthRouteError::unavailable(
-            &"too many Plex sign-ins are waiting",
-            state.ids.as_ref(),
-        )),
     }
 }
 
@@ -656,7 +624,7 @@ where
 )]
 pub async fn plex_start_handler<S, C, L, N>(
     State(state): State<PlexRouteState<S, C, L, N>>,
-) -> Result<Json<PlexStartBody>, AuthRouteError>
+) -> Result<Json<PlexStartBody>, ApiError>
 where
     S: FederatedUserStore,
     C: PlexPinClient,
@@ -682,7 +650,7 @@ where
 pub async fn plex_start_link_handler<S, C, L, N>(
     State(state): State<PlexRouteState<S, C, L, N>>,
     AuthenticatedSession(session): AuthenticatedSession,
-) -> Result<Json<PlexStartBody>, AuthRouteError>
+) -> Result<Json<PlexStartBody>, ApiError>
 where
     S: FederatedUserStore,
     C: PlexPinClient,
@@ -708,7 +676,7 @@ where
 pub async fn plex_start_connect_handler<S, C, L, N>(
     State(state): State<PlexRouteState<S, C, L, N>>,
     AuthenticatedSession(session): AuthenticatedSession,
-) -> Result<Json<PlexStartBody>, AuthRouteError>
+) -> Result<Json<PlexStartBody>, ApiError>
 where
     S: FederatedUserStore,
     C: PlexPinClient,
@@ -737,7 +705,7 @@ pub async fn plex_poll_login_handler<S, C, L, N>(
     headers: HeaderMap,
     peer: PeerAddr,
     ValidJson(body): ValidJson<PlexLoginPollBody>,
-) -> Result<Response, AuthRouteError>
+) -> Result<Response, ApiError>
 where
     S: FederatedUserStore,
     C: PlexPinClient,
@@ -767,7 +735,7 @@ where
                 user: Some(FederatedUserView::from(&user)),
                 token: None,
             })
-            .map_err(|cause| AuthRouteError::internal(&cause, state.ids.as_ref()))?;
+            .map_err(|cause| AuthRouteError::internal(&cause))?;
             let handoff = Handoff {
                 base_path: &state.base_path,
                 secure: cookies::secure_for_sign_in(
@@ -785,9 +753,10 @@ where
             tracing::debug!(%cause, "plex login poll rejected");
             Err(AuthRouteError::Forbidden {
                 message: PLEX_DENIED.to_owned(),
-            })
+            }
+            .into())
         }
-        Err(error) => Err(federated_unavailable(&error, state.ids.as_ref())),
+        Err(error) => Err(federated_unavailable(&error).into()),
     }
 }
 
@@ -810,7 +779,7 @@ pub async fn plex_poll_link_handler<S, C, L, N>(
     State(state): State<PlexRouteState<S, C, L, N>>,
     AuthenticatedSession(session): AuthenticatedSession,
     ValidJson(body): ValidJson<PlexPinBody>,
-) -> Result<Json<PlexLinkPollResult>, AuthRouteError>
+) -> Result<Json<PlexLinkPollResult>, ApiError>
 where
     S: FederatedUserStore,
     C: PlexPinClient,
@@ -835,9 +804,10 @@ where
             tracing::debug!(%cause, "plex link poll rejected");
             Err(AuthRouteError::Forbidden {
                 message: PLEX_DENIED.to_owned(),
-            })
+            }
+            .into())
         }
-        Err(error) => Err(federated_unavailable(&error, state.ids.as_ref())),
+        Err(error) => Err(federated_unavailable(&error).into()),
     }
 }
 
@@ -859,7 +829,7 @@ pub async fn plex_poll_connect_handler<S, C, L, N>(
     State(state): State<PlexRouteState<S, C, L, N>>,
     AuthenticatedSession(session): AuthenticatedSession,
     ValidJson(body): ValidJson<PlexPinBody>,
-) -> Result<Json<PlexConnectPollResult>, AuthRouteError>
+) -> Result<Json<PlexConnectPollResult>, ApiError>
 where
     S: FederatedUserStore,
     C: PlexPinClient,
@@ -884,24 +854,25 @@ where
             tracing::debug!(%cause, "plex connect poll rejected");
             Err(AuthRouteError::Forbidden {
                 message: PLEX_DENIED.to_owned(),
-            })
+            }
+            .into())
         }
-        Err(error) => Err(federated_unavailable(&error, state.ids.as_ref())),
+        Err(error) => Err(federated_unavailable(&error).into()),
     }
 }
 
 /// Non-caller-fault federated failures: misconfigured or unreachable IdPs
 /// are 503, store/RNG faults are 500. Bodies stay fixed; the cause goes to
-/// the log with the error id.
-fn federated_unavailable(error: &FederatedError, ids: &dyn IdGenerator) -> AuthRouteError {
+/// the log.
+fn federated_unavailable(error: &FederatedError) -> AuthRouteError {
     match error {
         FederatedError::NotConfigured(_) | FederatedError::ProviderUnavailable(_) => {
-            AuthRouteError::unavailable(error, ids)
+            AuthRouteError::unavailable(error)
         }
-        FederatedError::Authentication(_) => AuthRouteError::unavailable(error, ids),
+        FederatedError::Authentication(_) => AuthRouteError::unavailable(error),
         FederatedError::StoreUnavailable(_)
         | FederatedError::UsernameTaken
-        | FederatedError::RngUnavailable => AuthRouteError::internal(error, ids),
+        | FederatedError::RngUnavailable => AuthRouteError::internal(error),
     }
 }
 

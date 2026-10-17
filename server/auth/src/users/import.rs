@@ -34,14 +34,14 @@ pub async fn list_import_candidates(
     let users = directory
         .list_users()
         .await
-        .map_err(|error| UsersError::unavailable(&error, deps.ids.as_ref()))?;
+        .map_err(|error| UsersError::unavailable(&error))?;
     let mut candidates = Vec::with_capacity(users.len());
     for user in &users {
         let binding = deps
             .users
             .get_provider_binding(directory.provider(), &user.provider_uid)
             .await
-            .map_err(|error| store_internal(deps, error))?;
+            .map_err(store_internal)?;
         candidates.push(ImportCandidateView {
             provider: directory.provider().to_owned(),
             provider_uid: user.provider_uid.clone(),
@@ -64,7 +64,7 @@ pub async fn import_users(
     let users = directory
         .list_users()
         .await
-        .map_err(|error| UsersError::unavailable(&error, deps.ids.as_ref()))?;
+        .map_err(|error| UsersError::unavailable(&error))?;
     let catalog: HashMap<&str, &DirectoryUser> = users
         .iter()
         .map(|user| (user.provider_uid.as_str(), user))

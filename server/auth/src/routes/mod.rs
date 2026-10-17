@@ -32,17 +32,17 @@
 //!   `V: PasswordVerifier`, `C: CredentialLookup`. The `LoginService` is
 //!   built inside from the same handles.
 //! - `OidcRouteState::new(login: OidcLogin<S, I, T, E, N>, config: F,
-//!   ids: Arc<dyn IdGenerator>, base_path: &str)` where
+//!   base_path: &str)` where
 //!   `S: FederatedUserStore`, `I: OidcIdp`, `T: OidcStateStore`,
 //!   `E: OidcExchangeStore`, `N: SessionIssuer`, `F: OidcConfigSource`.
 //!   Build the service first via `OidcLogin::new(users, idp, states,
 //!   exchanges, sessions)`.
 //! - `JellyfinRouteState::new(users: S, idp: I, links: L, sessions: N,
-//!   ids: Arc<dyn IdGenerator>, base_path: &str)` where
+//!   base_path: &str)` where
 //!   `S: FederatedUserStore`, `I: JellyfinIdp`, `L: JellyfinConnectionLink`,
 //!   `N: SessionIssuer`.
 //! - `PlexRouteState::new(users: S, client: C, links: L, sessions: N,
-//!   ids: Arc<dyn IdGenerator>, base_path: &str)` where
+//!   base_path: &str)` where
 //!   `S: FederatedUserStore`, `C: PlexPinClient`, `L: PlexConnectionLink`,
 //!   `N: SessionIssuer`.
 //!

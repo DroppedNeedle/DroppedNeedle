@@ -18,7 +18,7 @@ use std::time::Duration;
 use axum::{
     Router,
     extract::State,
-    http::{HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue},
     response::{
         IntoResponse, Response,
         sse::{Event as SseEvent, Sse},
@@ -118,12 +118,10 @@ pub async fn stream(
     headers: HeaderMap,
 ) -> Response {
     let Some(axum::Extension(session)) = session else {
-        return droppedneedle_kernel::error::envelope_response(
-            StatusCode::UNAUTHORIZED,
-            droppedneedle_kernel::error::UNAUTHORIZED,
+        return droppedneedle_kernel::error::ApiError::unauthorized_without_challenge(
             "Not authenticated",
-            None,
-        );
+        )
+        .into_response();
     };
     let token_hash = extract(&headers).map(|(raw, _)| hash_token(&raw));
     let state = Stream {

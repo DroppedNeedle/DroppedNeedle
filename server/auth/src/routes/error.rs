@@ -1,24 +1,14 @@
-//! HTTP errors for the auth routes.
+//! HTTP errors for the auth routes and their one mapping onto [`ApiError`].
 //!
-//! Every failure renders through the shared envelope in [`droppedneedle_kernel::error`].
-//! Codes and fixed messages match the users routes; the one intended
-//! difference is the upstream outage status: federated IdP outages are 503
-//! here (the federated contract and v2 both say 503), while the users routes
-//! use 502 for their Last.fm calls.
+//! Codes and messages match the users routes. Federated IdP outages answer
+//! 503 here (the federated contract and v2 both say 503), while the users
+//! routes use 502 for their Last.fm calls. A busy database is the closed-list
+//! `SERVER_BUSY`; every other fault keeps its status with the fixed body, its
+//! cause logged once by the request boundary.
 
 use crate::users::error::UsersError;
-use axum::{
-    extract::{FromRequest, Query, Request},
-    http::{HeaderValue, StatusCode, header},
-    response::{IntoResponse, Response},
-};
-use droppedneedle_kernel::error::{
-    CONFLICT, FIXED_INTERNAL_MESSAGE, FIXED_TOO_LARGE_MESSAGE, FIXED_UPSTREAM_MESSAGE, FORBIDDEN,
-    INTERNAL_ERROR, INVALID_INPUT, NOT_FOUND, NOT_FOUND_MESSAGE, PAYLOAD_TOO_LARGE, UNAUTHORIZED,
-    UPSTREAM_ERROR, envelope_response, fault_response, unauthorized_response,
-};
-use droppedneedle_kernel::ids::IdGenerator;
-use serde::de::DeserializeOwned;
+use axum::http::StatusCode;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 
 /// Every failure these routes can return.
 #[derive(Debug)]
@@ -50,21 +40,20 @@ pub enum AuthRouteError {
     },
     /// Oversize body.
     TooLarge,
-    /// Upstream IdP failure. Fixed body plus the request-tied id.
+    /// Upstream IdP failure (503).
     Unavailable {
-        /// Ties the wire response to the server log line.
-        error_id: String,
+        /// What went wrong, for the log only.
+        cause: String,
     },
-    /// The database was too busy to answer in time. Fixed body, the id and
-    /// `Retry-After`.
+    /// The database was too busy to answer in time.
     Busy {
-        /// Ties the wire response to the server log line.
-        error_id: String,
+        /// What was busy, for the log only.
+        cause: String,
     },
-    /// Server fault. Fixed body plus the request-tied id.
+    /// Server fault.
     Internal {
-        /// Ties the wire response to the server log line.
-        error_id: String,
+        /// What went wrong, for the log only.
+        cause: String,
     },
 }
 
@@ -85,26 +74,25 @@ impl AuthRouteError {
         }
     }
 
-    /// Build a 500, logging the real cause with its id.
-    pub fn internal(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
-        let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "auth route failed");
-        Self::Internal { error_id }
+    /// A 500 with its cause for the log.
+    pub fn internal(cause: &dyn std::fmt::Display) -> Self {
+        Self::Internal {
+            cause: cause.to_string(),
+        }
     }
 
-    /// Build a busy 503, logging the cause with its id as a warning: the
-    /// store is working, only late.
-    pub fn busy(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
-        let error_id = ids.new_id();
-        tracing::warn!(error_id, %cause, "auth route busy; answering 503 with retry");
-        Self::Busy { error_id }
+    /// A busy database, with what was busy for the log.
+    pub fn busy(cause: &dyn std::fmt::Display) -> Self {
+        Self::Busy {
+            cause: cause.to_string(),
+        }
     }
 
-    /// Build a 503, logging the real cause with its id.
-    pub fn unavailable(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
-        let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "auth route upstream failed");
-        Self::Unavailable { error_id }
+    /// An upstream 503 with its cause for the log.
+    pub fn unavailable(cause: &dyn std::fmt::Display) -> Self {
+        Self::Unavailable {
+            cause: cause.to_string(),
+        }
     }
 }
 
@@ -117,84 +105,36 @@ impl From<UsersError> for AuthRouteError {
             UsersError::InvalidInput { message } => Self::InvalidInput { message },
             UsersError::Conflict { message } => Self::Conflict { message },
             UsersError::TooLarge => Self::TooLarge,
-            UsersError::Unavailable { error_id } | UsersError::Upstream { error_id } => {
-                Self::Unavailable { error_id }
+            UsersError::Unavailable { cause } | UsersError::Upstream { cause } => {
+                Self::Unavailable { cause }
             }
-            UsersError::Busy { error_id } => Self::Busy { error_id },
-            UsersError::Internal { error_id } => Self::Internal { error_id },
+            UsersError::Busy => Self::busy(&"users store busy"),
+            UsersError::Internal { cause } => Self::Internal { cause },
         }
     }
 }
 
-impl IntoResponse for AuthRouteError {
-    fn into_response(self) -> Response {
-        match self {
-            Self::Unauthorized {
+impl From<AuthRouteError> for ApiError {
+    fn from(error: AuthRouteError) -> Self {
+        match error {
+            AuthRouteError::Unauthorized {
                 message,
                 challenge: true,
-            } => unauthorized_response(message),
-            Self::Unauthorized {
+            } => ApiError::unauthorized(message),
+            AuthRouteError::Unauthorized {
                 message,
                 challenge: false,
-            } => envelope_response(StatusCode::UNAUTHORIZED, UNAUTHORIZED, message, None),
-            Self::Forbidden { message } => {
-                envelope_response(StatusCode::FORBIDDEN, FORBIDDEN, message, None)
+            } => ApiError::unauthorized_without_challenge(message),
+            AuthRouteError::Forbidden { message } => ApiError::forbidden(message),
+            AuthRouteError::NotFound => ApiError::not_found(),
+            AuthRouteError::InvalidInput { message } => ApiError::invalid_input(message),
+            AuthRouteError::Conflict { message } => ApiError::conflict(message),
+            AuthRouteError::TooLarge => ApiError::too_large(),
+            AuthRouteError::Unavailable { cause } => {
+                ApiError::fault(StatusCode::SERVICE_UNAVAILABLE, cause)
             }
-            Self::NotFound => {
-                envelope_response(StatusCode::NOT_FOUND, NOT_FOUND, NOT_FOUND_MESSAGE, None)
-            }
-            Self::InvalidInput { message } => {
-                envelope_response(StatusCode::BAD_REQUEST, INVALID_INPUT, message, None)
-            }
-            Self::Conflict { message } => {
-                envelope_response(StatusCode::CONFLICT, CONFLICT, message, None)
-            }
-            Self::TooLarge => envelope_response(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                PAYLOAD_TOO_LARGE,
-                FIXED_TOO_LARGE_MESSAGE,
-                None,
-            ),
-            Self::Unavailable { error_id } => fault_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                UPSTREAM_ERROR,
-                FIXED_UPSTREAM_MESSAGE,
-                &error_id,
-            ),
-            Self::Busy { error_id } => {
-                let mut response = fault_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    INTERNAL_ERROR,
-                    FIXED_INTERNAL_MESSAGE,
-                    &error_id,
-                );
-                response
-                    .headers_mut()
-                    .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
-                response
-            }
-            Self::Internal { error_id } => fault_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                INTERNAL_ERROR,
-                FIXED_INTERNAL_MESSAGE,
-                &error_id,
-            ),
+            AuthRouteError::Busy { cause } => ApiError::unavailable(Unavailable::ServerBusy, cause),
+            AuthRouteError::Internal { cause } => ApiError::internal(cause),
         }
-    }
-}
-
-/// Query extractor that renders failures in the shared envelope.
-pub struct ValidQuery<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidQuery<T> {
-    type Rejection = AuthRouteError;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Query::<T>::from_request(req, state)
-            .await
-            .map(|Query(value)| Self(value))
-            .map_err(|cause| AuthRouteError::InvalidInput {
-                message: format!("Invalid query string: {cause}"),
-            })
     }
 }

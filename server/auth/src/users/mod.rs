@@ -41,7 +41,6 @@ use axum::{
 };
 
 pub use error::UsersError;
-pub use handlers::UsersHttpError;
 pub use roles::{AuthContext, CurrentAdmin, CurrentCurator, CurrentUser, Role, SessionKind};
 
 use droppedneedle_kernel::{ids::IdGenerator, runtime_config::crypto::Crypto};
@@ -72,7 +71,7 @@ pub struct UsersDeps {
     pub screen: Arc<dyn PasswordScreen>,
     /// Clock for issue/expiry stamps.
     pub clock: Arc<dyn Clock>,
-    /// Fresh ids for rows and error ids.
+    /// Fresh ids for rows.
     pub ids: Arc<dyn IdGenerator>,
     /// At-rest encryption for app secrets and Last.fm keys.
     pub crypto: Arc<Crypto>,

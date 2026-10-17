@@ -3494,7 +3494,7 @@ async fn sign_in_waits_out_a_full_read_pool_as_busy_not_a_fault() {
             headers.get("retry-after").map(|v| v.as_bytes()),
             Some(&b"1"[..])
         );
-        assert_eq!(body["error"]["code"], "INTERNAL_ERROR", "{body}");
+        assert_eq!(body["error"]["code"], "SERVER_BUSY", "{body}");
         assert!(body["error"]["details"]["error_id"].is_string(), "{body}");
     }
     drop(held);

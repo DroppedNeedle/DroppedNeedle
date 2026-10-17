@@ -312,7 +312,6 @@ impl AuthSetup {
                 auth.issuer.clone(),
             ),
             StoreOidcConfig(config_store.clone()),
-            ids.clone(),
             base_path,
         )
         .with_stated_addresses(stated.clone());
@@ -321,7 +320,6 @@ impl AuthSetup {
             jellyfin_http,
             links.clone(),
             auth.issuer.clone(),
-            ids.clone(),
             base_path,
         )
         .with_limits(limits.clone())
@@ -331,7 +329,6 @@ impl AuthSetup {
             plex_tv,
             links,
             auth.issuer.clone(),
-            ids,
             base_path,
         )
         .with_stated_addresses(stated.clone());

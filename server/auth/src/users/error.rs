@@ -1,10 +1,8 @@
 //! The users domain error.
 //!
-//! Services return [`UsersError`]; the users handlers map it to HTTP
-//! ([`super::handlers::UsersHttpError`]). Anything unexpected carries an
-//! error id whose cause went to the log, never to the caller.
-
-use droppedneedle_kernel::ids::IdGenerator;
+//! Services return [`UsersError`]; the users handlers map it onto
+//! `ApiError`. Anything unexpected carries its cause for the log, never
+//! for the caller.
 
 /// Every failure the users routes can return to a caller.
 #[derive(Debug)]
@@ -34,55 +32,44 @@ pub enum UsersError {
     /// Oversize body.
     TooLarge,
     /// A directory or IdP this route needs is unconfigured or unreachable
-    /// (503, the federated outage posture). Fixed body plus the id.
+    /// (503, the federated outage posture).
     Unavailable {
-        /// Ties the wire response to the server log line.
-        error_id: String,
+        /// What went wrong, for the log only.
+        cause: String,
     },
-    /// Downstream failure. Fixed body plus the request-tied id.
+    /// Downstream failure (502).
     Upstream {
-        /// Ties the wire response to the server log line.
-        error_id: String,
+        /// What went wrong, for the log only.
+        cause: String,
     },
-    /// The database was too busy to answer in time (503 with
-    /// `Retry-After`). Fixed body plus the id.
-    Busy {
-        /// Ties the wire response to the server log line.
-        error_id: String,
-    },
-    /// Server fault. Fixed body plus the request-tied id.
+    /// The database was too busy to answer in time.
+    Busy,
+    /// Server fault.
     Internal {
-        /// Ties the wire response to the server log line.
-        error_id: String,
+        /// What went wrong, for the log only.
+        cause: String,
     },
 }
 
 impl UsersError {
-    /// Build a 500, logging the real cause with its id.
-    pub fn internal(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
-        let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "users request failed");
-        Self::Internal { error_id }
+    /// A 500 with its cause for the log.
+    pub fn internal(cause: &dyn std::fmt::Display) -> Self {
+        Self::Internal {
+            cause: cause.to_string(),
+        }
     }
 
-    /// Build a busy 503, logged as a warning with its id.
-    pub fn busy(ids: &dyn IdGenerator) -> Self {
-        let error_id = ids.new_id();
-        tracing::warn!(error_id, "users request busy; answering 503 with retry");
-        Self::Busy { error_id }
+    /// A 503 with its cause for the log.
+    pub fn unavailable(cause: &dyn std::fmt::Display) -> Self {
+        Self::Unavailable {
+            cause: cause.to_string(),
+        }
     }
 
-    /// Build a 503, logging the real cause with its id.
-    pub fn unavailable(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
-        let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "users request dependency unavailable");
-        Self::Unavailable { error_id }
-    }
-
-    /// Build a 502, logging the real cause with its id.
-    pub fn upstream(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
-        let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "users request upstream failed");
-        Self::Upstream { error_id }
+    /// A 502 with its cause for the log.
+    pub fn upstream(cause: &dyn std::fmt::Display) -> Self {
+        Self::Upstream {
+            cause: cause.to_string(),
+        }
     }
 }

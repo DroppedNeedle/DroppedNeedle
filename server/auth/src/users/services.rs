@@ -65,21 +65,17 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 /// Fill a buffer from the OS generator. Failure is a 500, never a fallback.
-fn random_bytes<const N: usize>(deps: &UsersDeps) -> Result<[u8; N], UsersError> {
+fn random_bytes<const N: usize>() -> Result<[u8; N], UsersError> {
     let mut buf = [0u8; N];
-    getrandom::fill(&mut buf).map_err(|cause| {
-        UsersError::internal(
-            &format_args!("random generator failed: {cause}"),
-            deps.ids.as_ref(),
-        )
-    })?;
+    getrandom::fill(&mut buf)
+        .map_err(|cause| UsersError::internal(&format_args!("random generator failed: {cause}")))?;
     Ok(buf)
 }
 
 /// A fresh opaque secret from the session token mint (32 random bytes,
 /// urlsafe base64, v2 format kept byte for byte).
-fn fresh_secret(deps: &UsersDeps) -> Result<String, UsersError> {
-    tokens::mint_token().map_err(|cause| UsersError::internal(&cause, deps.ids.as_ref()))
+fn fresh_secret() -> Result<String, UsersError> {
+    tokens::mint_token().map_err(|cause| UsersError::internal(&cause))
 }
 
 /// Validate a username: 3-32 chars of letters, digits, `.`, `_`, `-`.
@@ -177,13 +173,8 @@ async fn hash_password(deps: &UsersDeps, password: &str) -> Result<String, Users
     let owned = password.to_owned();
     tokio::task::spawn_blocking(move || hasher.try_hash_argon2id(&owned))
         .await
-        .map_err(|cause| {
-            UsersError::internal(
-                &format_args!("password hash panicked: {cause}"),
-                deps.ids.as_ref(),
-            )
-        })?
-        .map_err(|cause| UsersError::internal(&cause, deps.ids.as_ref()))
+        .map_err(|cause| UsersError::internal(&format_args!("password hash panicked: {cause}")))?
+        .map_err(|cause| UsersError::internal(&cause))
 }
 
 /// Verify off the IO loop, for the same reason. Unknown scheme tags fail
@@ -210,13 +201,13 @@ fn native_scheme() -> &'static str {
 
 /// Map a store failure: busy to a 503, the rest to a 500. Callers map
 /// `Conflict` themselves first.
-pub(crate) fn store_internal(deps: &UsersDeps, error: StoreError) -> UsersError {
+pub(crate) fn store_internal(error: StoreError) -> UsersError {
     match error {
         StoreError::Conflict => UsersError::Conflict {
             message: "Conflicting state".to_owned(),
         },
-        StoreError::Internal(cause) => UsersError::internal(&cause, deps.ids.as_ref()),
-        StoreError::Busy => UsersError::busy(deps.ids.as_ref()),
+        StoreError::Internal(cause) => UsersError::internal(&cause),
+        StoreError::Busy => UsersError::Busy,
     }
 }
 
@@ -227,7 +218,7 @@ async fn own_user(deps: &UsersDeps, ctx: &AuthContext) -> Result<UserRecord, Use
     deps.users
         .get_by_id(&ctx.user_id)
         .await
-        .map_err(|error| store_internal(deps, error))?
+        .map_err(store_internal)?
         .ok_or_else(|| UsersError::Unauthorized {
             message: "Authentication required".to_owned(),
         })
@@ -242,7 +233,7 @@ pub(crate) async fn user_response(
         .users
         .provider_names(&user.id)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     Ok(UserResponse {
         id: user.id.clone(),
         username: user.username.clone(),
@@ -282,7 +273,7 @@ pub async fn update_display_name(
     deps.users
         .update_profile(&ctx.user_id, Some(&name), None)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     user_response(deps, &own_user(deps, ctx).await?).await
 }
 
@@ -300,8 +291,8 @@ pub async fn update_username(
             StoreError::Conflict => UsersError::Conflict {
                 message: "Username already taken".to_owned(),
             },
-            StoreError::Internal(cause) => UsersError::internal(&cause, deps.ids.as_ref()),
-            StoreError::Busy => UsersError::busy(deps.ids.as_ref()),
+            StoreError::Internal(cause) => UsersError::internal(&cause),
+            StoreError::Busy => UsersError::Busy,
         })?;
     user_response(deps, &own_user(deps, ctx).await?).await
 }
@@ -318,7 +309,7 @@ pub async fn update_email(
             .users
             .get_by_email(candidate)
             .await
-            .map_err(|error| store_internal(deps, error))?;
+            .map_err(store_internal)?;
         if existing.as_ref().is_some_and(|row| row.id != ctx.user_id) {
             return Err(UsersError::Conflict {
                 message: "Email already in use".to_owned(),
@@ -332,8 +323,8 @@ pub async fn update_email(
             StoreError::Conflict => UsersError::Conflict {
                 message: "Email already in use".to_owned(),
             },
-            StoreError::Internal(cause) => UsersError::internal(&cause, deps.ids.as_ref()),
-            StoreError::Busy => UsersError::busy(deps.ids.as_ref()),
+            StoreError::Internal(cause) => UsersError::internal(&cause),
+            StoreError::Busy => UsersError::Busy,
         })?;
     user_response(deps, &own_user(deps, ctx).await?).await
 }
@@ -349,7 +340,7 @@ pub async fn change_password(
         .users
         .local_credential(&ctx.user_id)
         .await
-        .map_err(|error| store_internal(deps, error))?
+        .map_err(store_internal)?
         .ok_or_else(|| UsersError::Conflict {
             message: "No local password is set for this account".to_owned(),
         })?;
@@ -373,7 +364,7 @@ pub async fn change_password(
             &ctx.session_id,
         )
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     if !replaced {
         return Err(UsersError::Conflict {
             message: "Your password changed while this request was running. Try again.".to_owned(),
@@ -394,7 +385,7 @@ pub async fn set_local_password(
         .users
         .local_credential(&ctx.user_id)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     if existing.is_some() {
         return Err(UsersError::Conflict {
             message: "A local password already exists; use change password instead".to_owned(),
@@ -421,8 +412,8 @@ pub async fn set_local_password(
             StoreError::Conflict => UsersError::Conflict {
                 message: "Could not set a local password".to_owned(),
             },
-            StoreError::Internal(cause) => UsersError::internal(&cause, deps.ids.as_ref()),
-            StoreError::Busy => UsersError::busy(deps.ids.as_ref()),
+            StoreError::Internal(cause) => UsersError::internal(&cause),
+            StoreError::Busy => UsersError::Busy,
         })?;
     user_response(deps, &own_user(deps, ctx).await?).await
 }
@@ -458,14 +449,14 @@ pub async fn upload_avatar(
     deps.avatars
         .save(&ctx.user_id, content_type, &bytes)
         .await
-        .map_err(|error| store_internal(deps, error))?;
-    let nonce = hex_encode(&random_bytes::<3>(deps)?);
+        .map_err(store_internal)?;
+    let nonce = hex_encode(&random_bytes::<3>()?);
     let version = format!("{}-{nonce}", clock_now(deps));
     let url = avatar_url(&ctx.user_id, &version);
     deps.users
         .update_profile(&ctx.user_id, None, Some(&url))
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     user_response(deps, &own_user(deps, ctx).await?).await
 }
 
@@ -484,7 +475,7 @@ pub async fn get_avatar(
     deps.avatars
         .load(user_id)
         .await
-        .map_err(|error| store_internal(deps, error))?
+        .map_err(store_internal)?
         .ok_or(UsersError::NotFound)
 }
 
@@ -508,7 +499,7 @@ pub async fn list_sessions(
         .sessions
         .list_for_user(&ctx.user_id)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     rows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     let mut views: Vec<SessionView> = rows
         .iter()
@@ -540,7 +531,7 @@ pub async fn mint_device_session(
     ctx.require_standard_session()?;
     let label = validate_device_label(&body.label)?;
     own_user(deps, ctx).await?;
-    let token = fresh_secret(deps)?;
+    let token = fresh_secret()?;
     let now = clock_now(deps);
     let row = deps
         .sessions
@@ -553,7 +544,7 @@ pub async fn mint_device_session(
             tokens::expires_at(now),
         )
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     Ok(DeviceSessionResponse {
         id: row.id,
         label,
@@ -573,7 +564,7 @@ pub async fn revoke_session(
         .sessions
         .revoke_scoped(&ctx.user_id, session_id)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     if revoked {
         Ok(())
     } else {
@@ -586,7 +577,7 @@ pub async fn logout_all(deps: &UsersDeps, ctx: &AuthContext) -> Result<(), Users
     deps.sessions
         .revoke_all_for_user(&ctx.user_id)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     Ok(())
 }
 
@@ -596,14 +587,14 @@ pub async fn admin_revoke_user_sessions(deps: &UsersDeps, user_id: &str) -> Resu
         .users
         .get_by_id(user_id)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     if user.is_none() {
         return Err(UsersError::NotFound);
     }
     deps.sessions
         .revoke_all_for_user(user_id)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     Ok(())
 }
 
@@ -628,7 +619,7 @@ pub async fn admin_list_users(
         .users
         .list(limit, offset)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     let mut views = Vec::with_capacity(users.len());
     for user in &users {
         views.push(user_response(deps, user).await?);
@@ -645,7 +636,7 @@ pub async fn admin_get_user(deps: &UsersDeps, user_id: &str) -> Result<UserRespo
         .users
         .get_by_id(user_id)
         .await
-        .map_err(|error| store_internal(deps, error))?
+        .map_err(store_internal)?
         .ok_or(UsersError::NotFound)?;
     user_response(deps, &user).await
 }
@@ -710,7 +701,7 @@ async fn create_local_user(
         .users
         .get_by_username(&lower)
         .await
-        .map_err(|error| store_internal(deps, error))?
+        .map_err(store_internal)?
         .is_some()
     {
         return Err(vague_create_conflict());
@@ -720,7 +711,7 @@ async fn create_local_user(
             .users
             .get_by_email(candidate)
             .await
-            .map_err(|error| store_internal(deps, error))?
+            .map_err(store_internal)?
             .is_some()
     {
         return Err(vague_create_conflict());
@@ -762,7 +753,7 @@ async fn create_local_user(
             .users
             .insert_first_user(user.clone(), credential)
             .await
-            .map_err(|error| create_insert_error(deps, error))?;
+            .map_err(create_insert_error)?;
         if !created {
             return Err(vague_create_conflict());
         }
@@ -770,7 +761,7 @@ async fn create_local_user(
         deps.users
             .insert_with_local_credential(user.clone(), credential)
             .await
-            .map_err(|error| create_insert_error(deps, error))?;
+            .map_err(create_insert_error)?;
     }
     user_response(deps, &user).await
 }
@@ -778,11 +769,11 @@ async fn create_local_user(
 /// Creation-write faults: conflicts stay vague (no username/email oracle),
 /// store faults are fixed 500s with a log line. Never confused: a 500
 /// reported as 409 would hide an outage behind "try another name".
-fn create_insert_error(deps: &UsersDeps, error: StoreError) -> UsersError {
+fn create_insert_error(error: StoreError) -> UsersError {
     match error {
         StoreError::Conflict => vague_create_conflict(),
-        StoreError::Internal(cause) => UsersError::internal(&cause, deps.ids.as_ref()),
-        StoreError::Busy => UsersError::busy(deps.ids.as_ref()),
+        StoreError::Internal(cause) => UsersError::internal(&cause),
+        StoreError::Busy => UsersError::Busy,
     }
 }
 
@@ -811,7 +802,7 @@ pub async fn admin_set_role(
         .users
         .set_role(user_id, role)
         .await
-        .map_err(|error| store_internal(deps, error))?
+        .map_err(store_internal)?
     {
         RoleChange::Changed => {}
         RoleChange::NotFound => return Err(UsersError::NotFound),
@@ -825,7 +816,7 @@ pub async fn admin_set_role(
         .users
         .get_by_id(user_id)
         .await
-        .map_err(|error| store_internal(deps, error))?
+        .map_err(store_internal)?
         .ok_or(UsersError::NotFound)?;
     user_response(deps, &updated).await
 }
@@ -843,12 +834,7 @@ pub async fn admin_delete_user(
             message: "Cannot delete your own account".to_owned(),
         });
     }
-    match deps
-        .users
-        .delete(user_id)
-        .await
-        .map_err(|error| store_internal(deps, error))?
-    {
+    match deps.users.delete(user_id).await.map_err(store_internal)? {
         UserDeletion::Deleted => Ok(()),
         UserDeletion::NotFound => Err(UsersError::NotFound),
         UserDeletion::LastAdmin => Err(UsersError::Conflict {
@@ -1001,11 +987,10 @@ pub async fn admin_mint_recovery_code(
                 message: "Local password recovery is not available for this account".to_owned(),
             }
         }
-        RecoveryIssueError::Random(cause) => UsersError::internal(
-            &format_args!("random generator failed: {cause}"),
-            deps.ids.as_ref(),
-        ),
-        RecoveryIssueError::Store(error) => store_internal(deps, error),
+        RecoveryIssueError::Random(cause) => {
+            UsersError::internal(&format_args!("random generator failed: {cause}"))
+        }
+        RecoveryIssueError::Store(error) => store_internal(error),
     })
 }
 
@@ -1029,7 +1014,7 @@ pub async fn reset_password(deps: &UsersDeps, body: &PasswordReset) -> Result<()
         .recovery
         .find_live_by_hash(&tokens::hash_token(&canonical), now)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     let invalid = || UsersError::Unauthorized {
         message: "Invalid or expired recovery code".to_owned(),
     };
@@ -1040,7 +1025,7 @@ pub async fn reset_password(deps: &UsersDeps, body: &PasswordReset) -> Result<()
         .users
         .get_by_id(&code.user_id)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     let matches = owner.as_ref().and_then(|row| row.username.as_deref())
         == Some(body.username.trim().to_lowercase().as_str());
     if !matches {
@@ -1050,7 +1035,7 @@ pub async fn reset_password(deps: &UsersDeps, body: &PasswordReset) -> Result<()
         .users
         .local_credential(&code.user_id)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     // Only a caller holding a live code reaches the breach screen, so the
     // public reset route cannot be used to probe the HIBP service.
     screen_password(deps, &body.new_password).await?;
@@ -1079,7 +1064,7 @@ pub async fn reset_password(deps: &UsersDeps, body: &PasswordReset) -> Result<()
                 .await
         }
     }
-    .map_err(|error| store_internal(deps, error))?;
+    .map_err(store_internal)?;
     if !replaced {
         return Err(invalid());
     }
@@ -1104,9 +1089,9 @@ fn require_lastfm_enabled(deps: &UsersDeps) -> Result<(), UsersError> {
 /// Map a Last.fm client failure. Transport faults are fixed-body 502s;
 /// unapproved tokens are a 409 (user action pending, not an outage);
 /// rejections are a 400 naming no secret material.
-fn lastfm_error(deps: &UsersDeps, error: LastFmError) -> UsersError {
+fn lastfm_error(error: LastFmError) -> UsersError {
     match error {
-        LastFmError::Transport => UsersError::upstream(&"last.fm unreachable", deps.ids.as_ref()),
+        LastFmError::Transport => UsersError::upstream(&"last.fm unreachable"),
         LastFmError::TokenNotAuthorized => UsersError::Conflict {
             message: "Last.fm access hasn't been approved yet. Approve it, then try again."
                 .to_owned(),
@@ -1123,11 +1108,7 @@ pub async fn lastfm_status(
     deps: &UsersDeps,
     user_id: &str,
 ) -> Result<LastFmStatusResponse, UsersError> {
-    let link = deps
-        .lastfm
-        .get(user_id)
-        .await
-        .map_err(|error| store_internal(deps, error))?;
+    let link = deps.lastfm.get(user_id).await.map_err(store_internal)?;
     match link {
         None => Ok(LastFmStatusResponse {
             configured: false,
@@ -1154,11 +1135,7 @@ pub async fn lastfm_set_credentials(
 ) -> Result<LastFmConnection, UsersError> {
     require_lastfm_enabled(deps)?;
     let mask = droppedneedle_kernel::runtime_config::mask::LASTFM_SECRET_MASK;
-    let current = deps
-        .lastfm
-        .get(user_id)
-        .await
-        .map_err(|error| store_internal(deps, error))?;
+    let current = deps.lastfm.get(user_id).await.map_err(store_internal)?;
     // Resolves one field to its stored ciphertext plus whether the plaintext
     // changed. The comparison decrypts first: ciphertext never compares
     // equal (fresh nonce per seal), so comparing it would unlink on every
@@ -1185,7 +1162,7 @@ pub async fn lastfm_set_credentials(
             let cipher = deps
                 .crypto
                 .encrypt(trimmed)
-                .map_err(|cause| UsersError::internal(&cause, deps.ids.as_ref()))?;
+                .map_err(|cause| UsersError::internal(&cause))?;
             Ok((cipher, !unchanged))
         };
     let (key_cipher, key_changed) = resolve(
@@ -1222,7 +1199,7 @@ pub async fn lastfm_set_credentials(
     deps.lastfm
         .upsert(user_id, link.clone())
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     Ok(link)
 }
 
@@ -1238,7 +1215,7 @@ fn own_lastfm_keys(deps: &UsersDeps, link: &LastFmConnection) -> Result<LastFmKe
     let decrypt = |cipher: &str| {
         deps.crypto
             .decrypt(cipher)
-            .map_err(|cause| UsersError::internal(&cause, deps.ids.as_ref()))
+            .map_err(|cause| UsersError::internal(&cause))
     };
     Ok(LastFmKeys {
         api_key: decrypt(key_cipher)?,
@@ -1275,17 +1252,13 @@ pub async fn lastfm_request_token(
     user_id: &str,
 ) -> Result<LastFmTokenResponse, UsersError> {
     require_lastfm_enabled(deps)?;
-    let link = deps
-        .lastfm
-        .get(user_id)
-        .await
-        .map_err(|error| store_internal(deps, error))?;
+    let link = deps.lastfm.get(user_id).await.map_err(store_internal)?;
     let keys = lastfm_keys_for(deps, link.as_ref())?;
     let (token, auth_url) = deps
         .lastfm_client
         .request_token(&keys.api_key, &keys.shared_secret)
         .await
-        .map_err(|error| lastfm_error(deps, error))?;
+        .map_err(lastfm_error)?;
     deps.lastfm_pending.remember(user_id, &token);
     Ok(LastFmTokenResponse { token, auth_url })
 }
@@ -1306,21 +1279,17 @@ pub async fn lastfm_exchange_session(
                 .to_owned(),
         });
     }
-    let link = deps
-        .lastfm
-        .get(user_id)
-        .await
-        .map_err(|error| store_internal(deps, error))?;
+    let link = deps.lastfm.get(user_id).await.map_err(store_internal)?;
     let keys = lastfm_keys_for(deps, link.as_ref())?;
     let (username, session_key) = deps
         .lastfm_client
         .exchange_session(&keys.api_key, &keys.shared_secret, token)
         .await
-        .map_err(|error| lastfm_error(deps, error))?;
+        .map_err(lastfm_error)?;
     let session_cipher = deps
         .crypto
         .encrypt(&session_key)
-        .map_err(|cause| UsersError::internal(&cause, deps.ids.as_ref()))?;
+        .map_err(|cause| UsersError::internal(&cause))?;
     let base = link.unwrap_or(LastFmConnection {
         configured: false,
         api_key_encrypted: None,
@@ -1338,7 +1307,7 @@ pub async fn lastfm_exchange_session(
             },
         )
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     deps.lastfm_pending.forget(token);
     Ok(LastFmSessionResponse {
         username,
@@ -1349,10 +1318,7 @@ pub async fn lastfm_exchange_session(
 /// DELETE /me/connections/lastfm: unlink (drops credentials and session).
 /// Idempotent: unlinking twice still succeeds.
 pub async fn lastfm_unlink(deps: &UsersDeps, user_id: &str) -> Result<(), UsersError> {
-    deps.lastfm
-        .delete(user_id)
-        .await
-        .map_err(|error| store_internal(deps, error))?;
+    deps.lastfm.delete(user_id).await.map_err(store_internal)?;
     Ok(())
 }
 
@@ -1379,7 +1345,7 @@ pub async fn list_app_passwords(
         .app_passwords
         .list_active_by_user(user_id)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     Ok(AppPasswordListResponse {
         app_passwords: rows.iter().map(app_password_view).collect(),
     })
@@ -1405,11 +1371,11 @@ pub async fn create_app_password(
             message: "App-password name is too long".to_owned(),
         });
     }
-    let secret = fresh_secret(deps)?;
+    let secret = fresh_secret()?;
     let encrypted = deps
         .crypto
         .encrypt(&secret)
-        .map_err(|cause| UsersError::internal(&cause, deps.ids.as_ref()))?;
+        .map_err(|cause| UsersError::internal(&cause))?;
     let row = AppPasswordRecord {
         id: deps.ids.new_id(),
         user_id: ctx.user_id.clone(),
@@ -1426,7 +1392,7 @@ pub async fn create_app_password(
         .app_passwords
         .insert_capped(row.clone(), MAX_ACTIVE_APP_PASSWORDS)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     if !inserted {
         return Err(UsersError::Conflict {
             message: format!(
@@ -1453,13 +1419,13 @@ pub async fn revoke_app_password(
         .app_passwords
         .get_by_id(app_password_id)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     match row {
         Some(row) if row.user_id == user_id => {
             deps.app_passwords
                 .revoke(app_password_id)
                 .await
-                .map_err(|error| store_internal(deps, error))?;
+                .map_err(store_internal)?;
             Ok(())
         }
         _ => Err(UsersError::NotFound),
@@ -1475,13 +1441,13 @@ pub async fn admin_list_app_passwords(
         .app_passwords
         .list_all_active()
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     let owner_ids: Vec<String> = rows.iter().map(|row| row.user_id.clone()).collect();
     let owners = deps
         .users
         .get_by_ids(&owner_ids)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     let mut views = Vec::new();
     for row in &rows {
         let Some(owner) = owners.iter().find(|user| user.id == row.user_id) else {
@@ -1516,7 +1482,7 @@ pub async fn admin_revoke_app_password(
         .app_passwords
         .revoke(app_password_id)
         .await
-        .map_err(|error| store_internal(deps, error))?;
+        .map_err(store_internal)?;
     if revoked {
         Ok(())
     } else {

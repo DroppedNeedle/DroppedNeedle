@@ -9,12 +9,11 @@ use crate::session::extract;
 use crate::session::login::{
     INVALID_CREDENTIALS, LoginContext, LoginError, LoginRequest, LoginService,
 };
-use crate::session::rate_limit::{LOGIN_USERNAME_CLASS, RateLimiter, rate_limited_response};
+use crate::session::rate_limit::{LOGIN_USERNAME_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
 use crate::session::store::{SessionKind, SessionRecord, SessionStore, now_unix};
 use crate::session::tokens;
 use crate::users::UsersDeps;
-use crate::users::handlers::ValidJson;
 use crate::users::models::UserResponse;
 use crate::users::{clock_now, services};
 use axum::{
@@ -25,7 +24,8 @@ use axum::{
     routing::{get, post},
 };
 use droppedneedle_kernel::config::TrustedProxies;
-use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::ValidJson;
 
 use super::error::AuthRouteError;
 use super::login_handoff;
@@ -155,7 +155,7 @@ pub async fn login_handler<S, V, C>(
     headers: HeaderMap,
     peer: PeerAddr,
     ValidJson(body): ValidJson<LoginBody>,
-) -> Result<Response, AuthRouteError>
+) -> Result<Response, ApiError>
 where
     S: SessionStore,
     V: crate::session::login::PasswordVerifier,
@@ -169,10 +169,7 @@ where
     );
     let budget = state.limits.check_login(&body.username);
     if !budget.allowed {
-        return Ok(rate_limited_response(
-            LOGIN_USERNAME_CLASS,
-            budget.retry_after_secs,
-        ));
+        return Err(rate_limited(LOGIN_USERNAME_CLASS, budget.retry_after_secs));
     }
     let ctx = LoginContext {
         user_agent: user_agent_of(&headers),
@@ -195,16 +192,12 @@ where
             ))
         }
         Err(LoginError::InvalidCredentials) => {
-            Err(AuthRouteError::unauthorized(INVALID_CREDENTIALS))
+            Err(AuthRouteError::unauthorized(INVALID_CREDENTIALS).into())
         }
-        Err(LoginError::Unavailable) => Err(AuthRouteError::internal(
-            &LoginError::Unavailable,
-            state.users.ids.as_ref(),
-        )),
-        Err(LoginError::Busy) => Err(AuthRouteError::busy(
-            &LoginError::Busy,
-            state.users.ids.as_ref(),
-        )),
+        Err(LoginError::Unavailable) => {
+            Err(AuthRouteError::internal(&LoginError::Unavailable).into())
+        }
+        Err(LoginError::Busy) => Err(AuthRouteError::busy(&LoginError::Busy).into()),
     }
 }
 
@@ -222,7 +215,7 @@ where
 pub async fn logout_handler<S, V, C>(
     State(state): State<NativeAuthState<S, V, C>>,
     headers: HeaderMap,
-) -> Result<Response, AuthRouteError>
+) -> Result<Response, ApiError>
 where
     S: SessionStore,
     V: crate::session::login::PasswordVerifier,
@@ -239,18 +232,14 @@ where
             .sessions
             .owner_by_hash(&tokens::hash_token(&raw_token))
             .await
-            .map_err(|error| {
-                AuthRouteError::from(store_failure(&error, state.users.ids.as_ref()))
-            })?;
+            .map_err(|error| AuthRouteError::from(store_failure(&error)))?;
         if let Some(owner) = owner {
             state
                 .users
                 .sessions
                 .revoke_scoped(&owner.user_id, &owner.session_id)
                 .await
-                .map_err(|error| {
-                    AuthRouteError::from(store_failure(&error, state.users.ids.as_ref()))
-                })?;
+                .map_err(|error| AuthRouteError::from(store_failure(&error)))?;
         }
     }
     let mut response = StatusCode::NO_CONTENT.into_response();
@@ -282,7 +271,7 @@ pub async fn setup_handler<S, V, C>(
     headers: HeaderMap,
     peer: PeerAddr,
     ValidJson(body): ValidJson<SetupBody>,
-) -> Result<Response, AuthRouteError>
+) -> Result<Response, ApiError>
 where
     S: SessionStore,
     V: crate::session::login::PasswordVerifier,
@@ -291,7 +280,8 @@ where
     if users_exist(&state.users).await? {
         return Err(AuthRouteError::Conflict {
             message: SETUP_ALREADY_COMPLETED.to_owned(),
-        });
+        }
+        .into());
     }
     let user = services::create_first_admin(
         &state.users,
@@ -304,8 +294,7 @@ where
     .await
     .map_err(AuthRouteError::from)?;
     let now = clock_now(&state.users);
-    let raw_token =
-        tokens::mint_token().map_err(|error| AuthRouteError::internal(&error, id_gen(&state)))?;
+    let raw_token = tokens::mint_token().map_err(|error| AuthRouteError::internal(&error))?;
     state
         .sessions
         .insert(SessionRecord {
@@ -321,13 +310,13 @@ where
             user_agent: user_agent_of(&headers),
         })
         .await
-        .map_err(|error| AuthRouteError::internal(&error, id_gen(&state)))?;
+        .map_err(|error| AuthRouteError::internal(&error))?;
     state
         .users
         .users
         .touch_login(&user.id, now)
         .await
-        .map_err(|error| AuthRouteError::from(store_failure(&error, state.users.ids.as_ref())))?;
+        .map_err(|error| AuthRouteError::from(store_failure(&error)))?;
     let secure = cookies::secure_for_sign_in(
         uri.scheme_str().unwrap_or("http"),
         &headers,
@@ -354,7 +343,7 @@ where
 )]
 pub async fn setup_status_handler<S, V, C>(
     State(state): State<NativeAuthState<S, V, C>>,
-) -> Result<Json<SetupStatusBody>, AuthRouteError>
+) -> Result<Json<SetupStatusBody>, ApiError>
 where
     S: SessionStore,
     V: crate::session::login::PasswordVerifier,
@@ -372,7 +361,7 @@ async fn users_exist(users: &UsersDeps) -> Result<bool, AuthRouteError> {
         .list(1, 0)
         .await
         .map(|(_, total)| total > 0)
-        .map_err(|error| AuthRouteError::from(store_failure(&error, users.ids.as_ref())))
+        .map_err(|error| AuthRouteError::from(store_failure(&error)))
 }
 
 /// Full login user for the response body. The credential lookup already
@@ -382,15 +371,13 @@ async fn login_user(users: &UsersDeps, user_id: &str) -> Result<UserResponse, Au
         .users
         .get_by_id(user_id)
         .await
-        .map_err(|error| AuthRouteError::from(store_failure(&error, users.ids.as_ref())))?
-        .ok_or_else(|| {
-            AuthRouteError::internal(&"login credential has no user row", users.ids.as_ref())
-        })?;
+        .map_err(|error| AuthRouteError::from(store_failure(&error)))?
+        .ok_or_else(|| AuthRouteError::internal(&"login credential has no user row"))?;
     let providers = users
         .users
         .provider_names(user_id)
         .await
-        .map_err(|error| AuthRouteError::from(store_failure(&error, users.ids.as_ref())))?;
+        .map_err(|error| AuthRouteError::from(store_failure(&error)))?;
     Ok(UserResponse {
         id: user.id,
         username: user.username,
@@ -437,25 +424,17 @@ where
     }
 }
 
-/// Borrow the id generator out of native state.
-fn id_gen<S, V, C>(state: &NativeAuthState<S, V, C>) -> &dyn IdGenerator {
-    state.users.ids.as_ref()
-}
-
-/// Store failures: conflicts stay conflicts, busy is a 503, internals are
-/// logged with an id. The users error converts into the route error at the
-/// call site.
-fn store_failure(
-    error: &crate::users::stores::StoreError,
-    ids: &dyn droppedneedle_kernel::ids::IdGenerator,
-) -> crate::users::error::UsersError {
+/// Store failures: conflicts stay conflicts, busy is a 503, internals carry
+/// their cause. The users error converts into the route error at the call
+/// site.
+fn store_failure(error: &crate::users::stores::StoreError) -> crate::users::error::UsersError {
     match error {
         crate::users::stores::StoreError::Conflict => crate::users::error::UsersError::Conflict {
             message: "Conflicting state".to_owned(),
         },
-        crate::users::stores::StoreError::Busy => crate::users::error::UsersError::busy(ids),
+        crate::users::stores::StoreError::Busy => crate::users::error::UsersError::Busy,
         crate::users::stores::StoreError::Internal(cause) => {
-            crate::users::error::UsersError::internal(cause, ids)
+            crate::users::error::UsersError::internal(cause)
         }
     }
 }

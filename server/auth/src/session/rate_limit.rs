@@ -30,14 +30,15 @@ use std::time::Instant;
 
 use axum::{
     extract::{ConnectInfo, Request, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue},
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
 };
 
 use super::middleware::CurrentSession;
 use crate::session::client_ip::client_ip;
 use droppedneedle_kernel::config::TrustedProxies;
+use droppedneedle_kernel::error::ApiError;
 
 /// Most keys one map tracks before evicting the stalest.
 pub const MAX_ENTRIES: usize = 10_000;
@@ -418,9 +419,6 @@ fn username_key(username: &str) -> String {
     format!("username:{}", kept.to_lowercase())
 }
 
-/// Machine code for exhausted buckets.
-pub const RATE_LIMITED: &str = "RATE_LIMITED";
-
 /// Axum middleware over `/api/v3/*`. Mounted inside the session gate so a
 /// signed-in caller is keyed by user; non-v3 paths pass through.
 pub async fn rate_limit(
@@ -435,7 +433,7 @@ pub async fn rate_limit(
     let class = classify(path);
     let outcome = limits.check(class, &limits.caller_key(&request));
     if !outcome.allowed {
-        return rate_limited_response(class, outcome.retry_after_secs);
+        return rate_limited(class, outcome.retry_after_secs).into_response();
     }
     let mut response = next.run(request).await;
     stamp_budget_headers(response.headers_mut(), class, outcome.remaining);
@@ -448,21 +446,17 @@ pub fn stamp_budget_headers(headers: &mut HeaderMap, class: RateClass, remaining
     headers.insert("x-ratelimit-remaining", remaining.into());
 }
 
-/// 429 in the shared envelope with `Retry-After` and zeroed budget headers.
-pub fn rate_limited_response(class: RateClass, retry_after_secs: u64) -> Response {
-    let mut response = droppedneedle_kernel::error::envelope_response(
-        StatusCode::TOO_MANY_REQUESTS,
-        RATE_LIMITED,
-        "Too many requests",
-        None,
-    );
-    let headers = response.headers_mut();
-    headers.insert(
-        axum::http::header::RETRY_AFTER,
-        retry_after_secs.max(1).into(),
-    );
-    stamp_budget_headers(headers, class, 0);
-    response
+/// 429 `RATE_LIMITED` with `Retry-After` and zeroed budget headers.
+pub fn rate_limited(class: RateClass, retry_after_secs: u64) -> ApiError {
+    ApiError::rate_limited(retry_after_secs)
+        .with_header(
+            HeaderName::from_static("x-ratelimit-limit"),
+            class.capacity.into(),
+        )
+        .with_header(
+            HeaderName::from_static("x-ratelimit-remaining"),
+            HeaderValue::from_static("0"),
+        )
 }
 
 #[cfg(test)]

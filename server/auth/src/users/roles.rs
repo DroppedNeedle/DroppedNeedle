@@ -16,8 +16,8 @@ use utoipa::ToSchema;
 use super::super::session::middleware::CurrentSession;
 use super::UsersDeps;
 use super::error::UsersError;
-use super::handlers::UsersHttpError;
 use super::stores::StoreError;
+use droppedneedle_kernel::error::ApiError;
 
 /// Session kind, re-exported from the session module so services and
 /// tests share one definition.
@@ -141,8 +141,8 @@ async fn resolve(parts: &Parts, deps: &UsersDeps) -> Result<AuthContext, UsersEr
             StoreError::Conflict => UsersError::Conflict {
                 message: "Conflicting state".to_owned(),
             },
-            StoreError::Internal(cause) => UsersError::internal(&cause, deps.ids.as_ref()),
-            StoreError::Busy => UsersError::busy(deps.ids.as_ref()),
+            StoreError::Internal(cause) => UsersError::internal(&cause),
+            StoreError::Busy => UsersError::Busy,
         })?
         .ok_or_else(missing_session)?;
     Ok(AuthContext {
@@ -156,7 +156,7 @@ async fn resolve(parts: &Parts, deps: &UsersDeps) -> Result<AuthContext, UsersEr
 }
 
 impl FromRequestParts<UsersDeps> for CurrentUser {
-    type Rejection = UsersHttpError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -167,7 +167,7 @@ impl FromRequestParts<UsersDeps> for CurrentUser {
 }
 
 impl FromRequestParts<UsersDeps> for CurrentCurator {
-    type Rejection = UsersHttpError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -186,7 +186,7 @@ impl FromRequestParts<UsersDeps> for CurrentCurator {
 }
 
 impl FromRequestParts<UsersDeps> for CurrentAdmin {
-    type Rejection = UsersHttpError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,

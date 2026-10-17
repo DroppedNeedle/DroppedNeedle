@@ -60,20 +60,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use axum::{
     extract::{ConnectInfo, Request, State},
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
 };
 
 use super::{
     allowlist::is_public,
     cookies::is_secure_trusted,
-    extract::{Transport, forbidden_response, unauthorized_response},
+    extract::Transport,
     origin::{OriginDecision, check_origin, is_unsafe_method, named_origin},
-    rate_limit::{AUTH_FAILURE_CLASS, RateLimiter, rate_limited_response},
+    rate_limit::{AUTH_FAILURE_CLASS, RateLimiter, rate_limited},
     stated::StatedAddresses,
     store::{SessionKind, SessionStore, SessionStoreError, now_unix},
     tokens::hash_token,
 };
 use droppedneedle_kernel::config::TrustedProxies;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::runtime_config::origin::Origin;
 
 /// Authenticated session stashed in request extensions by the middleware.
@@ -191,20 +192,13 @@ where
         .await
     {
         Ok(record) => record,
+        Err(SessionStoreError::Busy) => {
+            return ApiError::unavailable(Unavailable::ServerBusy, "auth.session.lookup")
+                .into_response();
+        }
         Err(error) => {
-            let error_id = request
-                .extensions()
-                .get::<droppedneedle_kernel::ids::RequestId>()
-                .map(|id| id.0.clone())
-                .unwrap_or_default();
-            if matches!(error, SessionStoreError::Busy) {
-                return droppedneedle_kernel::error::busy_response(
-                    "auth.session.lookup",
-                    &error_id,
-                );
-            }
-            tracing::error!(%error, error_id, "session store lookup failed");
-            return droppedneedle_kernel::error::ApiError::internal_response(&error_id);
+            return ApiError::internal(format_args!("session store lookup failed: {error}"))
+                .into_response();
         }
     };
     let Some(record) = record else {
@@ -225,7 +219,7 @@ where
     ) == OriginDecision::Deny
     {
         warn_refused_origin(&auth, request.headers(), target.as_ref());
-        return forbidden_response("Origin not allowed");
+        return ApiError::forbidden("Origin not allowed").into_response();
     }
     let mut request = request;
     request.extensions_mut().insert(CurrentSession {
@@ -242,11 +236,12 @@ where
 /// paths are throttled even though the request limiter never sees them.
 fn auth_failure(limits: &RateLimiter, request: &Request, message: &str) -> Response {
     let outcome = limits.check(AUTH_FAILURE_CLASS, &limits.caller_key(request));
-    if outcome.allowed {
-        unauthorized_response(message)
+    let error = if outcome.allowed {
+        ApiError::unauthorized(message)
     } else {
-        rate_limited_response(AUTH_FAILURE_CLASS, outcome.retry_after_secs)
-    }
+        rate_limited(AUTH_FAILURE_CLASS, outcome.retry_after_secs)
+    };
+    error.into_response()
 }
 
 /// Headers a reverse proxy adds, any of which marks the peer as one.
