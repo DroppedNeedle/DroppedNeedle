@@ -7,6 +7,7 @@ use std::path::Path;
 use lofty::file::TaggedFile;
 
 use super::document::{FieldDocument, FieldRead, collect_reads, values_or_absent};
+use super::kept::{LeftAlone, TagsKept};
 use super::mp4_edit::{self, Mp4Edit};
 use super::{PictureSpec, Refusal, TagEdit, TagFormat, mismatch};
 use crate::tags::AudioFormat;
@@ -33,6 +34,20 @@ impl TagFormat for Mp4 {
             .collect();
         collect_reads(document, reads);
         Ok(())
+    }
+
+    /// Items holding a value that is not text, and atoms of one code
+    /// held twice, are left as they are.
+    fn kept(atoms: Vec<Mp4AtomTruth>) -> Result<TagsKept, Refusal> {
+        let left_alone = mp4_listing(&atoms, false)
+            .1
+            .into_iter()
+            .map(|(key, why)| (key["mp4:".len()..].to_owned(), why))
+            .collect();
+        Ok(TagsKept {
+            refusal: None,
+            left_alone,
+        })
     }
 
     fn resolve_fields(
@@ -84,6 +99,14 @@ impl TagFormat for Mp4 {
 /// `owned_too`, every one that holds text (what a native edit may
 /// replace: an undo recorded before a field owned the item names it).
 pub(super) fn mp4_native(atoms: &[Mp4AtomTruth], owned_too: bool) -> BTreeMap<String, Vec<String>> {
+    mp4_listing(atoms, owned_too).0
+}
+
+/// [`mp4_native`], and the items it leaves out, each with why.
+fn mp4_listing(
+    atoms: &[Mp4AtomTruth],
+    owned_too: bool,
+) -> (BTreeMap<String, Vec<String>>, BTreeMap<String, LeftAlone>) {
     let mut owned_codes: Vec<[u8; 4]> = vec![*b"covr"];
     let mut owned_names: Vec<&'static str> = Vec::new();
     let fields: &[TagField] = if owned_too { &[] } else { &TagField::ALL };
@@ -103,7 +126,7 @@ pub(super) fn mp4_native(atoms: &[Mp4AtomTruth], owned_too: bool) -> BTreeMap<St
     // A freeform holding any value that is not text (or is empty) is not
     // listed: an edit replaces the whole item, and that value could not
     // be written back.
-    let mut unlisted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut unlisted: BTreeMap<String, LeftAlone> = BTreeMap::new();
     for atom in atoms {
         if atom.kind == *b"----" {
             for item in &atom.items {
@@ -119,7 +142,7 @@ pub(super) fn mp4_native(atoms: &[Mp4AtomTruth], owned_too: bool) -> BTreeMap<St
                             out.entry(key).or_default().push(text.to_owned());
                         }
                         _ => {
-                            unlisted.insert(key);
+                            unlisted.insert(key, LeftAlone::NotText);
                         }
                     }
                 }
@@ -139,19 +162,21 @@ pub(super) fn mp4_native(atoms: &[Mp4AtomTruth], owned_too: bool) -> BTreeMap<St
             .collect();
         let code: String = atom.kind.iter().map(|byte| char::from(*byte)).collect();
         let key = format!("mp4:{code}");
+        // Two atoms of one code, or a value that is not text: left alone.
         match texts.filter(|texts| !texts.is_empty()) {
-            Some(texts) if !out.contains_key(&key) => {
-                out.insert(key, texts);
+            None => {
+                unlisted.insert(key, LeftAlone::NotText);
             }
-            // Two atoms of one code, or a value that is not text: left
-            // alone.
-            _ => {
-                unlisted.insert(key);
+            Some(_) if out.contains_key(&key) || unlisted.contains_key(&key) => {
+                unlisted.entry(key).or_insert(LeftAlone::HeldTwice);
+            }
+            Some(texts) => {
+                out.insert(key, texts);
             }
         }
     }
-    out.retain(|key, _| !unlisted.contains(key));
-    out
+    out.retain(|key, _| !unlisted.contains_key(key));
+    (out, unlisted)
 }
 
 // ---------------------------------------------------------------------------

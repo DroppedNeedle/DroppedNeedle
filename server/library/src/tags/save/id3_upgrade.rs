@@ -105,33 +105,21 @@ const ONE_PER_TAG_IDS: &[&str] = &[
     "MCDI", "ETCO", "MLLT", "SYTC", "RVRB", "PCNT", "RBUF", "POSS", "OWNE", "SEEK", "ASPI",
 ];
 
-/// Why a save cannot keep this MP3's ID3 tag whole, in plain words, or
+/// Why a save cannot move this tag to ID3v2.4 whole: a mixed v2.3 tag
+/// whose chapter or `LINK` frames cannot move unchanged. In plain words.
+pub(super) fn unmovable_frames(tag: &DeepId3) -> Option<String> {
+    if is_mixed_v23(tag) {
+        v24_layouts(tag).err()
+    } else {
+        None
+    }
+}
+
+/// Why a save cannot keep this tag (as saved) whole, in plain words, or
 /// `None` when it can. The writer keeps one of two identical frames,
 /// one `PCNT` and the like, and one `UFID` per owner, so a tag holding
-/// more would lose a frame. A mixed v2.3 tag whose chapter or `LINK`
-/// frames cannot move to ID3v2.4 is named too. The save would refuse
-/// either; the preview says so first.
-pub fn id3_unkept_frames(path: &Path) -> Result<Option<String>, TagsError> {
-    if format_for_path(path)? != AudioFormat::Mp3 {
-        return Ok(None);
-    }
-    let bytes = fs::read(path).map_err(|source| TagsError::Io {
-        path: path.display().to_string(),
-        source,
-    })?;
-    let unreadable = |refusal: Refusal| TagsError::TagRead {
-        path: path.display().to_string(),
-        reason: refusal.to_string(),
-    };
-    let Some(tag) = parse_id3_deep(&bytes).map_err(unreadable)? else {
-        return Ok(None);
-    };
-    if is_mixed_v23(&tag)
-        && let Err(reason) = v24_layouts(&tag)
-    {
-        return Ok(Some(reason));
-    }
-    let tag = as_saved(tag).map_err(unreadable)?;
+/// more would lose a frame, and undo could put back only one.
+pub(super) fn frames_kept_once(tag: &DeepId3) -> Option<String> {
     let mut seen: std::collections::HashSet<(&str, &[u8])> = std::collections::HashSet::new();
     for frame in tag.frames.iter().filter(|frame| frame.text.is_none()) {
         let key: &[u8] = if ONE_PER_TAG_IDS.contains(&frame.id.as_str()) {
@@ -146,13 +134,13 @@ pub fn id3_unkept_frames(path: &Path) -> Result<Option<String>, TagsError> {
             &frame.payload
         };
         if !seen.insert((frame.id.as_str(), key)) {
-            return Ok(Some(format!(
+            return Some(format!(
                 "The file's ID3 tag holds two {} frames where the tag writer keeps only one, so saving its tags would lose one.",
                 frame.id
-            )));
+            ));
         }
     }
-    Ok(None)
+    None
 }
 
 /// Whether a save of this file writes ID3v2.3: an MP3 whose tag is v2.3

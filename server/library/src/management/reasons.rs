@@ -301,7 +301,7 @@ pub fn tags_not_kept(message: &str) -> ItemReason {
     ItemReason::new(
         "WRITE_FAILED",
         message,
-        "Remove or fix the frame it names with a tag editor, then make a new preview.",
+        "Remove or fix the tag it names with a tag editor, then make a new preview.",
     )
 }
 

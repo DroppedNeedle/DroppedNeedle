@@ -207,7 +207,7 @@ pub(crate) fn id3_inject_frames(path: &Path, frames: &[(&str, &[u8])]) {
 }
 
 /// Inject raw pairs into a FLAC's Vorbis comment block.
-fn flac_inject_pairs(path: &Path, extra: &[(&str, &str)]) {
+pub(crate) fn flac_inject_pairs(path: &Path, extra: &[(&str, &str)]) {
     let bytes = std::fs::read(path).unwrap();
     assert_eq!(&bytes[..4], b"fLaC");
     let mut blocks: Vec<(u8, Vec<u8>)> = Vec::new();
@@ -3848,7 +3848,7 @@ fn title_save_keeps_frames_lofty_rewrites() {
         let (_dir, path) = raw_id3_mp3(&format!("kept-{major}"), major, &frames);
         let tail = after_id3v2(&path);
         let (_, before) = id3_view(&path);
-        assert_eq!(tags::save::id3_unkept_frames(&path).unwrap(), None);
+        assert_eq!(tags::save::tags_kept(&path).unwrap().refusal, None);
 
         tags::save_tags(&path, &[TagEdit::set_title("New")]).unwrap();
         let (after_major, after) = id3_view(&path);
@@ -3880,7 +3880,7 @@ fn frames_kept_only_once_are_refused_before_saving() {
     for (id, first, second) in cases {
         let frames = vec![("TIT2", latin1(&["Probe"])), (id, first), (id, second)];
         let (_dir, path) = raw_id3_mp3(&format!("unkept-{id}"), 3, &frames);
-        let message = tags::save::id3_unkept_frames(&path).unwrap().unwrap();
+        let message = tags::save::tags_kept(&path).unwrap().refusal.unwrap();
         assert!(message.contains(&format!("two {id} frames")), "{message}");
         let before = std::fs::read(&path).unwrap();
         assert!(matches!(
@@ -3918,7 +3918,7 @@ fn chapters_move_to_v24_readable() {
         ("CHAP", chap),
     ];
     let (_dir, path) = raw_id3_mp3("chapters", 3, &frames);
-    assert_eq!(tags::save::id3_unkept_frames(&path).unwrap(), None);
+    assert_eq!(tags::save::tags_kept(&path).unwrap().refusal, None);
 
     let report = tags::save_tags(&path, &[TagEdit::set_title("New")]).unwrap();
     assert_eq!(report.id3_version.as_deref(), Some("2.4"));

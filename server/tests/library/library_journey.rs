@@ -7491,6 +7491,114 @@ async fn a_mixed_id3v23_file_is_saved_as_v24() {
     saved_as_v24("restored");
 }
 
+/// A scrub's preview says, per file, how many tags it keeps as they are
+/// because undo could not put them back exactly, and why: an ID3 frame
+/// over 1 MB, an MP4 item that is not text. A file no save could keep
+/// whole is left out of the run with the reason: a FLAC spelling a tag
+/// two ways, and an MP3 holding two identical pictures in a run that
+/// replaces the art.
+#[tokio::test]
+async fn a_scrub_preview_names_the_tags_it_keeps() {
+    use crate::library_tags::{flac_inject_pairs, id3_inject_frames};
+    use droppedneedle_library::management::enrich::{Cover, ScriptedEnrichment};
+    use droppedneedle_library::management::models::{Eligibility, SelectionKind};
+
+    let managed = ManagedLibrary::start("lib-kept-as-is", |profile| {
+        profile.metadata.scrub_unmanaged_tags = true;
+        profile.artwork.embedded_enabled = true;
+    })
+    .await;
+    let mut cover = Vec::new();
+    image::RgbImage::from_pixel(8, 8, image::Rgb([30, 30, 200]))
+        .write_to(
+            &mut std::io::Cursor::new(&mut cover),
+            image::ImageFormat::Png,
+        )
+        .expect("png");
+    assert!(
+        managed
+            .library
+            .enrichment
+            .set(Arc::new(ScriptedEnrichment {
+                listenbrainz: None,
+                lyrics: None,
+                cover: Some(Cover {
+                    bytes: cover,
+                    mime: "image/png".to_owned(),
+                }),
+                ..Default::default()
+            }))
+            .is_ok()
+    );
+    let (kept, kept_tracks) = managed
+        .add_album_from(
+            "kept",
+            &["management_full.mp3", "management_full.m4a"],
+            |_| {},
+        )
+        .await;
+    let (spelled, spelled_tracks) = managed
+        .add_album_from("spelled", &["management_full.flac"], |_| {})
+        .await;
+    let (doubled, doubled_tracks) = managed
+        .add_album_from("doubled", &["management_full.mp3"], |_| {})
+        .await;
+    let mut geob = b"\x00application/octet-stream\x00blob.bin\x00large\x00".to_vec();
+    geob.extend((0..(1 << 20) + 4096).map(|index| (index % 251) as u8));
+    id3_inject_frames(&managed.path(&kept_tracks[0]), &[("GEOB", &geob)]);
+    flac_inject_pairs(
+        &managed.path(&spelled_tracks[0]),
+        &[("Mood", "Calm"), ("MOOD", "Bright")],
+    );
+    let picture = b"\0image/png\0\x03\0abc".as_slice();
+    id3_inject_frames(
+        &managed.path(&doubled_tracks[0]),
+        &[("APIC", picture), ("APIC", picture)],
+    );
+    rescan(&managed.library).await;
+
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&kept, &spelled, &doubled], "kept")
+        .await;
+    let item = |track: &str| {
+        items
+            .iter()
+            .find(|item| item.track_id.as_deref() == Some(track))
+            .expect("item for the track")
+    };
+    for (track, note) in [
+        (
+            &kept_tracks[0],
+            "1 tag kept as it is, since undo could not restore it exactly: GEOB (over 1 MB).",
+        ),
+        (
+            &kept_tracks[1],
+            "1 tag kept as it is, since undo could not restore it exactly: stik (not text).",
+        ),
+    ] {
+        let item = item(track);
+        assert_eq!(item.eligibility, Eligibility::Warning, "{:?}", item.facts);
+        assert!(
+            item.facts.warnings.iter().any(|warning| warning == note),
+            "{:?}",
+            item.facts.warnings
+        );
+    }
+    for (track, words) in [
+        (
+            &spelled_tracks[0],
+            "The file spells its MOOD tag more than one way (Mood, MOOD), so saving its tags would merge them.",
+        ),
+        (&doubled_tracks[0], "two APIC frames"),
+    ] {
+        let item = item(track);
+        assert_eq!(item.eligibility, Eligibility::Blocked, "{:?}", item.facts);
+        let reason = item.reason().expect("a reason");
+        assert_eq!(reason.code, "WRITE_FAILED");
+        assert!(reason.message.contains(words), "{}", reason.message);
+    }
+}
+
 /// The Picard profile applied to one album in every writable format
 /// writes each field in that format's own home: artist sort, album
 /// artists, ISRC, disc subtitle, original date and release type. Comment,

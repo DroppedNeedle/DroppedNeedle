@@ -593,12 +593,19 @@ fn plan_file(
             reasons::file_unreadable()
         })?;
         item.facts.warnings.extend(notes);
-        let unkept = tags::save::id3_unkept_frames(&path).map_err(|error| {
+        let kept = tags::save::tags_kept(&path).map_err(|error| {
             tracing::info!(%error, track = track.id, "tags unreadable at preview");
             reasons::file_unreadable()
         })?;
-        if let Some(message) = unkept {
+        if let Some(message) = kept.refusal {
             return Err(reasons::tags_not_kept(&message));
+        }
+        // A scrub leaves these alone; the preview says so.
+        let metadata = &ctx.pinned.profile.metadata;
+        if metadata.enabled && metadata.scrub_unmanaged_tags {
+            item.facts
+                .warnings
+                .extend(left_alone_note(&kept.left_alone));
         }
     }
     item.diff.path_changed = moves;
@@ -774,6 +781,42 @@ fn format_word(mime: &str) -> &'static str {
         "image/webp" => "webp",
         _ => "jpeg",
     }
+}
+
+/// The preview note for tags a write leaves as they are: how many, and
+/// why by kind with their names. `None` when there are none.
+fn left_alone_note(left_alone: &[(String, tags::save::LeftAlone)]) -> Option<String> {
+    use tags::save::LeftAlone;
+    if left_alone.is_empty() {
+        return None;
+    }
+    let groups: Vec<String> = [
+        (LeftAlone::NotText, "not text"),
+        (LeftAlone::HeldTwice, "held twice"),
+        (LeftAlone::OverSizeLimit, "over 1 MB"),
+    ]
+    .into_iter()
+    .filter_map(|(kind, words)| {
+        let mut names: Vec<&str> = left_alone
+            .iter()
+            .filter(|(_, why)| *why == kind)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        (!names.is_empty()).then(|| format!("{} ({words})", names.join(", ")))
+    })
+    .collect();
+    let (noun, as_it_is, it) = if left_alone.len() == 1 {
+        ("tag", "as it is", "it")
+    } else {
+        ("tags", "as they are", "them")
+    };
+    Some(format!(
+        "{} {noun} kept {as_it_is}, since undo could not restore {it} exactly: {}.",
+        left_alone.len(),
+        groups.join("; ")
+    ))
 }
 
 /// Plan the file's embedded pictures (v2's embedded artwork and its

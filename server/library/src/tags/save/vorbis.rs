@@ -12,6 +12,7 @@ use lofty::tag::{TagExt as _, TagType};
 
 use super::document::{FieldDocument, FieldRead, collect_reads};
 use super::edit::{foreign, supersede};
+use super::kept::TagsKept;
 use super::{PictureSpec, Refusal, TagEdit, TagFormat, lofty_picture, mismatch, save_failed};
 use crate::tags::AudioFormat;
 use crate::tags::fields::TagField;
@@ -47,25 +48,34 @@ impl TagFormat for Vorbis {
     }
 
     fn prepare(truth: VorbisTruth) -> Result<VorbisTruth, Refusal> {
-        if let Some((key, _)) = truth.pairs.iter().find(|(_, value)| value.is_empty()) {
-            return Err(Refusal::EmptyVorbisValue { key: key.clone() });
+        if let Some(key) = empty_key(&truth) {
+            return Err(Refusal::EmptyVorbisValue {
+                key: key.to_owned(),
+            });
         }
-        // Keys with mixed spellings (`title` plus `TITLE`) cannot be
-        // edited without merging them; repeated keys with one spelling
-        // are ordinary multi-values.
-        let mut spellings: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for (key, _) in &truth.pairs {
-            let entry = spellings.entry(key.to_ascii_uppercase()).or_default();
-            if !entry.contains(key) {
-                entry.push(key.clone());
-            }
-        }
-        if let Some((upper, variants)) = spellings.iter().find(|(_, variants)| variants.len() > 1) {
+        if let Some((upper, variants)) = mixed_spelling(&truth) {
             return Err(Refusal::NoByteInventory {
                 detail: format!("comment key '{upper}' has mixed spellings {variants:?}"),
             });
         }
         Ok(truth)
+    }
+
+    /// Every item is listed or owned by a field, so nothing is left
+    /// alone; a comment the save would refuse is named instead.
+    fn kept(truth: VorbisTruth) -> Result<TagsKept, Refusal> {
+        if let Some(key) = empty_key(&truth) {
+            return Ok(TagsKept::refused(format!(
+                "The file's {key} tag is empty, and the tag writer cannot keep an empty tag."
+            )));
+        }
+        if let Some((upper, variants)) = mixed_spelling(&truth) {
+            return Ok(TagsKept::refused(format!(
+                "The file spells its {upper} tag more than one way ({}), so saving its tags would merge them.",
+                variants.join(", ")
+            )));
+        }
+        Ok(TagsKept::default())
     }
 
     fn resolve_fields(
@@ -195,6 +205,31 @@ impl TagFormat for Vorbis {
     ) -> Result<(), Refusal> {
         verify_vorbis(before.is_some(), before, after, edits)
     }
+}
+
+/// The first key holding an empty value, which lofty drops on save.
+fn empty_key(truth: &VorbisTruth) -> Option<&str> {
+    truth
+        .pairs
+        .iter()
+        .find(|(_, value)| value.is_empty())
+        .map(|(key, _)| key.as_str())
+}
+
+/// The first key spelled more than one way (`title` plus `TITLE`), with
+/// its spellings: it cannot be edited without merging them. Repeated
+/// keys with one spelling are ordinary multi-values.
+fn mixed_spelling(truth: &VorbisTruth) -> Option<(String, Vec<String>)> {
+    let mut spellings: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (key, _) in &truth.pairs {
+        let entry = spellings.entry(key.to_ascii_uppercase()).or_default();
+        if !entry.contains(key) {
+            entry.push(key.clone());
+        }
+    }
+    spellings
+        .into_iter()
+        .find(|(_, variants)| variants.len() > 1)
 }
 
 /// Vorbis comments no writable field owns (pictures excluded). A key

@@ -12,7 +12,8 @@ use super::id3_bytes::{
     parse_id3_deep, people_pairs, people_sources, performer_pair, performer_text, role_owns,
 };
 use super::id3_edit::{self, Id3Edit};
-use super::id3_upgrade::as_saved;
+use super::id3_upgrade::{as_saved, frames_kept_once, unmovable_frames};
+use super::kept::{LeftAlone, TagsKept};
 use super::{PictureSpec, Refusal, TagEdit, TagFormat, mismatch};
 use crate::tags::AudioFormat;
 use crate::tags::fields::{Id3Target, Role, Slot, TagField};
@@ -43,6 +44,30 @@ impl TagFormat for Id3 {
     /// edits resolve to v2.4 homes, and the verify expects version 2.4.
     fn prepare(tag: DeepId3) -> Result<DeepId3, Refusal> {
         as_saved(tag)
+    }
+
+    /// A tag the save cannot keep whole is refused; otherwise raw frames
+    /// over [`MAX_RAW_NATIVE_BYTES`] are left as they are.
+    fn kept(tag: DeepId3) -> Result<TagsKept, Refusal> {
+        if let Some(reason) = unmovable_frames(&tag) {
+            return Ok(TagsKept::refused(reason));
+        }
+        let tag = as_saved(tag)?;
+        if let Some(reason) = frames_kept_once(&tag) {
+            return Ok(TagsKept::refused(reason));
+        }
+        let left_alone = tag
+            .frames
+            .iter()
+            .filter(|frame| frame.text.is_none() && is_raw_native_id(&frame.id))
+            .filter(|frame| frame.id != "COMM" || !comment_owned(&frame.payload))
+            .filter(|frame| frame.payload.len() > MAX_RAW_NATIVE_BYTES)
+            .map(|frame| (frame.id.clone(), LeftAlone::OverSizeLimit))
+            .collect();
+        Ok(TagsKept {
+            refusal: None,
+            left_alone,
+        })
     }
 
     fn resolve_fields(tag: Option<&DeepId3>, edits: &[TagEdit]) -> Result<Vec<Id3Edit>, Refusal> {
