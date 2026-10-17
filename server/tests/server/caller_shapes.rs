@@ -2,8 +2,9 @@
 //! `droppedneedle_auth::Principal` in the request, and a handler takes
 //! `User`, `Curator` or `Admin`. This gate reads the shipping source of
 //! every workspace crate, comments included, and fails the day a second
-//! role enum, principal struct, caller extractor or per-request user read
-//! comes back. Each allowed entry names its reason.
+//! role enum, principal struct, caller extractor, per-request user read,
+//! principal read straight from the request or raw role check comes back.
+//! Each allowed entry names its reason.
 
 use regex::Regex;
 
@@ -81,6 +82,11 @@ fn one_principal_and_three_caller_extractors() {
         r"\bimpl\b[^{;]*?\b(?:OptionalFromRequestParts|OptionalFromRequest|FromRequestParts|FromRequest)\b[^{;]*?\bfor\s+(?:[A-Za-z_]\w*::)*([A-Za-z_]\w*)",
     )
     .unwrap();
+    let principal_from_request = Regex::new(
+        r"\bExtension\s*<\s*(?:\w+::)*Principal\s*>|\bextensions\(\)\s*\.get::<\s*(?:\w+::)*Principal\s*>",
+    )
+    .unwrap();
+    let raw_role_check = Regex::new(r"\brole\(\)\s*\.is_admin\(\)").unwrap();
 
     let mut wrong = Vec::new();
     let mut extractors_seen = Vec::new();
@@ -121,6 +127,22 @@ fn one_principal_and_three_caller_extractors() {
                     ));
                 }
             }
+        }
+        if !in_auth {
+            for found in principal_from_request.find_iter(&source.text) {
+                let line = line_of(source, found.start());
+                wrong.push(format!(
+                    "{path}:{line}: the principal read from the request outside auth; \
+                     a handler takes `User`, `Curator` or `Admin`"
+                ));
+            }
+        }
+        for found in raw_role_check.find_iter(&source.text) {
+            let line = line_of(source, found.start());
+            wrong.push(format!(
+                "{path}:{line}: `role().is_admin()`; owner-or-admin is `Principal::is_admin`, \
+                 which also checks the session"
+            ));
         }
         for found in extractor.captures_iter(&source.text) {
             let name = &found[1];

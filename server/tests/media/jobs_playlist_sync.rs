@@ -21,7 +21,7 @@ use droppedneedle_kernel::jobs::schedule::Schedule;
 use droppedneedle_media::remotes::playlist_sync::{self as playlist_route, PlaylistSyncState};
 use tower::ServiceExt as _;
 
-use crate::common::auth::test_principal;
+use crate::common::auth::{test_principal, with_test_principal};
 
 type TestRegistry = JobRegistry<MemoryRegistryStore>;
 
@@ -115,27 +115,25 @@ fn route_state(
     PlaylistSyncState { settings, exporter }
 }
 
-fn post_sync() -> Request<Body> {
-    post_sync_as(Some(Role::Admin))
+/// The route signed in as `role`, standing in for the session gate, or
+/// with no session at all.
+fn app_as(role: Option<Role>, settings: FakeSettings, exporter: FakeExporter) -> axum::Router {
+    let app = playlist_route::router(route_state(settings, exporter));
+    match role {
+        Some(role) => with_test_principal(
+            app,
+            test_principal("user-1", role, "sess-1", SessionKind::Standard),
+        ),
+        None => app,
+    }
 }
 
-/// One route call, optionally carrying a signed-in principal. The session
-/// gate normally puts it in; here the test does.
-fn post_sync_as(role: Option<Role>) -> Request<Body> {
-    let mut request = Request::builder()
+fn post_sync() -> Request<Body> {
+    Request::builder()
         .method("POST")
         .uri("/navidrome/playlist-sync")
         .body(Body::empty())
-        .expect("request builds");
-    if let Some(role) = role {
-        request.extensions_mut().insert(test_principal(
-            "user-1",
-            role,
-            "sess-1",
-            SessionKind::Standard,
-        ));
-    }
-    request
+        .expect("request builds")
 }
 
 async fn read_json(response: axum::response::Response) -> serde_json::Value {
@@ -153,14 +151,14 @@ async fn read_json(response: axum::response::Response) -> serde_json::Value {
 async fn route_reads_settings_fresh_each_call() {
     let settings = FakeSettings::enabled();
     let exporter = FakeExporter::answering(FakeExporter::ok());
-    let app = playlist_route::router(route_state(settings.clone(), exporter.clone()));
+    let app = app_as(Some(Role::Admin), settings.clone(), exporter.clone());
 
     let response = app.oneshot(post_sync()).await.expect("router answers");
     assert_eq!(read_json(response).await["success"], true);
 
     // Flip sync off between calls: the next call sees it at once.
     *settings.config.lock().unwrap() = None;
-    let app = playlist_route::router(route_state(settings, exporter.clone()));
+    let app = app_as(Some(Role::Admin), settings, exporter.clone());
     let response = app.oneshot(post_sync()).await.expect("router answers");
     assert_eq!(read_json(response).await["success"], false);
     assert_eq!(exporter.calls.load(Ordering::SeqCst), 1);
@@ -170,13 +168,10 @@ async fn route_reads_settings_fresh_each_call() {
 async fn route_refuses_everyone_but_admins() {
     let settings = FakeSettings::enabled();
     let exporter = FakeExporter::answering(FakeExporter::ok());
-    let app = playlist_route::router(route_state(settings, exporter.clone()));
+    let app = app_as(None, settings, exporter.clone());
 
     // No session at all: 401 with the Bearer challenge.
-    let response = app
-        .oneshot(post_sync_as(None))
-        .await
-        .expect("router answers");
+    let response = app.oneshot(post_sync()).await.expect("router answers");
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(
         response
@@ -188,11 +183,8 @@ async fn route_refuses_everyone_but_admins() {
 
     // A signed-in non-admin: 403, and the exporter never runs.
     let settings = FakeSettings::enabled();
-    let app = playlist_route::router(route_state(settings, exporter.clone()));
-    let response = app
-        .oneshot(post_sync_as(Some(Role::Trusted)))
-        .await
-        .expect("router answers");
+    let app = app_as(Some(Role::Trusted), settings, exporter.clone());
+    let response = app.oneshot(post_sync()).await.expect("router answers");
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     let body = read_json(response).await;
     assert_eq!(body["error"]["code"], "FORBIDDEN");
