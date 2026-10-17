@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Play } from 'lucide-svelte';
 	import type { Snippet } from 'svelte';
+	import Button from '$lib/ui/Button.svelte';
 
 	interface Props {
 		available: boolean;
@@ -14,18 +15,20 @@
 </script>
 
 {#if available}
-	<button
-		class="btn btn-sm rounded-lg gap-1.5 shrink-0 border-none"
+	<!-- Each source keeps its own colour, which the kit's variants do not cover. -->
+	<Button
+		size="sm"
+		icon={Play}
+		class="shrink-0 [&_svg]:fill-current"
 		style="--btn-color: {sourceColor}; background-color: var(--btn-color); color: oklch(98% 0 0);"
 		{onclick}
 		aria-label={ariaLabel}
 	>
-		<Play class="h-4 w-4 fill-current" />
 		{@render icon()}
-	</button>
+	</Button>
 {:else}
 	<span
-		class="btn btn-sm btn-ghost rounded-lg shrink-0 pointer-events-none opacity-30"
+		class="inline-flex h-8 min-w-8 shrink-0 items-center justify-center px-3 text-sm opacity-30"
 		aria-label="Not available"
 	>
 		—

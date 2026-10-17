@@ -3,6 +3,8 @@
 	import type { components } from '$lib/api/v3/openapi';
 	import { REMOTE_ENDPOINTS } from '$lib/queries/remotes/endpoints';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import { ChevronLeft } from 'lucide-svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import type { PlexHistoryEntry } from '$lib/types';
 
@@ -73,8 +75,10 @@
 
 <div class="container mx-auto space-y-6 p-6">
 	<div class="flex items-center gap-3">
-		<a href={withBasePath('/library/plex')} class="btn btn-ghost btn-sm">← Back</a>
-		<PlexIcon class="h-6 w-6" style="color: rgb(var(--brand-plex));" />
+		<Button variant="ghost" size="sm" icon={ChevronLeft} href={withBasePath('/library/plex')}>
+			Back
+		</Button>
+		<PlexIcon class="h-6 w-6 text-plex" />
 		<h1 class="text-2xl font-bold">Plex activity and analytics</h1>
 	</div>
 
@@ -198,18 +202,20 @@
 			</div>
 
 			<div class="flex items-center justify-between mt-4">
-				<button
-					class="btn btn-sm btn-outline"
+				<Button
+					variant="outline"
+					size="sm"
 					disabled={historyOffset === 0}
-					onclick={() => loadHistory(Math.max(0, historyOffset - PAGE_SIZE))}>Previous</button
+					onclick={() => loadHistory(Math.max(0, historyOffset - PAGE_SIZE))}>Previous</Button
 				>
 				<span class="text-sm text-base-content/60">
 					Page {currentPage} of {totalPages} ({historyTotal.toLocaleString()} total plays)
 				</span>
-				<button
-					class="btn btn-sm btn-outline"
+				<Button
+					variant="outline"
+					size="sm"
 					disabled={historyOffset + PAGE_SIZE >= historyTotal}
-					onclick={() => loadHistory(historyOffset + PAGE_SIZE)}>Next</button
+					onclick={() => loadHistory(historyOffset + PAGE_SIZE)}>Next</Button
 				>
 			</div>
 		{:else}

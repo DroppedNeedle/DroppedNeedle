@@ -6,8 +6,9 @@
 	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { formatTotalDurationSec } from '$lib/utils/formatting';
-	import { getApiUrl } from '$lib/api/api-utils';
-	import { Disc3, Download } from 'lucide-svelte';
+	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import { Download } from 'lucide-svelte';
 	import type { SourcePlaylistSource } from '$lib/types';
 	import type { Snippet } from 'svelte';
 
@@ -85,31 +86,28 @@
 						: "Couldn't load this playlist."}
 			</span>
 			{#if relinkRequired}
-				<a class="btn btn-primary btn-sm" href={withBasePath('/profile#media-accounts')}
-					>Reconnect</a
-				>
+				<Button variant="primary" size="sm" href={withBasePath('/profile#media-accounts')}>
+					Reconnect
+				</Button>
 			{:else if notFound}
-				<a class="btn btn-primary btn-sm" href={withBasePath(backFallback)}>Back to playlists</a>
+				<Button variant="primary" size="sm" href={withBasePath(backFallback)}>
+					Back to playlists
+				</Button>
 			{:else}
-				<button class="btn btn-ghost btn-sm" onclick={() => void detailQuery.refetch()}
-					>Retry</button
-				>
+				<Button variant="ghost" size="sm" onclick={() => void detailQuery.refetch()}>Retry</Button>
 			{/if}
 		</div>
 	{:else if detail}
 		<div class="flex flex-col sm:flex-row gap-6">
 			<div class="w-48 h-48 shrink-0 rounded-lg overflow-hidden shadow-md">
-				{#if detail.cover_url}
-					<img
-						src={getApiUrl(detail.cover_url)}
-						alt={detail.name}
-						class="w-full h-full object-cover"
-					/>
-				{:else}
-					<div class="w-full h-full bg-base-200 flex items-center justify-center">
-						<Disc3 class="w-16 h-16 text-base-content/20" />
-					</div>
-				{/if}
+				<AlbumImage
+					customUrl={detail.cover_url}
+					alt={detail.name}
+					size="full"
+					requestSize={500}
+					rounded="none"
+					className="h-full w-full"
+				/>
 			</div>
 			<div class="space-y-2">
 				<h1 class="hero-title text-2xl font-bold">{detail.name}</h1>
@@ -119,20 +117,18 @@
 						- {formatTotalDurationSec(detail.duration_seconds)}
 					{/if}
 				</p>
-				<button
-					class="btn btn-primary btn-sm gap-2"
+				<Button
+					variant="primary"
+					size="sm"
+					icon={Download}
+					loading={importMutation.isPending}
+					disabled={importResult?.already_imported}
 					onclick={handleImport}
-					disabled={importMutation.isPending || importResult?.already_imported}
 				>
-					{#if importMutation.isPending}
-						<span class="loading loading-spinner loading-xs"></span>
-					{:else}
-						<Download class="w-4 h-4" />
-					{/if}
 					{importResult?.already_imported
 						? 'Already in DroppedNeedle'
 						: 'Import into DroppedNeedle'}
-				</button>
+				</Button>
 				{#if importResult && !importResult.already_imported}
 					<p class="text-sm text-success">
 						Imported {importResult.tracks_imported} tracks

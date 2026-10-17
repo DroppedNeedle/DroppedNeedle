@@ -7,6 +7,9 @@
 	import type { LibraryV3AlbumsParams } from '$lib/queries/library/LibraryQueryKeyFactory';
 	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import Input from '$lib/ui/Input.svelte';
 	import type { AlbumSort } from '$lib/types';
 
 	const PAGE_SIZE = 50;
@@ -82,13 +85,11 @@
 
 <div class="container mx-auto p-4 md:p-6 lg:p-8">
 	<div class="flex items-center gap-4 mb-6">
-		<button
-			class="btn btn-ghost btn-circle"
+		<IconButton
+			icon={ChevronLeft}
+			label="Back to library"
 			onclick={() => goto(withBasePath('/library'))}
-			aria-label="Back to library"
-		>
-			<ChevronLeft class="w-6 h-6" />
-		</button>
+		/>
 		<div>
 			<h1 class="text-3xl font-bold">All Albums</h1>
 			<p class="text-base-content/70 text-sm mt-1">
@@ -99,31 +100,27 @@
 	</div>
 
 	<div class="flex flex-col sm:flex-row gap-3 mb-6">
-		<div class="relative group flex-1">
-			<Search
-				class="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-base-content/40
-				group-focus-within:text-primary transition-colors duration-200 pointer-events-none"
-			/>
-			<input
-				type="text"
+		<div class="relative flex-1">
+			<Input
+				icon={Search}
+				label="Search albums"
 				placeholder="Search albums or artists..."
-				class="input input-bordered w-full rounded-full pl-11 pr-12"
+				class="w-full pr-12"
 				value={searchInput}
 				oninput={handleSearchInput}
-				aria-label="Search albums"
 			/>
 			{#if searchInput}
-				<button
-					class="absolute right-3 top-1/2 -translate-y-1/2 btn btn-sm btn-ghost btn-circle"
+				<IconButton
+					size="sm"
+					icon={X}
+					label="Clear search"
+					class="absolute right-2 top-1/2 -translate-y-1/2"
 					onclick={clearSearch}
-					aria-label="Clear search"
-				>
-					<X class="h-4 w-4" />
-				</button>
+				/>
 			{/if}
 		</div>
 		<select
-			class="select select-bordered rounded-full"
+			class="select"
 			value={params.sort}
 			onchange={(e) => setParams({ sort: (e.target as HTMLSelectElement).value, page: null })}
 			aria-label="Sort albums"
@@ -133,7 +130,7 @@
 			<option value="artist">Artist A-Z</option>
 		</select>
 		<select
-			class="select select-bordered rounded-full"
+			class="select"
 			value={params.format}
 			onchange={(e) => setParams({ format: (e.target as HTMLSelectElement).value, page: null })}
 			aria-label="Filter by format"
@@ -148,7 +145,7 @@
 	{#if albumsQuery.isError}
 		<div class="alert alert-error mb-6">
 			<span>Couldn't load albums</span>
-			<button class="btn btn-sm btn-ghost" onclick={() => albumsQuery.refetch()}>Retry</button>
+			<Button variant="ghost" size="sm" onclick={() => albumsQuery.refetch()}>Retry</Button>
 		</div>
 	{:else if albumsQuery.isLoading}
 		<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { type MusicSource } from '$lib/stores/musicSource';
 	import { getConnectionsQuery } from '$lib/queries/connections/ConnectionsQuery.svelte';
+	import Button from '$lib/ui/Button.svelte';
 
 	interface Props {
 		currentSource: MusicSource;
@@ -28,19 +29,25 @@
 
 {#if showSwitcher}
 	<div class="join">
-		<button
-			class="btn btn-sm join-item {currentSource === 'listenbrainz' ? 'btn-primary' : 'btn-ghost'}"
+		<Button
+			variant={currentSource === 'listenbrainz' ? 'primary' : 'ghost'}
+			size="sm"
+			class="join-item"
+			aria-pressed={currentSource === 'listenbrainz'}
 			disabled={switching}
 			onclick={() => handleSwitch('listenbrainz')}
 		>
 			ListenBrainz
-		</button>
-		<button
-			class="btn btn-sm join-item {currentSource === 'lastfm' ? 'btn-lastfm' : 'btn-ghost'}"
+		</Button>
+		<Button
+			variant={currentSource === 'lastfm' ? 'lastfm' : 'ghost'}
+			size="sm"
+			class="join-item"
+			aria-pressed={currentSource === 'lastfm'}
 			disabled={switching}
 			onclick={() => handleSwitch('lastfm')}
 		>
 			Last.fm
-		</button>
+		</Button>
 	</div>
 {/if}

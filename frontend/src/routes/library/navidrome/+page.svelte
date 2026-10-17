@@ -43,7 +43,8 @@
 	import { reveal } from '$lib/actions/reveal';
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { getApiUrl } from '$lib/api/api-utils';
+	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import type {
 		NavidromeAlbumSummary,
 		NavidromeTrackInfo,
@@ -288,7 +289,7 @@
 		{refreshing}
 	>
 		{#snippet icon()}
-			<span style="color: rgb(var(--brand-navidrome));">
+			<span class="text-navidrome">
 				<NavidromeIcon class="h-8 w-8" />
 			</span>
 		{/snippet}
@@ -307,7 +308,7 @@
 		playlistsHref={withBasePath('/library/navidrome/playlists')}
 	>
 		{#snippet sourceIcon()}
-			<span style="color: rgb(var(--brand-navidrome));">
+			<span class="text-navidrome">
 				<NavidromeIcon class="h-4 w-4" />
 			</span>
 		{/snippet}
@@ -318,7 +319,7 @@
 	{#if error}
 		<div role="alert" class="alert alert-error alert-soft">
 			<span>{error}</span>
-			<button class="btn btn-sm btn-ghost" onclick={() => location.reload()}>Retry</button>
+			<Button variant="ghost" size="sm" onclick={() => location.reload()}>Retry</Button>
 		</div>
 	{/if}
 
@@ -466,18 +467,17 @@
 				{/snippet}
 				{#if randomTracks.length > 0}
 					<div class="flex items-center gap-2 mb-3 mt-3">
-						<button class="btn btn-primary btn-sm" onclick={() => playRandomTracks()}>
-							Play all
-						</button>
-						<button
-							class="btn btn-ghost btn-sm"
+						<Button variant="primary" size="sm" onclick={() => playRandomTracks()}>Play all</Button>
+						<Button
+							variant="ghost"
+							size="sm"
 							onclick={() => {
 								const items = buildDiscoveryQueueFromNavidrome(randomTracks.map(toTrackInfo));
 								playerStore.playQueue(items, 0, true);
 							}}
 						>
 							Shuffle
-						</button>
+						</Button>
 					</div>
 					<DiscoveryTrackTable
 						tracks={toDiscoveryTracks(randomTracks)}
@@ -516,8 +516,7 @@
 				>
 					{#if topSongs.length > 0}
 						<div class="flex items-center gap-2 mb-3">
-							<button class="btn btn-primary btn-sm" onclick={() => playTopSongs()}>Play all</button
-							>
+							<Button variant="primary" size="sm" onclick={() => playTopSongs()}>Play all</Button>
 						</div>
 						<DiscoveryTrackTable
 							tracks={toDiscoveryTracks(topSongs)}
@@ -540,8 +539,8 @@
 				>
 					{#if similarSongs.length > 0}
 						<div class="flex items-center gap-2 mb-3">
-							<button class="btn btn-primary btn-sm" onclick={() => playSimilarSongs()}
-								>Play all</button
+							<Button variant="primary" size="sm" onclick={() => playSimilarSongs()}
+								>Play all</Button
 							>
 						</div>
 						<DiscoveryTrackTable
@@ -559,11 +558,16 @@
 				<HubShelf title="About {artistSeedName}" loading={artistInfoLoading}>
 					<div class="flex gap-4 items-start">
 						{#if artistInfo.image_url}
-							<img
-								src={getApiUrl(artistInfo.image_url)}
-								alt={artistSeedName}
-								class="w-24 h-24 rounded-full object-cover shrink-0"
-							/>
+							<div class="h-24 w-24 shrink-0">
+								<AlbumImage
+									customUrl={artistInfo.image_url}
+									alt={artistSeedName}
+									size="full"
+									requestSize={250}
+									rounded="full"
+									className="h-full w-full"
+								/>
+							</div>
 						{/if}
 						<div class="space-y-2">
 							{#if artistInfo.biography}

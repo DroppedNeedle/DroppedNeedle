@@ -14,6 +14,8 @@
 	import type { YouTubeLink } from '$lib/types';
 	import { Plus, Info, Play, Shuffle, ListPlus, ListStart, ListMusic } from 'lucide-svelte';
 	import LibraryFilterBar from '$lib/components/LibraryFilterBar.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import {
 		ytCardQuickPlay,
 		ytCardQuickShuffle,
@@ -199,19 +201,19 @@
 	{#if loading}
 		<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
 			{#each Array(12) as _, i (`skeleton-${i}`)}
-				<div class="card bg-base-100 shadow-sm animate-pulse">
+				<Card variant="raised" padding="none" class="animate-pulse">
 					<div class="aspect-square bg-base-300"></div>
-					<div class="card-body p-3">
+					<div class="p-3">
 						<div class="h-4 bg-base-300 rounded w-3/4"></div>
 						<div class="h-3 bg-base-300 rounded w-1/2 mt-1"></div>
 					</div>
-				</div>
+				</Card>
 			{/each}
 		</div>
 	{:else}
 		<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
 			<button
-				class="card bg-base-100 w-full shadow-sm border-2 border-dashed border-base-content/20 hover:border-accent transition-colors cursor-pointer flex items-center justify-center aspect-square"
+				class="flex aspect-square w-full cursor-pointer items-center justify-center rounded-box border-2 border-dashed border-base-content/20 bg-base-100 shadow-sm transition-colors hover:border-accent"
 				onclick={openAddModal}
 			>
 				<div class="flex flex-col items-center gap-2 opacity-60">
@@ -221,17 +223,20 @@
 			</button>
 
 			{#each filteredLinks as link (link.album_id)}
-				<div
-					class="card bg-base-100 w-full shadow-sm group relative cursor-pointer transition-transform hover:scale-105 hover:shadow-lg active:scale-95"
+				<Card
+					variant="raised"
+					padding="none"
+					class="group relative w-full cursor-pointer transition hover:shadow-md focus-visible:outline-2 focus-visible:outline-primary motion-safe:hover:-translate-y-0.5"
 					onclick={() => openDetail(link)}
 					onkeydown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
+						if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
 							e.preventDefault();
 							openDetail(link);
 						}
 					}}
 					role="button"
-					tabindex="0"
+					tabindex={0}
+					aria-label={`Open ${link.album_name}`}
 				>
 					<figure class="aspect-square overflow-hidden relative">
 						<AlbumImage
@@ -256,78 +261,56 @@
 								<div class="badge badge-sm badge-accent">{link.track_count} tracks</div>
 							{/if}
 						</div>
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<div
-							class="absolute top-1 right-1 z-30"
-							onclick={(e) => {
-								e.stopPropagation();
-								e.preventDefault();
-							}}
-							onkeydown={(e) => {
-								if (e.key === 'Enter' || e.key === ' ') {
-									e.stopPropagation();
-									e.preventDefault();
-								}
-							}}
-						>
+						<div class="absolute top-1 right-1 z-30">
 							<div
-								class="rounded-full bg-black/50 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity"
+								class="rounded-full bg-black/50 backdrop-blur-sm opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 transition-opacity"
 							>
 								<ContextMenu items={getCardMenuItems(link)} position="end" size="sm" />
 							</div>
 						</div>
 
 						<div
-							class="absolute bottom-2 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity z-20"
+							class="absolute bottom-2 right-2 flex items-center gap-1.5 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 transition-opacity z-20"
 						>
-							<button
-								class="btn btn-circle btn-sm btn-ghost bg-black/50 backdrop-blur-sm text-white shadow-md hover:bg-black/70"
+							<IconButton
+								variant="neutral"
+								size="sm"
+								icon={Shuffle}
+								label="Shuffle {link.album_name}"
+								loading={shufflingAlbumId === link.album_id}
 								onclick={(e) => quickShuffle(link, e)}
-								aria-label="Shuffle {link.album_name}"
-							>
-								{#if shufflingAlbumId === link.album_id}
-									<span class="loading loading-spinner loading-xs"></span>
-								{:else}
-									<Shuffle class="h-3.5 w-3.5" />
-								{/if}
-							</button>
-							<button
-								class="btn btn-circle btn-sm btn-primary shadow-md"
+							/>
+							<IconButton
+								variant="primary"
+								size="sm"
+								icon={Play}
+								label="Play {link.album_name}"
+								class="[&_svg]:fill-current"
+								loading={playingAlbumId === link.album_id}
 								onclick={(e) => quickPlay(link, e)}
-								aria-label="Play {link.album_name}"
-							>
-								{#if playingAlbumId === link.album_id}
-									<span class="loading loading-spinner loading-xs"></span>
-								{:else}
-									<Play class="h-4 w-4 fill-current" />
-								{/if}
-							</button>
+							/>
 						</div>
 					</figure>
 
-					<div class="card-body p-3">
+					<div class="p-3">
 						<h2 class="card-title text-sm line-clamp-2 min-h-10">{link.album_name}</h2>
 						<p class="text-xs opacity-70 line-clamp-1">{link.artist_name}</p>
 					</div>
-				</div>
+				</Card>
 			{/each}
 		</div>
 
 		{#if filteredLinks.length === 0 && links.length > 0}
-			<div class="card bg-base-200 mt-4">
-				<div class="card-body items-center text-center">
-					<p class="text-lg opacity-60">No matching links</p>
-					<p class="text-sm opacity-40">Try a different search term.</p>
-				</div>
-			</div>
+			<Card class="mt-4 text-center">
+				<p class="text-lg opacity-60">No matching links</p>
+				<p class="text-sm opacity-40">Try a different search term.</p>
+			</Card>
 		{:else if links.length === 0}
-			<div class="card bg-base-200 mt-4">
-				<div class="card-body items-center text-center">
-					<YouTubeIcon class="h-12 w-12 opacity-20" />
-					<p class="text-lg opacity-60">No saved YouTube links</p>
-					<p class="text-sm opacity-40">Generate links from album pages or add them manually.</p>
-				</div>
-			</div>
+			<Card class="mt-4 text-center">
+				<YouTubeIcon class="mx-auto h-12 w-12 opacity-20" />
+				<p class="text-lg opacity-60">No saved YouTube links</p>
+				<p class="text-sm opacity-40">Generate links from album pages or add them manually.</p>
+			</Card>
 		{/if}
 	{/if}
 </div>

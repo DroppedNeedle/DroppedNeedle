@@ -33,7 +33,7 @@
 		{#snippet title()}Unconfirmed matches{/snippet}
 	</PageHeader>
 	<div class="mx-auto max-w-[96rem] space-y-4 px-4 pb-12 sm:px-6 lg:px-8">
-		<div role="tablist" class="tabs tabs-bordered w-fit">
+		<div role="tablist" class="tabs tabs-border w-fit">
 			<button
 				role="tab"
 				class="tab {tab === 'unconfirmed' ? 'tab-active' : ''}"

@@ -10,7 +10,7 @@
 	playlistBaseHref="/library/navidrome/playlists"
 >
 	{#snippet icon()}
-		<span style="color: rgb(var(--brand-navidrome));">
+		<span class="text-navidrome">
 			<NavidromeIcon class="h-6 w-6" />
 		</span>
 	{/snippet}

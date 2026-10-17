@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { getApiUrl } from '$lib/api/api-utils';
+	import AlbumImage from './AlbumImage.svelte';
 	import ArtistImage from './ArtistImage.svelte';
 	import ArtistCardDownloadButton from './ArtistCardDownloadButton.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { Users } from 'lucide-svelte';
 
 	interface Props {
@@ -15,79 +16,48 @@
 	let { name, imageUrl = null, mbid = null, href, albumCount }: Props = $props();
 </script>
 
-{#if href}
-	<a
-		{href}
-		class="card bg-base-100 w-full shadow-sm shrink-0 transition-all hover:scale-105 hover:glow-primary focus-visible:ring-2 focus-visible:ring-primary group relative"
-		aria-label="Open {name}"
-	>
+<Card
+	variant="raised"
+	padding="none"
+	{href}
+	class="group relative w-full shrink-0"
+	aria-label={href ? `Open ${name}` : undefined}
+>
+	{#if href && mbid}
+		<ArtistCardDownloadButton artistName={name} artistMbid={mbid} />
+	{/if}
+	<figure class="aspect-square p-3">
 		{#if mbid}
-			<ArtistCardDownloadButton artistName={name} artistMbid={mbid} />
+			<ArtistImage
+				{mbid}
+				alt={name}
+				size="full"
+				requestSize={250}
+				remoteUrl={imageUrl}
+				className="w-full h-full"
+			/>
+		{:else if imageUrl}
+			<!-- A server's own artist picture has no MusicBrainz id, so it loads by URL. -->
+			<AlbumImage
+				customUrl={imageUrl}
+				alt={name}
+				size="full"
+				requestSize={250}
+				rounded="full"
+				className="w-full h-full"
+			/>
+		{:else}
+			<div
+				class="flex h-full w-full items-center justify-center rounded-full bg-base-200 text-base-content/20"
+			>
+				<Users class="h-12 w-12" />
+			</div>
 		{/if}
-		<figure class="aspect-square p-3">
-			{#if mbid}
-				<ArtistImage
-					{mbid}
-					alt={name}
-					size="full"
-					requestSize={250}
-					remoteUrl={imageUrl}
-					className="w-full h-full"
-				/>
-			{:else if imageUrl}
-				<img
-					src={getApiUrl(imageUrl)}
-					alt={name}
-					class="w-full h-full rounded-full object-cover"
-					loading="lazy"
-				/>
-			{:else}
-				<div
-					class="flex h-full w-full items-center justify-center rounded-full bg-base-200 text-base-content/20"
-				>
-					<Users class="h-12 w-12" />
-				</div>
-			{/if}
-		</figure>
-		<div class="card-body p-2 pt-0 items-center text-center">
-			<h2 class="card-title text-xs line-clamp-1 min-h-[1.25rem]">{name}</h2>
-			{#if albumCount !== undefined}
-				<p class="text-xs text-base-content/50">{albumCount} album{albumCount !== 1 ? 's' : ''}</p>
-			{/if}
-		</div>
-	</a>
-{:else}
-	<div class="card bg-base-100 w-full shadow-sm shrink-0">
-		<figure class="aspect-square p-3">
-			{#if mbid}
-				<ArtistImage
-					{mbid}
-					alt={name}
-					size="full"
-					requestSize={250}
-					remoteUrl={imageUrl}
-					className="w-full h-full"
-				/>
-			{:else if imageUrl}
-				<img
-					src={getApiUrl(imageUrl)}
-					alt={name}
-					class="w-full h-full rounded-full object-cover"
-					loading="lazy"
-				/>
-			{:else}
-				<div
-					class="flex h-full w-full items-center justify-center rounded-full bg-base-200 text-base-content/20"
-				>
-					<Users class="h-12 w-12" />
-				</div>
-			{/if}
-		</figure>
-		<div class="card-body p-2 pt-0 items-center text-center">
-			<h2 class="card-title text-xs line-clamp-1 min-h-[1.25rem]">{name}</h2>
-			{#if albumCount !== undefined}
-				<p class="text-xs text-base-content/50">{albumCount} album{albumCount !== 1 ? 's' : ''}</p>
-			{/if}
-		</div>
+	</figure>
+	<div class="flex flex-col items-center gap-1 p-2 pt-0 text-center">
+		<h2 class="card-title text-xs line-clamp-1 min-h-[1.25rem]">{name}</h2>
+		{#if albumCount !== undefined}
+			<p class="text-xs text-base-content/50">{albumCount} album{albumCount !== 1 ? 's' : ''}</p>
+		{/if}
 	</div>
-{/if}
+</Card>

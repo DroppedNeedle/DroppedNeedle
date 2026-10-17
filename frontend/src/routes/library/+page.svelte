@@ -4,6 +4,9 @@
 	import LibraryDashboard from '$lib/components/library/LibraryDashboard.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import { Headphones, LockKeyhole, SlidersHorizontal, Waypoints, X } from 'lucide-svelte';
 
 	const CONNECT_APPS_HREF = withBasePath('/profile#connect-apps');
@@ -34,40 +37,30 @@
 	<PageHeader subtitle="Your scanned music library">
 		{#snippet title()}Library{/snippet}
 		{#snippet actions()}
-			<a
+			<Button
+				variant="primary"
+				size="sm"
+				pill
 				href={withBasePath('/library/local')}
-				class="group btn btn-sm gap-2 rounded-full border-0 bg-primary text-primary-content shadow-lg shadow-primary/25 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-primary/40 sm:btn-md"
+				icon={Headphones}
 			>
-				<Headphones class="h-4 w-4 transition-transform duration-200 group-hover:scale-110" />
-				<span>Listen</span>
-			</a>
-			<a
-				href={CONNECT_APPS_HREF}
-				class="group btn btn-sm gap-2 rounded-full border border-base-content/15 bg-base-100/50 text-base-content backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-accent/40 hover:bg-base-100/80 sm:btn-md"
-			>
-				<Waypoints class="h-4 w-4 transition-transform duration-200 group-hover:scale-110" />
-				<span>Connect Apps</span>
-			</a>
+				Listen
+			</Button>
+			<Button size="sm" pill href={CONNECT_APPS_HREF} icon={Waypoints}>Connect Apps</Button>
 			{#if authStore.isAdmin}
-				<a
-					href={withBasePath('/library/management')}
-					class="group btn btn-sm gap-2 rounded-full border border-base-content/15 bg-base-100/50 text-base-content backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-base-100/80 sm:btn-md"
-				>
-					<SlidersHorizontal
-						class="h-4 w-4 transition-transform duration-200 group-hover:rotate-12"
-					/>
-					<span>Controls</span>
-				</a>
+				<Button size="sm" pill href={withBasePath('/library/management')} icon={SlidersHorizontal}>
+					Controls
+				</Button>
 			{:else}
-				<button
-					type="button"
-					aria-disabled="true"
+				<Button
+					size="sm"
+					pill
+					disabled
 					aria-describedby="library-controls-admin-only"
-					class="btn btn-sm cursor-not-allowed gap-2 rounded-full border border-base-content/10 bg-base-200/35 text-base-content/35 shadow-none sm:btn-md"
+					icon={LockKeyhole}
 				>
-					<LockKeyhole class="h-4 w-4" aria-hidden="true" />
-					<span>Controls</span>
-				</button>
+					Controls
+				</Button>
 				<span id="library-controls-admin-only" class="sr-only">
 					Library controls require administrator access.
 				</span>
@@ -84,26 +77,19 @@
 			</div>
 		{/if}
 		{#if !bannerDismissed}
-			<div
-				class="flex items-center gap-3 rounded-box border border-accent/25 bg-base-200 p-4"
-				role="note"
-			>
-				<Waypoints class="hidden h-6 w-6 shrink-0 text-accent sm:block" aria-hidden="true" />
-				<div class="min-w-0 flex-1">
-					<p class="font-semibold">Stream this library in your favourite app</p>
-					<p class="text-sm text-base-content/60">
-						Connect Symfonium, Finamp and more over the OpenSubsonic or Jellyfin protocols.
-					</p>
+			<Card variant="bordered" padding="md" role="note">
+				<div class="flex items-center gap-3">
+					<Waypoints class="hidden h-6 w-6 shrink-0 text-accent sm:block" aria-hidden="true" />
+					<div class="min-w-0 flex-1">
+						<p class="font-semibold">Stream this library in your favourite app</p>
+						<p class="text-sm text-base-content/60">
+							Connect Symfonium, Finamp and more over the OpenSubsonic or Jellyfin protocols.
+						</p>
+					</div>
+					<Button variant="accent" size="sm" href={CONNECT_APPS_HREF}>Set up</Button>
+					<IconButton size="sm" shape="square" icon={X} label="Dismiss" onclick={dismissBanner} />
 				</div>
-				<a href={CONNECT_APPS_HREF} class="btn btn-sm btn-accent">Set up</a>
-				<button
-					class="btn btn-ghost btn-sm btn-square"
-					aria-label="Dismiss"
-					onclick={dismissBanner}
-				>
-					<X class="h-4 w-4" aria-hidden="true" />
-				</button>
-			</div>
+			</Card>
 		{/if}
 		<LibraryDashboard />
 	</div>

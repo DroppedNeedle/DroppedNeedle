@@ -5,6 +5,10 @@
 	import ArtistCardSkeleton from '$lib/components/ArtistCardSkeleton.svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import LocalIdentityBadge from '$lib/components/library/LocalIdentityBadge.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import Input from '$lib/ui/Input.svelte';
 	import { getLibraryArtistsInfiniteQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import type { ArtistSort, LibraryArtistScope, LibraryArtistSummary } from '$lib/types';
 	import { artistHref } from '$lib/utils/entityRoutes';
@@ -99,13 +103,11 @@
 
 <main class="container mx-auto p-4 md:p-6 lg:p-8">
 	<header class="mb-6 flex items-center gap-4">
-		<button
-			class="btn btn-ghost btn-circle"
+		<IconButton
+			icon={ChevronLeft}
+			label="Back to library"
 			onclick={() => goto(withBasePath('/library'))}
-			aria-label="Back to library"
-		>
-			<ChevronLeft class="h-6 w-6" />
-		</button>
+		/>
 		<div>
 			<p class="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Your collection</p>
 			<h1 class="text-3xl font-black tracking-tight">Artists</h1>
@@ -154,30 +156,27 @@
 	</nav>
 
 	<div class="mb-6 flex flex-col gap-3 sm:flex-row">
-		<div class="group relative flex-1">
-			<Search
-				class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-base-content/40 transition-colors duration-200 group-focus-within:text-primary"
-			/>
-			<input
-				type="text"
+		<div class="relative flex-1">
+			<Input
+				icon={Search}
+				label="Search artists"
 				placeholder={browse.scope === 'album' ? 'Search album artists…' : 'Search contributors…'}
-				class="input input-bordered w-full rounded-full pl-11 pr-12"
+				class="w-full pr-12"
 				value={searchInput}
 				oninput={handleSearchInput}
-				aria-label="Search artists"
 			/>
 			{#if searchInput}
-				<button
-					class="btn btn-ghost btn-circle btn-sm absolute right-3 top-1/2 -translate-y-1/2"
+				<IconButton
+					size="sm"
+					icon={X}
+					label="Clear search"
+					class="absolute right-2 top-1/2 -translate-y-1/2"
 					onclick={clearSearch}
-					aria-label="Clear search"
-				>
-					<X class="h-4 w-4" />
-				</button>
+				/>
 			{/if}
 		</div>
 		<select
-			class="select select-bordered rounded-full"
+			class="select"
 			value="{browse.sortBy}:{browse.sortOrder}"
 			onchange={handleSortChange}
 			aria-label="Sort artists"
@@ -199,7 +198,7 @@
 	{#if artistsQuery.isError}
 		<div class="alert alert-error mb-6">
 			<span>Couldn't load artists.</span>
-			<button class="btn btn-ghost btn-sm" onclick={() => artistsQuery.refetch()}>Retry</button>
+			<Button variant="ghost" size="sm" onclick={() => artistsQuery.refetch()}>Retry</Button>
 		</div>
 	{:else if artistsQuery.isLoading}
 		<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
@@ -226,9 +225,11 @@
 		</p>
 		<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
 			{#each artists as artist (artist.id)}
-				<a
+				<Card
+					variant="raised"
+					padding="none"
 					href={artistHref(artist.musicbrainz_artist_id ?? artist.id)}
-					class="card group overflow-hidden border border-base-content/8 bg-base-100 shadow-sm transition-[transform,box-shadow,border-color] hover:-translate-y-1 hover:border-primary/25 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+					class="group overflow-hidden"
 					aria-label={`Open ${artist.name}`}
 				>
 					<figure class="relative aspect-square overflow-hidden p-3">
@@ -238,7 +239,7 @@
 							alt={artist.name}
 							size="full"
 							requestSize={250}
-							className="h-full w-full transition-transform duration-300 group-hover:scale-105"
+							className="h-full w-full transition-transform duration-300 motion-safe:group-hover:scale-105"
 						/>
 						{#if artist.artist_identity_state === 'local_only'}
 							<LocalIdentityBadge
@@ -249,7 +250,7 @@
 							/>
 						{/if}
 					</figure>
-					<div class="card-body gap-1 p-3 pt-0 text-center">
+					<div class="flex flex-col gap-1 p-3 pt-0 text-center">
 						<h2 class="truncate font-semibold">{artist.name}</h2>
 						<p class="text-xs text-base-content/55">
 							{#if browse.scope === 'album'}
@@ -265,30 +266,19 @@
 							{/if}
 						</p>
 					</div>
-				</a>
+				</Card>
 			{/each}
 		</div>
 		{#if artistsQuery.hasNextPage}
 			<div class="mt-6 flex justify-center">
-				<button
-					class="btn btn-primary btn-outline"
+				<Button
+					variant="outline"
+					loading={artistsQuery.isFetchingNextPage}
 					onclick={() => artistsQuery.fetchNextPage()}
-					disabled={artistsQuery.isFetchingNextPage}
 				>
-					{#if artistsQuery.isFetchingNextPage}<span class="loading loading-spinner loading-sm"
-						></span>{/if}
 					Load more ({artists.length} / {total})
-				</button>
+				</Button>
 			</div>
 		{/if}
 	{/if}
 </main>
-
-<style>
-	@media (prefers-reduced-motion: reduce) {
-		.card,
-		.card :global(img) {
-			transition: none;
-		}
-	}
-</style>

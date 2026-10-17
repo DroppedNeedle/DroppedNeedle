@@ -1,5 +1,8 @@
 <script lang="ts">
 	import { Search, X, ArrowDown } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import Input from '$lib/ui/Input.svelte';
 
 	interface Props {
 		searchQuery: string;
@@ -90,66 +93,45 @@
 </script>
 
 <div class="mb-6">
-	<div class="relative group">
-		<Search
-			class="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-base-content/40
-			group-focus-within:text-primary transition-colors duration-200 pointer-events-none"
-		/>
-		<input
-			type="text"
+	<div class="relative">
+		<Input
+			icon={Search}
+			label={ariaLabel}
 			{placeholder}
-			class="input input-md w-full rounded-full pl-11 pr-12
-				bg-base-200/50 border-base-content/10
-				focus:border-primary focus:bg-base-200/80
-				transition-all duration-200
-				placeholder:text-base-content/30"
+			class="w-full pr-12"
 			bind:value={searchQuery}
 			oninput={() => onSearchInput?.()}
-			aria-label={ariaLabel}
 		/>
 		{#if isSearching}
-			<button
-				type="button"
-				class="absolute right-3 top-1/2 -translate-y-1/2 btn btn-sm btn-ghost btn-circle"
+			<IconButton
+				size="sm"
+				icon={X}
+				label="Clear search"
+				class="absolute right-2 top-1/2 -translate-y-1/2"
 				onclick={clearSearch}
-				aria-label="Clear search"
-			>
-				<X class="h-4 w-4" />
-			</button>
+			/>
 		{/if}
 	</div>
 
 	{#if hasSecondRow}
 		<div class="flex flex-wrap items-center gap-3 mt-3">
 			{#if hasSortControls}
-				<select
-					class="select select-sm rounded-full bg-base-200/50 border-base-content/10
-						focus:border-primary transition-all duration-200"
-					onchange={handleSortSelect}
-					aria-label="Sort by"
-				>
+				<select class="select select-sm" onchange={handleSortSelect} aria-label="Sort by">
 					{#each sortOptions! as opt (opt.value)}
 						<option value={opt.value} selected={sortBy === opt.value}>{opt.label}</option>
 					{/each}
 				</select>
-				<button
-					type="button"
-					class="btn btn-sm btn-ghost btn-circle"
+				<IconButton
+					size="sm"
+					icon={ArrowDown}
+					label={isAscending ? 'Switch to descending sort' : 'Switch to ascending sort'}
+					class={isAscending ? '' : '[&_svg]:rotate-180'}
 					onclick={() => onToggleSortOrder?.()}
-					aria-label={isAscending ? 'Switch to descending sort' : 'Switch to ascending sort'}
-					title={isAscending ? 'Ascending' : 'Descending'}
-				>
-					<ArrowDown class="h-4 w-4 transition-transform {isAscending ? '' : 'rotate-180'}" />
-				</button>
+				/>
 			{/if}
 
 			{#if hasGenreFilter}
-				<select
-					class="select select-sm rounded-full bg-base-200/50 border-base-content/10
-						focus:border-primary transition-all duration-200"
-					onchange={handleGenreSelect}
-					aria-label="Filter by genre"
-				>
+				<select class="select select-sm" onchange={handleGenreSelect} aria-label="Filter by genre">
 					<option value="">All genres</option>
 					{#each genres! as genre (genre)}
 						<option value={genre} selected={selectedGenre === genre}>{genre}</option>
@@ -159,8 +141,7 @@
 
 			{#if hasMoodFilter}
 				<select
-					class="select select-sm rounded-full bg-base-200/50 border-base-content/10
-						focus:border-primary transition-all duration-200"
+					class="select select-sm"
 					onchange={handleMoodSelect}
 					aria-label="Filter by {moodLabel.toLowerCase()}"
 				>
@@ -179,51 +160,25 @@
 
 	{#if hasDecadeChips}
 		<div class="flex flex-wrap gap-2 mt-3" role="group" aria-label="Filter by decade">
-			<button
-				type="button"
-				class="btn btn-xs rounded-full {selectedDecade === ''
-					? 'btn-primary'
-					: 'btn-ghost bg-base-200/50'}"
-				onclick={() => onDecadeChange?.('')}
-			>
-				All
-			</button>
+			{@render chip('All', selectedDecade === '', () => onDecadeChange?.(''))}
 			{#each decades! as decade (decade)}
-				<button
-					type="button"
-					class="btn btn-xs rounded-full {selectedDecade === decade
-						? 'btn-primary'
-						: 'btn-ghost bg-base-200/50'}"
-					onclick={() => onDecadeChange?.(decade)}
-				>
-					{decade}
-				</button>
+				{@render chip(decade, selectedDecade === decade, () => onDecadeChange?.(decade))}
 			{/each}
 		</div>
 	{/if}
 
 	{#if hasTagChips}
 		<div class="flex flex-wrap gap-2 mt-3" role="group" aria-label="Filter by tag">
-			<button
-				type="button"
-				class="btn btn-xs rounded-full {selectedTag === ''
-					? 'btn-primary'
-					: 'btn-ghost bg-base-200/50'}"
-				onclick={() => onTagChange?.('')}
-			>
-				All tags
-			</button>
+			{@render chip('All tags', selectedTag === '', () => onTagChange?.(''))}
 			{#each tags! as tag (tag)}
-				<button
-					type="button"
-					class="btn btn-xs rounded-full {selectedTag === tag
-						? 'btn-primary'
-						: 'btn-ghost bg-base-200/50'}"
-					onclick={() => onTagChange?.(tag)}
-				>
-					{tag}
-				</button>
+				{@render chip(tag, selectedTag === tag, () => onTagChange?.(tag))}
 			{/each}
 		</div>
 	{/if}
 </div>
+
+{#snippet chip(text: string, selected: boolean, onclick: () => void)}
+	<Button variant={selected ? 'primary' : 'ghost'} size="xs" pill aria-pressed={selected} {onclick}>
+		{text}
+	</Button>
+{/snippet}

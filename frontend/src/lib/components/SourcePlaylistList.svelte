@@ -7,6 +7,8 @@
 	import type { SourcePlaylistSource } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { CircleAlert, Link2, ListMusic, RefreshCw } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		source: SourcePlaylistSource;
@@ -45,11 +47,11 @@
 	{#if playlistsQuery.isPending}
 		<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
 			{#each Array(12) as _, index (index)}
-				<div class="space-y-3 rounded-xl border border-base-content/5 bg-base-200/30 p-2">
+				<Card variant="bordered" padding="sm">
 					<div class="skeleton aspect-square w-full rounded-lg"></div>
 					<div class="skeleton h-4 w-4/5"></div>
 					<div class="skeleton h-3 w-3/5"></div>
-				</div>
+				</Card>
 			{/each}
 		</div>
 	{:else if playlistsQuery.isError}
@@ -65,19 +67,27 @@
 			</p>
 			<div class="mt-4 flex flex-wrap justify-center gap-2">
 				{#if relinkRequired}
-					<a class="btn btn-primary btn-sm gap-2" href={withBasePath('/profile#media-accounts')}>
-						<Link2 class="h-4 w-4" />
+					<Button
+						variant="primary"
+						size="sm"
+						icon={Link2}
+						href={withBasePath('/profile#media-accounts')}
+					>
 						Reconnect account
-					</a>
+					</Button>
 				{/if}
-				<button class="btn btn-ghost btn-sm gap-2" onclick={() => void playlistsQuery.refetch()}>
-					<RefreshCw class="h-4 w-4" />
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={RefreshCw}
+					onclick={() => void playlistsQuery.refetch()}
+				>
 					Try again
-				</button>
+				</Button>
 			</div>
 		</div>
 	{:else if playlists.length === 0}
-		<div class="rounded-2xl border border-base-content/5 bg-base-200/25 px-6 py-12 text-center">
+		<Card variant="bordered" class="py-6 text-center">
 			<ListMusic class="mx-auto h-10 w-10 text-base-content/25" />
 			<h2 class="mt-3 text-lg font-semibold">No playlists found</h2>
 			<p class="mx-auto mt-1 max-w-lg text-sm text-base-content/50">
@@ -87,17 +97,25 @@
 			</p>
 			<div class="mt-4 flex flex-wrap justify-center gap-2">
 				{#if collection}
-					<a class="btn btn-primary btn-sm gap-2" href={withBasePath('/profile#media-accounts')}>
-						<Link2 class="h-4 w-4" />
+					<Button
+						variant="primary"
+						size="sm"
+						icon={Link2}
+						href={withBasePath('/profile#media-accounts')}
+					>
 						{collection.account_mode === 'shared' ? 'Link your account' : 'Manage account'}
-					</a>
+					</Button>
 				{/if}
-				<button class="btn btn-ghost btn-sm gap-2" onclick={() => void playlistsQuery.refetch()}>
-					<RefreshCw class="h-4 w-4" />
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={RefreshCw}
+					onclick={() => void playlistsQuery.refetch()}
+				>
 					Check again
-				</button>
+				</Button>
 			</div>
-		</div>
+		</Card>
 	{:else}
 		<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
 			{#each playlists as playlist (playlist.id)}

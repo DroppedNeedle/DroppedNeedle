@@ -10,7 +10,6 @@
 		FolderHeart,
 		History,
 		ListMusic,
-		LoaderCircle,
 		RotateCcw,
 		Save,
 		Trash2
@@ -29,6 +28,11 @@
 		updateLibraryContributionMutation
 	} from '$lib/queries/libraryContributions/LibraryContributionMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
+	import Field from '$lib/ui/Field.svelte';
+	import Input from '$lib/ui/Input.svelte';
 
 	let { data }: { data: PageData } = $props();
 	const contributionQuery = getLibraryContributionQuery(() => data.contributionId);
@@ -39,7 +43,7 @@
 	let draft = $state<ReleaseDraft | null>(null);
 	let loadedDraft = $state<ReleaseDraft | null>(null);
 	let loadedRevision = $state(0);
-	let cancelDialog = $state<HTMLDialogElement | null>(null);
+	let cancelOpen = $state(false);
 
 	const mediaCount = $derived(contribution?.local_snapshot.media.length ?? 0);
 	const trackCount = $derived(
@@ -175,14 +179,15 @@
 		});
 	}
 
-	function cancel(): void {
-		if (!contribution || cancelMutation.isPending) return;
-		cancelMutation.mutate(
-			{
-				contributionId: contribution.id,
-				expectedRowRevision: contribution.row_revision
-			},
-			{ onSuccess: () => cancelDialog?.close() }
+	// Resolves once the cancel lands, so the dialog stays open until then.
+	function cancel(): Promise<void> {
+		const current = contribution;
+		if (!current) return Promise.resolve();
+		return new Promise((resolve, reject) =>
+			cancelMutation.mutate(
+				{ contributionId: current.id, expectedRowRevision: current.row_revision },
+				{ onSuccess: () => resolve(), onError: reject }
+			)
 		);
 	}
 
@@ -239,17 +244,19 @@
 					<h1 class="font-bold">Couldn't open this contribution</h1>
 					<p class="text-sm">It may have been removed, or the album is no longer in the library.</p>
 				</div>
-				<button class="btn btn-sm" onclick={() => contributionQuery.refetch()}>Retry</button>
+				<Button size="sm" onclick={() => contributionQuery.refetch()}>Retry</Button>
 			</div>
 		</div>
 	{:else}
 		<div class="mb-6 flex flex-wrap items-center justify-between gap-3">
-			<button
-				class="btn btn-ghost btn-sm gap-2"
+			<Button
+				variant="ghost"
+				size="sm"
+				icon={ArrowLeft}
 				onclick={() => goto(withBasePath(`/album/${contribution.local_album_id}`))}
 			>
-				<ArrowLeft class="h-4 w-4" /> Back to album
-			</button>
+				Back to album
+			</Button>
 			<span class="badge badge-outline gap-1.5 capitalize">
 				<CircleDot class="h-3.5 w-3.5" />
 				{contribution.state.replace('_', ' ')}
@@ -258,11 +265,11 @@
 
 		<div class="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:items-start">
 			<aside class="lg:sticky lg:top-5" aria-label="Contribution progress">
-				<div class="rounded-box border border-base-content/10 bg-base-200/50 p-4">
+				<Card variant="bordered" padding="md">
 					<p class="text-xs font-bold uppercase tracking-[0.18em] text-base-content/45">
 						Contribution steps
 					</p>
-					<ol class="mt-4 space-y-1">
+					<ol class="mt-2 space-y-1">
 						{#each stages as stage, index (stage.label)}
 							<li
 								class="grid grid-cols-[1.5rem_1fr] gap-2 rounded-box px-2 py-2.5 {stage.available
@@ -282,42 +289,44 @@
 							</li>
 						{/each}
 					</ol>
-				</div>
+				</Card>
 			</aside>
 
 			<div class="min-w-0 space-y-6">
-				<header class="overflow-hidden rounded-box border border-base-content/10 bg-base-200/45">
-					<div class="border-b border-base-content/10 px-5 py-5 sm:px-7">
-						<p class="text-sm font-semibold text-primary">Prepare a MusicBrainz release</p>
-						<h1 class="mt-1 text-2xl font-black tracking-tight sm:text-4xl">
-							{contribution.local_snapshot.title || 'Untitled local album'}
-						</h1>
-						<p class="mt-2 max-w-2xl text-sm text-base-content/60">
-							Check what DroppedNeedle read from your files. Your corrections are saved to this
-							draft only and won't change the album or its files.
-						</p>
-					</div>
-					<div class="grid gap-px bg-base-content/10 sm:grid-cols-3">
-						<div class="bg-base-100/75 px-5 py-3">
-							<span class="block text-xs text-base-content/45">Artist credit</span>
-							<span class="block truncate text-sm font-semibold">
-								{contribution.local_snapshot.album_artist_name || 'Missing'}
-							</span>
+				<Card variant="bordered" padding="none" class="overflow-hidden">
+					<header>
+						<div class="border-b border-base-content/10 px-5 py-5 sm:px-7">
+							<p class="text-sm font-semibold text-primary">Prepare a MusicBrainz release</p>
+							<h1 class="mt-1 text-2xl font-black tracking-tight sm:text-4xl">
+								{contribution.local_snapshot.title || 'Untitled local album'}
+							</h1>
+							<p class="mt-2 max-w-2xl text-sm text-base-content/60">
+								Check what DroppedNeedle read from your files. Your corrections are saved to this
+								draft only and won't change the album or its files.
+							</p>
 						</div>
-						<div class="bg-base-100/75 px-5 py-3">
-							<span class="block text-xs text-base-content/45">Media and tracks</span>
-							<span class="block text-sm font-semibold"
-								>{mediaCount}
-								{mediaCount === 1 ? 'medium' : 'media'} · {trackCount}
-								{trackCount === 1 ? 'track' : 'tracks'}</span
-							>
+						<div class="grid gap-px bg-base-content/10 sm:grid-cols-3">
+							<div class="bg-base-100/75 px-5 py-3">
+								<span class="block text-xs text-base-content/45">Artist credit</span>
+								<span class="block truncate text-sm font-semibold">
+									{contribution.local_snapshot.album_artist_name || 'Missing'}
+								</span>
+							</div>
+							<div class="bg-base-100/75 px-5 py-3">
+								<span class="block text-xs text-base-content/45">Media and tracks</span>
+								<span class="block text-sm font-semibold"
+									>{mediaCount}
+									{mediaCount === 1 ? 'medium' : 'media'} · {trackCount}
+									{trackCount === 1 ? 'track' : 'tracks'}</span
+								>
+							</div>
+							<div class="bg-base-100/75 px-5 py-3">
+								<span class="block text-xs text-base-content/45">Local snapshot</span>
+								<span class="block truncate text-sm font-semibold">{capturedAt}</span>
+							</div>
 						</div>
-						<div class="bg-base-100/75 px-5 py-3">
-							<span class="block text-xs text-base-content/45">Local snapshot</span>
-							<span class="block truncate text-sm font-semibold">{capturedAt}</span>
-						</div>
-					</div>
-				</header>
+					</header>
+				</Card>
 
 				{#if contribution.state === 'stale'}
 					<section
@@ -333,28 +342,28 @@
 									history.
 								</p>
 								{#if contribution.next_actions.includes('rebuild')}
-									<button
-										class="btn btn-warning btn-sm mt-4 gap-2"
-										disabled={rebuildMutation.isPending}
+									<Button
+										variant="warning"
+										size="sm"
+										icon={RotateCcw}
+										class="mt-4"
+										loading={rebuildMutation.isPending}
 										onclick={rebuild}
 									>
-										{#if rebuildMutation.isPending}<LoaderCircle
-												class="h-4 w-4 animate-spin"
-											/>{:else}<RotateCcw class="h-4 w-4" />{/if}
 										Rebuild draft
-									</button>
+									</Button>
 								{/if}
 							</div>
 						</div>
 					</section>
 				{:else if contribution.state === 'cancelled'}
-					<section class="rounded-box border border-base-content/10 bg-base-200/45 p-6 text-center">
+					<Card variant="bordered" as="section" class="text-center">
 						<Trash2 class="mx-auto h-8 w-8 text-base-content/30" />
-						<h2 class="mt-3 text-lg font-bold">This contribution was cancelled</h2>
-						<p class="mt-1 text-sm text-base-content/55">
+						<h2 class="mt-1 text-lg font-bold">This contribution was cancelled</h2>
+						<p class="text-sm text-base-content/55">
 							You can start a fresh draft from the album page.
 						</p>
-					</section>
+					</Card>
 				{:else if draft}
 					{@const currentDraft = draft}
 					{#if draftIsDirty}
@@ -364,14 +373,10 @@
 								<p class="font-semibold">Save this draft before checking provider data</p>
 								<p class="text-sm">Discogs and MusicBrainz actions use the last saved version.</p>
 							</div>
-							<button class="btn btn-ghost btn-sm" onclick={discardLocalEdits}>Discard edits</button
-							>
+							<Button variant="ghost" size="sm" onclick={discardLocalEdits}>Discard edits</Button>
 						</div>
 					{/if}
-					<section
-						class="rounded-box border border-base-content/10 bg-base-100"
-						aria-labelledby="local-source-title"
-					>
+					<Card variant="bordered" padding="none" as="section" aria-label="Local metadata">
 						<div
 							class="flex flex-wrap items-start justify-between gap-3 border-b border-base-content/10 px-5 py-4 sm:px-6"
 						>
@@ -382,7 +387,7 @@
 									<FolderHeart class="h-5 w-5" />
 								</div>
 								<div>
-									<h2 id="local-source-title" class="font-bold">Local metadata</h2>
+									<h2 class="font-bold">Local metadata</h2>
 									<p class="text-sm text-base-content/55">Read from the indexed audio files</p>
 								</div>
 							</div>
@@ -391,98 +396,22 @@
 							>
 						</div>
 						<div class="grid gap-4 p-5 sm:grid-cols-2 sm:p-6">
-							<label class="form-control sm:col-span-2">
-								<span class="label"
-									><span class="label-text font-semibold">Release title</span></span
-								>
-								<input
-									class="input input-bordered w-full"
-									value={currentDraft.title.value ?? ''}
-									disabled={!canEdit}
-									oninput={(event) => changeField(currentDraft.title, event.currentTarget.value)}
-								/>
-								<span class="label"
-									><span class="label-text-alt text-base-content/45"
-										>{currentDraft.title.source.replace('_', ' ')}</span
-									></span
-								>
-							</label>
-							<label class="form-control">
-								<span class="label"
-									><span class="label-text font-semibold">Artist credit</span></span
-								>
-								<input
-									class="input input-bordered w-full"
-									value={currentDraft.artist_credit.value ?? ''}
-									disabled={!canEdit}
-									oninput={(event) =>
-										changeField(currentDraft.artist_credit, event.currentTarget.value)}
-								/>
-							</label>
-							<label class="form-control">
-								<span class="label"><span class="label-text font-semibold">Release date</span></span
-								>
-								<input
-									class="input input-bordered w-full"
-									value={currentDraft.release_date.value ?? ''}
-									disabled={!canEdit}
-									placeholder="YYYY, YYYY-MM, or YYYY-MM-DD"
-									oninput={(event) =>
-										changeField(currentDraft.release_date, event.currentTarget.value)}
-								/>
-							</label>
-							<label class="form-control">
-								<span class="label"><span class="label-text font-semibold">Country</span></span>
-								<input
-									class="input input-bordered w-full"
-									value={currentDraft.country.value ?? ''}
-									disabled={!canEdit}
-									oninput={(event) => changeField(currentDraft.country, event.currentTarget.value)}
-								/>
-							</label>
-							<label class="form-control">
-								<span class="label"><span class="label-text font-semibold">Label</span></span>
-								<input
-									class="input input-bordered w-full"
-									value={currentDraft.label.value ?? ''}
-									disabled={!canEdit}
-									oninput={(event) => changeField(currentDraft.label, event.currentTarget.value)}
-								/>
-							</label>
-							<label class="form-control">
-								<span class="label"
-									><span class="label-text font-semibold">Catalogue number</span></span
-								>
-								<input
-									class="input input-bordered w-full"
-									value={currentDraft.catalogue_number.value ?? ''}
-									disabled={!canEdit}
-									oninput={(event) =>
-										changeField(currentDraft.catalogue_number, event.currentTarget.value)}
-								/>
-							</label>
-							<label class="form-control">
-								<span class="label"><span class="label-text font-semibold">Barcode</span></span>
-								<input
-									class="input input-bordered w-full"
-									value={currentDraft.barcode.value ?? ''}
-									disabled={!canEdit}
-									inputmode="numeric"
-									oninput={(event) => changeField(currentDraft.barcode, event.currentTarget.value)}
-								/>
-							</label>
-							<label class="form-control">
-								<span class="label"><span class="label-text font-semibold">Packaging</span></span>
-								<input
-									class="input input-bordered w-full"
-									value={currentDraft.packaging.value ?? ''}
-									disabled={!canEdit}
-									oninput={(event) =>
-										changeField(currentDraft.packaging, event.currentTarget.value)}
-								/>
-							</label>
+							<div class="sm:col-span-2">
+								{@render draftField('Release title', currentDraft.title, {
+									help: currentDraft.title.source.replace('_', ' ')
+								})}
+							</div>
+							{@render draftField('Artist credit', currentDraft.artist_credit)}
+							{@render draftField('Release date', currentDraft.release_date, {
+								placeholder: 'YYYY, YYYY-MM, or YYYY-MM-DD'
+							})}
+							{@render draftField('Country', currentDraft.country)}
+							{@render draftField('Label', currentDraft.label)}
+							{@render draftField('Catalogue number', currentDraft.catalogue_number)}
+							{@render draftField('Barcode', currentDraft.barcode, { inputmode: 'numeric' })}
+							{@render draftField('Packaging', currentDraft.packaging)}
 						</div>
-					</section>
+					</Card>
 
 					<ContributionDiscogsSource {contribution} canMutate={canUseProviderActions} />
 
@@ -495,14 +424,11 @@
 						onusetrack={useTrackValues}
 					/>
 
-					<section
-						class="rounded-box border border-base-content/10 bg-base-100"
-						aria-labelledby="tracklist-title"
-					>
+					<Card variant="bordered" padding="none" as="section" aria-label="Track list">
 						<div class="flex items-center gap-3 border-b border-base-content/10 px-5 py-4 sm:px-6">
 							<ListMusic class="h-5 w-5 text-primary" />
 							<div>
-								<h2 id="tracklist-title" class="font-bold">Track list</h2>
+								<h2 class="font-bold">Track list</h2>
 								<p class="text-sm text-base-content/55">Positions stay tied to the local album</p>
 							</div>
 						</div>
@@ -516,60 +442,44 @@
 										</h3>
 									</div>
 									<div class="mb-4 grid gap-3 sm:grid-cols-2">
-										<label class="form-control">
-											<span class="label-text mb-1 text-xs font-semibold">Medium title</span>
-											<input
-												class="input input-sm input-bordered w-full"
-												value={medium.title.value ?? ''}
-												disabled={!canEdit}
-												oninput={(event) => changeField(medium.title, event.currentTarget.value)}
-											/>
-										</label>
-										<label class="form-control">
-											<span class="label-text mb-1 text-xs font-semibold">MusicBrainz format</span>
-											<input
-												class="input input-sm input-bordered w-full"
-												value={medium.format.value ?? ''}
-												disabled={!canEdit}
-												placeholder="For example, CD or 12&quot; Vinyl"
-												oninput={(event) => changeField(medium.format, event.currentTarget.value)}
-											/>
-										</label>
+										{@render draftField('Medium title', medium.title, { size: 'sm' })}
+										{@render draftField('MusicBrainz format', medium.format, {
+											size: 'sm',
+											placeholder: 'For example, CD or 12" Vinyl'
+										})}
 									</div>
 									<div class="space-y-2">
 										{#each medium.tracks as track (track.local_track_id)}
 											<div
-												class="grid gap-2 rounded-box bg-base-200/45 p-3 sm:grid-cols-[3rem_minmax(0,1fr)_minmax(10rem,0.65fr)] sm:items-center"
+												class="grid gap-2 rounded-box bg-base-100/60 p-3 sm:grid-cols-[3rem_minmax(0,1fr)_minmax(10rem,0.65fr)] sm:items-center"
 											>
 												<span class="text-sm font-bold tabular-nums text-base-content/45">
 													{track.disc_number}.{track.track_number || '–'}
 												</span>
-												<label class="form-control">
-													<span class="sr-only">Title for track {track.track_number}</span>
-													<input
-														class="input input-sm input-bordered w-full"
-														value={track.title.value ?? ''}
-														disabled={!canEdit}
-														oninput={(event) => changeField(track.title, event.currentTarget.value)}
-													/>
-												</label>
-												<label class="form-control">
-													<span class="sr-only">Artist for track {track.track_number}</span>
-													<input
-														class="input input-sm input-bordered w-full"
-														value={track.artist_name.value ?? ''}
-														disabled={!canEdit}
-														oninput={(event) =>
-															changeField(track.artist_name, event.currentTarget.value)}
-													/>
-												</label>
+												<Input
+													size="sm"
+													label="Title for track {track.track_number}"
+													class="w-full"
+													value={track.title.value ?? ''}
+													disabled={!canEdit}
+													oninput={(event) => changeField(track.title, event.currentTarget.value)}
+												/>
+												<Input
+													size="sm"
+													label="Artist for track {track.track_number}"
+													class="w-full"
+													value={track.artist_name.value ?? ''}
+													disabled={!canEdit}
+													oninput={(event) =>
+														changeField(track.artist_name, event.currentTarget.value)}
+												/>
 											</div>
 										{/each}
 									</div>
 								</div>
 							{/each}
 						</div>
-					</section>
+					</Card>
 
 					{#if contribution.validation.length}
 						<section
@@ -598,23 +508,25 @@
 							</div>
 							<div class="flex items-center gap-2">
 								{#if contribution.next_actions.includes('cancel')}
-									<button
-										class="btn btn-ghost btn-sm gap-2"
-										onclick={() => cancelDialog?.showModal()}
+									<Button
+										variant="ghost"
+										size="sm"
+										icon={Trash2}
+										onclick={() => (cancelOpen = true)}
 									>
-										<Trash2 class="h-4 w-4" /> Cancel
-									</button>
+										Cancel
+									</Button>
 								{/if}
-								<button
-									class="btn btn-primary btn-sm gap-2"
-									disabled={!canEdit || saveMutation.isPending}
+								<Button
+									variant="primary"
+									size="sm"
+									icon={Save}
+									disabled={!canEdit}
+									loading={saveMutation.isPending}
 									onclick={save}
 								>
-									{#if saveMutation.isPending}<LoaderCircle
-											class="h-4 w-4 animate-spin"
-										/>{:else}<Save class="h-4 w-4" />{/if}
 									Save draft
-								</button>
+								</Button>
 							</div>
 						</div>
 					{/if}
@@ -624,19 +536,40 @@
 	{/if}
 </main>
 
-<dialog bind:this={cancelDialog} class="modal">
-	<div class="modal-box">
-		<h2 class="text-lg font-bold">Cancel this contribution?</h2>
-		<p class="mt-2 text-sm text-base-content/65">
-			The draft will close. Your library and audio files won't be changed.
-		</p>
-		<div class="modal-action">
-			<button class="btn btn-ghost" onclick={() => cancelDialog?.close()}>Keep draft</button>
-			<button class="btn btn-error gap-2" disabled={cancelMutation.isPending} onclick={cancel}>
-				{#if cancelMutation.isPending}<LoaderCircle class="h-4 w-4 animate-spin" />{/if}
-				Cancel contribution
-			</button>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop"><button aria-label="Close">close</button></form>
-</dialog>
+<ConfirmDialog
+	bind:open={cancelOpen}
+	title="Cancel this contribution?"
+	message="The draft will close. Your library and audio files won't be changed."
+	confirmLabel="Cancel contribution"
+	cancelLabel="Keep draft"
+	tone="danger"
+	pending={cancelMutation.isPending}
+	onconfirm={cancel}
+/>
+
+{#snippet draftField(
+	label: string,
+	field: ReleaseTextField,
+	extra: {
+		help?: string;
+		placeholder?: string;
+		inputmode?: 'numeric';
+		size?: 'sm' | 'md';
+	} = {}
+)}
+	<Field {label} help={extra.help}>
+		{#snippet children(control)}
+			<Input
+				{...control}
+				{label}
+				size={extra.size}
+				class="w-full"
+				value={field.value ?? ''}
+				disabled={!canEdit}
+				placeholder={extra.placeholder}
+				inputmode={extra.inputmode}
+				oninput={(event) => changeField(field, event.currentTarget.value)}
+			/>
+		{/snippet}
+	</Field>
+{/snippet}

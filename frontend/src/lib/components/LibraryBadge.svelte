@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { Check, Clock, Trash2 } from 'lucide-svelte';
-	import { STATUS_COLORS } from '$lib/constants';
 	import DeleteAlbumModal from './DeleteAlbumModal.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 
@@ -41,9 +40,9 @@
 	const lgButtonClass = $derived(
 		size === 'lg' ? 'w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center' : ''
 	);
-	const bgColor = $derived(status === 'library' ? 'var(--color-accent)' : STATUS_COLORS.REQUESTED);
-	// amber stays the same in both themes, so its icon stays dark
-	const iconColor = $derived(status === 'library' ? 'text-accent-content' : 'text-neutral-900');
+	const tone = $derived(
+		status === 'library' ? 'bg-accent text-accent-content' : 'bg-warning text-warning-content'
+	);
 
 	function handleClick(e: Event) {
 		e.stopPropagation();
@@ -59,45 +58,32 @@
 
 {#if authStore.isAdmin}
 	<button
-		class="{positioning} rounded-full shadow-sm transition-colors duration-200 group/badge {sizeClasses.button} {lgButtonClass}"
-		style="background-color: {bgColor};"
+		class="{positioning} {tone} group/badge rounded-full shadow-sm transition-colors duration-200 hover:bg-error hover:text-error-content {sizeClasses.button} {lgButtonClass}"
 		onclick={handleClick}
-		onmouseenter={(e) => {
-			e.currentTarget.style.backgroundColor = '#ef4444';
-		}}
-		onmouseleave={(e) => {
-			e.currentTarget.style.backgroundColor = bgColor;
-			e.currentTarget.style.filter = '';
-		}}
 		aria-label={status === 'library' ? 'Remove from library' : 'Remove request'}
 	>
 		{#if status === 'library'}
 			<Check
-				class="{sizeClasses.icon} {iconColor} group-hover/badge:hidden"
+				class="{sizeClasses.icon} group-hover/badge:hidden"
 				strokeWidth={Number(sizeClasses.strokeWidth)}
 			/>
 		{:else}
 			<Clock
-				class="{sizeClasses.icon} {iconColor} group-hover/badge:hidden"
+				class="{sizeClasses.icon} group-hover/badge:hidden"
 				strokeWidth={Number(sizeClasses.strokeWidth)}
 			/>
 		{/if}
-		<Trash2
-			class="{sizeClasses.icon} hidden group-hover/badge:block"
-			color="white"
-			strokeWidth={2}
-		/>
+		<Trash2 class="{sizeClasses.icon} hidden group-hover/badge:block" strokeWidth={2} />
 	</button>
 {:else}
 	<span
-		class="{positioning} rounded-full shadow-sm {sizeClasses.button} {lgButtonClass}"
-		style="background-color: {bgColor};"
+		class="{positioning} {tone} rounded-full shadow-sm {sizeClasses.button} {lgButtonClass}"
 		aria-label={status === 'library' ? 'In library' : 'Requested'}
 	>
 		{#if status === 'library'}
-			<Check class="{sizeClasses.icon} {iconColor}" strokeWidth={Number(sizeClasses.strokeWidth)} />
+			<Check class={sizeClasses.icon} strokeWidth={Number(sizeClasses.strokeWidth)} />
 		{:else}
-			<Clock class="{sizeClasses.icon} {iconColor}" strokeWidth={Number(sizeClasses.strokeWidth)} />
+			<Clock class={sizeClasses.icon} strokeWidth={Number(sizeClasses.strokeWidth)} />
 		{/if}
 	</span>
 {/if}

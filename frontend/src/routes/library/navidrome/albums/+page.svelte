@@ -198,7 +198,7 @@
 	emptyDescription="Make sure Navidrome is set up and has at least one music library."
 >
 	{#snippet headerIcon()}
-		<span style="color: rgb(var(--brand-navidrome));">
+		<span class="text-navidrome">
 			<NavidromeIcon class="h-8 w-8" />
 		</span>
 	{/snippet}

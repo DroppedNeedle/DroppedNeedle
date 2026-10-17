@@ -12,6 +12,9 @@
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import { formatDurationSec } from '$lib/utils/formatting';
 	import { reveal } from '$lib/actions/reveal';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import Input from '$lib/ui/Input.svelte';
 	import {
 		ChevronLeft,
 		ChevronRight,
@@ -145,13 +148,11 @@
 
 <div class="container mx-auto p-4 md:p-6 lg:p-8">
 	<div class="flex items-center gap-4 mb-6">
-		<button
-			class="btn btn-ghost btn-circle"
+		<IconButton
+			icon={ChevronLeft}
+			label="Back to library"
 			onclick={() => goto(withBasePath('/library'))}
-			aria-label="Back to library"
-		>
-			<ChevronLeft class="w-6 h-6" />
-		</button>
+		/>
 		<div>
 			<h1 class="text-3xl font-bold">All Tracks</h1>
 			<p class="text-base-content/70 text-sm mt-1">
@@ -162,36 +163,26 @@
 	</div>
 
 	<div class="flex flex-col sm:flex-row gap-3 mb-6">
-		<div class="relative group flex-1">
-			<Search
-				class="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-base-content/40
-				group-focus-within:text-primary transition-colors duration-200 pointer-events-none"
-			/>
-			<input
-				type="text"
+		<div class="relative flex-1">
+			<Input
+				icon={Search}
+				label="Search tracks"
 				placeholder="Search tracks..."
-				class="input input-bordered w-full rounded-full pl-11 pr-12"
+				class="w-full pr-12"
 				bind:value={searchQuery}
 				oninput={handleSearchInput}
-				aria-label="Search tracks"
 			/>
 			{#if searchQuery}
-				<button
-					type="button"
-					class="absolute right-3 top-1/2 -translate-y-1/2 btn btn-sm btn-ghost btn-circle"
+				<IconButton
+					size="sm"
+					icon={X}
+					label="Clear search"
+					class="absolute right-2 top-1/2 -translate-y-1/2"
 					onclick={clearSearch}
-					aria-label="Clear search"
-				>
-					<X class="h-4 w-4" />
-				</button>
+				/>
 			{/if}
 		</div>
-		<select
-			class="select select-bordered rounded-full"
-			value={sort}
-			onchange={handleSortChange}
-			aria-label="Sort tracks"
-		>
+		<select class="select" value={sort} onchange={handleSortChange} aria-label="Sort tracks">
 			<option value="recent">Recently added</option>
 			<option value="title">Title</option>
 		</select>
@@ -221,32 +212,35 @@
 	{:else}
 		<div class="mb-4 flex items-center gap-2">
 			{#if loader.loading}
-				<button
-					class="btn btn-sm btn-primary gap-1.5"
+				<Button
+					variant="primary"
+					size="sm"
 					onclick={() => loader.abort()}
-					aria-busy="true"
 					aria-label="Stop loading tracks"
 				>
-					<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
+					<LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
 					{loader.progressText ?? 'Loading tracks'}
-				</button>
+				</Button>
 			{:else}
-				<button
-					class="btn btn-sm btn-primary gap-1.5"
+				<Button
+					variant="primary"
+					size="sm"
+					icon={Play}
+					class="[&_svg]:fill-current"
 					onclick={playAll}
 					aria-label="Play all tracks"
 				>
-					<Play class="h-3.5 w-3.5 fill-current" />
 					Play All
-				</button>
-				<button
-					class="btn btn-sm btn-ghost gap-1.5"
+				</Button>
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={Shuffle}
 					onclick={shuffleAll}
 					aria-label="Shuffle all tracks"
 				>
-					<Shuffle class="h-3.5 w-3.5" />
 					Shuffle
-				</button>
+				</Button>
 			{/if}
 		</div>
 
@@ -257,12 +251,14 @@
 			{#each data.items as track, i (track.id)}
 				{@const playing = isTrackPlaying(track)}
 				<div
-					class="group flex cursor-pointer items-center gap-3 px-3 py-2 transition-colors {playing
+					class="group flex cursor-pointer items-center gap-3 px-3 py-2 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary {playing
 						? 'bg-accent/10'
 						: 'hover:bg-base-200/50'}"
 					onclick={() => playTrack(i)}
 					onkeydown={(e) =>
-						(e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), playTrack(i))}
+						e.target === e.currentTarget &&
+						(e.key === 'Enter' || e.key === ' ') &&
+						(e.preventDefault(), playTrack(i))}
 					tabindex="0"
 					role="button"
 					aria-label="Play {track.title}"
@@ -317,11 +313,8 @@
 								{formatDurationSec(track.duration_seconds)}
 							</span>
 						{/if}
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div
-							class="opacity-0 transition-opacity group-hover:opacity-100"
-							onclick={(e) => e.stopPropagation()}
-							onkeydown={(e) => e.stopPropagation()}
+							class="opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
 						>
 							<ContextMenu items={getTrackMenuItems(track)} position="end" size="xs" />
 						</div>
@@ -332,25 +325,25 @@
 
 		{#if totalPages > 1}
 			<div class="mt-8 flex items-center justify-center gap-2">
-				<button
-					class="btn btn-ghost btn-sm"
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={ChevronLeft}
 					disabled={currentPage === 0}
 					onclick={() => goToPage(currentPage - 1)}
 					aria-label="Previous page"
-				>
-					<ChevronLeft class="h-4 w-4" />
-				</button>
+				/>
 				<span class="text-sm text-base-content/70">
 					Page {currentPage + 1} of {totalPages}
 				</span>
-				<button
-					class="btn btn-ghost btn-sm"
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={ChevronRight}
 					disabled={currentPage >= totalPages - 1}
 					onclick={() => goToPage(currentPage + 1)}
 					aria-label="Next page"
-				>
-					<ChevronRight class="h-4 w-4" />
-				</button>
+				/>
 			</div>
 		{/if}
 	{/if}

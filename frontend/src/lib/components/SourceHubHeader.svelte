@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { RefreshCw } from 'lucide-svelte';
 	import type { Snippet } from 'svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
 		icon: Snippet;
@@ -30,15 +31,13 @@
 	</div>
 	<div class="flex items-center gap-2">
 		{#if onrefresh}
-			<button
-				class="btn btn-ghost btn-sm btn-circle tooltip tooltip-bottom"
-				data-tip="Refresh"
+			<IconButton
+				size="sm"
+				icon={RefreshCw}
+				label="Refresh page data"
+				loading={refreshing}
 				onclick={onrefresh}
-				disabled={refreshing}
-				aria-label="Refresh page data"
-			>
-				<RefreshCw class="h-4 w-4 {refreshing ? 'animate-spin' : ''}" />
-			</button>
+			/>
 		{/if}
 		{#if settingsSnippet}
 			{@render settingsSnippet()}

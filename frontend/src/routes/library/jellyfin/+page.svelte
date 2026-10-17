@@ -43,6 +43,7 @@
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { Tv } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import type {
 		JellyfinAlbumSummary,
 		JellyfinTrackInfo,
@@ -306,7 +307,7 @@
 	{#if error}
 		<div role="alert" class="alert alert-error alert-soft">
 			<span>{error}</span>
-			<button class="btn btn-sm btn-ghost" onclick={() => location.reload()}>Retry</button>
+			<Button variant="ghost" size="sm" onclick={() => location.reload()}>Retry</Button>
 		</div>
 	{/if}
 
@@ -427,18 +428,17 @@
 					{/snippet}
 					{#if mixTracks.length > 0}
 						<div class="flex items-center gap-2 mb-3 mt-3">
-							<button class="btn btn-primary btn-sm" onclick={() => playMixTracks()}
-								>Play all</button
-							>
-							<button
-								class="btn btn-ghost btn-sm"
+							<Button variant="primary" size="sm" onclick={() => playMixTracks()}>Play all</Button>
+							<Button
+								variant="ghost"
+								size="sm"
 								onclick={() => {
 									const items = buildDiscoveryQueueFromJellyfin(mixTracks.map(toTrackInfo));
 									playerStore.playQueue(items, 0, true);
 								}}
 							>
 								Shuffle
-							</button>
+							</Button>
 						</div>
 						<DiscoveryTrackTable
 							tracks={toDiscoveryTracks(mixTracks)}

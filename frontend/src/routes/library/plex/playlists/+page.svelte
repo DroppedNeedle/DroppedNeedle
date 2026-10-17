@@ -10,6 +10,6 @@
 	playlistBaseHref="/library/plex/playlists"
 >
 	{#snippet icon()}
-		<PlexIcon class="h-6 w-6" style="color: rgb(var(--brand-plex));" />
+		<PlexIcon class="h-6 w-6 text-plex" />
 	{/snippet}
 </SourcePlaylistList>

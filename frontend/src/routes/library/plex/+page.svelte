@@ -32,6 +32,7 @@
 	import { toastStore } from '$lib/stores/toast';
 	import { buildDiscoveryQueueFromPlex } from '$lib/player/queueHelpers';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import { reveal } from '$lib/actions/reveal';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { onMount } from 'svelte';
@@ -280,16 +281,15 @@
 		{refreshing}
 	>
 		{#snippet icon()}
-			<PlexIcon class="h-8 w-8" style="color: rgb(var(--brand-plex));" />
+			<PlexIcon class="h-8 w-8 text-plex" />
 		{/snippet}
 		{#snippet settingsSnippet()}
 			<div class="tooltip tooltip-left" data-tip="Send play history back to Plex">
 				<label class="label cursor-pointer gap-2 px-0">
-					<span class="label-text text-sm opacity-70">Scrobble to Plex</span>
+					<span class="text-sm opacity-70">Scrobble to Plex</span>
 					<input
 						type="checkbox"
-						class="toggle toggle-sm"
-						style="--tglbg: rgb(var(--brand-plex));"
+						class="toggle toggle-sm toggle-primary"
 						checked={scrobbleEnabled}
 						disabled={scrobbleLoading}
 						onchange={toggleScrobble}
@@ -312,7 +312,7 @@
 		playlistsHref={withBasePath('/library/plex/playlists')}
 	>
 		{#snippet sourceIcon()}
-			<PlexIcon class="h-4 w-4" style="color: rgb(var(--brand-plex));" />
+			<PlexIcon class="h-4 w-4 text-plex" />
 		{/snippet}
 	</PlaylistImportBanner>
 
@@ -321,7 +321,7 @@
 	{#if error}
 		<div role="alert" class="alert alert-error alert-soft">
 			<span>{error}</span>
-			<button class="btn btn-sm btn-ghost" onclick={() => location.reload()}>Retry</button>
+			<Button variant="ghost" size="sm" onclick={() => location.reload()}>Retry</Button>
 		</div>
 	{/if}
 
@@ -421,9 +421,9 @@
 					</div>
 					{#if historyTotal > 10}
 						<div class="mt-2 flex gap-2">
-							<a href={withBasePath('/library/plex/activity')} class="btn btn-sm btn-outline">
+							<Button variant="outline" size="sm" href={withBasePath('/library/plex/activity')}>
 								View full history and analytics ({historyTotal.toLocaleString()} plays)
-							</a>
+							</Button>
 						</div>
 					{/if}
 				{:else if !historyLoading}

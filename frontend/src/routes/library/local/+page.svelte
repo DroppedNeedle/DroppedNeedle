@@ -415,7 +415,10 @@
 					<div
 						class="absolute inset-0 flex items-center justify-center bg-base-100/40 opacity-0 backdrop-blur-[2px] transition-opacity group-hover:opacity-100"
 					>
-						<div class="btn btn-circle btn-primary btn-sm shadow-lg"><Play class="h-4 w-4" /></div>
+						<span
+							class="grid size-8 place-items-center rounded-full bg-primary text-primary-content shadow-lg"
+							aria-hidden="true"><Play class="h-4 w-4" /></span
+						>
 					</div>
 				</button>
 				{#if isMbid(album.musicbrainz_id)}
@@ -464,13 +467,20 @@
 							title="Browse {shelfData.label}"
 						>
 							{#if faceCover}
-								<img
-									src={faceCover}
-									alt=""
+								<div
+									class="pointer-events-none absolute inset-0 scale-110 opacity-20 blur-[2px] transition-opacity duration-300 group-hover:opacity-30"
 									aria-hidden="true"
-									loading="lazy"
-									class="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover opacity-20 blur-[2px] transition-opacity duration-300 group-hover:opacity-30"
-								/>
+								>
+									<AlbumImage
+										customUrl={faceCover}
+										alt=""
+										size="full"
+										requestSize={250}
+										rounded="none"
+										showPlaceholder={false}
+										className="h-full w-full"
+									/>
+								</div>
 							{/if}
 							<div
 								class="pointer-events-none absolute inset-0 bg-gradient-to-t from-base-100/85 via-base-100/40 to-transparent"

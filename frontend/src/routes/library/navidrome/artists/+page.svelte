@@ -1,4 +1,6 @@
 <script lang="ts">
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { remoteApi } from '$lib/queries/remotes/remoteApi';
 	import { toNavidromeArtist } from '$lib/queries/remotes/remoteAdapters';
 	import SourceArtistCard from '$lib/components/SourceArtistCard.svelte';
@@ -61,23 +63,24 @@
 		class="h-[2px] rounded-full bg-gradient-to-r from-transparent via-[rgb(var(--brand-navidrome))] to-transparent opacity-40 mb-6"
 	></div>
 
-	<div
-		class="mb-6 rounded-xl bg-base-200/30 backdrop-blur-sm border border-base-content/5 px-5 py-4 shadow-sm flex items-center gap-3"
-	>
-		<a
-			href={withBasePath('/library/navidrome')}
-			class="btn btn-ghost btn-sm gap-1"
-			aria-label="Back to Navidrome library"
-		>
-			<ChevronLeft class="h-4 w-4" />
-			Back
-		</a>
-		<NavidromeIcon class="h-6 w-6" />
-		<h1 class="text-2xl font-bold">Navidrome Artists</h1>
-		{#if artists.total > 0}
-			<span class="badge badge-ghost">{artists.total}</span>
-		{/if}
-	</div>
+	<Card variant="bordered" padding="md" class="mb-6">
+		<div class="flex items-center gap-3">
+			<Button
+				variant="ghost"
+				size="sm"
+				icon={ChevronLeft}
+				href={withBasePath('/library/navidrome')}
+				aria-label="Back to Navidrome library"
+			>
+				Back
+			</Button>
+			<NavidromeIcon class="h-6 w-6" />
+			<h1 class="text-2xl font-bold">Navidrome Artists</h1>
+			{#if artists.total > 0}
+				<span class="badge badge-ghost">{artists.total}</span>
+			{/if}
+		</div>
+	</Card>
 
 	<LibraryFilterBar
 		bind:searchQuery
@@ -123,25 +126,25 @@
 
 		{#if totalPages > 1}
 			<div class="mt-8 flex items-center justify-center gap-2">
-				<button
-					class="btn btn-ghost btn-sm"
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={ChevronLeft}
 					disabled={currentPage === 0}
 					onclick={() => goToPage(currentPage - 1)}
 					aria-label="Previous page"
-				>
-					<ChevronLeft class="h-4 w-4" />
-				</button>
+				/>
 				<span class="text-sm text-base-content/70">
 					Page {currentPage + 1} of {totalPages}
 				</span>
-				<button
-					class="btn btn-ghost btn-sm"
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={ChevronRight}
 					disabled={currentPage >= totalPages - 1}
 					onclick={() => goToPage(currentPage + 1)}
 					aria-label="Next page"
-				>
-					<ChevronRight class="h-4 w-4" />
-				</button>
+				/>
 			</div>
 		{/if}
 	{/if}

@@ -15,6 +15,9 @@
 	import AddToPlaylistModal from '$lib/components/AddToPlaylistModal.svelte';
 	import SourceAlbumModal from '$lib/components/SourceAlbumModal.svelte';
 	import LibraryFilterBar from '$lib/components/LibraryFilterBar.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import { ChevronLeft, CircleX, Play, Shuffle } from 'lucide-svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { onMount, onDestroy } from 'svelte';
@@ -70,9 +73,7 @@
 <div class="container mx-auto p-6">
 	<div class="flex items-center gap-3 mb-2">
 		{#if backHref}
-			<a href={withBasePath(backHref)} class="btn btn-ghost btn-circle btn-sm" aria-label="Back">
-				<ChevronLeft class="h-5 w-5" />
-			</a>
+			<IconButton size="sm" href={withBasePath(backHref)} icon={ChevronLeft} label="Back" />
 		{/if}
 		{@render headerIcon()}
 		<h1 class="text-2xl font-bold">{headerTitle}</h1>
@@ -184,32 +185,39 @@
 					<a href={withBasePath('/settings')} class="link link-primary text-sm">Open settings</a>
 				{/if}
 			</div>
-			<button class="btn btn-sm btn-ghost" onclick={() => ctrl.fetchAlbums(true)}>Retry</button>
+			<Button variant="ghost" size="sm" onclick={() => ctrl.fetchAlbums(true)}>Retry</Button>
 		</div>
 	{/if}
 
 	{#if ctrl.loading}
 		<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
 			{#each Array(12) as _, i (i)}
-				<div class="card bg-base-100 shadow-sm animate-pulse">
+				<Card variant="raised" padding="none" class="animate-pulse">
 					<div class="aspect-square bg-base-300"></div>
-					<div class="card-body p-3">
+					<div class="p-3">
 						<div class="h-4 bg-base-300 rounded w-3/4"></div>
 						<div class="h-3 bg-base-300 rounded w-1/2 mt-1"></div>
 					</div>
-				</div>
+				</Card>
 			{/each}
 		</div>
 	{:else}
 		<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
 			{#each ctrl.albums as album (a.getAlbumId(album))}
-				<div
-					class="card bg-base-100 w-full shadow-sm group relative cursor-pointer transition-transform hover:scale-105 hover:shadow-lg active:scale-95"
+				<Card
+					variant="raised"
+					padding="none"
+					class="group relative w-full cursor-pointer transition hover:shadow-md focus-visible:outline-2 focus-visible:outline-primary motion-safe:hover:-translate-y-0.5"
 					onclick={() => ctrl.openDetail(album)}
-					onkeydown={(e) =>
-						(e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), ctrl.openDetail(album))}
+					onkeydown={(e) => {
+						if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+							e.preventDefault();
+							ctrl.openDetail(album);
+						}
+					}}
 					role="button"
-					tabindex="0"
+					tabindex={0}
+					aria-label={`Open ${a.getAlbumName(album)}`}
 				>
 					<figure class="aspect-square overflow-hidden relative">
 						<AlbumImage
@@ -246,32 +254,30 @@
 							</div>
 						{/if}
 						<div
-							class="absolute bottom-2 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
+							class="absolute bottom-2 right-2 flex items-center gap-1.5 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 transition-opacity"
 						>
 							{#if a.supportsShuffle}
-								<button
-									class="btn btn-circle btn-sm btn-ghost bg-black/50 backdrop-blur-sm text-white shadow-md hover:bg-black/70"
+								<IconButton
+									variant="neutral"
+									size="sm"
+									icon={Shuffle}
+									label="Shuffle {a.getAlbumName(album)}"
 									onclick={(e) => ctrl.quickShuffle(album, e)}
-									aria-label="Shuffle {a.getAlbumName(album)}"
-								>
-									<Shuffle class="h-3.5 w-3.5" />
-								</button>
+								/>
 							{/if}
-							<button
-								class="btn btn-circle btn-sm btn-primary shadow-md"
+							<IconButton
+								variant="primary"
+								size="sm"
+								icon={Play}
+								label="Play {a.getAlbumName(album)}"
+								class="[&_svg]:fill-current"
+								loading={ctrl.playingAlbumId === a.getAlbumId(album)}
 								onclick={(e) => ctrl.quickPlay(album, e)}
-								aria-label="Play {a.getAlbumName(album)}"
-							>
-								{#if ctrl.playingAlbumId === a.getAlbumId(album)}
-									<span class="loading loading-spinner loading-xs"></span>
-								{:else}
-									<Play class="h-4 w-4 fill-current" />
-								{/if}
-							</button>
+							/>
 						</div>
 					</figure>
 
-					<div class="card-body p-3">
+					<div class="flex flex-col gap-2 p-3">
 						<h2 class="card-title text-sm line-clamp-2 min-h-10">
 							{a.getAlbumName(album)}
 						</h2>
@@ -281,28 +287,22 @@
 							<p class="text-xs opacity-70 line-clamp-1">{a.getArtistName(album)}</p>
 						{/if}
 					</div>
-				</div>
+				</Card>
 			{/each}
 		</div>
 
 		{#if ctrl.albums.length === 0}
-			<div class="card bg-base-200 mt-4">
-				<div class="card-body items-center text-center">
-					{@render emptyIcon()}
-					<p class="text-lg opacity-60">{emptyTitle}</p>
-					<p class="text-sm opacity-40">{emptyDescription}</p>
-				</div>
-			</div>
+			<Card class="mt-4 text-center">
+				<div class="flex justify-center">{@render emptyIcon()}</div>
+				<p class="text-lg opacity-60">{emptyTitle}</p>
+				<p class="text-sm opacity-40">{emptyDescription}</p>
+			</Card>
 		{/if}
 
 		{#if ctrl.albums.length < ctrl.total}
 			<div class="flex justify-center mt-6">
-				<button class="btn btn-ghost" onclick={ctrl.loadMore} disabled={ctrl.loadingMore}>
-					{#if ctrl.loadingMore}
-						<span class="loading loading-spinner loading-sm"></span>
-					{/if}
-					Show more
-				</button>
+				<Button variant="ghost" loading={ctrl.loadingMore} onclick={ctrl.loadMore}>Show more</Button
+				>
 			</div>
 		{/if}
 	{/if}

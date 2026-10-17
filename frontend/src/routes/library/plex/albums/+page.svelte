@@ -182,16 +182,13 @@
 	decades={DECADES}
 >
 	{#snippet headerIcon()}
-		<span style="color: rgb(var(--brand-plex));">
+		<span class="text-plex">
 			<PlexIcon class="h-8 w-8" />
 		</span>
 	{/snippet}
 
 	{#snippet cardTopLeftBadge(album)}
-		<div
-			class="badge badge-sm gap-1"
-			style="background-color: rgb(var(--brand-plex)); color: #000;"
-		>
+		<div class="badge badge-sm gap-1 border-0 bg-plex text-black">
 			<PlexIcon class="h-3 w-3" />
 		</div>
 		{#if !album.musicbrainz_id}

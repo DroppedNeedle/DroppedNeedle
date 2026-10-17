@@ -1,4 +1,6 @@
 <script lang="ts">
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { remoteApi } from '$lib/queries/remotes/remoteApi';
 	import { toPlexTrack } from '$lib/queries/remotes/remoteAdapters';
 	import { buildDiscoveryQueueFromPlex } from '$lib/player/queueHelpers';
@@ -189,25 +191,26 @@
 		class="h-[2px] rounded-full bg-gradient-to-r from-transparent via-[rgb(var(--brand-plex))] to-transparent opacity-40 mb-6"
 	></div>
 
-	<div
-		class="mb-6 rounded-xl bg-base-200/30 backdrop-blur-sm border border-base-content/5 px-5 py-4 shadow-sm flex items-center gap-3"
-	>
-		<a
-			href={withBasePath('/library/plex')}
-			class="btn btn-ghost btn-sm gap-1"
-			aria-label="Back to Plex library"
-		>
-			<ChevronLeft class="h-4 w-4" />
-			Back
-		</a>
-		<span style="color: rgb(var(--brand-plex));">
-			<PlexIcon class="h-6 w-6" />
-		</span>
-		<h1 class="text-2xl font-bold">Plex Tracks</h1>
-		{#if data.total > 0}
-			<span class="badge badge-ghost">{data.total}</span>
-		{/if}
-	</div>
+	<Card variant="bordered" padding="md" class="mb-6">
+		<div class="flex items-center gap-3">
+			<Button
+				variant="ghost"
+				size="sm"
+				icon={ChevronLeft}
+				href={withBasePath('/library/plex')}
+				aria-label="Back to Plex library"
+			>
+				Back
+			</Button>
+			<span class="text-plex">
+				<PlexIcon class="h-6 w-6" />
+			</span>
+			<h1 class="text-2xl font-bold">Plex Tracks</h1>
+			{#if data.total > 0}
+				<span class="badge badge-ghost">{data.total}</span>
+			{/if}
+		</div>
+	</Card>
 
 	<LibraryFilterBar
 		bind:searchQuery
@@ -250,32 +253,35 @@
 		{#if playableTracks.length > 0}
 			<div class="flex items-center gap-2 mb-4">
 				{#if loader.loading}
-					<button
-						class="btn btn-sm btn-primary gap-1.5"
+					<Button
+						variant="primary"
+						size="sm"
 						onclick={() => loader.abort()}
-						aria-busy="true"
 						aria-label="Stop loading tracks"
 					>
-						<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
+						<LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
 						{loader.progressText ?? 'Loading tracks'}
-					</button>
+					</Button>
 				{:else}
-					<button
-						class="btn btn-sm btn-primary gap-1.5"
+					<Button
+						variant="primary"
+						size="sm"
+						icon={Play}
+						class="[&_svg]:fill-current"
 						onclick={playAll}
 						aria-label="Play all tracks"
 					>
-						<Play class="h-3.5 w-3.5 fill-current" />
 						Play All
-					</button>
-					<button
-						class="btn btn-sm btn-ghost gap-1.5"
+					</Button>
+					<Button
+						variant="ghost"
+						size="sm"
+						icon={Shuffle}
 						onclick={shuffleAll}
 						aria-label="Shuffle all tracks"
 					>
-						<Shuffle class="h-3.5 w-3.5" />
 						Shuffle
-					</button>
+					</Button>
 				{/if}
 			</div>
 		{/if}
@@ -297,7 +303,7 @@
 						{@const playing = isTrackPlaying(track)}
 						{@const playable = !!track.part_key}
 						<tr
-							class="group transition-colors {playing
+							class="group transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary {playing
 								? 'bg-accent/10'
 								: playable
 									? 'hover:bg-base-200/50 cursor-pointer'
@@ -305,11 +311,12 @@
 							onclick={() => playable && playTrack(playableTracks.indexOf(track))}
 							onkeydown={(e) =>
 								playable &&
+								e.target === e.currentTarget &&
 								(e.key === 'Enter' || e.key === ' ') &&
 								(e.preventDefault(), playTrack(playableTracks.indexOf(track)))}
 							tabindex={playable ? 0 : -1}
 							role={playable ? 'button' : undefined}
-							aria-label={playable ? 'Play {track.title}' : undefined}
+							aria-label={playable ? `Play ${track.title}` : undefined}
 						>
 							<td class="text-center">
 								<div class="flex items-center justify-center w-8 h-8">
@@ -354,7 +361,7 @@
 							</td>
 							<td class="text-right hidden sm:table-cell">
 								<div
-									class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+									class="flex items-center justify-end gap-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 transition-opacity"
 								>
 									{#if track.codec}
 										<span
@@ -377,25 +384,25 @@
 
 		{#if totalPages > 1}
 			<div class="mt-8 flex items-center justify-center gap-2">
-				<button
-					class="btn btn-ghost btn-sm"
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={ChevronLeft}
 					disabled={currentPage === 0}
 					onclick={() => goToPage(currentPage - 1)}
 					aria-label="Previous page"
-				>
-					<ChevronLeft class="h-4 w-4" />
-				</button>
+				/>
 				<span class="text-sm text-base-content/70">
 					Page {currentPage + 1} of {totalPages}
 				</span>
-				<button
-					class="btn btn-ghost btn-sm"
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={ChevronRight}
 					disabled={currentPage >= totalPages - 1}
 					onclick={() => goToPage(currentPage + 1)}
 					aria-label="Next page"
-				>
-					<ChevronRight class="h-4 w-4" />
-				</button>
+				/>
 			</div>
 		{/if}
 	{/if}
