@@ -213,7 +213,12 @@ impl ArchiveUnpacker for ZipUnpacker {
                     ));
                 }
             }
-            let name = file.name().to_owned();
+            let name = file
+                .name()
+                .map_err(|error| {
+                    format!("plugin archive entry {index} has an unreadable name: {error}")
+                })?
+                .into_owned();
             if file.enclosed_name().is_none() {
                 return Err(format!("plugin archive entry {name:?} escapes its root"));
             }

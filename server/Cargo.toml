@@ -53,7 +53,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 utoipa = "5"
 uuid = { version = "1", features = ["v4"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
 hmac = "0.12"

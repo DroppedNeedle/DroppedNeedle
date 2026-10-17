@@ -319,7 +319,7 @@ mod tests {
         assert_eq!(reader.len(), files.len());
         for (index, (name, bytes)) in files.iter().enumerate() {
             let mut file = reader.by_index(index).expect("entry opens");
-            assert_eq!(file.name(), *name);
+            assert_eq!(file.name().expect("entry name"), *name);
             let mut read = Vec::new();
             file.read_to_end(&mut read)
                 .expect("entry reads with a good crc");

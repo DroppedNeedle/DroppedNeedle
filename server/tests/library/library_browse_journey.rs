@@ -346,7 +346,7 @@ fn zip_entries(bytes: Vec<u8>) -> Vec<(String, Vec<u8>)> {
             let mut data = Vec::new();
             file.read_to_end(&mut data)
                 .expect("entry reads, crc checked");
-            (file.name().to_owned(), data)
+            (file.name().expect("entry name").into_owned(), data)
         })
         .collect()
 }

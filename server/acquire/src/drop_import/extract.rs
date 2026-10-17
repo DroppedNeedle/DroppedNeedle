@@ -7,7 +7,6 @@
 //! thread.
 
 use std::collections::BTreeMap;
-use std::io::{Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
 
 /// More entries than this in one archive is not a purchase.
@@ -204,9 +203,11 @@ fn walk_audio(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
 }
 
 /// Extract only audio entries, refusing traversal, absolute paths and
-/// archives that unpack far larger than they claim. The size cap counts
-/// bytes actually written, not the archive's own headers. An `Err` is a
-/// note for the person: the archive was not usable at all.
+/// archives that unpack far larger than they claim. An entry holding more
+/// than its header declares fails to read, so the archive is refused as
+/// damaged; the cap on bytes written is our own bound on top. A file that
+/// fails part way is removed. An `Err` is a note for the person: the
+/// archive was not usable at all.
 fn safe_extract(
     archive: &Path,
     target_dir: &Path,
@@ -238,8 +239,8 @@ fn safe_extract(
         Ok(_) => {}
         Err(error) => tracing::warn!(%error, "free space unknown; unpacking anyway"),
     }
-    // Headers can lie: stop once the bytes written pass what the archive
-    // declared by more than a small slack.
+    // Headers can lie. zip already fails a read past an entry's declared
+    // size; this cap keeps the limit ours whatever the reader does.
     let cap = declared
         .saturating_add(declared / 10)
         .saturating_add(1 << 20)
@@ -251,7 +252,7 @@ fn safe_extract(
         if entry.is_dir() {
             continue;
         }
-        let raw = PathBuf::from(entry.name());
+        let raw = PathBuf::from(entry.name().map_err(|_| corrupt())?.as_ref());
         let escapes = raw.is_absolute()
             || raw
                 .components()
@@ -268,24 +269,22 @@ fn safe_extract(
             std::fs::create_dir_all(parent).map_err(|_| corrupt())?;
         }
         let mut out = std::fs::File::create(&dest).map_err(|_| corrupt())?;
-        let mut buffer = vec![0u8; 1 << 20];
-        loop {
-            let read = entry.read(&mut buffer).map_err(|_| corrupt())?;
-            if read == 0 {
-                break;
-            }
-            written = written.saturating_add(read as u64);
-            if written > cap {
-                drop(out);
-                if let Err(error) = std::fs::remove_file(&dest) {
-                    tracing::warn!(path = %dest.display(), %error, "oversized entry not removed");
-                }
+        let copied = copy_entry(&mut entry, &mut out, cap, &mut written);
+        drop(out);
+        if copied != Copied::Done
+            && let Err(error) = std::fs::remove_file(&dest)
+        {
+            tracing::warn!(path = %dest.display(), %error, "partly unpacked entry not removed");
+        }
+        match copied {
+            Copied::Done => {}
+            Copied::OverCap => {
                 notes.push(format!(
                     "Stopped unpacking {label}: it unpacks far larger than it claims."
                 ));
                 return Ok(());
             }
-            out.write_all(&buffer[..read]).map_err(|_| corrupt())?;
+            Copied::Failed => return Err(corrupt()),
         }
     }
     if skipped > 0 {
@@ -293,6 +292,42 @@ fn safe_extract(
         notes.push(format!("{label}: ignored {skipped} non-audio {noun}."));
     }
     Ok(())
+}
+
+/// How copying one archive entry ended.
+#[derive(Debug, PartialEq, Eq)]
+enum Copied {
+    Done,
+    /// The bytes written passed the archive's cap.
+    OverCap,
+    /// A read or write failed: a damaged entry, one longer than its
+    /// header says, or a full disk.
+    Failed,
+}
+
+/// Copy one entry to `out`, adding what it writes to `written`.
+fn copy_entry(
+    entry: &mut impl std::io::Read,
+    out: &mut impl std::io::Write,
+    cap: u64,
+    written: &mut u64,
+) -> Copied {
+    let mut buffer = vec![0u8; 1 << 20];
+    loop {
+        let Ok(read) = entry.read(&mut buffer) else {
+            return Copied::Failed;
+        };
+        if read == 0 {
+            return Copied::Done;
+        }
+        *written = written.saturating_add(read as u64);
+        if *written > cap {
+            return Copied::OverCap;
+        }
+        if out.write_all(&buffer[..read]).is_err() {
+            return Copied::Failed;
+        }
+    }
 }
 
 #[cfg(test)]

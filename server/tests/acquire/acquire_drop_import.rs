@@ -516,6 +516,17 @@ async fn drop_zip(
         }
         zip.finish().expect("zip finish");
     }
+    let job = upload_and_settle(acquire, curator, upload).await;
+    assert_eq!(job.status, "completed", "{:?}", job.error);
+    job
+}
+
+/// Start a drop job on the zip at `upload` and wait for it to settle.
+async fn upload_and_settle(
+    acquire: &droppedneedle_acquire::AcquireSetup,
+    curator: &Viewer,
+    upload: PathBuf,
+) -> JobRecord {
     let job = acquire
         .drops
         .create_job(
@@ -528,10 +539,72 @@ async fn drop_zip(
     for _ in 0..200 {
         let now = acquire.drops.get_job(curator, &job.id).await.expect("job");
         if now.status != "processing" {
-            assert_eq!(now.status, "completed", "{:?}", now.error);
             return now;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     panic!("the drop job never settled");
+}
+
+/// An entry whose header understates its size is refused whole: no part
+/// of it stays in staging and nothing from it reaches the library.
+#[tokio::test]
+async fn an_entry_longer_than_its_header_leaves_nothing_behind() {
+    let (acquire, library, _dir, _reads) = bundles().await;
+    let pool = acquire.db.pool().clone();
+    let acquire = acquire.with_library(Arc::new(LibraryLanding::new(
+        library,
+        Arc::new(OneRelease(release(&["Big"], &[None]))),
+        pool,
+    )));
+    let curator = Viewer {
+        user_id: "u-curator".to_owned(),
+        admin: false,
+    };
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let stored =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    writer
+        .start_file("Album/01 - Big.flac", stored)
+        .expect("zip entry");
+    writer.write_all(&vec![7u8; 3 << 20]).expect("zip bytes");
+    let mut bytes = writer.finish().expect("zip finish").into_inner();
+    // Claim 1 KiB unpacked in the local header (offset 22) and the central
+    // directory entry (offset 24); the stored data stays 3 MiB.
+    let central = bytes
+        .windows(4)
+        .position(|window| window == [0x50, 0x4b, 0x01, 0x02])
+        .expect("central directory");
+    for at in [22, central + 24] {
+        bytes[at..at + 4].copy_from_slice(&1024u32.to_le_bytes());
+    }
+    let incoming = acquire.drops.incoming_dir();
+    std::fs::create_dir_all(&incoming).expect("incoming");
+    let upload = incoming.join("upload-liar");
+    std::fs::write(&upload, &bytes).expect("upload");
+
+    let job = upload_and_settle(&acquire, &curator, upload).await;
+    assert_eq!(job.status, "failed", "{:?}", job.error);
+    assert!(job.items.is_empty(), "{:?}", job.items);
+    let mut left = Vec::new();
+    let mut pending = vec![PathBuf::from(&job.staging_dir)];
+    while let Some(dir) = pending.pop() {
+        let Ok(children) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for child in children {
+            let path = child.expect("staging entry").path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                left.push(path);
+            }
+        }
+    }
+    assert!(left.is_empty(), "staging still holds {left:?}");
+    let indexed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_tracks")
+        .fetch_one(acquire.db.pool())
+        .await
+        .expect("catalog");
+    assert_eq!(indexed, 0);
 }
