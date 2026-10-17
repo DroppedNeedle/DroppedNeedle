@@ -82,6 +82,23 @@ const transportRules = [
 	}
 ];
 
+// The page's content-security policy (server/src/security_headers.rs) refuses
+// a style attribute written into markup, so a static style="..." on an element
+// is refused in every browser while vite dev and the specs, which send no
+// policy, show nothing. A style attribute with an expression in it, style={x}
+// and style: directives are set through the style object, which the policy
+// does not govern, and stay allowed. eslint-plugin-svelte 3.23.0's
+// svelte/no-inline-styles cannot tell the two apart (its one option is
+// allowTransitions), hence a selector.
+const markupRules = [
+	{
+		selector:
+			"SvelteElement[kind='html'] > SvelteStartTag > SvelteAttribute[key.name='style'][value.length=1][value.0.type='SvelteLiteral']",
+		message:
+			'The content-security policy refuses a static style attribute. Use a class, or style: directives.'
+	}
+];
+
 // The transport itself: the api client and the page-scoped fetch it wraps.
 const TRANSPORT = ['src/lib/api/**', 'src/lib/utils/navigationAbort.ts'];
 
@@ -123,7 +140,7 @@ export default defineConfig(
 	},
 	{
 		rules: {
-			'no-restricted-syntax': ['error', ...queryClientRules]
+			'no-restricted-syntax': ['error', ...queryClientRules, ...markupRules]
 		}
 	},
 	{
@@ -138,7 +155,7 @@ export default defineConfig(
 		files: ['src/**/*.ts', 'src/**/*.js', 'src/**/*.svelte'],
 		ignores: [...TRANSPORT, 'src/**/*.spec.ts', 'src/**/*.test.ts', 'src/**/*.d.ts'],
 		rules: {
-			'no-restricted-syntax': ['error', ...queryClientRules, ...transportRules]
+			'no-restricted-syntax': ['error', ...queryClientRules, ...transportRules, ...markupRules]
 		}
 	}
 );

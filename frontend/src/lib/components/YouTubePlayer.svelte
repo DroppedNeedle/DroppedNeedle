@@ -19,6 +19,7 @@
 	style:min-width="200px"
 	style:min-height="200px"
 >
+	<!-- YouTube's widget copies this element's attributes onto its iframe: never give it a style. -->
 	<div id={elementId} data-testid="youtube-player-mount" class="h-full w-full"></div>
 </div>
 
