@@ -1420,27 +1420,15 @@ async fn restore_round_trips_and_refuses() {
 /// appears in the OpenAPI document.
 #[tokio::test]
 async fn covers_debug_is_dev_only() {
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
-    use tower::ServiceExt as _;
+    use axum::http::StatusCode;
+    use droppedneedle_kernel::config::AppConfig;
 
-    let mut flagged = common::hooked_state();
-    flagged.config = flagged.config.clone().with_tooling_routes();
-    let app = droppedneedle::create_app(flagged);
+    let flagged =
+        common::TestApp::start_configured("covers-debug", AppConfig::with_tooling_routes).await;
     let mbid = uuid::Uuid::new_v4().to_string();
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(format!("/__tooling__/covers/debug/artist/{mbid}"))
-                .body(Body::empty())
-                .expect("request builds"),
-        )
-        .await
-        .expect("route serves");
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
-        .await
-        .expect("body reads");
+    let uri = format!("/__tooling__/covers/debug/artist/{mbid}");
+    let (status, _, body) = flagged.raw("GET", &uri, &[], None).await;
+    assert_eq!(status, StatusCode::OK);
     let debug: serde_json::Value = serde_json::from_slice(&body).expect("debug parses");
     assert_eq!(
         debug.get("is_valid_mbid"),
@@ -1455,41 +1443,19 @@ async fn covers_debug_is_dev_only() {
         Some(2)
     );
 
-    let bad = droppedneedle::create_app({
-        let mut flagged = common::hooked_state();
-        flagged.config = flagged.config.clone().with_tooling_routes();
-        flagged
-    });
-    let response = bad
-        .oneshot(
-            Request::builder()
-                .uri("/__tooling__/covers/debug/artist/nope")
-                .body(Body::empty())
-                .expect("request builds"),
-        )
-        .await
-        .expect("route serves");
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
-        .await
-        .expect("body reads");
+    let (status, _, body) = flagged
+        .raw("GET", "/__tooling__/covers/debug/artist/nope", &[], None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
     let debug: serde_json::Value = serde_json::from_slice(&body).expect("debug parses");
     assert_eq!(
         debug.get("is_valid_mbid"),
         Some(&serde_json::Value::Bool(false))
     );
 
-    let prod_like = droppedneedle::create_app(common::prod_like_state());
-    let response = prod_like
-        .oneshot(
-            Request::builder()
-                .uri(format!("/__tooling__/covers/debug/artist/{mbid}"))
-                .body(Body::empty())
-                .expect("request builds"),
-        )
-        .await
-        .expect("prod app serves");
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let prod_like = common::TestApp::start("covers-debug-off").await;
+    let (status, _, _) = prod_like.raw("GET", &uri, &[], None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     use utoipa::OpenApi as _;
     let openapi =

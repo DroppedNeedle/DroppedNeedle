@@ -6,6 +6,8 @@
 use droppedneedle_catalog::reads::search;
 
 use crate::common;
+use crate::common::TestApp;
+use crate::common::auth::AuthRig;
 
 use std::sync::Arc;
 
@@ -14,10 +16,8 @@ use axum::{
     http::{Method, Request, StatusCode},
     middleware,
 };
-use droppedneedle::middleware::request_scope;
-use droppedneedle_auth::session::middleware::{SessionAuth, require_session};
-use droppedneedle_auth::session::store::{MemorySessionStore, SessionRecord, SessionStore};
-use droppedneedle_auth::session::tokens::hash_token;
+use droppedneedle_auth::session::middleware::require_session;
+use droppedneedle_auth::users::roles::Role;
 use search::SearchDeps;
 use search::models::{EnrichmentBatchRequest, EnrichmentResponse};
 use search::ports::{EnrichmentPort, EnrichmentPortError};
@@ -26,7 +26,7 @@ use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use tower::ServiceExt as _;
 
-/// Bearer token the rig mints a session for.
+/// Bearer token the rig signs the test user in with.
 const TEST_TOKEN: &str = "dn-search-test-token-0000000000001";
 
 /// Provider fakes: a dead provider that must degrade, never 500.
@@ -127,28 +127,6 @@ async fn seed_catalog(pool: &SqlitePool) {
     .unwrap();
 }
 
-/// Session store holding one valid standard session for the test token.
-async fn session_auth() -> SessionAuth<MemorySessionStore> {
-    let store = MemorySessionStore::new();
-    let now = droppedneedle_auth::session::store::now_unix();
-    store
-        .insert(SessionRecord {
-            id: "session-1".to_owned(),
-            user_id: "user-1".to_owned(),
-            token_hash: hash_token(TEST_TOKEN),
-            kind: droppedneedle_auth::session::store::SessionKind::Standard,
-            label: None,
-            issued_at: now,
-            expires_at: now + 3600,
-            last_seen_at: now,
-            revoked: false,
-            user_agent: None,
-        })
-        .await
-        .unwrap();
-    SessionAuth::new(store, "")
-}
-
 fn search_deps(pool: SqlitePool, enrichment: Arc<dyn EnrichmentPort>) -> SearchDeps {
     SearchDeps::new(
         SearchService::new(pool),
@@ -157,32 +135,37 @@ fn search_deps(pool: SqlitePool, enrichment: Arc<dyn EnrichmentPort>) -> SearchD
     )
 }
 
+/// What a test's router needs alive: the rig its session lives in and the
+/// app whose request wrapper it runs under.
+type Held = (AuthRig, TestApp);
+
 /// The search router behind the real middleware stack: session gate
 /// inside, request scope outside, shared 404/405 fallbacks. Mirrors the
-/// production posture in `create_app` for these paths.
-async fn app(pool: SqlitePool, enrichment: Arc<dyn EnrichmentPort>) -> axum::Router {
-    search::router(search_deps(pool, enrichment))
-        .layer(middleware::from_fn_with_state(
-            session_auth().await,
-            require_session,
-        ))
-        .layer(middleware::from_fn_with_state(
-            common::hooked_state(),
-            request_scope,
+/// production posture in `create_app` for these paths. A test user is
+/// signed in with [`TEST_TOKEN`].
+async fn app(pool: SqlitePool, enrichment: Arc<dyn EnrichmentPort>) -> (axum::Router, Held) {
+    let rig = AuthRig::new("reads-search").await;
+    let user = rig.seed_user("ada", Role::User).await;
+    rig.sign_in(&user.id, TEST_TOKEN).await;
+    let scope = TestApp::start("reads-search").await;
+    let app = scope
+        .request_scope(search::router(search_deps(pool, enrichment)).layer(
+            middleware::from_fn_with_state(rig.session_gate(), require_session),
         ))
         .fallback(droppedneedle::handlers::fallback_404)
-        .method_not_allowed_fallback(droppedneedle::handlers::fallback_405)
+        .method_not_allowed_fallback(droppedneedle::handlers::fallback_405);
+    (app, (rig, scope))
 }
 
-async fn authed_app() -> (axum::Router, SqlitePool) {
+async fn authed_app() -> (axum::Router, SqlitePool, Held) {
     let (pool, _dir) = crate::common::migrated_pool("reads-search").await;
     seed_catalog(&pool).await;
-    let app = app(
+    let (app, held) = app(
         pool.clone(),
         Arc::new(search::ports::UnconfiguredEnrichment),
     )
     .await;
-    (app, pool)
+    (app, pool, held)
 }
 
 async fn call(
@@ -229,7 +212,7 @@ fn assert_screaming_snake(code: &str) {
 
 #[tokio::test]
 async fn unified_search_returns_ranked_buckets_with_tops() {
-    let (app, _) = authed_app().await;
+    let (app, _, _held) = authed_app().await;
     let (status, _, bytes) = call(
         app,
         Method::GET,
@@ -260,7 +243,7 @@ async fn unified_search_returns_ranked_buckets_with_tops() {
 
 #[tokio::test]
 async fn search_ignores_accents_and_case() {
-    let (app, _) = authed_app().await;
+    let (app, _, _held) = authed_app().await;
     for query in ["beyonce", "BEYONCE", "Beyoncé", "BEYONCÉ"] {
         let uri = format!("/api/v3/search?{}", urlencode_query(query));
         let (status, _, bytes) = call(app.clone(), Method::GET, &uri, Some(TEST_TOKEN), None).await;
@@ -284,7 +267,7 @@ fn urlencode_query(query: &str) -> String {
 
 #[tokio::test]
 async fn search_blank_query_is_a_400_envelope() {
-    let (app, _) = authed_app().await;
+    let (app, _, _held) = authed_app().await;
     let (status, _, bytes) = call(
         app,
         Method::GET,
@@ -305,7 +288,7 @@ async fn search_blank_query_is_a_400_envelope() {
 
 #[tokio::test]
 async fn suggest_merges_buckets_best_first_and_caps() {
-    let (app, _) = authed_app().await;
+    let (app, _, _held) = authed_app().await;
     let (status, _, bytes) = call(
         app.clone(),
         Method::GET,
@@ -346,7 +329,7 @@ async fn suggest_merges_buckets_best_first_and_caps() {
 
 #[tokio::test]
 async fn bucket_drilldown_pages_with_top_only_on_first_page() {
-    let (app, _) = authed_app().await;
+    let (app, _, _held) = authed_app().await;
     let (status, _, bytes) = call(
         app.clone(),
         Method::GET,
@@ -381,7 +364,7 @@ async fn bucket_drilldown_pages_with_top_only_on_first_page() {
 #[tokio::test]
 async fn enrich_failure_degrades_inside_a_200() {
     let (pool, _dir) = crate::common::migrated_pool("reads-search").await;
-    let app = app(pool, Arc::new(FailingEnrichment)).await;
+    let (app, _held) = app(pool, Arc::new(FailingEnrichment)).await;
     let (status, _, bytes) = call(
         app,
         Method::POST,
@@ -411,7 +394,7 @@ async fn enrich_failure_degrades_inside_a_200() {
 
 #[tokio::test]
 async fn auth_matrix_row_401_without_bearer() {
-    let (app, _) = authed_app().await;
+    let (app, _, _held) = authed_app().await;
     for uri in [
         "/api/v3/search?q=beyonce",
         "/api/v3/search/suggest?q=bey",
@@ -460,7 +443,7 @@ async fn leak_db_failure_renders_fixed_500_with_error_id() {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    let app = app(pool, Arc::new(search::ports::UnconfiguredEnrichment)).await;
+    let (app, _held) = app(pool, Arc::new(search::ports::UnconfiguredEnrichment)).await;
     let (status, headers, bytes) = call(
         app,
         Method::GET,
@@ -474,8 +457,10 @@ async fn leak_db_failure_renders_fixed_500_with_error_id() {
     let body = json(&bytes);
     assert_eq!(body["error"]["code"], "INTERNAL_ERROR");
     assert_eq!(body["error"]["message"], "Internal server error");
-    assert_eq!(body["error"]["details"]["error_id"], common::FIXED_ID);
-    assert_eq!(headers.get("x-request-id").unwrap(), common::FIXED_ID);
+    assert_eq!(
+        body["error"]["details"]["error_id"],
+        headers["x-request-id"].to_str().unwrap()
+    );
     let raw = String::from_utf8(bytes).unwrap();
     assert!(!raw.contains("local_artists"));
     assert!(!raw.contains("no such table"));

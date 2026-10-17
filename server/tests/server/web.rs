@@ -1,19 +1,11 @@
 //! The web UI fallback and `BASE_PATH` mounting.
 
-use crate::common;
+use crate::common::{ScratchDir, TestApp};
 
-use axum::{
-    Router,
-    body::Body,
-    http::{HeaderMap, Request, StatusCode},
-};
+use axum::http::{HeaderMap, StatusCode};
 use base64::Engine as _;
-use droppedneedle::{
-    create_app_with_web,
-    web::{BASE_PATH_PLACEHOLDER, WebUi},
-};
+use droppedneedle::web::BASE_PATH_PLACEHOLDER;
 use sha2::Digest as _;
-use tower::ServiceExt as _;
 
 /// The boot script of the fixture page, as SvelteKit writes one: inline,
 /// with the base path inside it.
@@ -33,10 +25,11 @@ fn page(base_path: &str) -> String {
     )
 }
 
-/// A small adapter-static style build, stamped for `base_path`. Keep the
-/// guard alive while the UI serves.
-fn web_ui(name: &str, base_path: &str) -> (WebUi, common::ScratchDir) {
-    let dir = common::ScratchDir::new(&format!("web-{name}"));
+/// The app serving a small adapter-static style build under `base_path`,
+/// stamped by the production builder. Keep the guard alive while the UI
+/// serves.
+async fn web_app(name: &str, base_path: &str) -> (TestApp, ScratchDir) {
+    let dir = ScratchDir::new(&format!("web-{name}"));
     let template = dir.join("template");
     std::fs::create_dir_all(template.join("_app/immutable")).unwrap();
     std::fs::write(template.join("index.html"), page(BASE_PATH_PLACEHOLDER)).unwrap();
@@ -46,38 +39,31 @@ fn web_ui(name: &str, base_path: &str) -> (WebUi, common::ScratchDir) {
     )
     .unwrap();
     std::fs::write(template.join("_app/immutable/app.js.br"), "br").unwrap();
-    let web = WebUi::prepare(&template, &dir.join("static"), base_path)
-        .unwrap()
-        .unwrap();
-    (web, dir)
+    let app = TestApp::start_configured(&format!("web-{name}"), |mut config| {
+        config.static_dir = template;
+        config.base_path = base_path.to_owned();
+        config
+    })
+    .await;
+    (app, dir)
 }
 
 async fn get(
-    app: &Router,
+    app: &TestApp,
     uri: &str,
     accept_encoding: Option<&str>,
 ) -> (StatusCode, axum::http::HeaderMap, String) {
-    let mut request = Request::builder().uri(uri);
-    if let Some(value) = accept_encoding {
-        request = request.header("accept-encoding", value);
-    }
-    let response = app
-        .clone()
-        .oneshot(request.body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let headers = response.headers().clone();
-    let body = axum::body::to_bytes(response.into_body(), 1 << 20)
-        .await
-        .unwrap();
+    let headers: Vec<(&str, &str)> = accept_encoding
+        .map(|value| ("accept-encoding", value))
+        .into_iter()
+        .collect();
+    let (status, headers, body) = app.raw("GET", uri, &headers, None).await;
     (status, headers, String::from_utf8_lossy(&body).into_owned())
 }
 
 #[tokio::test]
 async fn serves_the_spa_and_its_assets_without_shadowing_the_api() {
-    let (web, _scratch) = web_ui("root", "");
-    let app = create_app_with_web(common::hooked_state(), Some(web));
+    let (app, _scratch) = web_app("root", "").await;
 
     for uri in ["/", "/library/artists/some-artist"] {
         let (status, headers, body) = get(&app, uri, None).await;
@@ -106,10 +92,7 @@ async fn serves_the_spa_and_its_assets_without_shadowing_the_api() {
 
 #[tokio::test]
 async fn base_path_moves_everything_and_the_gate_sees_routed_paths() {
-    let mut state = common::hooked_state();
-    state.config.base_path = "/music".to_owned();
-    let (web, _scratch) = web_ui("base", "/music");
-    let app = create_app_with_web(state, Some(web));
+    let (app, _scratch) = web_app("base", "/music").await;
 
     for uri in ["/music", "/music/", "/music/library?tab=albums"] {
         let (status, _, body) = get(&app, uri, None).await;
@@ -151,10 +134,7 @@ async fn the_page_runs_only_its_own_scripts_and_nothing_else_runs_anything() {
     const BARE: &str = "default-src 'none'; frame-ancestors 'none'; sandbox";
     const REPORTING: &str = "content-security-policy-report-only";
     const ENFORCED: &str = "content-security-policy";
-    let mut state = common::hooked_state();
-    state.config.base_path = "/music".to_owned();
-    let (web, _scratch) = web_ui("policy", "/music");
-    let app = create_app_with_web(state, Some(web));
+    let (app, _scratch) = web_app("policy", "/music").await;
 
     // Of the script as stamped: the template's text hashes differently.
     let hash = |script: String| {
@@ -196,19 +176,11 @@ async fn the_page_runs_only_its_own_scripts_and_nothing_else_runs_anything() {
         is_the_page(&headers, uri);
         etag = text(&headers, "etag").unwrap().to_owned();
     }
-    let revalidated = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/music/")
-                .header("if-none-match", &etag)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(revalidated.status(), StatusCode::NOT_MODIFIED);
-    is_the_page(revalidated.headers(), "304");
+    let (status, headers, _) = app
+        .raw("GET", "/music/", &[("if-none-match", etag.as_str())], None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    is_the_page(&headers, "304");
 
     // A static file, an API 404, a route, and the 404 outside the base.
     for uri in [

@@ -7,8 +7,8 @@
 //! tick store. The real subprocess runtime is tested with the shipped
 //! examples in `plugins_examples`.
 
-use crate::common::ScratchDir;
 use crate::common::auth::with_test_principal;
+use crate::common::{ScratchDir, TestApp};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -16,7 +16,6 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use droppedneedle::middleware::request_scope;
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
@@ -365,12 +364,13 @@ fn toy_archive() -> Arc<FakeUnpacker> {
     ]))
 }
 
-/// The admin's router behind the request wrapper production mounts it
-/// under, which replaces every 5xx body with the fixed one.
-fn admin_app(deps: PluginsDeps) -> axum::Router {
-    with_test_principal(plugins_router(deps), session("admin-1")).layer(
-        axum::middleware::from_fn_with_state(crate::common::hooked_state(), request_scope),
-    )
+/// The admin's router behind `scope`'s request wrapper, which replaces
+/// every 5xx body with the fixed one.
+fn admin_app(scope: &TestApp, deps: PluginsDeps) -> axum::Router {
+    scope.request_scope(with_test_principal(
+        plugins_router(deps),
+        session("admin-1"),
+    ))
 }
 
 async fn post_for_status(
@@ -418,6 +418,7 @@ async fn a_github_refusal_never_falls_back_to_the_default_branch() {
             None,
         ),
     ];
+    let scope = TestApp::start("plugins-refused").await;
     for (index, (answer, kind, status, retry_after)) in cases.into_iter().enumerate() {
         let rig = rig(&format!("refused-{index}"));
         let fetcher = Arc::new(FakeFetcher::new());
@@ -435,7 +436,7 @@ async fn a_github_refusal_never_falls_back_to_the_default_branch() {
             Err(kind)
         );
 
-        let admin = admin_app(deps_for(&rig, Arc::clone(&fetcher), toy_archive()));
+        let admin = admin_app(&scope, deps_for(&rig, Arc::clone(&fetcher), toy_archive()));
         let body = json!({"repository_url": "https://github.com/acme/toy"});
         for uri in ["/plugins/install/preview", "/plugins/install"] {
             let got = post_for_status(admin.clone(), uri, body.clone()).await;
@@ -467,7 +468,8 @@ async fn a_repository_without_releases_installs_its_default_branch() {
     let fetcher = Arc::new(FakeFetcher::new());
     fetcher.answer(LATEST_RELEASE, Fetched::NotFound);
     default_branch(&fetcher);
-    let admin = admin_app(deps_for(&rig, fetcher, toy_archive()));
+    let scope = TestApp::start("plugins-no-releases").await;
+    let admin = admin_app(&scope, deps_for(&rig, fetcher, toy_archive()));
     let (status, installed) = send(
         admin,
         "POST",
@@ -489,7 +491,8 @@ async fn a_ref_github_does_not_know_is_the_admins_mistake_not_an_outage() {
         "https://api.github.com/repos/acme/toy/commits/mian",
         Fetched::Failed(422),
     );
-    let admin = admin_app(deps_for(&rig, fetcher, toy_archive()));
+    let scope = TestApp::start("plugins-unknown-ref").await;
+    let admin = admin_app(&scope, deps_for(&rig, fetcher, toy_archive()));
     let (status, error) = send(
         admin,
         "POST",

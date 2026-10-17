@@ -11,10 +11,7 @@ use axum::{
     http::{Method, Request, StatusCode, Uri},
     middleware,
 };
-use droppedneedle::middleware::request_scope;
-use droppedneedle_auth::session::middleware::{SessionAuth, require_session};
-use droppedneedle_auth::session::store::{MemorySessionStore, SessionRecord, SessionStore};
-use droppedneedle_auth::session::tokens::hash_token;
+use droppedneedle_auth::session::middleware::require_session;
 use droppedneedle_auth::users::models::LastFmConnection;
 use droppedneedle_auth::users::roles::Role;
 use droppedneedle_catalog::reads::catalog::{
@@ -33,6 +30,7 @@ use sqlx::SqlitePool;
 use tower::ServiceExt as _;
 
 use crate::common;
+use crate::common::TestApp;
 use crate::common::auth::AuthRig;
 
 const TOKEN: &str = "dn-catalog-test-token-000000000001";
@@ -351,35 +349,16 @@ async fn seed_library(pool: &SqlitePool) {
     }
 }
 
-async fn session_auth() -> SessionAuth<MemorySessionStore> {
-    let store = MemorySessionStore::new();
-    let now = droppedneedle_auth::session::store::now_unix();
-    store
-        .insert(SessionRecord {
-            id: "session-1".to_owned(),
-            user_id: USER.to_owned(),
-            token_hash: hash_token(TOKEN),
-            kind: droppedneedle_auth::session::store::SessionKind::Standard,
-            label: None,
-            issued_at: now,
-            expires_at: now + 3600,
-            last_seen_at: now,
-            revoked: false,
-            user_agent: None,
-        })
-        .await
-        .unwrap();
-    SessionAuth::new(store, "")
-}
-
 /// The catalog and search routes behind the session gate and request
-/// scope, with MusicBrainz at `mb_url`. The test user has a Last.fm key.
-/// Hold the rig while the router serves: its database goes with it.
-async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, AuthRig) {
+/// scope, with MusicBrainz at `mb_url`. The test user has a Last.fm key
+/// and is signed in with [`TOKEN`]. Hold the rig and the app while the
+/// router serves: the rig's database and the request wrapper go with them.
+async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRig, TestApp)) {
     let (pool, _dir) = crate::common::migrated_pool("reads-catalog").await;
     seed_library(&pool).await;
     let rig = AuthRig::new("reads-catalog").await;
     rig.seed_user("ada", Role::User).await;
+    rig.sign_in(USER, TOKEN).await;
     let sealed = rig.deps.crypto.encrypt("test-lastfm-key").unwrap();
     rig.deps
         .lastfm
@@ -409,22 +388,22 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, AuthRig
         Arc::new(search::ports::UnconfiguredEnrichment),
         ids.clone(),
     );
-    let app = axum::Router::new()
-        .nest("/api/v3", catalog::router(CatalogDeps { catalog, ids }))
-        .merge(search::router(search))
-        .layer(middleware::from_fn_with_state(
-            session_auth().await,
-            require_session,
-        ))
-        .layer(middleware::from_fn_with_state(
-            common::hooked_state(),
-            request_scope,
-        ))
+    let scope = TestApp::start("reads-catalog").await;
+    let app = scope
+        .request_scope(
+            axum::Router::new()
+                .nest("/api/v3", catalog::router(CatalogDeps { catalog, ids }))
+                .merge(search::router(search))
+                .layer(middleware::from_fn_with_state(
+                    rig.session_gate(),
+                    require_session,
+                )),
+        )
         .fallback(droppedneedle::handlers::fallback_404);
-    (app, rig)
+    (app, (rig, scope))
 }
 
-async fn app(fixtures: &Fixtures) -> (axum::Router, AuthRig) {
+async fn app(fixtures: &Fixtures) -> (axum::Router, (AuthRig, TestApp)) {
     app_with(fixtures, format!("{}/mb/ws/2", fixtures.base)).await
 }
 
@@ -434,6 +413,17 @@ async fn call(
     uri: &str,
     token: Option<&str>,
 ) -> (StatusCode, Value) {
+    let (status, _, body) = call_full(app, method, uri, token).await;
+    (status, body)
+}
+
+/// As [`call`], with the response headers.
+async fn call_full(
+    app: &axum::Router,
+    method: Method,
+    uri: &str,
+    token: Option<&str>,
+) -> (StatusCode, axum::http::HeaderMap, Value) {
     let mut builder = Request::builder().method(method).uri(uri);
     if let Some(token) = token {
         builder = builder.header("authorization", format!("Bearer {token}"));
@@ -444,11 +434,12 @@ async fn call(
         .await
         .unwrap();
     let status = response.status();
+    let headers = response.headers().clone();
     let bytes = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
         .await
         .unwrap();
     let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-    (status, body)
+    (status, headers, body)
 }
 
 async fn get(app: &axum::Router, uri: &str) -> Value {
@@ -780,7 +771,7 @@ async fn musicbrainz_outage_falls_back_to_the_library() {
     assert_eq!(album["source"], "library");
     assert_eq!(titles(&album["tracks"]), ["Airbag"]);
 
-    let (status, body) = call(
+    let (status, headers, body) = call_full(
         &app,
         Method::GET,
         &format!("/api/v3/albums/{UNKNOWN_ALBUM}/basic"),
@@ -789,7 +780,10 @@ async fn musicbrainz_outage_falls_back_to_the_library() {
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["error"]["message"], "Internal server error");
-    assert_eq!(body["error"]["details"]["error_id"], common::FIXED_ID);
+    assert_eq!(
+        body["error"]["details"]["error_id"],
+        headers["x-request-id"].to_str().unwrap()
+    );
 
     let search = get(&app, "/api/v3/search?q=ok%20computer").await;
     assert_eq!(search["album_status"], "error");

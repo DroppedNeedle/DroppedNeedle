@@ -1051,18 +1051,11 @@ async fn spotify_expired_tokens_refresh_transparently() {
 /// migrated Spotify apps registered must keep answering.
 #[tokio::test]
 async fn spotify_callback_paths_are_mounted_in_the_app() {
-    let app = droppedneedle::create_app(common::hooked_state());
+    let app = common::TestApp::start("spotify-callbacks").await;
     for path in [SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::get(format!("{path}?error=access_denied"))
-                    .body(Body::empty())
-                    .expect("request builds"),
-            )
-            .await
-            .expect("router answers");
-        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT, "{path}");
+        let uri = format!("{path}?error=access_denied");
+        let (status, _, _) = app.raw("GET", &uri, &[], None).await;
+        assert_eq!(status, StatusCode::TEMPORARY_REDIRECT, "{path}");
     }
 }
 

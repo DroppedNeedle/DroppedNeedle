@@ -14,7 +14,7 @@ use axum::{
     extract::ConnectInfo,
     http::{HeaderMap, Request, StatusCode},
 };
-use droppedneedle::bootstrap;
+use droppedneedle::{AppState, bootstrap, middleware::request_scope};
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_testkit::{
     remotes::{MockServer, serve_plex},
@@ -67,6 +67,7 @@ pub struct TestApp {
     pub plex: MockServer,
     outbound: bootstrap::Outbound,
     router: Option<Router>,
+    state: Option<AppState>,
     admin: tokio::sync::OnceCell<String>,
     stop: Option<oneshot::Sender<()>>,
     server: Option<JoinHandle<Result<(), bootstrap::ServeError>>>,
@@ -84,8 +85,26 @@ impl TestApp {
     /// As [`TestApp::start`], reaching the outside world as `outbound`
     /// says: a journey that scripts a provider port passes it here.
     pub async fn start_with(tag: &str, outbound: bootstrap::Outbound) -> Self {
+        Self::launch(tag, outbound, |config| config).await
+    }
+
+    /// As [`TestApp::start`], with the deployment config passed through
+    /// `configure` before the app builds: `AppConfig::with_test_hooks` mounts
+    /// the `__test__` failure routes.
+    pub async fn start_configured(
+        tag: &str,
+        configure: impl FnOnce(AppConfig) -> AppConfig,
+    ) -> Self {
+        Self::launch(tag, closed_outbound(), configure).await
+    }
+
+    async fn launch(
+        tag: &str,
+        outbound: bootstrap::Outbound,
+        configure: impl FnOnce(AppConfig) -> AppConfig,
+    ) -> Self {
         let dir = ScratchDir::new(tag);
-        let config = AppConfig::with_root(0, &dir);
+        let config = configure(AppConfig::with_root(0, &dir));
         std::fs::create_dir_all(&config.cache_dir).expect("cache dir creates");
         migrated_db(&config.library_db_path);
 
@@ -104,6 +123,7 @@ impl TestApp {
             plex,
             outbound,
             router: None,
+            state: None,
             admin: tokio::sync::OnceCell::new(),
             stop: None,
             server: None,
@@ -116,10 +136,13 @@ impl TestApp {
 
     /// Build the app on the data directory and serve it.
     async fn boot(&mut self) {
-        // The state goes at once: workers that stop when their queue's last
-        // handle drops would otherwise sit out the shutdown grace.
+        // `halt` drops the state before the stop signal: workers that stop
+        // when their queue's last handle drops would otherwise sit out the
+        // shutdown grace.
         let bootstrap::Built {
-            router, background, ..
+            router,
+            state,
+            background,
         } = bootstrap::build_with(self.config.clone(), self.outbound.clone())
             .await
             .expect("the app builds");
@@ -136,6 +159,7 @@ impl TestApp {
             },
         )));
         self.router = Some(router);
+        self.state = Some(state);
         self.stop = Some(stop);
     }
 
@@ -146,6 +170,14 @@ impl TestApp {
         self.halt().await;
         self.boot().await;
         self
+    }
+
+    /// `router` under this app's request wrapper: request ids from its
+    /// generator and the 5xx boundary, for a test that serves its own
+    /// routes. Drop the router before [`TestApp::stop`].
+    pub fn request_scope(&self, router: Router) -> Router {
+        let state = self.state.clone().expect("the app is running");
+        router.layer(axum::middleware::from_fn_with_state(state, request_scope))
     }
 
     /// Answer one request as a client on the same host would get it.
@@ -400,6 +432,23 @@ impl TestApp {
         }
     }
 
+    /// Turn the Subsonic and Jellyfin APIs on or off in Settings, as the
+    /// admin does.
+    pub async fn set_compat(&self, subsonic: bool, jellyfin: bool) {
+        let admin = self.login_admin().await;
+        let admin = [("authorization", admin.as_str())];
+        let (status, mut apps) = self
+            .call("GET", "/api/v3/settings/connect-apps", &admin, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{apps}");
+        apps["subsonic_enabled"] = json!(subsonic);
+        apps["jellyfin_enabled"] = json!(jellyfin);
+        let (status, saved) = self
+            .call("PUT", "/api/v3/settings/connect-apps", &admin, Some(apps))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{saved}");
+    }
+
     /// Shut down as production does and wait for it: loops joined, the
     /// database closed, the listener gone. Fails if shutdown had to wait
     /// out its grace period.
@@ -410,6 +459,7 @@ impl TestApp {
     async fn halt(&mut self) {
         let grace = self.config.shutdown_grace;
         self.router = None;
+        self.state = None;
         let started = Instant::now();
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());

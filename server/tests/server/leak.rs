@@ -2,17 +2,17 @@
 //! envelope naming the request id, and no leak marker (path, host, secret)
 //! reaches the wire.
 
-use crate::common;
+use crate::common::TestApp;
 
 use axum::{
     Router,
     body::Body,
     http::{Request, StatusCode},
-    middleware,
     response::IntoResponse,
     routing::get as route_get,
 };
-use droppedneedle::{create_app, handlers::test_hooks::LEAK_MARKERS, middleware::request_scope};
+use droppedneedle::handlers::test_hooks::LEAK_MARKERS;
+use droppedneedle_kernel::config::AppConfig;
 use tower::ServiceExt as _;
 
 async fn get(uri: &str, request_id: Option<&str>) -> (StatusCode, String, String) {
@@ -30,21 +30,13 @@ async fn get_full(
     uri: &str,
     request_id: Option<&str>,
 ) -> (StatusCode, axum::http::HeaderMap, String) {
-    let mut builder = Request::builder().uri(uri);
-    if let Some(id) = request_id {
-        builder = builder.header("x-request-id", id);
-    }
-    let response = create_app(common::hooked_state())
-        .oneshot(builder.body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let headers = response.headers().clone();
-    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
-        .await
-        .unwrap();
-    let text = String::from_utf8(body.to_vec()).unwrap();
-    (status, headers, text)
+    let app = TestApp::start_configured("leak", AppConfig::with_test_hooks).await;
+    let headers: Vec<(&str, &str)> = request_id
+        .map(|id| ("x-request-id", id))
+        .into_iter()
+        .collect();
+    let (status, headers, body) = app.raw("GET", uri, &headers, None).await;
+    (status, headers, String::from_utf8(body).unwrap())
 }
 
 fn assert_fixed_envelope(text: &str, expected_id: &str) {
@@ -109,14 +101,13 @@ async fn compat_5xx_keeps_protocol_body_status_and_retry_after() {
             "protocol-shaped failure",
         )
     }
-    let app = Router::new()
-        .route("/subsonic/rest/__test500", route_get(raw_503))
-        .route("/jellyfin/__test500", route_get(raw_503))
-        .route("/native/__test500", route_get(raw_503))
-        .layer(middleware::from_fn_with_state(
-            common::hooked_state(),
-            request_scope,
-        ));
+    let scope = TestApp::start("leak-compat").await;
+    let app = scope.request_scope(
+        Router::new()
+            .route("/subsonic/rest/__test500", route_get(raw_503))
+            .route("/jellyfin/__test500", route_get(raw_503))
+            .route("/native/__test500", route_get(raw_503)),
+    );
     for uri in ["/subsonic/rest/__test500", "/jellyfin/__test500"] {
         let response = app
             .clone()
@@ -141,16 +132,20 @@ async fn compat_5xx_keeps_protocol_body_status_and_retry_after() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(response.headers().get("retry-after").unwrap(), "7");
+    let request_id = response.headers()["x-request-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
     let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
         .await
         .unwrap();
-    assert_fixed_envelope(core::str::from_utf8(&body).unwrap(), common::FIXED_ID);
+    assert_fixed_envelope(core::str::from_utf8(&body).unwrap(), &request_id);
 }
 
 #[tokio::test]
 async fn minted_request_id_is_used_when_caller_sends_none() {
     let (status, header_id, text) = get("/__test__/typed-error", None).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(header_id, common::FIXED_ID);
-    assert_fixed_envelope(&text, common::FIXED_ID);
+    assert!(uuid::Uuid::parse_str(&header_id).is_ok(), "{header_id}");
+    assert_fixed_envelope(&text, &header_id);
 }

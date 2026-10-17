@@ -17,9 +17,10 @@ use axum::{
 use droppedneedle_auth::federated::password_import::PasswordHasher as _;
 use droppedneedle_auth::prod::{Argon2idHasher, ProdAuth};
 use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
-use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _};
+use droppedneedle_auth::session::middleware::{CurrentSession, SessionAuth};
+use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _, now_unix};
 use droppedneedle_auth::session::tokens;
+use droppedneedle_auth::sqlite::SqliteSessionStore;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::models::{LocalCredential, UserRecord};
 use droppedneedle_auth::users::roles::Role;
@@ -195,6 +196,34 @@ impl AuthRig {
             .await
             .expect("session seeds");
         token
+    }
+
+    /// The production session gate over the rig's sessions.
+    pub fn session_gate(&self) -> SessionAuth<SqliteSessionStore> {
+        SessionAuth::new(self.auth.sessions.clone(), "")
+    }
+
+    /// Sign `user_id` in with the raw `token`: one standard session issued
+    /// now by the wall clock, which the session gate reads, not the rig's.
+    pub async fn sign_in(&self, user_id: &str, token: &str) {
+        let now = now_unix();
+        let token_hash = tokens::hash_token(token);
+        self.auth
+            .sessions
+            .insert(SessionRecord {
+                id: format!("signed-in-{}", &token_hash[..16]),
+                user_id: user_id.to_owned(),
+                token_hash,
+                kind: SessionKind::Standard,
+                label: None,
+                issued_at: now,
+                expires_at: tokens::expires_at(now),
+                last_seen_at: now,
+                revoked: false,
+                user_agent: None,
+            })
+            .await
+            .expect("session signs in");
     }
 }
 

@@ -1,42 +1,27 @@
-//! Compat wiring through the production `create_app`: kill switches, mounts
+//! Compat wiring through the production app: kill switches, mounts
 //! outside the `/api` session gate, CORS, case-insensitive paths, the
 //! layered rate limits, and the rule that request queries never reach logs.
 
-use crate::common::{hooked_state, hooked_state_with_compat};
+use crate::common::TestApp;
 
-use axum::Router;
-use axum::body::Body;
-use axum::http::{HeaderMap, Request, StatusCode};
-use droppedneedle::create_app;
+use axum::http::{HeaderMap, StatusCode};
 use serde_json::Value;
-use tower::ServiceExt as _;
 
 async fn oneshot(
-    app: Router,
+    app: &TestApp,
     method: &str,
     uri: &str,
     headers: &[(&str, &str)],
     body: &[u8],
 ) -> (StatusCode, HeaderMap, Vec<u8>) {
-    let mut builder = Request::builder().method(method).uri(uri);
-    for (name, value) in headers {
-        builder = builder.header(*name, *value);
-    }
-    let request = builder
-        .body(Body::from(body.to_vec()))
-        .expect("request builds");
-    let response = app.oneshot(request).await.expect("router responds");
-    let status = response.status();
-    let headers = response.headers().clone();
-    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
-        .await
-        .expect("body reads")
-        .to_vec();
-    (status, headers, bytes)
+    app.raw_bytes(method, uri, headers, body.to_vec()).await
 }
 
-fn enabled() -> Router {
-    create_app(hooked_state_with_compat(true, true))
+/// The app with both protocols turned on in Settings.
+async fn enabled(tag: &str) -> TestApp {
+    let app = TestApp::start(tag).await;
+    app.set_compat(true, true).await;
+    app
 }
 
 fn subsonic_code(bytes: &[u8]) -> Value {
@@ -52,14 +37,14 @@ fn cors(headers: &HeaderMap) -> Option<&str> {
 
 #[tokio::test]
 async fn kill_switches_default_off() {
-    for app in [
-        create_app(hooked_state()),
-        create_app(hooked_state_with_compat(false, false)),
-    ] {
+    let app = TestApp::start("compat-off").await;
+    for saved in [false, true] {
+        if saved {
+            app.set_compat(false, false).await;
+        }
         // Subsonic answers code 0 before auth; Jellyfin 404s every route
         // with an empty body, so nothing leaks about existence.
-        let (status, _, bytes) =
-            oneshot(app.clone(), "GET", "/subsonic/rest/ping?f=json", &[], b"").await;
+        let (status, _, bytes) = oneshot(&app, "GET", "/subsonic/rest/ping?f=json", &[], b"").await;
         assert_eq!(
             (status, subsonic_code(&bytes)),
             (StatusCode::OK, Value::from(0))
@@ -71,7 +56,7 @@ async fn kill_switches_default_off() {
                 &[("X-Emby-Token", "whatever")][..],
             ),
         ] {
-            let (status, _, body) = oneshot(app.clone(), "GET", uri, headers, b"").await;
+            let (status, _, body) = oneshot(&app, "GET", uri, headers, b"").await;
             assert_eq!((status, body.len()), (StatusCode::NOT_FOUND, 0), "{uri}");
         }
     }
@@ -79,6 +64,7 @@ async fn kill_switches_default_off() {
 
 #[tokio::test]
 async fn compat_mounts_outside_the_session_gate_with_cors() {
+    let on = enabled("compat-mounts").await;
     // Public endpoints answer with no credentials (the `/api` gate would
     // 401), with `*` CORS and credentials off, including uppercase paths.
     for uri in [
@@ -86,50 +72,48 @@ async fn compat_mounts_outside_the_session_gate_with_cors() {
         "/SUBSONIC/rest/getOpenSubsonicExtensions",
         "/jellyfin/System/Info/Public",
     ] {
-        let (status, headers, _) = oneshot(enabled(), "GET", uri, &[], b"").await;
+        let (status, headers, _) = oneshot(&on, "GET", uri, &[], b"").await;
         assert_eq!(status, StatusCode::OK, "{uri}");
         assert_eq!(cors(&headers), Some("*"), "{uri}");
         assert!(headers.get("access-control-allow-credentials").is_none());
     }
     // Authed paths answer in the compat posture, never a session challenge.
-    let (_, _, bytes) = oneshot(enabled(), "GET", "/subsonic/rest/ping?f=json", &[], b"").await;
+    let (_, _, bytes) = oneshot(&on, "GET", "/subsonic/rest/ping?f=json", &[], b"").await;
     assert_eq!(subsonic_code(&bytes), Value::from(10));
-    let (status, _, body) = oneshot(enabled(), "GET", "/jellyfin/Users/x/Views", &[], b"").await;
+    let (status, _, body) = oneshot(&on, "GET", "/jellyfin/Users/x/Views", &[], b"").await;
     assert_eq!((status, body.len()), (StatusCode::UNAUTHORIZED, 0));
 
     // Preflights short-circuit 204 before auth.
     for uri in ["/jellyfin/Users/x/Views", "/SUBSONIC/rest/ping"] {
-        let (status, headers, body) = oneshot(enabled(), "OPTIONS", uri, &[], b"").await;
+        let (status, headers, body) = oneshot(&on, "OPTIONS", uri, &[], b"").await;
         assert_eq!((status, body.len()), (StatusCode::NO_CONTENT, 0), "{uri}");
         assert_eq!(cors(&headers), Some("*"), "{uri}");
     }
     // Unknown compat paths 404 with CORS whether or not the protocol is on;
     // non-compat 404s carry none.
-    for app in [
-        enabled(),
-        create_app(hooked_state_with_compat(false, false)),
-    ] {
-        let (status, headers, _) = oneshot(app, "GET", "/jellyfin/NoSuchRoute", &[], b"").await;
-        assert_eq!((status, cors(&headers)), (StatusCode::NOT_FOUND, Some("*")));
-    }
-    let (status, headers, _) = oneshot(enabled(), "GET", "/nope", &[], b"").await;
+    let (status, headers, _) = oneshot(&on, "GET", "/jellyfin/NoSuchRoute", &[], b"").await;
+    assert_eq!((status, cors(&headers)), (StatusCode::NOT_FOUND, Some("*")));
+    let (status, headers, _) = oneshot(&on, "GET", "/nope", &[], b"").await;
     assert_eq!((status, cors(&headers)), (StatusCode::NOT_FOUND, None));
 
     // Feishin posts lowercase Jellyfin paths: the login handler answers
-    // instead of a 404. The credential store is unwired here, which that
-    // handler reports as 500.
+    // instead of a 404, refusing the unknown account with its 401.
     let (status, _, _) = oneshot(
-        enabled(),
+        &on,
         "POST",
         "/jellyfin/users/authenticatebyname",
         &[("content-type", "application/json")],
         br#"{"Username":"alice","Pw":"nope"}"#,
     )
     .await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     // Unknown methods on Subsonic answer code 0, never a native 405.
-    let (_, _, bytes) = oneshot(enabled(), "DELETE", "/subsonic/rest/ping?f=json", &[], b"").await;
+    let (_, _, bytes) = oneshot(&on, "DELETE", "/subsonic/rest/ping?f=json", &[], b"").await;
     assert_eq!(subsonic_code(&bytes), Value::from(0));
+
+    on.set_compat(false, false).await;
+    let (status, headers, _) = oneshot(&on, "GET", "/jellyfin/NoSuchRoute", &[], b"").await;
+    assert_eq!((status, cors(&headers)), (StatusCode::NOT_FOUND, Some("*")));
 }
 
 #[tokio::test]
@@ -140,10 +124,10 @@ async fn layered_limits_reject_in_each_protocol_shape() {
         "/subsonic/rest/getOpenSubsonicExtensions?f=json",
         "/jellyfin/System/Info/Public",
     ] {
-        let app = enabled();
+        let app = enabled("compat-limits").await;
         let mut rejected = false;
         for _ in 0..100 {
-            let (status, headers, body) = oneshot(app.clone(), "GET", uri, &[], b"").await;
+            let (status, headers, body) = oneshot(&app, "GET", uri, &[], b"").await;
             let is_reject = if uri.starts_with("/subsonic") {
                 assert_eq!(status, StatusCode::OK);
                 !subsonic_code(&body).is_null()
@@ -166,25 +150,19 @@ async fn layered_limits_reject_in_each_protocol_shape() {
     }
     // Artwork skips the public bucket: a cover grid is dozens of anonymous
     // image requests at once and must not see 429s.
-    let app = enabled();
+    let app = enabled("compat-artwork").await;
     for _ in 0..60 {
-        let (status, _, _) = oneshot(
-            app.clone(),
-            "GET",
-            "/jellyfin/Items/abc/Images/Primary",
-            &[],
-            b"",
-        )
-        .await;
+        let (status, _, _) =
+            oneshot(&app, "GET", "/jellyfin/Items/abc/Images/Primary", &[], b"").await;
         assert_ne!(status, StatusCode::TOO_MANY_REQUESTS);
     }
 }
 
 #[tokio::test]
 async fn api_bodies_compress_when_the_client_accepts() {
+    let app = enabled("compat-gzip").await;
     let uri = "/subsonic/rest/getOpenSubsonicExtensions?f=json";
-    let (_, headers, body) =
-        oneshot(enabled(), "GET", uri, &[("accept-encoding", "gzip")], b"").await;
+    let (_, headers, body) = oneshot(&app, "GET", uri, &[("accept-encoding", "gzip")], b"").await;
     assert_eq!(
         headers
             .get("content-encoding")
@@ -195,7 +173,7 @@ async fn api_bodies_compress_when_the_client_accepts() {
     std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(&body[..]), &mut plain)
         .expect("gzip body");
     assert!(plain.contains("songLyrics"), "{plain}");
-    let (_, headers, _) = oneshot(enabled(), "GET", uri, &[], b"").await;
+    let (_, headers, _) = oneshot(&app, "GET", uri, &[], b"").await;
     assert!(headers.get("content-encoding").is_none());
 }
 

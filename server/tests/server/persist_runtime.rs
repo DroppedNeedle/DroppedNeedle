@@ -18,10 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use axum::{
-    Extension, Router, body::Body, http::Request, middleware, response::Response, routing::get,
-};
-use droppedneedle::{middleware::request_scope, state::AppState};
+use axum::{Extension, Router, body::Body, http::Request, response::Response, routing::get};
 use droppedneedle_kernel::{
     db::{
         BACKGROUND_QUEUE_CAPACITY, BACKUP_KEEP, Budget, CancelFlag, CheckpointMode, Db, DbConfig,
@@ -36,7 +33,7 @@ use droppedneedle_kernel::{
 };
 use tower::ServiceExt as _;
 
-use crate::common::ScratchDir;
+use crate::common::{ScratchDir, TestApp};
 
 /// Unique scratch directory per brief, removed on drop.
 fn scratch_dir(name: &str) -> ScratchDir {
@@ -558,10 +555,8 @@ async fn busy_path_returns_503_with_retry_after_and_no_spin() {
     async fn busy_handler(Extension(RequestId(id)): Extension<RequestId>) -> Response {
         busy_response("brief-busy", &id)
     }
-    let state: AppState = common::hooked_state();
-    let app = Router::new()
-        .route("/busy", get(busy_handler))
-        .layer(middleware::from_fn_with_state(state, request_scope));
+    let scope = TestApp::start("busy-path").await;
+    let app = scope.request_scope(Router::new().route("/busy", get(busy_handler)));
     let response = app
         .oneshot(Request::builder().uri("/busy").body(Body::empty()).unwrap())
         .await
@@ -571,10 +566,10 @@ async fn busy_path_returns_503_with_retry_after_and_no_spin() {
         axum::http::StatusCode::SERVICE_UNAVAILABLE
     );
     assert_eq!(response.headers().get("retry-after").unwrap(), "1");
-    assert_eq!(
-        response.headers().get(REQUEST_ID_HEADER).unwrap(),
-        common::FIXED_ID
-    );
+    let request_id = response.headers()[REQUEST_ID_HEADER]
+        .to_str()
+        .unwrap()
+        .to_owned();
     let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
         .await
         .unwrap();
@@ -585,7 +580,7 @@ async fn busy_path_returns_503_with_retry_after_and_no_spin() {
             "error": {
                 "code": INTERNAL_ERROR,
                 "message": FIXED_INTERNAL_MESSAGE,
-                "details": { "error_id": common::FIXED_ID },
+                "details": { "error_id": request_id },
             }
         })
     );
