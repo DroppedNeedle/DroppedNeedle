@@ -22,3 +22,6 @@ Thumbs.db
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 __screenshots__/
+
+# Browser journey output (traces of failed runs)
+/test-results/
