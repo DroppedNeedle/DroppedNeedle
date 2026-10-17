@@ -26,7 +26,7 @@ use droppedneedle_kernel::jobs::registry::{JobRegistry, MemoryRegistryStore};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_plugins::fakes::{
-    FakeConnection, FakeFetcher, FakeLauncher, FakeRoles, FakeUnpacker, scrobble_plugin_event,
+    FakeConnection, FakeFetcher, FakeLauncher, FakeUnpacker, scrobble_plugin_event,
 };
 use droppedneedle_plugins::handlers::{ExtRateLimiter, PluginsDeps, plugins_router};
 use droppedneedle_plugins::host::PluginHost;
@@ -81,13 +81,9 @@ fn session(user_id: &str) -> Principal {
 }
 
 fn deps_for(rig: &Rig, fetcher: Arc<FakeFetcher>, unpacker: Arc<FakeUnpacker>) -> PluginsDeps {
-    let roles = Arc::new(FakeRoles::new());
-    roles.insert("admin-1", Role::Admin);
-    roles.insert("user-1", Role::User);
     PluginsDeps {
         host: Arc::clone(&rig.host),
         config: Arc::clone(&rig.config),
-        roles,
         github: droppedneedle::bootstrap::Outbound::live().plugin_hosts(),
         fetcher,
         unpacker,
@@ -572,7 +568,7 @@ async fn unsafe_archives_never_reach_the_plugins_folder() {
     assert!(!rig.dir.join("plugins").join("toy").exists());
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn plugin_routes_need_sessions_and_admins() {
     let rig = rig("auth");
     let bare = plugins_router(deps_for(

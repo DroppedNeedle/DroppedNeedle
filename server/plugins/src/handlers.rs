@@ -14,13 +14,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use axum::{
     Json,
     body::Body,
-    extract::{FromRequestParts, Path, Request, State},
-    http::{StatusCode, header, request::Parts},
+    extract::{Path, Request, State},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 
-use droppedneedle_auth::session::middleware::CurrentSession;
-use droppedneedle_auth::users::roles::Role;
+use droppedneedle_auth::{Admin, Principal, Role, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::runtime_config::ConfigStore;
@@ -46,14 +45,6 @@ use super::scrobble::{
 };
 use super::ticks::TickLoopSync;
 
-/// Role lookups for route gating. The users store owns the rows; this seam
-/// keeps plugins independent of that store. Production wires it over the
-/// user store; tests use a fixed map.
-pub trait UserRoles: Send + Sync {
-    /// One user's role, or `None` when the account is gone (stale session).
-    fn role_of(&self, user_id: &str) -> Option<Role>;
-}
-
 /// Plugin-route dependencies.
 #[derive(Clone)]
 pub struct PluginsDeps {
@@ -61,8 +52,6 @@ pub struct PluginsDeps {
     pub host: Arc<PluginHost>,
     /// Config store for masked settings reads.
     pub config: Arc<ConfigStore>,
-    /// Role lookups for admin gating.
-    pub roles: Arc<dyn UserRoles>,
     /// Where installs reach GitHub.
     pub github: super::install::GitHubHosts,
     /// Install archive fetcher.
@@ -79,8 +68,6 @@ pub struct PluginsDeps {
 pub struct ScrobbleHttpDeps {
     /// Scrobble settings service dependencies.
     pub deps: ScrobbleDeps,
-    /// Role lookups (admins read approved-by-role mix state).
-    pub roles: Arc<dyn UserRoles>,
     /// Standing-grant state reader.
     pub mix_state: Arc<dyn MixStateReader>,
 }
@@ -96,92 +83,8 @@ impl Clone for ScrobbleHttpDeps {
                 cache_hook: Arc::clone(&self.deps.cache_hook),
                 visibility_hook: Arc::clone(&self.deps.visibility_hook),
             },
-            roles: Arc::clone(&self.roles),
             mix_state: Arc::clone(&self.mix_state),
         }
-    }
-}
-
-/// The authenticated caller: user id plus a live role lookup.
-#[derive(Debug, Clone)]
-pub struct RouteCaller {
-    /// Owning user id.
-    pub user_id: String,
-    /// Account role.
-    pub role: Role,
-}
-
-impl RouteCaller {
-    /// Resolve the caller from the stashed session plus a role lookup. A
-    /// missing session or a gone account is 401.
-    pub fn require(parts: &Parts, roles: &dyn UserRoles) -> Result<Self, PluginError> {
-        let session =
-            parts
-                .extensions
-                .get::<CurrentSession>()
-                .ok_or(PluginError::Unauthorized {
-                    message: "Authentication required".to_owned(),
-                })?;
-        let role = roles
-            .role_of(&session.user_id)
-            .ok_or(PluginError::Unauthorized {
-                message: "Authentication required".to_owned(),
-            })?;
-        Ok(Self {
-            user_id: session.user_id.clone(),
-            role,
-        })
-    }
-}
-
-/// Any authenticated user.
-pub struct AuthenticatedUser(pub RouteCaller);
-
-impl FromRequestParts<PluginsDeps> for AuthenticatedUser {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &PluginsDeps,
-    ) -> Result<Self, Self::Rejection> {
-        RouteCaller::require(parts, state.roles.as_ref())
-            .map(AuthenticatedUser)
-            .map_err(ApiError::from)
-    }
-}
-
-/// An admin. Non-admin is 403.
-pub struct AdminUser(pub RouteCaller);
-
-impl FromRequestParts<PluginsDeps> for AdminUser {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &PluginsDeps,
-    ) -> Result<Self, Self::Rejection> {
-        let caller = RouteCaller::require(parts, state.roles.as_ref())?;
-        if caller.role == Role::Admin {
-            Ok(AdminUser(caller))
-        } else {
-            Err(ApiError::forbidden("Admin access required"))
-        }
-    }
-}
-
-/// Any authenticated user on the scrobble routes.
-pub struct ScrobbleUser(pub RouteCaller);
-
-impl FromRequestParts<ScrobbleHttpDeps> for ScrobbleUser {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &ScrobbleHttpDeps,
-    ) -> Result<Self, Self::Rejection> {
-        RouteCaller::require(parts, state.roles.as_ref())
-            .map(ScrobbleUser)
-            .map_err(ApiError::from)
     }
 }
 
@@ -296,7 +199,7 @@ fn plugin_info(
 )]
 pub async fn list_plugins(
     State(deps): State<PluginsDeps>,
-    _admin: AdminUser,
+    _admin: Admin,
 ) -> Result<Json<PluginListResponse>, ApiError> {
     let mut plugins = Vec::new();
     for plugin in deps.host.list_plugins() {
@@ -359,7 +262,7 @@ async fn install_staged(deps: &PluginsDeps, staged: StagedPlugin) -> Result<Stri
 )]
 pub async fn preview_plugin_install(
     State(deps): State<PluginsDeps>,
-    _admin: AdminUser,
+    _admin: Admin,
     ValidJson(body): ValidJson<PluginInstallRequest>,
 ) -> Result<Json<PluginInstallPreview>, ApiError> {
     let staged = stage_request(&deps, &body.repository_url, body.reference.as_deref()).await?;
@@ -411,7 +314,7 @@ pub async fn preview_plugin_install(
 )]
 pub async fn install_plugin(
     State(deps): State<PluginsDeps>,
-    _admin: AdminUser,
+    _admin: Admin,
     ValidJson(body): ValidJson<PluginInstallRequest>,
 ) -> Result<(StatusCode, Json<PluginInfo>), ApiError> {
     let staged = stage_request(&deps, &body.repository_url, body.reference.as_deref()).await?;
@@ -453,7 +356,7 @@ pub async fn install_plugin(
 )]
 pub async fn update_plugin_from_source(
     State(deps): State<PluginsDeps>,
-    _admin: AdminUser,
+    _admin: Admin,
     Path(name): Path<String>,
     ValidJson(body): ValidJson<PluginSourceUpdateRequest>,
 ) -> Result<Json<PluginSourceUpdateResponse>, ApiError> {
@@ -521,7 +424,7 @@ pub async fn update_plugin_from_source(
 )]
 pub async fn update_plugin(
     State(deps): State<PluginsDeps>,
-    _admin: AdminUser,
+    _admin: Admin,
     Path(name): Path<String>,
     ValidJson(body): ValidJson<PluginUpdateRequest>,
 ) -> Result<Json<PluginInfo>, ApiError> {
@@ -561,7 +464,7 @@ pub async fn update_plugin(
 )]
 pub async fn uninstall_plugin(
     State(deps): State<PluginsDeps>,
-    _admin: AdminUser,
+    _admin: Admin,
     Path(name): Path<String>,
 ) -> Result<Json<StatusMessage>, ApiError> {
     let host = Arc::clone(&deps.host);
@@ -596,7 +499,7 @@ pub async fn uninstall_plugin(
 )]
 pub async fn list_plugin_sources(
     State(deps): State<PluginsDeps>,
-    _user: AuthenticatedUser,
+    _user: User,
 ) -> Json<PluginSourcesResponse> {
     Json(PluginSourcesResponse {
         sources: deps.host.plugin_sources(),
@@ -672,7 +575,7 @@ impl ExtRateLimiter {
 
 async fn serve_ext(
     deps: &PluginsDeps,
-    caller: &RouteCaller,
+    caller: &Principal,
     plugin_name: &str,
     subpath: &str,
     method: &str,
@@ -699,14 +602,14 @@ async fn serve_ext(
     let Some(spec) = spec else {
         return Err(PluginError::NotFound);
     };
-    if spec.auth == "admin" && caller.role != Role::Admin {
-        return Err(PluginError::Forbidden {
-            message: "Admin access required".to_owned(),
-        });
+    if spec.auth == "admin" {
+        Admin::try_from(caller.clone()).map_err(|refused| PluginError::Forbidden {
+            message: refused.to_string(),
+        })?;
     }
     if let Some(retry_after) = deps.ext_limiter.check(
         plugin_name,
-        &caller.user_id,
+        caller.user_id(),
         method,
         subpath,
         spec.rate_limit_per_minute,
@@ -812,11 +715,11 @@ fn percent_decode(part: &str) -> Option<String> {
 )]
 pub async fn plugin_ext_get(
     State(deps): State<PluginsDeps>,
-    caller: AuthenticatedUser,
+    User(caller): User,
     Path((name, subpath)): Path<(String, String)>,
     request: Request,
 ) -> Result<Response, ApiError> {
-    Ok(serve_ext(&deps, &caller.0, &name, &subpath, "GET", request).await?)
+    Ok(serve_ext(&deps, &caller, &name, &subpath, "GET", request).await?)
 }
 
 /// Serve one declared plugin POST route.
@@ -839,11 +742,11 @@ pub async fn plugin_ext_get(
 )]
 pub async fn plugin_ext_post(
     State(deps): State<PluginsDeps>,
-    caller: AuthenticatedUser,
+    User(caller): User,
     Path((name, subpath)): Path<(String, String)>,
     request: Request,
 ) -> Result<Response, ApiError> {
-    Ok(serve_ext(&deps, &caller.0, &name, &subpath, "POST", request).await?)
+    Ok(serve_ext(&deps, &caller, &name, &subpath, "POST", request).await?)
 }
 
 /// Serve one declared plugin DELETE route.
@@ -865,11 +768,11 @@ pub async fn plugin_ext_post(
 )]
 pub async fn plugin_ext_delete(
     State(deps): State<PluginsDeps>,
-    caller: AuthenticatedUser,
+    User(caller): User,
     Path((name, subpath)): Path<(String, String)>,
     request: Request,
 ) -> Result<Response, ApiError> {
-    Ok(serve_ext(&deps, &caller.0, &name, &subpath, "DELETE", request).await?)
+    Ok(serve_ext(&deps, &caller, &name, &subpath, "DELETE", request).await?)
 }
 
 // ---------------------------------------------------------------------------
@@ -982,7 +885,7 @@ fn http_date(when: SystemTime) -> String {
 )]
 pub async fn plugin_panel_page(
     State(deps): State<PluginsDeps>,
-    _admin: AdminUser,
+    _admin: Admin,
     Path(name): Path<String>,
     request: Request,
 ) -> Result<Response, ApiError> {
@@ -1150,9 +1053,9 @@ async fn prefs_response(deps: &ScrobbleHttpDeps, user_id: &str, role: Role) -> S
 )]
 pub async fn get_scrobble_preferences(
     State(deps): State<ScrobbleHttpDeps>,
-    user: ScrobbleUser,
+    User(user): User,
 ) -> Json<ScrobblePreferences> {
-    Json(prefs_response(&deps, &user.0.user_id, user.0.role).await)
+    Json(prefs_response(&deps, user.user_id(), user.role()).await)
 }
 
 /// Update the caller's scrobble preferences. Absent fields keep their
@@ -1170,7 +1073,7 @@ pub async fn get_scrobble_preferences(
 )]
 pub async fn update_scrobble_preferences(
     State(deps): State<ScrobbleHttpDeps>,
-    user: ScrobbleUser,
+    User(user): User,
     ValidJson(body): ValidJson<ScrobblePreferencesUpdate>,
 ) -> Result<Json<ScrobblePreferences>, ApiError> {
     let patch = ScrobblePrefsPatch {
@@ -1181,9 +1084,9 @@ pub async fn update_scrobble_preferences(
         now_playing_visibility: body.now_playing_visibility,
         auto_request_personal_mix: body.auto_request_personal_mix,
     };
-    match update_prefs(&deps.deps, &user.0.user_id, user.0.role.as_str(), &patch).await {
+    match update_prefs(&deps.deps, user.user_id(), user.role().as_str(), &patch).await {
         Ok(_) => Ok(Json(
-            prefs_response(&deps, &user.0.user_id, user.0.role).await,
+            prefs_response(&deps, user.user_id(), user.role()).await,
         )),
         Err(PrefsError::InvalidValue(message)) => Err(ApiError::invalid_input(message)),
     }
@@ -1205,17 +1108,10 @@ pub async fn update_scrobble_preferences(
 )]
 pub async fn connect_listenbrainz_route(
     State(deps): State<ScrobbleHttpDeps>,
-    user: ScrobbleUser,
+    User(user): User,
     ValidJson(body): ValidJson<ListenBrainzConnectRequest>,
 ) -> Result<Json<ConnectionStatus>, ApiError> {
-    match connect_listenbrainz(
-        &deps.deps,
-        &user.0.user_id,
-        &body.username,
-        &body.user_token,
-    )
-    .await
-    {
+    match connect_listenbrainz(&deps.deps, user.user_id(), &body.username, &body.user_token).await {
         Ok(link) => Ok(Json(ConnectionStatus {
             service: "listenbrainz".to_owned(),
             enabled: true,
@@ -1243,9 +1139,9 @@ pub async fn connect_listenbrainz_route(
 )]
 pub async fn listenbrainz_status(
     State(deps): State<ScrobbleHttpDeps>,
-    user: ScrobbleUser,
+    User(user): User,
 ) -> Result<Json<ConnectionStatus>, ApiError> {
-    match deps.deps.links.status(&user.0.user_id).await {
+    match deps.deps.links.status(user.user_id()).await {
         Some(link) => Ok(Json(ConnectionStatus {
             service: "listenbrainz".to_owned(),
             enabled: true,
@@ -1268,9 +1164,9 @@ pub async fn listenbrainz_status(
 )]
 pub async fn disconnect_listenbrainz_route(
     State(deps): State<ScrobbleHttpDeps>,
-    user: ScrobbleUser,
+    User(user): User,
 ) -> Result<Json<StatusMessage>, ApiError> {
-    if disconnect_listenbrainz(&deps.deps, &user.0.user_id).await {
+    if disconnect_listenbrainz(&deps.deps, user.user_id()).await {
         Ok(Json(StatusMessage {
             status: "ok".to_owned(),
             message: "Disconnected listenbrainz".to_owned(),

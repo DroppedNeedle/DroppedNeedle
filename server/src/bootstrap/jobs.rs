@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use axum::Router;
 
-use droppedneedle_auth::users::{UsersDeps, roles::Role};
+use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::concerts::ConcertsSweep;
 use droppedneedle_kernel::db::{CheckpointService, DurableWorkWakeups, WriteLane};
 use droppedneedle_kernel::jobs::cache_sync::CacheSyncStatus;
@@ -43,9 +43,7 @@ use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, EventsSettings, NavidromeConnection,
 };
-use droppedneedle_media::remotes::playlist_sync::{
-    self as playlist_route, PlaylistSyncState, SyncRoles,
-};
+use droppedneedle_media::remotes::playlist_sync::{self as playlist_route, PlaylistSyncState};
 use droppedneedle_media::remotes::presence_feed::{MediaJobs, RegistryFeed, RemoteSessionPollers};
 
 /// Grace per job at shutdown. Loops select on their stop signal next to
@@ -108,30 +106,6 @@ impl PlaylistSyncSettings for NavidromeSyncSettings {
                 scope: connection.playlist_sync_scope,
                 remove_deleted: connection.playlist_sync_remove_deleted,
             })
-        })
-    }
-}
-
-/// Route role lookups over the user store. Async-native: the gate awaits
-/// the row read, so role changes land on the next call with no thread
-/// bridging. Missing accounts and store faults fail closed.
-#[derive(Clone)]
-pub struct StoreSyncRoles {
-    users: UsersDeps,
-}
-
-impl SyncRoles for StoreSyncRoles {
-    fn role_of(&self, user_id: &str) -> BoxFuture<'_, Option<Role>> {
-        let users = self.users.clone();
-        let user_id = user_id.to_owned();
-        Box::pin(async move {
-            users
-                .users
-                .get_by_id(&user_id)
-                .await
-                .ok()
-                .flatten()
-                .map(|user| user.role)
         })
     }
 }
@@ -308,11 +282,9 @@ pub struct JobsSetup {
 
 impl JobsSetup {
     /// Bind the production backends: durable rows, live checkpoint passes,
-    /// settings reads over the shared store, the route's admin gate over
-    /// the user store, the media feeds (presence, playlist export), and the
-    /// concerts sweep (`None` only on states without concerts).
+    /// settings reads over the shared store, the media feeds (presence,
+    /// playlist export), and the concerts sweep (`None` only on states without concerts).
     pub fn build(
-        users: UsersDeps,
         wakeups: DurableWorkWakeups,
         lane: WriteLane,
         checkpoint: CheckpointService,
@@ -332,7 +304,6 @@ impl JobsSetup {
                     store: Some(Arc::clone(&config)),
                 },
                 exporter: media.exporter(),
-                roles: Arc::new(StoreSyncRoles { users }),
             },
             presence: (media.feed(), media.pollers()),
             poll_time: EventsPollTime {
@@ -395,12 +366,11 @@ impl JobsSetup {
         self
     }
 
-    /// Test bundle: memory rows, skipped checkpoint passes, sync off, and the
-    /// live admin gate over the caller's user store. Route tests exercise the
-    /// playlist route through this; loop tests bind the memory stores
-    /// directly.
+    /// Test bundle: memory rows, skipped checkpoint passes and sync off.
+    /// Route tests exercise the playlist route through this; loop tests
+    /// bind the memory stores directly.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(users: UsersDeps) -> Self {
+    pub fn for_tests(_users: UsersDeps) -> Self {
         let media = MediaJobs::for_tests();
         Self {
             registry: JobRegistry::new(StoreKind::Memory(
@@ -410,7 +380,6 @@ impl JobsSetup {
             playlist: PlaylistSyncState {
                 settings: NavidromeSyncSettings { store: None },
                 exporter: media.exporter(),
-                roles: Arc::new(StoreSyncRoles { users }),
             },
             presence: (media.feed(), media.pollers()),
             poll_time: EventsPollTime { store: None },

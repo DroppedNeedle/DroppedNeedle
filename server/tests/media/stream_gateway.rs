@@ -14,15 +14,15 @@ use std::sync::{Arc, Mutex};
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
-use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
-use droppedneedle_auth::users::roles::SessionKind;
+use droppedneedle_auth::users::roles::{Role, SessionKind};
 use gateway::{
     AudioSource, OpenMedia, StreamEngine, StreamFault, StreamOpen, StreamState,
     content_type_for_extension, stream_routes,
 };
 use serde_json::Value;
 use tower::ServiceExt as _;
+
+use crate::common::auth::{test_principal, with_test_principal};
 
 /// What the fake engine observed on one open (principal + hints).
 #[derive(Debug, Clone)]
@@ -105,24 +105,17 @@ fn fixture_bytes(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i % 251) as u8).collect()
 }
 
-/// Router with a stashed session for `user-1`, or anonymous when false.
+/// Router signed in as `user-1`, or anonymous when false.
 fn app(engine: Arc<FakeEngine>, authed: bool) -> Router {
     let state = StreamState { engine };
     let router = stream_routes(state);
     if !authed {
         return router;
     }
-    router.layer(axum::middleware::from_fn(
-        |mut req: Request<Body>, next: axum::middleware::Next| async move {
-            req.extensions_mut().insert(CurrentSession {
-                user_id: "user-1".to_owned(),
-                session_id: "sess-1".to_owned(),
-                kind: SessionKind::Standard,
-                transport: Transport::Bearer,
-            });
-            next.run(req).await
-        },
-    ))
+    with_test_principal(
+        router,
+        test_principal("user-1", Role::User, "sess-1", SessionKind::Standard),
+    )
 }
 
 async fn call(

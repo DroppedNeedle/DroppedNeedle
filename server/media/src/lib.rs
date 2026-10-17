@@ -123,11 +123,7 @@ impl MediaSetup {
         let http = http_factory.shared().clone();
         crate::stream::plugin_url::sweep_stale_spools();
         let library = library_roots.map(|roots| LibraryFiles::new(pool.clone(), roots));
-        let download = DownloadState::new(
-            library.clone(),
-            access_from_config(config.clone()),
-            users.clone(),
-        );
+        let download = DownloadState::new(library.clone(), access_from_config(config.clone()));
         let resolver = Arc::new(
             ConnectionResolver::new(
                 Arc::new(SqliteConnectionStore::new(pool.clone(), lane.clone())),
@@ -155,10 +151,7 @@ impl MediaSetup {
             Arc::new(SqliteFolderStore::new(pool, lane)),
             imports,
         );
-        let remotes = RemotesDeps {
-            service,
-            auth: users,
-        };
+        let remotes = RemotesDeps { service };
         let reader = RemotesRemoteReader::with_resolver(
             http_factory.remote_audio().clone(),
             resolver.clone(),
@@ -184,7 +177,7 @@ impl MediaSetup {
         let db = Arc::new(PlaybackDb::open(db_path, ids.clone())?);
         let (queue, rx) = ReportQueue::channel();
         let (forwarder, forwards) =
-            ScrobbleForwarder::channel(db.clone(), remotes.auth.lastfm_switch.clone());
+            ScrobbleForwarder::channel(db.clone(), users.lastfm_switch.clone());
         let forwards = ForwardWorker::new(forwards, http.clone(), credentials, scrobbles);
         let playback = PlaybackDeps {
             catalog: db.clone(),
@@ -221,7 +214,7 @@ impl MediaSetup {
     /// configured, the catalog is empty (so reads 404), attribution drops,
     /// and ffmpeg is absent, so every transcode decision lands direct.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(users: UsersDeps) -> Result<Self, String> {
+    pub fn for_tests() -> Result<Self, String> {
         use crate::playback::fakes::{FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeSinks};
         use crate::remotes::adapter::MemoryImportSink;
         use crate::remotes::connections::{MemoryConnectionStore, NoServers};
@@ -245,7 +238,6 @@ impl MediaSetup {
             Arc::new(|| {
                 Ok(droppedneedle_kernel::runtime_config::sections::SecuritySettings::default())
             }),
-            users.clone(),
         );
         let remotes = RemotesDeps {
             service: RemotesService::new(
@@ -254,7 +246,6 @@ impl MediaSetup {
                 Arc::new(MemoryFolderStore::new()),
                 Arc::new(MemoryImportSink::new()),
             ),
-            auth: users,
         };
         let reader = RemotesRemoteReader::with_resolver(http, resolver);
         let transcoder = FfmpegTranscoder::new(

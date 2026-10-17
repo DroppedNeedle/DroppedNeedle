@@ -5,15 +5,13 @@
 
 use droppedneedle_media::remotes;
 
-use crate::common::auth::AuthRig;
+use crate::common::auth::{test_principal, with_test_principal};
 
 use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_testkit::remotes::{
@@ -45,14 +43,11 @@ fn http_client() -> reqwest::Client {
     reqwest::Client::new()
 }
 
-async fn auth_bundle() -> (AuthRig, String) {
-    let rig = AuthRig::new("remotes").await;
-    let user = rig.seed_user("ada", Role::User).await;
-    (rig, user.id)
-}
+/// The signed-in caller of the route tests.
+const USER_ID: &str = "user-ada";
 
 /// Route deps over memory rows and the given admin servers.
-fn deps_for(rig: &AuthRig, servers: FixedServers) -> RemotesDeps {
+fn deps_for(servers: FixedServers) -> RemotesDeps {
     let resolver = Arc::new(ConnectionResolver::new(
         Arc::new(MemoryConnectionStore::new()),
         Arc::new(CredentialCoder::new(Arc::new(test_crypto()))),
@@ -65,7 +60,6 @@ fn deps_for(rig: &AuthRig, servers: FixedServers) -> RemotesDeps {
             Arc::new(MemoryFolderStore::new()),
             Arc::new(MemoryImportSink::new()),
         ),
-        auth: rig.deps.clone(),
     }
 }
 
@@ -83,22 +77,11 @@ fn server(base_url: &str, username: &str, credential: &str, user_id: &str) -> Se
     }
 }
 
-fn authed_app(deps: RemotesDeps, user_id: &str) -> Router {
-    let user_id = user_id.to_owned();
-    remotes_router(deps).layer(axum::middleware::from_fn(
-        move |mut req: Request<Body>, next: axum::middleware::Next| {
-            let user_id = user_id.clone();
-            async move {
-                req.extensions_mut().insert(CurrentSession {
-                    user_id,
-                    session_id: "sess-1".to_owned(),
-                    kind: SessionKind::Standard,
-                    transport: Transport::Bearer,
-                });
-                next.run(req).await
-            }
-        },
-    ))
+fn authed_app(deps: RemotesDeps) -> Router {
+    with_test_principal(
+        remotes_router(deps),
+        test_principal(USER_ID, Role::User, "sess-1", SessionKind::Standard),
+    )
 }
 
 async fn get_json(app: Router, path: &str) -> (StatusCode, Value) {
@@ -764,10 +747,8 @@ async fn folders_fail_closed_on_server_change_or_outage() {
 
 /// A plain user with no links of their own, on an instance where the admin
 /// configured all three servers with shared credentials (the v2 shared
-/// mode). Every route below runs through the admin's accounts. Hold the
-/// rig while the router serves: its database goes with it.
-async fn connected_testbed() -> (Router, AuthRig) {
-    let (rig, user_id) = auth_bundle().await;
+/// mode). Every route below runs through the admin's accounts.
+async fn connected_testbed() -> Router {
     // Mocks leak for the life of the test process; routes need their URLs
     // after this helper returns, so the servers stay up detached.
     let jellyfin = Box::leak(Box::new(serve_jellyfin().await.expect("mock serves")));
@@ -783,13 +764,12 @@ async fn connected_testbed() -> (Router, AuthRig) {
             server(&navidrome.base_url, NAVIDROME_USER, "nd-pass", ""),
         )
         .with(SourceName::Plex, server(&plex.base_url, "", PLEX_TOKEN, ""));
-    (authed_app(deps_for(&rig, servers), &user_id), rig)
+    authed_app(deps_for(servers))
 }
 
 #[tokio::test]
 async fn routes_reject_anonymous_callers_with_challenge() {
-    let (rig, _) = auth_bundle().await;
-    let deps = deps_for(&rig, FixedServers::default());
+    let deps = deps_for(FixedServers::default());
     let response = remotes_router(deps)
         .oneshot(
             Request::get("/remotes/plex/hub")
@@ -815,7 +795,7 @@ async fn routes_reject_anonymous_callers_with_challenge() {
 
 #[tokio::test]
 async fn routes_reject_unknown_sources_and_bad_queries_in_envelope() {
-    let (app, _auth) = connected_testbed().await;
+    let app = connected_testbed().await;
     let (status, body) = get_json(app.clone(), "/remotes/emby/hub").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(error_code(&body), "INVALID_INPUT");
@@ -831,8 +811,7 @@ async fn routes_reject_unknown_sources_and_bad_queries_in_envelope() {
 
 #[tokio::test]
 async fn routes_report_unconfigured_sources() {
-    let (rig, user_id) = auth_bundle().await;
-    let app = authed_app(deps_for(&rig, FixedServers::default()), &user_id);
+    let app = authed_app(deps_for(FixedServers::default()));
     let (status, body) = get_json(app, "/remotes/plex/hub").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(error_code(&body), "REMOTE_NOT_CONFIGURED");
@@ -891,7 +870,7 @@ async fn routes_answer_remote_unavailable_when_the_server_is_down() {
 
 #[tokio::test]
 async fn routes_browse_albums_reports_stats_totals() {
-    let (app, _auth) = connected_testbed().await;
+    let app = connected_testbed().await;
     for source in ["jellyfin", "navidrome", "plex"] {
         let (status, body) =
             get_json(app.clone(), &format!("/remotes/{source}/albums?limit=2")).await;
@@ -911,7 +890,7 @@ async fn routes_browse_albums_reports_stats_totals() {
 
 #[tokio::test]
 async fn routes_import_playlists_idempotently() {
-    let (app, _auth) = connected_testbed().await;
+    let app = connected_testbed().await;
     for source in ["jellyfin", "navidrome", "plex"] {
         let id = match source {
             "jellyfin" => "jf-pl-1",
@@ -952,7 +931,7 @@ async fn routes_import_playlists_idempotently() {
 /// `REMOTE_UNSUPPORTED` rather than an empty success.
 #[tokio::test]
 async fn routes_serve_optional_features_per_source() {
-    let (app, _auth) = connected_testbed().await;
+    let app = connected_testbed().await;
     let matched = format!("match?mbid={MATCH_MBID}");
     let cases = [
         ("navidrome", "info/artists/nd-ar-1", true),
@@ -996,7 +975,7 @@ async fn routes_serve_optional_features_per_source() {
 
 #[tokio::test]
 async fn routes_serve_images_with_cache_contract() {
-    let (app, _auth) = connected_testbed().await;
+    let app = connected_testbed().await;
     let (status, headers, bytes) =
         get_bytes(app.clone(), "/remotes/navidrome/images/nd-al-1?size=200").await;
     assert_eq!(status, StatusCode::OK);
@@ -1039,7 +1018,7 @@ async fn routes_serve_images_with_cache_contract() {
 /// unlinking falls back to the shared account.
 #[tokio::test]
 async fn routes_link_own_accounts_over_the_shared_admin_account() {
-    let (app, _auth) = connected_testbed().await;
+    let app = connected_testbed().await;
     let (status, body) = get_json(app.clone(), "/remotes/navidrome/connection").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.get("connected").and_then(Value::as_bool), Some(true));
@@ -1086,7 +1065,7 @@ async fn routes_link_own_accounts_over_the_shared_admin_account() {
 
 #[tokio::test]
 async fn routes_manage_folder_preferences() {
-    let (app, _auth) = connected_testbed().await;
+    let app = connected_testbed().await;
     let (status, body) = get_json(app.clone(), "/remotes/navidrome/folders").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.get("mode").and_then(Value::as_str), Some("all"));
@@ -1341,14 +1320,13 @@ async fn routes_refuse_image_answers_that_are_not_images() {
             Router::new().fallback(move || async move { ([(CONTENT_TYPE, content_type)], PAGE) }),
         )
         .await;
-        let (rig, user_id) = auth_bundle().await;
         let servers = FixedServers::default()
             .with(
                 SourceName::Jellyfin,
                 server(&base_url, "", JELLYFIN_KEY, "jf-user-1"),
             )
             .with(SourceName::Plex, server(&base_url, "", PLEX_TOKEN, ""));
-        let app = authed_app(deps_for(&rig, servers), &user_id);
+        let app = authed_app(deps_for(servers));
         for source in ["jellyfin", "plex"] {
             let (status, headers, bytes) =
                 get_bytes(app.clone(), &format!("/remotes/{source}/images/any")).await;

@@ -12,18 +12,16 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::jobs::playlist_sync::{
     self, PlaylistExporter, PlaylistSyncConfig, PlaylistSyncResult, PlaylistSyncSettings,
 };
 use droppedneedle_kernel::jobs::registry::{BoxFuture, JobRegistry, MemoryRegistryStore};
 use droppedneedle_kernel::jobs::schedule::Schedule;
-use droppedneedle_media::remotes::playlist_sync::{
-    self as playlist_route, PlaylistSyncState, SyncRoles,
-};
+use droppedneedle_media::remotes::playlist_sync::{self as playlist_route, PlaylistSyncState};
 use tower::ServiceExt as _;
+
+use crate::common::auth::test_principal;
 
 type TestRegistry = JobRegistry<MemoryRegistryStore>;
 
@@ -110,51 +108,32 @@ impl PlaylistExporter for FakeExporter {
     }
 }
 
-/// Fixed role map for the admin gate: brenda administers, molly does not.
-#[derive(Clone, Default)]
-struct FakeRoles;
-
-impl SyncRoles for FakeRoles {
-    fn role_of(&self, user_id: &str) -> BoxFuture<'_, Option<Role>> {
-        let role = match user_id {
-            "user-brenda" => Some(Role::Admin),
-            "user-molly" => Some(Role::User),
-            _ => None,
-        };
-        Box::pin(async move { role })
-    }
-}
-
 fn route_state(
     settings: FakeSettings,
     exporter: FakeExporter,
 ) -> PlaylistSyncState<FakeSettings, FakeExporter> {
-    PlaylistSyncState {
-        settings,
-        exporter,
-        roles: Arc::new(FakeRoles),
-    }
+    PlaylistSyncState { settings, exporter }
 }
 
 fn post_sync() -> Request<Body> {
-    post_sync_as(Some("user-brenda"))
+    post_sync_as(Some(Role::Admin))
 }
 
-/// One route call, optionally carrying a stashed session. The session gate
-/// normally stashes it; here the test does.
-fn post_sync_as(user_id: Option<&str>) -> Request<Body> {
+/// One route call, optionally carrying a signed-in principal. The session
+/// gate normally puts it in; here the test does.
+fn post_sync_as(role: Option<Role>) -> Request<Body> {
     let mut request = Request::builder()
         .method("POST")
         .uri("/navidrome/playlist-sync")
         .body(Body::empty())
         .expect("request builds");
-    if let Some(user_id) = user_id {
-        request.extensions_mut().insert(CurrentSession {
-            user_id: user_id.to_owned(),
-            session_id: "sess-1".to_owned(),
-            kind: SessionKind::Standard,
-            transport: Transport::Bearer,
-        });
+    if let Some(role) = role {
+        request.extensions_mut().insert(test_principal(
+            "user-1",
+            role,
+            "sess-1",
+            SessionKind::Standard,
+        ));
     }
     request
 }
@@ -211,21 +190,13 @@ async fn route_refuses_everyone_but_admins() {
     let settings = FakeSettings::enabled();
     let app = playlist_route::router(route_state(settings, exporter.clone()));
     let response = app
-        .oneshot(post_sync_as(Some("user-molly")))
+        .oneshot(post_sync_as(Some(Role::Trusted)))
         .await
         .expect("router answers");
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     let body = read_json(response).await;
     assert_eq!(body["error"]["code"], "FORBIDDEN");
-
-    // A session whose account is gone: 401, like logged-out.
-    let settings = FakeSettings::enabled();
-    let app = playlist_route::router(route_state(settings, exporter.clone()));
-    let response = app
-        .oneshot(post_sync_as(Some("user-ghost")))
-        .await
-        .expect("router answers");
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(body["error"]["message"], "Admin role required");
     assert_eq!(exporter.calls.load(Ordering::SeqCst), 0);
 }
 

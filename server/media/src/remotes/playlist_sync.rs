@@ -8,85 +8,20 @@
 //! nest (v2 served it at `/settings/navidrome/playlist-sync`); the app nests
 //! it inside the session gate with the other settings routes.
 
-use std::sync::Arc;
+use axum::{Json, Router, extract::State, routing::post};
 
-use axum::{
-    Json, Router,
-    extract::{FromRequestParts, State},
-    http::request::Parts,
-    routing::post,
-};
-
-use droppedneedle_auth::session::middleware::CurrentSession;
-use droppedneedle_auth::users::roles::Role;
-use droppedneedle_kernel::error::ApiError;
+use droppedneedle_auth::Admin;
 use droppedneedle_kernel::jobs::playlist_sync::{
     DISABLED_MESSAGE, PlaylistExporter, PlaylistSyncResult, PlaylistSyncSettings,
 };
-use droppedneedle_kernel::jobs::registry::BoxFuture;
 
-/// Role lookups for the route gate. The users store owns the rows; this
-/// seam keeps the route independent of that store. Async-native on
-/// purpose: the lookup awaits the store instead of bridging threads.
-pub trait SyncRoles: Send + Sync {
-    /// One user's role, or `None` when the account is gone (stale session)
-    /// or the store failed. Both fail closed.
-    fn role_of(&self, user_id: &str) -> BoxFuture<'_, Option<Role>>;
-}
-
-/// Route state: settings plus exporter plus the admin gate's role lookup.
+/// Route state: settings plus exporter.
 #[derive(Clone)]
 pub struct PlaylistSyncState<T, E> {
     /// Saved-settings source.
     pub settings: T,
     /// Playlist file writer.
     pub exporter: E,
-    /// Role lookups for the admin gate.
-    pub roles: Arc<dyn SyncRoles>,
-}
-
-/// An admin caller. Anything else is 401 (no session, gone account) or 403.
-pub struct SyncAdmin;
-
-impl<T, E> FromRequestParts<PlaylistSyncState<T, E>> for SyncAdmin
-where
-    T: Send + Sync,
-    E: Send + Sync,
-{
-    type Rejection = ApiError;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &PlaylistSyncState<T, E>,
-    ) -> Result<Self, Self::Rejection> {
-        let session = parts
-            .extensions
-            .get::<CurrentSession>()
-            .ok_or(SyncError::Unauthorized)?;
-        match state.roles.role_of(&session.user_id).await {
-            Some(Role::Admin) => Ok(SyncAdmin),
-            Some(_) => Err(SyncError::Forbidden.into()),
-            None => Err(SyncError::Unauthorized.into()),
-        }
-    }
-}
-
-/// Route-level failures, answered through [`ApiError`].
-#[derive(Debug)]
-pub enum SyncError {
-    /// No session stashed, or the account behind it is gone.
-    Unauthorized,
-    /// Signed in, but not an admin.
-    Forbidden,
-}
-
-impl From<SyncError> for ApiError {
-    fn from(error: SyncError) -> Self {
-        match error {
-            SyncError::Unauthorized => ApiError::unauthorized("Authentication required"),
-            SyncError::Forbidden => ApiError::forbidden("Admin role required"),
-        }
-    }
 }
 
 /// Route for the settings router to nest: `POST /navidrome/playlist-sync`.
@@ -115,7 +50,7 @@ where
 )]
 pub(crate) async fn sync_now<T, E>(
     State(state): State<PlaylistSyncState<T, E>>,
-    _admin: SyncAdmin,
+    _admin: Admin,
 ) -> Json<PlaylistSyncResult>
 where
     T: PlaylistSyncSettings,

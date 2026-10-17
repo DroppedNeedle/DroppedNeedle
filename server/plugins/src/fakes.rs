@@ -1,5 +1,5 @@
 //! Test doubles for plugins: scripted connections and launchers,
-//! fetchers, unpackers, verifiers, and roles.
+//! fetchers, unpackers and verifiers.
 //!
 //! The real plugin runtime is a subprocess; tests that need one launch the
 //! shipped examples (see `tests/server/plugins_examples.rs`). These fakes cover
@@ -13,8 +13,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::Value;
-
-use droppedneedle_auth::users::roles::Role;
 
 use super::install::{ArchiveEntry, ArchiveFetcher, ArchiveUnpacker, FetchError, Fetched};
 use super::protocol::RpcError;
@@ -346,42 +344,6 @@ impl ListenBrainzVerifier for FakeVerifier {
                     rate_limited: false,
                 })
         })
-    }
-}
-
-/// Fixed role map.
-pub struct FakeRoles {
-    roles: Mutex<HashMap<String, Role>>,
-}
-
-impl FakeRoles {
-    /// Empty map: every lookup is a stale session.
-    pub fn new() -> Self {
-        Self {
-            roles: Mutex::new(HashMap::new()),
-        }
-    }
-
-    /// Pin one user's role.
-    pub fn insert(&self, user_id: &str, role: Role) {
-        if let Ok(mut guard) = self.roles.lock() {
-            guard.insert(user_id.to_owned(), role);
-        }
-    }
-}
-
-impl Default for FakeRoles {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl super::handlers::UserRoles for FakeRoles {
-    fn role_of(&self, user_id: &str) -> Option<Role> {
-        self.roles
-            .lock()
-            .ok()
-            .and_then(|guard| guard.get(user_id).copied())
     }
 }
 

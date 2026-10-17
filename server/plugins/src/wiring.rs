@@ -17,7 +17,6 @@ use std::sync::Arc;
 
 use axum::Router;
 
-use droppedneedle_auth::users::{UsersDeps, roles::Role};
 use droppedneedle_kernel::db::WriteLane;
 use droppedneedle_kernel::jobs::plugin_ticks::SqliteTickStore;
 use droppedneedle_kernel::jobs::registry::JobRegistry;
@@ -26,7 +25,7 @@ use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_providers::cache::{ProviderCache, invalidate_source};
 
 use super::handlers::{
-    ExtRateLimiter, PluginsDeps, ScrobbleHttpDeps, UserRoles, plugins_router, scrobble_router,
+    ExtRateLimiter, PluginsDeps, ScrobbleHttpDeps, plugins_router, scrobble_router,
 };
 use super::host::PluginHost;
 use super::install::{GitHubHosts, ReqwestFetcher, ZipUnpacker};
@@ -80,34 +79,6 @@ pub fn new_host(plugins_dir: PathBuf, config: Arc<ConfigStore>) -> Arc<PluginHos
     PluginHost::new(plugins_dir, config, launcher)
 }
 
-/// Role lookups over the user store. The plugins routes call this
-/// synchronously while the store is async, so the lookup bridges with
-/// `block_in_place`: production runs the multi-thread runtime, and route
-/// tests that reach these extractors must too (`flavor = "multi_thread"`).
-/// Missing sessions, gone accounts, and store faults all fail closed.
-#[derive(Clone)]
-pub struct StoreRoles {
-    users: UsersDeps,
-}
-
-impl UserRoles for StoreRoles {
-    fn role_of(&self, user_id: &str) -> Option<Role> {
-        let users = self.users.clone();
-        let id = user_id.to_owned();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move {
-                users
-                    .users
-                    .get_by_id(&id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|user| user.role)
-            })
-        })
-    }
-}
-
 /// Link-change hook over the shared provider cache: a ListenBrainz link
 /// mutation invalidates the dependent cached reads, the way v2 resets its
 /// breaker and clears caches on every per-user change. The invalidation
@@ -158,7 +129,6 @@ impl PluginsSetup {
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         host: Arc<PluginHost>,
-        users: UsersDeps,
         http: reqwest::Client,
         crypto: Arc<Crypto>,
         cache: Arc<dyn ProviderCache>,
@@ -170,7 +140,6 @@ impl PluginsSetup {
     ) -> Self {
         Self::assemble(
             host,
-            users,
             http,
             github,
             listenbrainz,
@@ -186,7 +155,7 @@ impl PluginsSetup {
     /// plugin runtimes (no subprocesses), memory tick and scrobble stores,
     /// the production verifier, and tick loops over the caller's registry.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(users: UsersDeps, registry: JobRegistry<StoreKind>) -> Result<Self, String> {
+    pub fn for_tests(registry: JobRegistry<StoreKind>) -> Result<Self, String> {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         use super::fakes::FakeLauncher;
@@ -220,7 +189,6 @@ impl PluginsSetup {
         let host = PluginHost::new(dir.join("plugins"), config, Arc::new(FakeLauncher::new()));
         let mut setup = Self::assemble(
             host,
-            users,
             http.shared().clone(),
             GitHubHosts {
                 api: super::install::API_BASE.to_owned(),
@@ -242,7 +210,6 @@ impl PluginsSetup {
     #[allow(clippy::too_many_arguments)]
     fn assemble(
         host: Arc<PluginHost>,
-        users: UsersDeps,
         http: reqwest::Client,
         github: GitHubHosts,
         listenbrainz: &str,
@@ -254,14 +221,10 @@ impl PluginsSetup {
     ) -> Self {
         host.set_state_store(Arc::new(ticks.clone()));
         host.load_all();
-        let roles: Arc<dyn UserRoles> = Arc::new(StoreRoles {
-            users: users.clone(),
-        });
         let ticks = Arc::new(PluginTickLoops::new(registry, ticks, TICK_CANCEL_GRACE));
         let plugins = PluginsDeps {
             host: Arc::clone(&host),
             config: Arc::clone(host.config()),
-            roles: Arc::clone(&roles),
             github,
             fetcher: Arc::new(ReqwestFetcher::new(http.clone())),
             unpacker: Arc::new(ZipUnpacker),
@@ -276,7 +239,6 @@ impl PluginsSetup {
                 Arc::new(NoopMixApprovalHook),
                 Arc::new(ListenBrainzCacheHook { cache }),
             ),
-            roles,
             mix_state: Arc::new(StaticMixState),
         };
         Self {
@@ -315,7 +277,7 @@ impl PluginsSetup {
 
     /// Mount the plugin and scrobble routes. Layers come from `create_app`
     /// (the session gate plus rate limiting); admin-only routes self-gate
-    /// through the `AdminUser` extractor inside the handlers.
+    /// through the `Admin` extractor inside the handlers.
     pub fn gated_router(&self) -> Router {
         Router::new()
             .merge(plugins_router(self.plugins.clone()))

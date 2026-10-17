@@ -31,8 +31,8 @@ use std::sync::{Arc, Mutex};
 use axum::{
     Json, Router,
     body::Body,
-    extract::{FromRequestParts, Path as UrlPath, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header, request::Parts},
+    extract::{Path as UrlPath, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -45,11 +45,8 @@ use super::local_files::{AlbumFiles, CatalogFile, LibraryFiles, LocateError, Pat
 use super::routes::{
     ChunkStream, DirectSpan, content_type_for_extension, file_range, unsatisfiable,
 };
-use droppedneedle_auth::session::middleware::CurrentSession;
-use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_auth::users::roles::Role;
-use droppedneedle_auth::users::stores::StoreError;
-use droppedneedle_kernel::error::{ApiError, Unavailable};
+use droppedneedle_auth::{Role, User};
+use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 
 use droppedneedle_library::scan::roots::RootRegistry;
@@ -74,18 +71,13 @@ pub struct LibraryDownloadAccess {
 pub struct DownloadState {
     library: Option<LibraryFiles>,
     access: AccessSource,
-    users: UsersDeps,
 }
 
 impl DownloadState {
     /// Downloads from the library catalog and roots. `None` (unwired
     /// builds) serves nothing.
-    pub fn new(library: Option<LibraryFiles>, access: AccessSource, users: UsersDeps) -> Self {
-        Self {
-            library,
-            access,
-            users,
-        }
+    pub fn new(library: Option<LibraryFiles>, access: AccessSource) -> Self {
+        Self { library, access }
     }
 }
 
@@ -120,8 +112,6 @@ pub fn download_routes(state: DownloadState) -> Router {
 /// Every failure a download route answers with.
 #[derive(Debug)]
 pub enum DownloadError {
-    /// No session, or the account is gone.
-    Unauthorized,
     /// The access setting excludes the caller, or a path left the roots.
     Forbidden(&'static str),
     /// Unknown id, or nothing on disk to serve.
@@ -149,7 +139,6 @@ impl DownloadError {
 impl From<DownloadError> for ApiError {
     fn from(error: DownloadError) -> Self {
         match error {
-            DownloadError::Unauthorized => ApiError::unauthorized("Authentication required"),
             DownloadError::Forbidden(message) => ApiError::forbidden(message),
             DownloadError::NotFound(message) => ApiError::new(
                 StatusCode::NOT_FOUND,
@@ -159,42 +148,6 @@ impl From<DownloadError> for ApiError {
             DownloadError::Unsatisfiable { total_len } => unsatisfiable(total_len),
             DownloadError::Internal { cause } => ApiError::internal(cause),
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Caller
-// ---------------------------------------------------------------------------
-
-/// The signed-in caller's role, read fresh from the user store so a role
-/// change applies to the next download.
-pub struct DownloadUser(Role);
-
-impl FromRequestParts<DownloadState> for DownloadUser {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &DownloadState,
-    ) -> Result<Self, Self::Rejection> {
-        let session = parts
-            .extensions
-            .get::<CurrentSession>()
-            .ok_or(DownloadError::Unauthorized)?;
-        let user = state
-            .users
-            .users
-            .get_by_id(&session.user_id)
-            .await
-            .map_err(|error| match error {
-                StoreError::Busy => ApiError::unavailable(
-                    Unavailable::ServerBusy,
-                    "download gate: users store busy",
-                ),
-                other => DownloadError::internal(format!("{other:?}")).into(),
-            })?
-            .ok_or(DownloadError::Unauthorized)?;
-        Ok(Self(user.role))
     }
 }
 
@@ -230,10 +183,10 @@ fn require_allowed(state: &DownloadState, role: Role) -> Result<(), DownloadErro
 )]
 pub async fn download_access(
     State(state): State<DownloadState>,
-    DownloadUser(role): DownloadUser,
+    User(user): User,
 ) -> Result<Json<LibraryDownloadAccess>, ApiError> {
     Ok(Json(LibraryDownloadAccess {
-        allowed: allowed(&state, role)?,
+        allowed: allowed(&state, user.role())?,
     }))
 }
 
@@ -256,11 +209,11 @@ pub async fn download_access(
 )]
 pub async fn download_track(
     State(state): State<DownloadState>,
-    DownloadUser(role): DownloadUser,
+    User(user): User,
     UrlPath(id): UrlPath<String>,
     request_headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    require_allowed(&state, role)?;
+    require_allowed(&state, user.role())?;
     let library = state
         .library
         .as_ref()
@@ -323,10 +276,10 @@ pub async fn download_track(
 )]
 pub async fn download_album(
     State(state): State<DownloadState>,
-    DownloadUser(role): DownloadUser,
+    User(user): User,
     UrlPath(id): UrlPath<String>,
 ) -> Result<Response, ApiError> {
-    require_allowed(&state, role)?;
+    require_allowed(&state, user.role())?;
     let library = state
         .library
         .as_ref()
@@ -350,10 +303,10 @@ pub async fn download_album(
 )]
 pub async fn download_album_by_mbid(
     State(state): State<DownloadState>,
-    DownloadUser(role): DownloadUser,
+    User(user): User,
     UrlPath(mbid): UrlPath<String>,
 ) -> Result<Response, ApiError> {
-    require_allowed(&state, role)?;
+    require_allowed(&state, user.role())?;
     let library = state
         .library
         .as_ref()

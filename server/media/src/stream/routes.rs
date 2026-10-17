@@ -22,7 +22,7 @@
 //!
 //! Players link to `/api/v3/stream/{source}/{key}` with those three query
 //! keys. The shapes stay small and stable: one handler shape
-//! `(State, StreamUser, Path, HeaderMap, ValidQuery)`, path params only
+//! `(State, User, Path, HeaderMap, ValidQuery)`, path params only
 //! for identity, query only for transcode hints. A new gateway capability
 //! should be a new query key, not a new route.
 //!
@@ -65,16 +65,15 @@ use futures_util::stream::BoxStream;
 use axum::{
     Router,
     body::Body,
-    extract::{FromRequestParts, Path, State},
+    extract::{Path, State},
     http::{
         HeaderMap, HeaderValue, StatusCode,
         header::{self},
-        request::Parts,
     },
     response::{IntoResponse, Response},
     routing::get,
 };
-use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::{Principal, User};
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidQuery;
 use serde::Deserialize;
@@ -430,36 +429,6 @@ impl<E> Clone for StreamState<E> {
     }
 }
 
-/// Any authenticated session. The session gate already ran, so presence of
-/// the stashed session is the whole check; the user id feeds per-principal
-/// leases. Missing session reads as 401, mirroring the users extractors.
-pub struct StreamUser {
-    /// Lease principal.
-    pub user_id: String,
-}
-
-impl<E: Send + Sync> FromRequestParts<StreamState<E>> for StreamUser {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        _state: &StreamState<E>,
-    ) -> Result<Self, Self::Rejection> {
-        parts
-            .extensions
-            .get::<CurrentSession>()
-            .map(|session| Self {
-                user_id: session.user_id.clone(),
-            })
-            .ok_or_else(|| {
-                StreamError::Unauthorized {
-                    message: "Authentication required".to_owned(),
-                }
-                .into()
-            })
-    }
-}
-
 /// Transcode hints. All optional; `format`/`max_bitrate` pass straight to
 /// the engine's `decide()`, and `estimate_content_length=true` asks a
 /// transcode landing for its estimated length. Player deep links rely on
@@ -487,11 +456,6 @@ pub struct StreamQuery {
 /// Every failure these routes can return.
 #[derive(Debug)]
 pub enum StreamError {
-    /// No valid session. Carries the `WWW-Authenticate` challenge.
-    Unauthorized {
-        /// User-safe reason.
-        message: String,
-    },
     /// Unknown id. Message follows the v2 detail per source.
     NotFound {
         /// "Track file not found" or "Audio item not found".
@@ -554,7 +518,6 @@ pub(crate) fn unsatisfiable(total_len: u64) -> ApiError {
 impl From<StreamError> for ApiError {
     fn from(error: StreamError) -> Self {
         match error {
-            StreamError::Unauthorized { message } => ApiError::unauthorized(message),
             StreamError::NotFound { message } => {
                 ApiError::new(StatusCode::NOT_FOUND, STREAM_NOT_FOUND, message)
             }
@@ -633,7 +596,7 @@ where
 )]
 pub(crate) async fn stream_get<E: StreamEngine>(
     State(state): State<StreamState<E>>,
-    user: StreamUser,
+    User(user): User,
     Path((source, key)): Path<(String, String)>,
     headers: HeaderMap,
     ValidQuery(query): ValidQuery<StreamQuery>,
@@ -662,7 +625,7 @@ pub(crate) async fn stream_get<E: StreamEngine>(
 )]
 pub(crate) async fn stream_head<E: StreamEngine>(
     State(state): State<StreamState<E>>,
-    user: StreamUser,
+    User(user): User,
     Path((source, key)): Path<(String, String)>,
     headers: HeaderMap,
     ValidQuery(query): ValidQuery<StreamQuery>,
@@ -674,7 +637,7 @@ pub(crate) async fn stream_head<E: StreamEngine>(
 /// semantics (transcode headers, range slicing, HEAD body strip).
 async fn serve<E: StreamEngine>(
     state: &StreamState<E>,
-    user: &StreamUser,
+    user: &Principal,
     source_raw: &str,
     key: &str,
     headers: &HeaderMap,
@@ -690,7 +653,7 @@ async fn serve<E: StreamEngine>(
             StreamOpen {
                 source,
                 key: key.to_owned(),
-                user_id: user.user_id.clone(),
+                user_id: user.user_id().to_owned(),
                 params: StreamParams {
                     format: query.format.clone(),
                     max_bitrate_kbps: query.max_bitrate,

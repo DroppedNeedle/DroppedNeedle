@@ -579,7 +579,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     ));
     // The one registry every background job registers on.
     let jobs = JobsSetup::build(
-        auth.users.clone(),
         runtime.wakeups().clone(),
         runtime.lane().clone(),
         runtime.checkpoint().clone(),
@@ -683,7 +682,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     }
     let plugins = PluginsSetup::build(
         plugin_host,
-        auth.users.clone(),
         http.shared().clone(),
         crypto,
         provider_cache,

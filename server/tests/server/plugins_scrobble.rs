@@ -15,7 +15,7 @@ use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, Lane, open_runtime};
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
-use droppedneedle_plugins::fakes::{FakeRoles, FakeVerifier};
+use droppedneedle_plugins::fakes::FakeVerifier;
 use droppedneedle_plugins::handlers::{ScrobbleHttpDeps, scrobble_router};
 use droppedneedle_plugins::scrobble::{
     ListenBrainzLinkStore, MemoryListenBrainzLinkStore, MemoryScrobblePrefsStore,
@@ -49,9 +49,6 @@ fn rig() -> Rig {
         Arc::new(NoopMixApprovalHook),
         Arc::new(NoopConnectionChangedHook),
     );
-    let roles = Arc::new(FakeRoles::new());
-    roles.insert("user-1", Role::User);
-    roles.insert("admin-1", Role::Admin);
     let http = ScrobbleHttpDeps {
         deps: ScrobbleDeps::new(
             deps.prefs.clone(),
@@ -60,7 +57,6 @@ fn rig() -> Rig {
             deps.mix_hook.clone(),
             deps.cache_hook.clone(),
         ),
-        roles,
         mix_state: Arc::new(StaticMixState),
     };
     Rig {
