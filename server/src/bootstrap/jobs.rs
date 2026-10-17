@@ -22,7 +22,6 @@ use std::time::Duration;
 
 use axum::Router;
 
-use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::concerts::ConcertsSweep;
 use droppedneedle_kernel::db::{CheckpointService, DurableWorkWakeups, WriteLane};
 use droppedneedle_kernel::jobs::cache_sync::CacheSyncStatus;
@@ -370,7 +369,7 @@ impl JobsSetup {
     /// Route tests exercise the playlist route through this; loop tests
     /// bind the memory stores directly.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(_users: UsersDeps) -> Self {
+    pub fn for_tests(_users: droppedneedle_auth::users::UsersDeps) -> Self {
         let media = MediaJobs::for_tests();
         Self {
             registry: JobRegistry::new(StoreKind::Memory(
