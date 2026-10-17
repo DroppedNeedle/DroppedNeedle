@@ -9,11 +9,6 @@ use super::db::StoreError;
 /// Every failure the collections routes can return to a caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CollectionsError {
-    /// No usable credential.
-    Unauthorized {
-        /// User-safe reason.
-        message: String,
-    },
     /// Credential lacks rights.
     Forbidden {
         /// User-safe reason.

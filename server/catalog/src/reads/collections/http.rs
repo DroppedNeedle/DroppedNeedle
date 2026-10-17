@@ -11,7 +11,6 @@ use super::error::CollectionsError;
 impl From<CollectionsError> for ApiError {
     fn from(error: CollectionsError) -> Self {
         match error {
-            CollectionsError::Unauthorized { message } => ApiError::unauthorized(message),
             CollectionsError::Forbidden { message } => ApiError::forbidden(message),
             CollectionsError::NotFound => ApiError::not_found(),
             CollectionsError::InvalidInput { message } => ApiError::invalid_input(message),

@@ -75,9 +75,7 @@ impl From<CollectionsError> for CompatError {
     fn from(error: CollectionsError) -> Self {
         match error {
             CollectionsError::NotFound => Self::NotFound,
-            CollectionsError::Forbidden { .. } | CollectionsError::Unauthorized { .. } => {
-                Self::Forbidden
-            }
+            CollectionsError::Forbidden { .. } => Self::Forbidden,
             CollectionsError::InvalidInput { message } => Self::Invalid(message),
             CollectionsError::Conflict { message } => Self::Conflict(message),
             CollectionsError::Busy { operation } => {
