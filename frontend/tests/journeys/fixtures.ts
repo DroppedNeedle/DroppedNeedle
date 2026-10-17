@@ -1,4 +1,4 @@
-import { test as base, expect } from '@playwright/test';
+import { test as base, expect, type Page } from '@playwright/test';
 
 // Every journey fails if the page asks for anything off the server's origin:
 // the server is sealed, so the browser must not reach out on its own either.
@@ -55,3 +55,36 @@ export const test = base.extend<{ sameOriginOnly: void; noPolicyViolations: void
 });
 
 export { expect };
+
+export const admin = {
+	displayName: 'Journey Admin',
+	username: 'journey-admin',
+	password: 'correct horse battery staple'
+};
+
+// The mock MusicBrainz and slskd the script starts on the same sealed
+// network, as the server reaches them.
+export const mocks = {
+	musicbrainz: requireEnv('DN_E2E_MOCK_MUSICBRAINZ'),
+	slskd: requireEnv('DN_E2E_MOCK_SLSKD')
+};
+
+function requireEnv(name: string): string {
+	const value = process.env[name];
+	if (!value) {
+		throw new Error(`${name} is not set: run the journeys with server/scripts/e2e-container.sh.`);
+	}
+	return value;
+}
+
+// Every journey runs on a server of its own, so each starts by creating the
+// first admin, which signs it in.
+export async function setUpAdmin(page: Page): Promise<void> {
+	await page.goto('/setup');
+	await page.getByLabel('Display Name').fill(admin.displayName);
+	await page.getByLabel('Username').fill(admin.username);
+	await page.getByLabel('Password', { exact: true }).fill(admin.password);
+	await page.getByLabel('Confirm Password').fill(admin.password);
+	await page.getByRole('button', { name: 'Create Admin Account' }).click();
+	await expect(page.getByRole('button', { name: 'Log out' })).toBeVisible();
+}

@@ -1,10 +1,4 @@
-import { test, expect } from './fixtures';
-
-const admin = {
-	displayName: 'Journey Admin',
-	username: 'journey-admin',
-	password: 'correct horse battery staple'
-};
+import { test, expect, admin } from './fixtures';
 
 // A fresh server sends the first visitor to set-up. The admin created there
 // is signed in straight away, and can sign out and back in with the same

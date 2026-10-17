@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// The journeys run against a fresh server that server/scripts/e2e-container.sh
+// Each journey runs against a fresh server that server/scripts/e2e-container.sh
 // starts on a network with no way out, and the script passes its address here.
 const baseURL = process.env.DN_E2E_BASE_URL;
 if (!baseURL) {
@@ -10,7 +10,7 @@ if (!baseURL) {
 export default defineConfig({
 	testDir: '.',
 	outputDir: '../../test-results/journeys',
-	// One server per run, and later journeys build on what earlier ones set up.
+	// The script runs one journey file per server.
 	workers: 1,
 	fullyParallel: false,
 	forbidOnly: !!process.env.CI,

@@ -3,9 +3,10 @@
 #
 # 1. Smoke: fresh boot, healthy, clean SIGTERM shutdown. Prints cold and
 #    warm boot time, idle RSS and shutdown time.
-# 2. Journeys: starts the image on an internal network with no route out,
-#    checks that nothing outside resolves or routes, then runs the browser
-#    journeys in frontend/tests/journeys against it.
+# 2. Journeys: on an internal network with no route out, starts the mock
+#    slskd and MusicBrainz (e2e-mocks.Dockerfile), then runs each browser
+#    journey in frontend/tests/journeys against a fresh server of its own,
+#    after checking that nothing outside resolves or routes from it.
 #
 # Everything runs against containers this script starts under its own names,
 # never against an address passed in. They are removed on exit, pass or fail,
@@ -15,12 +16,14 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 IMAGE="droppedneedle-v3:e2e"
+MOCKS_IMAGE="droppedneedle-v3:e2e-mocks"
 NAME="dn-e2e-smoke"
 APP="dn-e2e-app"
+MOCKS="dn-e2e-mocks"
 NET="dn-e2e-sealed"
 
 cleanup() {
-  docker rm -f "$NAME" "$APP" >/dev/null 2>&1 || true
+  docker rm -f "$NAME" "$APP" "$MOCKS" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -59,6 +62,7 @@ curl_inside() {
 
 echo "--- build ---"
 docker build -f "$ROOT/Dockerfile" -t "$IMAGE" "$ROOT" || fail "docker build failed"
+docker build -f "$ROOT/server/scripts/e2e-mocks.Dockerfile" -t "$MOCKS_IMAGE" "$ROOT" || fail "mocks build failed"
 
 cleanup
 
@@ -95,38 +99,68 @@ echo "exit code 0, graceful-shutdown log line present"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 
 echo "--- journeys ---"
-# A published port does not listen on an internal network, so the browser
-# on the host reaches the app by its address on the network's bridge.
 docker network create --internal "$NET" >/dev/null || fail "network create failed"
-docker run -d --name "$APP" --network "$NET" -e TZ=UTC -e RUST_LOG=info "$IMAGE" >/dev/null || fail "journey container did not start"
-APP_IP=$(docker inspect "$APP" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
-[ -n "$APP_IP" ] || fail "journey container has no address"
-BASE_URL="http://$APP_IP:8688"
-HEALTHY=""
+docker run -d --name "$MOCKS" --network "$NET" "$MOCKS_IMAGE" \
+  --slskd 0.0.0.0:5030 --musicbrainz 0.0.0.0:5000 >/dev/null || fail "mocks did not start"
+MOCKS_IP=$(docker inspect "$MOCKS" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+[ -n "$MOCKS_IP" ] || fail "mocks container has no address"
+MOCKS_UP=""
 for _ in $(seq 1 60); do
-  if curl -sf "$BASE_URL/health" >/dev/null 2>&1; then
-    HEALTHY=1
+  if curl -sf "http://$MOCKS_IP:5000/ws/2/artist?query=test" >/dev/null 2>&1 \
+    && curl -sf -H "X-API-Key: e2e" "http://$MOCKS_IP:5030/api/v0/application" >/dev/null 2>&1; then
+    MOCKS_UP=1
     break
   fi
   sleep 0.5
 done
-[ -n "$HEALTHY" ] || fail "journey container never became healthy at $BASE_URL"
+[ -n "$MOCKS_UP" ] || fail "mocks never answered at $MOCKS_IP"
 
-# The seal, checked from inside the app's container: a documentation address
-# fails at once with no route (curl 7), not after a timeout (curl 28), and
-# the documentation domain does not resolve (curl 6).
-ROUTE_RC=$(curl_inside "http://192.0.2.1/")
-[ "$ROUTE_RC" = "7" ] || fail "the journey network has a route out (curl exit $ROUTE_RC)"
-NAME_RC=$(curl_inside "http://example.com/")
-[ "$NAME_RC" = "6" ] || fail "outside names resolve on the journey network (curl exit $NAME_RC)"
-echo "sealed: no outside address routes, no outside name resolves"
+# Start a fresh server on the sealed network, wait for it, and check the seal
+# from inside it: a documentation address fails at once with no route (curl
+# 7), not after a timeout (curl 28), and the documentation domain does not
+# resolve (curl 6). A published port does not listen on an internal network,
+# so the browser on the host reaches the app by its address on the bridge.
+start_app() {
+  docker rm -f "$APP" >/dev/null 2>&1 || true
+  docker run -d --name "$APP" --network "$NET" -e TZ=UTC -e RUST_LOG=info \
+    "$IMAGE" >/dev/null || fail "journey container did not start"
+  APP_IP=$(docker inspect "$APP" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+  [ -n "$APP_IP" ] || fail "journey container has no address"
+  BASE_URL="http://$APP_IP:8688"
+  HEALTHY=""
+  for _ in $(seq 1 60); do
+    if curl -sf "$BASE_URL/health" >/dev/null 2>&1; then
+      HEALTHY=1
+      break
+    fi
+    sleep 0.5
+  done
+  [ -n "$HEALTHY" ] || fail "journey container never became healthy at $BASE_URL"
+  ROUTE_RC=$(curl_inside "http://192.0.2.1/")
+  [ "$ROUTE_RC" = "7" ] || fail "the journey network has a route out (curl exit $ROUTE_RC)"
+  NAME_RC=$(curl_inside "http://example.com/")
+  [ "$NAME_RC" = "6" ] || fail "outside names resolve on the journey network (curl exit $NAME_RC)"
+}
 
-START=$(date +%s.%N)
-if ! DN_E2E_BASE_URL="$BASE_URL" pnpm --dir "$ROOT/frontend" exec playwright test -c tests/journeys; then
-  echo "--- app log (last 80 lines) ---"
-  docker logs --tail 80 "$APP" 2>&1 || true
-  fail "journeys failed; traces are in frontend/test-results/journeys"
-fi
-echo "journeys: $(elapsed "$START" "$(date +%s.%N)")s"
+# Each journey gets a server of its own, so none depends on another.
+ALL_START=$(date +%s.%N)
+for SPEC in "$ROOT"/frontend/tests/journeys/*.spec.ts; do
+  JOURNEY=$(basename "$SPEC")
+  start_app
+  echo "$JOURNEY: sealed server at $BASE_URL"
+  START=$(date +%s.%N)
+  if ! DN_E2E_BASE_URL="$BASE_URL" \
+    DN_E2E_MOCK_MUSICBRAINZ="http://$MOCKS:5000/ws/2" \
+    DN_E2E_MOCK_SLSKD="http://$MOCKS:5030" \
+    pnpm --dir "$ROOT/frontend" exec playwright test -c tests/journeys "$JOURNEY"; then
+    echo "--- app log (last 80 lines) ---"
+    docker logs --tail 80 "$APP" 2>&1 || true
+    echo "--- mocks log ---"
+    docker logs "$MOCKS" 2>&1 || true
+    fail "$JOURNEY failed; its trace is in frontend/test-results/journeys"
+  fi
+  echo "$JOURNEY: $(elapsed "$START" "$(date +%s.%N)")s"
+done
+echo "journeys: $(elapsed "$ALL_START" "$(date +%s.%N)")s"
 
 echo "E2E PASSED"
