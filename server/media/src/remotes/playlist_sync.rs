@@ -13,13 +13,13 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{FromRequestParts, State},
-    http::{StatusCode, request::Parts},
-    response::{IntoResponse, Response},
+    http::request::Parts,
     routing::post,
 };
 
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::roles::Role;
+use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::jobs::playlist_sync::{
     DISABLED_MESSAGE, PlaylistExporter, PlaylistSyncResult, PlaylistSyncSettings,
 };
@@ -53,7 +53,7 @@ where
     T: Send + Sync,
     E: Send + Sync,
 {
-    type Rejection = SyncError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -65,13 +65,13 @@ where
             .ok_or(SyncError::Unauthorized)?;
         match state.roles.role_of(&session.user_id).await {
             Some(Role::Admin) => Ok(SyncAdmin),
-            Some(_) => Err(SyncError::Forbidden),
-            None => Err(SyncError::Unauthorized),
+            Some(_) => Err(SyncError::Forbidden.into()),
+            None => Err(SyncError::Unauthorized.into()),
         }
     }
 }
 
-/// Route-level failures, rendered in the shared error envelope.
+/// Route-level failures, answered through [`ApiError`].
 #[derive(Debug)]
 pub enum SyncError {
     /// No session stashed, or the account behind it is gone.
@@ -80,32 +80,11 @@ pub enum SyncError {
     Forbidden,
 }
 
-impl IntoResponse for SyncError {
-    fn into_response(self) -> Response {
-        let (status, code, message) = match self {
-            Self::Unauthorized => (
-                StatusCode::UNAUTHORIZED,
-                "UNAUTHORIZED",
-                "Authentication required",
-            ),
-            Self::Forbidden => (StatusCode::FORBIDDEN, "FORBIDDEN", "Admin role required"),
-        };
-        let body = droppedneedle_kernel::error::ErrorEnvelope {
-            error: droppedneedle_kernel::error::ErrorBody {
-                code: code.to_owned(),
-                message: message.to_owned(),
-                details: None,
-            },
-        };
-        if status == StatusCode::UNAUTHORIZED {
-            (
-                status,
-                [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
-                Json(body),
-            )
-                .into_response()
-        } else {
-            (status, Json(body)).into_response()
+impl From<SyncError> for ApiError {
+    fn from(error: SyncError) -> Self {
+        match error {
+            SyncError::Unauthorized => ApiError::unauthorized("Authentication required"),
+            SyncError::Forbidden => ApiError::forbidden("Admin role required"),
         }
     }
 }
