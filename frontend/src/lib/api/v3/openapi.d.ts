@@ -478,7 +478,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Queue demand plus the job registry. */
+        /** Queue demand, the job registry and the latest checkpoint pass. */
         get: operations["queue_stats"];
         put?: never;
         post?: never;
@@ -12073,10 +12073,7 @@ export interface components {
                 [key: string]: string[];
             };
         };
-        /**
-         * @description Latest checkpoint pass, for the health payload. `None` on `/health`
-         *     until the checkpoint loop records its first pass.
-         */
+        /** @description One database checkpoint pass, for the queue stats. */
         CheckpointView: {
             /**
              * Format: int64
@@ -12090,7 +12087,10 @@ export interface components {
             at_unix: number;
             /** @description True when a lock contender blocked the pass. */
             busy: boolean;
-            /** @description Non-lock failure text, when the pass failed. */
+            /**
+             * @description `CHECKPOINT_FAILED` when the pass failed on something other than a
+             *     lock. The cause is in the server log.
+             */
             error?: string | null;
             /** @description `passive` or `truncate`. */
             mode: string;
@@ -14610,12 +14610,11 @@ export interface components {
             handed_back: boolean;
         };
         /**
-         * @description Health payload. `status` plus the running message keep the v2 shape;
-         *     `checkpoint` adds the latest checkpoint pass (`None` until the
-         *     checkpoint loop records one, or on states without a checkpoint service).
+         * @description Health payload, in the v2 shape. The route is public, so it says
+         *     nothing about the server's internals; admins read those from the
+         *     admin routes.
          */
         HealthResponse: {
-            checkpoint?: null | components["schemas"]["CheckpointView"];
             /** @description Human-readable running message. */
             message: string;
             /** @description Service state, `ok` when serving. */
@@ -19481,6 +19480,7 @@ export interface components {
         QueueStatsResponse: {
             /** @description Demand per durable-work channel. */
             channels: components["schemas"]["WakeupChannelView"][];
+            checkpoint?: null | components["schemas"]["CheckpointView"];
             /** @description Registered background jobs in name order. */
             jobs: components["schemas"]["JobView"][];
         };

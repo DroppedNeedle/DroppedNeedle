@@ -180,10 +180,7 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
             rate_limit,
         ));
     let app = Router::new()
-        .route(
-            "/health",
-            get(handlers::health).with_state(state.admin.checkpoint.clone()),
-        )
+        .route("/health", get(handlers::health))
         .route("/openapi.json", get(handlers::openapi_json))
         .merge(v3)
         .merge(wrapped)

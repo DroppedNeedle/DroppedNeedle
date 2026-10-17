@@ -1,8 +1,9 @@
 //! Queue and provider stats.
 //!
 //! Queue stats port v2's lane-occupancy gauge onto the v3 durable fabric:
-//! per-channel requested/consumed demand plus the job-registry rows. Reads
-//! are plain pool queries; the registry decode reuses the fabric's own
+//! per-channel requested/consumed demand, the job-registry rows and the
+//! latest checkpoint pass. Reads are plain pool queries; the registry
+//! decode reuses the fabric's own
 //! [`droppedneedle_kernel::db::DurableWorkWakeups::list_jobs`].
 //!
 //! Provider stats port v2's provider-counters snapshot onto the v3 pacing
@@ -10,19 +11,24 @@
 //! and slot-lane occupancy.
 
 use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 
 use super::{
     AdminDb,
     error::AdminError,
     models::{
-        JobView, ProviderLimiterView, ProviderStatsResponse, QueueStatsResponse, SlotView,
-        WakeupChannelView,
+        CheckpointView, JobView, ProviderLimiterView, ProviderStatsResponse, QueueStatsResponse,
+        SlotView, WakeupChannelView,
     },
 };
+use droppedneedle_kernel::db::{CheckpointMode, CheckpointOutcome, CheckpointService};
 use droppedneedle_providers::Providers;
 
-/// Channel demand plus registry rows.
-pub async fn queue_stats(db: &AdminDb) -> Result<QueueStatsResponse, AdminError> {
+/// Channel demand, registry rows and the latest checkpoint pass.
+pub async fn queue_stats(
+    db: &AdminDb,
+    checkpoint: Option<&CheckpointService>,
+) -> Result<QueueStatsResponse, AdminError> {
     let rows: Vec<(String, i64, i64)> = sqlx::query_as(
         "SELECT channel, seq, consumed_seq FROM durable_work_wakeups ORDER BY channel",
     )
@@ -54,7 +60,31 @@ pub async fn queue_stats(db: &AdminDb) -> Result<QueueStatsResponse, AdminError>
                 last_heartbeat_at: job.last_heartbeat_at,
             })
             .collect(),
+        checkpoint: checkpoint
+            .and_then(CheckpointService::try_latest)
+            .map(checkpoint_view),
     })
+}
+
+/// The pass as admins see it. The failure text can carry a path, so it
+/// stays in the log and the view gets a fixed code.
+fn checkpoint_view(pass: CheckpointOutcome) -> CheckpointView {
+    CheckpointView {
+        mode: match pass.mode {
+            CheckpointMode::Passive => "passive".to_owned(),
+            CheckpointMode::Truncate => "truncate".to_owned(),
+        },
+        busy: pass.busy,
+        active_bytes: pass.active_bytes,
+        wal_file_bytes: pass.wal_file_bytes,
+        suspended: pass.suspended,
+        at_unix: pass
+            .at
+            .duration_since(UNIX_EPOCH)
+            .map(|span| span.as_secs())
+            .unwrap_or(0),
+        error: pass.error.map(|_| "CHECKPOINT_FAILED".to_owned()),
+    }
 }
 
 /// Limiter posture per provider plus slot-lane occupancy.

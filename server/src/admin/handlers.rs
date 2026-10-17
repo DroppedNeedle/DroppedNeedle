@@ -173,7 +173,7 @@ pub async fn clear_cache(
         .map_err(AdminHttpError::from)
 }
 
-/// Queue demand plus the job registry.
+/// Queue demand, the job registry and the latest checkpoint pass.
 #[utoipa::path(
     get,
     tag = "admin",
@@ -184,7 +184,9 @@ pub async fn queue_stats(
     State(admin): State<AdminSetup>,
 ) -> Result<Json<QueueStatsResponse>, AdminHttpError> {
     let db = admin.db.as_ref().ok_or_else(unwired_db)?;
-    Ok(Json(super::queues::queue_stats(db).await?))
+    Ok(Json(
+        super::queues::queue_stats(db, admin.checkpoint.as_ref()).await?,
+    ))
 }
 
 /// Provider limiter posture plus slot lanes.

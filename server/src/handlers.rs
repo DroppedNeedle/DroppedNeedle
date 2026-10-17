@@ -1,25 +1,22 @@
 //! Thin Axum handlers. Each handler answers one route and returns typed
 //! errors; status mapping lives in `error::ApiError`.
 
-use axum::{Json, extract::State};
+use axum::Json;
 use serde::Serialize;
 use utoipa::{OpenApi as _, ToSchema};
 
-use crate::{admin::CheckpointView, docs::ApiDoc};
-use droppedneedle_kernel::{db::CheckpointService, error::ApiError};
+use crate::docs::ApiDoc;
+use droppedneedle_kernel::error::ApiError;
 
-/// Health payload. `status` plus the running message keep the v2 shape;
-/// `checkpoint` adds the latest checkpoint pass (`None` until the
-/// checkpoint loop records one, or on states without a checkpoint service).
+/// Health payload, in the v2 shape. The route is public, so it says
+/// nothing about the server's internals; admins read those from the
+/// admin routes.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct HealthResponse {
     /// Service state, `ok` when serving.
     pub status: String,
     /// Human-readable running message.
     pub message: String,
-    /// Latest checkpoint pass, when one has been recorded.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub checkpoint: Option<CheckpointView>,
 }
 
 /// Liveness probe. Public, unauthenticated, cheap.
@@ -29,29 +26,10 @@ pub struct HealthResponse {
     path = "/health",
     responses((status = 200, description = "Server is running", body = HealthResponse))
 )]
-pub async fn health(State(checkpoint): State<Option<CheckpointService>>) -> Json<HealthResponse> {
+pub async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok".to_owned(),
         message: "DroppedNeedle backend running".to_owned(),
-        checkpoint: checkpoint
-            .as_ref()
-            .and_then(CheckpointService::try_latest)
-            .map(|pass| CheckpointView {
-                mode: match pass.mode {
-                    droppedneedle_kernel::db::CheckpointMode::Passive => "passive".to_owned(),
-                    droppedneedle_kernel::db::CheckpointMode::Truncate => "truncate".to_owned(),
-                },
-                busy: pass.busy,
-                active_bytes: pass.active_bytes,
-                wal_file_bytes: pass.wal_file_bytes,
-                suspended: pass.suspended,
-                at_unix: pass
-                    .at
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|span| span.as_secs())
-                    .unwrap_or(0),
-                error: pass.error,
-            }),
     })
 }
 

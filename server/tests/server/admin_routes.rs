@@ -23,9 +23,8 @@ use crate::common::auth::AuthRig;
 
 /// One scratch deployment: migrated runtime, auth on it, wired admin.
 struct Rig {
-    /// Held, never read: dropping it would close the pool out from under
-    /// the admin handles.
-    #[allow(dead_code)]
+    /// Held: dropping it would close the pool out from under the admin
+    /// handles.
     runtime: DbRuntime,
     admin: AdminSetup,
     rig: AuthRig,
@@ -216,6 +215,31 @@ async fn system_health_lists_degraded_services_for_any_user() {
     assert_eq!(entry["fallback"], Value::Null);
     assert!(entry["message"].as_str().is_some_and(|m| !m.is_empty()));
     assert!(entry["degraded_seconds"].is_u64());
+}
+
+/// A failed checkpoint pass reaches the admin as a fixed code, never as
+/// failure text that could carry a path.
+#[tokio::test]
+async fn queue_stats_reports_a_failed_checkpoint_as_a_code() {
+    let mut rig = Rig::open("checkpoint-failed").await;
+    let dir = rig._scratch.to_path_buf();
+    let missing = dir.join("gone").join("app.db");
+    let failing = droppedneedle_kernel::db::CheckpointService::new(
+        &missing,
+        rig.runtime.pool().clone(),
+        Arc::default(),
+        Arc::default(),
+    );
+    assert!(failing.run_once().error.is_some());
+    rig.admin = rig.admin.clone().with_checkpoint(failing);
+
+    let (status, payload) = call(rig.admin_app(), "GET", "/admin/queue-stats", None).await;
+    assert_eq!(status, StatusCode::OK, "{payload}");
+    assert_eq!(payload["checkpoint"]["error"], "CHECKPOINT_FAILED");
+    assert!(
+        !payload.to_string().contains(&*dir.to_string_lossy()),
+        "{payload}"
+    );
 }
 
 #[tokio::test]

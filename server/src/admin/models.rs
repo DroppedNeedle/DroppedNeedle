@@ -154,6 +154,10 @@ pub struct QueueStatsResponse {
     pub channels: Vec<WakeupChannelView>,
     /// Registered background jobs in name order.
     pub jobs: Vec<JobView>,
+    /// Latest database checkpoint pass, once the checkpoint loop has
+    /// recorded one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<CheckpointView>,
 }
 
 /// One provider's limiter posture.
@@ -247,8 +251,7 @@ pub struct PrecacheRunResponse {
     pub status: String,
 }
 
-/// Latest checkpoint pass, for the health payload. `None` on `/health`
-/// until the checkpoint loop records its first pass.
+/// One database checkpoint pass, for the queue stats.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct CheckpointView {
     /// `passive` or `truncate`.
@@ -263,7 +266,8 @@ pub struct CheckpointView {
     pub suspended: bool,
     /// Pass time as unix seconds.
     pub at_unix: u64,
-    /// Non-lock failure text, when the pass failed.
+    /// `CHECKPOINT_FAILED` when the pass failed on something other than a
+    /// lock. The cause is in the server log.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

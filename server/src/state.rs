@@ -44,7 +44,7 @@ pub struct AppState {
     pub library: LibrarySetup,
     /// Subsonic/Jellyfin compat (outside the `/api` gate).
     pub compat: CompatSetup,
-    /// Admin routes plus checkpoint health.
+    /// Admin routes, the latest checkpoint pass among them.
     pub admin: AdminSetup,
     /// Settings: section service with save effects.
     pub settings: SettingsSetup,
