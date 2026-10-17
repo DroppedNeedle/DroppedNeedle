@@ -67,7 +67,10 @@ pub struct TestApp {
     pub plex: MockServer,
     outbound: bootstrap::Outbound,
     router: Option<Router>,
-    state: Option<AppState>,
+    // Boxed, as is the build below: the state is about 10 KB, and every
+    // journey future that holds this app keeps copies of it on the test
+    // thread's 2 MiB stack in a debug build.
+    state: Option<Box<AppState>>,
     admin: tokio::sync::OnceCell<String>,
     stop: Option<oneshot::Sender<()>>,
     server: Option<JoinHandle<Result<(), bootstrap::ServeError>>>,
@@ -143,9 +146,12 @@ impl TestApp {
             router,
             state,
             background,
-        } = bootstrap::build_with(self.config.clone(), self.outbound.clone())
-            .await
-            .expect("the app builds");
+        } = Box::pin(bootstrap::build_with(
+            self.config.clone(),
+            self.outbound.clone(),
+        ))
+        .await
+        .expect("the app builds");
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("loopback binds");
@@ -159,7 +165,7 @@ impl TestApp {
             },
         )));
         self.router = Some(router);
-        self.state = Some(state);
+        self.state = Some(Box::new(state));
         self.stop = Some(stop);
     }
 
@@ -176,7 +182,7 @@ impl TestApp {
     /// generator and the 5xx boundary, for a test that serves its own
     /// routes. Drop the router before [`TestApp::stop`].
     pub fn request_scope(&self, router: Router) -> Router {
-        let state = self.state.clone().expect("the app is running");
+        let state = self.state.as_deref().cloned().expect("the app is running");
         router.layer(axum::middleware::from_fn_with_state(state, request_scope))
     }
 
