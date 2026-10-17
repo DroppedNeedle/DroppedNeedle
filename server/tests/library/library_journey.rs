@@ -8099,6 +8099,49 @@ async fn handing_an_album_back_lets_the_app_write_again() {
     assert_eq!(title(&managed.path(&tracks[0])), vec!["Third".to_owned()]);
 }
 
+/// "Manage it again" spends v2's record on every track, a v2 row a later
+/// in-app write carried included: a file that cannot be read then has no
+/// record at all, never v2's stale one.
+#[tokio::test]
+async fn handing_back_spends_a_carried_v2_record() {
+    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::publish::record::record;
+
+    let managed = ManagedLibrary::start("lib-takeover-hand-back-v2", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 2).await;
+    managed.activate().await;
+    managed.look(&album).await;
+    let db = managed.db();
+    assert_eq!(
+        db.execute(
+            "UPDATE library_track_management_state SET written_sha256 = 'x', \
+             managed_path_revision = 'v2', last_outcome = 'succeeded', \
+             last_operation_job_id = NULL WHERE local_track_id = ?1",
+            [&tracks[1]],
+        )
+        .expect("v2 row carried by a v3 write"),
+        1
+    );
+    db.execute(
+        "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+         VALUES (?1, 'files_changed', 1000)",
+        [&album],
+    )
+    .expect("album marked");
+    std::fs::remove_file(managed.path(&tracks[1])).expect("file gone");
+
+    assert!(
+        Mutations::new(&managed.library)
+            .hand_back_management(&album, "admin")
+            .expect("hand-back answers")
+    );
+    assert!(!record(&db, &tracks[1]).expect("record").exists());
+    assert_eq!(
+        managed.recorded(&tracks[0]),
+        Some(file_sha256(&managed.path(&tracks[0])))
+    );
+}
+
 /// Handing every album back at once only stamps them: no file is read in
 /// the request. The worker then hands back one album a step, and a
 /// restart in between loses none.

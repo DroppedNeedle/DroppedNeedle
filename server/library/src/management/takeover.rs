@@ -19,8 +19,8 @@ use super::models::{ManagementError, PlannedItem};
 use super::reasons::ItemReason;
 use crate::clock::now_unix;
 use crate::operations::decisions::{CatalogAction, bump_catalog, record_action};
+use crate::publish::record::changed_since_written;
 pub use crate::publish::record::record_sql;
-use crate::publish::record::{V2_ROW_SQL, changed_since_written};
 use crate::publish::snapshots::sha256_hex;
 use crate::wiring::LibrarySetup;
 
@@ -583,12 +583,15 @@ pub(crate) fn hand_back(
             return Ok(false);
         }
         // v2's record is spent: from here on the bytes below are the record.
+        // Every v3 writer of `managed_path_revision` sets the job, so a value
+        // with no job is v2's, even on a row a later write gave
+        // `written_sha256`. Kept there, it would be a v2 record again once
+        // that is cleared below.
         tx.execute(
-            &format!(
-                "UPDATE library_track_management_state AS s SET managed_path_revision = NULL, \
-                 row_revision = row_revision + 1 WHERE s.local_track_id IN \
-                 (SELECT id FROM local_tracks WHERE local_album_id = ?1) AND {V2_ROW_SQL}"
-            ),
+            "UPDATE library_track_management_state SET managed_path_revision = NULL, \
+             row_revision = row_revision + 1 WHERE managed_path_revision IS NOT NULL \
+             AND last_operation_job_id IS NULL AND local_track_id IN \
+             (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
             params![album_id],
         )?;
         tx.execute(
