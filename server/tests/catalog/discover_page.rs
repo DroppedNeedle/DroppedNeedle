@@ -464,7 +464,7 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
                  VALUES ('user-1', 'Ada', 'user', '2026-01-01T00:00:00Z')",
                 [],
             )?;
-            Ok(())
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
         })
         .await
         .expect("user row");

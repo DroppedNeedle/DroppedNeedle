@@ -14,7 +14,7 @@
 
 use sqlx::SqlitePool;
 
-use droppedneedle_kernel::db::{WriteLane, writer::Lane};
+use droppedneedle_kernel::db::{DbError, WriteLane, writer::Lane};
 
 /// Activity older than this is forgotten.
 pub const ACTIVITY_WINDOW_SECS: f64 = 86_400.0;
@@ -128,7 +128,7 @@ impl PageDb {
                 Ok(())
             })
             .await
-            .map_err(|error| format!("discover snapshot write: {error}"))
+            .map_err(|error: DbError| format!("discover snapshot write: {error}"))
     }
 
     /// Record that the user used a feature (v2 `record_activity`): prune
@@ -176,7 +176,7 @@ impl PageDb {
                 Ok(())
             })
             .await
-            .map_err(|error| format!("discover activity write: {error}"))
+            .map_err(|error: DbError| format!("discover activity write: {error}"))
     }
 
     /// Activity due for warming under `source`, least recently serviced
@@ -188,7 +188,7 @@ impl PageDb {
         now: f64,
         user_id: Option<&str>,
     ) -> Result<Vec<ActivityRow>, String> {
-        let prune = self
+        let prune: Result<(), DbError> = self
             .lane
             .write(Lane::Background, "discover.activity.prune", move |tx| {
                 tx.execute(
@@ -261,7 +261,7 @@ impl PageDb {
                 Ok(())
             })
             .await
-            .map_err(|error| format!("discover activity finish: {error}"))
+            .map_err(|error: DbError| format!("discover activity finish: {error}"))
     }
 
     /// Whether the user still exists.
@@ -287,6 +287,6 @@ impl PageDb {
                 Ok(())
             })
             .await
-            .map_err(|error| format!("discover user cleanup: {error}"))
+            .map_err(|error: DbError| format!("discover user cleanup: {error}"))
     }
 }

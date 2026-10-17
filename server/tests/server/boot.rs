@@ -271,7 +271,7 @@ async fn acquire_recovery_waits_out_a_busy_reader_and_stops_on_a_real_failure() 
         .lane()
         .write(Lane::Background, "test.break", |tx| {
             tx.execute_batch("ALTER TABLE request_history RENAME TO request_history_gone")?;
-            Ok(())
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
         })
         .await
         .unwrap();

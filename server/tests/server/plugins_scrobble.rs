@@ -291,7 +291,7 @@ async fn mirror_user(runtime: &DbRuntime, user_id: &str) {
                  VALUES (?1, ?1, 'user', '2026-01-01T00:00:00Z')",
                 rusqlite::params![user_id],
             )?;
-            Ok(())
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
         })
         .await
         .expect("user row seeds");

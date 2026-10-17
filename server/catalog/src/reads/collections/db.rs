@@ -11,7 +11,7 @@
 use rusqlite::Transaction;
 use sqlx::SqlitePool;
 
-use droppedneedle_kernel::db::{DbError, Lane, OpError, WriteLane, map_sqlx_busy};
+use droppedneedle_kernel::db::{DbError, Lane, WriteLane, map_sqlx_busy};
 
 /// Every way a store call can fail. The text goes to the log only.
 #[derive(Debug, thiserror::Error)]
@@ -66,7 +66,7 @@ impl CollectionsDb {
     /// One request-path write transaction.
     pub async fn write<F, R>(&self, name: &'static str, op: F) -> Result<R, StoreError>
     where
-        F: FnOnce(&Transaction) -> Result<R, OpError> + Send + 'static,
+        F: FnOnce(&Transaction) -> Result<R, DbError> + Send + 'static,
         R: Send + 'static,
     {
         let (_, lane) = self.live.as_ref().ok_or_else(unwired)?;

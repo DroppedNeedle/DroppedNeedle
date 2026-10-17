@@ -12,7 +12,7 @@ use rusqlite::{OptionalExtension as _, Transaction, params};
 use sqlx::Row as _;
 
 use crate::reads::collections::db::{CollectionsDb, StoreError};
-use droppedneedle_kernel::db::OpError;
+use droppedneedle_kernel::db::DbError;
 
 use super::models::{YouTubeLink, YouTubeTrackLink};
 
@@ -171,8 +171,10 @@ impl LinkStore {
                         origin == LinkOrigin::Manual,
                     ],
                 )?;
-                read_link(tx, &album.album_id)?
-                    .ok_or_else(|| OpError::Abort("saved youtube link vanished".to_owned()))
+                read_link(tx, &album.album_id)?.ok_or_else(|| DbError::WriteFailed {
+                    operation: "youtube save link".to_owned(),
+                    cause: "saved youtube link vanished".to_owned(),
+                })
             })
             .await
     }
@@ -287,8 +289,9 @@ impl LinkStore {
                     .iter()
                     .map(|track| {
                         read_track(tx, &album.album_id, track.disc_number, track.track_number)?
-                            .ok_or_else(|| {
-                                OpError::Abort("saved youtube track link vanished".to_owned())
+                            .ok_or_else(|| DbError::WriteFailed {
+                                operation: "youtube save track links".to_owned(),
+                                cause: "saved youtube track link vanished".to_owned(),
                             })
                     })
                     .collect()
@@ -357,7 +360,7 @@ fn track_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<YouTubeTrackLink, sql
     })
 }
 
-fn read_link(tx: &Transaction, album_id: &str) -> Result<Option<YouTubeLink>, OpError> {
+fn read_link(tx: &Transaction, album_id: &str) -> Result<Option<YouTubeLink>, DbError> {
     let link = tx
         .query_row(
             &format!("{LINK_SELECT} WHERE l.album_id = ?1"),
@@ -385,7 +388,7 @@ fn read_track(
     album_id: &str,
     disc_number: i64,
     track_number: i64,
-) -> Result<Option<YouTubeTrackLink>, OpError> {
+) -> Result<Option<YouTubeTrackLink>, DbError> {
     let track = tx
         .query_row(
             &format!(

@@ -276,7 +276,7 @@ impl ConcertsStore {
                      match_basis = excluded.match_basis, resolved_at = excluded.resolved_at",
                     params![artist, attraction_id, basis.as_str(), now],
                 )?;
-                Ok(())
+                Ok::<_, DbError>(())
             })
             .await
             .map_err(StoreError::from)
@@ -310,7 +310,7 @@ impl ConcertsStore {
                      resolved_at = excluded.resolved_at",
                     params![artist, now],
                 )?;
-                Ok(())
+                Ok::<_, DbError>(())
             })
             .await
             .map_err(StoreError::from)
@@ -404,7 +404,7 @@ impl ConcertsStore {
                     )?;
                 }
                 upsert_cursor(tx, &artist, now, "ok", None)?;
-                Ok(())
+                Ok::<_, DbError>(())
             })
             .await
             .map_err(StoreError::from)
@@ -422,7 +422,7 @@ impl ConcertsStore {
         self.lane
             .write(Lane::Background, "concerts record failure", move |tx| {
                 upsert_cursor(tx, &artist, now, "error", Some(&error))?;
-                Ok(())
+                Ok::<_, DbError>(())
             })
             .await
             .map_err(StoreError::from)
@@ -432,7 +432,7 @@ impl ConcertsStore {
     pub async fn prune_before(&self, cutoff_local_date: String) -> Result<usize, StoreError> {
         self.lane
             .write(Lane::Background, "concerts prune", move |tx| {
-                Ok(tx.execute(
+                Ok::<_, DbError>(tx.execute(
                     "DELETE FROM live_event_feed WHERE local_date < ?1",
                     params![cutoff_local_date],
                 )?)
@@ -547,7 +547,7 @@ impl ConcertsStore {
                         ],
                     )?;
                 }
-                Ok(())
+                Ok::<_, DbError>(())
             })
             .await
             .map_err(StoreError::from)
@@ -574,7 +574,7 @@ impl ConcertsStore {
                      ON CONFLICT(user_id) DO UPDATE SET seen_at = excluded.seen_at",
                     params![user_id, now],
                 )?;
-                Ok(())
+                Ok::<_, DbError>(())
             })
             .await
             .map_err(StoreError::from)

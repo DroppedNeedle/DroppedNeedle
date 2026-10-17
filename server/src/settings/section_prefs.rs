@@ -455,15 +455,13 @@ impl SectionPrefsStore for SqliteSectionPrefsStore {
                     tx.execute(
                         "DELETE FROM user_section_prefs WHERE user_id = ?1 AND page = ?2",
                         rusqlite::params![user_id, page],
-                    )
-                    .map_err(droppedneedle_kernel::db::OpError::Sql)?;
+                    )?;
                     for key in &disabled {
                         tx.execute(
                             "INSERT INTO user_section_prefs (user_id, page, section_key, enabled, updated_at)
                              VALUES (?1, ?2, ?3, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
                             rusqlite::params![user_id, page, key],
-                        )
-                        .map_err(droppedneedle_kernel::db::OpError::Sql)?;
+                        )?;
                     }
                     Ok(())
                 },

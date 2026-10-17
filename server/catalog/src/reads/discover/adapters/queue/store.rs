@@ -14,7 +14,7 @@ use sqlx::SqlitePool;
 
 use crate::reads::discover::adapters::ownership;
 use crate::reads::discover::models::{IgnoredRelease, QueueIgnoreRequest};
-use droppedneedle_kernel::db::{WriteLane, writer::Lane};
+use droppedneedle_kernel::db::{DbError, WriteLane, writer::Lane};
 
 /// Snapshot key prefix the decks share with v2.
 const DECK_KEY_PREFIX: &str = "discover_queue:";
@@ -124,7 +124,7 @@ impl QueueDb {
                 Ok(())
             })
             .await
-            .map_err(|error| format!("ignore write: {error}"))
+            .map_err(|error: DbError| format!("ignore write: {error}"))
     }
 
     /// Drop ignores older than `before` (unix seconds). Returns how many
@@ -142,7 +142,7 @@ impl QueueDb {
                 },
             )
             .await
-            .map_err(|error| format!("ignore prune: {error}"))
+            .map_err(|error: DbError| format!("ignore prune: {error}"))
     }
 
     /// The user's saved deck, when it was built against the current
@@ -192,7 +192,7 @@ impl QueueDb {
                 Ok(())
             })
             .await
-            .map_err(|error| format!("queue snapshot write: {error}"))
+            .map_err(|error: DbError| format!("queue snapshot write: {error}"))
     }
 
     /// Known release to release-group answers for the given lowercased
@@ -228,7 +228,7 @@ impl QueueDb {
         if answers.is_empty() {
             return;
         }
-        let written = self
+        let written: Result<(), DbError> = self
             .lane
             .write(Lane::Background, "discover.queue.resolutions", move |tx| {
                 for (release, group) in &answers {

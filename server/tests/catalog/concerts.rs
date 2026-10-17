@@ -189,7 +189,7 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
                     [user, MBID, &MBID.to_lowercase()],
                 )?;
             }
-            Ok(())
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
         })
         .await
         .unwrap();

@@ -66,7 +66,7 @@ impl Rig {
                             rusqlite::params![id, name, role],
                         )?;
                     }
-                    Ok(())
+                    Ok::<_, droppedneedle_kernel::db::DbError>(())
                 },
             )
             .await

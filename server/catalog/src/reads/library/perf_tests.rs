@@ -14,7 +14,7 @@ use crate::reads::library;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use droppedneedle_kernel::db::{DbConfig, DbRuntime, Lane, OpError, fold_text, open_runtime};
+use droppedneedle_kernel::db::{DbConfig, DbError, DbRuntime, Lane, fold_text, open_runtime};
 use droppedneedle_kernel::schema::{MIGRATOR, apply_migrations, latest_version};
 use library::sqlite::{
     ALBUM_COLUMNS, ALBUM_FILTER, ALBUM_JOINS, ARTIST_CREDIT_COUNTS, LibraryDb, STATS_FORMATS,
@@ -53,8 +53,8 @@ async fn seed_small() -> Fixture {
     runtime
         .lane()
         .write(Lane::Foreground, "perf seed", move |tx| {
-            tx.execute_batch(&seed).map_err(OpError::from)?;
-            Ok(())
+            tx.execute_batch(&seed)?;
+            Ok::<_, DbError>(())
         })
         .await
         .expect("seed batch runs");
@@ -602,8 +602,8 @@ async fn write_batch(fixture: &Fixture, label: &'static str, sql: String) {
         .runtime
         .lane()
         .write(Lane::Foreground, label, move |tx| {
-            tx.execute_batch(&sql).map_err(OpError::from)?;
-            Ok(())
+            tx.execute_batch(&sql)?;
+            Ok::<_, DbError>(())
         })
         .await
         .expect("write batch runs");
@@ -3182,7 +3182,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use droppedneedle_kernel::db::{Db, DbError, WriteLane};
+use droppedneedle_kernel::db::{Db, WriteLane};
 use library::player::{
     AlbumOrder, AlbumQuery, OrderKey, PlayerAlbum, PlayerCatalog, PlayerTrack, SqlitePlayerCatalog,
     TrackOrder, TrackQuery,
@@ -4101,7 +4101,7 @@ async fn concurrent_block(
                     for id in 0..WRITER_ROWS {
                         insert.execute((id, stamp))?;
                     }
-                    Ok(())
+                    Ok::<_, DbError>(())
                 })
                 .await
                 .expect("writer commits");

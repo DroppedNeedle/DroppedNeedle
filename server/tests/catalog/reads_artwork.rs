@@ -13,7 +13,7 @@ use droppedneedle_catalog::reads::platform::artwork::{
     ArtworkService, cache::ArtworkCache, local::LocalArtwork, remote::cover_client,
 };
 use droppedneedle_catalog::reads::platform::covers::{self, CoversState};
-use droppedneedle_kernel::db::{DbRuntime, Lane, OpError};
+use droppedneedle_kernel::db::{DbError, DbRuntime, Lane};
 use droppedneedle_library::scan::SqliteScanStore;
 use droppedneedle_providers::coverart::{CaaRequest, CaaTransport, RawResponse, TransportError};
 use tower::ServiceExt as _;
@@ -103,8 +103,7 @@ async fn rig(seed_track: Option<&Path>) -> Rig {
     runtime
         .lane()
         .write(Lane::Foreground, "artwork seed", move |tx| {
-            tx.execute_batch(&seed).map_err(OpError::from)?;
-            Ok(())
+            tx.execute_batch(&seed).map_err(DbError::from)
         })
         .await
         .unwrap();

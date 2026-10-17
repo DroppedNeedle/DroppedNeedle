@@ -553,8 +553,7 @@ async fn sqlite_fixture() -> SqliteFixture {
             "library seed",
             move |tx| {
                 tx.execute_batch(&seed)
-                    .map_err(droppedneedle_kernel::db::OpError::from)?;
-                Ok(())
+                    .map_err(droppedneedle_kernel::db::DbError::from)
             },
         )
         .await

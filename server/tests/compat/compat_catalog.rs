@@ -447,7 +447,7 @@ impl Rig {
                      VALUES ('u1', 'User', 'user', '2024-01-01T00:00:00Z');",
                 )?;
                 tx.execute_batch(LIBRARY)?;
-                Ok(())
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
             })
             .await
             .unwrap();
@@ -586,7 +586,7 @@ async fn jellyfin_ids_unknown_to_a_caller_without_sign_in_read_the_catalog_once(
                  'Portishead', 'portishead', 'Portishead', 'portishead', 'art-1', 1997, \
                  'automatic', 1, 1)",
             )?;
-            Ok(())
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
         })
         .await
         .unwrap();

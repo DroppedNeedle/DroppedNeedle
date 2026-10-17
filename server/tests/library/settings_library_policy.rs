@@ -12,7 +12,7 @@ use droppedneedle::settings::models::{
     LibraryPolicyApplyRequest, LibraryRestoreRootsRequest, LibrarySettingsSaveRequest,
 };
 use droppedneedle::settings::wiring::SettingsSetup;
-use droppedneedle_kernel::db::{Lane, OpError};
+use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::runtime_config::secret_sections::IdentificationPolicy;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use serde_json::json;
@@ -44,8 +44,7 @@ async fn removed_root_restores_and_previews_count_the_catalog() {
     runtime
         .lane()
         .write(Lane::Foreground, "policy seed", move |tx| {
-            tx.execute_batch(&seed).map_err(OpError::from)?;
-            Ok(())
+            tx.execute_batch(&seed).map_err(DbError::from)
         })
         .await
         .expect("catalog seeds");

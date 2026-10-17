@@ -27,7 +27,7 @@ use crate::reads::discover::models::{
 };
 use crate::reads::discover::ports::{BatchFailure, BatchStore, BoxFuture, ProviderFailure};
 use droppedneedle_auth::{Admin, Principal};
-use droppedneedle_kernel::db::{WriteLane, writer::Lane};
+use droppedneedle_kernel::db::{DbError, WriteLane, writer::Lane};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 /// Outcome of an album the batch filed a request for.
@@ -423,7 +423,7 @@ impl LiveBatches {
                 Ok(())
             })
             .await
-            .map_err(|error| format!("batch write: {error}"))
+            .map_err(|error: DbError| format!("batch write: {error}"))
     }
 
     /// The caller's batch already made under this idempotency key.
@@ -724,7 +724,7 @@ impl LiveBatches {
                 Ok(())
             })
             .await
-            .map_err(|error| failed(format!("batch delete: {error}")))?;
+            .map_err(|error: DbError| failed(format!("batch delete: {error}")))?;
         Ok(result)
     }
 }

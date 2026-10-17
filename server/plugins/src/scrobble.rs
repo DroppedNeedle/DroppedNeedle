@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::{collections::HashMap, sync::Mutex};
 
 use droppedneedle_auth::times::to_iso;
-use droppedneedle_kernel::db::{WriteLane, writer::Lane};
+use droppedneedle_kernel::db::{DbError, WriteLane, writer::Lane};
 
 use super::runtime::BoxFuture;
 use droppedneedle_providers::listenbrainz::ListenBrainzVerifier;
@@ -245,7 +245,7 @@ impl ScrobblePrefsStore for SqliteScrobblePrefsStore {
                             i64::from(merged.auto_request_personal_mix),
                         ],
                     )?;
-                    Ok(())
+                    Ok::<_, DbError>(())
                 })
                 .await
             {
@@ -476,7 +476,7 @@ impl ListenBrainzLinkStore for SqliteListenBrainzLinkStore {
                 Ok(())
             })
             .await
-            .map_err(|error| {
+            .map_err(|error: DbError| {
                 tracing::warn!(%error, "listenbrainz link save failed");
                 error.to_string()
             })
@@ -562,7 +562,7 @@ impl ListenBrainzLinkStore for SqliteListenBrainzLinkStore {
             })
             .await
             .map(|changed| changed > 0)
-            .map_err(|error| {
+            .map_err(|error: DbError| {
                 tracing::warn!(%error, "listenbrainz link delete failed");
             })
             .unwrap_or(false)

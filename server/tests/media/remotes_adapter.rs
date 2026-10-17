@@ -600,7 +600,7 @@ async fn linked_connections_survive_a_restart() {
                      VALUES ('user-ada', 'ada', 'Ada', 'user', '2026-01-01T00:00:00Z')",
                     [],
                 )?;
-                Ok(())
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
             })
             .await
             .expect("user seeds");

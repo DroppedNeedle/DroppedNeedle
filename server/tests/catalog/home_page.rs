@@ -23,7 +23,7 @@ use droppedneedle_catalog::reads::discover::adapters::queue::sources::{
 };
 use droppedneedle_catalog::reads::discover::models::{SectionItem, WeeklyExploration};
 use droppedneedle_catalog::reads::discover::ports::BoxFuture;
-use droppedneedle_kernel::db::{Lane, OpError};
+use droppedneedle_kernel::db::{DbError, Lane};
 
 const OWNED_RG: &str = "0a1b2c3d-0000-4000-8000-000000000001";
 const OTHER_RG: &str = "0a1b2c3d-0000-4000-8000-000000000002";
@@ -201,8 +201,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     runtime
         .lane()
         .write(Lane::Foreground, "home seed", move |tx| {
-            tx.execute_batch(&seed).map_err(OpError::from)?;
-            Ok(())
+            tx.execute_batch(&seed).map_err(DbError::from)
         })
         .await
         .expect("seed");
@@ -289,7 +288,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
                 "DELETE FROM local_album_artwork WHERE local_album_id = 'al1'",
                 [],
             )?;
-            Ok(())
+            Ok::<_, DbError>(())
         })
         .await
         .expect("art row removed");

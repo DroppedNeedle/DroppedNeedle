@@ -146,7 +146,7 @@ impl FolderStore for SqliteFolderStore {
                     },
                 )
                 .await
-                .map_err(|error| error.to_string())
+                .map_err(|error: droppedneedle_kernel::db::DbError| error.to_string())
         })
     }
 }
