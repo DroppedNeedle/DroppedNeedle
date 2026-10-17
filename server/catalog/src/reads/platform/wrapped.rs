@@ -20,14 +20,14 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{FromRequestParts, Path, State},
-    http::{HeaderMap, StatusCode, request::Parts},
-    response::Response,
+    http::{HeaderMap, request::Parts},
     routing::get,
 };
 use futures_util::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
 use droppedneedle_auth::session::tokens::constant_time_eq;
+use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::WrappedSettings};
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -365,20 +365,15 @@ pub fn check_key(headers: &HeaderMap, expected: &str) -> bool {
 /// Key-gate rejection. Status 401 with the v2 message verbatim, and
 /// no `WWW-Authenticate` header on purpose: v2 sends none, and a Bearer
 /// challenge would misdescribe a shared-secret header scheme.
-fn wrapped_rejection() -> Response {
-    droppedneedle_kernel::error::envelope_response(
-        StatusCode::UNAUTHORIZED,
-        droppedneedle_kernel::error::UNAUTHORIZED,
-        WRAPPED_UNAUTHORIZED_MESSAGE,
-        None,
-    )
+fn wrapped_rejection() -> ApiError {
+    ApiError::unauthorized_without_challenge(WRAPPED_UNAUTHORIZED_MESSAGE)
 }
 
 /// Extractor enforcing the wrapped key gate before the handler runs.
 pub struct WrappedKey;
 
 impl FromRequestParts<WrappedState> for WrappedKey {
-    type Rejection = Response;
+    type Rejection = ApiError;
 
     fn from_request_parts(
         parts: &mut Parts,

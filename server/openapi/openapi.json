@@ -3064,15 +3064,8 @@
           "401": {
             "description": "Not authenticated"
           },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+          "409": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"
           }
         }
       }
@@ -3099,14 +3092,7 @@
             "description": "Not authenticated"
           },
           "500": {
-            "description": "The batch store failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "The batch store failed"
           }
         }
       },
@@ -3144,34 +3130,13 @@
             "description": "Not authenticated"
           },
           "403": {
-            "description": "Storage full (STORAGE_FULL)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Storage full (STORAGE_FULL)"
+          },
+          "409": {
+            "description": "Acquisition is not running (NOT_AVAILABLE)"
           },
           "429": {
-            "description": "Request quota spent (QUOTA_EXCEEDED)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Acquisition is not running (NOT_AVAILABLE)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Request quota spent (QUOTA_EXCEEDED)"
           }
         }
       }
@@ -3300,14 +3265,7 @@
             "description": "Unknown seed album or playlist"
           },
           "502": {
-            "description": "A music provider failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "A music provider failed"
           }
         }
       }
@@ -3349,14 +3307,7 @@
             "description": "Not authenticated"
           },
           "500": {
-            "description": "The library check failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "The library check failed"
           }
         }
       }
@@ -3464,14 +3415,7 @@
             "description": "Not authenticated"
           },
           "500": {
-            "description": "The ignore could not be saved",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "The ignore could not be saved"
           }
         }
       }
@@ -3498,14 +3442,7 @@
             "description": "Not authenticated"
           },
           "500": {
-            "description": "The ledger could not be read",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "The ledger could not be read"
           }
         }
       }
@@ -3546,14 +3483,7 @@
             "description": "Not authenticated"
           },
           "502": {
-            "description": "MusicBrainz or YouTube failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "MusicBrainz or YouTube failed"
           }
         }
       }
@@ -3617,14 +3547,7 @@
             "description": "Not authenticated"
           },
           "500": {
-            "description": "The library check failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "The library check failed"
           }
         }
       }
@@ -3737,25 +3660,11 @@
           "401": {
             "description": "Not authenticated"
           },
-          "429": {
-            "description": "YouTube search quota used up for today (RATE_LIMITED)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+          "409": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"
           },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+          "429": {
+            "description": "YouTube search quota used up for today (RATE_LIMITED)"
           }
         }
       }
@@ -3804,25 +3713,11 @@
           "401": {
             "description": "Not authenticated"
           },
-          "429": {
-            "description": "YouTube search quota used up for today (RATE_LIMITED)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+          "409": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"
           },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+          "429": {
+            "description": "YouTube search quota used up for today (RATE_LIMITED)"
           }
         }
       }
@@ -3865,14 +3760,7 @@
             "description": "Unknown seed album or playlist"
           },
           "502": {
-            "description": "A music provider failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "A music provider failed"
           }
         }
       }
@@ -3915,14 +3803,7 @@
             "description": "Unknown seed album or playlist"
           },
           "502": {
-            "description": "A music provider failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "A music provider failed"
           }
         }
       }
@@ -3995,15 +3876,8 @@
           "401": {
             "description": "Not authenticated"
           },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+          "409": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"
           }
         }
       }
@@ -5708,15 +5582,8 @@
           "401": {
             "description": "Not authenticated"
           },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+          "409": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"
           }
         }
       }
@@ -5785,15 +5652,8 @@
           "401": {
             "description": "Not authenticated"
           },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+          "409": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"
           }
         }
       }
@@ -5862,15 +5722,8 @@
           "401": {
             "description": "Not authenticated"
           },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+          "409": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"
           }
         }
       }
@@ -5939,15 +5792,8 @@
           "401": {
             "description": "Not authenticated"
           },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+          "409": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"
           }
         }
       }
@@ -22828,57 +22674,22 @@
             }
           },
           "400": {
-            "description": "Bad request body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Bad request body"
           },
           "401": {
             "description": "Not authenticated"
           },
           "404": {
-            "description": "YouTube had no video for the album",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "YouTube had no video for the album"
+          },
+          "409": {
+            "description": "YouTube search is not set up (NOT_CONFIGURED)"
           },
           "429": {
-            "description": "Today's search budget is spent (RATE_LIMITED)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Today's search budget is spent (RATE_LIMITED)"
           },
           "502": {
-            "description": "YouTube failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "YouTube search is not set up (NOT_CONFIGURED)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "YouTube failed"
           }
         }
       }
@@ -22912,57 +22723,22 @@
             }
           },
           "400": {
-            "description": "Bad request body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Bad request body"
           },
           "401": {
             "description": "Not authenticated"
           },
           "404": {
-            "description": "YouTube had no video for the track",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "YouTube had no video for the track"
+          },
+          "409": {
+            "description": "YouTube search is not set up (NOT_CONFIGURED)"
           },
           "429": {
-            "description": "Today's search budget is spent (RATE_LIMITED)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Today's search budget is spent (RATE_LIMITED)"
           },
           "502": {
-            "description": "YouTube failed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "YouTube search is not set up (NOT_CONFIGURED)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "YouTube failed"
           }
         }
       }
@@ -22996,14 +22772,7 @@
             }
           },
           "400": {
-            "description": "Bad request body or too many tracks",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Bad request body or too many tracks"
           },
           "401": {
             "description": "Not authenticated"
@@ -23087,27 +22856,13 @@
             }
           },
           "400": {
-            "description": "Bad body or not a YouTube URL",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Bad body or not a YouTube URL"
           },
           "401": {
             "description": "Not authenticated"
           },
           "404": {
-            "description": "No link saved for the album",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "No link saved for the album"
           }
         }
       },
@@ -23194,14 +22949,7 @@
             }
           },
           "400": {
-            "description": "Bad body or not a YouTube URL",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Bad body or not a YouTube URL"
           },
           "401": {
             "description": "Not authenticated"
@@ -23276,14 +23024,7 @@
             "description": "Removed, or nothing was saved"
           },
           "400": {
-            "description": "Disc or track is not a number",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
+            "description": "Disc or track is not a number"
           },
           "401": {
             "description": "Not authenticated"

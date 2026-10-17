@@ -22,6 +22,7 @@ use droppedneedle_kernel::ids::IdGenerator;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
+use crate::common::TestApp;
 use crate::common::auth::{AuthRig, with_test_principal};
 
 // ---------------------------------------------------------------------------
@@ -309,43 +310,32 @@ fn leak_cause() -> String {
 }
 
 #[tokio::test]
-async fn failing_content_renders_fixed_500_without_leaks() {
+async fn failing_providers_keep_their_status_with_the_fixed_body() {
+    // What a client receives through the request boundary: a failed store
+    // read is a 500, a failed chart provider a 502, both with the fixed
+    // body naming the request id and nothing of the cause.
     let rig = rig();
     rig.content.fail_content(&leak_cause());
-    let (status, body, _) = call(app(&rig, Some("user-1")), "GET", "/api/v3/discover", None).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(error_code(&body), "INTERNAL_ERROR");
-    assert_eq!(body["error"]["message"], "Internal server error");
-    assert_eq!(
-        body["error"]["details"]["error_id"],
-        "123e4567-e89b-12d3-a456-426614174000"
-    );
-    let raw = body.to_string();
-    for marker in LEAK_MARKERS {
-        assert!(!raw.contains(marker), "leaked {marker}");
-    }
-}
-
-#[tokio::test]
-async fn failing_charts_render_fixed_502_without_leaks() {
-    // Charts failures are provider failures: 502 with the fixed message.
-    // The fake routes content failures through 500 and chart failures
-    // through 502 to pin both mappings.
-    let rig = rig();
     rig.charts.fail_charts(&leak_cause());
-    let (status, body, _) = call(
-        app(&rig, Some("user-1")),
-        "GET",
-        "/api/v3/home/trending/artists",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert_eq!(error_code(&body), "UPSTREAM_ERROR");
-    assert_eq!(body["error"]["message"], "Upstream service error");
-    let raw = body.to_string();
-    for marker in LEAK_MARKERS {
-        assert!(!raw.contains(marker), "leaked {marker}");
+    let scope = TestApp::start("reads-discover-faults").await;
+    for (uri, expected) in [
+        ("/api/v3/discover", StatusCode::INTERNAL_SERVER_ERROR),
+        ("/api/v3/home/trending/artists", StatusCode::BAD_GATEWAY),
+    ] {
+        let app = scope.request_scope(app(&rig, Some("user-1")));
+        let (status, body, headers) = call(app, "GET", uri, None).await;
+        assert_eq!(status, expected, "{uri}");
+        assert_eq!(error_code(&body), "INTERNAL_ERROR", "{uri}");
+        assert_eq!(body["error"]["message"], "Internal server error", "{uri}");
+        assert_eq!(
+            body["error"]["details"]["error_id"],
+            headers["x-request-id"].to_str().unwrap(),
+            "{uri}"
+        );
+        let raw = body.to_string();
+        for marker in LEAK_MARKERS {
+            assert!(!raw.contains(marker), "leaked {marker} on {uri}");
+        }
     }
 }
 

@@ -128,7 +128,6 @@ impl ReadsSetup {
             upgrade_policy: upgrade_policy_source(inputs_config.clone()),
             tags: Arc::new(library::tags::UnwiredTagReader),
             auth: users.clone(),
-            ids: ids.clone(),
         };
         let search_enrichment: Arc<dyn search::ports::EnrichmentPort> = match &enrichment {
             Some(pair) => pair.search.clone(),
@@ -170,7 +169,6 @@ impl ReadsSetup {
                 upgrade_policy: Arc::new(library::stores::UpgradePolicy::default),
                 tags: Arc::new(library::tags::UnwiredTagReader),
                 auth: users,
-                ids: ids.clone(),
             },
             search: search::SearchDeps::new(
                 search::service::SearchService::new(pool),
@@ -230,10 +228,7 @@ impl ReadsSetup {
             tracing::warn!("artist image source was already set");
         }
         self.search.service = self.search.service.clone().with_remote(catalog.clone());
-        self.catalog = Some(catalog::CatalogDeps {
-            catalog,
-            ids: self.search.ids.clone(),
-        });
+        self.catalog = Some(catalog::CatalogDeps { catalog });
         self
     }
 
@@ -489,34 +484,24 @@ async fn translate_principal(
     next: Next,
 ) -> Response {
     use axum::response::IntoResponse;
-    use collections::{auth::Principal, error::CollectionsError, http::CollectionsHttpError};
+    use collections::auth::Principal;
+    use droppedneedle_kernel::error::{ApiError, Unavailable};
 
-    let missing = || {
-        CollectionsHttpError(CollectionsError::Unauthorized {
-            message: "Authentication required".to_owned(),
-        })
-    };
+    let missing = || ApiError::unauthorized("Authentication required").into_response();
     let Some(session) = request.extensions().get::<CurrentSession>().cloned() else {
-        return missing().into_response();
+        return missing();
     };
     let user = match users.users.get_by_id(&session.user_id).await {
         Ok(Some(user)) => user,
-        Ok(None) => return missing().into_response(),
+        Ok(None) => return missing(),
         Err(StoreError::Conflict) => {
-            return CollectionsHttpError(CollectionsError::Conflict {
-                message: "Conflicting state".to_owned(),
-            })
-            .into_response();
+            return ApiError::conflict("Conflicting state").into_response();
         }
         Err(StoreError::Busy) => {
-            return CollectionsHttpError(CollectionsError::Busy {
-                error_id: uuid::Uuid::new_v4().to_string(),
-            })
-            .into_response();
+            return ApiError::unavailable(Unavailable::ServerBusy, StoreError::Busy)
+                .into_response();
         }
-        Err(StoreError::Internal(cause)) => {
-            return CollectionsHttpError(CollectionsError::internal(&cause)).into_response();
-        }
+        Err(StoreError::Internal(cause)) => return ApiError::internal(cause).into_response(),
     };
     request.extensions_mut().insert(Principal {
         user_id: user.id,

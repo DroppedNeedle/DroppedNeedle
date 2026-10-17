@@ -13,8 +13,8 @@ export interface ServiceErrorView {
 
 /**
  * Turn a read error into the friendly state Home, Discover and genre pages
- * show. The server answers 503 NOT_CONFIGURED when a service needs setting
- * up, 503 NOT_AVAILABLE when this version does not have the feature, and
+ * show. The server answers 409 NOT_CONFIGURED when a service needs setting
+ * up, 409 NOT_AVAILABLE when this version does not have the feature, and
  * 429 (RATE_LIMITED or QUOTA_EXCEEDED) when a usage limit is spent.
  */
 export function describeServiceError(error: unknown, what: string): ServiceErrorView {
@@ -28,7 +28,7 @@ export function describeServiceError(error: unknown, what: string): ServiceError
 		};
 	}
 	if (error instanceof ApiError) {
-		if (error.status === 503 && error.code === 'NOT_CONFIGURED') {
+		if (error.status === 409 && error.code === 'NOT_CONFIGURED') {
 			return {
 				kind: 'not_configured',
 				title: 'Not set up yet',
@@ -37,7 +37,7 @@ export function describeServiceError(error: unknown, what: string): ServiceError
 				settingsHref: '/settings'
 			};
 		}
-		if (error.status === 503 && error.code === 'NOT_AVAILABLE') {
+		if (error.status === 409 && error.code === 'NOT_AVAILABLE') {
 			return {
 				kind: 'not_available',
 				title: 'Not available here',

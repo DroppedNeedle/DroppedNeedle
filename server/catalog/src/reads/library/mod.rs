@@ -36,7 +36,6 @@ use axum::{
     routing::{get, post},
 };
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_kernel::ids::IdGenerator;
 
 use stores::{
     FavoriteReads, LibraryCatalog, LibraryLookups, LyricsPort, TrackTagReader, UpgradePolicySource,
@@ -59,8 +58,6 @@ pub struct LibraryDeps {
     pub tags: Arc<dyn TrackTagReader>,
     /// Auth bundle, used only to resolve the caller for favorite flags.
     pub auth: UsersDeps,
-    /// Fresh ids for 5xx error ids.
-    pub ids: Arc<dyn IdGenerator>,
 }
 
 /// Authenticated read routes. The session middleware authenticates before

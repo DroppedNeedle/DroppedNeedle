@@ -1,62 +1,27 @@
 //! Thin Axum handlers for unified search.
 //!
 //! Each handler answers one route: extract, validate, call the service,
-//! render. Status mapping lives in [`SearchError`](super::error::SearchError).
+//! render. Status mapping lives in `From<SearchError> for ApiError`.
 //! Authentication is the deny-by-default middleware alone (any signed-in
 //! user, as in v2): these routes take no principal because every role sees the
 //! same catalog and no per-user data is read or written.
 
 use axum::{
     Json,
-    extract::{FromRequest, Path, Query, Request, State},
+    extract::{Path, State},
 };
-use serde::de::DeserializeOwned;
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 use super::error::SearchError;
 use super::models::{BucketQuery, EnrichmentBatchRequest, SearchQuery, SuggestQuery};
 use super::service::{Bucket, BucketLimits, enrich_with_degradation};
 use super::{DEFAULT_BUCKET_LIMIT, DEFAULT_SUGGEST_LIMIT, MAX_BUCKET_LIMIT, MAX_SUGGEST_LIMIT};
 
-/// Query extractor that renders failures in the shared envelope instead
-/// of Axum's default plain-text 400.
-pub struct ValidQuery<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidQuery<T> {
-    type Rejection = SearchError;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Query::<T>::from_request(req, state)
-            .await
-            .map(|Query(value)| Self(value))
-            .map_err(|cause| SearchError::InvalidQuery {
-                message: format!("Invalid query: {cause}"),
-            })
-    }
-}
-
-/// JSON body extractor that renders failures in the shared envelope.
-pub struct ValidJson<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
-    type Rejection = SearchError;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Json::<T>::from_request(req, state)
-            .await
-            .map(|Json(value)| Self(value))
-            .map_err(|cause| SearchError::InvalidQuery {
-                message: format!("Invalid request body: {cause}"),
-            })
-    }
-}
-
 fn service_response<T: serde::Serialize>(
     result: Result<T, sqlx::Error>,
-    deps: &super::SearchDeps,
-) -> Result<Json<T>, SearchError> {
-    result
-        .map(Json)
-        .map_err(|cause| SearchError::internal(&cause, deps.ids.as_ref()))
+) -> Result<Json<T>, ApiError> {
+    result.map(Json).map_err(ApiError::internal)
 }
 
 /// Ranked hits across the selected buckets plus each bucket's standout.
@@ -75,11 +40,12 @@ fn service_response<T: serde::Serialize>(
 pub async fn search(
     State(deps): State<super::SearchDeps>,
     ValidQuery(query): ValidQuery<SearchQuery>,
-) -> Result<Json<super::models::SearchResponse>, SearchError> {
+) -> Result<Json<super::models::SearchResponse>, ApiError> {
     if query.q.trim().is_empty() {
         return Err(SearchError::InvalidQuery {
             message: "Query must not be blank".to_owned(),
-        });
+        }
+        .into());
     }
     let limits = BucketLimits {
         artists: check_limit(query.limit_artists, DEFAULT_BUCKET_LIMIT)?,
@@ -87,7 +53,7 @@ pub async fn search(
         tracks: check_limit(query.limit_tracks, DEFAULT_BUCKET_LIMIT)?,
     };
     let buckets = parse_buckets(query.buckets.as_deref())?;
-    service_response(deps.service.search(&query.q, limits, &buckets).await, &deps)
+    service_response(deps.service.search(&query.q, limits, &buckets).await)
 }
 
 /// One page of one bucket for drill-down views.
@@ -110,12 +76,13 @@ pub async fn search_bucket(
     State(deps): State<super::SearchDeps>,
     Path(bucket): Path<String>,
     ValidQuery(query): ValidQuery<BucketQuery>,
-) -> Result<Json<super::models::SearchBucketResponse>, SearchError> {
+) -> Result<Json<super::models::SearchBucketResponse>, ApiError> {
     let bucket = Bucket::parse(&bucket).ok_or(SearchError::UnknownBucket)?;
     if query.q.trim().is_empty() {
         return Err(SearchError::InvalidQuery {
             message: "Query must not be blank".to_owned(),
-        });
+        }
+        .into());
     }
     let limit = check_page_limit(query.limit)?;
     let offset = query.offset.unwrap_or(0);
@@ -123,7 +90,6 @@ pub async fn search_bucket(
         deps.service
             .search_bucket(bucket, &query.q, limit, offset)
             .await,
-        &deps,
     )
 }
 
@@ -143,7 +109,7 @@ pub async fn search_bucket(
 pub async fn suggest(
     State(deps): State<super::SearchDeps>,
     ValidQuery(query): ValidQuery<SuggestQuery>,
-) -> Result<Json<super::models::SuggestResponse>, SearchError> {
+) -> Result<Json<super::models::SuggestResponse>, ApiError> {
     let limit = check_suggest_limit(query.limit)?;
     if query.q.trim().len() < 2 {
         return Ok(Json(super::models::SuggestResponse {
@@ -151,7 +117,7 @@ pub async fn suggest(
             status: super::models::SearchRemoteStatus::Ok,
         }));
     }
-    service_response(deps.service.suggest(&query.q, limit).await, &deps)
+    service_response(deps.service.suggest(&query.q, limit).await)
 }
 
 /// The single enrich-batch method: one POST enriches a mixed batch of

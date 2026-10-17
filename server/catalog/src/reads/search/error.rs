@@ -1,17 +1,9 @@
-//! Search errors and their envelope mapping.
+//! Search errors and their one mapping onto [`ApiError`].
 //!
-//! Status mapping lives here in the handler layer. Client faults (400,
-//! 404) carry a message safe for users; server faults carry the fixed
-//! generic body plus an error id, with the cause in the structured log.
+//! Client faults (400, 404) carry a message safe for users; a server fault
+//! is the fixed internal error, its cause going to the log only.
 
-use axum::{
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
-
-/// Client sent a blank query, an out-of-range limit, or a bad bucket filter.
-/// The code matches the other reads routes (`INVALID_INPUT` everywhere).
-pub const INVALID_INPUT: &str = "INVALID_INPUT";
+use droppedneedle_kernel::error::ApiError;
 
 /// Handler-layer search errors.
 #[derive(Debug)]
@@ -23,48 +15,13 @@ pub enum SearchError {
     },
     /// Unknown drill-down bucket.
     UnknownBucket,
-    /// Server fault. The id matches the structured log line.
-    Internal {
-        /// Correlation id for the log line.
-        error_id: String,
-    },
 }
 
-impl SearchError {
-    /// Build a server fault, logging the real cause with its id. Call sites
-    /// pass the id generator from the search deps.
-    pub fn internal(
-        cause: &dyn std::fmt::Display,
-        ids: &dyn droppedneedle_kernel::ids::IdGenerator,
-    ) -> Self {
-        let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "search request failed");
-        Self::Internal { error_id }
-    }
-}
-
-impl IntoResponse for SearchError {
-    fn into_response(self) -> Response {
-        match self {
-            SearchError::InvalidQuery { message } => {
-                let body = droppedneedle_kernel::error::ErrorEnvelope {
-                    error: droppedneedle_kernel::error::ErrorBody {
-                        code: INVALID_INPUT.to_owned(),
-                        message,
-                        details: None,
-                    },
-                };
-                (StatusCode::BAD_REQUEST, axum::Json(body)).into_response()
-            }
-            SearchError::UnknownBucket => {
-                droppedneedle_kernel::error::ApiError::not_found().into_response()
-            }
-            SearchError::Internal { error_id } => {
-                droppedneedle_kernel::error::ApiError::server_error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    &error_id,
-                )
-            }
+impl From<SearchError> for ApiError {
+    fn from(error: SearchError) -> Self {
+        match error {
+            SearchError::InvalidQuery { message } => ApiError::invalid_input(message),
+            SearchError::UnknownBucket => ApiError::not_found(),
         }
     }
 }

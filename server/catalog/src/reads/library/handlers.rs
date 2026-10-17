@@ -1,23 +1,21 @@
 //! Thin Axum handlers and the library reads auth extractor.
 //!
 //! Every handler answers one route: extract, call the service, render.
-//! Status mapping lives in [`LibraryError`](super::error::LibraryError).
-//! Query strings parse through [`ValidQuery`], which keeps malformed input
-//! inside the shared error envelope instead of Axum's default plain-text 400.
+//! Status mapping lives in `From<LibraryFailure> for ApiError` (`super::error`).
 
 use axum::{
     Json,
-    extract::{FromRequestParts, Path, Query, Request, State},
+    extract::{FromRequestParts, Path, State},
     http::request::Parts,
 };
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::roles::AuthContext;
 use droppedneedle_auth::users::stores::StoreError as UserStoreError;
-use serde::de::DeserializeOwned;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
 use super::LibraryDeps;
-use super::error::LibraryError;
 use super::models::{
     AlbumCardPage, AlbumDetailView, AlbumPage, AlbumQuery, ArtistPage, ArtistQuery, ArtistView,
     BrowseQuery, DecadesResponse, GenreList, LibraryAlbumStatus, LibraryMbids,
@@ -25,7 +23,7 @@ use super::models::{
     ResolveTracksRequest, ResolveTracksResponse, SearchQuery, SearchResults, StatsView,
     SuggestionsQuery, SuggestionsResponse, TrackPage, TrackQuery, TrackTags, TrackView,
 };
-use super::services::{self, LibraryFailure};
+use super::services;
 
 /// Any authenticated user. Missing session or a session whose account is
 /// gone reads as 401, mirroring the users role extractors (whose state
@@ -33,38 +31,30 @@ use super::services::{self, LibraryFailure};
 pub struct LibraryUser(pub AuthContext);
 
 impl FromRequestParts<LibraryDeps> for LibraryUser {
-    type Rejection = LibraryError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
         state: &LibraryDeps,
     ) -> Result<Self, Self::Rejection> {
-        let session =
-            parts
-                .extensions
-                .get::<CurrentSession>()
-                .ok_or(LibraryError::Unauthorized {
-                    message: "Authentication required".to_owned(),
-                })?;
+        let unauthorized = || ApiError::unauthorized("Authentication required");
+        let session = parts
+            .extensions
+            .get::<CurrentSession>()
+            .ok_or_else(unauthorized)?;
         let user = state
             .auth
             .users
             .get_by_id(&session.user_id)
             .await
             .map_err(|error| match error {
-                UserStoreError::Conflict => LibraryError::InvalidInput {
-                    message: "Conflicting state".to_owned(),
-                },
+                UserStoreError::Conflict => ApiError::invalid_input("Conflicting state"),
                 UserStoreError::Busy => {
-                    LibraryError::busy(&UserStoreError::Busy, state.ids.as_ref())
+                    ApiError::unavailable(Unavailable::ServerBusy, UserStoreError::Busy)
                 }
-                UserStoreError::Internal(cause) => {
-                    LibraryError::internal(&cause, state.ids.as_ref())
-                }
+                UserStoreError::Internal(cause) => ApiError::internal(cause),
             })?
-            .ok_or(LibraryError::Unauthorized {
-                message: "Authentication required".to_owned(),
-            })?;
+            .ok_or_else(unauthorized)?;
         Ok(Self(AuthContext {
             user_id: user.id,
             username: user.username,
@@ -73,33 +63,6 @@ impl FromRequestParts<LibraryDeps> for LibraryUser {
             session_kind: session.kind,
             via_cookie: session.transport == Transport::Cookie,
         }))
-    }
-}
-
-/// Query extractor that renders failures in the shared envelope.
-pub struct ValidQuery<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> axum::extract::FromRequest<S> for ValidQuery<T> {
-    type Rejection = LibraryError;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Query::<T>::from_request(req, state)
-            .await
-            .map(|Query(value)| Self(value))
-            .map_err(|cause| LibraryError::InvalidInput {
-                message: format!("Invalid query string: {cause}"),
-            })
-    }
-}
-
-/// Map a domain failure to the wire. Internal causes reach the log only.
-fn failed(failure: LibraryFailure, deps: &LibraryDeps) -> LibraryError {
-    match failure {
-        LibraryFailure::NotFound => LibraryError::NotFound,
-        LibraryFailure::InvalidInput(message) => LibraryError::InvalidInput { message },
-        LibraryFailure::Forbidden(message) => LibraryError::Forbidden { message },
-        LibraryFailure::Busy(operation) => LibraryError::busy(&operation, deps.ids.as_ref()),
-        LibraryFailure::Internal(cause) => LibraryError::internal(&cause, deps.ids.as_ref()),
     }
 }
 
@@ -119,11 +82,11 @@ pub async fn list_albums(
     State(deps): State<LibraryDeps>,
     LibraryUser(ctx): LibraryUser,
     ValidQuery(query): ValidQuery<AlbumQuery>,
-) -> Result<Json<AlbumPage>, LibraryError> {
+) -> Result<Json<AlbumPage>, ApiError> {
     services::list_albums(&deps, &ctx.user_id, &query)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// One catalog album.
@@ -142,11 +105,11 @@ pub async fn get_album(
     State(deps): State<LibraryDeps>,
     LibraryUser(ctx): LibraryUser,
     Path(id): Path<String>,
-) -> Result<Json<AlbumDetailView>, LibraryError> {
+) -> Result<Json<AlbumDetailView>, ApiError> {
     services::get_album(&deps, &ctx.user_id, &id)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// One page of an album's streamable tracks.
@@ -167,11 +130,11 @@ pub async fn list_album_tracks(
     LibraryUser(ctx): LibraryUser,
     Path(id): Path<String>,
     ValidQuery(query): ValidQuery<PageQuery>,
-) -> Result<Json<TrackPage>, LibraryError> {
+) -> Result<Json<TrackPage>, ApiError> {
     services::album_tracks(&deps, &ctx.user_id, &id, &query)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Other local albums sharing the album's release group.
@@ -190,11 +153,11 @@ pub async fn list_album_copies(
     State(deps): State<LibraryDeps>,
     LibraryUser(ctx): LibraryUser,
     Path(id): Path<String>,
-) -> Result<Json<AlbumPage>, LibraryError> {
+) -> Result<Json<AlbumPage>, ApiError> {
     services::album_copies(&deps, &ctx.user_id, &id)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// One page of catalog artists.
@@ -213,11 +176,11 @@ pub async fn list_artists(
     State(deps): State<LibraryDeps>,
     LibraryUser(ctx): LibraryUser,
     ValidQuery(query): ValidQuery<ArtistQuery>,
-) -> Result<Json<ArtistPage>, LibraryError> {
+) -> Result<Json<ArtistPage>, ApiError> {
     services::list_artists(&deps, &ctx.user_id, &query)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// One catalog artist.
@@ -236,11 +199,11 @@ pub async fn get_artist(
     State(deps): State<LibraryDeps>,
     LibraryUser(ctx): LibraryUser,
     Path(id): Path<String>,
-) -> Result<Json<ArtistView>, LibraryError> {
+) -> Result<Json<ArtistView>, ApiError> {
     services::get_artist(&deps, &ctx.user_id, &id)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// One page of albums led by the artist.
@@ -261,11 +224,11 @@ pub async fn list_artist_albums(
     LibraryUser(ctx): LibraryUser,
     Path(id): Path<String>,
     ValidQuery(query): ValidQuery<PageQuery>,
-) -> Result<Json<AlbumPage>, LibraryError> {
+) -> Result<Json<AlbumPage>, ApiError> {
     services::artist_albums(&deps, &ctx.user_id, &id, &query)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// One page of albums where the artist appears without leading.
@@ -286,11 +249,11 @@ pub async fn list_artist_appearances(
     LibraryUser(ctx): LibraryUser,
     Path(id): Path<String>,
     ValidQuery(query): ValidQuery<PageQuery>,
-) -> Result<Json<AlbumPage>, LibraryError> {
+) -> Result<Json<AlbumPage>, ApiError> {
     services::artist_appearances(&deps, &ctx.user_id, &id, &query)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// One page of streamable tracks.
@@ -309,11 +272,11 @@ pub async fn list_tracks(
     State(deps): State<LibraryDeps>,
     LibraryUser(ctx): LibraryUser,
     ValidQuery(query): ValidQuery<TrackQuery>,
-) -> Result<Json<TrackPage>, LibraryError> {
+) -> Result<Json<TrackPage>, ApiError> {
     services::list_tracks(&deps, &ctx.user_id, &query)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// One streamable track.
@@ -332,11 +295,11 @@ pub async fn get_track(
     State(deps): State<LibraryDeps>,
     LibraryUser(ctx): LibraryUser,
     Path(id): Path<String>,
-) -> Result<Json<TrackView>, LibraryError> {
+) -> Result<Json<TrackView>, ApiError> {
     services::get_track(&deps, &ctx.user_id, &id)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Stored lyrics for one track.
@@ -355,12 +318,12 @@ pub async fn get_lyrics(
     State(deps): State<LibraryDeps>,
     LibraryUser(ctx): LibraryUser,
     Path(id): Path<String>,
-) -> Result<Json<LyricsView>, LibraryError> {
+) -> Result<Json<LyricsView>, ApiError> {
     let _ = ctx;
     services::lyrics(&deps, &id)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Library totals plus the caller's favorite counts.
@@ -376,11 +339,11 @@ pub async fn get_lyrics(
 pub async fn get_stats(
     State(deps): State<LibraryDeps>,
     LibraryUser(ctx): LibraryUser,
-) -> Result<Json<StatsView>, LibraryError> {
+) -> Result<Json<StatsView>, ApiError> {
     services::stats(&deps, &ctx.user_id)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Newest albums first, capped.
@@ -399,11 +362,11 @@ pub async fn list_recently_added(
     State(deps): State<LibraryDeps>,
     LibraryUser(ctx): LibraryUser,
     ValidQuery(query): ValidQuery<RecentQuery>,
-) -> Result<Json<AlbumPage>, LibraryError> {
+) -> Result<Json<AlbumPage>, ApiError> {
     services::recently_added(&deps, &ctx.user_id, &query)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Full genre listing.
@@ -419,11 +382,11 @@ pub async fn list_recently_added(
 pub async fn list_genres(
     State(deps): State<LibraryDeps>,
     LibraryUser(_ctx): LibraryUser,
-) -> Result<Json<GenreList>, LibraryError> {
+) -> Result<Json<GenreList>, ApiError> {
     services::genres(&deps)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// One page of a genre's streamable tracks.
@@ -443,11 +406,11 @@ pub async fn list_genre_tracks(
     LibraryUser(ctx): LibraryUser,
     Path(name): Path<String>,
     ValidQuery(query): ValidQuery<PageQuery>,
-) -> Result<Json<TrackPage>, LibraryError> {
+) -> Result<Json<TrackPage>, ApiError> {
     services::genre_tracks(&deps, &ctx.user_id, &name, &query)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Album-card browse for the local library.
@@ -466,11 +429,11 @@ pub async fn browse_albums(
     State(deps): State<LibraryDeps>,
     LibraryUser(_ctx): LibraryUser,
     ValidQuery(query): ValidQuery<BrowseQuery>,
-) -> Result<Json<AlbumCardPage>, LibraryError> {
+) -> Result<Json<AlbumCardPage>, ApiError> {
     services::browse_albums(&deps, &query)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Album plus track search.
@@ -489,11 +452,11 @@ pub async fn search_library(
     State(deps): State<LibraryDeps>,
     LibraryUser(_ctx): LibraryUser,
     ValidQuery(query): ValidQuery<SearchQuery>,
-) -> Result<Json<SearchResults>, LibraryError> {
+) -> Result<Json<SearchResults>, ApiError> {
     services::search_library(&deps, &query)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Newest album cards first, capped.
@@ -512,11 +475,11 @@ pub async fn recent_albums(
     State(deps): State<LibraryDeps>,
     LibraryUser(_ctx): LibraryUser,
     ValidQuery(query): ValidQuery<RecentQuery>,
-) -> Result<Json<Vec<super::models::AlbumCard>>, LibraryError> {
+) -> Result<Json<Vec<super::models::AlbumCard>>, ApiError> {
     services::recent_albums(&deps, &query)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Decade shelves, oldest first.
@@ -532,11 +495,11 @@ pub async fn recent_albums(
 pub async fn list_decades(
     State(deps): State<LibraryDeps>,
     LibraryUser(_ctx): LibraryUser,
-) -> Result<Json<DecadesResponse>, LibraryError> {
+) -> Result<Json<DecadesResponse>, ApiError> {
     services::decades(&deps)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// One page of an album's streamable tracks by release-group mbid or
@@ -561,11 +524,11 @@ pub async fn match_album(
     LibraryUser(ctx): LibraryUser,
     Path(mbid): Path<String>,
     ValidQuery(query): ValidQuery<PageQuery>,
-) -> Result<Json<TrackPage>, LibraryError> {
+) -> Result<Json<TrackPage>, ApiError> {
     services::album_match(&deps, &ctx.user_id, &mbid, &query)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Reason-tagged track suggestions.
@@ -584,27 +547,11 @@ pub async fn list_suggestions(
     State(deps): State<LibraryDeps>,
     LibraryUser(_ctx): LibraryUser,
     ValidQuery(query): ValidQuery<SuggestionsQuery>,
-) -> Result<Json<SuggestionsResponse>, LibraryError> {
+) -> Result<Json<SuggestionsResponse>, ApiError> {
     services::suggestions(&deps, &query)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
-}
-
-/// JSON body extractor that renders failures in the shared envelope.
-pub struct ValidJson<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> axum::extract::FromRequest<S> for ValidJson<T> {
-    type Rejection = LibraryError;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Json::<T>::from_request(req, state)
-            .await
-            .map(|Json(value)| Self(value))
-            .map_err(|cause| LibraryError::InvalidInput {
-                message: format!("Invalid request body: {cause}"),
-            })
-    }
+        .map_err(ApiError::from)
 }
 
 /// The tags in one track's file on disk (admins only).
@@ -625,11 +572,11 @@ pub async fn track_tags(
     State(deps): State<LibraryDeps>,
     LibraryUser(ctx): LibraryUser,
     Path(id): Path<String>,
-) -> Result<Json<TrackTags>, LibraryError> {
+) -> Result<Json<TrackTags>, ApiError> {
     services::track_tags(&deps, ctx.role, &id)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Every MusicBrainz release group the library holds, and every album
@@ -646,11 +593,11 @@ pub async fn track_tags(
 pub async fn album_mbids(
     State(deps): State<LibraryDeps>,
     LibraryUser(_ctx): LibraryUser,
-) -> Result<Json<LibraryMbids>, LibraryError> {
+) -> Result<Json<LibraryMbids>, ApiError> {
     services::album_mbids(&deps)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Which MusicBrainz album ids the library holds or has requested.
@@ -669,11 +616,11 @@ pub async fn membership(
     State(deps): State<LibraryDeps>,
     LibraryUser(_ctx): LibraryUser,
     ValidJson(body): ValidJson<LibraryMembershipRequest>,
-) -> Result<Json<LibraryMembershipResponse>, LibraryError> {
+) -> Result<Json<LibraryMembershipResponse>, ApiError> {
     services::membership(&deps, &body)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// What the library holds for one album, by local id or MusicBrainz id,
@@ -692,11 +639,11 @@ pub async fn album_status(
     State(deps): State<LibraryDeps>,
     LibraryUser(ctx): LibraryUser,
     Path(id): Path<String>,
-) -> Result<Json<LibraryAlbumStatus>, LibraryError> {
+) -> Result<Json<LibraryAlbumStatus>, ApiError> {
     services::album_status(&deps, &ctx.user_id, &id)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Resolve track positions to playable local files.
@@ -715,9 +662,9 @@ pub async fn resolve_tracks(
     State(deps): State<LibraryDeps>,
     LibraryUser(_ctx): LibraryUser,
     ValidJson(body): ValidJson<ResolveTracksRequest>,
-) -> Result<Json<ResolveTracksResponse>, LibraryError> {
+) -> Result<Json<ResolveTracksResponse>, ApiError> {
     services::resolve_tracks(&deps, &body)
         .await
         .map(Json)
-        .map_err(|failure| failed(failure, &deps))
+        .map_err(ApiError::from)
 }

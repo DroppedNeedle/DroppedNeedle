@@ -91,11 +91,6 @@ impl YouTubeLinks {
         self
     }
 
-    /// Fresh ids, for error ids in the handler layer.
-    pub fn ids(&self) -> &dyn IdGenerator {
-        self.ids.as_ref()
-    }
-
     /// Today's search budget. While search is switched off or has no key
     /// there is nothing to spend, which reads as a zero budget.
     pub async fn quota(&self) -> YouTubeQuotaStatus {

@@ -20,7 +20,7 @@ use axum::{
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-use crate::common::ScratchDir;
+use crate::common::{ScratchDir, TestApp};
 
 const ADA: &str = "u-ada:user:ada";
 const BOB: &str = "u-bob:user:bob";
@@ -364,16 +364,24 @@ async fn playlist_input_validation() {
             format!("/playlists/{id}/cover"),
             json!({"image_base64": "!!!", "content_type": "image/png"}),
         ),
-        (
-            format!("/playlists/{id}/cover"),
-            json!({"image_base64": "A".repeat(7_000_000), "content_type": "image/png"}),
-        ),
     ];
     for (uri, body) in bad {
         let (status, body) = call(&app, Method::POST, &uri, Some(ADA), Some(body)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
         assert_eq!(body["error"]["code"], "INVALID_INPUT");
     }
+
+    let oversized = json!({"image_base64": "A".repeat(7_000_000), "content_type": "image/png"});
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        &format!("/playlists/{id}/cover"),
+        Some(ADA),
+        Some(oversized),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(body["error"]["code"], "PAYLOAD_TOO_LARGE");
 }
 
 #[tokio::test]
@@ -570,18 +578,23 @@ async fn remote_playlist_import_lands_in_the_users_playlists() {
 
 #[tokio::test]
 async fn store_faults_render_fixed_500_envelopes() {
-    let app = collections::collections_router(CollectionsState::unwired());
+    let scope = TestApp::start("reads-collections-faults").await;
+    let app = scope.request_scope(collections::collections_router(CollectionsState::unwired()));
     for uri in [
         "/playlists",
         "/favorites",
         "/following/artists",
         "/requests/auto-download-approvals",
     ] {
-        let (status, _, bytes) = send(&app, request(Method::GET, uri, Some(ADMIN), None)).await;
+        let (status, headers, bytes) =
+            send(&app, request(Method::GET, uri, Some(ADMIN), None)).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{uri}");
         let body: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["error"]["message"], "Internal server error");
-        assert!(body["error"]["details"]["error_id"].is_string());
+        assert_eq!(
+            body["error"]["details"]["error_id"],
+            headers["x-request-id"].to_str().unwrap()
+        );
         let raw = String::from_utf8(bytes).unwrap();
         assert!(!raw.contains("wired"), "{raw}");
     }

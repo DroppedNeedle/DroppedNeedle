@@ -1,26 +1,20 @@
 //! Thin handlers for the YouTube link routes. Every route is a plain
 //! signed-in-user route: links are shared by everyone on the server, as in
-//! v2. Status mapping lives in [`render`]; bodies and paths that do not
-//! parse answer the shared 400 envelope.
+//! v2. Status mapping lives in `From<LinkError> for ApiError`.
 
 use axum::{
     Json, Router,
-    extract::{
-        Path, State,
-        rejection::{JsonRejection, PathRejection},
-    },
+    extract::{Path, State, rejection::PathRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
 
 use crate::reads::collections::db::StoreError;
-use crate::reads::discover::error::{NOT_CONFIGURED, RATE_LIMITED};
+use crate::reads::discover::error::NOT_CONFIGURED;
 use crate::reads::discover::handlers::AuthenticatedUser;
-use droppedneedle_kernel::error::{
-    FIXED_INTERNAL_MESSAGE, FIXED_UPSTREAM_MESSAGE, INTERNAL_ERROR, INVALID_INPUT, NOT_FOUND,
-    UPSTREAM_ERROR, busy_response, envelope_response, fault_response,
-};
+use droppedneedle_kernel::error::{ApiError, NOT_FOUND, RATE_LIMITED, Unavailable};
+use droppedneedle_kernel::extract::ValidJson;
 
 use super::models::{
     YouTubeLink, YouTubeLinkGenerateRequest, YouTubeLinkResponse, YouTubeLinkUpdateRequest,
@@ -30,7 +24,7 @@ use super::models::{
 };
 use super::service::{LinkError, YouTubeLinks};
 
-type Reply<T> = Result<T, Response>;
+type Reply<T> = Result<T, ApiError>;
 
 /// The YouTube link routes. Mount under `/api/v3` inside the session gate.
 pub fn router(links: YouTubeLinks) -> Router {
@@ -61,23 +55,20 @@ pub fn router(links: YouTubeLinks) -> Router {
     request_body = YouTubeLinkGenerateRequest,
     responses(
         (status = 200, description = "Saved link and today's budget", body = YouTubeLinkResponse),
-        (status = 400, description = "Bad request body", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
-        (status = 404, description = "YouTube had no video for the album", body = droppedneedle_kernel::error::ErrorEnvelope),
-        (status = 429, description = "Today's search budget is spent (RATE_LIMITED)", body = droppedneedle_kernel::error::ErrorEnvelope),
-        (status = 502, description = "YouTube failed", body = droppedneedle_kernel::error::ErrorEnvelope),
-        (status = 503, description = "YouTube search is not set up (NOT_CONFIGURED)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 404, description = "YouTube had no video for the album"),
+        (status = 429, description = "Today's search budget is spent (RATE_LIMITED)"),
+        (status = 502, description = "YouTube failed"),
+        (status = 409, description = "YouTube search is not set up (NOT_CONFIGURED)"),
     )
 )]
 pub async fn generate_link(
     State(links): State<YouTubeLinks>,
     _user: AuthenticatedUser,
-    body: Result<Json<YouTubeLinkGenerateRequest>, JsonRejection>,
+    ValidJson(body): ValidJson<YouTubeLinkGenerateRequest>,
 ) -> Reply<Json<YouTubeLinkResponse>> {
-    let link = links
-        .generate_link(body.map_err(bad_body)?.0)
-        .await
-        .map_err(|error| render(error, &links))?;
+    let link = links.generate_link(body).await.map_err(ApiError::from)?;
     let quota = links.quota().await;
     Ok(Json(YouTubeLinkResponse { link, quota }))
 }
@@ -99,10 +90,7 @@ pub async fn get_link(
     _user: AuthenticatedUser,
     Path(album_id): Path<String>,
 ) -> Reply<Response> {
-    let link = links
-        .link(&album_id)
-        .await
-        .map_err(|error| render(error, &links))?;
+    let link = links.link(&album_id).await.map_err(ApiError::from)?;
     Ok(match link {
         Some(link) => Json(link).into_response(),
         None => StatusCode::NO_CONTENT.into_response(),
@@ -123,11 +111,7 @@ pub async fn list_links(
     State(links): State<YouTubeLinks>,
     _user: AuthenticatedUser,
 ) -> Reply<Json<Vec<YouTubeLink>>> {
-    links
-        .links()
-        .await
-        .map(Json)
-        .map_err(|error| render(error, &links))
+    links.links().await.map(Json).map_err(ApiError::from)
 }
 
 /// Remove an album link and its track links.
@@ -150,7 +134,7 @@ pub async fn delete_link(
         .delete_link(&album_id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
-        .map_err(|error| render(error, &links))
+        .map_err(ApiError::from)
 }
 
 /// Edit a saved link: video, names or cover.
@@ -162,22 +146,22 @@ pub async fn delete_link(
     request_body = YouTubeLinkUpdateRequest,
     responses(
         (status = 200, description = "Edited link", body = YouTubeLink),
-        (status = 400, description = "Bad body or not a YouTube URL", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 400, description = "Bad body or not a YouTube URL"),
         (status = 401, description = "Not authenticated"),
-        (status = 404, description = "No link saved for the album", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 404, description = "No link saved for the album"),
     )
 )]
 pub async fn update_link(
     State(links): State<YouTubeLinks>,
     _user: AuthenticatedUser,
     Path(album_id): Path<String>,
-    body: Result<Json<YouTubeLinkUpdateRequest>, JsonRejection>,
+    ValidJson(body): ValidJson<YouTubeLinkUpdateRequest>,
 ) -> Reply<Json<YouTubeLink>> {
     links
-        .update_link(&album_id, body.map_err(bad_body)?.0)
+        .update_link(&album_id, body)
         .await
         .map(Json)
-        .map_err(|error| render(error, &links))
+        .map_err(ApiError::from)
 }
 
 /// Save a video a person pasted, for a known album or a made-up one.
@@ -188,20 +172,20 @@ pub async fn update_link(
     request_body = YouTubeManualLinkRequest,
     responses(
         (status = 200, description = "Saved link", body = YouTubeLink),
-        (status = 400, description = "Bad body or not a YouTube URL", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 400, description = "Bad body or not a YouTube URL"),
         (status = 401, description = "Not authenticated"),
     )
 )]
 pub async fn save_manual_link(
     State(links): State<YouTubeLinks>,
     _user: AuthenticatedUser,
-    body: Result<Json<YouTubeManualLinkRequest>, JsonRejection>,
+    ValidJson(body): ValidJson<YouTubeManualLinkRequest>,
 ) -> Reply<Json<YouTubeLink>> {
     links
-        .save_manual_link(body.map_err(bad_body)?.0)
+        .save_manual_link(body)
         .await
         .map(Json)
-        .map_err(|error| render(error, &links))
+        .map_err(ApiError::from)
 }
 
 /// Find and save one track's video. A saved one answers without a search.
@@ -212,23 +196,23 @@ pub async fn save_manual_link(
     request_body = YouTubeTrackLinkGenerateRequest,
     responses(
         (status = 200, description = "Saved track link and today's budget", body = YouTubeTrackLinkResponse),
-        (status = 400, description = "Bad request body", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
-        (status = 404, description = "YouTube had no video for the track", body = droppedneedle_kernel::error::ErrorEnvelope),
-        (status = 429, description = "Today's search budget is spent (RATE_LIMITED)", body = droppedneedle_kernel::error::ErrorEnvelope),
-        (status = 502, description = "YouTube failed", body = droppedneedle_kernel::error::ErrorEnvelope),
-        (status = 503, description = "YouTube search is not set up (NOT_CONFIGURED)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 404, description = "YouTube had no video for the track"),
+        (status = 429, description = "Today's search budget is spent (RATE_LIMITED)"),
+        (status = 502, description = "YouTube failed"),
+        (status = 409, description = "YouTube search is not set up (NOT_CONFIGURED)"),
     )
 )]
 pub async fn generate_track_link(
     State(links): State<YouTubeLinks>,
     _user: AuthenticatedUser,
-    body: Result<Json<YouTubeTrackLinkGenerateRequest>, JsonRejection>,
+    ValidJson(body): ValidJson<YouTubeTrackLinkGenerateRequest>,
 ) -> Reply<Json<YouTubeTrackLinkResponse>> {
     let track_link = links
-        .generate_track_link(body.map_err(bad_body)?.0)
+        .generate_track_link(body)
         .await
-        .map_err(|error| render(error, &links))?;
+        .map_err(ApiError::from)?;
     let quota = links.quota().await;
     Ok(Json(YouTubeTrackLinkResponse { track_link, quota }))
 }
@@ -242,19 +226,19 @@ pub async fn generate_track_link(
     request_body = YouTubeTrackLinkBatchGenerateRequest,
     responses(
         (status = 200, description = "Saved track links, failures and today's budget", body = YouTubeTrackLinkBatchResponse),
-        (status = 400, description = "Bad request body or too many tracks", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 400, description = "Bad request body or too many tracks"),
         (status = 401, description = "Not authenticated"),
     )
 )]
 pub async fn generate_track_links(
     State(links): State<YouTubeLinks>,
     _user: AuthenticatedUser,
-    body: Result<Json<YouTubeTrackLinkBatchGenerateRequest>, JsonRejection>,
+    ValidJson(body): ValidJson<YouTubeTrackLinkBatchGenerateRequest>,
 ) -> Reply<Json<YouTubeTrackLinkBatchResponse>> {
     let (track_links, failed) = links
-        .generate_track_links(body.map_err(bad_body)?.0)
+        .generate_track_links(body)
         .await
-        .map_err(|error| render(error, &links))?;
+        .map_err(ApiError::from)?;
     let quota = links.quota().await;
     Ok(Json(YouTubeTrackLinkBatchResponse {
         track_links,
@@ -283,7 +267,7 @@ pub async fn list_track_links(
         .track_links(&album_id)
         .await
         .map(Json)
-        .map_err(|error| render(error, &links))
+        .map_err(ApiError::from)
 }
 
 /// Remove one track link.
@@ -298,7 +282,7 @@ pub async fn list_track_links(
     ),
     responses(
         (status = 204, description = "Removed, or nothing was saved"),
-        (status = 400, description = "Disc or track is not a number", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 400, description = "Disc or track is not a number"),
         (status = 401, description = "Not authenticated"),
     )
 )]
@@ -307,19 +291,13 @@ pub async fn delete_track_link(
     _user: AuthenticatedUser,
     path: Result<Path<(String, i64, i64)>, PathRejection>,
 ) -> Reply<StatusCode> {
-    let Path((album_id, disc_number, track_number)) = path.map_err(|cause| {
-        envelope_response(
-            StatusCode::BAD_REQUEST,
-            INVALID_INPUT,
-            format!("Invalid path: {cause}"),
-            None,
-        )
-    })?;
+    let Path((album_id, disc_number, track_number)) =
+        path.map_err(|cause| ApiError::invalid_input(format!("Invalid path: {cause}")))?;
     links
         .delete_track_link(&album_id, disc_number, track_number)
         .await
         .map(|()| StatusCode::NO_CONTENT)
-        .map_err(|error| render(error, &links))
+        .map_err(ApiError::from)
 }
 
 /// Today's YouTube search budget. A zero budget while search is off.
@@ -339,57 +317,24 @@ pub async fn get_quota(
     Json(links.quota().await)
 }
 
-/// The shared 400 envelope for a JSON body that does not parse.
-fn bad_body(cause: JsonRejection) -> Response {
-    envelope_response(
-        StatusCode::BAD_REQUEST,
-        INVALID_INPUT,
-        format!("Invalid request body: {}", cause.body_text()),
-        None,
-    )
-}
-
-/// Map a service failure to its status and envelope. Causes of 5xx answers
-/// go to the log under a fresh error id; only the id reaches the wire.
-fn render(error: LinkError, links: &YouTubeLinks) -> Response {
-    match error {
-        LinkError::NotFound(message) => {
-            envelope_response(StatusCode::NOT_FOUND, NOT_FOUND, message, None)
-        }
-        LinkError::Invalid(message) => {
-            envelope_response(StatusCode::BAD_REQUEST, INVALID_INPUT, message, None)
-        }
-        LinkError::NotConfigured(message) => envelope_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            NOT_CONFIGURED,
-            message,
-            None,
-        ),
-        LinkError::Exhausted(message) => {
-            envelope_response(StatusCode::TOO_MANY_REQUESTS, RATE_LIMITED, message, None)
-        }
-        LinkError::Upstream(cause) => {
-            let error_id = links.ids().new_id();
-            tracing::error!(error_id, %cause, "youtube link request failed upstream");
-            fault_response(
-                StatusCode::BAD_GATEWAY,
-                UPSTREAM_ERROR,
-                FIXED_UPSTREAM_MESSAGE,
-                &error_id,
-            )
-        }
-        LinkError::Store(StoreError::Busy(operation)) => {
-            busy_response(&operation, &links.ids().new_id())
-        }
-        LinkError::Store(error) => {
-            let error_id = links.ids().new_id();
-            tracing::error!(error_id, %error, "youtube link request failed");
-            fault_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                INTERNAL_ERROR,
-                FIXED_INTERNAL_MESSAGE,
-                &error_id,
-            )
+impl From<LinkError> for ApiError {
+    fn from(error: LinkError) -> Self {
+        match error {
+            LinkError::NotFound(message) => {
+                ApiError::new(StatusCode::NOT_FOUND, NOT_FOUND, message)
+            }
+            LinkError::Invalid(message) => ApiError::invalid_input(message),
+            LinkError::NotConfigured(message) => {
+                ApiError::new(StatusCode::CONFLICT, NOT_CONFIGURED, message)
+            }
+            LinkError::Exhausted(message) => {
+                ApiError::new(StatusCode::TOO_MANY_REQUESTS, RATE_LIMITED, message)
+            }
+            LinkError::Upstream(cause) => ApiError::fault(StatusCode::BAD_GATEWAY, cause),
+            LinkError::Store(StoreError::Busy(operation)) => {
+                ApiError::unavailable(Unavailable::ServerBusy, operation)
+            }
+            LinkError::Store(error) => ApiError::internal(error),
         }
     }
 }

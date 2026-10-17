@@ -1,8 +1,8 @@
 //! The collections domain error.
 //!
-//! Services return [`CollectionsError`]; the handlers map it to HTTP
-//! ([`super::http::CollectionsHttpError`]). Unexpected failures carry an
-//! error id whose cause went to the log, never to the caller.
+//! Services return [`CollectionsError`]; `super::http` maps it to HTTP.
+//! Unexpected failures carry an error id whose cause went to the log, never
+//! to the caller.
 
 use super::db::StoreError;
 

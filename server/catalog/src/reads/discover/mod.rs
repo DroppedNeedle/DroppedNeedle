@@ -21,6 +21,5 @@ pub mod models;
 pub mod ports;
 pub mod services;
 
-pub use error::ReadsError;
 pub use handlers::{discover_router, home_router, now_playing_router, reads_router};
 pub use services::ReadsDeps;

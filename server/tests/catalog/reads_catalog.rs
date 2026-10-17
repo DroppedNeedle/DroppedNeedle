@@ -386,13 +386,13 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRi
     let search = SearchDeps::new(
         SearchService::new(pool).with_remote(catalog.clone()),
         Arc::new(search::ports::UnconfiguredEnrichment),
-        ids.clone(),
+        ids,
     );
     let scope = TestApp::start("reads-catalog").await;
     let app = scope
         .request_scope(
             axum::Router::new()
-                .nest("/api/v3", catalog::router(CatalogDeps { catalog, ids }))
+                .nest("/api/v3", catalog::router(CatalogDeps { catalog }))
                 .merge(search::router(search))
                 .layer(middleware::from_fn_with_state(
                     rig.session_gate(),

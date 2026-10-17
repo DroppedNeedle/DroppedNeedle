@@ -1,18 +1,13 @@
-//! Catalog errors and their HTTP mapping.
+//! Catalog errors and their one mapping onto [`ApiError`].
 //!
-//! [`CatalogError`] is the service-layer error; [`CatalogHttpError`] is the
-//! only place it becomes a status. Client faults carry a safe message;
-//! server and upstream faults carry the fixed body plus an error id, with
-//! the cause in the structured log only.
+//! [`CatalogError`] is the service-layer error; its `From` impl is the only
+//! place it becomes a status. Client faults carry a safe message; server
+//! and upstream faults keep their status with the fixed body, the cause
+//! going to the log only.
 
-use axum::{
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
+use axum::http::StatusCode;
 
-use droppedneedle_kernel::error::{
-    FIXED_UPSTREAM_MESSAGE, INVALID_INPUT, UPSTREAM_ERROR, envelope_response, fault_response,
-};
+use droppedneedle_kernel::error::{ApiError, NOT_FOUND};
 
 /// What can go wrong building a catalog page.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -48,71 +43,20 @@ impl CatalogError {
     }
 }
 
-/// Handler-layer wrapper that owns the status mapping.
-#[derive(Debug)]
-pub struct CatalogHttpError {
-    error: CatalogError,
-    error_id: String,
-}
-
-impl CatalogHttpError {
-    /// Pair a service error with the id its log line and body share.
-    pub fn new(error: CatalogError, ids: &dyn droppedneedle_kernel::ids::IdGenerator) -> Self {
-        Self {
-            error,
-            error_id: ids.new_id(),
-        }
-    }
-
-    /// Reject a bad request parameter.
-    pub fn invalid(
-        message: impl Into<String>,
-        ids: &dyn droppedneedle_kernel::ids::IdGenerator,
-    ) -> Self {
-        Self::new(CatalogError::Invalid(message.into()), ids)
-    }
-}
-
-impl IntoResponse for CatalogHttpError {
-    fn into_response(self) -> Response {
-        match self.error {
-            CatalogError::Invalid(message) => {
-                envelope_response(StatusCode::BAD_REQUEST, INVALID_INPUT, message, None)
+impl From<CatalogError> for ApiError {
+    fn from(error: CatalogError) -> Self {
+        match error {
+            CatalogError::Invalid(message) => ApiError::invalid_input(message),
+            CatalogError::NotFound => ApiError::not_found(),
+            CatalogError::Missing(message) => {
+                ApiError::new(StatusCode::NOT_FOUND, NOT_FOUND, message)
             }
-            CatalogError::NotFound => {
-                droppedneedle_kernel::error::ApiError::not_found().into_response()
-            }
-            CatalogError::Missing(message) => envelope_response(
-                StatusCode::NOT_FOUND,
-                droppedneedle_kernel::error::NOT_FOUND,
-                message,
-                None,
-            ),
-            CatalogError::Forbidden => envelope_response(
-                StatusCode::FORBIDDEN,
-                droppedneedle_kernel::error::FORBIDDEN,
-                "Curator access required",
-                None,
-            ),
-            CatalogError::Conflict(message) => envelope_response(
-                StatusCode::CONFLICT,
-                droppedneedle_kernel::error::CONFLICT,
-                message,
-                None,
-            ),
+            CatalogError::Forbidden => ApiError::forbidden("Curator access required"),
+            CatalogError::Conflict(message) => ApiError::conflict(message),
             CatalogError::Unavailable(cause) => {
-                tracing::warn!(error_id = %self.error_id, %cause, "catalog upstream unavailable");
-                fault_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    UPSTREAM_ERROR,
-                    FIXED_UPSTREAM_MESSAGE,
-                    &self.error_id,
-                )
+                ApiError::fault(StatusCode::SERVICE_UNAVAILABLE, cause)
             }
-            CatalogError::Internal(cause) => {
-                tracing::error!(error_id = %self.error_id, %cause, "catalog request failed");
-                droppedneedle_kernel::error::ApiError::internal_response(&self.error_id)
-            }
+            CatalogError::Internal(cause) => ApiError::internal(cause),
         }
     }
 }

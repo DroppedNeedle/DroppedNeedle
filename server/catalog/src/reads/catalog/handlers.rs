@@ -1,18 +1,19 @@
 //! Thin Axum handlers for the artist and album pages. Each extracts,
 //! validates its parameters, calls the catalog, and renders; status
-//! mapping lives in [`CatalogHttpError`].
+//! mapping lives in `From<CatalogError> for ApiError`.
 
 use axum::{
     Json,
-    extract::{FromRequestParts, Path, Query, State},
+    extract::{FromRequestParts, Path, State},
     http::request::Parts,
-    response::{IntoResponse, Response},
 };
 
 use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::ValidQuery;
 
 use super::CatalogDeps;
-use super::error::CatalogHttpError;
+use super::error::CatalogError;
 use super::models::{
     AlbumArtistQuery, AlbumBasicInfo, AlbumEditionsResponse, AlbumInfo, AlbumLastFmQuery,
     AlbumTracksInfo, ArtistExtendedInfo, ArtistInfo, ArtistLastFmQuery,
@@ -22,66 +23,34 @@ use super::models::{
     TopAlbumsResponse, TopSongsResponse,
 };
 
-type Answer<T> = Result<Json<T>, CatalogHttpError>;
+type Answer<T> = Result<Json<T>, ApiError>;
 
 /// The signed-in user's id, from the session the gate stashed.
 pub struct SessionUser(pub String);
 
 impl<S: Send + Sync> FromRequestParts<S> for SessionUser {
-    type Rejection = Response;
+    type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         parts
             .extensions
             .get::<CurrentSession>()
             .map(|session| Self(session.user_id.clone()))
-            .ok_or_else(|| {
-                droppedneedle_kernel::error::unauthorized_response("Authentication required")
-                    .into_response()
-            })
+            .ok_or_else(|| ApiError::unauthorized("Authentication required"))
     }
 }
 
-/// Query extractor that renders failures as the shared 400 envelope.
-pub struct ValidQuery<T>(pub T);
-
-impl<T: serde::de::DeserializeOwned + Send, S: Send + Sync> FromRequestParts<S> for ValidQuery<T> {
-    type Rejection = Response;
-
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        Query::<T>::from_request_parts(parts, state)
-            .await
-            .map(|Query(value)| Self(value))
-            .map_err(|cause| {
-                droppedneedle_kernel::error::envelope_response(
-                    axum::http::StatusCode::BAD_REQUEST,
-                    droppedneedle_kernel::error::INVALID_INPUT,
-                    format!("Invalid query: {cause}"),
-                    None,
-                )
-            })
-    }
-}
-
-fn answer<T>(deps: &CatalogDeps, result: Result<T, super::error::CatalogError>) -> Answer<T> {
-    result
-        .map(Json)
-        .map_err(|error| CatalogHttpError::new(error, deps.ids.as_ref()))
+fn answer<T>(result: Result<T, CatalogError>) -> Answer<T> {
+    result.map(Json).map_err(ApiError::from)
 }
 
 /// A count within `1..=max`, defaulting when absent.
-fn count(
-    deps: &CatalogDeps,
-    value: Option<u32>,
-    default: u32,
-    max: u32,
-) -> Result<u32, CatalogHttpError> {
+fn count(value: Option<u32>, default: u32, max: u32) -> Result<u32, ApiError> {
     let value = value.unwrap_or(default);
     if value == 0 || value > max {
-        return Err(CatalogHttpError::invalid(
-            format!("count must be between 1 and {max}"),
-            deps.ids.as_ref(),
-        ));
+        return Err(ApiError::invalid_input(format!(
+            "count must be between 1 and {max}"
+        )));
     }
     Ok(value)
 }
@@ -105,7 +74,7 @@ pub async fn artist(
     SessionUser(user): SessionUser,
     Path(mbid): Path<String>,
 ) -> Answer<ArtistInfo> {
-    answer(&deps, deps.catalog.artist(&user, &mbid).await)
+    answer(deps.catalog.artist(&user, &mbid).await)
 }
 
 /// Biography, portrait and artist images.
@@ -124,7 +93,7 @@ pub async fn artist_extended(
     State(deps): State<CatalogDeps>,
     Path(mbid): Path<String>,
 ) -> Answer<ArtistExtendedInfo> {
-    answer(&deps, deps.catalog.artist_extended(&mbid).await)
+    answer(deps.catalog.artist_extended(&mbid).await)
 }
 
 /// One page of the discography.
@@ -145,9 +114,8 @@ pub async fn artist_releases(
     Path(mbid): Path<String>,
     ValidQuery(query): ValidQuery<ReleasesQuery>,
 ) -> Answer<ArtistReleases> {
-    let limit = count(&deps, query.limit, 50, 200)?;
+    let limit = count(query.limit, 50, 200)?;
     answer(
-        &deps,
         deps.catalog
             .artist_releases(&mbid, query.offset.unwrap_or(0), limit)
             .await,
@@ -172,9 +140,8 @@ pub async fn similar_artists(
     Path(mbid): Path<String>,
     ValidQuery(query): ValidQuery<DiscoveryQuery>,
 ) -> Answer<SimilarArtistsResponse> {
-    let count = count(&deps, query.count, 15, 50)?;
+    let count = count(query.count, 15, 50)?;
     answer(
-        &deps,
         deps.catalog
             .similar_artists(&user, &mbid, count, query.source)
             .await,
@@ -199,9 +166,8 @@ pub async fn top_songs(
     Path(mbid): Path<String>,
     ValidQuery(query): ValidQuery<DiscoveryQuery>,
 ) -> Answer<TopSongsResponse> {
-    let count = count(&deps, query.count, 10, 50)?;
+    let count = count(query.count, 10, 50)?;
     answer(
-        &deps,
         deps.catalog
             .top_songs(&user, &mbid, count, query.source)
             .await,
@@ -226,9 +192,8 @@ pub async fn top_albums(
     Path(mbid): Path<String>,
     ValidQuery(query): ValidQuery<DiscoveryQuery>,
 ) -> Answer<TopAlbumsResponse> {
-    let count = count(&deps, query.count, 10, 50)?;
+    let count = count(query.count, 10, 50)?;
     answer(
-        &deps,
         deps.catalog
             .top_albums(&user, &mbid, count, query.source)
             .await,
@@ -254,7 +219,6 @@ pub async fn artist_lastfm(
     ValidQuery(query): ValidQuery<ArtistLastFmQuery>,
 ) -> Answer<LastFmArtistEnrichment> {
     answer(
-        &deps,
         deps.catalog
             .artist_lastfm(&user, &mbid, &query.artist_name)
             .await,
@@ -279,7 +243,6 @@ pub async fn artist_purchase_options(
     ValidQuery(query): ValidQuery<ArtistPurchaseQuery>,
 ) -> Answer<ArtistPurchaseOptionsResponse> {
     answer(
-        &deps,
         deps.catalog
             .artist_purchase_options(&mbid, &query.name)
             .await,
@@ -301,7 +264,7 @@ pub async fn artist_purchase_options(
     )
 )]
 pub async fn album(State(deps): State<CatalogDeps>, Path(id): Path<String>) -> Answer<AlbumInfo> {
-    answer(&deps, deps.catalog.album(&id).await)
+    answer(deps.catalog.album(&id).await)
 }
 
 /// The album header.
@@ -322,7 +285,7 @@ pub async fn album_basic(
     State(deps): State<CatalogDeps>,
     Path(id): Path<String>,
 ) -> Answer<AlbumBasicInfo> {
-    answer(&deps, deps.catalog.album_basic(&id).await)
+    answer(deps.catalog.album_basic(&id).await)
 }
 
 /// The tracklist of the edition the page shows.
@@ -343,7 +306,7 @@ pub async fn album_tracks(
     State(deps): State<CatalogDeps>,
     Path(id): Path<String>,
 ) -> Answer<AlbumTracksInfo> {
-    answer(&deps, deps.catalog.album_tracks(&id).await)
+    answer(deps.catalog.album_tracks(&id).await)
 }
 
 /// Every edition of the album.
@@ -364,7 +327,7 @@ pub async fn album_editions(
     State(deps): State<CatalogDeps>,
     Path(id): Path<String>,
 ) -> Answer<AlbumEditionsResponse> {
-    answer(&deps, deps.catalog.album_editions(&id).await)
+    answer(deps.catalog.album_editions(&id).await)
 }
 
 /// The tracklist of one edition, any release, for comparing editions side
@@ -389,7 +352,7 @@ pub async fn edition_tracks(
     State(deps): State<CatalogDeps>,
     Path((_album, release)): Path<(String, String)>,
 ) -> Answer<AlbumTracksInfo> {
-    answer(&deps, deps.catalog.edition_tracks(&release).await)
+    answer(deps.catalog.edition_tracks(&release).await)
 }
 
 /// Drop the album's cached upstream answers and rebuild the header.
@@ -410,7 +373,7 @@ pub async fn album_refresh(
     State(deps): State<CatalogDeps>,
     Path(id): Path<String>,
 ) -> Answer<AlbumBasicInfo> {
-    answer(&deps, deps.catalog.album_refresh(&id).await)
+    answer(deps.catalog.album_refresh(&id).await)
 }
 
 /// Albums by similar artists.
@@ -431,9 +394,8 @@ pub async fn similar_albums(
     Path(id): Path<String>,
     ValidQuery(query): ValidQuery<AlbumArtistQuery>,
 ) -> Answer<SimilarAlbumsResponse> {
-    let count = count(&deps, query.count, 10, 30)?;
+    let count = count(query.count, 10, 30)?;
     answer(
-        &deps,
         deps.catalog
             .similar_albums(&user, &id, &query.artist_id, count)
             .await,
@@ -457,9 +419,8 @@ pub async fn more_by_artist(
     Path(id): Path<String>,
     ValidQuery(query): ValidQuery<AlbumArtistQuery>,
 ) -> Answer<MoreByArtistResponse> {
-    let count = count(&deps, query.count, 10, 30)?;
+    let count = count(query.count, 10, 30)?;
     answer(
-        &deps,
         deps.catalog
             .more_by_artist(&id, &query.artist_id, count)
             .await,
@@ -485,7 +446,6 @@ pub async fn album_lastfm(
     ValidQuery(query): ValidQuery<AlbumLastFmQuery>,
 ) -> Answer<LastFmAlbumEnrichment> {
     answer(
-        &deps,
         deps.catalog
             .album_lastfm(&user, &id, &query.artist_name, &query.album_name)
             .await,
@@ -510,7 +470,7 @@ pub async fn album_plugin_details(
     State(deps): State<CatalogDeps>,
     Path(id): Path<String>,
 ) -> Answer<PluginDetails> {
-    answer(&deps, deps.catalog.album_plugin_details(&id).await)
+    answer(deps.catalog.album_plugin_details(&id).await)
 }
 
 /// Where to buy the album.
@@ -530,5 +490,5 @@ pub async fn album_purchase_options(
     State(deps): State<CatalogDeps>,
     Path(id): Path<String>,
 ) -> Answer<PurchaseOptionsResponse> {
-    answer(&deps, deps.catalog.album_purchase_options(&id).await)
+    answer(deps.catalog.album_purchase_options(&id).await)
 }

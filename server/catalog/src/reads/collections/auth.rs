@@ -15,6 +15,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use droppedneedle_kernel::error::ApiError;
+
 use super::error::CollectionsError;
 
 /// Account role. Meanings match v2: `user` requests await approval;
@@ -76,14 +78,14 @@ impl Principal {
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for Principal {
-    type Rejection = super::http::CollectionsHttpError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts.extensions.get::<Principal>().cloned().ok_or_else(|| {
-            super::http::CollectionsHttpError(CollectionsError::Unauthorized {
-                message: "Authentication required".to_owned(),
-            })
-        })
+        parts
+            .extensions
+            .get::<Principal>()
+            .cloned()
+            .ok_or_else(|| ApiError::unauthorized("Authentication required"))
     }
 }
 
@@ -128,9 +130,6 @@ pub async fn gate(mut req: Request, next: Next) -> Response {
             req.extensions_mut().insert(principal);
             next.run(req).await
         }
-        None => super::http::CollectionsHttpError(CollectionsError::Unauthorized {
-            message: "Authentication required".to_owned(),
-        })
-        .into_response(),
+        None => ApiError::unauthorized("Authentication required").into_response(),
     }
 }

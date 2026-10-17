@@ -17,15 +17,16 @@
 //! [`ArtworkService`](super::artwork::ArtworkService).
 
 use axum::{
-    Json, Router,
-    extract::{FromRequest, Path, Query, Request, State},
+    Router,
+    extract::{Path, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::ValidQuery;
 use futures_util::future::BoxFuture;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use utoipa::ToSchema;
+use serde::Deserialize;
 
 /// Sizes the release cover routes accept, v2 set kept.
 const ALLOWED_SIZES: &[&str] = &["250", "500", "1200"];
@@ -45,9 +46,6 @@ const REVALIDATE_CACHE: &str = "private, no-cache";
 const PRIVATE_IMMUTABLE_CACHE: &str = "private, max-age=31536000, immutable";
 /// An album's own art requested without a version.
 const PRIVATE_SHORT_CACHE: &str = "private, max-age=300";
-
-/// Machine code for a bad `size` query value, matching the auth routes.
-const INVALID_INPUT: &str = "INVALID_INPUT";
 
 /// Album placeholder, v2 SVG kept so cold covers look the same.
 const ALBUM_PLACEHOLDER_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
@@ -337,46 +335,6 @@ fn etag_matches(if_none_match: Option<&str>, etag: &str) -> bool {
     candidates.contains(&weak.as_str())
 }
 
-/// Shared error envelope, byte-identical in shape to `droppedneedle_kernel::error`.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-struct CoversErrorBody {
-    code: String,
-    message: String,
-    details: Option<serde_json::Value>,
-}
-
-/// Shared error envelope, byte-identical in shape to `droppedneedle_kernel::error`.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-struct CoversErrorEnvelope {
-    error: CoversErrorBody,
-}
-
-fn invalid_input(message: String) -> Response {
-    let body = CoversErrorEnvelope {
-        error: CoversErrorBody {
-            code: INVALID_INPUT.to_owned(),
-            message,
-            details: None,
-        },
-    };
-    (StatusCode::BAD_REQUEST, Json(body)).into_response()
-}
-
-/// Query extractor that renders failures in the shared envelope instead
-/// of Axum's default plain-text 400.
-pub struct ValidQuery<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidQuery<T> {
-    type Rejection = Response;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Query::<T>::from_request(req, state)
-            .await
-            .map(|Query(value)| Self(value))
-            .map_err(|cause| invalid_input(format!("Invalid query string: {cause}")))
-    }
-}
-
 /// Warming answer: 202 with an empty body so `<img>` fires `onerror`, which
 /// the frontend treats as "still warming" (skeleton + poll) rather than a
 /// settled placeholder. `no-store` so each poll re-requests.
@@ -479,7 +437,7 @@ pub async fn cover_from_release_group(
 ) -> Response {
     let desired_size = match normalize_size(&query.size) {
         Ok(size) => size,
-        Err(message) => return invalid_input(message),
+        Err(message) => return ApiError::invalid_input(message).into_response(),
     };
     let lookup = state
         .covers
@@ -513,7 +471,7 @@ pub async fn cover_from_release(
 ) -> Response {
     let desired_size = match normalize_size(&query.size) {
         Ok(size) => size,
-        Err(message) => return invalid_input(message),
+        Err(message) => return ApiError::invalid_input(message).into_response(),
     };
     let lookup = state
         .covers
@@ -578,7 +536,7 @@ pub async fn album_artwork(
 ) -> Response {
     let size = match normalize_size(&query.size) {
         Ok(size) => size,
-        Err(message) => return invalid_input(message),
+        Err(message) => return ApiError::invalid_input(message).into_response(),
     };
     let Some(art) = state
         .covers

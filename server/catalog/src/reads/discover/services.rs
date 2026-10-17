@@ -5,7 +5,6 @@
 use std::sync::Arc;
 
 use crate::reads::discover::{
-    error::ReadsError,
     models::{
         AlbumPreviewResponse, ChartRange, ChartSection, ChartSource, DiscoverActivityResponse,
         DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
@@ -53,7 +52,7 @@ pub const RADIO_EXCLUDE_MAX: usize = 500;
 /// Max radio shelf rows.
 pub const RADIO_SHELF_MAX: i64 = 50;
 
-/// Domain failures. Handlers map these to [`ReadsError`]; the mapping is
+/// Domain failures. `From<ServiceError> for ApiError` in `super::error` is
 /// the only place HTTP statuses are chosen.
 #[derive(Debug, Clone)]
 pub enum ServiceError {
@@ -73,22 +72,6 @@ pub enum ServiceError {
     Exhausted(String),
     /// The request rules refused a batch (quota, storage).
     Refused(BatchRefusal),
-}
-
-impl ServiceError {
-    /// Map a domain failure to the wire error, logging server-side causes.
-    pub fn into_reads_error(self, ids: &dyn IdGenerator) -> ReadsError {
-        match self {
-            Self::NotFound => ReadsError::NotFound,
-            Self::InvalidInput(message) => ReadsError::InvalidInput { message },
-            Self::Upstream(cause) => ReadsError::upstream(&cause, ids),
-            Self::Internal(cause) => ReadsError::internal(&cause, ids),
-            Self::NotConfigured(message) => ReadsError::NotConfigured { message },
-            Self::NotBuilt(message) => ReadsError::NotBuilt { message },
-            Self::Exhausted(message) => ReadsError::Exhausted { message },
-            Self::Refused(refusal) => ReadsError::Refused(refusal),
-        }
-    }
 }
 
 impl From<ProviderFailure> for ServiceError {

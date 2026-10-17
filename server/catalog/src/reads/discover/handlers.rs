@@ -1,21 +1,19 @@
 //! Thin Axum handlers and route assembly.
 //!
 //! Every handler answers one route: extract the caller, call the service,
-//! render. Status mapping lives in [`ReadsError`](super::error::ReadsError).
-//! Bodies parse through [`ValidJson`] and query strings through [`ValidQuery`],
-//! which keep malformed input inside the shared error envelope instead of
-//! Axum's default plain-text 400.
+//! render. Status mapping lives in `From<ServiceError> for ApiError`
+//! (`super::error`).
 
 use axum::{
     Json,
-    extract::{FromRequest, FromRequestParts, Path, Query, State},
+    extract::{FromRequestParts, Path, State},
     http::{StatusCode, request::Parts},
 };
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 
 use super::{
-    error::ReadsError,
     models::{
         AlbumPreviewResponse, ChartSection, DiscoverActivityRequest, DiscoverActivityResponse,
         DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
@@ -28,7 +26,7 @@ use super::{
         TrackCacheCheckResponse, TrackPreviewResponse, TrendingArtistsPage, YouTubeQuotaResponse,
         YouTubeSearchResponse,
     },
-    services::{self, ReadsDeps, ServiceError},
+    services::{self, ReadsDeps},
 };
 use droppedneedle_auth::session::middleware::CurrentSession;
 
@@ -49,61 +47,23 @@ pub struct AuthenticatedUser {
 
 impl AuthenticatedUser {
     /// Reject unauthenticated callers with the 401 envelope.
-    pub fn require(parts: &Parts) -> Result<Self, ReadsError> {
+    pub fn require(parts: &Parts) -> Result<Self, ApiError> {
         parts
             .extensions
             .get::<CurrentSession>()
             .map(|session| Self {
                 user_id: session.user_id.clone(),
             })
-            .ok_or_else(|| ReadsError::Unauthorized {
-                message: "Authentication required".to_owned(),
-            })
+            .ok_or_else(|| ApiError::unauthorized("Authentication required"))
     }
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedUser {
-    type Rejection = ReadsError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         Self::require(parts)
     }
-}
-
-/// JSON body extractor that renders failures in the shared envelope.
-pub struct ValidJson<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
-    type Rejection = ReadsError;
-
-    async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
-        Json::<T>::from_request(req, state)
-            .await
-            .map(|Json(value)| Self(value))
-            .map_err(|cause| ReadsError::InvalidInput {
-                message: format!("Invalid request body: {cause}"),
-            })
-    }
-}
-
-/// Query extractor that renders failures in the shared envelope.
-pub struct ValidQuery<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidQuery<T> {
-    type Rejection = ReadsError;
-
-    async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
-        Query::<T>::from_request(req, state)
-            .await
-            .map(|Query(value)| Self(value))
-            .map_err(|cause| ReadsError::InvalidInput {
-                message: format!("Invalid query string: {cause}"),
-            })
-    }
-}
-
-fn map(error: ServiceError, deps: &ReadsDeps) -> ReadsError {
-    error.into_reads_error(deps.ids.as_ref())
 }
 
 // ---------------------------------------------------------------------------
@@ -203,11 +163,11 @@ pub struct RemoveBatchQuery {
 pub async fn get_discover(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
-) -> Result<Json<DiscoverResponse>, ReadsError> {
+) -> Result<Json<DiscoverResponse>, ApiError> {
     services::discover(&deps, &user.user_id)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Trigger a background discover rebuild for the caller.
@@ -223,11 +183,11 @@ pub async fn get_discover(
 pub async fn refresh_discover(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
-) -> Result<(StatusCode, Json<RefreshResponse>), ReadsError> {
+) -> Result<(StatusCode, Json<RefreshResponse>), ApiError> {
     services::refresh_discover(&deps, &user.user_id)
         .await
         .map(|body| (StatusCode::ACCEPTED, Json(body)))
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Record one discover interaction for personalization.
@@ -246,11 +206,11 @@ pub async fn record_activity(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
     ValidJson(body): ValidJson<DiscoverActivityRequest>,
-) -> Result<Json<DiscoverActivityResponse>, ReadsError> {
+) -> Result<Json<DiscoverActivityResponse>, ApiError> {
     services::record_activity(&deps, &user.user_id, &body)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Generate one radio shelf from a seed.
@@ -264,18 +224,18 @@ pub async fn record_activity(
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "Unknown seed album or playlist"),
-        (status = 502, description = "A music provider failed", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 502, description = "A music provider failed"),
     )
 )]
 pub async fn discover_radio(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
     ValidJson(body): ValidJson<RadioRequest>,
-) -> Result<Json<ChartSection>, ReadsError> {
+) -> Result<Json<ChartSection>, ApiError> {
     services::radio_shelf(&deps, &user.user_id, &body)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Build a complete track-level radio plan.
@@ -289,18 +249,18 @@ pub async fn discover_radio(
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "Unknown seed album or playlist"),
-        (status = 502, description = "A music provider failed", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 502, description = "A music provider failed"),
     )
 )]
 pub async fn radio_plan(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
     ValidJson(body): ValidJson<RadioPlanRequest>,
-) -> Result<Json<RadioPlanResponse>, ReadsError> {
+) -> Result<Json<RadioPlanResponse>, ApiError> {
     services::radio_plan(&deps, &user.user_id, &body)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Suggest rows extending one playlist.
@@ -314,18 +274,18 @@ pub async fn radio_plan(
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "Unknown seed album or playlist"),
-        (status = 502, description = "A music provider failed", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 502, description = "A music provider failed"),
     )
 )]
 pub async fn playlist_suggestions(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
     ValidJson(body): ValidJson<PlaylistSuggestionsRequest>,
-) -> Result<Json<PlaylistSuggestionsResponse>, ReadsError> {
+) -> Result<Json<PlaylistSuggestionsResponse>, ApiError> {
     services::playlist_suggestions(&deps, &user.user_id, &body)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -342,18 +302,18 @@ pub async fn playlist_suggestions(
         (status = 200, description = "Queue deck", body = DiscoverQueueResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The library check failed", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 500, description = "The library check failed"),
     )
 )]
 pub async fn get_queue(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
     ValidQuery(query): ValidQuery<QueueQuery>,
-) -> Result<Json<DiscoverQueueResponse>, ReadsError> {
+) -> Result<Json<DiscoverQueueResponse>, ApiError> {
     services::queue(&deps, &user.user_id, query.count)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Where the caller's background queue build stands: `idle`, `building`,
@@ -413,11 +373,11 @@ pub async fn enrich_queue_item(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
     Path(release_group_mbid): Path<String>,
-) -> Result<Json<QueueEnrichment>, ReadsError> {
+) -> Result<Json<QueueEnrichment>, ApiError> {
     services::enrich_queue_item(&deps, &user.user_id, &release_group_mbid)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// A video preview behind one queue card: a MusicBrainz video link when
@@ -431,18 +391,18 @@ pub async fn enrich_queue_item(
         (status = 200, description = "Card preview", body = DiscoverQueuePreview),
         (status = 400, description = "Bad release-group id"),
         (status = 401, description = "Not authenticated"),
-        (status = 502, description = "MusicBrainz or YouTube failed", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 502, description = "MusicBrainz or YouTube failed"),
     )
 )]
 pub async fn preview_queue_item(
     State(deps): State<ReadsDeps>,
     _user: AuthenticatedUser,
     Path(release_group_mbid): Path<String>,
-) -> Result<Json<DiscoverQueuePreview>, ReadsError> {
+) -> Result<Json<DiscoverQueuePreview>, ApiError> {
     services::preview_queue_item(&deps, &release_group_mbid)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Ignore one release: later decks skip it, and a new deck starts
@@ -456,18 +416,18 @@ pub async fn preview_queue_item(
         (status = 204, description = "Release ignored"),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The ignore could not be saved", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 500, description = "The ignore could not be saved"),
     )
 )]
 pub async fn ignore_queue_item(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
     ValidJson(body): ValidJson<QueueIgnoreRequest>,
-) -> Result<StatusCode, ReadsError> {
+) -> Result<StatusCode, ApiError> {
     services::ignore_queue_item(&deps, &user.user_id, &body)
         .await
         .map(|()| StatusCode::NO_CONTENT)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// The caller's ignore ledger, newest first.
@@ -478,17 +438,17 @@ pub async fn ignore_queue_item(
     responses(
         (status = 200, description = "Ignore ledger", body = IgnoredReleasesResponse),
         (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The ledger could not be read", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 500, description = "The ledger could not be read"),
     )
 )]
 pub async fn ignored_releases(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
-) -> Result<Json<IgnoredReleasesResponse>, ReadsError> {
+) -> Result<Json<IgnoredReleasesResponse>, ApiError> {
     services::ignored_releases(&deps, &user.user_id)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// The given cards whose albums the library already holds.
@@ -501,18 +461,18 @@ pub async fn ignored_releases(
         (status = 200, description = "Library membership", body = QueueValidateResponse),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The library check failed", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 500, description = "The library check failed"),
     )
 )]
 pub async fn validate_queue(
     State(deps): State<ReadsDeps>,
     _user: AuthenticatedUser,
     ValidJson(body): ValidJson<QueueValidateRequest>,
-) -> Result<Json<QueueValidateResponse>, ReadsError> {
+) -> Result<Json<QueueValidateResponse>, ApiError> {
     services::validate_queue(&deps, &body)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Album video lookup with the cached flag.
@@ -528,19 +488,19 @@ pub async fn validate_queue(
         (status = 200, description = "Resolved video", body = YouTubeSearchResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 429, description = "YouTube search quota used up for today (RATE_LIMITED)", body = droppedneedle_kernel::error::ErrorEnvelope),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 429, description = "YouTube search quota used up for today (RATE_LIMITED)"),
+        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
     )
 )]
 pub async fn youtube_search(
     State(deps): State<ReadsDeps>,
     _user: AuthenticatedUser,
     ValidQuery(query): ValidQuery<YouTubeAlbumQuery>,
-) -> Result<Json<YouTubeSearchResponse>, ReadsError> {
+) -> Result<Json<YouTubeSearchResponse>, ApiError> {
     services::youtube_search(&deps, &query.artist, &query.album)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Track video lookup with the cached flag.
@@ -556,19 +516,19 @@ pub async fn youtube_search(
         (status = 200, description = "Resolved video", body = YouTubeSearchResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 429, description = "YouTube search quota used up for today (RATE_LIMITED)", body = droppedneedle_kernel::error::ErrorEnvelope),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 429, description = "YouTube search quota used up for today (RATE_LIMITED)"),
+        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
     )
 )]
 pub async fn youtube_track_search(
     State(deps): State<ReadsDeps>,
     _user: AuthenticatedUser,
     ValidQuery(query): ValidQuery<YouTubeTrackQuery>,
-) -> Result<Json<YouTubeSearchResponse>, ReadsError> {
+) -> Result<Json<YouTubeSearchResponse>, ApiError> {
     services::youtube_track_search(&deps, &query.artist, &query.track)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// YouTube data-API quota state. 404 when YouTube is unconfigured.
@@ -585,11 +545,11 @@ pub async fn youtube_track_search(
 pub async fn youtube_quota(
     State(deps): State<ReadsDeps>,
     _user: AuthenticatedUser,
-) -> Result<Json<YouTubeQuotaResponse>, ReadsError> {
+) -> Result<Json<YouTubeQuotaResponse>, ApiError> {
     services::youtube_quota(&deps)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Bulk YouTube cache membership. Unconfigured YouTube answers empty.
@@ -608,10 +568,10 @@ pub async fn youtube_cache_check(
     State(deps): State<ReadsDeps>,
     _user: AuthenticatedUser,
     ValidJson(body): ValidJson<TrackCacheCheckRequest>,
-) -> Result<Json<TrackCacheCheckResponse>, ReadsError> {
+) -> Result<Json<TrackCacheCheckResponse>, ApiError> {
     services::youtube_cache_check(&deps, &body)
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// A 30-second track preview. Empty means no provider had one.
@@ -627,18 +587,18 @@ pub async fn youtube_cache_check(
         (status = 200, description = "Track preview", body = TrackPreviewResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
     )
 )]
 pub async fn track_preview(
     State(deps): State<ReadsDeps>,
     _user: AuthenticatedUser,
     ValidQuery(query): ValidQuery<TrackPreviewQuery>,
-) -> Result<Json<TrackPreviewResponse>, ReadsError> {
+) -> Result<Json<TrackPreviewResponse>, ApiError> {
     services::track_preview(&deps, &query.artist, &query.track)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Ordered 30-second samples of an album's first tracks.
@@ -655,18 +615,18 @@ pub async fn track_preview(
         (status = 200, description = "Album samples", body = AlbumPreviewResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
     )
 )]
 pub async fn album_preview(
     State(deps): State<ReadsDeps>,
     _user: AuthenticatedUser,
     ValidQuery(query): ValidQuery<AlbumPreviewQuery>,
-) -> Result<Json<AlbumPreviewResponse>, ReadsError> {
+) -> Result<Json<AlbumPreviewResponse>, ApiError> {
     services::album_preview(&deps, &query.artist, &query.album, query.count)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -685,20 +645,20 @@ pub async fn album_preview(
         (status = 202, description = "Batch created", body = DiscoveryBatchDetail),
         (status = 400, description = "Empty or oversized batch, or every album is already owned or requested"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Storage full (STORAGE_FULL)", body = droppedneedle_kernel::error::ErrorEnvelope),
-        (status = 429, description = "Request quota spent (QUOTA_EXCEEDED)", body = droppedneedle_kernel::error::ErrorEnvelope),
-        (status = 503, description = "Acquisition is not running (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 403, description = "Storage full (STORAGE_FULL)"),
+        (status = 429, description = "Request quota spent (QUOTA_EXCEEDED)"),
+        (status = 409, description = "Acquisition is not running (NOT_AVAILABLE)"),
     )
 )]
 pub async fn create_batch(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
     ValidJson(body): ValidJson<DiscoveryBatchCreate>,
-) -> Result<(StatusCode, Json<DiscoveryBatchDetail>), ReadsError> {
+) -> Result<(StatusCode, Json<DiscoveryBatchDetail>), ApiError> {
     services::create_batch(&deps, &user.user_id, &body)
         .await
         .map(|detail| (StatusCode::ACCEPTED, Json(detail)))
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// The caller's batches, newest first.
@@ -709,17 +669,17 @@ pub async fn create_batch(
     responses(
         (status = 200, description = "Batch list", body = DiscoveryBatchListResponse),
         (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The batch store failed", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 500, description = "The batch store failed"),
     )
 )]
 pub async fn list_batches(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
-) -> Result<Json<DiscoveryBatchListResponse>, ReadsError> {
+) -> Result<Json<DiscoveryBatchListResponse>, ApiError> {
     services::list_batches(&deps, &user.user_id)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// One batch with each album's current state. Admins may open any batch;
@@ -739,11 +699,11 @@ pub async fn get_batch(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
     Path(batch_id): Path<String>,
-) -> Result<Json<DiscoveryBatchDetail>, ReadsError> {
+) -> Result<Json<DiscoveryBatchDetail>, ApiError> {
     services::get_batch(&deps, &user.user_id, &batch_id)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Remove one batch. With `remove_albums` (the default) its pending
@@ -769,7 +729,7 @@ pub async fn remove_batch(
     user: AuthenticatedUser,
     Path(batch_id): Path<String>,
     ValidQuery(query): ValidQuery<RemoveBatchQuery>,
-) -> Result<Json<DiscoveryBatchRemoveResult>, ReadsError> {
+) -> Result<Json<DiscoveryBatchRemoveResult>, ApiError> {
     services::remove_batch(
         &deps,
         &user.user_id,
@@ -778,7 +738,7 @@ pub async fn remove_batch(
     )
     .await
     .map(Json)
-    .map_err(|error| map(error, &deps))
+    .map_err(ApiError::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -798,11 +758,11 @@ pub async fn remove_batch(
 pub async fn get_home(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
-) -> Result<Json<HomeResponse>, ReadsError> {
+) -> Result<Json<HomeResponse>, ApiError> {
     services::home(&deps, &user.user_id)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Integration availability behind the shelves.
@@ -813,17 +773,17 @@ pub async fn get_home(
     responses(
         (status = 200, description = "Integration availability", body = IntegrationStatus),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
     )
 )]
 pub async fn integration_status(
     State(deps): State<ReadsDeps>,
     _user: AuthenticatedUser,
-) -> Result<Json<IntegrationStatus>, ReadsError> {
+) -> Result<Json<IntegrationStatus>, ApiError> {
     services::integration_status(&deps)
         .await
         .map(Json)
-        .map_err(|error| map(error, &deps))
+        .map_err(ApiError::from)
 }
 
 /// Genre detail with owned and popular rows.
@@ -848,7 +808,7 @@ pub async fn genre_detail(
     _user: AuthenticatedUser,
     Path(genre_name): Path<String>,
     ValidQuery(query): ValidQuery<GenreQuery>,
-) -> Result<Json<GenreDetailResponse>, ReadsError> {
+) -> Result<Json<GenreDetailResponse>, ApiError> {
     services::genre_detail(
         &deps,
         &genre_name,
@@ -858,7 +818,7 @@ pub async fn genre_detail(
     )
     .await
     .map(Json)
-    .map_err(|error| map(error, &deps))
+    .map_err(ApiError::from)
 }
 
 /// One trending-artists page. Range rides the `range` query param (one
@@ -877,14 +837,14 @@ pub async fn genre_detail(
         (status = 200, description = "Trending artists page", body = TrendingArtistsPage),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
     )
 )]
 pub async fn trending_artists(
     State(deps): State<ReadsDeps>,
     _user: AuthenticatedUser,
     ValidQuery(query): ValidQuery<ChartQuery>,
-) -> Result<Json<TrendingArtistsPage>, ReadsError> {
+) -> Result<Json<TrendingArtistsPage>, ApiError> {
     services::trending_artists(
         &deps,
         query.range.as_deref(),
@@ -894,7 +854,7 @@ pub async fn trending_artists(
     )
     .await
     .map(Json)
-    .map_err(|error| map(error, &deps))
+    .map_err(ApiError::from)
 }
 
 /// One popular-albums page (same range-param redesign).
@@ -912,14 +872,14 @@ pub async fn trending_artists(
         (status = 200, description = "Popular albums page", body = PopularAlbumsPage),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
     )
 )]
 pub async fn popular_albums(
     State(deps): State<ReadsDeps>,
     _user: AuthenticatedUser,
     ValidQuery(query): ValidQuery<ChartQuery>,
-) -> Result<Json<PopularAlbumsPage>, ReadsError> {
+) -> Result<Json<PopularAlbumsPage>, ApiError> {
     services::popular_albums(
         &deps,
         query.range.as_deref(),
@@ -929,7 +889,7 @@ pub async fn popular_albums(
     )
     .await
     .map(Json)
-    .map_err(|error| map(error, &deps))
+    .map_err(ApiError::from)
 }
 
 /// One your-top-albums page for the caller (same redesign, per-user).
@@ -947,14 +907,14 @@ pub async fn popular_albums(
         (status = 200, description = "Your-top albums page", body = PopularAlbumsPage),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 409, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)"),
     )
 )]
 pub async fn your_top_albums(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
     ValidQuery(query): ValidQuery<ChartQuery>,
-) -> Result<Json<PopularAlbumsPage>, ReadsError> {
+) -> Result<Json<PopularAlbumsPage>, ApiError> {
     services::your_top_albums(
         &deps,
         &user.user_id,
@@ -965,7 +925,7 @@ pub async fn your_top_albums(
     )
     .await
     .map(Json)
-    .map_err(|error| map(error, &deps))
+    .map_err(ApiError::from)
 }
 
 // ---------------------------------------------------------------------------

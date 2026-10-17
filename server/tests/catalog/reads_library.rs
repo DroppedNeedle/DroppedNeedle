@@ -2,8 +2,8 @@
 //! the routes, the same-era suggestion pool, and the SQLite catalog and
 //! favorites adapters over a scratch migrated database.
 
-use crate::common::ScratchDir;
 use crate::common::auth::AuthRig;
+use crate::common::{ScratchDir, TestApp};
 use droppedneedle_catalog::reads::library;
 
 use std::sync::Arc;
@@ -27,19 +27,6 @@ use library::stores::{
 use library::{LibraryDeps, library_router};
 use serde_json::Value;
 use tower::ServiceExt as _;
-
-/// Fixed error id asserted in leak envelopes. A valid UUID.
-const FIXED_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
-
-/// Id generator returning one fixed value.
-#[derive(Debug, Clone)]
-struct FixedIdGenerator;
-
-impl droppedneedle_kernel::ids::IdGenerator for FixedIdGenerator {
-    fn new_id(&self) -> String {
-        FIXED_ID.to_owned()
-    }
-}
 
 fn album(
     id: &str,
@@ -236,7 +223,6 @@ fn deps(
         upgrade_policy: Arc::new(library::stores::UpgradePolicy::default),
         tags: Arc::new(library::tags::UnwiredTagReader),
         auth: auth.clone(),
-        ids: Arc::new(FixedIdGenerator),
     }
 }
 
@@ -473,7 +459,8 @@ async fn auth_matrix_every_route_401s_anonymous_and_admits_users() {
 #[tokio::test]
 async fn every_route_hides_store_faults() {
     let (rig, user_id) = auth_bundle().await;
-    let app = app(
+    let scope = TestApp::start("reads-library-faults").await;
+    let app = scope.request_scope(app(
         deps(
             Arc::new(FailingCatalog::new()),
             Arc::new(FailingFavorites::new()),
@@ -481,7 +468,7 @@ async fn every_route_hides_store_faults() {
             &rig.deps,
         ),
         Some(&user_id),
-    );
+    ));
     for path in ROUTES {
         let response = app
             .clone()
@@ -497,6 +484,10 @@ async fn every_route_hides_store_faults() {
             StatusCode::INTERNAL_SERVER_ERROR,
             "for {path}"
         );
+        let request_id = response.headers()["x-request-id"]
+            .to_str()
+            .expect("request id is text")
+            .to_owned();
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("body reads");
@@ -510,7 +501,10 @@ async fn every_route_hides_store_faults() {
             json["error"]["message"], "Internal server error",
             "for {path}"
         );
-        assert_eq!(json["error"]["details"]["error_id"], FIXED_ID, "for {path}");
+        assert_eq!(
+            json["error"]["details"]["error_id"], request_id,
+            "for {path}"
+        );
     }
 }
 
