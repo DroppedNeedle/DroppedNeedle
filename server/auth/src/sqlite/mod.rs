@@ -46,7 +46,7 @@ use sqlx::SqlitePool;
 use super::federated::FederatedError;
 use super::federated::password_import::HashScheme;
 use super::users::stores::StoreError;
-use droppedneedle_kernel::db::WriteLane;
+use droppedneedle_kernel::db::{DbError, Lane, WriteLane};
 
 pub use app_passwords::SqliteAppPasswordStore;
 pub use federated::SqliteFederatedStore;
@@ -80,14 +80,30 @@ impl AuthDb {
         &self.pool
     }
 
-    /// The writer lane.
-    fn lane(&self) -> &WriteLane {
-        &self.lane
+    /// The writer lane, its closures failing with [`WriteError`].
+    fn lane(&self) -> AuthLane<'_> {
+        AuthLane(&self.lane)
     }
 
     /// Current unix time in whole seconds.
     fn now_unix() -> i64 {
         super::session::store::now_unix()
+    }
+}
+
+/// The writer lane with the auth closure error pinned, so a closure that
+/// only uses `?` needs no annotation.
+#[derive(Clone, Copy)]
+struct AuthLane<'a>(&'a WriteLane);
+
+impl AuthLane<'_> {
+    /// [`WriteLane::write`].
+    async fn write<R, F>(self, lane: Lane, name: &'static str, op: F) -> Result<R, WriteError>
+    where
+        F: FnOnce(&rusqlite::Transaction) -> Result<R, WriteError> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.0.write(lane, name, op).await
     }
 }
 
@@ -108,10 +124,11 @@ fn internal(error: impl std::fmt::Display) -> StoreError {
 }
 
 /// Store failure from a lane or pool error: busy stays busy, the rest is
-/// [`internal`].
-fn store_error(error: droppedneedle_kernel::db::DbError) -> StoreError {
-    match error {
-        droppedneedle_kernel::db::DbError::Busy { .. } => StoreError::Busy,
+/// [`internal`]. A conflict reaches here only where the caller does not
+/// treat it as its own, so it is internal too.
+fn store_error(error: impl Into<WriteError>) -> StoreError {
+    match error.into() {
+        WriteError::Db(DbError::Busy { .. }) => StoreError::Busy,
         error => internal(error),
     }
 }
@@ -144,37 +161,43 @@ fn render_local_data(scheme: &str, hash: &str) -> String {
 const USER_COLUMNS: &str = "id, display_name, email, avatar_url, role, created_at, \
     last_login_at, username, username_display";
 
-/// Marker a write closure aborts with when the failure is a domain conflict.
-/// The lane renders SQL errors as message text, so closures classify the
-/// typed error first (see [`op_error`]) instead of sniffing strings later.
-const CONFLICT_ABORT: &str = "conflicting state";
+/// What an auth write closure fails with. The transaction rolls back
+/// either way.
+#[derive(Debug, thiserror::Error)]
+enum WriteError {
+    /// A constraint refused the write: the caller's domain conflict.
+    #[error("conflicting state")]
+    Conflict,
+    /// Any other failure, the lane's own included.
+    #[error(transparent)]
+    Db(#[from] DbError),
+}
 
-/// Convert a rusqlite failure inside a write closure: constraint violations
-/// become the conflict marker, everything else stays a SQL error.
-fn op_error(error: rusqlite::Error) -> droppedneedle_kernel::db::OpError {
-    if is_constraint(&error) {
-        droppedneedle_kernel::db::OpError::Abort(CONFLICT_ABORT.to_owned())
-    } else {
-        droppedneedle_kernel::db::OpError::Sql(error)
+impl From<rusqlite::Error> for WriteError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Db(error.into())
     }
 }
 
-/// True when a lane failure carries the conflict marker.
-fn is_write_conflict(error: &droppedneedle_kernel::db::DbError) -> bool {
-    matches!(
-        error,
-        droppedneedle_kernel::db::DbError::WriteFailed { cause, .. } if cause == CONFLICT_ABORT
-    )
+/// Convert a rusqlite failure inside a write closure: constraint violations
+/// become [`WriteError::Conflict`], everything else a database error.
+fn op_error(error: rusqlite::Error) -> WriteError {
+    if is_constraint(&error) {
+        WriteError::Conflict
+    } else {
+        error.into()
+    }
+}
+
+/// True when a write failed on a constraint.
+fn is_write_conflict(error: &WriteError) -> bool {
+    matches!(error, WriteError::Conflict)
 }
 
 /// True when a row with `id` exists in `table`. Used after updates that may
 /// legitimately change nothing, so an unchanged row still reads as found.
 /// The table name is always a literal at the call site, never caller input.
-fn row_exists(
-    tx: &rusqlite::Transaction,
-    table: &str,
-    id: &str,
-) -> Result<bool, droppedneedle_kernel::db::OpError> {
+fn row_exists(tx: &rusqlite::Transaction, table: &str, id: &str) -> Result<bool, WriteError> {
     let found: Option<i64> = tx
         .query_row(
             &format!("SELECT 1 FROM {table} WHERE id = ?"),

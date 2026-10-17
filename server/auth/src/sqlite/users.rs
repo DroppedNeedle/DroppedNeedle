@@ -14,7 +14,7 @@ use crate::times::{parse_iso, to_iso};
 use crate::users::models::{LocalCredential as UsersLocalCredential, UserRecord};
 use crate::users::roles::Role;
 use crate::users::stores::{BoxFuture, RoleChange, StoreError, UserDeletion, UserStore};
-use droppedneedle_kernel::db::{Lane, map_sqlx_busy};
+use droppedneedle_kernel::db::{DbError, Lane, map_sqlx_busy};
 
 /// Account and credential rows over `auth_users` plus the `local` rows of
 /// `auth_providers`.
@@ -228,7 +228,7 @@ impl UserStore for SqliteUserStore {
                 username.to_owned(),
                 username_display.to_owned(),
             );
-            let outcome: Result<bool, droppedneedle_kernel::db::DbError> = lane
+            let outcome: Result<bool, super::WriteError> = lane
                 .write(Lane::Foreground, "auth.users.rename", move |tx| {
                     tx.execute(
                         "UPDATE auth_users SET username = ?, username_display = ? WHERE id = ?",
@@ -261,7 +261,7 @@ impl UserStore for SqliteUserStore {
         Box::pin(async move {
             let lane = self.db.lane();
             let (id, email) = (id.to_owned(), email.map(str::to_owned));
-            let outcome: Result<bool, droppedneedle_kernel::db::DbError> = lane
+            let outcome: Result<bool, super::WriteError> = lane
                 .write(Lane::Foreground, "auth.users.email", move |tx| {
                     tx.execute(
                         "UPDATE auth_users SET email = ? WHERE id = ?",
@@ -624,7 +624,7 @@ impl UserStore for SqliteUserStore {
     ) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
             let lane = self.db.lane();
-            let outcome: Result<(), droppedneedle_kernel::db::DbError> = lane
+            let outcome: Result<(), super::WriteError> = lane
                 .write(Lane::Foreground, "auth.users.bind", move |tx| {
                     tx.execute(
                         "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
@@ -671,9 +671,7 @@ const RESTRICTING_HISTORY: &[(&str, &str, &str)] = &[
 ];
 
 /// Map a write outcome: constraint conflicts become `Conflict`.
-fn conflict_or_internal(
-    outcome: Result<(), droppedneedle_kernel::db::DbError>,
-) -> Result<(), StoreError> {
+fn conflict_or_internal(outcome: Result<(), super::WriteError>) -> Result<(), StoreError> {
     match outcome {
         Ok(()) => Ok(()),
         Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
@@ -682,10 +680,7 @@ fn conflict_or_internal(
 }
 
 /// Insert one `auth_users` row.
-fn insert_user_row(
-    tx: &rusqlite::Transaction,
-    user: &UserRecord,
-) -> Result<(), droppedneedle_kernel::db::OpError> {
+fn insert_user_row(tx: &rusqlite::Transaction, user: &UserRecord) -> Result<(), super::WriteError> {
     tx.execute(
         "INSERT INTO auth_users (id, display_name, email, avatar_url, role, \
          created_at, last_login_at, username, username_display) \
@@ -710,7 +705,7 @@ fn insert_user_row(
 fn insert_local_row(
     tx: &rusqlite::Transaction,
     credential: &UsersLocalCredential,
-) -> Result<(), droppedneedle_kernel::db::OpError> {
+) -> Result<(), super::WriteError> {
     let username: Option<String> = tx
         .query_row(
             "SELECT username FROM auth_users WHERE id = ?",
@@ -721,9 +716,10 @@ fn insert_local_row(
         .map_err(op_error)?
         .flatten();
     let Some(username) = username else {
-        return Err(droppedneedle_kernel::db::OpError::Abort(
-            "cannot set a local password without a username".to_owned(),
-        ));
+        return Err(super::WriteError::Db(DbError::WriteFailed {
+            operation: "auth.users.local_row".to_owned(),
+            cause: "cannot set a local password without a username".to_owned(),
+        }));
     };
     tx.execute(
         "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
@@ -748,7 +744,7 @@ fn swap_local_hash(
     expected_hash: &str,
     scheme: &str,
     new_hash: &str,
-) -> Result<bool, droppedneedle_kernel::db::OpError> {
+) -> Result<bool, super::WriteError> {
     let current: Option<Option<String>> = tx
         .query_row(
             "SELECT provider_data FROM auth_providers WHERE user_id = ? AND provider = 'local'",
@@ -775,10 +771,7 @@ fn swap_local_hash(
 }
 
 /// Current role of one user, or `None` when the row is gone.
-fn role_of(
-    tx: &rusqlite::Transaction,
-    id: &str,
-) -> Result<Option<Role>, droppedneedle_kernel::db::OpError> {
+fn role_of(tx: &rusqlite::Transaction, id: &str) -> Result<Option<Role>, super::WriteError> {
     let raw: Option<String> = tx
         .query_row(
             "SELECT role FROM auth_users WHERE id = ?",
@@ -791,7 +784,7 @@ fn role_of(
 }
 
 /// Admin accounts right now, read inside the caller's transaction.
-fn admin_count(tx: &rusqlite::Transaction) -> Result<i64, droppedneedle_kernel::db::OpError> {
+fn admin_count(tx: &rusqlite::Transaction) -> Result<i64, super::WriteError> {
     tx.query_row(
         "SELECT COUNT(*) FROM auth_users WHERE role = ?",
         rusqlite::params![Role::Admin.as_str()],

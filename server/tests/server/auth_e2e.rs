@@ -3607,7 +3607,7 @@ async fn login_store_failure_is_a_500_not_bad_credentials() {
             "test.break",
             |tx| {
                 tx.execute_batch("ALTER TABLE auth_providers RENAME TO auth_providers_gone")?;
-                Ok(())
+                Ok::<_, droppedneedle_kernel::db::DbError>(())
             },
         )
         .await

@@ -148,7 +148,7 @@ async fn v2_bcrypt_rows_log_in_and_rehash_to_argon2id() {
                  created_at) VALUES ('cred-1', 'user-1', 'local', 'ada', ?, '2023-11-14T22:13:20+00:00')",
                 params![legacy],
             )?;
-            Ok(())
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
         })
         .await
         .unwrap();
@@ -726,7 +726,7 @@ async fn oidc_states_consume_once_and_expired_ones_are_swept() {
                  VALUES ('stale', '2020-01-01T00:00:00+00:00', '2020-01-01T00:10:00+00:00', 'v')",
                 params![],
             )?;
-            Ok(())
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
         })
         .await
         .unwrap();

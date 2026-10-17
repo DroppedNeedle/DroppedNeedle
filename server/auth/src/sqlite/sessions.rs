@@ -81,7 +81,7 @@ impl SessionStore for SqliteSessionStore {
         // the requeue below. Almost always an empty vec (legacy logins only).
         let retry = pending.clone();
         let record_issued_at = record.issued_at;
-        let outcome: Result<Vec<PendingRehash>, droppedneedle_kernel::db::DbError> = lane
+        let outcome: Result<Vec<PendingRehash>, super::WriteError> = lane
             .write(Lane::Foreground, "auth.session.insert", move |tx| {
                 tx.execute(
                     "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, \
@@ -112,7 +112,7 @@ impl SessionStore for SqliteSessionStore {
             }
             // A write past its budget was rolled back whole: nothing of the
             // sign-in was kept, so the client may simply try again.
-            Err(droppedneedle_kernel::db::DbError::TxTimeout { .. }) => {
+            Err(super::WriteError::Db(droppedneedle_kernel::db::DbError::TxTimeout { .. })) => {
                 self.rehash.requeue(retry);
                 return Err(SessionStoreError::Busy);
             }
@@ -230,11 +230,12 @@ impl SessionStore for SqliteSessionStore {
 
 /// Session-port failure from a lane or pool error: busy stays busy, and
 /// anything else is logged here, since the port's error carries no cause.
-fn session_store_error(
-    operation: &str,
-    error: droppedneedle_kernel::db::DbError,
-) -> SessionStoreError {
-    if matches!(error, droppedneedle_kernel::db::DbError::Busy { .. }) {
+fn session_store_error(operation: &str, error: impl Into<super::WriteError>) -> SessionStoreError {
+    let error = error.into();
+    if matches!(
+        error,
+        super::WriteError::Db(droppedneedle_kernel::db::DbError::Busy { .. })
+    ) {
         return SessionStoreError::Busy;
     }
     tracing::error!(operation, %error, "session store failed");
@@ -247,10 +248,7 @@ const TOKEN_SWEEP_BATCH: i64 = 500;
 
 /// Delete revoked and expired token rows (no request can use them again),
 /// in the login's own transaction.
-fn sweep_dead_tokens(
-    tx: &rusqlite::Transaction,
-    now_unix: i64,
-) -> Result<(), droppedneedle_kernel::db::OpError> {
+fn sweep_dead_tokens(tx: &rusqlite::Transaction, now_unix: i64) -> Result<(), super::WriteError> {
     tx.execute(
         "DELETE FROM auth_tokens WHERE id IN (SELECT id FROM auth_tokens \
          WHERE revoked = 1 OR expires_at <= ? LIMIT ?)",
@@ -269,7 +267,7 @@ fn apply_pending_rehash(
     tx: &rusqlite::Transaction,
     user_id: &str,
     pending: Vec<PendingRehash>,
-) -> Result<Vec<PendingRehash>, droppedneedle_kernel::db::OpError> {
+) -> Result<Vec<PendingRehash>, super::WriteError> {
     if pending.is_empty() {
         return Ok(pending);
     }
@@ -453,7 +451,7 @@ impl SessionManager for SqliteSessionManager {
                 token_hash.clone(),
                 agent.clone(),
             );
-            let outcome: Result<(), droppedneedle_kernel::db::DbError> = lane
+            let outcome: Result<(), super::WriteError> = lane
                 .write(Lane::Foreground, "auth.sessions.replace", move |tx| {
                     tx.execute(
                         "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, \
