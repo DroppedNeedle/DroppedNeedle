@@ -1,12 +1,6 @@
-//! Explicit re-identification: an administrator asks for another look at
-//! one album and sees every candidate the matcher scored.
-//!
-//! Unlike a queued identification, nothing seals on its own. The worker
-//! recalls candidates (every release the usual recall finds, or only the
-//! release the administrator named), scores them with the matching
-//! engine, and parks the job as `ready` with the candidates on its
-//! snapshot. A MusicBrainz outage defers the job for two minutes, at most
-//! five times, before it fails with a code that can be resumed.
+//! Scored candidates: releases the matcher ranked against an album's
+//! files, with the evidence for each, as the edition plan and repairs
+//! show them.
 
 use super::models::{CandidateTrack, Evaluation, ReidentificationCandidate};
 use crate::identify::models::{EvidenceClass, LocalAlbumFacts, RecallResult};
@@ -16,10 +10,6 @@ use crate::matching::score::NAME_GATE;
 use crate::matching::strings::{string_dist, strip_edition_words};
 use crate::matching::{Release, ReleaseMatch};
 
-/// Seconds a deferred re-identification waits before trying again.
-pub const RETRY_SECS: f64 = 120.0;
-/// Deferrals before an outage fails the job (resumable).
-pub const MAX_ATTEMPTS: i64 = 5;
 /// Reason on candidates of a release an administrator named: they always
 /// need confirmation.
 const MANUAL_EXACT: &str = "MANUAL_EXACT_RELEASE_REQUEST";
@@ -145,14 +135,4 @@ fn snake<T: serde::Serialize>(value: &T) -> String {
         .ok()
         .and_then(|json| json.as_str().map(str::to_owned))
         .unwrap_or_else(|| "unknown".to_owned())
-}
-
-/// The evaluation recorded when MusicBrainz stayed down past the retry
-/// budget. The job fails with a code an administrator can resume.
-pub fn unavailable() -> Evaluation {
-    Evaluation {
-        outcome: "provider_deferred".to_owned(),
-        reason_code: super::control::RESUMABLE_FAILURE.to_owned(),
-        ..Evaluation::default()
-    }
 }

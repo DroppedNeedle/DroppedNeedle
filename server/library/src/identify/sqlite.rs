@@ -28,7 +28,7 @@ use super::models::{
     IdentifyKind, JobState, LocalAlbumFacts, LocalTrackFacts, MatchFlag, MatchFlagState,
     PriorAlbumIdentity, PriorTrackIdentity, ReviewItem, ReviewState, TrackIdentity,
 };
-use super::queue::PRIORITY_NEW_OR_CHANGED;
+use super::queue::{PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY};
 use super::sources::ArtistAnswer;
 use super::stores::{Approval, RELEASE_FRESH_SECS, StoreError};
 use crate::corrections::artist_convergence::converge_ids;
@@ -114,7 +114,7 @@ fn review_state_from(raw: &str) -> ReviewState {
 }
 
 /// `embedded` rows (tags carried the ids) are revisable like automatic ones.
-fn decision_from(raw: &str) -> DecisionSource {
+pub(crate) fn decision_from(raw: &str) -> DecisionSource {
     match raw {
         "manual" => DecisionSource::Manual,
         "legacy_import" => DecisionSource::LegacyImport,
@@ -128,6 +128,13 @@ fn idempotency_key(local_album_id: &str, input_revision: &str) -> String {
 
 const JOB_COLUMNS: &str = "id, local_album_id, kind, priority, state, attempts, not_before_ms, \
      input_revision, requested_by_user_id, failure_code";
+
+/// Store one identify job. A live job on the same album and input
+/// revision (the partial unique index on its key) keeps its place.
+const INSERT_JOB: &str = "INSERT INTO library_identify_jobs (id, local_album_id, kind, \
+     priority, state, attempts, not_before_ms, input_revision, idempotency_key, \
+     requested_by_user_id, failure_code, created_ms, updated_ms) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12) ON CONFLICT DO NOTHING";
 
 fn map_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<IdentifyJob> {
     Ok(IdentifyJob {
@@ -220,6 +227,62 @@ pub fn offer_album(conn: &Connection, local_album_id: &str, now_ms: i64) -> rusq
         bump_identification_stream(conn)?;
     }
     Ok(inserted == 1)
+}
+
+/// Queue identification of one album because a person asked for it again.
+/// A job already waiting for the album takes the album's current files
+/// and runs now, even when it was waiting out a backoff; a live job on
+/// those files does the work; otherwise a manual job is queued. Runs
+/// inside the caller's transaction, so it lands with the write that asked.
+pub(crate) fn queue_retry(
+    conn: &Connection,
+    local_album_id: &str,
+    requested_by: Option<&str>,
+    now_ms: i64,
+) -> rusqlite::Result<()> {
+    let revision = album_input_revision(conn, local_album_id)?;
+    let key = idempotency_key(local_album_id, &revision);
+    let waiting: Option<String> = conn
+        .query_row(
+            "SELECT id FROM library_identify_jobs \
+             WHERE local_album_id = ?1 AND state IN ('queued','deferred') \
+             ORDER BY input_revision <> ?2, created_ms LIMIT 1",
+            params![local_album_id, revision],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(job_id) = waiting {
+        let woken = conn.execute(
+            "UPDATE OR IGNORE library_identify_jobs SET input_revision = ?1, \
+             idempotency_key = ?2, not_before_ms = MIN(not_before_ms, ?3), \
+             priority = MIN(priority, ?5), updated_ms = ?3 WHERE id = ?4",
+            params![revision, key, now_ms, job_id, PRIORITY_REVIEW_RETRY as i64],
+        )?;
+        if woken == 1 {
+            return bump_identification_stream(conn);
+        }
+    }
+    let inserted = conn.execute(
+        INSERT_JOB,
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            local_album_id,
+            kind_str(IdentifyKind::Manual),
+            PRIORITY_REVIEW_RETRY as i64,
+            state_str(JobState::Queued),
+            0_i64,
+            now_ms,
+            revision,
+            key,
+            requested_by,
+            None::<String>,
+            now_ms,
+        ],
+    )?;
+    if inserted == 1 {
+        bump_identification_stream(conn)?;
+    }
+    Ok(())
 }
 
 /// Move the `identification` activity revision. Every change to the queue
@@ -1753,11 +1816,7 @@ impl SqliteIdentifyStore {
         self.write("enqueue identify job", |tx| {
             let now = now_ms();
             let inserted = tx.execute(
-                "INSERT INTO library_identify_jobs (id, local_album_id, kind, priority, state, \
-                 attempts, not_before_ms, input_revision, idempotency_key, \
-                 requested_by_user_id, failure_code, created_ms, updated_ms) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12) \
-                 ON CONFLICT DO NOTHING",
+                INSERT_JOB,
                 params![
                     job.id,
                     job.local_album_id,

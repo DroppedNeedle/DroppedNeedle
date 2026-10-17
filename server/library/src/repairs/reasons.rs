@@ -95,7 +95,7 @@ pub fn finding(code: &str) -> Reason {
         "NON_TERMINAL_SAFETY_CONCERN" => reason(
             "NON_TERMINAL_SAFETY_CONCERN",
             "The files only partly fit the linked release; it may be a different edition.",
-            "Open the album and check its edition, or re-identify it.",
+            "Open the album and check its edition.",
         ),
         "MANUAL_IDENTITY_REPORT_ONLY" => reason(
             "MANUAL_IDENTITY_REPORT_ONLY",
@@ -105,7 +105,7 @@ pub fn finding(code: &str) -> Reason {
         "EVIDENCE_UNAVAILABLE" => reason(
             "EVIDENCE_UNAVAILABLE",
             "MusicBrainz no longer has the release this album is linked to, or the link names no exact release.",
-            "Re-identify the album, or pick its edition yourself.",
+            "Choose its edition from the album page.",
         ),
         // Identity preparation.
         "EXACT_RELEASE_MAPPINGS_VERIFIED" => reason(
@@ -161,7 +161,7 @@ pub fn finding(code: &str) -> Reason {
         "CUSTOM_MANIFEST_STALE" => reason(
             "CUSTOM_MANIFEST_STALE",
             "The album's files changed after it was kept as your own edition.",
-            "Re-identify the album and seal its edition again.",
+            "Open the album's edition and use \"Keep your own track list\" again.",
         ),
         // Both.
         "LOCAL_METADATA_POLICY" => reason(

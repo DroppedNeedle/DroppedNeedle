@@ -69,7 +69,7 @@ fn catalogued(code: &str) -> Option<(&'static str, &'static str)> {
         ),
         "EXISTING_IDENTITY_CONFLICT" => (
             "This album is already linked to a different MusicBrainz release.",
-            "Re-identify the album first if the existing link is wrong, then retry.",
+            "If that link is wrong, change the album's edition first, then retry.",
         ),
         "EXISTING_ARTIST_IDENTITY_CONFLICT" => (
             "The album's artist is already linked to a different MusicBrainz artist.",

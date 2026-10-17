@@ -40,7 +40,7 @@ pub const ALBUM_NOT_FOUND: Reason = reason(
 pub const NO_AUTOMATIC_EDITION: Reason = reason(
     "NO_AUTOMATIC_EDITION",
     "This album has no automatic edition choice to undo.",
-    "Use Re-identify to change the album's match instead.",
+    "Change the edition from the album page instead.",
 );
 
 // Bad input.
@@ -81,6 +81,16 @@ pub const LOCAL_METADATA_NEEDS_CONFIRMATION: Reason = reason(
     "This album uses the Local metadata policy, so looking it up on MusicBrainz needs your confirmation.",
     "Confirm the one-off lookup and start again.",
 );
+pub const LOCAL_METADATA_MANAGED: Reason = reason(
+    "LOCAL_METADATA_MANAGED",
+    "This folder keeps its own tags and DroppedNeedle manages it, so the album can't be identified again.",
+    "Choose its edition on the album page if you want it changed.",
+);
+pub const EDITION_IS_CHOSEN: Reason = reason(
+    "EDITION_IS_CHOSEN",
+    "Someone chose this album's edition, so identifying it again would change nothing.",
+    "Use \"Let DroppedNeedle choose\" on the album page to have it matched again.",
+);
 pub const CONTROL_KEY_REUSED: Reason = reason(
     "CONTROL_KEY_REUSED",
     "This idempotency key was already used for a different request.",
@@ -88,16 +98,6 @@ pub const CONTROL_KEY_REUSED: Reason = reason(
 );
 
 // Stale: the album or job moved since the caller read it.
-pub const ALBUM_CHANGED: Reason = reason(
-    STALE,
-    "The album changed before re-identification started.",
-    "Reload the album and start again.",
-);
-pub const ALBUM_FILES_CHANGED: Reason = reason(
-    STALE,
-    "The album's files changed before re-identification started.",
-    "Reload the album and start again.",
-);
 pub const OPERATION_CHANGED: Reason = reason(
     STALE,
     "The operation changed since you last loaded it.",
@@ -106,7 +106,7 @@ pub const OPERATION_CHANGED: Reason = reason(
 pub const UNDO_STALE: Reason = reason(
     STALE,
     "The album's match changed after the automatic choice, so undoing it would bring back an outdated match.",
-    "Reload the album; use Re-identify to change the match.",
+    "Reload the album and change its edition there.",
 );
 
 // The exact release does not fit.
@@ -348,25 +348,30 @@ pub const MUSICBRAINZ_UNAVAILABLE: Reason = reason(
 /// Why a job ended where it did, by its stored terminal code.
 pub fn terminal(code: &str) -> Reason {
     match code {
-        "CANDIDATES_READY" => reason(
-            "CANDIDATES_READY",
-            "Candidates are ready for your review.",
-            "Choose a release, or keep the album as it is.",
+        "HANDED_TO_IDENTIFICATION" => reason(
+            "HANDED_TO_IDENTIFICATION",
+            "The album was queued for identification.",
+            "Nothing to do.",
         ),
+        "ALBUM_NOT_FOUND" => ALBUM_NOT_FOUND,
+        "ALBUM_EXCLUDED" => ALBUM_EXCLUDED,
+        "LOCAL_METADATA_NEEDS_CONFIRMATION" => LOCAL_METADATA_NEEDS_CONFIRMATION,
+        "LOCAL_METADATA_MANAGED" => LOCAL_METADATA_MANAGED,
+        "EDITION_IS_CHOSEN" => EDITION_IS_CHOSEN,
         "IDENTIFIED" => reason(
             "IDENTIFIED",
             "The album is matched to the release you chose.",
-            "Nothing to do; Re-identify again if you change your mind.",
+            "Change it from the album page if it is wrong.",
         ),
         "CUSTOM_EDITION_SEALED" => reason(
             "CUSTOM_EDITION_SEALED",
             "The album is kept as your own edition of the chosen release group.",
-            "Nothing to do; Re-identify again if you change your mind.",
+            "Change it from the album page if it is wrong.",
         ),
         "LEFT_UNMANAGED" => reason(
             "LEFT_UNMANAGED",
             "The album is kept out of file organizing.",
-            "Re-enable organizing from the album page when you want it back.",
+            "Use \"Manage it again\" on the album page when you want it back.",
         ),
         "NO_CANDIDATE" => reason(
             "NO_CANDIDATE",
@@ -381,17 +386,17 @@ pub fn terminal(code: &str) -> Reason {
         "STALE_INPUT" => reason(
             "STALE_INPUT",
             "The album's files or match changed while it was being checked.",
-            "Run Re-identify again.",
+            "Open the album to check its edition.",
         ),
         "SUBJECT_NOT_AVAILABLE" => reason(
             "SUBJECT_NOT_AVAILABLE",
             "The album has no files in the library any more.",
-            "Rescan the library; re-identify the album if it comes back.",
+            "Rescan the library if the files should still be there.",
         ),
         "MISSING_WORK" | "MISSING_SNAPSHOT" => reason(
             "OPERATION_INCOMPLETE",
             "This operation lost the record of what it was checking.",
-            "Start Re-identify again.",
+            "Start it again.",
         ),
         "PROVIDER_TEMPORARILY_UNAVAILABLE" => reason(
             "PROVIDER_TEMPORARILY_UNAVAILABLE",

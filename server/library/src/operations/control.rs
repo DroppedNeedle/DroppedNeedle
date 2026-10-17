@@ -55,8 +55,8 @@ pub fn plan(job: &OperationJob, control: Control) -> ControlPlan {
             OperationState::Queued | OperationState::Paused if control == Control::Stop => {
                 ControlPlan::StopNow
             }
-            // A job waiting on an administrator (a re-identification's
-            // choice, a repair report's Apply) holds no worker.
+            // A job waiting on an administrator (a repair report's Apply)
+            // holds no worker.
             OperationState::Ready if control == Control::Stop => ControlPlan::StopNow,
             _ => ControlPlan::Request(if control == Control::Stop {
                 ControlRequest::Stop

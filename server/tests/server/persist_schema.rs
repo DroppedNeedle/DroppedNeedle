@@ -2995,6 +2995,127 @@ async fn artist_id_checks_arrive_empty_and_every_album_is_worked_again() {
     }
 }
 
+/// Migration 0064 puts re-identifications parked on a choice back in the
+/// queue, with their stale candidates cleared, so the worker hands them to
+/// identification. Stopped re-identifications and repair reports waiting
+/// for Apply stay as they are.
+#[tokio::test]
+async fn parked_reidentifications_go_back_to_the_queue() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 64)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO library_operation_jobs (id, kind, state, expected_work_count, \
+         completed_count, succeeded_count, terminal_code, reidentification_attempt_count, \
+         created_at, updated_at, row_revision, event_revision) VALUES \
+         ('parked', 'explicit_reidentification', 'ready', 1, 1, 1, 'CANDIDATES_READY', 2, \
+         1, 1, 4, 4), \
+         ('stopped', 'explicit_reidentification', 'stopped', 1, 0, 0, 'STOPPED', 0, \
+         1, 1, 2, 2), \
+         ('report', 'repair', 'ready', 1, 1, 1, 'DRY_RUN_READY', 0, 1, 1, 3, 3); \
+         INSERT INTO library_operation_work (job_id, ordinal, local_album_id, \
+         expected_subject_revision, expected_input_revision, action, idempotency_key, state, \
+         result_json, updated_at) VALUES \
+         ('parked', 0, 'al1', 1, 'x', 'reidentify', 'parked:al1', 'succeeded', \
+         '{\"outcome\":\"contradictory\"}', 1), \
+         ('stopped', 0, 'al1', 1, 'x', 'reidentify', 'stopped:al1', 'pending', NULL, 1); \
+         INSERT INTO library_reidentification_snapshots (job_id, local_album_id, \
+         expected_album_revision, expected_input_revision, selected_candidate_key, \
+         result_json, created_at) VALUES \
+         ('parked', 'al1', 1, 'x', 'rg:rel', '{\"candidates\":[{\"candidate_key\":\"rg:rel\"}]}', 1), \
+         ('stopped', 'al1', 1, 'x', NULL, NULL, 1);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    async fn job(pool: &SqlitePool, id: &str) -> String {
+        sqlx::query_scalar(
+            "SELECT state || '|' || COALESCE(terminal_code, '') || '|' || control_request \
+             || '|' || completed_count || '|' || succeeded_count || '|' || failed_count \
+             || '|' || skipped_count || '|' || reidentification_attempt_count || '|' \
+             || expected_work_count || '|' || row_revision || '|' || event_revision || '|' \
+             || updated_at FROM library_operation_jobs WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+    async fn work(pool: &SqlitePool, id: &str) -> (String, Option<String>, i64) {
+        sqlx::query_as(
+            "SELECT state, result_json, row_revision FROM library_operation_work \
+             WHERE job_id = ?",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+    async fn snapshot(pool: &SqlitePool, id: &str) -> (Option<String>, Option<String>) {
+        sqlx::query_as(
+            "SELECT selected_candidate_key, result_json \
+             FROM library_reidentification_snapshots WHERE job_id = ?",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+    let stopped = (
+        job(&pool, "stopped").await,
+        work(&pool, "stopped").await,
+        snapshot(&pool, "stopped").await,
+    );
+    let report = job(&pool, "report").await;
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let parked = job(&pool, "parked").await;
+    let (fields, updated_at) = parked.rsplit_once('|').expect("job fields");
+    assert_eq!(fields, "queued||none|0|0|0|0|0|1|5|5");
+    let updated_at: f64 = updated_at.parse().expect("updated_at");
+    assert!(updated_at > 1_000_000_000.0, "updated now: {updated_at}");
+    assert_eq!(work(&pool, "parked").await, ("pending".to_owned(), None, 2));
+    assert_eq!(snapshot(&pool, "parked").await, (None, None));
+    assert_eq!(
+        (
+            job(&pool, "stopped").await,
+            work(&pool, "stopped").await,
+            snapshot(&pool, "stopped").await,
+        ),
+        stopped,
+        "a stopped re-identification keeps its meaning"
+    );
+    assert_eq!(
+        job(&pool, "report").await,
+        report,
+        "a repair report still waits for Apply"
+    );
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 64 && stamped == latest_version(), "{stamped}");
+}
+
 /// Every table in the migrated schema is listed once in
 /// `server/table-owners.txt` under a known area, and the list names no
 /// table the schema lacks.

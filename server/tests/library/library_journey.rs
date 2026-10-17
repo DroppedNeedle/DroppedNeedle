@@ -2731,8 +2731,155 @@ async fn library_journey_undo_automatic_edition() {
         body["reviews"][0]["reason_code"],
         json!("AUTOMATIC_EDITION_CLEARED_TO_REVIEW")
     );
+    let review = body["reviews"][0]["id"]
+        .as_str()
+        .expect("review id")
+        .to_owned();
     let (status, _) = app.call("POST", &undo, &headers, Some(fresh)).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "an undo is used once");
+
+    // Retrying the review identifies the album again, as a scan would,
+    // and the job that asked for it finishes.
+    let (status, job) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/reviews/{review}/retry"),
+            &headers,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{job}");
+    assert_eq!(job["kind"], json!("explicit_reidentification"));
+    rig.identified(1).await;
+    let db = app.db();
+    let identity: (Option<String>, String) = db
+        .query_row(
+            "SELECT release_mbid, decision_source FROM local_album_external_identities \
+             WHERE local_album_id = ?1",
+            [&album],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("identity sealed again");
+    assert_eq!(identity, (Some(release.id.clone()), "automatic".to_owned()));
+    let review_state = |id: &str| -> String {
+        db.query_row(
+            "SELECT state FROM library_identify_reviews WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .expect("review reads")
+    };
+    assert_eq!(review_state(&review), "dismissed");
+    let job_id = job["id"].as_str().expect("job id");
+    let (status, ended) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/operations/{job_id}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{ended}");
+    assert_eq!(ended["state"], json!("succeeded"), "{ended}");
+    assert_eq!(
+        ended["terminal_reason"]["code"],
+        json!("HANDED_TO_IDENTIFICATION")
+    );
+    let parked: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_operation_jobs \
+             WHERE kind = 'explicit_reidentification' AND state = 'ready'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("jobs read");
+    assert_eq!(parked, 0, "no retry waits on a choice");
+
+    // An edition someone chose is never retried: the review stays open.
+    db.execute(
+        "UPDATE local_album_external_identities SET decision_source = 'manual' \
+         WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("edition chosen");
+    db.execute(
+        "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+         candidates_json, state, created_ms, updated_ms) \
+         VALUES ('rev-chosen', ?1, 'EDITION_KEPT_OVER_CONFLICT', '[]', 'pending', 5, 5)",
+        [&album],
+    )
+    .expect("review filed");
+    let (status, tally) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/retry-pending",
+            &headers,
+            Some(json!({"preview": true})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{tally}");
+    assert_eq!(tally["started"], json!(0), "{tally}");
+    assert_eq!(
+        tally["skipped"].as_array().map(Vec::len),
+        Some(1),
+        "{tally}"
+    );
+    assert_eq!(
+        tally["skipped"][0]["reason"]["code"],
+        json!("EDITION_IS_CHOSEN")
+    );
+    assert_eq!(tally["skipped"][0]["count"], json!(1));
+    let retry_chosen = "/api/v3/library/reviews/rev-chosen/retry";
+    let (status, body) = app
+        .call("POST", retry_chosen, &headers, Some(json!({})))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("EDITION_IS_CHOSEN"));
+    assert_eq!(review_state("rev-chosen"), "pending");
+
+    // A folder that keeps its own tags, which DroppedNeedle manages, is
+    // never looked up again, whatever was confirmed.
+    let page = "/api/v3/settings/library-management";
+    let (status, saved) = app.call("GET", page, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let mut settings = saved.clone();
+    settings
+        .as_object_mut()
+        .expect("settings")
+        .remove("settings_revision");
+    settings["root_assignments"] = json!([{
+        "root_id": "music",
+        "profile_id": droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID,
+        "enabled": true,
+    }]);
+    let (status, body) = app
+        .call(
+            "PUT",
+            page,
+            &headers,
+            Some(json!({
+                "settings": settings,
+                "expected_settings_revision": saved["settings_revision"],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    db.execute(
+        "UPDATE local_tracks SET applied_policy = 'local_metadata' WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("policy set");
+    let (status, body) = app
+        .call(
+            "POST",
+            retry_chosen,
+            &headers,
+            Some(json!({"confirm_local_metadata": true})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("LOCAL_METADATA_MANAGED"));
+    assert_eq!(review_state("rev-chosen"), "pending");
 
     rig.stop().await;
 }

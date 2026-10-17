@@ -100,7 +100,7 @@ pub fn release_unavailable() -> ItemReason {
     ItemReason::new(
         "METADATA_UNAVAILABLE",
         "The details of this album's edition are not saved on this server yet.",
-        "Run Re-identify on the album page so the edition is fetched again, then make a new preview.",
+        "Open the album page so its edition is fetched again, then make a new preview.",
     )
 }
 

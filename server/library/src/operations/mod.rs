@@ -2,9 +2,9 @@
 //! administrator can watch, pause, resume, and stop.
 //!
 //! Jobs live in `library_operation_jobs`. The worker here runs
-//! re-identifications: an administrator asks for another look at one
-//! album, and the job scores every candidate release and keeps them on its
-//! snapshot. The same module undoes an automatic edition and searches
+//! re-identifications: a person retries a review, and the job hands the
+//! album to the identification queue, which settles it by its usual
+//! rules. The same module undoes an automatic edition and searches
 //! MusicBrainz releases for the edition finder.
 //!
 //! Layout: `models` holds the types, `control` the pause, resume, and stop
@@ -76,12 +76,11 @@ async fn run_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
 /// when a job was worked on.
 pub async fn tick(setup: &LibrarySetup, ops: &Operations, worker: &str) -> bool {
     let (setup, ops, worker) = (setup.clone(), ops.clone(), worker.to_owned());
-    let handle = tokio::runtime::Handle::current();
     let outcome = tokio::task::spawn_blocking(move || {
         if !setup.coordinator.current().is_empty() {
             return Ok(None);
         }
-        handle.block_on(ops.run_next(&worker))
+        ops.run_next(&worker)
     })
     .await;
     match outcome {

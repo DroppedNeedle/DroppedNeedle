@@ -17,7 +17,7 @@ use super::models::{
 };
 use super::plan::{self, EditionPlan, PlanReading};
 use super::reasons;
-use super::reidentify::{MAX_ATTEMPTS, RETRY_SECS, evaluation, unavailable};
+use super::reidentify::evaluation;
 use super::store::{self, NewReidentification};
 use super::{choice, decisions, hand_match, history, reviews};
 use crate::clock::now_unix;
@@ -26,10 +26,11 @@ use crate::identify::models::LocalAlbumFacts;
 use crate::identify::service::IdentifyService;
 use crate::identify::sources::EditionQuery;
 use crate::identify::sqlite::SqliteIdentifyStore;
-use crate::identify::sqlite::album_identity_row;
+use crate::identify::sqlite::{album_identity_row, queue_retry};
 use crate::matching::model::Release;
-use crate::wiring::{LibrarySetup, ScanCoordinator};
+use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::ConfigStore;
 
 /// Most reviews one "retry all" or bulk action takes on.
 pub const BULK_MAX: u32 = 5_000;
@@ -43,7 +44,7 @@ pub struct Operations {
     store: Arc<SqliteIdentifyStore>,
     identify: Arc<IdentifyService>,
     ids: Arc<dyn IdGenerator>,
-    coordinator: Arc<ScanCoordinator>,
+    config: Arc<ConfigStore>,
 }
 
 impl Operations {
@@ -52,13 +53,8 @@ impl Operations {
             store: setup.identify_store.clone(),
             identify: setup.identify.clone(),
             ids: setup.ids.clone(),
-            coordinator: setup.coordinator.clone(),
+            config: setup.config.clone(),
         }
-    }
-
-    /// True while a scan runs: it may be changing the files a job reads.
-    fn scan_running(&self) -> bool {
-        !self.coordinator.current().is_empty()
     }
 
     fn read<T>(
@@ -136,8 +132,7 @@ impl Operations {
         })
     }
 
-    /// A plain re-identification of one album: no release, no revision
-    /// guards.
+    /// A re-identification of one album.
     fn plain_reidentification(
         &self,
         album_id: &str,
@@ -151,9 +146,6 @@ impl Operations {
             idempotency_key,
             local_album_id: album_id.to_owned(),
             one_off_local_metadata,
-            release_mbid: None,
-            expected_album_revision: None,
-            expected_input_revision: None,
         }
     }
 
@@ -183,10 +175,11 @@ impl Operations {
         self.review(review_id)
     }
 
-    /// Start a fresh re-identification of a pending review's album. The
-    /// job carries the decision from here, so the review is dismissed in
-    /// the same write; a review someone settled meanwhile is refused.
-    /// Blocking.
+    /// Identify a pending review's album again. The job hands the album to
+    /// identification, which settles it by its usual rules, so the review
+    /// is dismissed in the same write. A review someone settled meanwhile,
+    /// or an album that may not be retried, is refused and the review
+    /// stays open. Blocking.
     pub fn retry_review(
         &self,
         review_id: &str,
@@ -211,14 +204,15 @@ impl Operations {
             )? {
                 return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
             }
-            store::create_reidentification(tx, &new, now_unix())
+            store::create_reidentification(tx, &self.config, &new, now_unix())
         })
     }
 
     /// Start identification again for every pending review `filter`
     /// selects, up to [`BULK_MAX`]. Albums that cannot start (excluded, no
-    /// files, Local metadata without the confirmation) keep their review
-    /// and are counted by reason. With `preview`, nothing starts: each
+    /// files, Local metadata without the confirmation or under management,
+    /// an edition someone chose) keep their review and are counted by
+    /// reason. With `preview`, nothing starts: each
     /// start is tried and rolled back, so the counts are exactly what a
     /// real run would do. Blocking.
     pub fn retry_pending_reviews(
@@ -246,7 +240,8 @@ impl Operations {
                 );
                 self.store.with_connection(|conn| {
                     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                    let tried = store::create_reidentification(&tx, &new, now_unix()).map(|_| ());
+                    let tried = store::create_reidentification(&tx, &self.config, &new, now_unix())
+                        .map(|_| ());
                     tx.rollback()?;
                     Ok::<_, OperationError>(tried)
                 })?
@@ -886,115 +881,50 @@ impl Operations {
         })
     }
 
-    /// Requeue jobs whose worker vanished, then claim and evaluate the next
-    /// due re-identification. Returns the job as it was left, or `None`
-    /// when nothing was due. Store calls block: run this on a blocking
-    /// thread.
-    pub async fn run_next(&self, worker: &str) -> Result<Option<OperationJob>, OperationError> {
-        let now = now_unix();
-        let claimed = self.write(|tx| {
+    /// Requeue jobs whose worker vanished, then claim the next due
+    /// re-identification and hand its album to the identification queue,
+    /// all in one write. Returns the job as it was left, or `None` when
+    /// nothing was due. Blocking.
+    pub fn run_next(&self, worker: &str) -> Result<Option<OperationJob>, OperationError> {
+        self.write(|tx| {
+            let now = now_unix();
             store::recover_expired(tx, now)?;
             let Some(job) = store::claim_reidentification(tx, worker, now)? else {
                 return Ok(None);
             };
             if store::claim_work(tx, &job.id, now)?.is_none() {
-                return Ok(Some((
-                    job.clone(),
-                    None,
-                    store::fail(tx, &job.id, worker, "MISSING_WORK", now)?,
-                )));
+                return Ok(store::fail(tx, &job.id, worker, "MISSING_WORK", now)?);
             }
-            match store::snapshot(tx, &job.id)? {
-                Some(snap) => Ok(Some((job, Some(snap), None))),
-                None => Ok(Some((
-                    job.clone(),
-                    None,
-                    store::fail(tx, &job.id, worker, "MISSING_SNAPSHOT", now)?,
-                ))),
+            // A pause or stop asked for while the job was queued wins.
+            if let Some(halted) = store::checkpoint(tx, &job.id, worker, now)? {
+                return Ok(Some(halted));
             }
-        })?;
-        let Some((job, snap, failed)) = claimed else {
-            return Ok(None);
-        };
-        let Some(snap) = snap else {
-            return Ok(failed);
-        };
-
-        let facts = self
-            .store
-            .album_facts(&snap.local_album_id)
-            .filter(|facts| !facts.tracks.is_empty());
-        let Some(facts) = facts else {
-            return self.write(|tx| {
-                Ok(store::fail(
-                    tx,
-                    &job.id,
-                    worker,
-                    "SUBJECT_NOT_AVAILABLE",
-                    now_unix(),
-                )?)
-            });
-        };
-        let scanning = self.scan_running();
-        let halted = self.write(|tx| {
-            if scanning {
-                return Ok(Some(store::requeue_for_scan(
-                    tx,
-                    &job.id,
-                    worker,
-                    now_unix(),
-                )?));
+            let Some(snap) = store::snapshot(tx, &job.id)? else {
+                return Ok(store::fail(tx, &job.id, worker, "MISSING_SNAPSHOT", now)?);
+            };
+            let gate = store::retry_gate(
+                tx,
+                &self.config,
+                &snap.local_album_id,
+                snap.one_off_local_metadata,
+            );
+            match gate {
+                Ok(_) => {}
+                Err(
+                    OperationError::NotFound(reason)
+                    | OperationError::Invalid(reason)
+                    | OperationError::Conflict(reason),
+                ) => return Ok(store::fail(tx, &job.id, worker, reason.code, now)?),
+                Err(other) => return Err(other),
             }
-            if !store::matches_snapshot(tx, &snap)? {
-                return Ok(Some(store::fail(
-                    tx,
-                    &job.id,
-                    worker,
-                    "STALE_INPUT",
-                    now_unix(),
-                )?));
-            }
-            Ok(store::checkpoint(tx, &job.id, worker, now_unix())?.map(Some))
-        })?;
-        if let Some(left) = halted {
-            return Ok(left);
-        }
-
-        let exact = snap.requested_release_mbid.as_deref();
-        let recall = self.identify.recall(&facts, exact).await;
-        if recall.provider_deferred {
-            return self.write(|tx| {
-                let now = now_unix();
-                if job.reidentification_attempt_count < MAX_ATTEMPTS {
-                    let reason = super::control::RESUMABLE_FAILURE;
-                    Ok(store::defer(
-                        tx,
-                        &job.id,
-                        worker,
-                        reason,
-                        now + RETRY_SECS,
-                        now,
-                    )?)
-                } else {
-                    store::finish_evaluation(tx, &job.id, worker, &unavailable(), now)
-                }
-            });
-        }
-        // A scan that started during recall may have moved the files: wait
-        // for it and evaluate again rather than calling the input stale.
-        let scanning = self.scan_running();
-        let left = self.write(|tx| {
-            if scanning {
-                return Ok(store::requeue_for_scan(tx, &job.id, worker, now_unix())?);
-            }
-            Ok(store::checkpoint(tx, &job.id, worker, now_unix())?)
-        })?;
-        if let Some(left) = left {
-            return Ok(Some(left));
-        }
-        let ranking = self.identify.rank(&facts, &recall);
-        let found = evaluation(&facts, &recall, &ranking, exact.is_some());
-        self.write(|tx| store::finish_evaluation(tx, &job.id, worker, &found, now_unix()))
+            queue_retry(
+                tx,
+                &snap.local_album_id,
+                job.requested_by_user_id.as_deref(),
+                crate::clock::now_ms() as i64,
+            )?;
+            Ok(store::hand_over(tx, &job.id, worker, now)?)
+        })
     }
 }
 

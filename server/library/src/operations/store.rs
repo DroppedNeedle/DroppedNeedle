@@ -3,18 +3,16 @@
 //! Jobs live in `library_operation_jobs` with one row per work item in
 //! `library_operation_work`. A re-identification also keeps a snapshot in
 //! `library_reidentification_snapshots`: the album, input, and identity
-//! revisions it was started against, the release an administrator named,
-//! and (in `result_json`) the evaluation with its candidates. Every write
-//! takes the job's `row_revision` forward, and every decision an
-//! administrator makes checks the revisions it was shown first.
+//! revisions it was started against and whether a Local metadata lookup
+//! was confirmed. Its worker hands the album to the identification queue
+//! and finishes, so no re-identification waits on a choice. Every write
+//! takes the job's `row_revision` forward.
 //!
 //! The functions here are plain SQL on a caller's connection or
-//! transaction; [`super::service`] owns the transactions. The decisions an
-//! administrator makes on a finished evaluation live in
-//! [`super::decisions`].
+//! transaction; [`super::service`] owns the transactions. The catalog
+//! decisions a person makes on an album live in [`super::decisions`].
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
-use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
 use super::control::{ControlPlan, Requeue, plan};
@@ -23,7 +21,10 @@ use super::models::{
     OperationState, WorkResult,
 };
 use super::reasons;
-use crate::identify::sqlite::album_input_revision;
+use crate::identify::sqlite::{album_identity_row, album_input_revision, decision_from};
+use crate::management::profile::root_assignment;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 
 /// How long a worker holds a claimed job before recovery requeues it.
 pub const LEASE_SECS: f64 = 60.0;
@@ -106,7 +107,8 @@ pub fn work_results(conn: &Connection, job_id: &str) -> rusqlite::Result<(Vec<Wo
     Ok((results, truncated))
 }
 
-/// A re-identification's sealed inputs and its evaluation, once made.
+/// A re-identification's sealed inputs, and the evaluation a job made
+/// before re-identifications were handed to identification.
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub local_album_id: String,
@@ -115,6 +117,7 @@ pub struct Snapshot {
     pub expected_identity_revision: String,
     pub requested_release_mbid: Option<String>,
     pub selected_candidate_key: Option<String>,
+    pub one_off_local_metadata: bool,
     pub evaluation: Option<Evaluation>,
 }
 
@@ -122,7 +125,8 @@ pub fn snapshot(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<Snap
     conn.query_row(
         "SELECT local_album_id, expected_album_revision, expected_input_revision, \
          expected_identity_revision, requested_release_mbid, selected_candidate_key, \
-         result_json FROM library_reidentification_snapshots WHERE job_id = ?1",
+         result_json, one_off_local_metadata FROM library_reidentification_snapshots \
+         WHERE job_id = ?1",
         params![job_id],
         |row| {
             let raw: Option<String> = row.get(6)?;
@@ -133,6 +137,7 @@ pub fn snapshot(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<Snap
                 expected_identity_revision: row.get(3)?,
                 requested_release_mbid: row.get(4)?,
                 selected_candidate_key: row.get(5)?,
+                one_off_local_metadata: row.get(7)?,
                 evaluation: raw.and_then(|raw| match serde_json::from_str(&raw) {
                     Ok(evaluation) => Some(evaluation),
                     Err(error) => {
@@ -249,66 +254,17 @@ fn identity_revision(conn: &Connection, album_id: &str) -> rusqlite::Result<Stri
 // Creating a re-identification.
 // ---------------------------------------------------------------------------
 
-/// A re-identification ready to store.
-#[derive(Debug, Clone)]
-pub struct NewReidentification {
-    pub job_id: String,
-    pub requested_by_user_id: String,
-    /// The caller's key; without one, the album's input revision keys the
-    /// request, so asking twice for unchanged files returns one job.
-    pub idempotency_key: Option<String>,
-    pub local_album_id: String,
-    pub one_off_local_metadata: bool,
-    pub release_mbid: Option<String>,
-    pub expected_album_revision: Option<i64>,
-    pub expected_input_revision: Option<String>,
-}
-
-/// Store a re-identification, or hand back the job an earlier request
-/// with the same idempotency key created.
-pub fn create_reidentification(
-    tx: &Transaction<'_>,
-    new: &NewReidentification,
-    now: f64,
-) -> Result<OperationJob, OperationError> {
-    let release_part = new.release_mbid.as_deref().unwrap_or("automatic");
-    let caller_key = new
-        .idempotency_key
-        .as_ref()
-        .map(|key| format!("{key}:release:{release_part}"));
-    if let Some(key) = &caller_key
-        && let Some(existing) = job_by_key(tx, key)?
-    {
-        return Ok(existing);
-    }
-    let revisions = album_revisions(tx, &new.local_album_id)?
+/// Whether the album may be identified again on a person's request, and
+/// its revisions when it may. Checked when the request is stored and
+/// again when the worker hands the album to identification.
+pub(super) fn retry_gate(
+    conn: &Connection,
+    config: &ConfigStore,
+    album_id: &str,
+    one_off_local_metadata: bool,
+) -> Result<AlbumRevisions, OperationError> {
+    let revisions = album_revisions(conn, album_id)?
         .ok_or(OperationError::NotFound(reasons::ALBUM_NOT_FOUND))?;
-    let key = match caller_key {
-        Some(key) => key,
-        None => {
-            let key = format!(
-                "explicit_reidentification:{}:{}:release:{release_part}",
-                new.local_album_id, revisions.input_revision
-            );
-            if let Some(existing) = job_by_key(tx, &key)? {
-                return Ok(existing);
-            }
-            key
-        }
-    };
-    if new
-        .expected_album_revision
-        .is_some_and(|expected| expected != revisions.album_revision)
-    {
-        return Err(OperationError::Conflict(reasons::ALBUM_CHANGED));
-    }
-    if new
-        .expected_input_revision
-        .as_deref()
-        .is_some_and(|expected| expected != revisions.input_revision)
-    {
-        return Err(OperationError::Conflict(reasons::ALBUM_FILES_CHANGED));
-    }
     if revisions.policies.iter().any(|policy| policy == "excluded") {
         return Err(OperationError::Conflict(reasons::ALBUM_EXCLUDED));
     }
@@ -316,11 +272,87 @@ pub fn create_reidentification(
         .policies
         .iter()
         .any(|policy| policy == "local_metadata")
-        && !new.one_off_local_metadata
     {
-        return Err(OperationError::Conflict(
-            reasons::LOCAL_METADATA_NEEDS_CONFIRMATION,
-        ));
+        // A lookup's result could reach the files through management, in
+        // a folder that keeps its own tags.
+        if local_metadata_managed(conn, config, album_id)? {
+            return Err(OperationError::Conflict(reasons::LOCAL_METADATA_MANAGED));
+        }
+        if !one_off_local_metadata {
+            return Err(OperationError::Conflict(
+                reasons::LOCAL_METADATA_NEEDS_CONFIRMATION,
+            ));
+        }
+    }
+    // Identification keeps an edition someone chose or imported, so a
+    // retry would change nothing.
+    if album_identity_row(conn, album_id)?.is_some_and(|row| {
+        row.decision_source
+            .as_deref()
+            .is_some_and(|raw| !decision_from(raw).automatic_may_overwrite())
+    }) {
+        return Err(OperationError::Conflict(reasons::EDITION_IS_CHOSEN));
+    }
+    Ok(revisions)
+}
+
+/// True when a folder holding the album's Local metadata files has
+/// Library Management turned on.
+fn local_metadata_managed(
+    conn: &Connection,
+    config: &ConfigStore,
+    album_id: &str,
+) -> Result<bool, OperationError> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT root_id FROM local_tracks WHERE local_album_id = ?1 \
+         AND availability = 'indexed' AND applied_policy = 'local_metadata'",
+    )?;
+    let roots = stmt
+        .query_map(params![album_id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let settings = config
+        .get::<LibraryManagement>()
+        .map_err(|error| OperationError::Store(error.to_string()))?;
+    Ok(roots
+        .iter()
+        .any(|root| root_assignment(&settings, root).enabled))
+}
+
+/// A re-identification ready to store.
+#[derive(Debug, Clone)]
+pub struct NewReidentification {
+    pub job_id: String,
+    pub requested_by_user_id: String,
+    /// The caller's key. Without one, a re-identification of the album
+    /// that has not run yet is handed back instead of a new one.
+    pub idempotency_key: Option<String>,
+    pub local_album_id: String,
+    pub one_off_local_metadata: bool,
+}
+
+/// Store a re-identification, or hand back the job an earlier request
+/// with the same idempotency key created, or (without a key) one of the
+/// album's that is still to run.
+pub fn create_reidentification(
+    tx: &Transaction<'_>,
+    config: &ConfigStore,
+    new: &NewReidentification,
+    now: f64,
+) -> Result<OperationJob, OperationError> {
+    let key = new
+        .idempotency_key
+        .as_ref()
+        .map(|key| format!("{key}:reidentification"));
+    if let Some(key) = &key
+        && let Some(existing) = job_by_key(tx, key)?
+    {
+        return Ok(existing);
+    }
+    let revisions = retry_gate(tx, config, &new.local_album_id, new.one_off_local_metadata)?;
+    if key.is_none()
+        && let Some(existing) = live_reidentification(tx, &new.local_album_id)?
+    {
+        return Ok(existing);
     }
     tx.execute(
         "INSERT INTO library_operation_jobs (id, kind, state, requested_by_user_id, \
@@ -346,7 +378,7 @@ pub fn create_reidentification(
             revisions.input_revision,
             revisions.identity_revision,
             new.one_off_local_metadata,
-            new.release_mbid,
+            None::<String>,
             now,
         ],
     )?;
@@ -364,6 +396,24 @@ pub fn create_reidentification(
         ],
     )?;
     job_after(tx, &new.job_id)
+}
+
+/// The album's re-identification that is queued or running, if any.
+fn live_reidentification(
+    conn: &Connection,
+    album_id: &str,
+) -> rusqlite::Result<Option<OperationJob>> {
+    conn.query_row(
+        &format!(
+            "SELECT {JOB_COLUMNS} FROM library_operation_jobs \
+             WHERE kind = ?1 AND state IN ('queued','running') AND id IN \
+             (SELECT job_id FROM library_reidentification_snapshots WHERE local_album_id = ?2) \
+             ORDER BY created_at LIMIT 1"
+        ),
+        params![OperationKind::ExplicitReidentification.as_str(), album_id],
+        map_job,
+    )
+    .optional()
 }
 
 // ---------------------------------------------------------------------------
@@ -666,132 +716,32 @@ pub fn requeue_for_scan(
     job(tx, job_id)
 }
 
-/// MusicBrainz was down: hand the work back and try again at `retry_at`.
-pub fn defer(
+/// End a running re-identification whose album went to the
+/// identification queue in the same transaction.
+pub fn hand_over(
     tx: &Transaction<'_>,
     job_id: &str,
     worker: &str,
-    reason: &str,
-    retry_at: f64,
     now: f64,
 ) -> rusqlite::Result<Option<OperationJob>> {
     if !holds(tx, job_id, worker)? {
         return job(tx, job_id);
     }
     tx.execute(
-        "UPDATE library_operation_work SET state = 'pending', failure_code = ?2, \
-         updated_at = ?3, row_revision = row_revision + 1 \
+        "UPDATE library_operation_work SET state = 'succeeded', \
+         result_json = '{\"outcome\":\"handed_to_identification\"}', failure_code = NULL, \
+         updated_at = ?2, row_revision = row_revision + 1 \
          WHERE job_id = ?1 AND state = 'running'",
-        params![job_id, reason, now],
+        params![job_id, now],
     )?;
     tx.execute(
-        "UPDATE library_operation_jobs SET state = 'queued', lease_owner = NULL, \
-         lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?3, \
-         next_attempt_at = ?4, \
-         reidentification_attempt_count = reidentification_attempt_count + 1, \
-         row_revision = row_revision + 1, event_revision = event_revision + 1 \
+        "UPDATE library_operation_jobs SET state = 'succeeded', \
+         terminal_code = 'HANDED_TO_IDENTIFICATION', completed_count = 1, \
+         succeeded_count = 1, terminal_at = ?3, updated_at = ?3, lease_owner = NULL, \
+         lease_expires_at = NULL, heartbeat_at = NULL, row_revision = row_revision + 1, \
+         event_revision = event_revision + 1 \
          WHERE id = ?1 AND state = 'running' AND lease_owner = ?2",
-        params![job_id, worker, now, retry_at],
+        params![job_id, worker, now],
     )?;
     job(tx, job_id)
-}
-
-/// The work result a re-identification records.
-#[derive(Serialize)]
-struct WorkOutcome<'a> {
-    outcome: &'a str,
-    reason_code: &'a str,
-    candidate_keys: Vec<&'a str>,
-}
-
-/// Record an evaluation. With candidates the job waits on a choice
-/// (`ready`); without, it is done. The album must still be what the job
-/// was started against, or the evaluation is thrown away as stale.
-pub fn finish_evaluation(
-    tx: &Transaction<'_>,
-    job_id: &str,
-    worker: &str,
-    evaluation: &Evaluation,
-    now: f64,
-) -> Result<Option<OperationJob>, OperationError> {
-    if !holds(tx, job_id, worker)? {
-        // Stopped, or the lease ran out and another worker took over.
-        return Ok(job(tx, job_id)?);
-    }
-    // A pause or stop that arrived during recall wins over the result.
-    if let Some(halted) = checkpoint(tx, job_id, worker, now)? {
-        return Ok(Some(halted));
-    }
-    let Some(snap) = snapshot(tx, job_id)? else {
-        return Ok(fail(tx, job_id, worker, "MISSING_SNAPSHOT", now)?);
-    };
-    if !matches_snapshot(tx, &snap)? {
-        return Ok(fail(tx, job_id, worker, "STALE_INPUT", now)?);
-    }
-    let unavailable = evaluation.candidates.is_empty()
-        && evaluation.reason_code == super::control::RESUMABLE_FAILURE;
-    let work = serde_json::to_string(&WorkOutcome {
-        outcome: &evaluation.outcome,
-        reason_code: &evaluation.reason_code,
-        candidate_keys: evaluation
-            .candidates
-            .iter()
-            .map(|candidate| candidate.candidate_key.as_str())
-            .collect(),
-    })
-    .map_err(|error| OperationError::Store(error.to_string()))?;
-    let stored = serde_json::to_string(evaluation)
-        .map_err(|error| OperationError::Store(error.to_string()))?;
-    tx.execute(
-        "UPDATE library_operation_work SET state = ?2, result_json = ?3, failure_code = ?4, \
-         updated_at = ?5, row_revision = row_revision + 1 \
-         WHERE job_id = ?1 AND state = 'running'",
-        params![
-            job_id,
-            if unavailable { "failed" } else { "succeeded" },
-            work,
-            unavailable.then_some(evaluation.reason_code.as_str()),
-            now,
-        ],
-    )?;
-    tx.execute(
-        "UPDATE library_reidentification_snapshots SET result_json = ?2 WHERE job_id = ?1",
-        params![job_id, stored],
-    )?;
-    let (state, code) = if unavailable {
-        ("failed", evaluation.reason_code.as_str())
-    } else if evaluation.candidates.is_empty() {
-        ("succeeded", evaluation.reason_code.as_str())
-    } else {
-        ("ready", "CANDIDATES_READY")
-    };
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = ?3, terminal_code = ?4, \
-         completed_count = 1, succeeded_count = ?5, failed_count = ?6, lease_owner = NULL, \
-         lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?7, \
-         terminal_at = CASE WHEN ?3 IN ('succeeded','failed') THEN ?7 ELSE NULL END, \
-         row_revision = row_revision + 1, event_revision = event_revision + 1 \
-         WHERE id = ?1 AND state = 'running' AND lease_owner = ?2",
-        params![
-            job_id,
-            worker,
-            state,
-            code,
-            i64::from(!unavailable),
-            i64::from(unavailable),
-            now,
-        ],
-    )?;
-    Ok(job(tx, job_id)?)
-}
-
-/// True while the album still has the revisions the snapshot sealed.
-pub(super) fn matches_snapshot(conn: &Connection, snap: &Snapshot) -> rusqlite::Result<bool> {
-    Ok(
-        album_revisions(conn, &snap.local_album_id)?.is_some_and(|now| {
-            now.album_revision == snap.expected_album_revision
-                && now.input_revision == snap.expected_input_revision
-                && now.identity_revision == snap.expected_identity_revision
-        }),
-    )
 }
