@@ -17,7 +17,7 @@ test('a request made with no download source waits, then starts when one is save
 	await page.getByRole('button', { name: 'Test Connection' }).click();
 	await expect(page.getByText('Connected to MusicBrainz.')).toBeVisible();
 
-	// Search, open the artist and request its albums.
+	// Search, open the artist, then the album, and request it from its page.
 	await page.getByRole('searchbox', { name: 'Search' }).first().fill('Radiohead');
 	await page.getByRole('searchbox', { name: 'Search' }).first().press('Enter');
 	await page
@@ -25,11 +25,14 @@ test('a request made with no download source waits, then starts when one is save
 		.filter({ has: page.getByRole('heading', { name: 'Radiohead', exact: true }) })
 		.click();
 	await expect(page.getByRole('heading', { name: 'Radiohead', level: 1 })).toBeVisible();
-	await page.locator('#section-albums').getByRole('button', { name: 'Download All' }).click();
-	const confirm = page.getByRole('dialog');
-	await expect(confirm.getByText('OK Computer')).toBeAttached();
-	await confirm.getByRole('button', { name: 'Download 2 Albums' }).click();
-	await expect(confirm).toBeHidden();
+	await page
+		.locator('#section-albums')
+		.getByRole('link')
+		.filter({ hasText: 'OK Computer' })
+		.click();
+	await expect(page.getByRole('heading', { name: 'OK Computer', level: 1 })).toBeVisible();
+	await page.getByRole('button', { name: 'Add to Library' }).click();
+	await expect(page.getByText('Requested - waiting for a download source.')).toBeVisible();
 
 	// Held, and the page says why.
 	await page.goto('/requests');
@@ -49,19 +52,17 @@ test('a request made with no download source waits, then starts when one is save
 	await page.getByRole('checkbox', { name: 'Enable slskd download client' }).check();
 	await expect(page.getByText('Soulseek enabled')).toBeVisible();
 
-	// The card stops waiting as soon as a source is on.
+	// The worker searches the mock slskd and holds the copies it finds for a
+	// pick. It does so well inside its own 30 s pass, so the save woke it. The
+	// card shows that state, not a download that has not begun.
 	await page.goto('/requests');
 	await expect(okComputer.getByText('Waiting: no download source configured')).toBeHidden();
-	await expect(okComputer.getByLabel('Status: Downloading')).toBeVisible();
+	await expect(okComputer.getByLabel('Status: Awaiting Review')).toBeVisible({ timeout: 15_000 });
 
-	// The worker searches the mock slskd and holds the copies it finds for a
-	// pick, which the album page offers. It does so well inside its own 30 s
-	// pass, so the save woke it.
+	// The album page offers the pick.
 	// The link covers the card; its middle holds the artist link.
 	await okComputer
 		.getByRole('link', { name: 'Open OK Computer', exact: true })
 		.click({ position: { x: 8, y: 8 } });
-	await expect(page.getByText('Awaiting review', { exact: true })).toBeVisible({
-		timeout: 10_000
-	});
+	await expect(page.getByText('Awaiting review', { exact: true })).toBeVisible();
 });

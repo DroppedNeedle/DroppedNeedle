@@ -67,7 +67,7 @@ make frontend-install frontend-browser-install   # once
 make container-e2e
 ```
 
-This builds a test image, runs the container checks (boot, health, clean shutdown), then starts the image on a Docker network with no route out and runs the journeys against it. It needs Docker and takes a while, mostly for the image build. Each run starts from an empty server, and its containers and network are removed when it ends. A failed journey leaves a trace in `frontend/test-results/journeys/`; open it with `pnpm exec playwright show-trace <path>/trace.zip` from `frontend/`. CI runs the same script in the Container E2E job and keeps the traces of a failed run as the `journey-traces` artifact.
+This builds a test image, runs the container checks (boot, health, clean shutdown), then starts the image on a Docker network with no route out and runs the journeys against it. It needs Docker and takes a while, mostly for the image build. Each journey gets an empty server of its own, and the containers and network are removed when the run ends. A failed journey leaves a trace in `frontend/test-results/journeys/`; open it with `pnpm exec playwright show-trace <path>/trace.zip` from `frontend/`. CI runs the same script in the Container E2E job and keeps the traces of a failed run as the `journey-traces` artifact.
 
 The mock slskd and MusicBrainz the journeys point the app at run as their own program: `cargo run -p droppedneedle-testkit --bin droppedneedle-mocks -- --slskd 0.0.0.0:9001 --musicbrainz 0.0.0.0:9002` from `server/`. MusicBrainz answers under `/ws/2` from recorded responses only, and logs each request it has no recording for.
 
