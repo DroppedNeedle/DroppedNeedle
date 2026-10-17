@@ -7,12 +7,10 @@
 
 use axum::{
     Json, Router,
-    extract::{FromRequest, FromRequestParts, Query, Request, State},
+    extract::{FromRequestParts, State},
     http::{StatusCode, request::Parts},
-    response::{IntoResponse, Response},
     routing::{get, post},
 };
-use serde::de::DeserializeOwned;
 
 use super::models::{
     CitySearchQuery, CitySearchResponse, ConcertsResponse, EventCitiesResponse, EventCitiesUpdate,
@@ -20,109 +18,39 @@ use super::models::{
 use super::service::{ConcertsError, ConcertsService};
 use crate::reads::collections::models::UnseenCountResponse;
 use droppedneedle_auth::session::middleware::CurrentSession;
-use droppedneedle_kernel::error::{
-    FIXED_INTERNAL_MESSAGE, FIXED_UPSTREAM_MESSAGE, INTERNAL_ERROR, INVALID_INPUT, UPSTREAM_ERROR,
-    busy_response, envelope_response, unauthorized_response,
-};
+use droppedneedle_kernel::error::{ApiError, Unavailable};
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 
-/// A concerts failure on its way to the wire.
-#[derive(Debug)]
-pub struct ConcertsHttpError(ConcertsError);
-
-impl From<ConcertsError> for ConcertsHttpError {
+impl From<ConcertsError> for ApiError {
     fn from(error: ConcertsError) -> Self {
-        Self(error)
-    }
-}
-
-/// No session on the request.
-#[derive(Debug)]
-pub struct Unauthenticated;
-
-impl IntoResponse for Unauthenticated {
-    fn into_response(self) -> Response {
-        unauthorized_response("Authentication required")
-    }
-}
-
-impl IntoResponse for ConcertsHttpError {
-    fn into_response(self) -> Response {
-        match self.0 {
-            ConcertsError::InvalidInput(message) => {
-                envelope_response(StatusCode::BAD_REQUEST, INVALID_INPUT, message, None)
-            }
-            ConcertsError::SearchUnavailable(cause) => {
-                tracing::warn!(%cause, "city search failed");
-                envelope_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    UPSTREAM_ERROR,
-                    FIXED_UPSTREAM_MESSAGE,
-                    None,
-                )
-            }
+        match error {
+            ConcertsError::InvalidInput(message) => ApiError::invalid_input(message),
+            ConcertsError::SearchUnavailable(cause) => ApiError::fault(
+                StatusCode::SERVICE_UNAVAILABLE,
+                format_args!("city search failed: {cause}"),
+            ),
             ConcertsError::Busy(operation) => {
-                let error_id = uuid::Uuid::new_v4().to_string();
-                busy_response(&operation, &error_id)
+                ApiError::unavailable(Unavailable::ServerBusy, operation)
             }
-            ConcertsError::Internal(cause) => {
-                tracing::error!(%cause, "concerts request failed");
-                envelope_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    INTERNAL_ERROR,
-                    FIXED_INTERNAL_MESSAGE,
-                    None,
-                )
-            }
+            ConcertsError::Internal(cause) => ApiError::internal(cause),
         }
     }
 }
 
-type HttpResult<T> = Result<Json<T>, ConcertsHttpError>;
+type HttpResult<T> = Result<Json<T>, ApiError>;
 
 /// The signed-in caller.
 pub struct Caller(String);
 
 impl<S: Send + Sync> FromRequestParts<S> for Caller {
-    type Rejection = Unauthenticated;
+    type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         parts
             .extensions
             .get::<CurrentSession>()
             .map(|session| Self(session.user_id.clone()))
-            .ok_or(Unauthenticated)
-    }
-}
-
-/// JSON body extractor keeping bad input in the shared envelope.
-pub struct ValidJson<T>(T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
-    type Rejection = ConcertsHttpError;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Json::<T>::from_request(req, state)
-            .await
-            .map(|Json(value)| Self(value))
-            .map_err(|cause| {
-                ConcertsError::InvalidInput(format!("Invalid request body: {cause}")).into()
-            })
-    }
-}
-
-/// Query extractor keeping bad input in the shared envelope.
-pub struct ValidQuery<T>(T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequestParts<S> for ValidQuery<T> {
-    type Rejection = ConcertsHttpError;
-
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        Query::<T>::from_request_parts(parts, state)
-            .await
-            .map(|Query(value)| Self(value))
-            .map_err(|cause| {
-                ConcertsError::InvalidInput(format!("Invalid query string: {cause}")).into()
-            })
+            .ok_or_else(|| ApiError::unauthorized("Authentication required"))
     }
 }
 
