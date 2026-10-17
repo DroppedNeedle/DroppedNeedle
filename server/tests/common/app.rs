@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 use tower::ServiceExt as _;
 
-use super::{ScratchDir, closed_outbound, migrated_db};
+use super::{ScratchDir, closed_outbound, migrated_db, through_busy};
 
 const ADMIN_NAME: &str = "admin";
 const ADMIN_PASSWORD: &str = "correct horse battery";
@@ -275,6 +275,23 @@ impl TestApp {
         (status, json)
     }
 
+    /// [`TestApp::call`], asked again while the app answers busy: see
+    /// [`super::through_busy`].
+    async fn call_through_busy(
+        &self,
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let (status, _, bytes) =
+            through_busy(|| self.raw(method, uri, headers, body.clone())).await;
+        (
+            status,
+            serde_json::from_slice(&bytes).expect("body is json"),
+        )
+    }
+
     /// Wait for something the app does in its own time. `check` is asked
     /// again and again until it answers; `what` names the wait if it never
     /// does.
@@ -387,7 +404,7 @@ impl TestApp {
         self.admin
             .get_or_init(|| async {
                 let (status, body) = self
-                    .call(
+                    .call_through_busy(
                         "POST",
                         "/api/v3/auth/setup",
                         &[],
@@ -410,7 +427,7 @@ impl TestApp {
         let admin = self.login_admin().await;
         let password = format!("{username}-password-1234");
         let (status, body) = self
-            .call(
+            .call_through_busy(
                 "POST",
                 "/api/v3/admin/users",
                 &[("authorization", admin.as_str())],
@@ -420,7 +437,7 @@ impl TestApp {
         assert_eq!(status, StatusCode::CREATED, "{body}");
         let user_id = body["id"].as_str().expect("user id").to_owned();
         let (status, body) = self
-            .call(
+            .call_through_busy(
                 "POST",
                 "/api/v3/auth/login",
                 &[],

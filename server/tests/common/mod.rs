@@ -17,7 +17,9 @@ pub use app::TestApp;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
+use axum::http::{HeaderMap, StatusCode, header::RETRY_AFTER};
 use droppedneedle_kernel::{http_client::HttpClientFactory, ids::IdGenerator};
 
 /// Fixed id used across tests. A valid UUID so id-format assertions hold.
@@ -81,6 +83,32 @@ impl AsRef<Path> for ScratchDir {
 impl Drop for ScratchDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Ask again while the app answers busy (503 with `Retry-After`), waiting
+/// as long as it says, the way a client does. A busy answer means the
+/// request was not carried out, so asking again is safe. For the requests
+/// a test only needs to get through, such as signing in, on a host slow
+/// enough that a pooled connection takes longer than its limit to free.
+pub async fn through_busy<T, F>(mut ask: impl FnMut() -> F) -> (StatusCode, HeaderMap, T)
+where
+    F: std::future::Future<Output = (StatusCode, HeaderMap, T)>,
+{
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let answer = ask().await;
+        let retry_after = answer
+            .1
+            .get(RETRY_AFTER)
+            .and_then(|value| value.to_str().ok()?.parse::<u64>().ok())
+            .map(Duration::from_secs);
+        let Some(wait) = retry_after.filter(|wait| {
+            answer.0 == StatusCode::SERVICE_UNAVAILABLE && Instant::now() + *wait < deadline
+        }) else {
+            return answer;
+        };
+        tokio::time::sleep(wait).await;
     }
 }
 

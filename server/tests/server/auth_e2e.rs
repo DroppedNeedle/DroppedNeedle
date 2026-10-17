@@ -371,6 +371,23 @@ pub(crate) async fn call(
     headers: &[(&str, &str)],
     body: Option<Value>,
 ) -> (StatusCode, Value, HeaderMap) {
+    let (status, headers, body) = crate::common::through_busy(|| async {
+        let (status, body, headers) =
+            call_once(app.clone(), method, uri, headers, body.clone()).await;
+        (status, headers, body)
+    })
+    .await;
+    (status, body, headers)
+}
+
+/// One request, answered as it came: a busy answer is not asked again.
+async fn call_once(
+    app: Router,
+    method: &str,
+    uri: &str,
+    headers: &[(&str, &str)],
+    body: Option<Value>,
+) -> (StatusCode, Value, HeaderMap) {
     let mut builder = Request::builder().method(method).uri(uri);
     builder = builder.header("host", HOST);
     for (name, value) in headers {
@@ -3285,8 +3302,21 @@ async fn concurrent_setups_yield_exactly_one_admin() {
 // Rate limits and edge failures
 // ---------------------------------------------------------------------------
 
-/// One request from a given client address (as `ConnectInfo` would carry).
+/// One request from a given client address (as `ConnectInfo` would carry),
+/// asked again while the app answers busy.
 async fn call_from(app: Router, peer: &str, uri: &str, body: Option<Value>) -> StatusCode {
+    crate::common::through_busy(|| call_from_once(app.clone(), peer, uri, body.clone()))
+        .await
+        .0
+}
+
+/// [`call_from`] answered as it came.
+async fn call_from_once(
+    app: Router,
+    peer: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, HeaderMap, ()) {
     let peer: std::net::SocketAddr = peer.parse().expect("peer address");
     let mut builder = Request::builder()
         .method(if body.is_some() { "POST" } else { "GET" })
@@ -3303,10 +3333,8 @@ async fn call_from(app: Router, peer: &str, uri: &str, body: Option<Value>) -> S
     request
         .extensions_mut()
         .insert(axum::extract::ConnectInfo(peer));
-    app.oneshot(request)
-        .await
-        .expect("router responds")
-        .status()
+    let response = app.oneshot(request).await.expect("router responds");
+    (response.status(), response.headers().clone(), ())
 }
 
 #[tokio::test]
@@ -3369,14 +3397,25 @@ async fn rate_limits_key_by_client_and_username() {
             Some(json!({"username": "victim", "password": "wrong-password-123"})),
         )
     };
+    // Each asked once: a guess answered busy has already spent its token.
     let attempts = (0..8).map(|n| {
-        guess(if n % 2 == 0 {
+        let peer = if n % 2 == 0 {
             "[2001:db8:1:2::1]:1"
         } else {
             "[2001:db8:1:2:aaaa::9]:1"
-        })
+        };
+        call_from_once(
+            app.clone(),
+            peer,
+            "/api/v3/auth/login",
+            Some(json!({"username": "victim", "password": "wrong-password-123"})),
+        )
     });
-    let statuses = futures_util::future::join_all(attempts).await;
+    let statuses: Vec<_> = futures_util::future::join_all(attempts)
+        .await
+        .into_iter()
+        .map(|(status, _, ())| status)
+        .collect();
     let limited = statuses
         .iter()
         .filter(|status| **status == StatusCode::TOO_MANY_REQUESTS)
@@ -3483,10 +3522,21 @@ async fn sign_in_waits_out_a_full_read_pool_as_busy_not_a_fault() {
     }
     let headers = [("authorization", auth.as_str())];
     let setup = json!({"username": "second", "password": "second-password-12"});
+    let sign_in = json!({
+        "username": "e2e-owner",
+        "password": "e2e-owner-password-1",
+        "transport": "bearer",
+    });
     let (signed_in, gated, set_up) = tokio::join!(
-        login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer"),
-        call(e2e.router(), "GET", "/api/v3/me", &headers, None),
-        call(e2e.router(), "POST", "/api/v3/auth/setup", &[], Some(setup)),
+        call_once(
+            e2e.router(),
+            "POST",
+            "/api/v3/auth/login",
+            &[],
+            Some(sign_in)
+        ),
+        call_once(e2e.router(), "GET", "/api/v3/me", &headers, None),
+        call_once(e2e.router(), "POST", "/api/v3/auth/setup", &[], Some(setup)),
     );
     for (status, body, headers) in [signed_in, gated, set_up] {
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
