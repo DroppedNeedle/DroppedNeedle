@@ -10,8 +10,10 @@
 #
 # Everything runs against containers this script starts under its own names,
 # never against an address passed in. They are removed on exit, pass or fail,
-# and use no volumes. The journeys need the frontend dependencies and
-# Playwright's Chromium (make frontend-install frontend-browser-install).
+# and use no volumes. The one folder mounted, as the library at /music, is a
+# throwaway copy of two audio fixtures, removed on exit. The journeys need the
+# frontend dependencies and Playwright's Chromium
+# (make frontend-install frontend-browser-install).
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -21,10 +23,13 @@ NAME="dn-e2e-smoke"
 APP="dn-e2e-app"
 MOCKS="dn-e2e-mocks"
 NET="dn-e2e-sealed"
+FIXTURES="$ROOT/server/tests/fixtures/library"
+WORK=""
 
 cleanup() {
   docker rm -f "$NAME" "$APP" "$MOCKS" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
+  if [ -n "$WORK" ]; then rm -rf "$WORK" || true; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
@@ -115,6 +120,14 @@ for _ in $(seq 1 60); do
 done
 [ -n "$MOCKS_UP" ] || fail "mocks never answered at $MOCKS_IP"
 
+WORK=$(mktemp -d)
+ALBUM="$WORK/music/Radiohead/OK Computer"
+mkdir -p "$ALBUM"
+cp "$FIXTURES/flac_full_01.flac" "$ALBUM/01 Airbag.flac"
+cp "$FIXTURES/flac_full_02.flac" "$ALBUM/02 Paranoid Android.flac"
+# Writable by the server's user, so a write would show in the check below.
+chmod -R a+rwX "$WORK/music"
+
 # Start a fresh server on the sealed network, wait for it, and check the seal
 # from inside it: a documentation address fails at once with no route (curl
 # 7), not after a timeout (curl 28), and the documentation domain does not
@@ -123,7 +136,7 @@ done
 start_app() {
   docker rm -f "$APP" >/dev/null 2>&1 || true
   docker run -d --name "$APP" --network "$NET" -e TZ=UTC -e RUST_LOG=info \
-    "$IMAGE" >/dev/null || fail "journey container did not start"
+    -v "$WORK/music:/music" "$IMAGE" >/dev/null || fail "journey container did not start"
   APP_IP=$(docker inspect "$APP" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
   [ -n "$APP_IP" ] || fail "journey container has no address"
   BASE_URL="http://$APP_IP:8688"
@@ -162,5 +175,14 @@ for SPEC in "$ROOT"/frontend/tests/journeys/*.spec.ts; do
   echo "$JOURNEY: $(elapsed "$START" "$(date +%s.%N)")s"
 done
 echo "journeys: $(elapsed "$ALL_START" "$(date +%s.%N)")s"
+
+# Scanning writes no music file.
+if ! cmp -s "$FIXTURES/flac_full_01.flac" "$ALBUM/01 Airbag.flac" \
+  || ! cmp -s "$FIXTURES/flac_full_02.flac" "$ALBUM/02 Paranoid Android.flac"; then
+  fail "a file in the library folder changed"
+fi
+ENTRIES=$(find "$WORK/music" -mindepth 1 | wc -l)
+[ "$ENTRIES" -eq 4 ] || fail "the library folder holds $ENTRIES entries, not the 4 it started with"
+echo "library folder unchanged"
 
 echo "E2E PASSED"
