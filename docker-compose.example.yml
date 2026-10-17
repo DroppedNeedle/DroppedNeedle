@@ -3,7 +3,7 @@
 # DroppedNeedle downloads through your OWN slskd (Soulseek) and/or SABnzbd (Usenet); it
 # doesn't run either for you. Start them yourself, then connect them under
 # Settings > Download Client. A commented-out slskd sidecar is at the bottom.
-# Full walkthrough: the Setup section of the README.
+# Full walkthrough: the Quick start section of the README.
 
 services:
   droppedneedle:

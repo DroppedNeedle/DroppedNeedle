@@ -352,7 +352,7 @@ policy.
 
 ### 8. Point DroppedNeedle at your mirror
 
-In DroppedNeedle, open **Settings -> MusicBrainz** and choose **Self-hosted mirror**. Set:
+In DroppedNeedle, open **Settings > MusicBrainz** and choose **Self-hosted mirror**. Set:
 
 - **API URL:** `http://<mirror-host>:5000/ws/2` if using the Compose stack's published port. Use
   the URL and port chosen for your deployment.

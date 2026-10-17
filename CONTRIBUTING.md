@@ -12,7 +12,7 @@ Use the [feature request template](https://github.com/DroppedNeedle/DroppedNeedl
 
 ## Development setup
 
-The server is Rust (Axum, tokio, SQLite through sqlx). The frontend is SvelteKit with Svelte 5, TanStack Query, Tailwind CSS and daisyUI. The toolchain version is pinned in `rust-toolchain.toml`; rustup picks it up automatically.
+The server is Rust (Axum, tokio, SQLite through sqlx and rusqlite). The frontend is SvelteKit with Svelte 5, TanStack Query, Tailwind CSS and daisyUI. The toolchain version is pinned in `rust-toolchain.toml`; rustup picks it up automatically.
 
 ### Prerequisites
 
@@ -87,6 +87,7 @@ If you change a route or a request or response type, run `make contract-write` a
 - The server is a single process. Never run two against the same data directory.
 - Frontend: strict TypeScript, no `any`. Svelte 5 runes only. Data fetching goes through TanStack Query hooks and the typed `/api/v3` client.
 - Use existing design tokens (`primary`, `secondary`, etc.) for colours, not hardcoded values.
+- The web UI runs under an enforced content-security policy: no inline scripts, no `eval`, and no static `style="..."` in markup (eslint refuses one; bind styles through Svelte instead). Loading a script, frame, audio clip or connection from a new outside host is an edit to the list in `server/src/security_headers.rs`, with the reason beside it.
 - Run `pnpm run lint` and `pnpm run check` in the frontend before submitting.
 
 ## AI-assisted contributions

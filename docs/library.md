@@ -12,6 +12,7 @@ How DroppedNeedle scans your music, works out which album and edition each folde
 - [Removing albums and tracks](#removing-albums-and-tracks)
 - [Downloading from the library](#downloading-from-the-library)
 - [Lyrics](#lyrics)
+- [Ratings](#ratings)
 - [Adding a missing album to MusicBrainz](#adding-a-missing-album-to-musicbrainz)
 
 ## Scanning
