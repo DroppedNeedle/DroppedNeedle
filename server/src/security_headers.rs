@@ -81,10 +81,15 @@ fn shell_policy_header(mode: ContentSecurityPolicyMode) -> Option<HeaderName> {
 /// - `https://musicbrainz.org/release/add` takes the one form that leaves
 ///   the app, the release editor seed.
 ///
-/// A `style-src-attr` that allows no style attribute and an `img-src` with
-/// no outside host are stricter than the page can live with. This is the candidate sent while
-/// the policy only reports, so that a browser lists every style attribute
-/// and every outside picture host.
+/// Style attributes, checked 2026-10-17: the built bundle holds one static
+/// `style` attribute, SvelteKit's route announcer ([`ANNOUNCER_STYLE`]),
+/// and no `<style>` built at run time. A Chromium walk of the pages on a
+/// scratch server (no outside network, the test fixture library) refused
+/// only the announcer. What it could not reach (Discover content, outside
+/// art, YouTube, previews, remote media servers, the plugin panel, dialogs
+/// and drawers) is walked on the dev instance. Outside pictures seen on an
+/// earlier walk (TheAudioDB's `r2.theaudiodb.com` on artist pages) are
+/// covered by `img-src` allowing any web address.
 const SHELL_DIRECTIVES: &[&str] = &[
     // Whatever is not named below is refused, so a new kind of load has to
     // be added here on purpose.
@@ -93,13 +98,22 @@ const SHELL_DIRECTIVES: &[&str] = &[
     "script-src-attr 'none'",
     // Stylesheets from the app's own files. The page builds no `<style>`.
     // `'report-sample'` allows nothing. It makes the browser quote the
-    // start of the refused style in its report, which is how a style
-    // attribute in a bundle is traced to its component.
+    // start of a refused style, which is how a style attribute in a bundle
+    // is traced to its component. The app sets its own inline styles
+    // through the style object, which this policy does not govern; a
+    // `style` attribute written into markup is refused, except the
+    // announcer's. A browser that does not know `style-src-attr` falls back
+    // to `style-src` and shows the announcer unstyled: the page title as
+    // text below the app after each navigation.
     "style-src 'self'",
     "style-src-elem 'self' 'report-sample'",
-    "style-src-attr 'report-sample'",
-    // The app's pictures, inline placeholders and upload previews.
-    "img-src 'self' data: blob:",
+    ANNOUNCER_STYLE,
+    // The app's pictures, inline placeholders and upload previews, and
+    // pictures from any web address: artist and album art, chart covers,
+    // account pictures from Plex, Jellyfin (often plain http on a LAN) and
+    // single sign-on, plugin images. A picture cannot run code, and text
+    // from outside renders no images.
+    "img-src 'self' data: blob: https: http:",
     // The app's streams, the silent `data:` unlock clip, the preview hosts.
     "media-src 'self' data: https://*.dzcdn.net https://audio-ssl.itunes.apple.com",
     "font-src 'self'",
@@ -114,6 +128,15 @@ const SHELL_DIRECTIVES: &[&str] = &[
     "base-uri 'none'",
     "form-action 'self' https://musicbrainz.org",
 ];
+
+/// The one style attribute the page holds: SvelteKit's route announcer,
+/// which hides itself with `style="position: absolute; left: 0; top: 0;
+/// clip: rect(0 0 0 0); clip-path: inset(50%); overflow: hidden;
+/// white-space: nowrap; width: 1px; height: 1px"` (`write_root.js` in
+/// SvelteKit 2.70.3), allowed by the hash of that text. If SvelteKit changes
+/// the text, the browser journeys fail on the refusal and this hash is
+/// updated.
+const ANNOUNCER_STYLE: &str = "style-src-attr 'report-sample' 'unsafe-hashes' 'sha256-S8qMpvofolR8Mpjy4kQvEm7m1q8clzU4dfDH0AmvZjo='";
 
 /// The scripts the page may run: the app's own files, its inline scripts by
 /// hash, and YouTube's player by path. Never `unsafe-inline`, `unsafe-eval`,
