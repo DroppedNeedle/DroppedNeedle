@@ -17123,8 +17123,6 @@ export interface components {
         };
         /** @description Delete every saved original for good. */
         ManagementPurgeBody: {
-            /** Format: int64 */
-            expected_catalog_revision: number;
             idempotency_key: string;
             impact_token: string;
             /** @description Must be `CONFIRM`. */
@@ -17138,11 +17136,6 @@ export interface components {
             baseline_count: number;
             /** Format: int64 */
             blocked_journal_count: number;
-            /**
-             * Format: int64
-             * @description Echo on the purge.
-             */
-            catalog_revision: number;
             /** @description Echo on the purge. */
             impact_token: string;
             /** Format: int64 */

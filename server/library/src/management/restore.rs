@@ -42,7 +42,6 @@ pub struct PurgeImpact {
     pub blocked_journal_count: i64,
     /// Restore jobs waiting or running.
     pub active_restore_count: i64,
-    pub catalog_revision: i64,
     /// Proves the purge confirms exactly this impact.
     pub impact_token: String,
 }
@@ -60,7 +59,6 @@ pub struct PurgeOutcome {
 /// A purge request.
 pub struct PurgeRequest {
     pub impact_token: String,
-    pub expected_catalog_revision: i64,
     pub typed_confirmation: String,
     pub idempotency_key: String,
 }
@@ -368,9 +366,7 @@ impl Management {
                 });
             }
             let impact = purge_impact(tx)?;
-            if impact.impact_token != request.impact_token
-                || impact.catalog_revision != request.expected_catalog_revision
-            {
+            if impact.impact_token != request.impact_token {
                 return Err(stale(
                     "The saved originals changed since you looked. Check what the purge removes again.",
                 ));
@@ -457,16 +453,14 @@ fn purge_impact(conn: &rusqlite::Connection) -> rusqlite::Result<PurgeImpact> {
          WHERE s.mode = 'baseline_restore' AND j.state IN ('queued', 'running', 'paused', 'ready') \
          AND (j.state <> 'ready' OR COALESCE(s.preview_expires_at, 0) > CAST(strftime('%s', 'now') AS REAL))",
     )?;
-    let catalog = count("SELECT value FROM library_catalog_revision WHERE singleton = 1")?;
     let baseline_count = v3 + v2;
-    let material = format!("{baseline_count}:{newest}:{blobs}:{journals}:{restores}:{catalog}");
+    let material = format!("{baseline_count}:{newest}:{blobs}:{journals}:{restores}");
     Ok(PurgeImpact {
         baseline_count,
         referenced_blob_count: blobs,
         referenced_blob_bytes: bytes,
         blocked_journal_count: journals,
         active_restore_count: restores,
-        catalog_revision: catalog,
         impact_token: sha256_hex(material.as_bytes()),
     })
 }

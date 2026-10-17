@@ -46303,15 +46303,10 @@
         "description": "Delete every saved original for good.",
         "required": [
           "impact_token",
-          "expected_catalog_revision",
           "typed_confirmation",
           "idempotency_key"
         ],
         "properties": {
-          "expected_catalog_revision": {
-            "type": "integer",
-            "format": "int64"
-          },
           "idempotency_key": {
             "type": "string"
           },
@@ -46333,7 +46328,6 @@
           "referenced_blob_bytes",
           "blocked_journal_count",
           "active_restore_count",
-          "catalog_revision",
           "impact_token"
         ],
         "properties": {
@@ -46348,11 +46342,6 @@
           "blocked_journal_count": {
             "type": "integer",
             "format": "int64"
-          },
-          "catalog_revision": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Echo on the purge."
           },
           "impact_token": {
             "type": "string",

@@ -302,8 +302,6 @@ pub struct ManagementPurgeImpactView {
     pub blocked_journal_count: i64,
     pub active_restore_count: i64,
     /// Echo on the purge.
-    pub catalog_revision: i64,
-    /// Echo on the purge.
     pub impact_token: String,
 }
 
@@ -315,7 +313,6 @@ impl From<PurgeImpact> for ManagementPurgeImpactView {
             referenced_blob_bytes: impact.referenced_blob_bytes,
             blocked_journal_count: impact.blocked_journal_count,
             active_restore_count: impact.active_restore_count,
-            catalog_revision: impact.catalog_revision,
             impact_token: impact.impact_token,
         }
     }
@@ -325,7 +322,6 @@ impl From<PurgeImpact> for ManagementPurgeImpactView {
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct ManagementPurgeBody {
     pub impact_token: String,
-    pub expected_catalog_revision: i64,
     /// Must be `CONFIRM`.
     pub typed_confirmation: String,
     pub idempotency_key: String,
@@ -425,7 +421,6 @@ pub async fn purge_management_baselines(
     let management = Management::new(&state);
     let request = PurgeRequest {
         impact_token: body.impact_token,
-        expected_catalog_revision: body.expected_catalog_revision,
         typed_confirmation: body.typed_confirmation,
         idempotency_key: body.idempotency_key,
     };

@@ -54,7 +54,6 @@
 		try {
 			await purgeBaselines.mutateAsync({
 				impact_token: impact.impact_token,
-				expected_catalog_revision: impact.catalog_revision,
 				typed_confirmation: purgePhrase,
 				idempotency_key: createUuid()
 			});

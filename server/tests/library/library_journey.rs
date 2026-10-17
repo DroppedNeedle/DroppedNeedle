@@ -5803,7 +5803,6 @@ async fn library_management_tools_journey() {
     assert_eq!(impact.baseline_count, 1);
     let purge = |phrase: &str, key: &str| PurgeRequest {
         impact_token: impact.impact_token.clone(),
-        expected_catalog_revision: impact.catalog_revision,
         typed_confirmation: phrase.to_owned(),
         idempotency_key: key.to_owned(),
     };

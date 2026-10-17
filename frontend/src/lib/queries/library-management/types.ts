@@ -379,13 +379,11 @@ export interface LibraryManagementBaselinePurgeImpactResponse {
 	referenced_blob_bytes: number;
 	blocked_journal_count: number;
 	active_restore_count: number;
-	catalog_revision: number;
 	impact_token: string;
 }
 
 export interface LibraryManagementBaselinePurgeRequest {
 	impact_token: string;
-	expected_catalog_revision: number;
 	typed_confirmation: string;
 	idempotency_key: string;
 }

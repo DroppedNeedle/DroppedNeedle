@@ -29,7 +29,6 @@ describe('LibraryManagementPurgeDialog', () => {
 			referenced_blob_bytes: 4096,
 			blocked_journal_count: 0,
 			active_restore_count: 0,
-			catalog_revision: 7,
 			impact_token: 'impact-token'
 		};
 		h.purgeImpact.mockResolvedValue(h.purgeData);
@@ -60,7 +59,6 @@ describe('LibraryManagementPurgeDialog', () => {
 		expect(h.purge).toHaveBeenCalledWith(
 			expect.objectContaining({
 				impact_token: 'impact-token',
-				expected_catalog_revision: 7,
 				typed_confirmation: 'CONFIRM'
 			})
 		);
