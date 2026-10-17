@@ -10,9 +10,9 @@ use rusqlite::{Connection, Transaction};
 use sqlx::SqlitePool;
 
 use super::{
-    error::DbError,
+    error::{ChunkedError, DbError},
     read_pool::ReadPools,
-    writer::{CancelFlag, Lane, OpError, WriteLane},
+    writer::{CancelFlag, Lane, WriteLane},
 };
 
 /// The database, for reads and writes. Cloneable; every clone shares the one
@@ -107,42 +107,46 @@ impl Db {
     }
 
     /// [`WriteLane::write`] on this database's lane.
-    pub async fn write<F, R>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, DbError>
+    pub async fn write<R, E, F>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, E>
     where
-        F: FnOnce(&Transaction) -> Result<R, OpError> + Send + 'static,
+        F: FnOnce(&Transaction) -> Result<R, E> + Send + 'static,
         R: Send + 'static,
+        E: From<DbError> + std::fmt::Display + Send + 'static,
     {
         self.lane.write(lane, name, op).await
     }
 
     /// [`WriteLane::write_blocking`] on this database's lane.
-    pub fn write_blocking<F, R>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, DbError>
+    pub fn write_blocking<R, E, F>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, E>
     where
-        F: FnOnce(&Transaction) -> Result<R, OpError>,
+        F: FnOnce(&Transaction) -> Result<R, E>,
+        E: From<DbError> + std::fmt::Display,
     {
         self.lane.write_blocking(lane, name, op)
     }
 
     /// [`WriteLane::write_durable`] on this database's lane.
-    pub fn write_durable<F, R>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, DbError>
+    pub fn write_durable<R, E, F>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, E>
     where
-        F: FnOnce(&Transaction) -> Result<R, OpError>,
+        F: FnOnce(&Transaction) -> Result<R, E>,
+        E: From<DbError> + std::fmt::Display,
     {
         self.lane.write_durable(lane, name, op)
     }
 
     /// [`WriteLane::write_chunked`] on this database's lane.
-    pub async fn write_chunked<T, F>(
+    pub async fn write_chunked<T, E, F>(
         &self,
         name: &'static str,
         items: Vec<T>,
         chunk_rows: usize,
         cancel: &CancelFlag,
         chunk: F,
-    ) -> Result<usize, DbError>
+    ) -> Result<usize, ChunkedError<E>>
     where
         T: Send + 'static,
-        F: Fn(&[T], &Transaction) -> Result<(), OpError> + Send + Sync + 'static,
+        E: From<DbError> + std::fmt::Display + Send + 'static,
+        F: Fn(&[T], &Transaction) -> Result<(), E> + Send + Sync + 'static,
     {
         self.lane
             .write_chunked(name, items, chunk_rows, cancel, chunk)
@@ -150,16 +154,17 @@ impl Db {
     }
 
     /// [`WriteLane::write_chunked_blocking`] on this database's lane.
-    pub fn write_chunked_blocking<T, F>(
+    pub fn write_chunked_blocking<T, E, F>(
         &self,
         name: &'static str,
         items: &[T],
         chunk_rows: usize,
         cancel: &CancelFlag,
         chunk: F,
-    ) -> Result<usize, DbError>
+    ) -> Result<usize, ChunkedError<E>>
     where
-        F: FnMut(&[T], &Transaction) -> Result<(), OpError>,
+        E: From<DbError> + std::fmt::Display,
+        F: FnMut(&[T], &Transaction) -> Result<(), E>,
     {
         self.lane
             .write_chunked_blocking(name, items, chunk_rows, cancel, chunk)

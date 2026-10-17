@@ -27,10 +27,10 @@ use axum::{
 };
 use droppedneedle_kernel::{
     db::{
-        BACKGROUND_QUEUE_CAPACITY, BACKUP_KEEP, Budget, CancelFlag, CheckpointMode, Db, DbConfig,
-        DbError, DbRuntime, FOREGROUND_QUEUE_CAPACITY, LONG_READERS, Lane, LaneLimits, OpError,
-        WakeupChannel, WriteLane, block_on, filesystem_is_local, map_sqlx_busy, open_runtime,
-        sqlx_is_busy,
+        BACKGROUND_QUEUE_CAPACITY, BACKUP_KEEP, Budget, CancelFlag, CheckpointMode, ChunkedError,
+        Db, DbConfig, DbError, DbRuntime, FOREGROUND_QUEUE_CAPACITY, LONG_READERS, Lane,
+        LaneLimits, WakeupChannel, WriteLane, block_on, filesystem_is_local, map_sqlx_busy,
+        open_runtime, sqlx_is_busy,
     },
     error::{ApiError, Unavailable},
     ids::REQUEST_ID_HEADER,
@@ -119,7 +119,7 @@ fn scratch_lane_with(name: &str, limits: LaneLimits) -> (WriteLane, ScratchDir) 
     (lane, dir)
 }
 
-fn insert_label(tx: &rusqlite::Transaction, label: &str) -> Result<(), OpError> {
+fn insert_label(tx: &rusqlite::Transaction, label: &str) -> Result<(), DbError> {
     tx.execute("INSERT INTO scratch_turns (label) VALUES (?1)", [label])?;
     Ok(())
 }
@@ -375,7 +375,7 @@ async fn checkpoint_truncate_reclaims_dead_wal() {
                 "CREATE TABLE scratch_bulk (id INTEGER PRIMARY KEY, payload TEXT)",
                 [],
             )?;
-            Ok(())
+            Ok::<_, DbError>(())
         })
         .await
         .unwrap();
@@ -388,7 +388,7 @@ async fn checkpoint_truncate_reclaims_dead_wal() {
                 for row in &rows {
                     tx.execute("INSERT INTO scratch_bulk (payload) VALUES (?1)", [row])?;
                 }
-                Ok(batch)
+                Ok::<_, DbError>(batch)
             })
             .await
             .unwrap();
@@ -429,7 +429,7 @@ async fn writer_fairness_burst_eight_then_one() {
         .write(Lane::Foreground, "brief-table", |tx| {
             tx.execute("CREATE TABLE scratch_order (label TEXT)", [])
                 .unwrap();
-            Ok(())
+            Ok::<_, DbError>(())
         })
         .await
         .unwrap();
@@ -443,7 +443,7 @@ async fn writer_fairness_burst_eight_then_one() {
             held.wait();
             tx.execute("INSERT INTO scratch_order (label) VALUES ('block')", [])?;
             blocker_order.lock().unwrap().push("block".to_owned());
-            Ok(())
+            Ok::<_, DbError>(())
         })
         .await
         .unwrap();
@@ -459,7 +459,7 @@ async fn writer_fairness_burst_eight_then_one() {
             lane.write(Lane::Foreground, "brief-fg", move |tx| {
                 tx.execute("INSERT INTO scratch_order (label) VALUES (?1)", [&label])?;
                 order.lock().unwrap().push(label);
-                Ok(())
+                Ok::<_, DbError>(())
             })
             .await
             .unwrap();
@@ -471,7 +471,7 @@ async fn writer_fairness_burst_eight_then_one() {
         lane.write(Lane::Background, "brief-bg", move |tx| {
             tx.execute("INSERT INTO scratch_order (label) VALUES ('bg')", [])?;
             order_bg.lock().unwrap().push("bg".to_owned());
-            Ok(())
+            Ok::<_, DbError>(())
         })
         .await
         .unwrap();
@@ -508,7 +508,7 @@ async fn busy_path_returns_503_with_retry_after_and_no_spin() {
         .write(Lane::Foreground, "brief-table", |tx| {
             tx.execute("CREATE TABLE scratch_busy (id INTEGER)", [])
                 .unwrap();
-            Ok(())
+            Ok::<_, DbError>(())
         })
         .await
         .unwrap();
@@ -519,7 +519,7 @@ async fn busy_path_returns_503_with_retry_after_and_no_spin() {
         lane.write(Lane::Foreground, "brief-hold", move |tx| {
             tx.execute("INSERT INTO scratch_busy (id) VALUES (1)", [])?;
             held.wait();
-            Ok(())
+            Ok::<_, DbError>(())
         })
         .await
         .unwrap();
@@ -608,7 +608,7 @@ async fn backup_restore_round_trip_with_refusals() {
                  VALUES ('p1', 'Road Songs', 'now', 'now')",
                 [],
             )?;
-            Ok(())
+            Ok::<_, DbError>(())
         })
         .await
         .unwrap();
@@ -755,7 +755,7 @@ async fn writer_lane_backpressure_fails_fast_when_full() {
         .write(Lane::Foreground, "brief-table", |tx| {
             tx.execute("CREATE TABLE scratch_full (id INTEGER)", [])
                 .unwrap();
-            Ok(())
+            Ok::<_, DbError>(())
         })
         .await
         .unwrap();
@@ -766,7 +766,7 @@ async fn writer_lane_backpressure_fails_fast_when_full() {
         lane.write(Lane::Foreground, "brief-blocker", move |tx| {
             held.wait();
             tx.execute("INSERT INTO scratch_full (id) VALUES (1)", [])?;
-            Ok(())
+            Ok::<_, DbError>(())
         })
         .await
         .unwrap();
@@ -779,7 +779,7 @@ async fn writer_lane_backpressure_fails_fast_when_full() {
         fillers.push(Box::pin(async move {
             lane.write(Lane::Foreground, "brief-fill", |tx| {
                 tx.execute("INSERT INTO scratch_full (id) VALUES (2)", [])?;
-                Ok(())
+                Ok::<_, DbError>(())
             })
             .await
             .unwrap();
@@ -791,7 +791,7 @@ async fn writer_lane_backpressure_fails_fast_when_full() {
         fillers.push(Box::pin(async move {
             lane.write(Lane::Background, "brief-job", |tx| {
                 tx.execute("INSERT INTO scratch_full (id) VALUES (3)", [])?;
-                Ok(())
+                Ok::<_, DbError>(())
             })
             .await
             .unwrap();
@@ -830,7 +830,7 @@ async fn runaway_write_aborts_at_hard_budget() {
         for label in ["a", "b", "c", "d", "e"] {
             insert_label(tx, label)?;
         }
-        Ok(())
+        Ok::<_, DbError>(())
     })
     .await
     .unwrap();
@@ -876,7 +876,7 @@ async fn runaway_write_aborts_at_hard_budget() {
 }
 
 /// Run short queries inside a write until `span` of real time has gone.
-fn burn(tx: &rusqlite::Transaction, span: Duration) -> Result<(), OpError> {
+fn burn(tx: &rusqlite::Transaction, span: Duration) -> Result<(), DbError> {
     let started = Instant::now();
     while started.elapsed() < span {
         let _rows: i64 = tx.query_row(
@@ -975,7 +975,7 @@ async fn foreground_wait_past_its_limit_is_refused() {
     let lane = runtime.lane().clone();
     lane.write_blocking(Lane::Foreground, "brief-table", |tx| {
         tx.execute("CREATE TABLE scratch_turns (label TEXT)", [])?;
-        Ok(())
+        Ok::<_, DbError>(())
     })
     .unwrap();
     let running = lane.clone();
@@ -1044,7 +1044,7 @@ async fn foreground_wait_past_its_limit_is_refused() {
         .unwrap();
 }
 
-fn synchronous(tx: &rusqlite::Transaction) -> Result<i64, OpError> {
+fn synchronous(tx: &rusqlite::Transaction) -> Result<i64, DbError> {
     Ok(tx.query_row("PRAGMA synchronous", [], |row| row.get(0))?)
 }
 
@@ -1072,9 +1072,12 @@ fn durable_write_syncs_fully_and_the_next_write_does_not() {
     let failed = lane.write_durable(
         Lane::Background,
         "brief-durable-failed",
-        |tx| -> Result<(), OpError> {
+        |tx| -> Result<(), DbError> {
             inside.set(synchronous(tx)?);
-            Err(OpError::Abort("brief: a durable closure fails".to_owned()))
+            Err(DbError::WriteFailed {
+                operation: "brief-durable-failed".to_owned(),
+                cause: "brief: a durable closure fails".to_owned(),
+            })
         },
     );
     assert!(matches!(failed, Err(DbError::WriteFailed { .. })));
@@ -1085,7 +1088,7 @@ fn durable_write_syncs_fully_and_the_next_write_does_not() {
         lane.write_durable(
             Lane::Background,
             "brief-durable-panic",
-            |tx| -> Result<(), OpError> {
+            |tx| -> Result<(), DbError> {
                 inside.set(synchronous(tx)?);
                 panic!("brief: a durable closure panics")
             },
@@ -1182,7 +1185,7 @@ async fn blocking_write_on_the_runtime_thread_takes_its_turn() {
         .write_blocking(Lane::Foreground, "brief-blocking", |tx| {
             let ahead = tx.query_row("SELECT COUNT(*) FROM scratch_turns", [], |row| row.get(0))?;
             insert_label(tx, "blocking")?;
-            Ok(ahead)
+            Ok::<_, DbError>(ahead)
         })
         .unwrap();
     assert_eq!(ahead, 2, "the queued write ran without the runtime thread");
@@ -1206,7 +1209,7 @@ fn blocking_write_borrows_from_its_caller() {
     lane.write_blocking(Lane::Foreground, "brief-borrow", |tx| {
         insert_label(tx, &label)?;
         written += 1;
-        Ok(())
+        Ok::<_, DbError>(())
     })
     .unwrap();
     assert_eq!(written, 1);
@@ -1406,7 +1409,7 @@ async fn panicking_write_rolls_back_and_frees_the_lane() {
         .write(
             Lane::Foreground,
             "brief-panic-async",
-            |tx| -> Result<(), OpError> {
+            |tx| -> Result<(), DbError> {
                 insert_label(tx, "async")?;
                 panic!("brief: an async closure panics")
             },
@@ -1420,7 +1423,7 @@ async fn panicking_write_rolls_back_and_frees_the_lane() {
         lane.write_blocking(
             Lane::Foreground,
             "brief-panic-blocking",
-            |tx| -> Result<(), OpError> {
+            |tx| -> Result<(), DbError> {
                 insert_label(tx, "blocking")?;
                 panic!("brief: a blocking closure panics")
             },
@@ -1486,12 +1489,10 @@ async fn nested_write_is_refused_on_the_same_lane_only() {
     let nested = lane
         .write_blocking(Lane::Foreground, "brief-outer", |tx| {
             insert_label(tx, "outer")?;
-            other
-                .write_blocking(Lane::Foreground, "brief-other", |tx| {
-                    insert_label(tx, "other")
-                })
-                .map_err(|error| OpError::Abort(error.to_string()))?;
-            Ok(lane.write_blocking(Lane::Foreground, "brief-nested", |tx| {
+            other.write_blocking(Lane::Foreground, "brief-other", |tx| {
+                insert_label(tx, "other")
+            })?;
+            Ok::<_, DbError>(lane.write_blocking(Lane::Foreground, "brief-nested", |tx| {
                 insert_label(tx, "nested")
             }))
         })
@@ -1505,7 +1506,7 @@ async fn nested_write_is_refused_on_the_same_lane_only() {
     let nested = lane
         .write(Lane::Foreground, "brief-outer-async", move |tx| {
             insert_label(tx, "outer-async")?;
-            Ok(
+            Ok::<_, DbError>(
                 inner.write_blocking(Lane::Foreground, "brief-nested", |tx| {
                     insert_label(tx, "nested")
                 }),
@@ -1538,7 +1539,7 @@ fn block_on_is_refused_inside_a_write_closure() {
     let inside = lane
         .write_blocking(Lane::Foreground, "brief-holder", |tx| {
             insert_label(tx, "holder")?;
-            Ok(block_on(handle, "brief-inside", async { polled = true }))
+            Ok::<_, DbError>(block_on(handle, "brief-inside", async { polled = true }))
         })
         .unwrap();
     assert!(
@@ -1575,7 +1576,7 @@ async fn chunked_write_commits_and_cancels() {
         .write(Lane::Foreground, "brief-table", |tx| {
             tx.execute("CREATE TABLE scratch_chunk (id INTEGER)", [])
                 .unwrap();
-            Ok(())
+            Ok::<_, DbError>(())
         })
         .await
         .unwrap();
@@ -1592,7 +1593,7 @@ async fn chunked_write_commits_and_cancels() {
                 for row in rows {
                     tx.execute("INSERT INTO scratch_chunk (id) VALUES (?1)", [row])?;
                 }
-                Ok(())
+                Ok::<_, DbError>(())
             },
         )
         .await
@@ -1613,11 +1614,11 @@ async fn chunked_write_commits_and_cancels() {
             (0..100).collect(),
             500,
             &stop,
-            |_rows: &[i32], _tx| Ok(()),
+            |_rows: &[i32], _tx| Ok::<_, DbError>(()),
         )
         .await
     {
-        Err(DbError::Cancelled { chunks, .. }) => assert_eq!(chunks, 0),
+        Err(ChunkedError::Cancelled { rows }) => assert_eq!(rows, 0),
         other => panic!("tripped flag must stop the write, got {other:?}"),
     }
 
@@ -1648,7 +1649,7 @@ fn blocking_chunked_write_stops_at_chunk_boundaries() {
         write_rows(rows, tx)
     });
     assert!(
-        matches!(stopped, Err(DbError::Cancelled { chunks: 1, .. })),
+        matches!(stopped, Err(ChunkedError::Cancelled { rows: 2 })),
         "the chunk that was running commits and the write stops, got {stopped:?}"
     );
     assert_eq!(labels(&lane).len(), 7);
@@ -1684,7 +1685,7 @@ fn blocking_chunked_write_stops_at_chunk_boundaries() {
     // next write, and each chunk that runs raises the hold again.
     for whole in [11, 12] {
         hold.force(false);
-        lane.write_blocking(Lane::Foreground, "brief-nudge", |_tx| Ok(()))
+        lane.write_blocking(Lane::Foreground, "brief-nudge", |_tx| Ok::<_, DbError>(()))
             .unwrap();
         if whole < 12 {
             wait_queued(&lane, 1);
@@ -1696,6 +1697,37 @@ fn blocking_chunked_write_stops_at_chunk_boundaries() {
         .expect("the chunked write finishes once the hold is off");
     assert_eq!(committed.unwrap(), 5);
     assert_eq!(labels(&lane).len(), 12);
+
+    // A chunk that fails rolls back alone: the write answers with the rows
+    // committed before it and the closure's own error. The last held chunk
+    // raised the hold again, and a scratch lane has nothing to lift it.
+    hold.force(false);
+    let mut chunks = 0;
+    let failed = lane.write_chunked_blocking(
+        "brief-failed",
+        &rows,
+        2,
+        &CancelFlag::never(),
+        |rows, tx| {
+            chunks += 1;
+            write_rows(rows, tx)?;
+            if chunks == 2 {
+                return Err(DbError::WriteFailed {
+                    operation: "brief-failed".to_owned(),
+                    cause: "brief: the second chunk fails".to_owned(),
+                });
+            }
+            Ok(())
+        },
+    );
+    match failed {
+        Err(ChunkedError::Failed {
+            rows: 2,
+            error: DbError::WriteFailed { cause, .. },
+        }) => assert_eq!(cause, "brief: the second chunk fails"),
+        other => panic!("the failed chunk answers its own error, got {other:?}"),
+    }
+    assert_eq!(labels(&lane)[12..], ["row-0", "row-1"]);
 }
 
 /// With the WAL hold on, a bulk write waits and every other class goes past
@@ -1746,7 +1778,7 @@ fn held_bulk_write_lets_every_other_class_past_until_shutdown() {
 
     let mut cx = Context::from_waker(Waker::noop());
     let mut backlog: Vec<_> = (1..BACKGROUND_QUEUE_CAPACITY)
-        .map(|_| Box::pin(lane.write(Lane::Bulk, "brief-backlog", |_tx| Ok(()))))
+        .map(|_| Box::pin(lane.write(Lane::Bulk, "brief-backlog", |_tx| Ok::<_, DbError>(()))))
         .collect();
     for write in &mut backlog {
         assert!(write.as_mut().poll(&mut cx).is_pending());
@@ -1816,7 +1848,7 @@ async fn fill_wal_behind_a_reader(runtime: &DbRuntime) -> rusqlite::Connection {
         tx.execute_batch(
             "CREATE TABLE scratch_turns (label TEXT); CREATE TABLE scratch_fill (payload TEXT);",
         )?;
-        Ok(())
+        Ok::<_, DbError>(())
     })
     .await
     .unwrap();
@@ -1835,7 +1867,7 @@ async fn fill_wal_behind_a_reader(runtime: &DbRuntime) -> rusqlite::Connection {
         for _ in 0..256 {
             tx.execute("INSERT INTO scratch_fill (payload) VALUES (?1)", [&payload])?;
         }
-        Ok(())
+        Ok::<_, DbError>(())
     })
     .await
     .unwrap();
@@ -2017,7 +2049,7 @@ async fn cancelled_chunked_write_does_not_wait_out_the_hold() {
         .recv_timeout(Duration::from_secs(5))
         .expect("a cancelled chunk is answered while the hold is still on");
     assert!(
-        matches!(stopped, Err(DbError::Cancelled { chunks: 0, .. })),
+        matches!(stopped, Err(ChunkedError::Cancelled { rows: 0 })),
         "the held chunk never ran, got {stopped:?}"
     );
     assert!(runtime.checkpoint().bulk_held());
@@ -2054,7 +2086,7 @@ async fn fold_sql_function_matches_v2_casefold() {
         .lane()
         .write(Lane::Foreground, "brief-fold", |tx| {
             tx.query_row("SELECT fold('Straße à  Athènes')", [], |row| row.get(0))
-                .map_err(droppedneedle_kernel::db::OpError::from)
+                .map_err(DbError::from)
         })
         .await
         .unwrap();
@@ -2063,7 +2095,7 @@ async fn fold_sql_function_matches_v2_casefold() {
         .lane()
         .write(Lane::Foreground, "brief-fold-null", |tx| {
             tx.query_row("SELECT fold(NULL)", [], |row| row.get(0))
-                .map_err(droppedneedle_kernel::db::OpError::from)
+                .map_err(DbError::from)
         })
         .await
         .unwrap();
@@ -2149,7 +2181,7 @@ async fn read_runtime_with(
         .db()
         .write(Lane::Foreground, "brief-table", |tx| {
             tx.execute("CREATE TABLE scratch_turns (label TEXT)", [])?;
-            Ok(())
+            Ok::<_, DbError>(())
         })
         .await
         .unwrap();
@@ -2468,7 +2500,7 @@ fn closures_may_not_reach_back_into_the_database() {
     let in_write = db
         .write_blocking(Lane::Foreground, "brief-write", |tx| {
             insert_label(tx, "row")?;
-            Ok([
+            Ok::<_, DbError>([
                 db.read_blocking("brief-read", count_labels),
                 db.read_long("brief-long", &never, count_labels),
             ])

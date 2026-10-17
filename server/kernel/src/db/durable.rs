@@ -18,7 +18,7 @@ use tokio::sync::Notify;
 
 use super::{
     error::DbError,
-    writer::{Lane, OpError, WriteLane},
+    writer::{Lane, WriteLane},
 };
 
 /// Background work channel. Matches the `durable_work_wakeups` CHECK.
@@ -196,10 +196,9 @@ impl DurableWorkWakeups {
                     rusqlite::params![channel.as_str()],
                     |row| row.get(0),
                 )?;
-                Ok(seq)
+                Ok::<_, DbError>(seq)
             })
-            .await
-            .map_err(|error| map_missing_table(error, "durable_work_wakeups"))?;
+            .await?;
         self.signals[channel.index()].notify_one();
         Ok(seq)
     }
@@ -241,8 +240,6 @@ impl DurableWorkWakeups {
             Ok(())
         })
         .await
-        .map_err(|error| map_missing_table(error, "durable_work_wakeups"))?;
-        Ok(())
     }
 
     /// Register a job, or refresh the registration if the name exists.
@@ -270,8 +267,6 @@ impl DurableWorkWakeups {
             Ok(())
         })
         .await
-        .map_err(|error| map_missing_table(error, "durable_job_registry"))?;
-        Ok(())
     }
 
     /// Move a job to a new liveness state.
@@ -290,13 +285,14 @@ impl DurableWorkWakeups {
                 rusqlite::params![state_text, now_unix(), name],
             )?;
             if changed == 0 {
-                return Err(OpError::Abort("unknown job".to_owned()));
+                return Err(DbError::WriteFailed {
+                    operation: "durable-job-state".to_owned(),
+                    cause: "unknown job".to_owned(),
+                });
             }
             Ok(())
         })
         .await
-        .map_err(|error| map_missing_table(error, "durable_job_registry"))?;
-        Ok(())
     }
 
     /// Beat a job's heart without changing its state.
@@ -309,13 +305,14 @@ impl DurableWorkWakeups {
                 rusqlite::params![now_unix(), name],
             )?;
             if changed == 0 {
-                return Err(OpError::Abort("unknown job".to_owned()));
+                return Err(DbError::WriteFailed {
+                    operation: "durable-job-heartbeat".to_owned(),
+                    cause: "unknown job".to_owned(),
+                });
             }
             Ok(())
         })
         .await
-        .map_err(|error| map_missing_table(error, "durable_job_registry"))?;
-        Ok(())
     }
 
     /// Read one registry row, or `None` when the name is unregistered.
@@ -369,17 +366,4 @@ fn now_unix() -> f64 {
         .duration_since(UNIX_EPOCH)
         .map(|span| span.as_secs_f64())
         .unwrap_or(0.0)
-}
-
-/// Reword a missing-table failure so an unmigrated database reads plainly.
-fn map_missing_table(error: DbError, table: &str) -> DbError {
-    match &error {
-        DbError::WriteFailed { cause, .. } if cause.contains("no such table") => {
-            DbError::WriteFailed {
-                operation: format!("durable fabric needs migrated table {table}"),
-                cause: cause.clone(),
-            }
-        }
-        _ => error,
-    }
 }

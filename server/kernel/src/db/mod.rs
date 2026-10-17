@@ -25,6 +25,11 @@
 //! that must wait on a future goes through [`block_on`], which refuses
 //! inside a write closure.
 //!
+//! A write closure fails with the caller's own error type, as a read
+//! closure does, and the lane's failures reach the caller through
+//! `From<DbError>`. An outcome a caller branches on is a variant of that
+//! type, never the text of a database error.
+//!
 //! A background write waits for its turn. A foreground write is refused
 //! with `Busy` when its queue is full or it has waited 5 s, so a request
 //! never waits for ever behind a stuck write. Each class has its own time
@@ -39,6 +44,9 @@
 //! `Lane::Bulk` turn per chunk. Bulk writes are the only ones that wait
 //! while the checkpoint service reports the WAL too large or stalled, and
 //! the runtime's relief thread checkpoints every second until they can go.
+//! Each chunk commits on its own, so any prefix may be all that lands; a
+//! chunked write that stops short answers [`ChunkedError`] with the rows
+//! that committed, and a caller resumes from there.
 //!
 //! Layout: [`factory`] builds the runtime, [`handle`] is `Db`, [`read_pool`]
 //! holds the two read pools, [`checkpoint`] runs the GH-293
@@ -79,7 +87,7 @@ pub use checkpoint::{
     Observation, TRUNCATE_MIN_INTERVAL,
 };
 pub use durable::{DurableWorkWakeups, JobKind, JobRecord, JobState, WakeupChannel};
-pub use error::{DbError, map_sqlx_busy, rusqlite_is_busy, sqlx_is_busy};
+pub use error::{ChunkedError, DbError, map_sqlx_busy, rusqlite_is_busy, sqlx_is_busy};
 pub use factory::{
     ACQUIRE_TIMEOUT, BOOT_WAIT, BUSY_TIMEOUT, CACHE_SIZE_KIB, DbConfig, DbRuntime, IDLE_TIMEOUT,
     MAX_READERS, MIN_CONNECTIONS, MMAP_SIZE, WAL_AUTOCHECKPOINT, open_runtime,
@@ -93,7 +101,7 @@ pub use writer::{
     BACKGROUND_CHUNK_ROWS, BACKGROUND_HARD_BUDGET, BACKGROUND_QUEUE_CAPACITY,
     BACKGROUND_SOFT_BUDGET, Budget, CancelFlag, FOREGROUND_BURST, FOREGROUND_HARD_BUDGET,
     FOREGROUND_QUEUE_CAPACITY, FOREGROUND_SOFT_BUDGET, FOREGROUND_WAIT_LIMIT, HOLDER_LOG_EVERY,
-    Lane, LaneIdle, LaneLimits, LaneWatch, OpError, ReliefPass, WAIT_BUCKET_BOUNDS_MS, WATCH_TICK,
+    Lane, LaneIdle, LaneLimits, LaneWatch, ReliefPass, WAIT_BUCKET_BOUNDS_MS, WATCH_TICK,
     WaitTimes, WalHold, WriteLane, apply_connection_pragmas, decide_lane, open_connection,
     open_journal_connection,
 };

@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use super::registry::{BoxFuture, JobCtx, JobExit, JobKind, JobRegistry, RegistryStore};
 use super::schedule::sleep_or_stop;
-use crate::db::{WriteLane, writer::Lane};
+use crate::db::{DbError, WriteLane, writer::Lane};
 
 /// Registered-name prefix for tick loops: `plugin-tick:{name}`.
 pub const TICK_PREFIX: &str = "plugin-tick:";
@@ -414,7 +414,7 @@ impl TickStore for SqliteTickStore {
                     Ok(true)
                 })
                 .await
-                .map_err(|error| {
+                .map_err(|error: DbError| {
                     tracing::warn!(%error, "tick state write failed");
                     TickStoreError::Unavailable(error.to_string())
                 })?;

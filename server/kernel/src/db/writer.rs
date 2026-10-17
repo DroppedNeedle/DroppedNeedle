@@ -80,7 +80,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 use tokio::sync::oneshot;
 
 use super::{
-    error::{DbError, rusqlite_is_busy},
+    error::{ChunkedError, DbError, rusqlite_is_busy},
     fold::register_fold,
     read_pool::OldestRead,
     scope::{self, LaneId},
@@ -275,22 +275,6 @@ impl LaneLimits {
     }
 }
 
-/// Failure from inside a write closure. The transaction rolls back either
-/// way; the two cases differ only in what the caller learns.
-#[derive(Debug)]
-pub enum OpError {
-    /// The SQLite call failed.
-    Sql(rusqlite::Error),
-    /// The closure refused the write for its own reason.
-    Abort(String),
-}
-
-impl From<rusqlite::Error> for OpError {
-    fn from(error: rusqlite::Error) -> Self {
-        Self::Sql(error)
-    }
-}
-
 /// Pure fairness step, mirroring `PriorityWriteLock.acquire`.
 ///
 /// `bg_fresh` is true when the background lane went from empty to busy since
@@ -358,16 +342,18 @@ impl WaitTimes {
 }
 
 /// What one transaction did, before its failure is mapped for the caller.
-struct Outcome<R> {
-    value: Result<R, Failure>,
+struct Outcome<R, E> {
+    value: Result<R, Failure<E>>,
     changes: u64,
     elapsed: Duration,
 }
 
 /// Why a transaction committed nothing.
-enum Failure {
-    /// The closure returned an error, or `BEGIN` or the lane's commit failed.
-    Op(OpError),
+enum Failure<E> {
+    /// The closure returned its own error.
+    Op(E),
+    /// `BEGIN`, the lane's commit or the durable pragma failed.
+    Sql(rusqlite::Error),
     /// The abort fired while the closure ran.
     TimedOut,
     /// The transaction ended inside the closure. Carries the closure's own
@@ -395,16 +381,43 @@ impl Refused {
                 operation: name.to_owned(),
             },
             Self::Closed => DbError::LaneClosed,
-            // The chunked write that hears this knows how many chunks it
-            // committed and puts the count in.
-            Self::Cancelled => cancelled(name, 0),
+            // The chunked write that hears this answers with the rows it
+            // committed.
+            Self::Cancelled => DbError::Cancelled {
+                operation: name.to_owned(),
+                chunks: 0,
+            },
         }
     }
 }
 
+/// Why a write failed, kept typed inside the lane so a chunked write can
+/// tell a cancelled chunk from a failed one. Callers get `E`.
+enum TxError<E> {
+    /// The lane's own failure.
+    Lane(DbError),
+    /// The closure's own error.
+    Op(E),
+}
+
+impl<E: From<DbError>> TxError<E> {
+    fn into_caller(self) -> E {
+        match self {
+            Self::Lane(error) => E::from(error),
+            Self::Op(error) => error,
+        }
+    }
+}
+
+impl<E> From<DbError> for TxError<E> {
+    fn from(error: DbError) -> Self {
+        Self::Lane(error)
+    }
+}
+
 /// What a queued async write tells its caller.
-enum Answer<R> {
-    Ran(Outcome<R>),
+enum Answer<R, E> {
+    Ran(Outcome<R, E>),
     Panicked,
     Refused(Refused),
 }
@@ -965,19 +978,20 @@ impl Turn {
     /// Run the turn's transaction and log what its caller may no longer be
     /// there to hear: a queued write runs even when its future was dropped,
     /// so these lines are written here, on the thread that ran it.
-    fn transact<R>(
+    fn transact<R, E: std::fmt::Display>(
         &mut self,
         lane: Lane,
         budget: Budget,
         name: &'static str,
         durable: bool,
-        op: impl FnOnce(&Transaction) -> Result<R, OpError>,
-    ) -> Outcome<R> {
+        op: impl FnOnce(&Transaction) -> Result<R, E>,
+    ) -> Outcome<R, E> {
         let Some(connection) = self.connection.as_mut() else {
             return Outcome {
-                value: Err(Failure::Op(OpError::Abort(
-                    "the turn holds no connection".to_owned(),
-                ))),
+                value: Err(Failure::Connection(DbError::WriteFailed {
+                    operation: name.to_owned(),
+                    cause: "the turn holds no connection".to_owned(),
+                })),
                 changes: 0,
                 elapsed: Duration::ZERO,
             };
@@ -1149,26 +1163,36 @@ impl WriteLane {
     /// A background write waits for its turn. A foreground write is answered
     /// `Busy` when the foreground queue is full, or when it has waited past
     /// the limit, in which case it never runs.
-    pub async fn write<F, R>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, DbError>
+    ///
+    /// The closure returns the caller's own error type `E`, which rolls the
+    /// transaction back. The lane's own failures (`Busy`, `TxTimeout`,
+    /// `TransactionEnded`, `NestedWrite`, `LaneClosed`, a panic) reach the
+    /// caller through `E::from`. After `TxTimeout` or `TransactionEnded`
+    /// whatever the closure returned is discarded.
+    pub async fn write<R, E, F>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, E>
     where
-        F: FnOnce(&Transaction) -> Result<R, OpError> + Send + 'static,
+        F: FnOnce(&Transaction) -> Result<R, E> + Send + 'static,
         R: Send + 'static,
+        E: From<DbError> + std::fmt::Display + Send + 'static,
     {
-        self.write_queued(lane, name, None, op).await
+        self.write_queued(lane, name, None, op)
+            .await
+            .map_err(TxError::into_caller)
     }
 
     /// [`WriteLane::write`], for a chunk too: `cancel` is the flag of the
     /// chunked write it belongs to.
-    async fn write_queued<F, R>(
+    async fn write_queued<R, E, F>(
         &self,
         lane: Lane,
         name: &'static str,
         cancel: Option<CancelFlag>,
         op: F,
-    ) -> Result<R, DbError>
+    ) -> Result<R, TxError<E>>
     where
-        F: FnOnce(&Transaction) -> Result<R, OpError> + Send + 'static,
+        F: FnOnce(&Transaction) -> Result<R, E> + Send + 'static,
         R: Send + 'static,
+        E: std::fmt::Display + Send + 'static,
     {
         let budget = self.shared.limits.budget(lane);
         let (reply, answer) = oneshot::channel();
@@ -1200,12 +1224,12 @@ impl WriteLane {
             .enqueue(lane, name, false, cancel, Grantee::Async(write))?;
         match answer.await {
             Ok(Answer::Ran(outcome)) => finish(name, outcome),
-            Ok(Answer::Panicked) => Err(DbError::WriteFailed {
+            Ok(Answer::Panicked) => Err(TxError::Lane(DbError::WriteFailed {
                 operation: name.to_owned(),
                 cause: "the write closure panicked".to_owned(),
-            }),
-            Ok(Answer::Refused(refused)) => Err(refused.into_error(name)),
-            Err(_) => Err(DbError::LaneClosed),
+            })),
+            Ok(Answer::Refused(refused)) => Err(TxError::Lane(refused.into_error(name))),
+            Err(_) => Err(TxError::Lane(DbError::LaneClosed)),
         }
     }
 
@@ -1218,11 +1242,13 @@ impl WriteLane {
     /// thread, not from async code. Inside a write closure on this lane it
     /// is refused with `NestedWrite`; a closure that hands the write to
     /// another thread and waits for it is not seen, and hangs the lane.
-    pub fn write_blocking<F, R>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, DbError>
+    pub fn write_blocking<R, E, F>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, E>
     where
-        F: FnOnce(&Transaction) -> Result<R, OpError>,
+        F: FnOnce(&Transaction) -> Result<R, E>,
+        E: From<DbError> + std::fmt::Display,
     {
         self.write_parked(lane, name, false, None, op)
+            .map_err(TxError::into_caller)
     }
 
     /// [`WriteLane::write_blocking`] whose commit is on disk before it
@@ -1260,9 +1286,10 @@ impl WriteLane {
     /// stuck on a disk that does not answer is not aborted: it shows only in
     /// the log line that names a write holding the lane past twice its
     /// budget.
-    pub fn write_durable<F, R>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, DbError>
+    pub fn write_durable<R, E, F>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, E>
     where
-        F: FnOnce(&Transaction) -> Result<R, OpError>,
+        F: FnOnce(&Transaction) -> Result<R, E>,
+        E: From<DbError> + std::fmt::Display,
     {
         // A durable write is never held, so it cannot be a bulk write.
         let lane = match lane {
@@ -1270,19 +1297,21 @@ impl WriteLane {
             other => other,
         };
         self.write_parked(lane, name, true, None, op)
+            .map_err(TxError::into_caller)
     }
 
     /// Wait for the turn on the calling thread and run the closure there.
-    fn write_parked<F, R>(
+    fn write_parked<R, E, F>(
         &self,
         lane: Lane,
         name: &'static str,
         durable: bool,
         cancel: Option<CancelFlag>,
         op: F,
-    ) -> Result<R, DbError>
+    ) -> Result<R, TxError<E>>
     where
-        F: FnOnce(&Transaction) -> Result<R, OpError>,
+        F: FnOnce(&Transaction) -> Result<R, E>,
+        E: std::fmt::Display,
     {
         let budget = self.shared.limits.budget(lane);
         let (parked, granted) = mpsc::channel();
@@ -1290,8 +1319,8 @@ impl WriteLane {
             .enqueue(lane, name, durable, cancel, Grantee::Blocking(parked))?;
         let mut turn = match granted.recv() {
             Ok(Ok(turn)) => turn,
-            Ok(Err(refused)) => return Err(refused.into_error(name)),
-            Err(_) => return Err(DbError::LaneClosed),
+            Ok(Err(refused)) => return Err(TxError::Lane(refused.into_error(name))),
+            Err(_) => return Err(TxError::Lane(DbError::LaneClosed)),
         };
         let outcome = turn.transact(lane, budget, name, durable, op);
         drop(turn);
@@ -1303,6 +1332,11 @@ impl WriteLane {
     /// hold is on the next chunk waits: a long bulk job stops at a chunk
     /// boundary, never inside a transaction. Returns the rows committed.
     ///
+    /// Each chunk commits on its own and the lane never undoes one, so any
+    /// prefix of the chunks may be all that lands. A write that stops short
+    /// answers [`ChunkedError`] with the rows that committed: `Failed` when
+    /// a chunk failed and rolled back, `Cancelled` when the flag stopped it.
+    ///
     /// A tripped flag lets the chunk that is running commit and stops the
     /// write there with `Cancelled`. The flag is read before each chunk is
     /// queued and again when its turn comes. A chunk that is waiting, behind
@@ -1311,25 +1345,29 @@ impl WriteLane {
     /// thread takes a cancelled chunk out of the queue within a tick (a
     /// second) and the write returns `Cancelled` without that chunk having
     /// run.
-    pub async fn write_chunked<T, F>(
+    ///
+    /// Dropping the future instead of tripping the flag gets no answer: the
+    /// chunk in flight still runs to commit or rollback and no later chunk
+    /// starts. A caller that needs the count trips the flag and awaits.
+    pub async fn write_chunked<T, E, F>(
         &self,
         name: &'static str,
         mut items: Vec<T>,
         chunk_rows: usize,
         cancel: &CancelFlag,
         chunk: F,
-    ) -> Result<usize, DbError>
+    ) -> Result<usize, ChunkedError<E>>
     where
         T: Send + 'static,
-        F: Fn(&[T], &Transaction) -> Result<(), OpError> + Send + Sync + 'static,
+        E: From<DbError> + std::fmt::Display + Send + 'static,
+        F: Fn(&[T], &Transaction) -> Result<(), E> + Send + Sync + 'static,
     {
         let chunk = Arc::new(chunk);
         let width = chunk_rows.clamp(1, BACKGROUND_CHUNK_ROWS);
         let mut committed = 0;
-        let mut chunks = 0;
         while !items.is_empty() {
             if cancel.is_cancelled() {
-                return Err(cancelled(name, chunks));
+                return Err(ChunkedError::Cancelled { rows: committed });
             }
             let take = width.min(items.len());
             let owned: Vec<T> = items.drain(..take).collect();
@@ -1345,12 +1383,8 @@ impl WriteLane {
                     Ok(true)
                 })
                 .await;
-            if matches!(ran, Ok(false) | Err(DbError::Cancelled { .. })) {
-                return Err(cancelled(name, chunks));
-            }
-            ran?;
+            chunk_answer(ran, committed)?;
             committed += total;
-            chunks += 1;
         }
         Ok(committed)
     }
@@ -1358,22 +1392,23 @@ impl WriteLane {
     /// [`WriteLane::write_chunked`] for synchronous code: each chunk waits
     /// for its turn on the calling thread and runs there, so `items` and the
     /// closure may borrow from the caller. Call it from a blocking thread.
-    pub fn write_chunked_blocking<T, F>(
+    pub fn write_chunked_blocking<T, E, F>(
         &self,
         name: &'static str,
         items: &[T],
         chunk_rows: usize,
         cancel: &CancelFlag,
         mut chunk: F,
-    ) -> Result<usize, DbError>
+    ) -> Result<usize, ChunkedError<E>>
     where
-        F: FnMut(&[T], &Transaction) -> Result<(), OpError>,
+        E: From<DbError> + std::fmt::Display,
+        F: FnMut(&[T], &Transaction) -> Result<(), E>,
     {
         let width = chunk_rows.clamp(1, BACKGROUND_CHUNK_ROWS);
         let mut committed = 0;
-        for (chunks, rows) in items.chunks(width).enumerate() {
+        for rows in items.chunks(width) {
             if cancel.is_cancelled() {
-                return Err(cancelled(name, chunks));
+                return Err(ChunkedError::Cancelled { rows: committed });
             }
             let ran = self.write_parked(Lane::Bulk, name, false, Some(cancel.clone()), |tx| {
                 if cancel.is_cancelled() {
@@ -1382,10 +1417,7 @@ impl WriteLane {
                 chunk(rows, tx)?;
                 Ok(true)
             });
-            if matches!(ran, Ok(false) | Err(DbError::Cancelled { .. })) {
-                return Err(cancelled(name, chunks));
-            }
-            ran?;
+            chunk_answer(ran, committed)?;
             committed += rows.len();
         }
         Ok(committed)
@@ -1492,32 +1524,41 @@ fn run_async_writes(granted: mpsc::Receiver<Granted>) {
     }
 }
 
-/// A chunked write stopped by its flag after `chunks` chunks committed.
-fn cancelled(name: &'static str, chunks: usize) -> DbError {
-    DbError::Cancelled {
-        operation: name.to_owned(),
-        chunks,
+/// What one chunk's write means for the chunked write: carry on after a
+/// chunk that committed, or stop with the rows committed before it. A chunk
+/// that saw the flag commits nothing and is not counted.
+fn chunk_answer<E: From<DbError>>(
+    ran: Result<bool, TxError<E>>,
+    rows: usize,
+) -> Result<(), ChunkedError<E>> {
+    match ran {
+        Ok(true) => Ok(()),
+        Ok(false) | Err(TxError::Lane(DbError::Cancelled { .. })) => {
+            Err(ChunkedError::Cancelled { rows })
+        }
+        Err(error) => Err(ChunkedError::Failed {
+            rows,
+            error: error.into_caller(),
+        }),
     }
 }
 
 /// Map one transaction's outcome for its caller.
-fn finish<R>(name: &'static str, outcome: Outcome<R>) -> Result<R, DbError> {
-    match outcome.value {
-        Ok(value) => Ok(value),
-        Err(Failure::TimedOut) => Err(DbError::TxTimeout {
+fn finish<R, E>(name: &'static str, outcome: Outcome<R, E>) -> Result<R, TxError<E>> {
+    let lane = match outcome.value {
+        Ok(value) => return Ok(value),
+        Err(Failure::Op(error)) => return Err(TxError::Op(error)),
+        Err(Failure::TimedOut) => DbError::TxTimeout {
             operation: name.to_owned(),
             changes: outcome.changes,
-        }),
-        Err(Failure::Ended(_)) => Err(DbError::TransactionEnded {
+        },
+        Err(Failure::Ended(_)) => DbError::TransactionEnded {
             operation: name.to_owned(),
-        }),
-        Err(Failure::Connection(error)) => Err(error),
-        Err(Failure::Op(OpError::Abort(cause))) => Err(DbError::WriteFailed {
-            operation: name.to_owned(),
-            cause,
-        }),
-        Err(Failure::Op(OpError::Sql(error))) => Err(map_write_error(name, outcome.changes, error)),
-    }
+        },
+        Err(Failure::Connection(error)) => error,
+        Err(Failure::Sql(error)) => map_write_error(name, outcome.changes, error),
+    };
+    Err(TxError::Lane(lane))
 }
 
 /// Open a dedicated rusqlite connection with the same pragma set as the
@@ -1603,13 +1644,13 @@ impl WriterConnection {
     /// One turn, one transaction. The abort clock is armed for exactly the
     /// transaction; commit follows `Ok`, rollback follows anything else,
     /// a panic included.
-    fn transact<R>(
+    fn transact<R, E: std::fmt::Display>(
         &mut self,
         budget: Budget,
         name: &'static str,
         durable: bool,
-        op: impl FnOnce(&Transaction) -> Result<R, OpError>,
-    ) -> Outcome<R> {
+        op: impl FnOnce(&Transaction) -> Result<R, E>,
+    ) -> Outcome<R, E> {
         let started = Instant::now();
         if let Err(error) = self.start_in_autocommit() {
             return Outcome {
@@ -1627,7 +1668,7 @@ impl WriterConnection {
                 Ok(full) => {
                     run_transaction(&mut *full.connection, clock, budget.abort, watch, lane, op)
                 }
-                Err(error) => Err(Failure::Op(error.into())),
+                Err(error) => Err(Failure::Sql(error)),
             }
         } else {
             run_transaction(&mut self.connection, clock, budget.abort, watch, lane, op)
@@ -1701,17 +1742,17 @@ impl Drop for FullSync<'_> {
 /// Run the closure between the lane's `BEGIN IMMEDIATE` and the lane's
 /// commit. The abort and the transaction's own fate are judged first:
 /// either one discards what the closure returned.
-fn run_transaction<R>(
+fn run_transaction<R, E: std::fmt::Display>(
     connection: &mut Connection,
     clock: &AbortClock,
     abort_after: Duration,
     watch: &TxWatch,
     lane: LaneId,
-    op: impl FnOnce(&Transaction) -> Result<R, OpError>,
-) -> Result<R, Failure> {
+    op: impl FnOnce(&Transaction) -> Result<R, E>,
+) -> Result<R, Failure<E>> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|error| Failure::Op(error.into()))?;
+        .map_err(Failure::Sql)?;
     // Armed after `BEGIN`: the budget counts the work, not the wait for the
     // file lock.
     let armed = clock.arm(abort_after);
@@ -1724,18 +1765,11 @@ fn run_transaction<R>(
         return Err(Failure::TimedOut);
     }
     if watch.rolled_back() || transaction.is_autocommit() {
-        let cause = match value {
-            Ok(_) => None,
-            Err(OpError::Sql(error)) => Some(short_cause(&error)),
-            Err(OpError::Abort(cause)) => Some(cause),
-        };
-        return Err(Failure::Ended(cause));
+        return Err(Failure::Ended(value.err().map(|error| error.to_string())));
     }
     let value = value.map_err(Failure::Op)?;
     let _allowed = watch.allow_commit();
-    transaction
-        .commit()
-        .map_err(|error| Failure::Op(error.into()))?;
+    transaction.commit().map_err(Failure::Sql)?;
     Ok(value)
 }
 

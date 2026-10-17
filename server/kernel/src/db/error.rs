@@ -103,12 +103,14 @@ pub enum DbError {
         /// Operation name for the log line. Never SQL text or a path.
         operation: String,
     },
-    /// Cooperative cancellation stopped a chunked bulk write.
-    #[error("chunked write {operation} cancelled after {chunks} chunks")]
+    /// Cooperative cancellation stopped a backup, or a chunk of a chunked
+    /// write before it ran. A chunked write answers its caller with
+    /// [`ChunkedError::Cancelled`] instead.
+    #[error("{operation} cancelled after {chunks} chunks")]
     Cancelled {
         /// Operation name for the log line.
         operation: String,
-        /// Committed chunks before the stop flag was seen.
+        /// Steps completed before the stop flag was seen.
         chunks: usize,
     },
     /// The backup staging copy failed its integrity check. Nothing rotated.
@@ -140,8 +142,11 @@ pub enum DbError {
     /// read pool is closed.
     #[error("the database is shutting down")]
     LaneClosed,
-    /// A write closure failed inside its transaction. The transaction rolled
-    /// back; the message names the operation, never SQL text or a path.
+    /// A write failed and rolled back: the lane's own SQLite failure, a
+    /// panic, or a closure failure that is only logged. The message names
+    /// the operation, never SQL text or a path. No code decides anything by
+    /// reading `cause`: an outcome a caller branches on is a variant of the
+    /// caller's own error type.
     #[error("write {operation} failed: {cause}")]
     WriteFailed {
         /// Operation name for the log line.
@@ -155,15 +160,59 @@ pub enum DbError {
     /// A non-busy SQLite failure on the read path or at boot.
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
-    /// A non-busy SQLite failure on a dedicated connection.
+    /// A non-busy SQLite failure on a dedicated connection or inside a read
+    /// or write closure.
     #[error(transparent)]
-    Rusqlite(#[from] rusqlite::Error),
+    Rusqlite(rusqlite::Error),
     /// Filesystem failure around the database or a backup.
     #[error(transparent)]
     Io(#[from] std::io::Error),
     /// Backup manifest that is missing or unreadable as JSON.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+}
+
+/// Lock contention becomes the retryable [`DbError::Busy`], the way the
+/// lane maps its own failures; anything else stays [`DbError::Rusqlite`].
+/// A busy error has no operation name here, so it reads as a statement.
+impl From<rusqlite::Error> for DbError {
+    fn from(error: rusqlite::Error) -> Self {
+        if rusqlite_is_busy(&error) {
+            Self::Busy {
+                operation: "a statement".to_owned(),
+            }
+        } else {
+            Self::Rusqlite(error)
+        }
+    }
+}
+
+/// A chunked write that stopped short. The `rows` items before the stop are
+/// committed and stay committed: `items[rows..]` is what did not land.
+///
+/// Any prefix of the chunks may be all that lands, so a chunked write is
+/// only for work where every prefix is a valid database state. A caller
+/// that resumes passes `items[rows..]`; it passes the whole list again only
+/// if every chunk is safe to run twice.
+#[derive(Debug, Error)]
+pub enum ChunkedError<E> {
+    /// The cancel flag stopped it at a chunk boundary. A stop the caller
+    /// asked for, not a failure.
+    #[error("chunked write cancelled after {rows} rows")]
+    Cancelled {
+        /// Items in the chunks that committed.
+        rows: usize,
+    },
+    /// One chunk failed and rolled back: the closure's own error, or the
+    /// lane's (`Busy`, `TxTimeout`, `TransactionEnded`, `LaneClosed`, a
+    /// panic) through `From<DbError>`.
+    #[error("chunked write failed after {rows} rows: {error}")]
+    Failed {
+        /// Items in the chunks that committed before the one that failed.
+        rows: usize,
+        /// Why the chunk failed.
+        error: E,
+    },
 }
 
 /// True when a sqlx error is lock contention (SQLITE_BUSY or SQLITE_LOCKED),

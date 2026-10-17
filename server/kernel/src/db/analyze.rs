@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use sqlx::SqlitePool;
 
 use super::error::DbError;
-use super::writer::{Lane, OpError, WriteLane};
+use super::writer::{Lane, WriteLane};
 
 /// Statistics older than this are refreshed.
 pub const MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -165,7 +165,7 @@ impl AnalyzeService {
             );
             self.lane
                 .write(Lane::Background, "db.analyze", move |tx| {
-                    tx.execute_batch(&statement).map_err(OpError::from)
+                    tx.execute_batch(&statement).map_err(DbError::from)
                 })
                 .await?;
         }
@@ -184,7 +184,7 @@ impl AnalyzeService {
                 tx.execute_batch(
                     "CREATE TABLE db_planner_stats_reload (x); DROP TABLE db_planner_stats_reload;",
                 )?;
-                Ok(())
+                Ok::<_, DbError>(())
             })
             .await?;
         tracing::info!(
