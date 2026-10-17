@@ -27,17 +27,16 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
-    response::{IntoResponse as _, Response},
     routing::{get, post, put},
 };
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use super::auth::{Principal, RequireAdmin, RequireCurator};
-use super::error::{LibraryError, ValidJson, ValidQuery};
 use super::models::PenaltyView;
-use super::mutations::MutationHttpError;
-use super::operations::{OperationsHttpError, ReasonView, blocking};
+use super::operations::{ReasonView, blocking};
 use crate::identify::models::CandidateEvidence;
 use crate::management::automatic::AutomaticWrites;
 use crate::management::service::Management;
@@ -479,10 +478,7 @@ fn read_status(
     Ok(EditionStatusView::of(status, writes))
 }
 
-async fn status_of(
-    state: &LibrarySetup,
-    album_id: &str,
-) -> Result<EditionStatusView, OperationsHttpError> {
+async fn status_of(state: &LibrarySetup, album_id: &str) -> Result<EditionStatusView, ApiError> {
     let ops = Operations::new(state);
     let management = Management::new(state);
     let album_id = album_id.to_owned();
@@ -505,7 +501,7 @@ pub async fn get_edition(
     State(state): State<LibrarySetup>,
     _caller: Principal,
     Path(album_id): Path<String>,
-) -> Result<Json<EditionStatusView>, OperationsHttpError> {
+) -> Result<Json<EditionStatusView>, ApiError> {
     Ok(Json(status_of(&state, &album_id).await?))
 }
 
@@ -532,7 +528,7 @@ pub async fn choose_edition(
     caller: RequireCurator,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<ChooseEditionBody>,
-) -> Result<Json<EditionChoiceView>, OperationsHttpError> {
+) -> Result<Json<EditionChoiceView>, ApiError> {
     let ops = Operations::new(&state);
     let choice: EditionChoice = ops
         .choose_edition(&album_id, &body.release_mbid, Some(&caller.0.user_id))
@@ -575,7 +571,7 @@ pub async fn hand_back_edition(
     State(state): State<LibrarySetup>,
     caller: RequireCurator,
     Path(album_id): Path<String>,
-) -> Result<Json<EditionStatusView>, OperationsHttpError> {
+) -> Result<Json<EditionStatusView>, ApiError> {
     let ops = Operations::new(&state);
     let (album, user) = (album_id.clone(), caller.0.user_id);
     blocking(move || ops.hand_back_edition(&album, &user)).await?;
@@ -600,7 +596,7 @@ pub async fn confirm_edition(
     State(state): State<LibrarySetup>,
     caller: RequireCurator,
     Path(album_id): Path<String>,
-) -> Result<Json<EditionStatusView>, OperationsHttpError> {
+) -> Result<Json<EditionStatusView>, ApiError> {
     let ops = Operations::new(&state);
     let (album, user) = (album_id.clone(), caller.0.user_id);
     blocking(move || ops.confirm_match(&album, &user)).await?;
@@ -625,7 +621,7 @@ pub async fn undo_edition(
     State(state): State<LibrarySetup>,
     caller: RequireCurator,
     Path(album_id): Path<String>,
-) -> Result<Json<EditionStatusView>, OperationsHttpError> {
+) -> Result<Json<EditionStatusView>, ApiError> {
     let ops = Operations::new(&state);
     let (album, user) = (album_id.clone(), caller.0.user_id);
     blocking(move || ops.undo_edition_choice(&album, &user)).await?;
@@ -673,7 +669,7 @@ pub async fn seal_custom_edition(
     caller: RequireAdmin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<CustomEditionBody>,
-) -> Result<Json<EditionStatusView>, OperationsHttpError> {
+) -> Result<Json<EditionStatusView>, ApiError> {
     Operations::new(&state)
         .seal_custom_edition(
             &album_id,
@@ -707,7 +703,7 @@ pub async fn leave_unmanaged(
     caller: RequireAdmin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<LeaveUnmanagedBody>,
-) -> Result<Json<EditionStatusView>, OperationsHttpError> {
+) -> Result<Json<EditionStatusView>, ApiError> {
     let ops = Operations::new(&state);
     let (album, user) = (album_id.clone(), caller.0.user_id);
     blocking(move || ops.leave_unmanaged(&album, body.expected_identity_revision, &user)).await?;
@@ -738,12 +734,9 @@ pub async fn plan_edition(
     caller: Principal,
     Path(album_id): Path<String>,
     ValidQuery(query): ValidQuery<EditionPlanQuery>,
-) -> Result<Json<EditionPlanView>, OperationsHttpError> {
+) -> Result<Json<EditionPlanView>, ApiError> {
     if query.release_mbid.is_some() && !caller.role.is_curator() {
-        return Err(LibraryError::Forbidden {
-            message: "Curator role required".to_owned(),
-        }
-        .into());
+        return Err(ApiError::forbidden("Curator role required"));
     }
     let plan = Operations::new(&state)
         .read_edition_plan(&album_id, query.release_mbid.as_deref())
@@ -790,7 +783,7 @@ pub async fn match_edition_file(
     caller: RequireCurator,
     Path((album_id, track_id)): Path<(String, String)>,
     ValidJson(body): ValidJson<MatchFileBody>,
-) -> Result<Json<EditionStatusView>, OperationsHttpError> {
+) -> Result<Json<EditionStatusView>, ApiError> {
     Operations::new(&state)
         .match_file(
             &album_id,
@@ -827,7 +820,7 @@ pub async fn unmatch_edition_file(
     State(state): State<LibrarySetup>,
     caller: RequireCurator,
     Path((album_id, track_id)): Path<(String, String)>,
-) -> Result<Json<EditionStatusView>, OperationsHttpError> {
+) -> Result<Json<EditionStatusView>, ApiError> {
     let ops = Operations::new(&state);
     let (album, track, user) = (album_id.clone(), track_id, caller.0.user_id);
     blocking(move || ops.unmatch_file(&album, &track, &user)).await?;
@@ -889,16 +882,14 @@ pub async fn remove_extras(
     caller: RequireCurator,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<RemoveExtrasBody>,
-) -> Result<Json<RemoveExtrasView>, Response> {
-    let refuse =
-        |reason| OperationsHttpError::from(OperationError::Invalid(reason)).into_response();
+) -> Result<Json<RemoveExtrasView>, ApiError> {
+    let refuse = |reason| ApiError::from(OperationError::Invalid(reason));
     if body.track_ids.is_empty() {
         return Err(refuse(reasons::NOTHING_PICKED));
     }
     let plan = Operations::new(&state)
         .edition_plan(&album_id, None)
-        .await
-        .map_err(|error| OperationsHttpError::from(error).into_response())?;
+        .await?;
     let spare = |id: &String| {
         plan.files
             .iter()
@@ -912,8 +903,7 @@ pub async fn remove_extras(
         Mutations::new(&state).recycle_album_files(&album_id, &body.track_ids, &actor)
     })
     .await
-    .map_err(|cause| LibraryError::internal(&cause).into_response())?
-    .map_err(|error| MutationHttpError::from(error).into_response())?;
+    .map_err(ApiError::internal)??;
     Ok(Json(RemoveExtrasView {
         action_id,
         removed_track_ids,
@@ -940,14 +930,13 @@ pub async fn restore_extras(
     caller: RequireCurator,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<RestoreExtrasBody>,
-) -> Result<Json<RestoreExtrasView>, Response> {
+) -> Result<Json<RestoreExtrasView>, ApiError> {
     let actor = caller.0.user_id;
     let restored = tokio::task::spawn_blocking(move || {
         Mutations::new(&state).restore_recycled(&album_id, &body.action_id, &actor)
     })
     .await
-    .map_err(|cause| LibraryError::internal(&cause).into_response())?
-    .map_err(|error| MutationHttpError::from(error).into_response())?;
+    .map_err(ApiError::internal)??;
     Ok(Json(RestoreExtrasView { restored }))
 }
 
@@ -968,15 +957,14 @@ pub async fn list_unconfirmed(
     State(state): State<LibrarySetup>,
     _caller: Principal,
     ValidQuery(query): ValidQuery<UnconfirmedQuery>,
-) -> Result<Json<WaitingAlbumsResponse>, OperationsHttpError> {
+) -> Result<Json<WaitingAlbumsResponse>, ApiError> {
     let unmatched = match query.state.as_deref() {
         None | Some("unconfirmed") => false,
         Some("unmatched") => true,
         Some(_) => {
-            return Err(LibraryError::InvalidInput {
-                message: "state must be unconfirmed or unmatched".to_owned(),
-            }
-            .into());
+            return Err(ApiError::invalid_input(
+                "state must be unconfirmed or unmatched",
+            ));
         }
     };
     let limit = query.limit.unwrap_or(50).clamp(1, PAGE_MAX);

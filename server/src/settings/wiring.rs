@@ -104,7 +104,7 @@ impl SettingsSetup {
             SettingsService::new(
                 store.clone(),
                 effects.clone(),
-                ids.clone(),
+                ids,
                 probes,
                 outbound.clone(),
             )
@@ -117,7 +117,6 @@ impl SettingsSetup {
             lifecycle: Arc::new(MusicBrainzLifecycle::new(store.clone(), effects, outbound)),
             management: Arc::new(LibraryManagementService::new(
                 store,
-                ids,
                 Arc::new(StructuralCompiler),
             )),
             prefs: None,

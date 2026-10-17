@@ -5491,7 +5491,6 @@ async fn library_management_tools_journey() {
     // The settings page reads them first, which stores them normalized.
     lm::service::LibraryManagementService::new(
         library.config.clone(),
-        library.ids.clone(),
         Arc::new(lm::StructuralCompiler),
     )
     .get_settings()
@@ -5589,7 +5588,6 @@ async fn library_management_tools_journey() {
         let normalize = || {
             lm::service::LibraryManagementService::new(
                 library.config.clone(),
-                library.ids.clone(),
                 Arc::new(lm::StructuralCompiler),
             )
             .get_settings()
@@ -6221,7 +6219,6 @@ async fn library_management_custom_edition_journey() {
         .expect("settings saved");
     lm::service::LibraryManagementService::new(
         library.config.clone(),
-        library.ids.clone(),
         Arc::new(lm::StructuralCompiler),
     )
     .get_settings()
@@ -6392,7 +6389,6 @@ async fn library_management_artwork_journey() {
     let original = read_document(&file).expect("original tags");
     lm::service::LibraryManagementService::new(
         library.config.clone(),
-        library.ids.clone(),
         Arc::new(lm::StructuralCompiler),
     )
     .get_settings()
@@ -6633,7 +6629,6 @@ impl ManagedLibrary {
         library.config.save(settings).expect("settings saved");
         lm::service::LibraryManagementService::new(
             library.config.clone(),
-            library.ids.clone(),
             Arc::new(lm::StructuralCompiler),
         )
         .get_settings()

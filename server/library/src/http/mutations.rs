@@ -6,16 +6,17 @@
 
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
     routing::{delete, post},
 };
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use super::auth::{RequireAdmin, RequireCurator};
-use super::error::{LibraryError, ValidJson};
+use super::error::refused;
 use super::models::snake;
 use crate::mutations::{MutationError, Mutations};
 use crate::wiring::LibrarySetup;
@@ -117,41 +118,24 @@ pub struct HandBackAllResponse {
     pub albums: usize,
 }
 
-/// A refused mutation in the shared error envelope, with the action in
-/// `details.action`.
-pub struct MutationHttpError(MutationError);
-
-impl From<MutationError> for MutationHttpError {
+impl From<MutationError> for ApiError {
     fn from(error: MutationError) -> Self {
-        Self(error)
-    }
-}
-
-impl IntoResponse for MutationHttpError {
-    fn into_response(self) -> Response {
-        use droppedneedle_kernel::error::envelope_response;
-        let (status, reason) = match self.0 {
-            MutationError::NotFound(reason) => (StatusCode::NOT_FOUND, reason),
-            MutationError::Conflict(reason) => (StatusCode::CONFLICT, reason),
-            MutationError::Files(reason) => (StatusCode::UNPROCESSABLE_ENTITY, reason),
-            MutationError::Store(cause) => return LibraryError::internal(&cause).into_response(),
-        };
-        envelope_response(
-            status,
-            reason.code,
-            reason.message,
-            Some(serde_json::json!({ "action": reason.action })),
-        )
+        match error {
+            MutationError::NotFound(reason) => refused(StatusCode::NOT_FOUND, reason),
+            MutationError::Conflict(reason) => refused(StatusCode::CONFLICT, reason),
+            MutationError::Files(reason) => refused(StatusCode::UNPROCESSABLE_ENTITY, reason),
+            MutationError::Store(cause) => ApiError::internal(cause),
+        }
     }
 }
 
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, MutationError> + Send + 'static,
-) -> Result<T, Response> {
+) -> Result<T, ApiError> {
     tokio::task::spawn_blocking(work)
         .await
-        .map_err(|cause| LibraryError::internal(&cause).into_response())?
-        .map_err(|error| MutationHttpError(error).into_response())
+        .map_err(ApiError::internal)?
+        .map_err(ApiError::from)
 }
 
 /// Remove an album from the library. With `delete_files` its files move
@@ -179,8 +163,8 @@ pub async fn remove_album(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     Path(album_id): Path<String>,
-    Query(query): Query<RemoveAlbumQuery>,
-) -> Result<Json<RemovalResponse>, Response> {
+    ValidQuery(query): ValidQuery<RemoveAlbumQuery>,
+) -> Result<Json<RemovalResponse>, ApiError> {
     let actor = caller.0.user_id;
     let hook = state.removal_hook.get().cloned();
     let removed = blocking(move || {
@@ -221,8 +205,8 @@ pub async fn remove_track(
     State(state): State<LibrarySetup>,
     caller: RequireCurator,
     Path(track_id): Path<String>,
-    Query(query): Query<RemoveTrackQuery>,
-) -> Result<Json<RemovalResponse>, Response> {
+    ValidQuery(query): ValidQuery<RemoveTrackQuery>,
+) -> Result<Json<RemovalResponse>, ApiError> {
     let actor = caller.0.user_id;
     let removed =
         blocking(move || Mutations::new(&state).remove_track(&track_id, query.delete_file, &actor))
@@ -252,7 +236,7 @@ pub async fn rescan_album(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     Path(album_id): Path<String>,
-) -> Result<(StatusCode, Json<AlbumRescanResponse>), Response> {
+) -> Result<(StatusCode, Json<AlbumRescanResponse>), ApiError> {
     let actor = caller.0.user_id;
     let result = blocking(move || Mutations::new(&state).rescan_album(&album_id, &actor)).await?;
     Ok((
@@ -286,7 +270,7 @@ pub async fn reenable_management(
     caller: RequireAdmin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<ReenableBody>,
-) -> Result<Json<ReenableResponse>, Response> {
+) -> Result<Json<ReenableResponse>, ApiError> {
     let actor = caller.0.user_id;
     let reenabled = blocking(move || {
         Mutations::new(&state).reenable_management(
@@ -319,7 +303,7 @@ pub async fn hand_back_management(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     Path(album_id): Path<String>,
-) -> Result<Json<HandBackResponse>, Response> {
+) -> Result<Json<HandBackResponse>, ApiError> {
     let actor = caller.0.user_id;
     let handed_back =
         blocking(move || Mutations::new(&state).hand_back_management(&album_id, &actor)).await?;
@@ -342,7 +326,7 @@ pub async fn hand_back_management(
 pub async fn hand_back_all(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
-) -> Result<Json<HandBackAllResponse>, Response> {
+) -> Result<Json<HandBackAllResponse>, ApiError> {
     let actor = caller.0.user_id;
     let albums = blocking(move || Mutations::new(&state).hand_back_all(&actor)).await?;
     Ok(Json(HandBackAllResponse { albums }))

@@ -8,8 +8,7 @@
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-
-use super::error::LibraryError;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 
 /// Account role. Meanings match the other routes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,16 +45,14 @@ pub struct Principal {
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for Principal {
-    type Rejection = LibraryError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         parts
             .extensions
             .get::<Principal>()
             .cloned()
-            .ok_or(LibraryError::Unauthorized {
-                message: "Authentication required".to_owned(),
-            })
+            .ok_or_else(|| ApiError::unauthorized("Authentication required"))
     }
 }
 
@@ -63,16 +60,14 @@ impl<S: Send + Sync> FromRequestParts<S> for Principal {
 pub struct RequireAdmin(pub Principal);
 
 impl<S: Send + Sync> FromRequestParts<S> for RequireAdmin {
-    type Rejection = LibraryError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let caller = Principal::from_request_parts(parts, state).await?;
         if caller.role.is_admin() {
             Ok(Self(caller))
         } else {
-            Err(LibraryError::Forbidden {
-                message: "Admin role required".to_owned(),
-            })
+            Err(ApiError::forbidden("Admin role required"))
         }
     }
 }
@@ -81,16 +76,14 @@ impl<S: Send + Sync> FromRequestParts<S> for RequireAdmin {
 pub struct RequireCurator(pub Principal);
 
 impl<S: Send + Sync> FromRequestParts<S> for RequireCurator {
-    type Rejection = LibraryError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let caller = Principal::from_request_parts(parts, state).await?;
         if caller.role.is_curator() {
             Ok(Self(caller))
         } else {
-            Err(LibraryError::Forbidden {
-                message: "Curator role required".to_owned(),
-            })
+            Err(ApiError::forbidden("Curator role required"))
         }
     }
 }
@@ -105,9 +98,7 @@ pub async fn translate_principal(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
 
-    let missing = || LibraryError::Unauthorized {
-        message: "Authentication required".to_owned(),
-    };
+    let missing = || ApiError::unauthorized("Authentication required");
     let Some(session) = request
         .extensions()
         .get::<droppedneedle_auth::session::middleware::CurrentSession>()
@@ -119,19 +110,17 @@ pub async fn translate_principal(
         Ok(Some(user)) => user,
         Ok(None) => return missing().into_response(),
         Err(droppedneedle_auth::users::stores::StoreError::Conflict) => {
-            return LibraryError::Conflict {
-                message: "Conflicting state".to_owned(),
-            }
-            .into_response();
+            return ApiError::conflict("Conflicting state").into_response();
         }
         Err(droppedneedle_auth::users::stores::StoreError::Busy) => {
-            return droppedneedle_kernel::error::busy_response(
-                "library.auth.user",
-                &uuid::Uuid::new_v4().to_string(),
-            );
+            return ApiError::unavailable(
+                Unavailable::ServerBusy,
+                "library principal: users store busy",
+            )
+            .into_response();
         }
         Err(droppedneedle_auth::users::stores::StoreError::Internal(cause)) => {
-            return LibraryError::internal(&cause).into_response();
+            return ApiError::internal(cause).into_response();
         }
     };
     request.extensions_mut().insert(Principal {

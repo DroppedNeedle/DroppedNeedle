@@ -13,17 +13,19 @@ use axum::{
     extract::{Path, State},
     routing::{get, post},
 };
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
 use super::auth::{Principal, RequireAdmin, RequireCurator};
-use super::error::{LibraryError, ValidJson, ValidQuery};
+use super::error::LibraryError;
 use super::models::{
     ApproveBody, CandidateView, IdentityView, PenaltyView, ReasonCount, ReviewBulkPreviewResponse,
     ReviewBulkResponse, ReviewResolveResponse, ReviewRetryAllResponse, ReviewRetryBody, ReviewView,
     ReviewsResponse, SkippedReviews, TrackEvidenceView, snake,
 };
-use super::operations::{OperationView, OperationsHttpError, blocking, job_view};
+use super::operations::{OperationView, blocking, job_view};
 use crate::identify::models::{AlbumIdentity, CandidateEvidence};
 use crate::operations::models::OperationError;
 use crate::operations::reasons::{self, review_reason};
@@ -176,7 +178,7 @@ fn identity_view(identity: &AlbumIdentity) -> IdentityView {
 }
 
 /// Read one review back after a change.
-async fn settled(state: LibrarySetup, id: String) -> Result<ReviewView, OperationsHttpError> {
+async fn settled(state: LibrarySetup, id: String) -> Result<ReviewView, ApiError> {
     let ops = Operations::new(&state);
     let row = blocking(move || ops.review(&id)).await?;
     Ok(review_view(&row))
@@ -198,7 +200,7 @@ pub async fn list_reviews(
     State(state): State<LibrarySetup>,
     _caller: Principal,
     ValidQuery(query): ValidQuery<ReviewsQuery>,
-) -> Result<Json<ReviewsResponse>, OperationsHttpError> {
+) -> Result<Json<ReviewsResponse>, ApiError> {
     let filter = review_filter(query, Vec::new())?;
     let (limit, offset) = (filter.limit, filter.offset);
     let ops = Operations::new(&state);
@@ -295,7 +297,7 @@ pub async fn get_review(
     State(state): State<LibrarySetup>,
     _caller: Principal,
     Path(id): Path<String>,
-) -> Result<Json<ReviewView>, OperationsHttpError> {
+) -> Result<Json<ReviewView>, ApiError> {
     Ok(Json(settled(state, id).await?))
 }
 
@@ -320,12 +322,9 @@ pub async fn approve_review(
     caller: RequireCurator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ApproveBody>,
-) -> Result<Json<ReviewResolveResponse>, OperationsHttpError> {
+) -> Result<Json<ReviewResolveResponse>, ApiError> {
     if body.candidate_key.is_empty() {
-        return Err(LibraryError::InvalidInput {
-            message: "Candidate key must not be empty".to_owned(),
-        }
-        .into());
+        return Err(ApiError::invalid_input("Candidate key must not be empty"));
     }
     let user_id = caller.0.user_id;
     let service = state.clone();
@@ -360,7 +359,7 @@ pub async fn reject_review(
     State(state): State<LibrarySetup>,
     caller: RequireCurator,
     Path(id): Path<String>,
-) -> Result<Json<ReviewResolveResponse>, OperationsHttpError> {
+) -> Result<Json<ReviewResolveResponse>, ApiError> {
     let user_id = caller.0.user_id;
     let service = state.clone();
     let review_id = id.clone();
@@ -379,7 +378,7 @@ async fn act(
     id: String,
     action: ReviewAction,
     actor: String,
-) -> Result<Json<ReviewView>, OperationsHttpError> {
+) -> Result<Json<ReviewView>, ApiError> {
     let ops = Operations::new(&state);
     let row = blocking(move || ops.settle_review(&id, action, &actor)).await?;
     Ok(Json(review_view(&row)))
@@ -403,7 +402,7 @@ pub async fn dismiss_review(
     State(state): State<LibrarySetup>,
     caller: RequireCurator,
     Path(id): Path<String>,
-) -> Result<Json<ReviewView>, OperationsHttpError> {
+) -> Result<Json<ReviewView>, ApiError> {
     act(state, id, ReviewAction::Dismiss, caller.0.user_id).await
 }
 
@@ -427,7 +426,7 @@ pub async fn detach_review(
     State(state): State<LibrarySetup>,
     caller: RequireCurator,
     Path(id): Path<String>,
-) -> Result<Json<ReviewView>, OperationsHttpError> {
+) -> Result<Json<ReviewView>, ApiError> {
     act(state, id, ReviewAction::Detach, caller.0.user_id).await
 }
 
@@ -450,7 +449,7 @@ pub async fn exclude_review(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     Path(id): Path<String>,
-) -> Result<Json<ReviewView>, OperationsHttpError> {
+) -> Result<Json<ReviewView>, ApiError> {
     act(state, id, ReviewAction::Exclude, caller.0.user_id).await
 }
 
@@ -472,7 +471,7 @@ pub async fn restore_review(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     Path(id): Path<String>,
-) -> Result<Json<ReviewView>, OperationsHttpError> {
+) -> Result<Json<ReviewView>, ApiError> {
     act(state, id, ReviewAction::Restore, caller.0.user_id).await
 }
 
@@ -497,7 +496,7 @@ pub async fn retry_review(
     caller: RequireAdmin,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ReviewRetryBody>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     let ops = Operations::new(&state);
     let actor = caller.0.user_id;
     let key = body.idempotency_key.filter(|key| !key.trim().is_empty());
@@ -524,7 +523,7 @@ pub async fn retry_pending_reviews(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     ValidJson(body): ValidJson<ReviewRetryAllBody>,
-) -> Result<Json<ReviewRetryAllResponse>, OperationsHttpError> {
+) -> Result<Json<ReviewRetryAllResponse>, ApiError> {
     let ops = Operations::new(&state);
     let actor = caller.0.user_id;
     let mut filter = review_filter(body.filter, Vec::new())?;
@@ -610,13 +609,10 @@ fn skipped_view(skipped: Vec<(reasons::Reason, u32)>) -> Vec<SkippedReviews> {
 fn bulk_request(
     body: ReviewBulkBody,
     caller: &RequireCurator,
-) -> Result<(BulkAction, ReviewFilter, Option<String>, Option<String>), OperationsHttpError> {
+) -> Result<(BulkAction, ReviewFilter, Option<String>, Option<String>), ApiError> {
     let action = bulk_action(&body.action)?;
     if action == BulkAction::Exclude && !caller.0.role.is_admin() {
-        return Err(LibraryError::Forbidden {
-            message: "Admin role required".to_owned(),
-        }
-        .into());
+        return Err(ApiError::forbidden("Admin role required"));
     }
     let filter = review_filter(body.filter, body.review_ids)?;
     let key = body.candidate_key.filter(|key| !key.is_empty());
@@ -641,7 +637,7 @@ pub async fn preview_bulk_reviews(
     State(state): State<LibrarySetup>,
     caller: RequireCurator,
     ValidJson(body): ValidJson<ReviewBulkBody>,
-) -> Result<Json<ReviewBulkPreviewResponse>, OperationsHttpError> {
+) -> Result<Json<ReviewBulkPreviewResponse>, ApiError> {
     let (action, filter, key, _) = bulk_request(body, &caller)?;
     let ops = Operations::new(&state);
     let plan = blocking(move || ops.preview_bulk_reviews(action, &filter, key.as_deref())).await?;
@@ -672,14 +668,11 @@ pub async fn apply_bulk_reviews(
     State(state): State<LibrarySetup>,
     caller: RequireCurator,
     ValidJson(body): ValidJson<ReviewBulkBody>,
-) -> Result<Json<ReviewBulkResponse>, OperationsHttpError> {
+) -> Result<Json<ReviewBulkResponse>, ApiError> {
     let actor = caller.0.user_id.clone();
     let (action, filter, key, token) = bulk_request(body, &caller)?;
     let Some(token) = token.filter(|token| !token.is_empty()) else {
-        return Err(LibraryError::InvalidInput {
-            message: "Preview the change first".to_owned(),
-        }
-        .into());
+        return Err(ApiError::invalid_input("Preview the change first"));
     };
     let ops = Operations::new(&state);
     let Tally { done, skipped } =

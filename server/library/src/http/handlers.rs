@@ -9,9 +9,11 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::ValidJson;
 
 use super::auth::{Principal, RequireAdmin, RequireCurator};
-use super::error::{LibraryError, ValidJson};
+use super::error::LibraryError;
 use super::models::{
     AddRootBody, BaselineRestoreBody, BaselineRestoreResponse, IdentifyBody, IdentifyResponse,
     ManageAppliedFile, ManageApplyBody, ManageApplyResponse, ManageFileView, ManageItemBody,
@@ -163,7 +165,7 @@ fn check_plain_retag(caller: &Principal, plain: bool) -> Result<(), LibraryError
 pub async fn list_roots(
     State(state): State<LibrarySetup>,
     _caller: Principal,
-) -> Result<Json<RootsResponse>, LibraryError> {
+) -> Result<Json<RootsResponse>, ApiError> {
     let held = {
         let state = state.clone();
         blocking(move || state.held_publish_bundles()).await??
@@ -207,12 +209,10 @@ pub async fn add_root(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     ValidJson(body): ValidJson<AddRootBody>,
-) -> Result<(StatusCode, Json<RootView>), LibraryError> {
+) -> Result<(StatusCode, Json<RootView>), ApiError> {
     let policy = parse_policy(body.policy.as_deref())?;
     if body.path.is_empty() {
-        return Err(LibraryError::InvalidInput {
-            message: "Root path must not be empty".to_owned(),
-        });
+        return Err(ApiError::invalid_input("Root path must not be empty"));
     }
     // Blocking stat plus publish-cell refresh: off the runtime.
     let (root, _) = tokio::task::spawn_blocking(move || state.add_root(body.id, body.path, policy))
@@ -247,7 +247,7 @@ pub async fn trigger_scan(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     ValidJson(body): ValidJson<ScanBody>,
-) -> Result<Json<ScanResponse>, LibraryError> {
+) -> Result<Json<ScanResponse>, ApiError> {
     let user_id = caller.0.user_id;
     let result = blocking(move || state.request_scan(body.root_id.as_deref(), &user_id)).await??;
     Ok(Json(ScanResponse {
@@ -270,7 +270,7 @@ pub async fn trigger_scan(
 pub async fn list_runs(
     State(state): State<LibrarySetup>,
     caller: Principal,
-) -> Result<Json<ScanRunsResponse>, LibraryError> {
+) -> Result<Json<ScanRunsResponse>, ApiError> {
     let (current, history) =
         blocking(move || (state.coordinator.current(), state.coordinator.history(20))).await?;
     let view = |run: &ScanRun| caller_run_view(&caller, run);
@@ -296,7 +296,7 @@ pub async fn get_run(
     State(state): State<LibrarySetup>,
     caller: Principal,
     Path(id): Path<String>,
-) -> Result<Json<RunDetailResponse>, LibraryError> {
+) -> Result<Json<RunDetailResponse>, ApiError> {
     let (run, scopes, files) = blocking(move || state.run_detail(&id)).await??;
     Ok(Json(RunDetailResponse {
         run: caller_run_view(&caller, &run),
@@ -335,11 +335,9 @@ pub async fn enqueue_identify(
     State(state): State<LibrarySetup>,
     caller: RequireCurator,
     ValidJson(body): ValidJson<IdentifyBody>,
-) -> Result<Json<IdentifyResponse>, LibraryError> {
+) -> Result<Json<IdentifyResponse>, ApiError> {
     if body.album_id.is_empty() {
-        return Err(LibraryError::InvalidInput {
-            message: "Album id must not be empty".to_owned(),
-        });
+        return Err(ApiError::invalid_input("Album id must not be empty"));
     }
     let kind = parse_identify_kind(body.kind.as_deref())?;
     let user_id = caller.0.user_id;
@@ -377,25 +375,21 @@ pub async fn manage_preview(
     State(state): State<LibrarySetup>,
     RequireCurator(caller): RequireCurator,
     ValidJson(body): ValidJson<ManagePreviewBody>,
-) -> Result<Json<ManagePreviewResponse>, LibraryError> {
+) -> Result<Json<ManagePreviewResponse>, ApiError> {
     let kind = match body.kind.as_str() {
         "retag" => PlanKind::SamePath,
         "organize" => PlanKind::Move,
         other => {
-            return Err(LibraryError::InvalidInput {
-                message: format!("Unknown management kind '{other}'"),
-            });
+            return Err(ApiError::invalid_input(format!(
+                "Unknown management kind '{other}'"
+            )));
         }
     };
     if body.album_id.is_empty() {
-        return Err(LibraryError::InvalidInput {
-            message: "Album id must not be empty".to_owned(),
-        });
+        return Err(ApiError::invalid_input("Album id must not be empty"));
     }
     if body.items.is_empty() {
-        return Err(LibraryError::InvalidInput {
-            message: "Preview needs at least one file".to_owned(),
-        });
+        return Err(ApiError::invalid_input("Preview needs at least one file"));
     }
     check_managed_names(&body.items)?;
     let inputs: Vec<PreviewItemInput> = body
@@ -458,11 +452,9 @@ pub async fn manage_apply(
     State(state): State<LibrarySetup>,
     RequireCurator(caller): RequireCurator,
     ValidJson(body): ValidJson<ManageApplyBody>,
-) -> Result<Json<ManageApplyResponse>, LibraryError> {
+) -> Result<Json<ManageApplyResponse>, ApiError> {
     if body.preview_token.is_empty() {
-        return Err(LibraryError::InvalidInput {
-            message: "Preview token must not be empty".to_owned(),
-        });
+        return Err(ApiError::invalid_input("Preview token must not be empty"));
     }
     // The role is checked before the token is spent, so a refused caller
     // cannot use up someone else's preview.
@@ -507,11 +499,9 @@ pub async fn manage_undo(
     State(state): State<LibrarySetup>,
     RequireCurator(caller): RequireCurator,
     ValidJson(body): ValidJson<ManageUndoBody>,
-) -> Result<Json<ManageUndoResponse>, LibraryError> {
+) -> Result<Json<ManageUndoResponse>, ApiError> {
     if body.bundle_id.is_empty() {
-        return Err(LibraryError::InvalidInput {
-            message: "Bundle id must not be empty".to_owned(),
-        });
+        return Err(ApiError::invalid_input("Bundle id must not be empty"));
     }
     // An admin undoes any bundle; a curator only one they applied.
     let only_by = (!caller.role.is_admin()).then_some(caller.user_id);
@@ -548,11 +538,9 @@ pub async fn baseline_restore(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     ValidJson(body): ValidJson<BaselineRestoreBody>,
-) -> Result<Json<BaselineRestoreResponse>, LibraryError> {
+) -> Result<Json<BaselineRestoreResponse>, ApiError> {
     if body.track_ids.is_empty() {
-        return Err(LibraryError::InvalidInput {
-            message: "Restore needs at least one track".to_owned(),
-        });
+        return Err(ApiError::invalid_input("Restore needs at least one track"));
     }
     let applied = tokio::task::spawn_blocking(move || state.baseline_restore(&body.track_ids))
         .await

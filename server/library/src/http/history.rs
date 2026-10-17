@@ -9,11 +9,12 @@ use axum::{
     extract::{Path, State},
     routing::get,
 };
+use droppedneedle_kernel::error::ApiError;
 use serde::Serialize;
 use utoipa::ToSchema;
 
 use super::auth::Principal;
-use super::operations::{OperationsHttpError, blocking};
+use super::operations::blocking;
 use crate::operations::history::{HistoryActor, HistoryEntry, HistoryKind};
 use crate::operations::models::OperationError;
 use crate::operations::service::Operations;
@@ -135,7 +136,7 @@ pub async fn get_album_history(
     State(state): State<LibrarySetup>,
     caller: Principal,
     Path(album_id): Path<String>,
-) -> Result<Json<AlbumHistoryView>, OperationsHttpError> {
+) -> Result<Json<AlbumHistoryView>, ApiError> {
     let ops = Operations::new(&state);
     let view = blocking(move || album_history_view(&ops, &album_id, &caller.user_id)).await?;
     Ok(Json(view))

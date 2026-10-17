@@ -9,14 +9,15 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
     routing::{get, post},
 };
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use super::auth::RequireAdmin;
-use super::error::{LibraryError, ValidJson, ValidQuery};
+use super::error::refused;
 use super::operations::ReasonView;
 use crate::reconcile::models::{
     CreditEvidence, Group, GroupDetail, GroupState, Member, OwnedReference, ReconcileError,
@@ -44,54 +45,24 @@ pub fn router() -> Router<LibrarySetup> {
         )
 }
 
-/// Why a reconciliation request failed, in the shared envelope.
-#[derive(Debug)]
-pub enum ReconcileHttpError {
-    Library(LibraryError),
-    Reconcile(ReconcileError),
-}
-
-impl From<LibraryError> for ReconcileHttpError {
-    fn from(error: LibraryError) -> Self {
-        Self::Library(error)
-    }
-}
-
-impl From<ReconcileError> for ReconcileHttpError {
+impl From<ReconcileError> for ApiError {
     fn from(error: ReconcileError) -> Self {
-        Self::Reconcile(error)
-    }
-}
-
-impl IntoResponse for ReconcileHttpError {
-    fn into_response(self) -> Response {
-        use droppedneedle_kernel::error::envelope_response;
-        let error = match self {
-            Self::Library(error) => return error.into_response(),
-            Self::Reconcile(error) => error,
-        };
-        let (status, reason) = match error {
-            ReconcileError::NotFound(reason) => (StatusCode::NOT_FOUND, reason),
-            ReconcileError::Invalid(reason) => (StatusCode::BAD_REQUEST, reason),
-            ReconcileError::Conflict(reason) => (StatusCode::CONFLICT, reason),
-            ReconcileError::Store(cause) => return LibraryError::internal(&cause).into_response(),
-        };
-        envelope_response(
-            status,
-            reason.code,
-            reason.message,
-            Some(serde_json::json!({ "action": reason.action })),
-        )
+        match error {
+            ReconcileError::NotFound(reason) => refused(StatusCode::NOT_FOUND, reason),
+            ReconcileError::Invalid(reason) => refused(StatusCode::BAD_REQUEST, reason),
+            ReconcileError::Conflict(reason) => refused(StatusCode::CONFLICT, reason),
+            ReconcileError::Store(cause) => ApiError::internal(cause),
+        }
     }
 }
 
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, ReconcileError> + Send + 'static,
-) -> Result<T, ReconcileHttpError> {
+) -> Result<T, ApiError> {
     tokio::task::spawn_blocking(work)
         .await
-        .map_err(|cause| LibraryError::internal(&cause))?
-        .map_err(ReconcileHttpError::from)
+        .map_err(ApiError::internal)?
+        .map_err(ApiError::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -431,7 +402,7 @@ pub struct ArtistDuplicateGroupDismissResponse {
 pub async fn artist_reconciliation(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
-) -> Result<Json<ArtistReconciliationProgress>, ReconcileHttpError> {
+) -> Result<Json<ArtistReconciliationProgress>, ApiError> {
     let service = Reconcile::new(&state);
     let p = blocking(move || service.progress()).await?;
     Ok(Json(ArtistReconciliationProgress {
@@ -465,7 +436,7 @@ pub async fn list_artist_duplicate_groups(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     ValidQuery(query): ValidQuery<ArtistGroupListQuery>,
-) -> Result<Json<ArtistDuplicateGroupListResponse>, ReconcileHttpError> {
+) -> Result<Json<ArtistDuplicateGroupListResponse>, ApiError> {
     let service = Reconcile::new(&state);
     let page = blocking(move || {
         service.list(
@@ -506,7 +477,7 @@ pub async fn get_artist_duplicate_group(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     Path(group_id): Path<String>,
-) -> Result<Json<ArtistDuplicateGroupDetail>, ReconcileHttpError> {
+) -> Result<Json<ArtistDuplicateGroupDetail>, ApiError> {
     let service = Reconcile::new(&state);
     let detail = blocking(move || service.detail(&group_id)).await?;
     Ok(Json(detail.into()))
@@ -534,7 +505,7 @@ pub async fn dismiss_artist_duplicate_group(
     caller: RequireAdmin,
     Path(group_id): Path<String>,
     ValidJson(body): ValidJson<ArtistDuplicateGroupDismissRequest>,
-) -> Result<Json<ArtistDuplicateGroupDismissResponse>, ReconcileHttpError> {
+) -> Result<Json<ArtistDuplicateGroupDismissResponse>, ApiError> {
     let service = Reconcile::new(&state);
     let user_id = caller.0.user_id;
     let id = group_id.clone();

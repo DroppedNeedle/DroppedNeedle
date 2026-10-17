@@ -13,14 +13,15 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
     routing::{get, post},
 };
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::ValidJson;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::auth::RequireAdmin;
-use super::error::{LibraryError, ValidJson};
+use super::error::refused;
 use super::operations::ReasonView;
 use crate::corrections::Corrections;
 use crate::corrections::models::{
@@ -67,35 +68,24 @@ pub fn corrections_router() -> Router<LibrarySetup> {
 // Errors.
 // ---------------------------------------------------------------------------
 
-/// A refused correction in the shared error envelope, with the action in
-/// `details.action`.
-pub struct CorrectionHttpError(CorrectionError);
-
-impl IntoResponse for CorrectionHttpError {
-    fn into_response(self) -> Response {
-        use droppedneedle_kernel::error::envelope_response;
-        let (status, reason) = match self.0 {
-            CorrectionError::NotFound(reason) => (StatusCode::NOT_FOUND, reason),
-            CorrectionError::Invalid(reason) => (StatusCode::BAD_REQUEST, reason),
-            CorrectionError::Conflict(reason) => (StatusCode::CONFLICT, reason),
-            CorrectionError::Store(cause) => return LibraryError::internal(&cause).into_response(),
-        };
-        envelope_response(
-            status,
-            reason.code,
-            reason.message,
-            Some(serde_json::json!({ "action": reason.action })),
-        )
+impl From<CorrectionError> for ApiError {
+    fn from(error: CorrectionError) -> Self {
+        match error {
+            CorrectionError::NotFound(reason) => refused(StatusCode::NOT_FOUND, reason),
+            CorrectionError::Invalid(reason) => refused(StatusCode::BAD_REQUEST, reason),
+            CorrectionError::Conflict(reason) => refused(StatusCode::CONFLICT, reason),
+            CorrectionError::Store(cause) => ApiError::internal(cause),
+        }
     }
 }
 
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, CorrectionError> + Send + 'static,
-) -> Result<T, Response> {
+) -> Result<T, ApiError> {
     tokio::task::spawn_blocking(work)
         .await
-        .map_err(|cause| LibraryError::internal(&cause).into_response())?
-        .map_err(|error| CorrectionHttpError(error).into_response())
+        .map_err(ApiError::internal)?
+        .map_err(ApiError::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -399,7 +389,7 @@ async fn preview_membership(
     state: LibrarySetup,
     actor: String,
     request: MembershipRequest,
-) -> Result<Json<MembershipPreviewResponse>, Response> {
+) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let corrections = Corrections::new(&state);
     let previewed = blocking(move || corrections.preview_membership(&request, &actor)).await?;
     Ok(Json(membership_view(previewed.token, previewed.outcome)))
@@ -409,7 +399,7 @@ async fn apply_membership(
     state: LibrarySetup,
     request: MembershipRequest,
     meta: ApplyMeta,
-) -> Result<Json<CatalogCorrectionResponse>, Response> {
+) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
     let corrections = Corrections::new(&state);
     let applied = blocking(move || corrections.apply_membership(&request, &meta)).await?;
     Ok(Json(applied.into()))
@@ -440,7 +430,7 @@ pub async fn preview_album_split(
     caller: RequireAdmin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<MembershipPreviewBody>,
-) -> Result<Json<MembershipPreviewResponse>, Response> {
+) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let request = preview_request(MembershipKind::Split, Some(album_id), body);
     preview_membership(state, caller.0.user_id, request).await
 }
@@ -466,7 +456,7 @@ pub async fn apply_album_split(
     caller: RequireAdmin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<MembershipApplyBody>,
-) -> Result<Json<CatalogCorrectionResponse>, Response> {
+) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
     let (request, meta) = apply_request(
         MembershipKind::Split,
         Some(album_id),
@@ -495,7 +485,7 @@ pub async fn preview_album_merge(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     ValidJson(body): ValidJson<MembershipPreviewBody>,
-) -> Result<Json<MembershipPreviewResponse>, Response> {
+) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let request = preview_request(MembershipKind::Merge, None, body);
     preview_membership(state, caller.0.user_id, request).await
 }
@@ -519,7 +509,7 @@ pub async fn apply_album_merge(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     ValidJson(body): ValidJson<MembershipApplyBody>,
-) -> Result<Json<CatalogCorrectionResponse>, Response> {
+) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
     let (request, meta) = apply_request(MembershipKind::Merge, None, body, caller.0.user_id);
     apply_membership(state, request, meta).await
 }
@@ -543,7 +533,7 @@ pub async fn preview_track_move(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     ValidJson(body): ValidJson<MembershipPreviewBody>,
-) -> Result<Json<MembershipPreviewResponse>, Response> {
+) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let request = preview_request(MembershipKind::Move, None, body);
     preview_membership(state, caller.0.user_id, request).await
 }
@@ -567,7 +557,7 @@ pub async fn apply_track_move(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     ValidJson(body): ValidJson<MembershipApplyBody>,
-) -> Result<Json<CatalogCorrectionResponse>, Response> {
+) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
     let (request, meta) = apply_request(MembershipKind::Move, None, body, caller.0.user_id);
     apply_membership(state, request, meta).await
 }
@@ -593,7 +583,7 @@ pub async fn preview_grouping_reset(
     caller: RequireAdmin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<MembershipPreviewBody>,
-) -> Result<Json<MembershipPreviewResponse>, Response> {
+) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let request = preview_request(MembershipKind::Reset, Some(album_id), body);
     preview_membership(state, caller.0.user_id, request).await
 }
@@ -619,7 +609,7 @@ pub async fn apply_grouping_reset(
     caller: RequireAdmin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<MembershipApplyBody>,
-) -> Result<Json<CatalogCorrectionResponse>, Response> {
+) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
     let (request, meta) = apply_request(
         MembershipKind::Reset,
         Some(album_id),
@@ -662,7 +652,7 @@ pub async fn preview_artist_merge(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     ValidJson(body): ValidJson<ArtistMergePreviewBody>,
-) -> Result<Json<MembershipPreviewResponse>, Response> {
+) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let corrections = Corrections::new(&state);
     let request = artist_request(
         body.source_artist_ids,
@@ -694,7 +684,7 @@ pub async fn apply_artist_merge(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     ValidJson(body): ValidJson<ArtistMergeApplyBody>,
-) -> Result<Json<CatalogCorrectionResponse>, Response> {
+) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
     let corrections = Corrections::new(&state);
     let request = artist_request(
         body.source_artist_ids,
@@ -856,7 +846,7 @@ fn pair_view(pair: RetagPair) -> RetagPairView {
 pub async fn list_retag_pairs(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
-) -> Result<Json<RetagPairListResponse>, Response> {
+) -> Result<Json<RetagPairListResponse>, ApiError> {
     let corrections = Corrections::new(&state);
     let list = blocking(move || corrections.retag_pairs()).await?;
     Ok(Json(RetagPairListResponse {
@@ -892,7 +882,7 @@ pub async fn join_retag_pair(
     caller: RequireAdmin,
     Path((old_album_id, new_album_id)): Path<(String, String)>,
     ValidJson(body): ValidJson<RetagPairJoinBody>,
-) -> Result<Json<RetagPairJoinResponse>, Response> {
+) -> Result<Json<RetagPairJoinResponse>, ApiError> {
     let corrections = Corrections::new(&state);
     let request = PairJoinRequest {
         old_album_id,
@@ -925,7 +915,7 @@ pub async fn dismiss_retag_pair(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     Path((old_album_id, new_album_id)): Path<(String, String)>,
-) -> Result<Json<RetagPairDismissResponse>, Response> {
+) -> Result<Json<RetagPairDismissResponse>, ApiError> {
     let corrections = Corrections::new(&state);
     let dismissed =
         blocking(move || corrections.dismiss_retag_pair(&old_album_id, &new_album_id)).await?;

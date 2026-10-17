@@ -10,14 +10,15 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
     routing::{get, post},
 };
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use super::auth::{RequireAdmin, RequireCurator};
-use super::error::{LibraryError, ValidJson, ValidQuery};
+use super::error::refused;
 use super::models::PenaltyView;
 use crate::identify::models::EvidenceClass;
 use crate::operations::models::{
@@ -54,52 +55,17 @@ pub fn operations_router() -> Router<LibrarySetup> {
 // Errors.
 // ---------------------------------------------------------------------------
 
-/// Why an operation request failed, rendered in the shared envelope.
-#[derive(Debug)]
-pub enum OperationsHttpError {
-    Library(LibraryError),
-    Operation(OperationError),
-}
-
-impl From<LibraryError> for OperationsHttpError {
-    fn from(error: LibraryError) -> Self {
-        Self::Library(error)
-    }
-}
-
-impl From<OperationError> for OperationsHttpError {
+impl From<OperationError> for ApiError {
     fn from(error: OperationError) -> Self {
-        Self::Operation(error)
-    }
-}
-
-impl IntoResponse for OperationsHttpError {
-    fn into_response(self) -> Response {
-        use droppedneedle_kernel::error::envelope_response;
-        let error = match self {
-            Self::Library(error) => return error.into_response(),
-            Self::Operation(error) => error,
-        };
-        let refuse = |status: StatusCode, reason: Reason| {
-            envelope_response(
-                status,
-                reason.code,
-                reason.message,
-                Some(serde_json::json!({ "action": reason.action })),
-            )
-        };
         match error {
-            OperationError::NotFound(reason) => refuse(StatusCode::NOT_FOUND, reason),
-            OperationError::Invalid(reason) => refuse(StatusCode::BAD_REQUEST, reason),
-            OperationError::Conflict(reason) => refuse(StatusCode::CONFLICT, reason),
-            OperationError::Unavailable(cause) => {
-                tracing::warn!(%cause, "MusicBrainz release search failed");
-                refuse(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    reasons::MUSICBRAINZ_UNAVAILABLE,
-                )
-            }
-            OperationError::Store(cause) => LibraryError::internal(&cause).into_response(),
+            OperationError::NotFound(reason) => refused(StatusCode::NOT_FOUND, reason),
+            OperationError::Invalid(reason) => refused(StatusCode::BAD_REQUEST, reason),
+            OperationError::Conflict(reason) => refused(StatusCode::CONFLICT, reason),
+            OperationError::Unavailable(cause) => ApiError::fault(
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("MusicBrainz release search failed: {cause}"),
+            ),
+            OperationError::Store(cause) => ApiError::internal(cause),
         }
     }
 }
@@ -107,11 +73,11 @@ impl IntoResponse for OperationsHttpError {
 /// Run blocking operation work off the async workers.
 pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, OperationError> + Send + 'static,
-) -> Result<T, OperationsHttpError> {
+) -> Result<T, ApiError> {
     tokio::task::spawn_blocking(work)
         .await
-        .map_err(|cause| LibraryError::internal(&cause))?
-        .map_err(OperationsHttpError::from)
+        .map_err(ApiError::internal)?
+        .map_err(ApiError::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -490,7 +456,7 @@ pub async fn get_operation(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     Path(job_id): Path<String>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     let ops = Operations::new(&state);
     let (detail, summary) = blocking(move || {
         let detail = ops.get(&job_id)?;
@@ -511,7 +477,7 @@ async fn control(
     job_id: String,
     control: Control,
     body: OperationControlBody,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     let ops = Operations::new(&state);
     let job = blocking(move || {
         ops.control(
@@ -546,7 +512,7 @@ pub async fn pause_operation(
     _caller: RequireAdmin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     control(state, job_id, Control::Pause, body).await
 }
 
@@ -572,7 +538,7 @@ pub async fn resume_operation(
     _caller: RequireAdmin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     control(state, job_id, Control::Resume, body).await
 }
 
@@ -597,7 +563,7 @@ pub async fn stop_operation(
     _caller: RequireAdmin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     control(state, job_id, Control::Stop, body).await
 }
 
@@ -621,7 +587,7 @@ pub async fn search_reidentification_releases(
     _caller: RequireCurator,
     Path(album_id): Path<String>,
     ValidQuery(query): ValidQuery<ReleaseSearchQuery>,
-) -> Result<Json<ReleaseEditionSearchResponse>, OperationsHttpError> {
+) -> Result<Json<ReleaseEditionSearchResponse>, ApiError> {
     let limit = query.limit.unwrap_or(RELEASE_PAGE_MAX);
     if !(1..=RELEASE_PAGE_MAX).contains(&limit)
         || query.title.chars().count() > 250
@@ -708,7 +674,7 @@ pub async fn undo_automatic_edition(
     caller: RequireAdmin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<AutomaticEditionUndoBody>,
-) -> Result<Json<AutomaticEditionUndoResponse>, OperationsHttpError> {
+) -> Result<Json<AutomaticEditionUndoResponse>, ApiError> {
     let ops = Operations::new(&state);
     let user_id = caller.0.user_id;
     let undone = blocking(move || {

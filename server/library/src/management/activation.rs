@@ -74,7 +74,6 @@ impl Management {
             .unwrap_or_else(|| {
                 Arc::new(LibraryManagementService::new(
                     self.setup.config.clone(),
-                    self.setup.ids.clone(),
                     Arc::new(StructuralCompiler),
                 ))
             })

@@ -13,11 +13,13 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::auth::{Principal, RequireAdmin};
-use super::error::{LibraryError, ValidJson, ValidQuery};
+use super::error::LibraryError;
 use super::handlers::run_view;
 use super::models::{ScanRunView, snake};
 use crate::activity::feed::LibraryActivity;
@@ -284,7 +286,7 @@ pub async fn request_scan_run(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     ValidJson(body): ValidJson<ScanRunRequestBody>,
-) -> Result<(StatusCode, Json<ScanRunRequestedResponse>), LibraryError> {
+) -> Result<(StatusCode, Json<ScanRunRequestedResponse>), ApiError> {
     let user_id = caller.0.user_id;
     let result = blocking(move || {
         state.request_scan_run(
@@ -322,7 +324,7 @@ pub async fn request_scan_run(
 pub async fn current_scan_runs(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
-) -> Result<Json<ScanRunCurrentResponse>, LibraryError> {
+) -> Result<Json<ScanRunCurrentResponse>, ApiError> {
     let (active, queued) = blocking(move || state.current_scan_runs()).await?;
     Ok(Json(ScanRunCurrentResponse {
         active: active.as_ref().map(run_view),
@@ -350,7 +352,7 @@ pub async fn scan_run_history(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     ValidQuery(query): ValidQuery<HistoryQuery>,
-) -> Result<Json<ScanRunHistoryResponse>, LibraryError> {
+) -> Result<Json<ScanRunHistoryResponse>, ApiError> {
     let limit = query.limit.unwrap_or(MAX_PAGE);
     let (runs, next_cursor) =
         blocking(move || state.scan_history_page(limit, query.cursor.as_deref())).await??;
@@ -379,7 +381,7 @@ pub async fn estimate_scan_run(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     ValidQuery(pairs): ValidQuery<Vec<(String, String)>>,
-) -> Result<Json<ScanEstimateResponse>, LibraryError> {
+) -> Result<Json<ScanEstimateResponse>, ApiError> {
     let scope_ids: Vec<String> = pairs
         .into_iter()
         .filter(|(key, _)| key == "scope_ids")
@@ -415,7 +417,7 @@ pub async fn scan_run_failures(
     _caller: RequireAdmin,
     Path(id): Path<String>,
     ValidQuery(query): ValidQuery<FailuresQuery>,
-) -> Result<Json<ScanRunFailuresResponse>, LibraryError> {
+) -> Result<Json<ScanRunFailuresResponse>, ApiError> {
     let limit = query.limit.unwrap_or(50).min(MAX_FAILURE_PAGE);
     let (failures, next_cursor) =
         blocking(move || state.scan_run_failures(&id, limit, query.cursor)).await??;
@@ -445,7 +447,7 @@ async fn control(
     id: String,
     control: RunControl,
     body: ScanControlBody,
-) -> Result<Json<ScanControlResponse>, LibraryError> {
+) -> Result<Json<ScanControlResponse>, ApiError> {
     let controlled =
         blocking(move || state.control_scan_run(&id, control, body.expected_revision)).await??;
     let run = controlled.run;
@@ -478,7 +480,7 @@ pub async fn pause_scan_run(
     _caller: RequireAdmin,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ScanControlBody>,
-) -> Result<Json<ScanControlResponse>, LibraryError> {
+) -> Result<Json<ScanControlResponse>, ApiError> {
     control(state, id, RunControl::Pause, body).await
 }
 
@@ -502,7 +504,7 @@ pub async fn resume_scan_run(
     _caller: RequireAdmin,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ScanControlBody>,
-) -> Result<Json<ScanControlResponse>, LibraryError> {
+) -> Result<Json<ScanControlResponse>, ApiError> {
     control(state, id, RunControl::Resume, body).await
 }
 
@@ -526,7 +528,7 @@ pub async fn stop_scan_run(
     _caller: RequireAdmin,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ScanControlBody>,
-) -> Result<Json<ScanControlResponse>, LibraryError> {
+) -> Result<Json<ScanControlResponse>, ApiError> {
     control(state, id, RunControl::Stop, body).await
 }
 
@@ -548,7 +550,7 @@ pub async fn stop_scan_run(
 pub async fn library_activity(
     State(state): State<LibrarySetup>,
     caller: Principal,
-) -> Result<Json<LibraryActivity>, LibraryError> {
+) -> Result<Json<LibraryActivity>, ApiError> {
     let admin = caller.role.is_admin();
     Ok(Json(
         blocking(move || state.library_activity(admin)).await??,
@@ -560,7 +562,7 @@ async fn identification_control(
     paused: bool,
     user_id: String,
     body: IdentificationControlBody,
-) -> Result<Json<IdentificationControlResponse>, LibraryError> {
+) -> Result<Json<IdentificationControlResponse>, ApiError> {
     let answer = blocking(move || {
         state.set_identification_paused(paused, &user_id, Some(body.expected_revision))
     })
@@ -592,7 +594,7 @@ pub async fn pause_identification(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     ValidJson(body): ValidJson<IdentificationControlBody>,
-) -> Result<Json<IdentificationControlResponse>, LibraryError> {
+) -> Result<Json<IdentificationControlResponse>, ApiError> {
     identification_control(state, true, caller.0.user_id, body).await
 }
 
@@ -613,6 +615,6 @@ pub async fn resume_identification(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     ValidJson(body): ValidJson<IdentificationControlBody>,
-) -> Result<Json<IdentificationControlResponse>, LibraryError> {
+) -> Result<Json<IdentificationControlResponse>, ApiError> {
     identification_control(state, false, caller.0.user_id, body).await
 }

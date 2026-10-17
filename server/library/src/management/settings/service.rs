@@ -38,7 +38,6 @@ use crate::settings_models::{
     LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,
     LibraryManagementSettingsResponse, ManagedFieldInfo,
 };
-use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_kernel::runtime_config::sections::{
@@ -72,13 +71,8 @@ pub struct LibraryManagementService {
 }
 
 impl LibraryManagementService {
-    /// Build over the shared store and a script compiler. `_ids` is no
-    /// longer read: errors carry their cause to the request boundary.
-    pub fn new(
-        store: Arc<ConfigStore>,
-        _ids: Arc<dyn IdGenerator>,
-        compiler: Arc<dyn ScriptCompiler>,
-    ) -> Self {
+    /// Build over the shared store and a script compiler.
+    pub fn new(store: Arc<ConfigStore>, compiler: Arc<dyn ScriptCompiler>) -> Self {
         Self {
             store,
             compiler,

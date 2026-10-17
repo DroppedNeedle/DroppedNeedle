@@ -276,11 +276,7 @@ fn stored_unknown_field_is_dropped_on_read() {
         ConfigStore::open(&path, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("store opens"),
     );
-    let service = LibraryManagementService::new(
-        store,
-        Arc::new(FixedIdGenerator::new(common::FIXED_ID)),
-        Arc::new(StructuralCompiler),
-    );
+    let service = LibraryManagementService::new(store, Arc::new(StructuralCompiler));
     let read = service.get_settings().expect("the section reads");
     assert!(
         !std::fs::read_to_string(&path)

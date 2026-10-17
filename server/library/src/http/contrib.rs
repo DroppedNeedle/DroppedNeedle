@@ -17,12 +17,13 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::{get, post, put},
 };
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::Deserialize;
 use serde_json::json;
 use utoipa::{IntoParams, ToSchema};
 
 use super::auth::{Principal, RequireCurator};
-use super::error::{ErrorBody, ErrorEnvelope, ValidJson, ValidQuery};
 use crate::contrib::error::ContribError;
 use crate::contrib::models::{
     CALLBACK_PATH, ContributionRecord, DiscogsReleaseCandidate, LEGACY_CALLBACK_PATH,
@@ -119,18 +120,8 @@ pub struct MusicBrainzCallbackQuery {
 // Errors
 // ---------------------------------------------------------------------------
 
-/// A contribution failure as an HTTP answer.
-pub struct ContribHttpError(ContribError);
-
-impl From<ContribError> for ContribHttpError {
+impl From<ContribError> for ApiError {
     fn from(error: ContribError) -> Self {
-        Self(error)
-    }
-}
-
-impl IntoResponse for ContribHttpError {
-    fn into_response(self) -> Response {
-        let error = self.0;
         let status = match &error {
             ContribError::ContributionNotFound
             | ContribError::AlbumNotFound
@@ -152,24 +143,15 @@ impl IntoResponse for ContribHttpError {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         };
-        let mut details = json!({ "action": error.action() });
         if status.is_server_error() {
-            let error_id = uuid::Uuid::new_v4().to_string();
-            tracing::error!(error_id, code = error.code(), cause = ?error, "contribution request failed");
-            details["error_id"] = json!(error_id);
+            return ApiError::fault(status, format!("{}: {error:?}", error.code()));
         }
-        let body = ErrorEnvelope {
-            error: ErrorBody {
-                code: error.code().to_owned(),
-                message: error.to_string(),
-                details: Some(details),
-            },
-        };
-        (status, Json(body)).into_response()
+        ApiError::new(status, error.code(), error.to_string())
+            .with_details(json!({ "action": error.action() }))
     }
 }
 
-type Answer<T> = Result<Json<T>, ContribHttpError>;
+type Answer<T> = Result<Json<T>, ApiError>;
 
 // ---------------------------------------------------------------------------
 // Routes

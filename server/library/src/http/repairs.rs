@@ -11,14 +11,14 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use super::auth::RequireAdmin;
-use super::error::{ValidJson, ValidQuery};
 use super::operations::{
-    OperationControlBody, OperationView, OperationsHttpError, ReasonView, blocking, detail_view,
-    job_view,
+    OperationControlBody, OperationView, ReasonView, blocking, detail_view, job_view,
 };
 use crate::operations::models::{Control, OperationJob};
 use crate::repairs::models::{
@@ -359,7 +359,7 @@ async fn get_job(
     state: LibrarySetup,
     job_id: String,
     purpose: Purpose,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     let repairs = Repairs::new(&state);
     let detail = blocking(move || repairs.get(&job_id, purpose)).await?;
     Ok(Json(repair_view(&detail)))
@@ -370,7 +370,7 @@ async fn list_jobs(
     query: HistoryQuery,
     purpose: Purpose,
     default_limit: usize,
-) -> Result<Json<OperationListView>, OperationsHttpError> {
+) -> Result<Json<OperationListView>, ApiError> {
     let repairs = Repairs::new(&state);
     let (items, next_cursor) = blocking(move || {
         repairs.history(
@@ -391,7 +391,7 @@ async fn findings(
     job_id: String,
     query: FindingsQuery,
     purpose: Purpose,
-) -> Result<Json<RepairFindingListView>, OperationsHttpError> {
+) -> Result<Json<RepairFindingListView>, ApiError> {
     let repairs = Repairs::new(&state);
     let page = blocking(move || {
         repairs.findings(
@@ -417,7 +417,7 @@ async fn apply(
     job_id: String,
     body: RepairApplyBody,
     purpose: Purpose,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     let repairs = Repairs::new(&state);
     let job = blocking(move || {
         repairs.begin_apply(
@@ -436,7 +436,7 @@ async fn control(
     job_id: String,
     control: Control,
     body: OperationControlBody,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     let repairs = Repairs::new(&state);
     let job = blocking(move || {
         repairs.control(
@@ -476,7 +476,7 @@ pub async fn create_repair(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     ValidJson(body): ValidJson<RepairCreateBody>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     let repairs = Repairs::new(&state);
     let user = caller.0.user_id;
     let job = blocking(move || {
@@ -509,7 +509,7 @@ pub async fn list_repairs(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     ValidQuery(query): ValidQuery<HistoryQuery>,
-) -> Result<Json<OperationListView>, OperationsHttpError> {
+) -> Result<Json<OperationListView>, ApiError> {
     list_jobs(state, query, Purpose::ExistingMatches, 50).await
 }
 
@@ -528,7 +528,7 @@ pub async fn estimate_repair(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     ValidQuery(pairs): ValidQuery<Vec<(String, String)>>,
-) -> Result<Json<RepairEstimateView>, OperationsHttpError> {
+) -> Result<Json<RepairEstimateView>, ApiError> {
     let repairs = Repairs::new(&state);
     let roots = root_ids(pairs);
     let selected_root_count = roots.len();
@@ -556,7 +556,7 @@ pub async fn get_repair(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     Path(job_id): Path<String>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     get_job(state, job_id, Purpose::ExistingMatches).await
 }
 
@@ -578,7 +578,7 @@ pub async fn repair_findings(
     _caller: RequireAdmin,
     Path(job_id): Path<String>,
     ValidQuery(query): ValidQuery<FindingsQuery>,
-) -> Result<Json<RepairFindingListView>, OperationsHttpError> {
+) -> Result<Json<RepairFindingListView>, ApiError> {
     findings(state, job_id, query, Purpose::ExistingMatches).await
 }
 
@@ -602,7 +602,7 @@ pub async fn apply_repair(
     _caller: RequireAdmin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<RepairApplyBody>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     apply(state, job_id, body, Purpose::ExistingMatches).await
 }
 
@@ -625,7 +625,7 @@ pub async fn pause_repair(
     _caller: RequireAdmin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     control(state, job_id, Control::Pause, body).await
 }
 
@@ -648,7 +648,7 @@ pub async fn resume_repair(
     _caller: RequireAdmin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     control(state, job_id, Control::Resume, body).await
 }
 
@@ -671,7 +671,7 @@ pub async fn stop_repair(
     _caller: RequireAdmin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     control(state, job_id, Control::Stop, body).await
 }
 
@@ -696,7 +696,7 @@ pub async fn create_preparation(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
     ValidJson(body): ValidJson<PreparationCreateBody>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     let repairs = Repairs::new(&state);
     let user = caller.0.user_id;
     let job = blocking(move || {
@@ -729,7 +729,7 @@ pub async fn list_preparations(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     ValidQuery(query): ValidQuery<HistoryQuery>,
-) -> Result<Json<OperationListView>, OperationsHttpError> {
+) -> Result<Json<OperationListView>, ApiError> {
     list_jobs(state, query, Purpose::ManagementReadiness, 20).await
 }
 
@@ -748,7 +748,7 @@ pub async fn estimate_preparation(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     ValidQuery(pairs): ValidQuery<Vec<(String, String)>>,
-) -> Result<Json<PreparationEstimateView>, OperationsHttpError> {
+) -> Result<Json<PreparationEstimateView>, ApiError> {
     let repairs = Repairs::new(&state);
     let roots = root_ids(pairs);
     let selected_root_count = roots.len();
@@ -779,7 +779,7 @@ pub async fn get_preparation(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     Path(job_id): Path<String>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     get_job(state, job_id, Purpose::ManagementReadiness).await
 }
 
@@ -801,7 +801,7 @@ pub async fn preparation_findings(
     _caller: RequireAdmin,
     Path(job_id): Path<String>,
     ValidQuery(query): ValidQuery<FindingsQuery>,
-) -> Result<Json<RepairFindingListView>, OperationsHttpError> {
+) -> Result<Json<RepairFindingListView>, ApiError> {
     findings(state, job_id, query, Purpose::ManagementReadiness).await
 }
 
@@ -825,7 +825,7 @@ pub async fn apply_preparation(
     _caller: RequireAdmin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<RepairApplyBody>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     apply(state, job_id, body, Purpose::ManagementReadiness).await
 }
 
@@ -848,7 +848,7 @@ pub async fn discard_preparation(
     _caller: RequireAdmin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
+) -> Result<Json<OperationView>, ApiError> {
     let repairs = Repairs::new(&state);
     let job = blocking(move || repairs.discard(&job_id, body.expected_row_revision)).await?;
     Ok(Json(job_view(&job)))
@@ -875,7 +875,7 @@ pub async fn scan_diagnostics(
     State(state): State<LibrarySetup>,
     _caller: RequireAdmin,
     Path(run_id): Path<String>,
-) -> Result<Response, OperationsHttpError> {
+) -> Result<Response, ApiError> {
     let store = state.scan_store.clone();
     let (filename, bytes) = blocking(move || {
         store.with_connection(|conn| crate::repairs::diagnostics::export(conn, &run_id))
