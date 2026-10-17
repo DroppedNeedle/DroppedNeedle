@@ -1,8 +1,9 @@
 //! The shipping source of the workspace, for gates that read code as text:
 //! every `.rs` file under the `src/` of each member that `server/Cargo.toml`
 //! lists, except the testkit's mock servers. A new crate is walked without
-//! editing any gate, no `tests/` or build folder is ever reached, and no
-//! folder is skipped by name.
+//! editing any gate, no `tests/` or build folder is ever reached, no
+//! folder is skipped by name, and a member whose `src/` holds no source
+//! fails the walk rather than shrinking it.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -24,7 +25,7 @@ pub fn workspace_sources() -> Vec<Source> {
     let members = manifest["workspace"]["members"]
         .as_array()
         .expect("workspace members");
-    let mut dirs: Vec<PathBuf> = members
+    let dirs: Vec<PathBuf> = members
         .iter()
         .map(|member| member.as_str().expect("member path"))
         .filter(|member| *member != "testkit")
@@ -32,18 +33,27 @@ pub fn workspace_sources() -> Vec<Source> {
         .collect();
     assert!(dirs.len() > 1, "the workspace lists its crates");
     let mut sources = Vec::new();
-    while let Some(dir) = dirs.pop() {
-        for entry in std::fs::read_dir(&dir).expect("src lists") {
-            let path = entry.expect("entry").path();
-            if path.is_dir() {
-                dirs.push(path);
-            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-                sources.push(Source {
-                    path: relative(&server, &path),
-                    text: std::fs::read_to_string(&path).expect("source reads"),
-                });
+    for src in dirs {
+        let before = sources.len();
+        let mut pending = vec![src.clone()];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(&dir).expect("src lists") {
+                let path = entry.expect("entry").path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                    sources.push(Source {
+                        path: relative(&server, &path),
+                        text: std::fs::read_to_string(&path).expect("source reads"),
+                    });
+                }
             }
         }
+        assert!(
+            sources.len() > before,
+            "{} holds no source file",
+            relative(&server, &src)
+        );
     }
     sources.sort_by(|a, b| a.path.cmp(&b.path));
     sources

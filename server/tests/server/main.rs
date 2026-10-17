@@ -33,4 +33,5 @@ mod providers_core;
 mod providers_events;
 mod providers_musicbrainz;
 mod settings_sections;
+mod source_gates;
 mod web;
