@@ -7,6 +7,7 @@ use axum::{
     http::StatusCode,
 };
 
+use droppedneedle_auth::{Admin, Curator, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidJson;
 
@@ -23,8 +24,6 @@ use super::{
 impl From<AdminError> for ApiError {
     fn from(error: AdminError) -> Self {
         match error {
-            AdminError::Unauthorized { message } => ApiError::unauthorized(message),
-            AdminError::Forbidden { message } => ApiError::forbidden(message),
             AdminError::NotFound => ApiError::not_found(),
             AdminError::InvalidInput { message } => ApiError::invalid_input(message),
             AdminError::Conflict { message } => ApiError::conflict(message),
@@ -45,6 +44,7 @@ impl From<AdminError> for ApiError {
 )]
 pub async fn list_backups(
     State(admin): State<AdminSetup>,
+    _caller: Admin,
 ) -> Result<Json<BackupListResponse>, ApiError> {
     let dir = admin
         .backups
@@ -66,6 +66,7 @@ pub async fn list_backups(
 )]
 pub async fn run_backup(
     State(admin): State<AdminSetup>,
+    _caller: Admin,
 ) -> Result<(StatusCode, Json<BackupRunResponse>), ApiError> {
     let backups = admin.backups.as_ref().ok_or_else(unwired_backups)?;
     let report = super::backups::run_backup(backups).await?;
@@ -82,6 +83,7 @@ pub async fn run_backup(
 )]
 pub async fn restore_report(
     State(admin): State<AdminSetup>,
+    _caller: Admin,
     Path(name): Path<String>,
 ) -> Result<Json<RestoreReport>, ApiError> {
     let dir = admin
@@ -102,7 +104,10 @@ pub async fn restore_report(
     path = "/api/v3/admin/cache/stats",
     responses((status = 200, description = "Cache counters", body = CacheStatsResponse))
 )]
-pub async fn cache_stats(State(admin): State<AdminSetup>) -> Json<CacheStatsResponse> {
+pub async fn cache_stats(
+    State(admin): State<AdminSetup>,
+    _caller: Admin,
+) -> Json<CacheStatsResponse> {
     Json(super::cache::cache_stats(&admin.cache, admin.covers.as_ref()).await)
 }
 
@@ -116,6 +121,7 @@ pub async fn cache_stats(State(admin): State<AdminSetup>) -> Json<CacheStatsResp
 )]
 pub async fn clear_cache(
     State(admin): State<AdminSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<CacheClearBody>,
 ) -> Result<Json<CacheClearResponse>, ApiError> {
     super::cache::clear_cache(&admin.cache, admin.covers.as_ref(), &body)
@@ -133,6 +139,7 @@ pub async fn clear_cache(
 )]
 pub async fn queue_stats(
     State(admin): State<AdminSetup>,
+    _caller: Admin,
 ) -> Result<Json<QueueStatsResponse>, ApiError> {
     let db = admin.db.as_ref().ok_or_else(unwired_db)?;
     Ok(Json(
@@ -147,7 +154,10 @@ pub async fn queue_stats(
     path = "/api/v3/admin/provider-stats",
     responses((status = 200, description = "Provider snapshot", body = ProviderStatsResponse))
 )]
-pub async fn provider_stats(State(admin): State<AdminSetup>) -> Json<ProviderStatsResponse> {
+pub async fn provider_stats(
+    State(admin): State<AdminSetup>,
+    _caller: Admin,
+) -> Json<ProviderStatsResponse> {
     Json(super::queues::provider_stats(&admin.providers))
 }
 
@@ -161,6 +171,7 @@ pub async fn provider_stats(State(admin): State<AdminSetup>) -> Json<ProviderSta
 )]
 pub async fn get_quota(
     State(admin): State<AdminSetup>,
+    _caller: Admin,
     Path(user_id): Path<String>,
 ) -> Result<Json<QuotaResponse>, ApiError> {
     let db = admin.db.as_ref().ok_or_else(unwired_db)?;
@@ -183,11 +194,10 @@ pub async fn get_quota(
 )]
 pub async fn run_precache(
     State(admin): State<AdminSetup>,
-    session: Option<axum::Extension<droppedneedle_auth::session::middleware::CurrentSession>>,
+    caller: Admin,
 ) -> Result<(StatusCode, Json<PrecacheRunResponse>), ApiError> {
     let trigger = admin.precache.as_ref().ok_or_else(unwired_precache)?;
-    let user_id = session.map(|axum::Extension(session)| session.user_id);
-    match trigger.run(user_id).await {
+    match trigger.run(Some(caller.user_id().to_owned())).await {
         Ok(_) => Ok((
             StatusCode::ACCEPTED,
             Json(PrecacheRunResponse {
@@ -212,6 +222,7 @@ pub async fn run_precache(
 )]
 pub async fn cache_sync_status(
     State(admin): State<AdminSetup>,
+    _caller: User,
 ) -> Json<droppedneedle_kernel::events::CacheSyncProgress> {
     Json(
         admin
@@ -231,7 +242,10 @@ pub async fn cache_sync_status(
     path = "/api/v3/cache/sync/cancel",
     responses((status = 200, description = "Precache stopped", body = CacheSyncCancelResponse))
 )]
-pub async fn cancel_cache_sync(State(admin): State<AdminSetup>) -> Json<CacheSyncCancelResponse> {
+pub async fn cancel_cache_sync(
+    State(admin): State<AdminSetup>,
+    _caller: Curator,
+) -> Json<CacheSyncCancelResponse> {
     if let Some(trigger) = &admin.precache {
         trigger.cancel().await;
     }
@@ -251,6 +265,7 @@ pub async fn cancel_cache_sync(State(admin): State<AdminSetup>) -> Json<CacheSyn
 )]
 pub async fn set_quota(
     State(admin): State<AdminSetup>,
+    _caller: Admin,
     Path(user_id): Path<String>,
     ValidJson(body): ValidJson<QuotaOverrideBody>,
 ) -> Result<Json<QuotaResponse>, ApiError> {

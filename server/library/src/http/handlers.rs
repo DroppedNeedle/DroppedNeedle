@@ -12,7 +12,6 @@ use axum::{
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidJson;
 
-use super::auth::{Principal, RequireAdmin, RequireCurator};
 use super::error::LibraryError;
 use super::models::{
     AddRootBody, BaselineRestoreBody, BaselineRestoreResponse, IdentifyBody, IdentifyResponse,
@@ -26,6 +25,7 @@ use crate::manage::{PreviewItemInput, plain_retag};
 use crate::publish::planner::PlanKind;
 use crate::scan::models::{EffectivePolicy, ScanRun, ScanScope};
 use crate::wiring::LibrarySetup;
+use droppedneedle_auth::{Admin, Curator, Principal, User};
 
 // ---------------------------------------------------------------------------
 // Views.
@@ -93,7 +93,7 @@ pub(super) fn run_view(run: &ScanRun) -> ScanRunView {
 /// Run view for `caller`: only administrators see who asked for a run.
 fn caller_run_view(caller: &Principal, run: &ScanRun) -> ScanRunView {
     let mut view = run_view(run);
-    if !caller.role.is_admin() {
+    if !caller.role().is_admin() {
         view.requested_by_user_id = None;
     }
     view
@@ -139,7 +139,7 @@ fn check_managed_names(items: &[ManageItemBody]) -> Result<(), LibraryError> {
 /// Only an admin may move a file or choose tag values. Anyone else gets
 /// the plain retag: the album's edition tags, written in place.
 fn check_plain_retag(caller: &Principal, plain: bool) -> Result<(), LibraryError> {
-    if plain || caller.role.is_admin() {
+    if plain || Admin::try_from(caller.clone()).is_ok() {
         Ok(())
     } else {
         Err(LibraryError::Forbidden {
@@ -164,7 +164,7 @@ fn check_plain_retag(caller: &Principal, plain: bool) -> Result<(), LibraryError
 )]
 pub async fn list_roots(
     State(state): State<LibrarySetup>,
-    _caller: Principal,
+    _caller: User,
 ) -> Result<Json<RootsResponse>, ApiError> {
     let held = {
         let state = state.clone();
@@ -207,7 +207,7 @@ pub async fn list_roots(
 )]
 pub async fn add_root(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     ValidJson(body): ValidJson<AddRootBody>,
 ) -> Result<(StatusCode, Json<RootView>), ApiError> {
     let policy = parse_policy(body.policy.as_deref())?;
@@ -245,10 +245,10 @@ pub async fn add_root(
 )]
 pub async fn trigger_scan(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<ScanBody>,
 ) -> Result<Json<ScanResponse>, ApiError> {
-    let user_id = caller.0.user_id;
+    let user_id = caller.user_id().to_owned();
     let result = blocking(move || state.request_scan(body.root_id.as_deref(), &user_id)).await??;
     Ok(Json(ScanResponse {
         run_id: result.run_id,
@@ -269,7 +269,7 @@ pub async fn trigger_scan(
 )]
 pub async fn list_runs(
     State(state): State<LibrarySetup>,
-    caller: Principal,
+    User(caller): User,
 ) -> Result<Json<ScanRunsResponse>, ApiError> {
     let (current, history) =
         blocking(move || (state.coordinator.current(), state.coordinator.history(20))).await?;
@@ -294,7 +294,7 @@ pub async fn list_runs(
 )]
 pub async fn get_run(
     State(state): State<LibrarySetup>,
-    caller: Principal,
+    User(caller): User,
     Path(id): Path<String>,
 ) -> Result<Json<RunDetailResponse>, ApiError> {
     let (run, scopes, files) = blocking(move || state.run_detail(&id)).await??;
@@ -333,14 +333,14 @@ pub async fn get_run(
 )]
 pub async fn enqueue_identify(
     State(state): State<LibrarySetup>,
-    caller: RequireCurator,
+    caller: Curator,
     ValidJson(body): ValidJson<IdentifyBody>,
 ) -> Result<Json<IdentifyResponse>, ApiError> {
     if body.album_id.is_empty() {
         return Err(ApiError::invalid_input("Album id must not be empty"));
     }
     let kind = parse_identify_kind(body.kind.as_deref())?;
-    let user_id = caller.0.user_id;
+    let user_id = caller.user_id().to_owned();
     let job = blocking(move || state.enqueue_identify(&body.album_id, kind, &user_id)).await??;
     let state_label: String = match job.state {
         JobState::Queued => "queued".to_owned(),
@@ -373,7 +373,7 @@ pub async fn enqueue_identify(
 )]
 pub async fn manage_preview(
     State(state): State<LibrarySetup>,
-    RequireCurator(caller): RequireCurator,
+    caller: Curator,
     ValidJson(body): ValidJson<ManagePreviewBody>,
 ) -> Result<Json<ManagePreviewResponse>, ApiError> {
     let kind = match body.kind.as_str() {
@@ -450,7 +450,7 @@ pub async fn manage_preview(
 )]
 pub async fn manage_apply(
     State(state): State<LibrarySetup>,
-    RequireCurator(caller): RequireCurator,
+    caller: Curator,
     ValidJson(body): ValidJson<ManageApplyBody>,
 ) -> Result<Json<ManageApplyResponse>, ApiError> {
     if body.preview_token.is_empty() {
@@ -462,7 +462,7 @@ pub async fn manage_apply(
         if let Some(plain) = state.preview_is_plain_retag(&body.preview_token) {
             check_plain_retag(&caller, plain)?;
         }
-        Ok::<_, LibraryError>(state.apply_preview(&body.preview_token, Some(&caller.user_id))?)
+        Ok::<_, LibraryError>(state.apply_preview(&body.preview_token, Some(caller.user_id()))?)
     })
     .await??;
     Ok(Json(ManageApplyResponse {
@@ -497,14 +497,14 @@ pub async fn manage_apply(
 )]
 pub async fn manage_undo(
     State(state): State<LibrarySetup>,
-    RequireCurator(caller): RequireCurator,
+    caller: Curator,
     ValidJson(body): ValidJson<ManageUndoBody>,
 ) -> Result<Json<ManageUndoResponse>, ApiError> {
     if body.bundle_id.is_empty() {
         return Err(ApiError::invalid_input("Bundle id must not be empty"));
     }
     // An admin undoes any bundle; a curator only one they applied.
-    let only_by = (!caller.role.is_admin()).then_some(caller.user_id);
+    let only_by = (!caller.role().is_admin()).then_some(caller.user_id().to_owned());
     let applied =
         tokio::task::spawn_blocking(move || state.undo_bundle(&body.bundle_id, only_by.as_deref()))
             .await
@@ -536,7 +536,7 @@ pub async fn manage_undo(
 )]
 pub async fn baseline_restore(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     ValidJson(body): ValidJson<BaselineRestoreBody>,
 ) -> Result<Json<BaselineRestoreResponse>, ApiError> {
     if body.track_ids.is_empty() {

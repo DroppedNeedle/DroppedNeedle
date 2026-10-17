@@ -16,7 +16,6 @@ use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use super::auth::RequireAdmin;
 use super::error::refused;
 use super::operations::ReasonView;
 use crate::reconcile::models::{
@@ -24,6 +23,7 @@ use crate::reconcile::models::{
 };
 use crate::reconcile::service::Reconcile;
 use crate::wiring::LibrarySetup;
+use droppedneedle_auth::Admin;
 
 pub fn router() -> Router<LibrarySetup> {
     Router::new()
@@ -401,7 +401,7 @@ pub struct ArtistDuplicateGroupDismissResponse {
 )]
 pub async fn artist_reconciliation(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
 ) -> Result<Json<ArtistReconciliationProgress>, ApiError> {
     let service = Reconcile::new(&state);
     let p = blocking(move || service.progress()).await?;
@@ -434,7 +434,7 @@ pub async fn artist_reconciliation(
 )]
 pub async fn list_artist_duplicate_groups(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     ValidQuery(query): ValidQuery<ArtistGroupListQuery>,
 ) -> Result<Json<ArtistDuplicateGroupListResponse>, ApiError> {
     let service = Reconcile::new(&state);
@@ -475,7 +475,7 @@ pub async fn list_artist_duplicate_groups(
 )]
 pub async fn get_artist_duplicate_group(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path(group_id): Path<String>,
 ) -> Result<Json<ArtistDuplicateGroupDetail>, ApiError> {
     let service = Reconcile::new(&state);
@@ -502,12 +502,12 @@ pub async fn get_artist_duplicate_group(
 )]
 pub async fn dismiss_artist_duplicate_group(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     Path(group_id): Path<String>,
     ValidJson(body): ValidJson<ArtistDuplicateGroupDismissRequest>,
 ) -> Result<Json<ArtistDuplicateGroupDismissResponse>, ApiError> {
     let service = Reconcile::new(&state);
-    let user_id = caller.0.user_id;
+    let user_id = caller.user_id().to_owned();
     let id = group_id.clone();
     let pairs =
         blocking(move || service.dismiss(&id, &body.expected_member_revisions, &user_id)).await?;

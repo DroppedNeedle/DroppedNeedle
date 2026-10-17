@@ -23,13 +23,13 @@ use serde::Deserialize;
 use serde_json::json;
 use utoipa::{IntoParams, ToSchema};
 
-use super::auth::{Principal, RequireCurator};
 use crate::contrib::error::ContribError;
 use crate::contrib::models::{
     CALLBACK_PATH, ContributionRecord, DiscogsReleaseCandidate, LEGACY_CALLBACK_PATH,
     MusicBrainzSeed, ReleaseDraft,
 };
 use crate::wiring::LibrarySetup;
+use droppedneedle_auth::{Curator, User};
 
 // ---------------------------------------------------------------------------
 // DTOs (v2 `api/v1/schemas/library_contributions.py`)
@@ -232,11 +232,11 @@ impl LibrarySetup {
 )]
 pub async fn create_contribution(
     State(state): State<LibrarySetup>,
-    RequireCurator(caller): RequireCurator,
+    caller: Curator,
     Path(album_id): Path<String>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(
-        state.contrib.create(&album_id, &caller.user_id).await?,
+        state.contrib.create(&album_id, caller.user_id()).await?,
     ))
 }
 
@@ -254,7 +254,7 @@ pub async fn create_contribution(
 )]
 pub async fn get_contribution(
     State(state): State<LibrarySetup>,
-    _caller: Principal,
+    _caller: User,
     Path(id): Path<String>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(state.contrib.get(&id).await?))
@@ -278,7 +278,7 @@ pub async fn get_contribution(
 )]
 pub async fn update_draft(
     State(state): State<LibrarySetup>,
-    RequireCurator(caller): RequireCurator,
+    caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ContributionDraftBody>,
 ) -> Answer<ContributionRecord> {
@@ -289,7 +289,7 @@ pub async fn update_draft(
                 &id,
                 body.expected_row_revision,
                 &body.draft,
-                &caller.user_id,
+                caller.user_id(),
             )
             .await?,
     ))
@@ -312,14 +312,14 @@ pub async fn update_draft(
 )]
 pub async fn rebuild(
     State(state): State<LibrarySetup>,
-    RequireCurator(caller): RequireCurator,
+    caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ContributionRevisionBody>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(
         state
             .contrib
-            .rebuild(&id, body.expected_row_revision, &caller.user_id)
+            .rebuild(&id, body.expected_row_revision, caller.user_id())
             .await?,
     ))
 }
@@ -341,14 +341,14 @@ pub async fn rebuild(
 )]
 pub async fn cancel(
     State(state): State<LibrarySetup>,
-    RequireCurator(caller): RequireCurator,
+    caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ContributionRevisionBody>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(
         state
             .contrib
-            .cancel(&id, body.expected_row_revision, &caller.user_id)
+            .cancel(&id, body.expected_row_revision, caller.user_id())
             .await?,
     ))
 }
@@ -372,7 +372,7 @@ pub async fn cancel(
 )]
 pub async fn search_discogs(
     State(state): State<LibrarySetup>,
-    _caller: RequireCurator,
+    _caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<DiscogsSearchBody>,
 ) -> Answer<DiscogsSearchResponse> {
@@ -402,7 +402,7 @@ pub async fn search_discogs(
 )]
 pub async fn select_discogs(
     State(state): State<LibrarySetup>,
-    RequireCurator(caller): RequireCurator,
+    caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<DiscogsSelectBody>,
 ) -> Answer<ContributionRecord> {
@@ -413,7 +413,7 @@ pub async fn select_discogs(
                 &id,
                 &body.release_id_or_url,
                 body.expected_row_revision,
-                &caller.user_id,
+                caller.user_id(),
             )
             .await?,
     ))
@@ -436,14 +436,14 @@ pub async fn select_discogs(
 )]
 pub async fn remove_discogs(
     State(state): State<LibrarySetup>,
-    RequireCurator(caller): RequireCurator,
+    caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ContributionRevisionBody>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(
         state
             .contrib
-            .remove_discogs(&id, body.expected_row_revision, &caller.user_id)
+            .remove_discogs(&id, body.expected_row_revision, caller.user_id())
             .await?,
     ))
 }
@@ -466,7 +466,7 @@ pub async fn remove_discogs(
 )]
 pub async fn check_duplicates(
     State(state): State<LibrarySetup>,
-    RequireCurator(caller): RequireCurator,
+    caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<DuplicateCheckBody>,
 ) -> Answer<ContributionRecord> {
@@ -476,7 +476,7 @@ pub async fn check_duplicates(
             .check_duplicates(
                 &id,
                 body.expected_row_revision,
-                &caller.user_id,
+                caller.user_id(),
                 body.different_edition_confirmed,
             )
             .await?,
@@ -501,7 +501,7 @@ pub async fn check_duplicates(
 )]
 pub async fn attach_existing(
     State(state): State<LibrarySetup>,
-    RequireCurator(caller): RequireCurator,
+    caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<AttachExistingBody>,
 ) -> Answer<ContributionRecord> {
@@ -512,7 +512,7 @@ pub async fn attach_existing(
                 &id,
                 &body.release_mbid,
                 body.expected_row_revision,
-                &caller.user_id,
+                caller.user_id(),
             )
             .await?,
     ))
@@ -538,7 +538,7 @@ pub async fn attach_existing(
 )]
 pub async fn create_seed(
     State(state): State<LibrarySetup>,
-    RequireCurator(caller): RequireCurator,
+    caller: Curator,
     OriginalUri(original): OriginalUri,
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -552,7 +552,7 @@ pub async fn create_seed(
     Ok(Json(
         state
             .contrib
-            .create_seed(&id, body.expected_row_revision, &caller.user_id, &base_url)
+            .create_seed(&id, body.expected_row_revision, caller.user_id(), &base_url)
             .await?,
     ))
 }
@@ -575,7 +575,7 @@ pub async fn create_seed(
 )]
 pub async fn record_result(
     State(state): State<LibrarySetup>,
-    RequireCurator(caller): RequireCurator,
+    caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<MusicBrainzResultBody>,
 ) -> Answer<ContributionRecord> {
@@ -586,7 +586,7 @@ pub async fn record_result(
                 &id,
                 &body.release_id_or_url,
                 body.expected_row_revision,
-                &caller.user_id,
+                caller.user_id(),
                 body.replace_existing_result,
             )
             .await?,
@@ -610,14 +610,14 @@ pub async fn record_result(
 )]
 pub async fn retry_verification(
     State(state): State<LibrarySetup>,
-    RequireCurator(caller): RequireCurator,
+    caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ContributionRevisionBody>,
 ) -> Answer<ContributionRecord> {
     Ok(Json(
         state
             .contrib
-            .retry_verification(&id, body.expected_row_revision, &caller.user_id)
+            .retry_verification(&id, body.expected_row_revision, caller.user_id())
             .await?,
     ))
 }

@@ -18,7 +18,6 @@ use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
-use super::auth::{Principal, RequireAdmin, RequireCurator};
 use super::error::LibraryError;
 use super::models::{
     ApproveBody, CandidateView, IdentityView, PenaltyView, ReasonCount, ReviewBulkPreviewResponse,
@@ -34,6 +33,7 @@ use crate::operations::reviews::{
 };
 use crate::operations::service::Operations;
 use crate::wiring::LibrarySetup;
+use droppedneedle_auth::{Admin, Curator, User};
 
 /// Largest review page.
 const PAGE_MAX: u32 = 200;
@@ -198,7 +198,7 @@ async fn settled(state: LibrarySetup, id: String) -> Result<ReviewView, ApiError
 )]
 pub async fn list_reviews(
     State(state): State<LibrarySetup>,
-    _caller: Principal,
+    _caller: User,
     ValidQuery(query): ValidQuery<ReviewsQuery>,
 ) -> Result<Json<ReviewsResponse>, ApiError> {
     let filter = review_filter(query, Vec::new())?;
@@ -295,7 +295,7 @@ fn review_filter(
 )]
 pub async fn get_review(
     State(state): State<LibrarySetup>,
-    _caller: Principal,
+    _caller: User,
     Path(id): Path<String>,
 ) -> Result<Json<ReviewView>, ApiError> {
     Ok(Json(settled(state, id).await?))
@@ -319,14 +319,14 @@ pub async fn get_review(
 )]
 pub async fn approve_review(
     State(state): State<LibrarySetup>,
-    caller: RequireCurator,
+    caller: Curator,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ApproveBody>,
 ) -> Result<Json<ReviewResolveResponse>, ApiError> {
     if body.candidate_key.is_empty() {
         return Err(ApiError::invalid_input("Candidate key must not be empty"));
     }
-    let user_id = caller.0.user_id;
+    let user_id = caller.user_id().to_owned();
     let service = state.clone();
     let review_id = id.clone();
     let (_, identity) = tokio::task::spawn_blocking(move || {
@@ -357,10 +357,10 @@ pub async fn approve_review(
 )]
 pub async fn reject_review(
     State(state): State<LibrarySetup>,
-    caller: RequireCurator,
+    caller: Curator,
     Path(id): Path<String>,
 ) -> Result<Json<ReviewResolveResponse>, ApiError> {
-    let user_id = caller.0.user_id;
+    let user_id = caller.user_id().to_owned();
     let service = state.clone();
     let review_id = id.clone();
     tokio::task::spawn_blocking(move || service.reject_review(&review_id, &user_id))
@@ -400,10 +400,16 @@ async fn act(
 )]
 pub async fn dismiss_review(
     State(state): State<LibrarySetup>,
-    caller: RequireCurator,
+    caller: Curator,
     Path(id): Path<String>,
 ) -> Result<Json<ReviewView>, ApiError> {
-    act(state, id, ReviewAction::Dismiss, caller.0.user_id).await
+    act(
+        state,
+        id,
+        ReviewAction::Dismiss,
+        caller.user_id().to_owned(),
+    )
+    .await
 }
 
 /// Take the album's MusicBrainz match off and keep its own tags. The
@@ -424,10 +430,10 @@ pub async fn dismiss_review(
 )]
 pub async fn detach_review(
     State(state): State<LibrarySetup>,
-    caller: RequireCurator,
+    caller: Curator,
     Path(id): Path<String>,
 ) -> Result<Json<ReviewView>, ApiError> {
-    act(state, id, ReviewAction::Detach, caller.0.user_id).await
+    act(state, id, ReviewAction::Detach, caller.user_id().to_owned()).await
 }
 
 /// Take the album's files out of the library. Nothing is deleted; scans
@@ -447,10 +453,16 @@ pub async fn detach_review(
 )]
 pub async fn exclude_review(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     Path(id): Path<String>,
 ) -> Result<Json<ReviewView>, ApiError> {
-    act(state, id, ReviewAction::Exclude, caller.0.user_id).await
+    act(
+        state,
+        id,
+        ReviewAction::Exclude,
+        caller.user_id().to_owned(),
+    )
+    .await
 }
 
 /// Put an excluded album's files back into the library.
@@ -469,10 +481,16 @@ pub async fn exclude_review(
 )]
 pub async fn restore_review(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     Path(id): Path<String>,
 ) -> Result<Json<ReviewView>, ApiError> {
-    act(state, id, ReviewAction::Restore, caller.0.user_id).await
+    act(
+        state,
+        id,
+        ReviewAction::Restore,
+        caller.user_id().to_owned(),
+    )
+    .await
 }
 
 /// Start identification again for the review's album. The new job
@@ -493,12 +511,12 @@ pub async fn restore_review(
 )]
 pub async fn retry_review(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<ReviewRetryBody>,
 ) -> Result<Json<OperationView>, ApiError> {
     let ops = Operations::new(&state);
-    let actor = caller.0.user_id;
+    let actor = caller.user_id().to_owned();
     let key = body.idempotency_key.filter(|key| !key.trim().is_empty());
     let job =
         blocking(move || ops.retry_review(&id, &actor, key, body.confirm_local_metadata)).await?;
@@ -521,11 +539,11 @@ pub async fn retry_review(
 )]
 pub async fn retry_pending_reviews(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<ReviewRetryAllBody>,
 ) -> Result<Json<ReviewRetryAllResponse>, ApiError> {
     let ops = Operations::new(&state);
-    let actor = caller.0.user_id;
+    let actor = caller.user_id().to_owned();
     let mut filter = review_filter(body.filter, Vec::new())?;
     if !body.root_ids.is_empty() {
         filter.root_ids = body.root_ids;
@@ -608,11 +626,11 @@ fn skipped_view(skipped: Vec<(reasons::Reason, u32)>) -> Vec<SkippedReviews> {
 /// Parse a bulk body; taking files out of the library is admin-only.
 fn bulk_request(
     body: ReviewBulkBody,
-    caller: &RequireCurator,
+    caller: &Curator,
 ) -> Result<(BulkAction, ReviewFilter, Option<String>, Option<String>), ApiError> {
     let action = bulk_action(&body.action)?;
-    if action == BulkAction::Exclude && !caller.0.role.is_admin() {
-        return Err(ApiError::forbidden("Admin role required"));
+    if action == BulkAction::Exclude {
+        Admin::try_from(caller.principal().clone())?;
     }
     let filter = review_filter(body.filter, body.review_ids)?;
     let key = body.candidate_key.filter(|key| !key.is_empty());
@@ -635,7 +653,7 @@ fn bulk_request(
 )]
 pub async fn preview_bulk_reviews(
     State(state): State<LibrarySetup>,
-    caller: RequireCurator,
+    caller: Curator,
     ValidJson(body): ValidJson<ReviewBulkBody>,
 ) -> Result<Json<ReviewBulkPreviewResponse>, ApiError> {
     let (action, filter, key, _) = bulk_request(body, &caller)?;
@@ -666,10 +684,10 @@ pub async fn preview_bulk_reviews(
 )]
 pub async fn apply_bulk_reviews(
     State(state): State<LibrarySetup>,
-    caller: RequireCurator,
+    caller: Curator,
     ValidJson(body): ValidJson<ReviewBulkBody>,
 ) -> Result<Json<ReviewBulkResponse>, ApiError> {
-    let actor = caller.0.user_id.clone();
+    let actor = caller.user_id().to_owned();
     let (action, filter, key, token) = bulk_request(body, &caller)?;
     let Some(token) = token.filter(|token| !token.is_empty()) else {
         return Err(ApiError::invalid_input("Preview the change first"));

@@ -3,7 +3,6 @@
 //! save, the save refuses to drop every root under a live catalog, and
 //! the previews count catalog rows the way v2 did.
 
-use crate::common::auth::AuthRig;
 use crate::common::{FIXED_ID, FixedIdGenerator, ScratchDir};
 
 use std::sync::Arc;
@@ -51,13 +50,11 @@ async fn removed_root_restores_and_previews_count_the_catalog() {
         .await
         .expect("catalog seeds");
 
-    let rig = AuthRig::on(&runtime);
-    let settings =
-        SettingsSetup::for_tests(Arc::new(FixedIdGenerator::new(FIXED_ID)), rig.deps.clone())
-            .expect("settings bundle builds")
-            .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
-                pool: runtime.pool().clone(),
-            }));
+    let settings = SettingsSetup::for_tests(Arc::new(FixedIdGenerator::new(FIXED_ID)))
+        .expect("settings bundle builds")
+        .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
+            pool: runtime.pool().clone(),
+        }));
     let policy = settings.library_policy();
 
     let offered = policy.restorable_roots().await.expect("restorable reads");

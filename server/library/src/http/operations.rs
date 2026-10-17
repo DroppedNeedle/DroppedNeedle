@@ -17,7 +17,6 @@ use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use super::auth::{RequireAdmin, RequireCurator};
 use super::error::refused;
 use super::models::PenaltyView;
 use crate::identify::models::EvidenceClass;
@@ -27,6 +26,7 @@ use crate::operations::models::{
 use crate::operations::reasons::{self, Reason};
 use crate::operations::service::{Operations, RELEASE_PAGE_MAX};
 use crate::wiring::LibrarySetup;
+use droppedneedle_auth::{Admin, Curator};
 
 /// Matcher version reported on candidates scored by the matching engine.
 const MATCHER_VERSION: &str = "library-matching-v1";
@@ -454,7 +454,7 @@ pub(super) fn detail_view(detail: &OperationDetail) -> OperationView {
 )]
 pub async fn get_operation(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path(job_id): Path<String>,
 ) -> Result<Json<OperationView>, ApiError> {
     let ops = Operations::new(&state);
@@ -509,7 +509,7 @@ async fn control(
 )]
 pub async fn pause_operation(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
 ) -> Result<Json<OperationView>, ApiError> {
@@ -535,7 +535,7 @@ pub async fn pause_operation(
 )]
 pub async fn resume_operation(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
 ) -> Result<Json<OperationView>, ApiError> {
@@ -560,7 +560,7 @@ pub async fn resume_operation(
 )]
 pub async fn stop_operation(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<OperationControlBody>,
 ) -> Result<Json<OperationView>, ApiError> {
@@ -584,7 +584,7 @@ pub async fn stop_operation(
 )]
 pub async fn search_reidentification_releases(
     State(state): State<LibrarySetup>,
-    _caller: RequireCurator,
+    _caller: Curator,
     Path(album_id): Path<String>,
     ValidQuery(query): ValidQuery<ReleaseSearchQuery>,
 ) -> Result<Json<ReleaseEditionSearchResponse>, ApiError> {
@@ -671,12 +671,12 @@ pub async fn search_reidentification_releases(
 )]
 pub async fn undo_automatic_edition(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<AutomaticEditionUndoBody>,
 ) -> Result<Json<AutomaticEditionUndoResponse>, ApiError> {
     let ops = Operations::new(&state);
-    let user_id = caller.0.user_id;
+    let user_id = caller.user_id().to_owned();
     let undone = blocking(move || {
         ops.undo_automatic_edition(
             &album_id,

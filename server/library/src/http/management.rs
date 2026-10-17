@@ -17,7 +17,6 @@ use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use super::auth::RequireAdmin;
 use super::error::LibraryError;
 use super::operations::{OperationView, ReasonView, job_view};
 use crate::management::models::{
@@ -27,6 +26,7 @@ use crate::management::models::{
 use crate::management::reasons::ItemReason;
 use crate::management::service::{ApplyRequest, Management, PreviewRequest};
 use crate::wiring::LibrarySetup;
+use droppedneedle_auth::Admin;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagementRootOverrides;
 
 /// Management routes, relative for nesting under `/api/v3`.
@@ -653,7 +653,7 @@ pub struct ManagementUndoPreviewBody {
 )]
 pub async fn create_management_preview(
     State(state): State<LibrarySetup>,
-    RequireAdmin(caller): RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<ManagementPreviewCreateBody>,
 ) -> Result<Json<ManagementPreviewCreatedResponse>, ApiError> {
     let management = Management::new(&state);
@@ -666,7 +666,7 @@ pub async fn create_management_preview(
         target_root_id: body.target_root_id.filter(|root| !root.is_empty()),
         overrides: body.overrides,
     };
-    let handle = blocking(move || management.create_preview(request, &caller.user_id)).await?;
+    let handle = blocking(move || management.create_preview(request, caller.user_id())).await?;
     Ok(Json(handle.into()))
 }
 
@@ -685,7 +685,7 @@ pub async fn create_management_preview(
 )]
 pub async fn get_management_preview(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path(job_id): Path<String>,
 ) -> Result<Json<ManagementJobView>, ApiError> {
     let management = Management::new(&state);
@@ -739,7 +739,7 @@ fn item_filter(query: &ManagementItemsQuery) -> Result<ItemFilter, LibraryError>
 )]
 pub async fn list_management_preview_items(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path(job_id): Path<String>,
     ValidQuery(query): ValidQuery<ManagementItemsQuery>,
 ) -> Result<Json<ManagementPlanItemPage>, ApiError> {
@@ -775,7 +775,7 @@ pub async fn list_management_preview_items(
 )]
 pub async fn get_management_preview_artwork(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path((job_id, ordinal, sha256)): Path<(String, i64, String)>,
 ) -> Result<axum::response::Response, ApiError> {
     use axum::http::{HeaderValue, header};
@@ -823,7 +823,7 @@ pub async fn get_management_preview_artwork(
 )]
 pub async fn discard_management_preview(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<ManagementDiscardBody>,
 ) -> Result<Json<ManagementJobView>, ApiError> {
@@ -852,7 +852,7 @@ pub async fn discard_management_preview(
 )]
 pub async fn apply_management_preview(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<ManagementApplyBody>,
 ) -> Result<Json<OperationView>, ApiError> {
@@ -884,11 +884,11 @@ pub async fn apply_management_preview(
 )]
 pub async fn reissue_management_preview(
     State(state): State<LibrarySetup>,
-    RequireAdmin(caller): RequireAdmin,
+    caller: Admin,
     Path(job_id): Path<String>,
 ) -> Result<Json<ManagementPreviewReissueResponse>, ApiError> {
     let management = Management::new(&state);
-    let handle = blocking(move || management.reissue(&job_id, &caller.user_id)).await?;
+    let handle = blocking(move || management.reissue(&job_id, caller.user_id())).await?;
     Ok(Json(ManagementPreviewReissueResponse {
         job_id: handle.job_id,
         preview_token: handle.preview_token,
@@ -924,7 +924,7 @@ fn history_cursor(raw: Option<&str>) -> Result<Option<(f64, String)>, LibraryErr
 )]
 pub async fn list_management_operations(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     ValidQuery(query): ValidQuery<ManagementHistoryQuery>,
 ) -> Result<Json<ManagementHistoryPage>, ApiError> {
     let filter = HistoryFilter {
@@ -961,7 +961,7 @@ pub async fn list_management_operations(
 )]
 pub async fn get_management_operation(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     Path(job_id): Path<String>,
 ) -> Result<Json<ManagementJobView>, ApiError> {
     get_management_preview(State(state), caller, Path(job_id)).await
@@ -982,7 +982,7 @@ pub async fn get_management_operation(
 )]
 pub async fn list_management_operation_results(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path(job_id): Path<String>,
     ValidQuery(query): ValidQuery<ManagementResultsQuery>,
 ) -> Result<Json<ManagementResultPage>, ApiError> {
@@ -1016,7 +1016,7 @@ pub async fn list_management_operation_results(
 )]
 pub async fn create_management_undo_preview(
     State(state): State<LibrarySetup>,
-    RequireAdmin(caller): RequireAdmin,
+    caller: Admin,
     Path(job_id): Path<String>,
     ValidJson(body): ValidJson<ManagementUndoPreviewBody>,
 ) -> Result<Json<ManagementPreviewCreatedResponse>, ApiError> {
@@ -1026,7 +1026,7 @@ pub async fn create_management_undo_preview(
             &job_id,
             body.expected_operation_row_revision,
             &body.idempotency_key,
-            &caller.user_id,
+            caller.user_id(),
         )
     })
     .await?;

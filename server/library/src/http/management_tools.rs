@@ -16,7 +16,6 @@ use droppedneedle_kernel::extract::ValidJson;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::auth::RequireAdmin;
 use super::management::{
     ManagementJobView, ManagementPreviewCreatedResponse, ManagementSelectionBody,
 };
@@ -30,6 +29,7 @@ use crate::management::tag_edit::{EditorContext, TagEditRequest};
 use crate::publish::PlacementMode;
 use crate::settings_models::LibraryManagementSettingsResponse;
 use crate::wiring::LibrarySetup;
+use droppedneedle_auth::Admin;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 
 /// The routes, relative for nesting under `/api/v3`.
@@ -231,7 +231,7 @@ pub struct ManagementTagEditPreviewBody {
 )]
 pub async fn get_management_tag_editor(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path(track_id): Path<String>,
 ) -> Result<Json<ManagementTagEditorView>, ApiError> {
     let management = Management::new(&state);
@@ -256,7 +256,7 @@ pub async fn get_management_tag_editor(
 )]
 pub async fn create_management_tag_edit_preview(
     State(state): State<LibrarySetup>,
-    RequireAdmin(caller): RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<ManagementTagEditPreviewBody>,
 ) -> Result<Json<ManagementPreviewCreatedResponse>, ApiError> {
     let management = Management::new(&state);
@@ -276,7 +276,7 @@ pub async fn create_management_tag_edit_preview(
             .collect(),
         idempotency_key: key(body.idempotency_key),
     };
-    let handle = blocking(move || management.create_tag_edit(request, &caller.user_id)).await?;
+    let handle = blocking(move || management.create_tag_edit(request, caller.user_id())).await?;
     Ok(Json(handle.into()))
 }
 
@@ -368,7 +368,7 @@ impl From<PurgeOutcome> for ManagementPurgeView {
 )]
 pub async fn create_management_restore_preview(
     State(state): State<LibrarySetup>,
-    RequireAdmin(caller): RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<ManagementRestorePreviewBody>,
 ) -> Result<Json<ManagementPreviewCreatedResponse>, ApiError> {
     let management = Management::new(&state);
@@ -379,7 +379,7 @@ pub async fn create_management_restore_preview(
         idempotency_key: body.idempotency_key,
     };
     let handle =
-        blocking(move || management.create_restore_preview(request, &caller.user_id)).await?;
+        blocking(move || management.create_restore_preview(request, caller.user_id())).await?;
     Ok(Json(handle.into()))
 }
 
@@ -396,7 +396,7 @@ pub async fn create_management_restore_preview(
 )]
 pub async fn get_management_purge_impact(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
 ) -> Result<Json<ManagementPurgeImpactView>, ApiError> {
     let management = Management::new(&state);
     let impact = blocking(move || management.purge_impact()).await?;
@@ -419,7 +419,7 @@ pub async fn get_management_purge_impact(
 )]
 pub async fn purge_management_baselines(
     State(state): State<LibrarySetup>,
-    RequireAdmin(caller): RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<ManagementPurgeBody>,
 ) -> Result<Json<ManagementPurgeView>, ApiError> {
     let management = Management::new(&state);
@@ -429,7 +429,7 @@ pub async fn purge_management_baselines(
         typed_confirmation: body.typed_confirmation,
         idempotency_key: body.idempotency_key,
     };
-    let outcome = blocking(move || management.purge(request, &caller.user_id)).await?;
+    let outcome = blocking(move || management.purge(request, caller.user_id())).await?;
     Ok(Json(outcome.into()))
 }
 
@@ -484,7 +484,7 @@ pub struct ManagementDuplicateBody {
 )]
 pub async fn create_management_duplicate_preview(
     State(state): State<LibrarySetup>,
-    RequireAdmin(caller): RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<ManagementDuplicateBody>,
 ) -> Result<Json<ManagementPreviewCreatedResponse>, ApiError> {
     let management = Management::new(&state);
@@ -516,7 +516,7 @@ pub async fn create_management_duplicate_preview(
         idempotency_key: body.idempotency_key,
     };
     let handle =
-        blocking(move || management.create_duplicate_preview(request, &caller.user_id)).await?;
+        blocking(move || management.create_duplicate_preview(request, caller.user_id())).await?;
     Ok(Json(handle.into()))
 }
 
@@ -644,7 +644,7 @@ impl From<Resolved> for ManagementResolveView {
 )]
 pub async fn get_management_recovery_diagnostics(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
 ) -> Result<Json<ManagementRecoveryView>, ApiError> {
     let management = Management::new(&state);
     let diagnostics = blocking(move || management.recovery_diagnostics()).await?;
@@ -668,11 +668,12 @@ pub async fn get_management_recovery_diagnostics(
 )]
 pub async fn resolve_management_bundle(
     State(state): State<LibrarySetup>,
-    RequireAdmin(caller): RequireAdmin,
+    caller: Admin,
     Path(bundle_id): Path<String>,
 ) -> Result<Json<ManagementResolveView>, ApiError> {
     let management = Management::new(&state);
-    let resolved = blocking(move || management.resolve_bundle(&bundle_id, &caller.user_id)).await?;
+    let resolved =
+        blocking(move || management.resolve_bundle(&bundle_id, caller.user_id())).await?;
     Ok(Json(resolved.into()))
 }
 
@@ -745,7 +746,7 @@ pub struct ManagementPlacementView {
 )]
 pub async fn get_management_placement(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
 ) -> Result<Json<ManagementPlacementView>, ApiError> {
     let management = Management::new(&state);
     let roots = blocking(move || Ok(management.placement_modes()))
@@ -777,7 +778,7 @@ pub async fn get_management_placement(
 )]
 pub async fn check_management_placement(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path(root_id): Path<String>,
 ) -> Result<Json<ManagementPlacementCheckView>, ApiError> {
     let management = Management::new(&state);
@@ -825,7 +826,7 @@ pub struct ManagementSkippedPage {
 )]
 pub async fn list_management_automatic_skipped(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
 ) -> Result<Json<ManagementSkippedPage>, ApiError> {
     let management = Management::new(&state);
     let skipped = blocking(move || management.automatic_skipped(100)).await?;
@@ -882,7 +883,7 @@ pub struct ManagementTakeoverPage {
 )]
 pub async fn list_management_takeovers(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
 ) -> Result<Json<ManagementTakeoverPage>, ApiError> {
     let management = Management::new(&state);
     let waiting = blocking(move || management.takeovers(100)).await?;
@@ -952,7 +953,7 @@ pub struct ManagementActivationConfirmBody {
 )]
 pub async fn create_management_activation_preview(
     State(state): State<LibrarySetup>,
-    RequireAdmin(caller): RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<ManagementActivationPreviewBody>,
 ) -> Result<Json<ManagementPreviewCreatedResponse>, ApiError> {
     let management = Management::new(&state);
@@ -963,7 +964,7 @@ pub async fn create_management_activation_preview(
         expected_policy_revision: body.expected_policy_revision,
         idempotency_key: key(body.idempotency_key),
     };
-    let handle = blocking(move || management.create_activation(request, &caller.user_id)).await?;
+    let handle = blocking(move || management.create_activation(request, caller.user_id())).await?;
     Ok(Json(handle.into()))
 }
 
@@ -983,7 +984,7 @@ pub async fn create_management_activation_preview(
 )]
 pub async fn get_management_activation_preview(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path(job_id): Path<String>,
 ) -> Result<Json<ManagementJobView>, ApiError> {
     let management = Management::new(&state);
@@ -1008,7 +1009,7 @@ pub async fn get_management_activation_preview(
 )]
 pub async fn confirm_management_activation(
     State(state): State<LibrarySetup>,
-    RequireAdmin(caller): RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<ManagementActivationConfirmBody>,
 ) -> Result<Json<LibraryManagementSettingsResponse>, ApiError> {
     let management = Management::new(&state);
@@ -1026,6 +1027,6 @@ pub async fn confirm_management_activation(
         expected_settings_revision: body.expected_settings_revision,
         confirmation: body.confirmation,
     };
-    let saved = blocking(move || management.confirm_activation(request, &caller.user_id)).await?;
+    let saved = blocking(move || management.confirm_activation(request, caller.user_id())).await?;
     Ok(Json(saved))
 }

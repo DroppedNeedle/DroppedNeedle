@@ -13,6 +13,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use super::AdminSetup;
+use droppedneedle_auth::User;
 use droppedneedle_providers::health::DegradedService;
 
 /// One degraded service capability (v2 `ServiceHealthItem`).
@@ -63,7 +64,10 @@ pub struct SystemHealthResponse {
         (status = 401, description = "Not authenticated"),
     )
 )]
-pub async fn system_health(State(admin): State<AdminSetup>) -> Json<SystemHealthResponse> {
+pub async fn system_health(
+    State(admin): State<AdminSetup>,
+    _caller: User,
+) -> Json<SystemHealthResponse> {
     let degraded = admin
         .providers
         .health

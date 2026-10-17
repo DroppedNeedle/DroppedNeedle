@@ -8,19 +8,15 @@
 //! probes behind the verify endpoints, the MusicBrainz lifecycle and the
 //! Library Management service over the same store.
 //!
-//! [`SettingsSetup::gated_router`] serves `/api/v3/settings/*` behind
-//! [`require_admin`]: every settings route is admin-only, like v2's
-//! whole-router guard. [`SettingsSetup::me_router`] serves the
-//! per-user section prefs (`/me/section-prefs`) inside the session
-//! gate only.
+//! [`SettingsSetup::gated_router`] serves `/api/v3/settings/*`; every
+//! handler there takes `Admin`, like v2's whole-router guard.
+//! [`SettingsSetup::me_router`] serves the per-user section prefs
+//! (`/me/section-prefs`) to any signed-in user.
 
 use std::sync::Arc;
 
 use axum::{
     Router,
-    extract::{Request, State},
-    middleware::Next,
-    response::{IntoResponse, Response},
     routing::{get, post, put},
 };
 
@@ -31,12 +27,6 @@ use crate::settings::musicbrainz::MusicBrainzLifecycle;
 use crate::settings::section_prefs::{LinkStatus, SectionPrefsStore};
 use crate::settings::services::{PolicyImpactBuckets, SettingsService};
 use crate::settings::verify::{LiveProbes, VerifyProbes};
-use droppedneedle_auth::users::stores::StoreError;
-use droppedneedle_auth::{
-    session::middleware::CurrentSession,
-    users::{UsersDeps, roles::Role},
-};
-use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
@@ -56,7 +46,6 @@ pub struct SectionPrefsDeps {
 #[derive(Clone)]
 pub struct SettingsSetup {
     service: Arc<SettingsService>,
-    users: UsersDeps,
     lifecycle: Arc<MusicBrainzLifecycle>,
     management: Arc<LibraryManagementService>,
     prefs: Option<Arc<SectionPrefsDeps>>,
@@ -70,13 +59,11 @@ pub struct SettingsSetup {
 
 impl SettingsSetup {
     /// Build over the shared store, the wired fan-out, the id mint,
-    /// the account rows for gating, the outbound HTTP client, and the
-    /// deployment timezone name.
+    /// the outbound HTTP client, and the deployment timezone name.
     pub fn build(
         store: Arc<ConfigStore>,
         effects: Arc<dyn SaveEffects>,
         ids: Arc<dyn IdGenerator>,
-        users: UsersDeps,
         http: reqwest::Client,
         timezone: Option<String>,
         outbound: &Outbound,
@@ -85,7 +72,6 @@ impl SettingsSetup {
             store,
             effects,
             ids,
-            users,
             Arc::new(LiveProbes::new(http)),
             timezone,
             outbound.clone(),
@@ -96,7 +82,6 @@ impl SettingsSetup {
         store: Arc<ConfigStore>,
         effects: Arc<dyn SaveEffects>,
         ids: Arc<dyn IdGenerator>,
-        users: UsersDeps,
         probes: Arc<dyn VerifyProbes>,
         timezone: Option<String>,
         outbound: Outbound,
@@ -114,7 +99,6 @@ impl SettingsSetup {
         Self {
             policy: Arc::new(LibraryPolicyService::new(service.clone(), None)),
             service,
-            users,
             lifecycle: Arc::new(MusicBrainzLifecycle::new(store.clone(), effects, outbound)),
             management: Arc::new(LibraryManagementService::new(
                 store,
@@ -161,16 +145,15 @@ impl SettingsSetup {
     /// connections use [`SettingsSetup::for_tests_with_probes`] with a
     /// scripted fake instead, so no test touches live networks.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(ids: Arc<dyn IdGenerator>, users: UsersDeps) -> Result<Self, String> {
+    pub fn for_tests(ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         let http = reqwest::Client::new();
-        Self::for_tests_with_probes(ids, users, Arc::new(LiveProbes::new(http)))
+        Self::for_tests_with_probes(ids, Arc::new(LiveProbes::new(http)))
     }
 
     /// Test bundle with scripted verify probes.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests_with_probes(
         ids: Arc<dyn IdGenerator>,
-        users: UsersDeps,
         probes: Arc<dyn VerifyProbes>,
     ) -> Result<Self, String> {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -198,7 +181,7 @@ impl SettingsSetup {
         let cache: Arc<dyn ProviderCache> = Arc::new(InMemoryProviderCache::new());
         let effects: Arc<dyn SaveEffects> =
             Arc::new(LiveSaveEffects::new(cache, Arc::new(NoopKick)));
-        let mut setup = Self::assemble(store, effects, ids, users, probes, None, Outbound::live());
+        let mut setup = Self::assemble(store, effects, ids, probes, None, Outbound::live());
         setup.prefs = Some(Arc::new(SectionPrefsDeps {
             store: Arc::new(MemorySectionPrefsStore::new()),
             links: Arc::new(StaticLinkStatus {
@@ -258,8 +241,8 @@ impl SettingsSetup {
     }
 
     /// Mount the admin-only settings routes. Layers are applied by
-    /// `create_app`, plus the [`require_admin`] gate below; handlers
-    /// take `State<SettingsSetup>`.
+    /// `create_app`; every handler takes `Admin` and
+    /// `State<SettingsSetup>`.
     pub fn gated_router(&self) -> Router {
         use super::handlers as h;
         Router::new()
@@ -492,10 +475,6 @@ impl SettingsSetup {
                 "/settings/library-management/profile-imports",
                 post(h::import_library_management_profile),
             )
-            .layer(axum::middleware::from_fn_with_state(
-                self.clone(),
-                require_admin,
-            ))
             .with_state(self.clone())
     }
 
@@ -510,50 +489,6 @@ impl SettingsSetup {
             )
             .with_state(self.clone())
     }
-}
-
-/// Admin gate: 401 when no session is stashed or the account is gone,
-/// 403 when the account is not an admin. The role rereads the user row
-/// every request, so promotions and demotions land on the next call.
-async fn require_admin(
-    State(settings): State<SettingsSetup>,
-    mut request: Request,
-    next: Next,
-) -> Response {
-    let missing = || ApiError::unauthorized("Authentication required").into_response();
-    let Some(session) = request.extensions().get::<CurrentSession>().cloned() else {
-        return missing();
-    };
-    let user = match settings.users.users.get_by_id(&session.user_id).await {
-        Ok(Some(user)) => user,
-        Ok(None) => return missing(),
-        Err(StoreError::Busy) => {
-            return ApiError::unavailable(
-                Unavailable::ServerBusy,
-                "settings gate: users store busy",
-            )
-            .into_response();
-        }
-        Err(error) => {
-            return ApiError::internal(format_args!("settings gate lookup failed: {error}"))
-                .into_response();
-        }
-    };
-    if user.role != Role::Admin {
-        return ApiError::forbidden("Admin role required").into_response();
-    }
-    request
-        .extensions_mut()
-        .insert(AdminUser { user_id: user.id });
-    next.run(request).await
-}
-
-/// The gated admin principal, stashed for handlers that need it (the
-/// BrainzMash consent records the consenting admin).
-#[derive(Debug, Clone)]
-pub struct AdminUser {
-    /// Owning user id.
-    pub user_id: String,
 }
 
 /// A scratch directory removed on drop (test bundles only).

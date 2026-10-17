@@ -613,15 +613,9 @@ impl LibrarySetup {
     }
 
     /// Relative-path routers for nesting under `/api/v3` inside the
-    /// session gate. The leg carries the principal-translation layer
-    /// so handlers keep their `Principal` extractor.
+    /// session gate, whose principal the handlers read.
     pub fn gated_router(&self) -> Router {
-        super::http::routes::library_router(self.clone()).layer(
-            axum::middleware::from_fn_with_state(
-                self.users.clone(),
-                super::http::auth::translate_principal,
-            ),
-        )
+        super::http::routes::library_router(self.clone())
     }
 
     /// Startup recovery: publish reconcile (resume-or-compensate,

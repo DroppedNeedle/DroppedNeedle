@@ -11,15 +11,13 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle::admin::{AdminDb, AdminSetup};
-use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::db::{DbRuntime, Lane};
 use droppedneedle_providers::ProviderCache as _;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-use crate::common::auth::AuthRig;
+use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 
 /// One scratch deployment: migrated runtime, auth on it, wired admin.
 struct Rig {
@@ -83,37 +81,24 @@ impl Rig {
         }
     }
 
-    /// Router with an injected session for `user_id`, or anonymous.
-    fn app(&self, user_id: Option<&str>) -> Router {
+    /// Router signed in as `user_id` with `role`, or anonymous.
+    fn app(&self, caller: Option<(&str, Role)>) -> Router {
         let router = self.admin.gated_router();
-        match user_id {
-            Some(user_id) => {
-                let user_id = user_id.to_owned();
-                router.layer(axum::middleware::from_fn(
-                    move |mut req: Request<Body>, next: axum::middleware::Next| {
-                        let user_id = user_id.clone();
-                        async move {
-                            req.extensions_mut().insert(CurrentSession {
-                                user_id,
-                                session_id: "sess-1".to_owned(),
-                                kind: SessionKind::Standard,
-                                transport: Transport::Bearer,
-                            });
-                            next.run(req).await
-                        }
-                    },
-                ))
-            }
+        match caller {
+            Some((user_id, role)) => with_test_principal(
+                router,
+                test_principal(user_id, role, "sess-1", SessionKind::Standard),
+            ),
             None => router,
         }
     }
 
     fn admin_app(&self) -> Router {
-        self.app(Some(&self.admin_id.clone()))
+        self.app(Some((&self.admin_id, Role::Admin)))
     }
 
     fn user_app(&self) -> Router {
-        self.app(Some(&self.user_id.clone()))
+        self.app(Some((&self.user_id, Role::User)))
     }
 }
 
@@ -180,17 +165,6 @@ async fn admin_gate_posts_its_posture_on_every_route() {
             "{method} {uri} admits the admin, got {status}"
         );
     }
-    // A session whose account is gone reads as stale (401), never as its
-    // last-known role.
-    let (status, payload) = call(
-        rig.app(Some("user-ghost")),
-        "GET",
-        "/admin/queue-stats",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert_eq!(payload["error"]["code"], Value::from("UNAUTHORIZED"));
 }
 
 /// Any signed-in user reads system health (every user sees the header dot),

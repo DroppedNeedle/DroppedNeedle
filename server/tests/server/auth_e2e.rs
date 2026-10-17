@@ -314,10 +314,10 @@ impl E2e {
         let plugins =
             droppedneedle_plugins::wiring::PluginsSetup::for_tests(jobs.registry().clone())
                 .expect("test plugins bundle builds");
-        let settings = droppedneedle::settings::wiring::SettingsSetup::for_tests(
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            auth.users.clone(),
+        let settings = droppedneedle::settings::wiring::SettingsSetup::for_tests(Arc::clone(
+            &self.ids,
         )
+            as Arc<dyn IdGenerator>)
         .expect("test settings bundle builds")
         .with_impact_buckets(Arc::new(
             droppedneedle::settings::services::SqliteImpactBuckets {

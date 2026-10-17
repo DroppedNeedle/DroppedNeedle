@@ -3,7 +3,7 @@
 //! scaling, revision checks, the admin gate, the BrainzMash ceremony, the
 //! live probes against a loopback stub, and the cache sweep after a save.
 
-use crate::common::auth::AuthRig;
+use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 use crate::common::{self, ScratchDir};
 
 use std::collections::HashMap;
@@ -24,8 +24,6 @@ use droppedneedle::settings::verify::{
     ProwlarrVerdict, SabnzbdMountDiagnosis, SabnzbdVerdict, VerifyProbes, VersionVerdict,
 };
 use droppedneedle::settings::wiring::SettingsSetup;
-use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::runtime_config::mask::{INDEXER_API_KEY_MASK, JELLYFIN_API_KEY_MASK};
 use droppedneedle_kernel::runtime_config::secret_sections::{JellyfinConnection, TypedLibrary};
@@ -449,7 +447,6 @@ impl Rig {
         });
         let settings = SettingsSetup::for_tests_with_probes(
             Arc::new(FixedIdGenerator::new(FIXED_ID)),
-            rig.deps.clone(),
             probes.clone(),
         )
         .expect("settings bundle builds");
@@ -462,40 +459,27 @@ impl Rig {
         }
     }
 
-    /// Both routers with an injected session for `user_id`, or anonymous.
-    fn app(&self, user_id: Option<&str>) -> Router {
+    /// Both routers signed in as `user_id` with `role`, or anonymous.
+    fn app(&self, caller: Option<(&str, Role)>) -> Router {
         let router = self
             .settings
             .gated_router()
             .merge(self.settings.me_router());
-        match user_id {
-            Some(user_id) => {
-                let user_id = user_id.to_owned();
-                router.layer(axum::middleware::from_fn(
-                    move |mut req: Request<Body>, next: axum::middleware::Next| {
-                        let user_id = user_id.clone();
-                        async move {
-                            req.extensions_mut().insert(CurrentSession {
-                                user_id,
-                                session_id: "sess-1".to_owned(),
-                                kind: SessionKind::Standard,
-                                transport: Transport::Bearer,
-                            });
-                            next.run(req).await
-                        }
-                    },
-                ))
-            }
+        match caller {
+            Some((user_id, role)) => with_test_principal(
+                router,
+                test_principal(user_id, role, "sess-1", SessionKind::Standard),
+            ),
             None => router,
         }
     }
 
     fn admin_app(&self) -> Router {
-        self.app(Some(self.admin_id.clone()).as_deref())
+        self.app(Some((&self.admin_id, Role::Admin)))
     }
 
     fn user_app(&self) -> Router {
-        self.app(Some(self.user_id.clone()).as_deref())
+        self.app(Some((&self.user_id, Role::User)))
     }
 }
 
@@ -546,18 +530,11 @@ async fn settings_routes_are_admin_gated() {
         assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri} user");
         assert_eq!(denied["error"]["code"], "FORBIDDEN");
     }
-    // Section prefs are per-user: a plain user passes. Anonymous
-    // rejection belongs to the app-level session gate (covered by the
-    // auth journeys); the bare router has no session to extend.
+    // Section prefs are per-user: a plain user passes.
     let (status, _) = call(rig.user_app(), "GET", "/me/section-prefs", None).await;
     assert_eq!(status, StatusCode::OK);
-    let request = Request::builder()
-        .method("GET")
-        .uri("/me/section-prefs")
-        .body(Body::empty())
-        .expect("request builds");
-    let response = rig.app(None).oneshot(request).await.expect("answers");
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let (status, _) = call(rig.app(None), "GET", "/me/section-prefs", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 /// Verify endpoints resolve masked secrets to the stored ones before
@@ -668,26 +645,13 @@ async fn verify_resolves_masks_and_maps_verdicts() {
         valid: false,
         rate_limited: true,
     });
-    let settings = SettingsSetup::for_tests_with_probes(
-        Arc::new(FixedIdGenerator::new(FIXED_ID)),
-        rig.deps.clone(),
-        probes,
-    )
-    .expect("settings bundle builds");
-    let app = settings.gated_router().layer(axum::middleware::from_fn(
-        move |mut req: Request<Body>, next: axum::middleware::Next| {
-            let admin_id = admin.id.clone();
-            async move {
-                req.extensions_mut().insert(CurrentSession {
-                    user_id: admin_id,
-                    session_id: "sess-1".to_owned(),
-                    kind: SessionKind::Standard,
-                    transport: Transport::Bearer,
-                });
-                next.run(req).await
-            }
-        },
-    ));
+    let settings =
+        SettingsSetup::for_tests_with_probes(Arc::new(FixedIdGenerator::new(FIXED_ID)), probes)
+            .expect("settings bundle builds");
+    let app = with_test_principal(
+        settings.gated_router(),
+        test_principal(&admin.id, Role::Admin, "sess-1", SessionKind::Standard),
+    );
     let (status, limited) = call(
         app,
         "POST",

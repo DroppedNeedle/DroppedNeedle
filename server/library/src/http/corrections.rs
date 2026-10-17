@@ -20,7 +20,6 @@ use droppedneedle_kernel::extract::ValidJson;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::auth::RequireAdmin;
 use super::error::refused;
 use super::operations::ReasonView;
 use crate::corrections::Corrections;
@@ -30,6 +29,7 @@ use crate::corrections::models::{
     PairSide, ProviderChoice, RetagPair,
 };
 use crate::wiring::LibrarySetup;
+use droppedneedle_auth::Admin;
 
 /// Correction routes, relative for nesting under `/api/v3`.
 pub fn corrections_router() -> Router<LibrarySetup> {
@@ -427,12 +427,12 @@ async fn apply_membership(
 )]
 pub async fn preview_album_split(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<MembershipPreviewBody>,
 ) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let request = preview_request(MembershipKind::Split, Some(album_id), body);
-    preview_membership(state, caller.0.user_id, request).await
+    preview_membership(state, caller.user_id().to_owned(), request).await
 }
 
 /// Split selected tracks off an album into a new album (or into the target).
@@ -453,7 +453,7 @@ pub async fn preview_album_split(
 )]
 pub async fn apply_album_split(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<MembershipApplyBody>,
 ) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
@@ -461,7 +461,7 @@ pub async fn apply_album_split(
         MembershipKind::Split,
         Some(album_id),
         body,
-        caller.0.user_id,
+        caller.user_id().to_owned(),
     );
     apply_membership(state, request, meta).await
 }
@@ -483,11 +483,11 @@ pub async fn apply_album_split(
 )]
 pub async fn preview_album_merge(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<MembershipPreviewBody>,
 ) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let request = preview_request(MembershipKind::Merge, None, body);
-    preview_membership(state, caller.0.user_id, request).await
+    preview_membership(state, caller.user_id().to_owned(), request).await
 }
 
 /// Fold whole albums into the target album.
@@ -507,10 +507,15 @@ pub async fn preview_album_merge(
 )]
 pub async fn apply_album_merge(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<MembershipApplyBody>,
 ) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
-    let (request, meta) = apply_request(MembershipKind::Merge, None, body, caller.0.user_id);
+    let (request, meta) = apply_request(
+        MembershipKind::Merge,
+        None,
+        body,
+        caller.user_id().to_owned(),
+    );
     apply_membership(state, request, meta).await
 }
 
@@ -531,11 +536,11 @@ pub async fn apply_album_merge(
 )]
 pub async fn preview_track_move(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<MembershipPreviewBody>,
 ) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let request = preview_request(MembershipKind::Move, None, body);
-    preview_membership(state, caller.0.user_id, request).await
+    preview_membership(state, caller.user_id().to_owned(), request).await
 }
 
 /// Move selected tracks onto the target album.
@@ -555,10 +560,15 @@ pub async fn preview_track_move(
 )]
 pub async fn apply_track_move(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<MembershipApplyBody>,
 ) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
-    let (request, meta) = apply_request(MembershipKind::Move, None, body, caller.0.user_id);
+    let (request, meta) = apply_request(
+        MembershipKind::Move,
+        None,
+        body,
+        caller.user_id().to_owned(),
+    );
     apply_membership(state, request, meta).await
 }
 
@@ -580,12 +590,12 @@ pub async fn apply_track_move(
 )]
 pub async fn preview_grouping_reset(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<MembershipPreviewBody>,
 ) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let request = preview_request(MembershipKind::Reset, Some(album_id), body);
-    preview_membership(state, caller.0.user_id, request).await
+    preview_membership(state, caller.user_id().to_owned(), request).await
 }
 
 /// Hand an album's tracks back to automatic grouping.
@@ -606,7 +616,7 @@ pub async fn preview_grouping_reset(
 )]
 pub async fn apply_grouping_reset(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     Path(album_id): Path<String>,
     ValidJson(body): ValidJson<MembershipApplyBody>,
 ) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
@@ -614,7 +624,7 @@ pub async fn apply_grouping_reset(
         MembershipKind::Reset,
         Some(album_id),
         body,
-        caller.0.user_id,
+        caller.user_id().to_owned(),
     );
     apply_membership(state, request, meta).await
 }
@@ -650,7 +660,7 @@ fn artist_request(
 )]
 pub async fn preview_artist_merge(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<ArtistMergePreviewBody>,
 ) -> Result<Json<MembershipPreviewResponse>, ApiError> {
     let corrections = Corrections::new(&state);
@@ -660,7 +670,7 @@ pub async fn preview_artist_merge(
         body.expected_revisions,
         body.provider_choice,
     );
-    let actor = caller.0.user_id;
+    let actor = caller.user_id().to_owned();
     let previewed = blocking(move || corrections.preview_artist_merge(&request, &actor)).await?;
     Ok(Json(artist_view(previewed.token, previewed.outcome)))
 }
@@ -682,7 +692,7 @@ pub async fn preview_artist_merge(
 )]
 pub async fn apply_artist_merge(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     ValidJson(body): ValidJson<ArtistMergeApplyBody>,
 ) -> Result<Json<CatalogCorrectionResponse>, ApiError> {
     let corrections = Corrections::new(&state);
@@ -695,7 +705,7 @@ pub async fn apply_artist_merge(
     let meta = ApplyMeta {
         preview_token: body.preview_token,
         idempotency_key: body.idempotency_key.filter(|key| !key.trim().is_empty()),
-        actor: caller.0.user_id,
+        actor: caller.user_id().to_owned(),
     };
     let applied = blocking(move || corrections.apply_artist_merge(&request, &meta)).await?;
     Ok(Json(applied.into()))
@@ -845,7 +855,7 @@ fn pair_view(pair: RetagPair) -> RetagPairView {
 )]
 pub async fn list_retag_pairs(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
 ) -> Result<Json<RetagPairListResponse>, ApiError> {
     let corrections = Corrections::new(&state);
     let list = blocking(move || corrections.retag_pairs()).await?;
@@ -879,7 +889,7 @@ pub async fn list_retag_pairs(
 )]
 pub async fn join_retag_pair(
     State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
+    caller: Admin,
     Path((old_album_id, new_album_id)): Path<(String, String)>,
     ValidJson(body): ValidJson<RetagPairJoinBody>,
 ) -> Result<Json<RetagPairJoinResponse>, ApiError> {
@@ -889,7 +899,7 @@ pub async fn join_retag_pair(
         new_album_id,
         keep_edition_of: body.keep_edition_of,
         expected_identity_revisions: body.expected_identity_revisions,
-        actor: caller.0.user_id,
+        actor: caller.user_id().to_owned(),
     };
     let album_id = blocking(move || corrections.join_retag_pair(&request)).await?;
     Ok(Json(RetagPairJoinResponse { album_id }))
@@ -913,7 +923,7 @@ pub async fn join_retag_pair(
 )]
 pub async fn dismiss_retag_pair(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: Admin,
     Path((old_album_id, new_album_id)): Path<(String, String)>,
 ) -> Result<Json<RetagPairDismissResponse>, ApiError> {
     let corrections = Corrections::new(&state);

@@ -305,7 +305,7 @@ impl MusicBrainzLifecycle {
     pub fn consent(
         &self,
         binding: &MusicBrainzBindingRequest,
-        admin_id: &str,
+        admin: &droppedneedle_auth::Admin,
     ) -> Result<MusicBrainzSettingsView, SettingsError> {
         let _op = self.begin_op()?;
         let mut guard = self.pending_mut()?;
@@ -328,7 +328,7 @@ impl MusicBrainzLifecycle {
         drop(guard);
         let mut internal: droppedneedle_kernel::runtime_config::sections::InternalState =
             self.store.get().map_err(|e| self.config(e))?;
-        internal.brainzmash_consent_admin = Some(admin_id.to_owned());
+        internal.brainzmash_consent_admin = Some(admin.user_id().to_owned());
         let _: droppedneedle_kernel::runtime_config::sections::InternalState =
             self.store.save(internal).map_err(|e| self.config(e))?;
         let stored: MusicBrainzSettings = self.store.get().map_err(|e| self.config(e))?;

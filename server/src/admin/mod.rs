@@ -1,12 +1,11 @@
 //! Admin UX: backups, caches, queues, providers, quotas, plus the system
 //! health read every user's header polls.
 //!
-//! Every `/admin` route is admin-only. [`require_admin`] re-reads the
-//! caller's user row on each request (role changes land immediately) and
-//! answers 401 for missing or stale sessions, 403 for signed-in non-admins:
-//! the same posture as the users routes, minus their extractor (this router
-//! carries [`AdminSetup`] state, not `UsersDeps`). `/system/health` takes
-//! any signed-in user through [`require_user`], as in v2.
+//! Every `/admin` handler takes [`Admin`](droppedneedle_auth::Admin): 401
+//! without a session, 403 for a signed-in non-admin, judged on the role
+//! the session gate read for this request. `/system/health` and the
+//! precache status take any signed-in user, as in v2; stopping a precache
+//! takes a curator.
 //!
 //! Optional backends ([`AdminDb`], backups, checkpoint, precache) are
 //! `None` on unwired test states; handlers answer 503 there instead of
@@ -25,19 +24,12 @@ use std::sync::Arc;
 
 use axum::{
     Router,
-    extract::{Request, State},
-    middleware::Next,
-    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use sqlx::SqlitePool;
 
-use droppedneedle_auth::{
-    session::middleware::CurrentSession,
-    users::{UsersDeps, models::UserRecord, roles::Role},
-};
+use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::{BackupService, CheckpointService, DurableWorkWakeups, WriteLane};
-use droppedneedle_kernel::error::ApiError;
 use droppedneedle_providers::{InMemoryProviderCache, Providers};
 
 pub use error::AdminError;
@@ -74,7 +66,7 @@ impl AdminDb {
 /// Everything the admin router needs, built once at boot.
 #[derive(Clone)]
 pub struct AdminSetup {
-    /// Account rows for gating and quota identity.
+    /// Account rows for quota identity.
     pub users: UsersDeps,
     /// Live quota ledger (shared with acquisition enforcement).
     pub quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
@@ -169,25 +161,12 @@ impl AdminSetup {
     }
 
     /// Mount the admin routes and the system health read. Layers are
-    /// applied by `create_app`, plus the [`require_admin`] or
-    /// [`require_user`] gate below; handlers take `State<AdminSetup>`.
+    /// applied by `create_app`; each handler takes the caller it admits.
     pub fn gated_router(&self) -> Router {
-        let system = Router::new()
+        Router::new()
             .route("/system/health", get(system::system_health))
             .route("/cache/sync/status", get(handlers::cache_sync_status))
-            .layer(axum::middleware::from_fn_with_state(
-                self.clone(),
-                require_user,
-            ))
-            .with_state(self.clone());
-        let curator = Router::new()
             .route("/cache/sync/cancel", post(handlers::cancel_cache_sync))
-            .layer(axum::middleware::from_fn_with_state(
-                self.clone(),
-                require_curator,
-            ))
-            .with_state(self.clone());
-        let admin = Router::new()
             .route(
                 "/admin/backups",
                 get(handlers::list_backups).post(handlers::run_backup),
@@ -205,86 +184,6 @@ impl AdminSetup {
                 get(handlers::get_quota).put(handlers::set_quota),
             )
             .route("/admin/precache/run", post(handlers::run_precache))
-            .layer(axum::middleware::from_fn_with_state(
-                self.clone(),
-                require_admin,
-            ))
-            .with_state(self.clone());
-        admin.merge(system).merge(curator)
+            .with_state(self.clone())
     }
-}
-
-/// The caller's live user row: 401 when no session is stashed or the
-/// account is gone. Read on every request, so role changes land on the
-/// next call. Takes the session's user id rather than the request, which
-/// is not `Sync` and so cannot be borrowed across the lookup.
-async fn signed_in_user(
-    admin: &AdminSetup,
-    session_user: Option<String>,
-) -> Result<UserRecord, ApiError> {
-    let missing = || {
-        ApiError::from(AdminError::Unauthorized {
-            message: "Authentication required".to_owned(),
-        })
-    };
-    let user_id = session_user.ok_or_else(missing)?;
-    match admin.users.users.get_by_id(&user_id).await {
-        Ok(Some(user)) => Ok(user),
-        Ok(None) => Err(missing()),
-        Err(error) => Err(ApiError::from(AdminError::internal(&format_args!(
-            "session user lookup failed: {error}"
-        )))),
-    }
-}
-
-/// The user id the session gate stashed, if any.
-fn session_user(request: &Request) -> Option<String> {
-    request
-        .extensions()
-        .get::<CurrentSession>()
-        .map(|session| session.user_id.clone())
-}
-
-/// Signed-in gate: any live account passes.
-async fn require_user(State(admin): State<AdminSetup>, request: Request, next: Next) -> Response {
-    match signed_in_user(&admin, session_user(&request)).await {
-        Ok(_) => next.run(request).await,
-        Err(error) => error.into_response(),
-    }
-}
-
-/// Curator gate: [`signed_in_user`], then 403 unless the account is an
-/// admin or trusted.
-async fn require_curator(
-    State(admin): State<AdminSetup>,
-    request: Request,
-    next: Next,
-) -> Response {
-    let user = match signed_in_user(&admin, session_user(&request)).await {
-        Ok(user) => user,
-        Err(error) => return error.into_response(),
-    };
-    if !user.role.is_curator() {
-        return ApiError::from(AdminError::Forbidden {
-            message: "Curator role required".to_owned(),
-        })
-        .into_response();
-    }
-    next.run(request).await
-}
-
-/// Admin gate: [`signed_in_user`], then 403 when the account is not an
-/// admin.
-async fn require_admin(State(admin): State<AdminSetup>, request: Request, next: Next) -> Response {
-    let user = match signed_in_user(&admin, session_user(&request)).await {
-        Ok(user) => user,
-        Err(error) => return error.into_response(),
-    };
-    if user.role != Role::Admin {
-        return ApiError::from(AdminError::Forbidden {
-            message: "Admin role required".to_owned(),
-        })
-        .into_response();
-    }
-    next.run(request).await
 }

@@ -7,16 +7,6 @@
 /// Admin failures.
 #[derive(Debug)]
 pub enum AdminError {
-    /// No usable credential.
-    Unauthorized {
-        /// Why the credential failed.
-        message: String,
-    },
-    /// Credential lacks rights.
-    Forbidden {
-        /// What the credential lacks.
-        message: String,
-    },
     /// Missing resource.
     NotFound,
     /// Bad input with a user-safe message.

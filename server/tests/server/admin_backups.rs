@@ -11,14 +11,12 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle::admin::{AdminDb, AdminSetup};
-use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::db::{BACKUP_KEEP, DbRuntime};
 use serde_json::Value;
 use tower::ServiceExt as _;
 
-use crate::common::auth::AuthRig;
+use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 
 /// One scratch deployment: migrated runtime, auth on it, wired admin.
 struct Rig {
@@ -65,33 +63,17 @@ impl Rig {
         }
     }
 
-    /// Router with an injected session for `user_id`, or anonymous.
-    fn app(&self, user_id: Option<&str>) -> Router {
-        let router = self.admin.gated_router();
-        match user_id {
-            Some(user_id) => {
-                let user_id = user_id.to_owned();
-                router.layer(axum::middleware::from_fn(
-                    move |mut req: Request<Body>, next: axum::middleware::Next| {
-                        let user_id = user_id.clone();
-                        async move {
-                            req.extensions_mut().insert(CurrentSession {
-                                user_id,
-                                session_id: "sess-admin-1".to_owned(),
-                                kind: SessionKind::Standard,
-                                transport: Transport::Bearer,
-                            });
-                            next.run(req).await
-                        }
-                    },
-                ))
-            }
-            None => router,
-        }
-    }
-
+    /// Router signed in as the admin.
     fn admin_app(&self) -> Router {
-        self.app(Some(&self.admin_id.clone()))
+        with_test_principal(
+            self.admin.gated_router(),
+            test_principal(
+                &self.admin_id,
+                Role::Admin,
+                "sess-admin-1",
+                SessionKind::Standard,
+            ),
+        )
     }
 }
 

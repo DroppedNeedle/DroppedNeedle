@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use axum::{
     Json,
-    extract::{Extension, Path, State},
+    extract::{Path, State},
 };
 
 use super::models::{
@@ -26,8 +26,8 @@ use super::models::{
     SectionPrefsResponse, SectionPrefsUpdate, SourcePriorityOrder, TestConnectionResponse,
     UsenetSearchBackend, VerifyConnectionResponse,
 };
-use super::wiring::{AdminUser, SettingsSetup};
-use droppedneedle_auth::session::middleware::CurrentSession;
+use super::wiring::SettingsSetup;
+use droppedneedle_auth::{Admin, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::runtime_config::Masked;
@@ -61,7 +61,10 @@ type JsonResult<T> = Result<Json<T>, ApiError>;
     path = "/api/v3/settings/preferences",
     responses((status = 200, description = "Release-type filters", body = UserPreferences))
 )]
-pub async fn get_preferences(State(settings): State<SettingsSetup>) -> JsonResult<UserPreferences> {
+pub async fn get_preferences(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+) -> JsonResult<UserPreferences> {
     settings.service().get().map(Json).map_err(ApiError::from)
 }
 
@@ -75,6 +78,7 @@ pub async fn get_preferences(State(settings): State<SettingsSetup>) -> JsonResul
 )]
 pub async fn put_preferences(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<UserPreferences>,
 ) -> JsonResult<UserPreferences> {
     settings
@@ -94,6 +98,7 @@ pub async fn put_preferences(
 )]
 pub async fn get_schedule(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<LibraryScanScheduleResponse> {
     settings
         .service()
@@ -112,6 +117,7 @@ pub async fn get_schedule(
 )]
 pub async fn put_schedule(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<LibraryScanSchedule>,
 ) -> JsonResult<LibraryScanScheduleResponse> {
     settings
@@ -129,7 +135,10 @@ pub async fn put_schedule(
     path = "/api/v3/settings/library/watcher",
     responses((status = 200, description = "Filesystem poller knobs", body = FilesystemWatcher))
 )]
-pub async fn get_watcher(State(settings): State<SettingsSetup>) -> JsonResult<FilesystemWatcher> {
+pub async fn get_watcher(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+) -> JsonResult<FilesystemWatcher> {
     settings.service().get().map(Json).map_err(ApiError::from)
 }
 
@@ -143,6 +152,7 @@ pub async fn get_watcher(State(settings): State<SettingsSetup>) -> JsonResult<Fi
 )]
 pub async fn put_watcher(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<FilesystemWatcher>,
 ) -> JsonResult<FilesystemWatcher> {
     settings
@@ -160,7 +170,10 @@ pub async fn put_watcher(
     path = "/api/v3/settings/scrobble",
     responses((status = 200, description = "Scrobble targets", body = ScrobbleSettings))
 )]
-pub async fn get_scrobble(State(settings): State<SettingsSetup>) -> JsonResult<ScrobbleSettings> {
+pub async fn get_scrobble(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+) -> JsonResult<ScrobbleSettings> {
     settings.service().get().map(Json).map_err(ApiError::from)
 }
 
@@ -174,6 +187,7 @@ pub async fn get_scrobble(State(settings): State<SettingsSetup>) -> JsonResult<S
 )]
 pub async fn put_scrobble(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<ScrobbleSettings>,
 ) -> JsonResult<ScrobbleSettings> {
     settings
@@ -193,6 +207,7 @@ pub async fn put_scrobble(
 )]
 pub async fn get_lyrics_settings(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<LyricsSettings> {
     settings.service().get().map(Json).map_err(ApiError::from)
 }
@@ -207,6 +222,7 @@ pub async fn get_lyrics_settings(
 )]
 pub async fn put_lyrics_settings(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<LyricsSettings>,
 ) -> JsonResult<LyricsSettings> {
     settings
@@ -226,6 +242,7 @@ pub async fn put_lyrics_settings(
 )]
 pub async fn get_primary_source(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<PrimaryMusicSource> {
     settings.service().get().map(Json).map_err(ApiError::from)
 }
@@ -240,6 +257,7 @@ pub async fn get_primary_source(
 )]
 pub async fn put_primary_source(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<PrimaryMusicSource>,
 ) -> JsonResult<PrimaryMusicSource> {
     settings
@@ -260,6 +278,7 @@ pub async fn put_primary_source(
 )]
 pub async fn get_lastfm(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<Masked<LastFmSettings>> {
     settings
         .service()
@@ -279,6 +298,7 @@ pub async fn get_lastfm(
 )]
 pub async fn put_lastfm(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<LastFmSettings>>,
 ) -> JsonResult<Masked<LastFmSettings>> {
     settings
@@ -296,7 +316,10 @@ pub async fn put_lastfm(
     path = "/api/v3/settings/get-it",
     responses((status = 200, description = "Store-region settings", body = GetIt))
 )]
-pub async fn get_get_it(State(settings): State<SettingsSetup>) -> JsonResult<GetIt> {
+pub async fn get_get_it(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+) -> JsonResult<GetIt> {
     settings.service().get().map(Json).map_err(ApiError::from)
 }
 
@@ -310,6 +333,7 @@ pub async fn get_get_it(State(settings): State<SettingsSetup>) -> JsonResult<Get
 )]
 pub async fn put_get_it(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<GetIt>,
 ) -> JsonResult<GetIt> {
     settings
@@ -329,6 +353,7 @@ pub async fn put_get_it(
 )]
 pub async fn get_edition_preferences(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<EditionPreferences> {
     settings.service().get().map(Json).map_err(ApiError::from)
 }
@@ -343,6 +368,7 @@ pub async fn get_edition_preferences(
 )]
 pub async fn put_edition_preferences(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<EditionPreferences>,
 ) -> JsonResult<EditionPreferences> {
     settings
@@ -361,7 +387,10 @@ pub async fn put_edition_preferences(
     operation_id = "get_home_settings",
     responses((status = 200, description = "Home page settings", body = HomeSettings))
 )]
-pub async fn get_home(State(settings): State<SettingsSetup>) -> JsonResult<HomeSettings> {
+pub async fn get_home(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+) -> JsonResult<HomeSettings> {
     settings.service().get().map(Json).map_err(ApiError::from)
 }
 
@@ -378,6 +407,7 @@ pub async fn get_home(State(settings): State<SettingsSetup>) -> JsonResult<HomeS
 )]
 pub async fn put_home(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<HomeSettings>,
 ) -> JsonResult<HomeSettings> {
     settings
@@ -395,7 +425,10 @@ pub async fn put_home(
     path = "/api/v3/settings/security",
     responses((status = 200, description = "Security settings", body = SecuritySettings))
 )]
-pub async fn get_security(State(settings): State<SettingsSetup>) -> JsonResult<SecuritySettings> {
+pub async fn get_security(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+) -> JsonResult<SecuritySettings> {
     settings.service().get().map(Json).map_err(ApiError::from)
 }
 
@@ -409,6 +442,7 @@ pub async fn get_security(State(settings): State<SettingsSetup>) -> JsonResult<S
 )]
 pub async fn put_security(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<SecuritySettings>,
 ) -> JsonResult<SecuritySettings> {
     settings
@@ -430,6 +464,7 @@ pub async fn put_security(
 )]
 pub async fn verify_hibp(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<SecuritySettings>,
 ) -> JsonResult<VerifyConnectionResponse> {
     settings
@@ -449,6 +484,7 @@ pub async fn verify_hibp(
 )]
 pub async fn get_public_address(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<PublicAddress> {
     settings.service().get().map(Json).map_err(ApiError::from)
 }
@@ -467,6 +503,7 @@ pub async fn get_public_address(
 )]
 pub async fn put_public_address(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<PublicAddress>,
 ) -> JsonResult<PublicAddress> {
     settings
@@ -484,7 +521,10 @@ pub async fn put_public_address(
     path = "/api/v3/settings/connect-apps",
     responses((status = 200, description = "Connect Apps config", body = ConnectApps))
 )]
-pub async fn get_connect_apps(State(settings): State<SettingsSetup>) -> JsonResult<ConnectApps> {
+pub async fn get_connect_apps(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+) -> JsonResult<ConnectApps> {
     settings.service().get().map(Json).map_err(ApiError::from)
 }
 
@@ -498,6 +538,7 @@ pub async fn get_connect_apps(State(settings): State<SettingsSetup>) -> JsonResu
 )]
 pub async fn put_connect_apps(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<ConnectApps>,
 ) -> JsonResult<ConnectApps> {
     settings
@@ -515,7 +556,10 @@ pub async fn put_connect_apps(
     path = "/api/v3/settings/download-clients/wanted",
     responses((status = 200, description = "Wanted watcher toggles", body = WantedWatcher))
 )]
-pub async fn get_wanted(State(settings): State<SettingsSetup>) -> JsonResult<WantedWatcher> {
+pub async fn get_wanted(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+) -> JsonResult<WantedWatcher> {
     settings.service().get().map(Json).map_err(ApiError::from)
 }
 
@@ -529,6 +573,7 @@ pub async fn get_wanted(State(settings): State<SettingsSetup>) -> JsonResult<Wan
 )]
 pub async fn put_wanted(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<WantedWatcher>,
 ) -> JsonResult<WantedWatcher> {
     settings
@@ -548,6 +593,7 @@ pub async fn put_wanted(
 )]
 pub async fn get_source_priority(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<SourcePriorityOrder> {
     settings
         .service()
@@ -566,6 +612,7 @@ pub async fn get_source_priority(
 )]
 pub async fn put_source_priority(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<SourcePriorityOrder>,
 ) -> JsonResult<SourcePriorityOrder> {
     settings
@@ -585,6 +632,7 @@ pub async fn put_source_priority(
 )]
 pub async fn get_search_backend(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<UsenetSearchBackend> {
     settings
         .service()
@@ -603,6 +651,7 @@ pub async fn get_search_backend(
 )]
 pub async fn put_search_backend(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<UsenetSearchBackend>,
 ) -> JsonResult<UsenetSearchBackend> {
     settings
@@ -624,6 +673,7 @@ pub async fn put_search_backend(
 )]
 pub async fn get_library(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<LibrarySettingsResponse> {
     settings
         .service()
@@ -649,6 +699,7 @@ pub async fn get_library(
 )]
 pub async fn put_library(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<LibrarySettingsSaveRequest>,
 ) -> JsonResult<LibrarySettingsResponse> {
     settings
@@ -670,6 +721,7 @@ pub async fn put_library(
 )]
 pub async fn add_library_path(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<LibraryPathRequest>,
 ) -> JsonResult<LibrarySettingsResponse> {
     settings
@@ -694,6 +746,7 @@ pub async fn add_library_path(
 )]
 pub async fn remove_library_path(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidQuery(query): ValidQuery<LibraryPathQuery>,
 ) -> JsonResult<LibrarySettingsResponse> {
     settings
@@ -714,6 +767,7 @@ pub async fn remove_library_path(
 )]
 pub async fn get_library_policy_tree(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<LibraryPolicyTreeResponse> {
     settings
         .library_policy()
@@ -737,6 +791,7 @@ pub async fn get_library_policy_tree(
 )]
 pub async fn preview_library_policy_impact(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<LibraryPolicyImpactRequest>,
 ) -> JsonResult<LibraryPolicyImpactResponse> {
     settings
@@ -763,6 +818,7 @@ pub async fn preview_library_policy_impact(
 )]
 pub async fn preview_library_policy_apply(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<LibraryPolicyApplyRequest>,
 ) -> JsonResult<LibraryPolicyApplyPreviewResponse> {
     settings
@@ -786,6 +842,7 @@ pub async fn preview_library_policy_apply(
 )]
 pub async fn get_restorable_library_roots(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<LibraryRestorableRootsResponse> {
     settings
         .library_policy()
@@ -810,6 +867,7 @@ pub async fn get_restorable_library_roots(
 )]
 pub async fn restore_library_roots(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<LibraryRestoreRootsRequest>,
 ) -> JsonResult<LibrarySettingsResponse> {
     settings
@@ -832,6 +890,7 @@ pub async fn restore_library_roots(
 )]
 pub async fn get_library_path_mapping(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<LibraryPathMappingReport> {
     settings
         .library_policy()
@@ -852,6 +911,7 @@ pub async fn get_library_path_mapping(
 )]
 pub async fn get_advanced(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<AdvancedSettingsForm> {
     settings
         .service()
@@ -871,6 +931,7 @@ pub async fn get_advanced(
 )]
 pub async fn put_advanced(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<AdvancedSettingsForm>,
 ) -> JsonResult<AdvancedSettingsForm> {
     settings
@@ -890,6 +951,7 @@ pub async fn put_advanced(
 )]
 pub async fn get_cache_ttls(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<FrontendCacheTTLs> {
     settings
         .service()
@@ -909,6 +971,7 @@ pub async fn get_cache_ttls(
 )]
 pub async fn get_jellyfin(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<Masked<JellyfinConnection>> {
     settings
         .service()
@@ -927,6 +990,7 @@ pub async fn get_jellyfin(
 )]
 pub async fn put_jellyfin(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<JellyfinConnection>>,
 ) -> JsonResult<Masked<JellyfinConnection>> {
     settings
@@ -948,6 +1012,7 @@ pub async fn put_jellyfin(
 )]
 pub async fn verify_jellyfin(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<JellyfinConnection>>,
 ) -> JsonResult<JellyfinVerifyResponse> {
     settings
@@ -967,6 +1032,7 @@ pub async fn verify_jellyfin(
 )]
 pub async fn get_navidrome(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<Masked<NavidromeConnection>> {
     settings
         .service()
@@ -985,6 +1051,7 @@ pub async fn get_navidrome(
 )]
 pub async fn put_navidrome(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<NavidromeConnection>>,
 ) -> JsonResult<Masked<NavidromeConnection>> {
     settings
@@ -1006,6 +1073,7 @@ pub async fn put_navidrome(
 )]
 pub async fn verify_navidrome(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<NavidromeConnection>>,
 ) -> JsonResult<VerifyConnectionResponse> {
     settings
@@ -1023,7 +1091,10 @@ pub async fn verify_navidrome(
     path = "/api/v3/settings/plex",
     responses((status = 200, description = "Plex connection", body = PlexConnection))
 )]
-pub async fn get_plex(State(settings): State<SettingsSetup>) -> JsonResult<Masked<PlexConnection>> {
+pub async fn get_plex(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+) -> JsonResult<Masked<PlexConnection>> {
     settings
         .service()
         .get_masked()
@@ -1041,6 +1112,7 @@ pub async fn get_plex(State(settings): State<SettingsSetup>) -> JsonResult<Maske
 )]
 pub async fn put_plex(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<PlexConnection>>,
 ) -> JsonResult<Masked<PlexConnection>> {
     settings
@@ -1062,6 +1134,7 @@ pub async fn put_plex(
 )]
 pub async fn verify_plex(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<PlexConnection>>,
 ) -> JsonResult<PlexVerifyResponse> {
     settings
@@ -1086,6 +1159,7 @@ pub async fn verify_plex(
 )]
 pub async fn get_plex_libraries(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<Vec<PlexLibrarySectionInfo>> {
     settings
         .service()
@@ -1104,6 +1178,7 @@ pub async fn get_plex_libraries(
 )]
 pub async fn get_listenbrainz(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<Masked<ListenBrainzConnection>> {
     settings
         .service()
@@ -1122,6 +1197,7 @@ pub async fn get_listenbrainz(
 )]
 pub async fn put_listenbrainz(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<ListenBrainzConnection>>,
 ) -> JsonResult<Masked<ListenBrainzConnection>> {
     settings
@@ -1146,6 +1222,7 @@ pub async fn put_listenbrainz(
 )]
 pub async fn verify_listenbrainz(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<ListenBrainzConnection>>,
 ) -> JsonResult<VerifyConnectionResponse> {
     settings
@@ -1165,6 +1242,7 @@ pub async fn verify_listenbrainz(
 )]
 pub async fn get_youtube(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<Masked<YouTubeConnection>> {
     settings
         .service()
@@ -1183,6 +1261,7 @@ pub async fn get_youtube(
 )]
 pub async fn put_youtube(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<YouTubeConnection>>,
 ) -> JsonResult<Masked<YouTubeConnection>> {
     settings
@@ -1203,6 +1282,7 @@ pub async fn put_youtube(
 )]
 pub async fn verify_youtube(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<YouTubeConnection>>,
 ) -> JsonResult<VerifyConnectionResponse> {
     settings
@@ -1222,6 +1302,7 @@ pub async fn verify_youtube(
 )]
 pub async fn get_events(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<Masked<EventsSettings>> {
     settings
         .service()
@@ -1241,6 +1322,7 @@ pub async fn get_events(
 )]
 pub async fn put_events(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<EventsSettings>>,
 ) -> JsonResult<Masked<EventsSettings>> {
     settings
@@ -1261,6 +1343,7 @@ pub async fn put_events(
 )]
 pub async fn test_ticketmaster(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<EventsSettings>>,
 ) -> JsonResult<VerifyConnectionResponse> {
     settings
@@ -1281,6 +1364,7 @@ pub async fn test_ticketmaster(
 )]
 pub async fn test_skiddle(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<EventsSettings>>,
 ) -> JsonResult<VerifyConnectionResponse> {
     settings
@@ -1300,6 +1384,7 @@ pub async fn test_skiddle(
 )]
 pub async fn get_wrapped(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<Masked<WrappedSettings>> {
     settings
         .service()
@@ -1318,6 +1403,7 @@ pub async fn get_wrapped(
 )]
 pub async fn put_wrapped(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<WrappedSettings>>,
 ) -> JsonResult<Masked<WrappedSettings>> {
     settings
@@ -1335,7 +1421,10 @@ pub async fn put_wrapped(
     path = "/api/v3/settings/oidc",
     responses((status = 200, description = "OIDC connection", body = OidcConnection))
 )]
-pub async fn get_oidc(State(settings): State<SettingsSetup>) -> JsonResult<Masked<OidcConnection>> {
+pub async fn get_oidc(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+) -> JsonResult<Masked<OidcConnection>> {
     settings
         .service()
         .get_masked()
@@ -1353,6 +1442,7 @@ pub async fn get_oidc(State(settings): State<SettingsSetup>) -> JsonResult<Maske
 )]
 pub async fn put_oidc(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<OidcConnection>>,
 ) -> JsonResult<Masked<OidcConnection>> {
     settings
@@ -1373,6 +1463,7 @@ pub async fn put_oidc(
 )]
 pub async fn verify_oidc(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<OidcConnection>>,
 ) -> JsonResult<VerifyConnectionResponse> {
     settings
@@ -1392,6 +1483,7 @@ pub async fn verify_oidc(
 )]
 pub async fn get_slskd(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<Masked<SlskdConnection>> {
     settings
         .service()
@@ -1410,6 +1502,7 @@ pub async fn get_slskd(
 )]
 pub async fn put_slskd(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<SlskdConnection>>,
 ) -> JsonResult<Masked<SlskdConnection>> {
     settings
@@ -1430,6 +1523,7 @@ pub async fn put_slskd(
 )]
 pub async fn test_slskd(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<SlskdConnection>>,
 ) -> JsonResult<TestConnectionResponse> {
     settings
@@ -1449,6 +1543,7 @@ pub async fn test_slskd(
 )]
 pub async fn get_sabnzbd(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<Masked<SabnzbdConnection>> {
     settings
         .service()
@@ -1467,6 +1562,7 @@ pub async fn get_sabnzbd(
 )]
 pub async fn put_sabnzbd(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<SabnzbdConnection>>,
 ) -> JsonResult<Masked<SabnzbdConnection>> {
     settings
@@ -1488,6 +1584,7 @@ pub async fn put_sabnzbd(
 )]
 pub async fn test_sabnzbd(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<SabnzbdConnection>>,
 ) -> JsonResult<SabnzbdTestResponse> {
     settings
@@ -1507,6 +1604,7 @@ pub async fn test_sabnzbd(
 )]
 pub async fn get_prowlarr(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<Masked<ProwlarrConnection>> {
     settings
         .service()
@@ -1525,6 +1623,7 @@ pub async fn get_prowlarr(
 )]
 pub async fn put_prowlarr(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<ProwlarrConnection>>,
 ) -> JsonResult<Masked<ProwlarrConnection>> {
     settings
@@ -1545,6 +1644,7 @@ pub async fn put_prowlarr(
 )]
 pub async fn test_prowlarr(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<ProwlarrConnection>>,
 ) -> JsonResult<ProwlarrTestResponse> {
     settings
@@ -1564,7 +1664,10 @@ pub async fn test_prowlarr(
     path = "/api/v3/settings/download-clients/policy",
     responses((status = 200, description = "Acquisition policy", body = DownloadPolicyView))
 )]
-pub async fn get_policy(State(settings): State<SettingsSetup>) -> JsonResult<DownloadPolicyView> {
+pub async fn get_policy(
+    State(settings): State<SettingsSetup>,
+    _caller: Admin,
+) -> JsonResult<DownloadPolicyView> {
     settings
         .service()
         .get_policy()
@@ -1583,6 +1686,7 @@ pub async fn get_policy(State(settings): State<SettingsSetup>) -> JsonResult<Dow
 )]
 pub async fn put_policy(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<DownloadPolicy>,
 ) -> JsonResult<DownloadPolicyView> {
     settings
@@ -1603,6 +1707,7 @@ pub async fn put_policy(
 )]
 pub async fn get_policy_summary(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<PolicySummaryResponse> {
     settings
         .service()
@@ -1625,6 +1730,7 @@ pub async fn get_policy_summary(
 )]
 pub async fn post_policy_impact(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<DownloadPolicy>,
 ) -> JsonResult<PolicyImpactResponse> {
     let buckets = settings
@@ -1651,6 +1757,7 @@ pub async fn post_policy_impact(
 )]
 pub async fn list_indexers(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<Vec<Masked<NewznabIndexer>>> {
     settings
         .service()
@@ -1669,6 +1776,7 @@ pub async fn list_indexers(
 )]
 pub async fn create_indexer(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<NewznabIndexer>>,
 ) -> JsonResult<IndexerSavedResponse> {
     settings
@@ -1690,6 +1798,7 @@ pub async fn create_indexer(
 )]
 pub async fn update_indexer(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     Path(id): Path<String>,
     ValidJson(body): ValidJson<Masked<NewznabIndexer>>,
 ) -> JsonResult<IndexerSavedResponse> {
@@ -1711,6 +1820,7 @@ pub async fn update_indexer(
 )]
 pub async fn delete_indexer(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     Path(id): Path<String>,
 ) -> JsonResult<OperationResult> {
     settings.service().delete_indexer(&id).await?;
@@ -1727,6 +1837,7 @@ pub async fn delete_indexer(
 )]
 pub async fn reorder_indexers(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<IndexerReorderRequest>,
 ) -> JsonResult<OperationResult> {
     settings
@@ -1747,6 +1858,7 @@ pub async fn reorder_indexers(
 )]
 pub async fn test_indexer(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<Masked<NewznabIndexer>>,
 ) -> JsonResult<IndexerTestResponse> {
     settings
@@ -1768,6 +1880,7 @@ pub async fn test_indexer(
 )]
 pub async fn get_musicbrainz(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<MusicBrainzSettingsView> {
     settings.lifecycle().get().map(Json).map_err(ApiError::from)
 }
@@ -1783,6 +1896,7 @@ pub async fn get_musicbrainz(
 )]
 pub async fn put_musicbrainz(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<MusicBrainzSettingsUpdate>,
 ) -> JsonResult<MusicBrainzSettingsView> {
     settings
@@ -1802,6 +1916,7 @@ pub async fn put_musicbrainz(
 )]
 pub async fn stage_brainzmash(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<MusicBrainzSettingsView> {
     settings
         .lifecycle()
@@ -1825,12 +1940,12 @@ pub async fn stage_brainzmash(
 )]
 pub async fn consent_brainzmash(
     State(settings): State<SettingsSetup>,
-    Extension(admin): Extension<AdminUser>,
+    caller: Admin,
     ValidJson(body): ValidJson<MusicBrainzBindingRequest>,
 ) -> JsonResult<MusicBrainzSettingsView> {
     settings
         .lifecycle()
-        .consent(&body, &admin.user_id)
+        .consent(&body, &caller)
         .map(Json)
         .map_err(ApiError::from)
 }
@@ -1850,6 +1965,7 @@ pub async fn consent_brainzmash(
 )]
 pub async fn verify_musicbrainz(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<MusicBrainzVerifyRequest>,
 ) -> JsonResult<MusicBrainzSettingsView> {
     settings
@@ -1873,6 +1989,7 @@ pub async fn verify_musicbrainz(
 )]
 pub async fn activate_brainzmash(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<MusicBrainzBindingRequest>,
 ) -> JsonResult<MusicBrainzSettingsView> {
     settings
@@ -1894,6 +2011,7 @@ pub async fn activate_brainzmash(
 )]
 pub async fn get_library_management(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<LibraryManagementSettingsResponse> {
     settings
         .management(|service| service.get_settings())
@@ -1917,6 +2035,7 @@ pub async fn get_library_management(
 )]
 pub async fn put_library_management(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<LibraryManagementSaveRequest>,
 ) -> JsonResult<LibraryManagementSettingsResponse> {
     settings
@@ -1937,6 +2056,7 @@ pub async fn put_library_management(
 )]
 pub async fn get_library_management_activation_health(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
 ) -> JsonResult<ActivationHealth> {
     settings
         .management(|service| service.activation_health())
@@ -1955,6 +2075,7 @@ pub async fn get_library_management_activation_health(
 )]
 pub async fn preview_library_management_impact(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<LibraryManagementSettingsImpactRequest>,
 ) -> JsonResult<ChangeImpact> {
     settings
@@ -1977,9 +2098,10 @@ pub async fn preview_library_management_impact(
 )]
 pub async fn validate_library_management(
     State(settings): State<SettingsSetup>,
+    caller: Admin,
     ValidJson(body): ValidJson<LibraryManagementSettingsImpactRequest>,
 ) -> JsonResult<ChangeImpact> {
-    preview_library_management_impact(State(settings), ValidJson(body)).await
+    preview_library_management_impact(State(settings), caller, ValidJson(body)).await
 }
 
 /// Read one profile.
@@ -1992,6 +2114,7 @@ pub async fn validate_library_management(
 )]
 pub async fn get_library_management_profile(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     Path(profile_id): Path<String>,
 ) -> JsonResult<LibraryManagementProfile> {
     settings
@@ -2011,6 +2134,7 @@ pub async fn get_library_management_profile(
 )]
 pub async fn create_library_management_profile(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<LibraryManagementProfileCreateRequest>,
 ) -> JsonResult<LibraryManagementProfileMutationResponse> {
     settings
@@ -2037,6 +2161,7 @@ pub async fn create_library_management_profile(
 )]
 pub async fn copy_library_management_profile(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     Path(profile_id): Path<String>,
     ValidJson(body): ValidJson<LibraryManagementProfileCopyRequest>,
 ) -> JsonResult<LibraryManagementProfileMutationResponse> {
@@ -2060,6 +2185,7 @@ pub async fn copy_library_management_profile(
 )]
 pub async fn update_library_management_profile(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     Path(profile_id): Path<String>,
     ValidJson(body): ValidJson<LibraryManagementProfileUpdateRequest>,
 ) -> JsonResult<LibraryManagementProfileMutationResponse> {
@@ -2083,6 +2209,7 @@ pub async fn update_library_management_profile(
 )]
 pub async fn delete_library_management_profile(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     Path(profile_id): Path<String>,
     ValidJson(body): ValidJson<LibraryManagementProfileDeleteRequest>,
 ) -> JsonResult<LibraryManagementSettingsResponse> {
@@ -2105,6 +2232,7 @@ pub async fn delete_library_management_profile(
 )]
 pub async fn get_library_management_preset_diff(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     Path(profile_id): Path<String>,
 ) -> JsonResult<PresetDiff> {
     settings
@@ -2125,6 +2253,7 @@ pub async fn get_library_management_preset_diff(
 )]
 pub async fn export_library_management_profile(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     Path(profile_id): Path<String>,
     ValidJson(body): ValidJson<LibraryManagementProfileExportRequest>,
 ) -> JsonResult<LibraryManagementProfileExportResponse> {
@@ -2147,6 +2276,7 @@ pub async fn export_library_management_profile(
 )]
 pub async fn preview_library_management_profile_import(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<LibraryManagementProfileImportPreviewRequest>,
 ) -> JsonResult<LibraryManagementProfileImportPreviewResponse> {
     settings
@@ -2171,6 +2301,7 @@ pub async fn preview_library_management_profile_import(
 )]
 pub async fn import_library_management_profile(
     State(settings): State<SettingsSetup>,
+    _caller: Admin,
     ValidJson(body): ValidJson<LibraryManagementProfileImportRequest>,
 ) -> JsonResult<LibraryManagementProfileImportResponse> {
     settings
@@ -2196,7 +2327,7 @@ pub async fn import_library_management_profile(
     path = "/api/v3/settings/library/sync",
     responses((status = 410, description = "Section dropped in v3"))
 )]
-pub async fn dropped_library_sync() -> JsonResult<serde_json::Value> {
+pub async fn dropped_library_sync(_caller: Admin) -> JsonResult<serde_json::Value> {
     super::validator::ensure_kept_section("library_sync_settings")?;
     Ok(Json(serde_json::Value::Null))
 }
@@ -2208,8 +2339,8 @@ pub async fn dropped_library_sync() -> JsonResult<serde_json::Value> {
     path = "/api/v3/settings/library/sync",
     responses((status = 410, description = "Section dropped in v3"))
 )]
-pub async fn dropped_library_sync_put() -> JsonResult<serde_json::Value> {
-    dropped_library_sync().await
+pub async fn dropped_library_sync_put(caller: Admin) -> JsonResult<serde_json::Value> {
+    dropped_library_sync(caller).await
 }
 
 // --- section prefs (per-user) ------------------------------------------------------
@@ -2223,7 +2354,7 @@ pub async fn dropped_library_sync_put() -> JsonResult<serde_json::Value> {
 )]
 pub async fn get_section_prefs(
     State(settings): State<SettingsSetup>,
-    Extension(session): Extension<CurrentSession>,
+    User(caller): User,
 ) -> JsonResult<SectionPrefsResponse> {
     let prefs = settings.prefs().ok_or_else(|| SettingsError::Unavailable {
         cause: "Section prefs need the database.".to_owned(),
@@ -2236,7 +2367,7 @@ pub async fn get_section_prefs(
     super::section_prefs::full_response(
         prefs.store.as_ref(),
         prefs.links.as_ref(),
-        &session.user_id,
+        caller.user_id(),
         lastfm_master,
     )
     .await
@@ -2258,7 +2389,7 @@ pub async fn get_section_prefs(
 )]
 pub async fn put_section_prefs(
     State(settings): State<SettingsSetup>,
-    Extension(session): Extension<CurrentSession>,
+    User(caller): User,
     ValidJson(body): ValidJson<SectionPrefsUpdate>,
 ) -> JsonResult<SectionPrefsResponse> {
     let prefs = settings.prefs().ok_or_else(|| SettingsError::Unavailable {
@@ -2272,7 +2403,7 @@ pub async fn put_section_prefs(
     let items = super::section_prefs::save_page(
         prefs.store.as_ref(),
         prefs.links.as_ref(),
-        &session.user_id,
+        caller.user_id(),
         &body,
         lastfm_master,
     )
