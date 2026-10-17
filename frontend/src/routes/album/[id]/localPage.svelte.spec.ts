@@ -167,8 +167,6 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	writeEditionTags: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	undoTagWrite: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	editionsKey: (id: string) => ['editions', id],
-	setEditionPin: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
-	clearEditionPin: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
 	getEditionPlanQuery: () => ({
 		get data() {
 			return h.plan;

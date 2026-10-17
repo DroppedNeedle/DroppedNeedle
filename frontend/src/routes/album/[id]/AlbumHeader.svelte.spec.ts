@@ -12,8 +12,6 @@ import type {
 
 const h = vi.hoisted(() => ({
 	editions: undefined as AlbumEditionsResponse | undefined,
-	setPin: vi.fn(),
-	clearPin: vi.fn(),
 	acquire: vi.fn()
 }));
 
@@ -26,8 +24,6 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 			return h.editions;
 		}
 	}),
-	setEditionPin: () => ({ mutateAsync: h.setPin, isPending: false }),
-	clearEditionPin: () => ({ mutateAsync: h.clearPin, isPending: false }),
 	acquireEdition: () => ({ mutateAsync: h.acquire, isPending: false }),
 	getAlbumEditionStatusQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getEditionTracksQuery: () => ({ data: undefined, isLoading: false, isError: false }),

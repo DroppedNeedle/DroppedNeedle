@@ -549,27 +549,3 @@ pub struct ApprovalBatchListResponse {
     /// Batch count.
     pub count: usize,
 }
-
-// The per-album edition.
-
-/// The album's edition. `selected_release_mbid` is the album's edition
-/// (its identity row); `pinned_release_mbid` is set when a person chose it.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct EditionPinResponse {
-    /// Album id.
-    pub album_id: String,
-    /// The edition, when a person chose it.
-    pub pinned_release_mbid: Option<String>,
-    /// The album's edition.
-    pub selected_release_mbid: Option<String>,
-    /// Who decided: `pin` (a person), `default` (automatic best fit), or
-    /// `none` (not identified).
-    pub hint_source: String,
-}
-
-/// Pin-set body.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct EditionPinBody {
-    /// Any MusicBrainz release, from this album's group or another.
-    pub release_mbid: String,
-}

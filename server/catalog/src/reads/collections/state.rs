@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use super::db::CollectionsDb;
 use super::store::Stores;
-use droppedneedle_library::operations::port::{EditionChoices, NoEditionChoices};
 
 /// Auto-download state of one follow, as the routes show it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,8 +119,6 @@ pub struct CollectionsState {
     pub acquire_approvals: Option<Arc<dyn PendingApprovalsSource>>,
     /// Seed sink into the acquire approval store, when wired.
     pub approval_seeds: Option<Arc<dyn ApprovalSeedSink>>,
-    /// The library's edition operation, wired once the library exists.
-    pub editions: Arc<dyn EditionChoices>,
 }
 
 impl CollectionsState {
@@ -132,7 +129,6 @@ impl CollectionsState {
             db,
             acquire_approvals: None,
             approval_seeds: None,
-            editions: Arc::new(NoEditionChoices),
         }
     }
 

@@ -1651,12 +1651,6 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/albums/{album_id}/tracks", Posture::User),
     ("GET", "/api/v3/albums/{album_id}/editions", Posture::User),
     ("POST", "/api/v3/albums/{album_id}/refresh", Posture::User),
-    ("PUT", "/api/v3/albums/{album_id}/edition", Posture::Curator),
-    (
-        "DELETE",
-        "/api/v3/albums/{album_id}/edition",
-        Posture::Curator,
-    ),
     ("GET", "/api/v3/albums/{album_id}/similar", Posture::User),
     (
         "GET",
@@ -1862,21 +1856,6 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "GET",
         "/api/v3/requests/auto-download-approval-batches",
         Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/albums/{album_id}/edition-pin",
-        Posture::User,
-    ),
-    (
-        "PUT",
-        "/api/v3/library/albums/{album_id}/edition-pin",
-        Posture::Curator,
-    ),
-    (
-        "DELETE",
-        "/api/v3/library/albums/{album_id}/edition-pin",
-        Posture::Curator,
     ),
     // Platform: covers, version, wrapped.
     (
@@ -2931,16 +2910,6 @@ async fn auth_on_every_endpoint() {
             "POST" | "PUT" | "PATCH" => Some(json!({})),
             _ => None,
         };
-        // Pin writes gate the role inside the service, after the body
-        // parses: a shaped body reaches the curator check (403 for plain
-        // users) instead of failing body validation first.
-        if matches!(
-            (*method, *template),
-            ("PUT", "/api/v3/library/albums/{album_id}/edition-pin")
-                | ("PUT", "/api/v3/albums/{album_id}/edition")
-        ) {
-            body = Some(json!({"release_mbid": "e2e-dummy-id"}));
-        }
         if *template == "/api/v3/import/items/{item_id}/match" {
             body = Some(json!({"release_group_mbid": "e2e-dummy-id"}));
         }
@@ -3035,16 +3004,6 @@ async fn auth_on_every_endpoint() {
             "POST" | "PUT" | "PATCH" => Some(json!({})),
             _ => None,
         };
-        // Shaped pin body, as in the user pass: the admin reaches the
-        // service (404 on the empty catalog, 400 for the dummy album id)
-        // instead of failing validation.
-        if matches!(
-            (*method, *template),
-            ("PUT", "/api/v3/library/albums/{album_id}/edition-pin")
-                | ("PUT", "/api/v3/albums/{album_id}/edition")
-        ) {
-            body = Some(json!({"release_mbid": "e2e-dummy-id"}));
-        }
         // Shaped binding body: a BrainzMash binding on a non-Brainzmash
         // selection answers 400 without probing. The empty object would
         // decode as a default tier update and probe MusicBrainz for real,
@@ -3171,7 +3130,7 @@ async fn auth_on_every_endpoint() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn trusted_tier_pins_admitted_approvals_forbidden() {
+async fn trusted_tier_edition_admitted_approvals_forbidden() {
     let e2e = E2e::open("trusted-tier").await;
     let (_, admin_token) =
         setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
@@ -3206,18 +3165,18 @@ async fn trusted_tier_pins_admitted_approvals_forbidden() {
     let tris_auth = bearer(body["token"].as_str().expect("user token"));
     let tris_headers = [("authorization", tris_auth.as_str())];
 
-    // Curator pin write reaches the service: 404 on the empty edition
-    // catalog proves the role gate admitted (a plain user 403s here).
+    // Choosing an edition reaches the service: 400 for the dummy release
+    // id proves the role gate admitted (a plain user 403s here).
     let (status, body, _) = call(
         e2e.router(),
         "PUT",
-        "/api/v3/library/albums/e2e-dummy-id/edition-pin",
+        "/api/v3/library/albums/e2e-dummy-id/edition",
         &tris_headers,
         Some(json!({"release_mbid": "e2e-dummy-id"})),
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    assert_eq!(error_code(&body), "NOT_FOUND");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(error_code(&body), "RELEASE_MBID_INVALID");
 
     // A custom edition and "leave unmanaged" are an admin's word.
     for (path, body) in [

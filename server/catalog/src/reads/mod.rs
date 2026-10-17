@@ -237,21 +237,6 @@ impl ReadsSetup {
         self
     }
 
-    /// Choose album editions (album pages of both the catalog and the
-    /// collections) through the library's edition operation, which is
-    /// built after the reads bundle.
-    #[must_use]
-    pub fn with_edition_choices(
-        mut self,
-        editions: Arc<dyn droppedneedle_library::operations::port::EditionChoices>,
-    ) -> Self {
-        self.collections.editions = editions.clone();
-        if let Some(deps) = self.catalog.as_mut() {
-            deps.catalog = deps.catalog.clone().with_edition_choices(editions);
-        }
-        self
-    }
-
     /// Relative-path routers for nesting under `/api/v3` inside the session
     /// gate. The collections leg carries the principal-translation layer so
     /// its handlers keep their `Principal` extractor against the real gate.

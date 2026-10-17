@@ -16,11 +16,11 @@ use super::{
     models::{
         AddTracksBody, AddTracksResponse, ApprovalBatchListResponse,
         AutoDownloadApprovalListResponse, AutoDownloadBody, CheckTracksBody, CheckTracksResponse,
-        CoverUploadBody, CoverUploadResponse, CreatePlaylistBody, EditionPinBody,
-        EditionPinResponse, FavoriteListResponse, FavoriteQuery, FavoriteStatusResponse,
-        FollowBody, FollowStatusResponse, FollowedArtistListResponse, NewReleaseListResponse,
-        NewReleasePageQuery, PlaylistDetail, PlaylistListResponse, PlaylistSummary, PlaylistTrack,
-        RecentReleasesQuery, RemoveTracksBody, RemoveTracksResponse, ReorderBody, ReorderResponse,
+        CoverUploadBody, CoverUploadResponse, CreatePlaylistBody, FavoriteListResponse,
+        FavoriteQuery, FavoriteStatusResponse, FollowBody, FollowStatusResponse,
+        FollowedArtistListResponse, NewReleaseListResponse, NewReleasePageQuery, PlaylistDetail,
+        PlaylistListResponse, PlaylistSummary, PlaylistTrack, RecentReleasesQuery,
+        RemoveTracksBody, RemoveTracksResponse, ReorderBody, ReorderResponse,
         ResolveSourcesResponse, SetFavoriteBody, StatusResponse, UnseenCountResponse,
         UpdatePlaylistBody, UpdateTrackBody, VisibilityBody,
     },
@@ -750,83 +750,6 @@ pub async fn list_approval_batches_handler(
     Ok(Json(
         CollectionsService::new(&state)
             .list_approval_batches(&caller)
-            .await?,
-    ))
-}
-
-/// Read the pin display lane for one album.
-#[utoipa::path(
-    get,
-    path = "/api/v3/library/albums/{album_id}/edition-pin",
-    tag = "collections",
-    params(("album_id" = String, Path, description = "Album id")),
-    responses(
-        (status = 200, description = "Pin display", body = EditionPinResponse),
-        (status = 401, description = "Not authenticated"),
-        (status = 404, description = "Unknown album id"),
-    )
-)]
-pub async fn get_pin_handler(
-    State(state): State<CollectionsState>,
-    _caller: Principal,
-    Path(album_id): Path<String>,
-) -> HttpResult<Json<EditionPinResponse>> {
-    Ok(Json(
-        CollectionsService::new(&state)
-            .edition_pin(&album_id)
-            .await?,
-    ))
-}
-
-/// Pin one edition for an album.
-#[utoipa::path(
-    put,
-    path = "/api/v3/library/albums/{album_id}/edition-pin",
-    tag = "collections",
-    params(("album_id" = String, Path, description = "Album id")),
-    request_body = EditionPinBody,
-    responses(
-        (status = 200, description = "Pin display", body = EditionPinResponse),
-        (status = 400, description = "Unknown edition for this album"),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Curator role required"),
-        (status = 404, description = "Unknown album id"),
-    )
-)]
-pub async fn set_pin_handler(
-    State(state): State<CollectionsState>,
-    caller: Principal,
-    Path(album_id): Path<String>,
-    ValidJson(body): ValidJson<EditionPinBody>,
-) -> HttpResult<Json<EditionPinResponse>> {
-    Ok(Json(
-        CollectionsService::new(&state)
-            .set_edition_pin(&caller, &album_id, &body.release_mbid)
-            .await?,
-    ))
-}
-
-/// Clear the pin for an album.
-#[utoipa::path(
-    delete,
-    path = "/api/v3/library/albums/{album_id}/edition-pin",
-    tag = "collections",
-    params(("album_id" = String, Path, description = "Album id")),
-    responses(
-        (status = 200, description = "Pin display", body = EditionPinResponse),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Curator role required"),
-        (status = 404, description = "Unknown album id"),
-    )
-)]
-pub async fn clear_pin_handler(
-    State(state): State<CollectionsState>,
-    caller: Principal,
-    Path(album_id): Path<String>,
-) -> HttpResult<Json<EditionPinResponse>> {
-    Ok(Json(
-        CollectionsService::new(&state)
-            .clear_edition_pin(&caller, &album_id)
             .await?,
     ))
 }

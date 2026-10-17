@@ -1,4 +1,4 @@
-//! Collections: playlists, favorites, follows, approval reads, pins.
+//! Collections: playlists, favorites, follows, approval reads.
 //!
 //! Layout: `handlers` parse and render, `service` holds the rules and
 //! returns the domain [`error::CollectionsError`], `store` reads and
@@ -25,7 +25,7 @@ pub use state::CollectionsState;
 /// The collections routes behind the header test gate, for tests that
 /// mount them without the session middleware. Route posture per handler
 /// docs: playlists, favorites and follows need any authenticated user,
-/// approvals need admin, pin writes need curator.
+/// approvals need admin.
 #[cfg(any(test, feature = "test-support"))]
 pub fn collections_router(state: CollectionsState) -> Router {
     collections_routes(state).layer(axum::middleware::from_fn(auth::gate))
@@ -124,12 +124,6 @@ pub fn collections_routes(state: CollectionsState) -> Router {
         .route(
             "/requests/auto-download-approval-batches",
             routing::get(handlers::list_approval_batches_handler),
-        )
-        .route(
-            "/library/albums/{album_id}/edition-pin",
-            routing::get(handlers::get_pin_handler)
-                .put(handlers::set_pin_handler)
-                .delete(handlers::clear_pin_handler),
         )
         .with_state(state)
 }

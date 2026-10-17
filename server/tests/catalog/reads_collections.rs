@@ -95,21 +95,6 @@ impl Rig {
         let runtime = Self::boot(&dir).await;
         Self { dir, runtime }
     }
-
-    async fn exec(&self, sql: &'static str) {
-        self.runtime
-            .lane()
-            .write(
-                droppedneedle_kernel::db::Lane::Foreground,
-                "fixture",
-                move |tx| {
-                    tx.execute_batch(sql)?;
-                    Ok(())
-                },
-            )
-            .await
-            .unwrap();
-    }
 }
 
 fn request(
@@ -527,42 +512,6 @@ async fn follow_auto_download_states_and_admin_reads() {
 }
 
 #[tokio::test]
-async fn edition_pin_reads_the_identity_and_needs_a_curator() {
-    let rig = Rig::open().await;
-    rig.exec(
-        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
-         album_artist_id, grouping_source, created_at, updated_at) VALUES \
-         ('alb-1', 'root', 'k1', 'One', 'one', '00000000-0000-4000-8000-000000000002', 'automatic', 1, 1), \
-         ('alb-2', 'root', 'k2', 'One (Deluxe)', 'one (deluxe)', '00000000-0000-4000-8000-000000000002', 'automatic', 1, 1); \
-         INSERT INTO local_album_external_identities (local_album_id, release_group_mbid, \
-         release_mbid, decision_source, selected_at) VALUES \
-         ('alb-1', 'rg-1', 'rel-a', 'manual', 1), ('alb-2', 'rg-1', 'rel-b', 'automatic', 1);",
-    )
-    .await;
-    let app = rig.app();
-    let pin = "/library/albums/alb-1/edition-pin";
-
-    let (status, _) = call(
-        &app,
-        Method::PUT,
-        pin,
-        Some(ADA),
-        Some(json!({"release_mbid": "rel-b"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "pin writes need curator");
-    let (_, shown) = call(&app, Method::GET, pin, Some(ADA), None).await;
-    assert_eq!(
-        (
-            shown["selected_release_mbid"].as_str(),
-            shown["hint_source"].as_str()
-        ),
-        (Some("rel-a"), Some("pin")),
-        "a manual identity is the person's chosen edition"
-    );
-}
-
-#[tokio::test]
 async fn remote_playlist_import_lands_in_the_users_playlists() {
     use droppedneedle_catalog::reads::collections::remote_import::PlaylistImportSink;
     use droppedneedle_media::remotes::adapter::ImportSink as _;
@@ -627,7 +576,6 @@ async fn store_faults_render_fixed_500_envelopes() {
         "/favorites",
         "/following/artists",
         "/requests/auto-download-approvals",
-        "/library/albums/alb-1/edition-pin",
     ] {
         let (status, _, bytes) = send(&app, request(Method::GET, uri, Some(ADMIN), None)).await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{uri}");
@@ -635,7 +583,7 @@ async fn store_faults_render_fixed_500_envelopes() {
         assert_eq!(body["error"]["message"], "Internal server error");
         assert!(body["error"]["details"]["error_id"].is_string());
         let raw = String::from_utf8(bytes).unwrap();
-        assert!(!raw.contains("wired") && !raw.contains("alb-1"), "{raw}");
+        assert!(!raw.contains("wired"), "{raw}");
     }
 }
 

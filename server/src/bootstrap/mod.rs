@@ -343,9 +343,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         runtime.pool().clone(),
         library.root_source(),
     ));
-    reads = reads.with_edition_choices(Arc::new(
-        droppedneedle_library::operations::service::Operations::new(&library),
-    ));
     let (media, media_workers) = MediaSetup::build(
         &config.library_db_path,
         &config,

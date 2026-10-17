@@ -627,24 +627,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/albums/{album_id}/edition": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Pin an edition by release group (v2's route). Curators only. */
-        put: operations["set_album_edition"];
-        post?: never;
-        /** Clear the edition pin (v2's route). Curators only. */
-        delete: operations["clear_album_edition"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v3/albums/{album_id}/edition/acquire": {
         parameters: {
             query?: never;
@@ -3120,25 +3102,6 @@ export interface paths {
          *     fit for the files again.
          */
         delete: operations["hand_back_edition"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/library/albums/{album_id}/edition-pin": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read the pin display lane for one album. */
-        get: operations["get_pin_handler"];
-        /** Pin one edition for an album. */
-        put: operations["set_pin_handler"];
-        post?: never;
-        /** Clear the pin for an album. */
-        delete: operations["clear_pin_handler"];
         options?: never;
         head?: never;
         patch?: never;
@@ -13645,28 +13608,6 @@ export interface components {
             /** Format: int32 */
             track_count: number;
         };
-        /** @description Pin-set body. */
-        EditionPinBody: {
-            /** @description Any MusicBrainz release, from this album's group or another. */
-            release_mbid: string;
-        };
-        /**
-         * @description The album's edition. `selected_release_mbid` is the album's edition
-         *     (its identity row); `pinned_release_mbid` is set when a person chose it.
-         */
-        EditionPinResponse: {
-            /** @description Album id. */
-            album_id: string;
-            /**
-             * @description Who decided: `pin` (a person), `default` (automatic best fit), or
-             *     `none` (not identified).
-             */
-            hint_source: string;
-            /** @description The edition, when a person chose it. */
-            pinned_release_mbid?: string | null;
-            /** @description The album's edition. */
-            selected_release_mbid?: string | null;
-        };
         /** @description The chosen edition's files are still being placed on it. */
         EditionPlacingView: {
             /**
@@ -14614,16 +14555,6 @@ export interface components {
             published_at: string;
             /** @description Release tag. */
             tag_name: string;
-        };
-        /** @description Body for `PUT /albums/{album_id}/edition`. */
-        GroupEditionPinBody: {
-            /** @description Release MBID to pin; must be one of the album's editions. */
-            release_mbid: string;
-        };
-        /** @description Answer for the edition pin routes. */
-        GroupEditionPinResponse: {
-            /** @description The pinned edition, or absent after a clear. */
-            pinned_release_mbid?: string | null;
         };
         /** @description Answer to handing every album back. */
         HandBackAllResponse: {
@@ -24679,126 +24610,6 @@ export interface operations {
             };
         };
     };
-    set_album_edition: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Release-group MBID, or a library album id identified as one */
-                album_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GroupEditionPinBody"];
-            };
-        };
-        responses: {
-            /** @description Pinned */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GroupEditionPinResponse"];
-                };
-            };
-            /** @description Not a MusicBrainz id or bad body */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Not a curator */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Unknown album, edition not of this album, or album not in the library */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The library holds the album more than once */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    clear_album_edition: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Release-group MBID, or a library album id identified as one */
-                album_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Cleared */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GroupEditionPinResponse"];
-                };
-            };
-            /** @description Not a MusicBrainz id */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Not a curator */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Unknown album or album not in the library */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The library holds the album more than once */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     acquire_edition_handler: {
         parameters: {
             query?: {
@@ -29619,142 +29430,6 @@ export interface operations {
                 content?: never;
             };
             /** @description Unknown album */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    get_pin_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Album id */
-                album_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Pin display */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EditionPinResponse"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Unknown album id */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    set_pin_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Album id */
-                album_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EditionPinBody"];
-            };
-        };
-        responses: {
-            /** @description Pin display */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EditionPinResponse"];
-                };
-            };
-            /** @description Unknown edition for this album */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Curator role required */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Unknown album id */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    clear_pin_handler: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Album id */
-                album_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Pin display */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EditionPinResponse"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Curator role required */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Unknown album id */
             404: {
                 headers: {
                     [name: string]: unknown;

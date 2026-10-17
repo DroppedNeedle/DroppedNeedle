@@ -14,7 +14,6 @@ use droppedneedle_providers::{IntegrationStatus, RequestPriority, record_current
 use super::artist::{LASTFM_TTL, checked_mbid};
 use super::error::CatalogError;
 use super::mapping;
-use super::models::GroupEditionPinResponse;
 use super::models::{
     AlbumBasicInfo, AlbumEditionItem, AlbumEditionsResponse, AlbumImages, AlbumInfo, AlbumTrack,
     AlbumTracksInfo, CatalogSource, LastFmAlbumEnrichment, LastFmTag, PluginDetails, PurchaseKind,
@@ -361,14 +360,8 @@ impl Catalog {
     /// id resolves to the group it is identified as, as in v2; anything
     /// else that is not an MBID is rejected.
     async fn album_id(&self, raw_id: &str) -> Result<String, CatalogError> {
-        Ok(self.album_ref(raw_id).await?.0)
-    }
-
-    /// [`Self::album_id`] plus the live library album when the id named
-    /// one.
-    async fn album_ref(&self, raw_id: &str) -> Result<(String, Option<String>), CatalogError> {
         if let Ok(id) = checked_mbid(raw_id, "album") {
-            return Ok((id, None));
+            return Ok(id);
         }
         let local = raw_id.trim();
         if !local.is_empty() && local.len() <= 128 {
@@ -377,21 +370,11 @@ impl Catalog {
                 .group_for_album(local)
                 .await
                 .map_err(CatalogError::database)?;
-            if let Some((group, album)) = found.filter(|(group, _)| is_mbid(group)) {
-                return Ok((group.to_ascii_lowercase(), Some(album)));
+            if let Some(group) = found.filter(|group| is_mbid(group)) {
+                return Ok(group.to_ascii_lowercase());
             }
         }
-        checked_mbid(raw_id, "album").map(|id| (id, None))
-    }
-
-    /// A release-group detail already in the cache; never dials out.
-    async fn cached_group_detail(&self, mbid: &str) -> Option<GroupDetail> {
-        let bytes = self
-            .upstream()
-            .cache()
-            .get_bytes(&self.group_key(mbid))
-            .await?;
-        serde_json::from_slice::<GroupCore>(&bytes).ok().flatten()
+        checked_mbid(raw_id, "album")
     }
 
     /// `GET /albums/{album_id}/basic`: the header. A dead MusicBrainz falls
@@ -889,122 +872,6 @@ impl Catalog {
         self.album_basic(&id).await
     }
 
-    /// Whether the user may choose editions: admins and trusted users (v2
-    /// curators). A user who is gone reads as not allowed.
-    async fn require_curator(&self, user_id: &str) -> Result<(), CatalogError> {
-        use droppedneedle_auth::users::roles::Role;
-        let user = self
-            .upstream()
-            .users()
-            .users
-            .get_by_id(user_id)
-            .await
-            .map_err(|error| CatalogError::Internal(format!("user read: {error:?}")))?;
-        match user.map(|user| user.role) {
-            Some(Role::Admin | Role::Trusted) => Ok(()),
-            _ => Err(CatalogError::Forbidden),
-        }
-    }
-
-    /// The library copy of a release group an edition choice applies to.
-    /// v2 pinned per release group; v3 chooses per library copy, so a copy
-    /// named by its library id is the target, and a group named by MBID
-    /// must be held exactly once.
-    async fn choice_target(
-        &self,
-        group: &str,
-        named: Option<String>,
-    ) -> Result<String, CatalogError> {
-        if let Some(album) = named {
-            return Ok(album);
-        }
-        let mut albums = self
-            .local()
-            .albums_for_group(group)
-            .await
-            .map_err(CatalogError::database)?;
-        match albums.len() {
-            0 => Err(CatalogError::Missing(
-                "This album is not in the library, so there is no copy to choose an edition for"
-                    .to_owned(),
-            )),
-            1 => Ok(albums.remove(0)),
-            _ => Err(CatalogError::Conflict(
-                "The library holds this album more than once; choose the edition on the copy's own page"
-                    .to_owned(),
-            )),
-        }
-    }
-
-    /// Drop the cached answers an edition change alters. Release keys come
-    /// from the group detail when one is cached.
-    async fn forget_album(&self, mbid: &str) {
-        let cached = self.cached_group_detail(mbid).await;
-        let mut keys = vec![
-            self.group_key(mbid),
-            self.purchase_key(mbid),
-            self.editions_key(mbid),
-        ];
-        if let Some(group) = cached.as_ref() {
-            keys.push(self.group_key(&group.mbid));
-            keys.push(self.purchase_key(&group.mbid));
-            keys.extend(
-                group
-                    .releases
-                    .iter()
-                    .map(|release| self.release_key(&release.id)),
-            );
-        }
-        self.forget(&keys).await;
-    }
-
-    /// `PUT /albums/{album_id}/edition`: choose the edition of the
-    /// library's copy of the album (v2's pin route). Curators only. Any
-    /// release counts, even one of another release group; the library's
-    /// edition operation does the work.
-    pub async fn set_group_edition_pin(
-        &self,
-        user_id: &str,
-        raw_id: &str,
-        release_mbid: &str,
-    ) -> Result<GroupEditionPinResponse, CatalogError> {
-        self.require_curator(user_id).await?;
-        let (id, named) = self.album_ref(raw_id).await?;
-        let album = self.choice_target(&id, named).await?;
-        let choice = self
-            .editions
-            .choose(&album, release_mbid, user_id)
-            .await
-            .map_err(choice_error)?;
-        self.forget_album(&id).await;
-        if !choice.release_group_mbid.eq_ignore_ascii_case(&id) {
-            self.forget_album(&choice.release_group_mbid).await;
-        }
-        Ok(GroupEditionPinResponse {
-            pinned_release_mbid: Some(choice.release_mbid),
-        })
-    }
-
-    /// `DELETE /albums/{album_id}/edition`: "Let DroppedNeedle choose" for
-    /// the library's copy. Curators only.
-    pub async fn clear_group_edition_pin(
-        &self,
-        user_id: &str,
-        raw_id: &str,
-    ) -> Result<GroupEditionPinResponse, CatalogError> {
-        self.require_curator(user_id).await?;
-        let (id, named) = self.album_ref(raw_id).await?;
-        let album = self.choice_target(&id, named).await?;
-        self.editions
-            .hand_back(&album, user_id)
-            .await
-            .map_err(choice_error)?;
-        self.forget_album(&id).await;
-        Ok(GroupEditionPinResponse {
-            pinned_release_mbid: None,
-        })
-    }
-
     /// The purchase cache key: per MusicBrainz source, store region and set
     /// of extra link providers.
     fn purchase_key(&self, mbid: &str) -> String {
@@ -1236,22 +1103,6 @@ fn bandcamp_album_search(term: &str) -> String {
         "https://bandcamp.com/search?q={}&item_type=a",
         mapping::quote_plus(term.trim())
     )
-}
-
-/// An edition operation's refusal as a catalog error, keeping its sentence
-/// and what to do about it.
-fn choice_error(error: droppedneedle_library::operations::models::OperationError) -> CatalogError {
-    use droppedneedle_library::operations::models::OperationError;
-    let said = |reason: droppedneedle_library::operations::reasons::Reason| {
-        format!("{} {}", reason.message, reason.action)
-    };
-    match error {
-        OperationError::NotFound(reason) => CatalogError::Missing(said(reason)),
-        OperationError::Invalid(reason) => CatalogError::Invalid(said(reason)),
-        OperationError::Conflict(reason) => CatalogError::Conflict(said(reason)),
-        OperationError::Unavailable(cause) => CatalogError::Unavailable(cause),
-        OperationError::Store(cause) => CatalogError::Internal(cause),
-    }
 }
 
 /// The editions the group lookup itself lists.

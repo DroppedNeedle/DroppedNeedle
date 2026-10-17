@@ -3,8 +3,6 @@
 //! loopback fixture server (tests/fixtures/catalog). One test per page,
 //! the MusicBrainz outage fallback, and the auth matrix rows.
 
-use droppedneedle_library::operations::models::{EditionChoice, OperationError};
-use droppedneedle_library::operations::port::{BoxFuture as PortFuture, EditionChoices};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -841,94 +839,6 @@ async fn unified_search_joins_musicbrainz_with_the_library() {
     assert_eq!(album["in_library"], true);
 }
 
-/// Edition choices recorded for assertions.
-#[derive(Default)]
-struct RecordedPins(Mutex<Vec<String>>);
-
-impl EditionChoices for RecordedPins {
-    fn choose<'a>(
-        &'a self,
-        album_id: &'a str,
-        release_mbid: &'a str,
-        _user_id: &'a str,
-    ) -> PortFuture<'a, Result<EditionChoice, OperationError>> {
-        Box::pin(async move {
-            self.0
-                .lock()
-                .unwrap()
-                .push(format!("set {album_id} {release_mbid}"));
-            Err(OperationError::Store("not scripted".to_owned()))
-        })
-    }
-
-    fn hand_back<'a>(
-        &'a self,
-        album_id: &'a str,
-        _user_id: &'a str,
-    ) -> PortFuture<'a, Result<(), OperationError>> {
-        Box::pin(async move {
-            self.0.lock().unwrap().push(format!("clear {album_id}"));
-            Ok(())
-        })
-    }
-}
-
-#[tokio::test]
-async fn clearing_a_pin_names_the_copy_and_never_calls_musicbrainz() {
-    let (pool, _dir) = crate::common::migrated_pool("reads-catalog").await;
-    seed_library(&pool).await;
-    // A second copy of OK Computer makes the group ambiguous.
-    for statement in [
-        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
-         album_artist_name, album_artist_name_folded, album_artist_id, year, \
-         grouping_source, created_at, updated_at) VALUES ('album-okc-2', 'root-1', \
-         'g-okc-2', 'OK Computer', 'ok computer', 'Radiohead', 'radiohead', \
-         'artist-radiohead', 1997, 'manual', 2, 2)"
-            .to_owned(),
-        format!(
-            "INSERT INTO local_album_external_identities \
-             (local_album_id, provider, release_group_mbid, release_mbid, decision_source, \
-             selected_at) VALUES ('album-okc-2', 'musicbrainz', '{OK_COMPUTER}', \
-             '{RELEASE_CD}', 'manual', 0)"
-        ),
-    ] {
-        sqlx::query(&statement).execute(&pool).await.unwrap();
-    }
-    let rig = TestRig::new().unwrap();
-    let curator = rig
-        .seed_user("curator", droppedneedle_auth::users::roles::Role::Trusted)
-        .await;
-    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
-    // Nothing listens here: any MusicBrainz call would fail the clear.
-    let upstream = Upstream::new(
-        &http,
-        Arc::new(Providers::unpaced()),
-        Arc::new(TestSettings {
-            mb_url: "http://127.0.0.1:9/ws/2".to_owned(),
-        }),
-        rig.deps.clone(),
-        droppedneedle::bootstrap::Outbound::live().catalog(),
-    );
-    let pins = Arc::new(RecordedPins::default());
-    let catalog =
-        Catalog::new(upstream, LocalCatalog::new(pool)).with_edition_choices(pins.clone());
-
-    let error = catalog
-        .clear_group_edition_pin(&curator.id, OK_COMPUTER)
-        .await
-        .expect_err("two copies are ambiguous by group");
-    assert!(
-        matches!(error, catalog::error::CatalogError::Conflict(_)),
-        "{error:?}"
-    );
-    let cleared = catalog
-        .clear_group_edition_pin(&curator.id, "album-okc-2")
-        .await
-        .expect("a named copy clears");
-    assert_eq!(cleared.pinned_release_mbid, None);
-    assert_eq!(*pins.0.lock().unwrap(), ["clear album-okc-2"]);
-}
-
 #[tokio::test]
 async fn lastfm_reads_fall_back_to_the_instance_key() {
     let rig = TestRig::new().unwrap();
@@ -985,14 +895,6 @@ async fn auth_matrix_rejects_anonymous_callers_and_bad_ids() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let edition = format!("/api/v3/albums/{OK_COMPUTER}/edition");
-    for method in [Method::PUT, Method::DELETE] {
-        let (status, _) = call(&app, method, &edition, None).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-    }
-    let (status, body) = call(&app, Method::DELETE, &edition, Some(TOKEN)).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "pins are for curators");
-    assert_eq!(body["error"]["code"], "FORBIDDEN");
 
     let (status, body) = call(&app, Method::GET, "/api/v3/artists/radiohead", Some(TOKEN)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);

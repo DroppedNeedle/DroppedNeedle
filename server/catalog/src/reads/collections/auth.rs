@@ -73,17 +73,6 @@ impl Principal {
             })
         }
     }
-
-    /// Reject non-curators with 403.
-    pub fn require_curator(&self) -> Result<(), CollectionsError> {
-        if self.role.is_curator() {
-            Ok(())
-        } else {
-            Err(CollectionsError::Forbidden {
-                message: "Curator role required".to_owned(),
-            })
-        }
-    }
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for Principal {

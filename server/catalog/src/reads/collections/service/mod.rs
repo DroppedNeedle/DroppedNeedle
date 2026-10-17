@@ -1,5 +1,5 @@
 //! Collections business rules: playlist ownership and visibility, favorite
-//! kinds, follow and auto-download state, approval reads, edition pins.
+//! kinds, follow and auto-download state, approval reads.
 //!
 //! The service returns [`CollectionsError`](super::error::CollectionsError)
 //! and knows nothing of HTTP. Native handlers, both compat protocols and the
@@ -9,7 +9,6 @@
 mod approvals;
 mod favorites;
 mod follows;
-mod pins;
 mod play_marks;
 mod playlists;
 mod ratings;

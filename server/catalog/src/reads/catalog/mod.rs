@@ -31,7 +31,6 @@ pub mod precache;
 pub mod search;
 pub mod upstream;
 
-use droppedneedle_library::operations::port::{EditionChoices, NoEditionChoices};
 use std::collections::HashSet;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -39,7 +38,7 @@ use std::time::Duration;
 
 use axum::{
     Router,
-    routing::{get, post, put},
+    routing::{get, post},
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -62,7 +61,6 @@ pub struct Catalog {
     follows: Arc<dyn ports::FollowLookup>,
     purchase_links: Arc<dyn ports::PurchaseLinkSource>,
     details: Arc<dyn ports::DetailsSource>,
-    editions: Arc<dyn EditionChoices>,
 }
 
 /// How long plugin details are kept.
@@ -101,15 +99,7 @@ impl Catalog {
             follows: Arc::new(ports::NoFollows),
             purchase_links: Arc::new(ports::NoPurchaseLinks),
             details: Arc::new(ports::NoDetails),
-            editions: Arc::new(NoEditionChoices),
         }
-    }
-
-    /// Choose album editions through the library's edition operation.
-    #[must_use]
-    pub fn with_edition_choices(mut self, editions: Arc<dyn EditionChoices>) -> Self {
-        self.editions = editions;
-        self
     }
 
     /// Add extra purchase links (the plugins' `purchase_links`) from this
@@ -365,10 +355,6 @@ pub fn router(deps: CatalogDeps) -> Router {
             get(handlers::edition_tracks),
         )
         .route("/albums/{album_id}/refresh", post(handlers::album_refresh))
-        .route(
-            "/albums/{album_id}/edition",
-            put(handlers::set_album_edition).delete(handlers::clear_album_edition),
-        )
         .route("/albums/{album_id}/similar", get(handlers::similar_albums))
         .route(
             "/albums/{album_id}/plugin-details",

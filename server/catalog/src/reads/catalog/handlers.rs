@@ -17,9 +17,9 @@ use super::models::{
     AlbumArtistQuery, AlbumBasicInfo, AlbumEditionsResponse, AlbumInfo, AlbumLastFmQuery,
     AlbumTracksInfo, ArtistExtendedInfo, ArtistInfo, ArtistLastFmQuery,
     ArtistPurchaseOptionsResponse, ArtistPurchaseQuery, ArtistReleases, DiscoveryQuery,
-    GroupEditionPinBody, GroupEditionPinResponse, LastFmAlbumEnrichment, LastFmArtistEnrichment,
-    MoreByArtistResponse, PluginDetails, PurchaseOptionsResponse, ReleasesQuery,
-    SimilarAlbumsResponse, SimilarArtistsResponse, TopAlbumsResponse, TopSongsResponse,
+    LastFmAlbumEnrichment, LastFmArtistEnrichment, MoreByArtistResponse, PluginDetails,
+    PurchaseOptionsResponse, ReleasesQuery, SimilarAlbumsResponse, SimilarArtistsResponse,
+    TopAlbumsResponse, TopSongsResponse,
 };
 
 type Answer<T> = Result<Json<T>, CatalogHttpError>;
@@ -411,65 +411,6 @@ pub async fn album_refresh(
     Path(id): Path<String>,
 ) -> Answer<AlbumBasicInfo> {
     answer(&deps, deps.catalog.album_refresh(&id).await)
-}
-
-/// Pin an edition by release group (v2's route). Curators only.
-#[utoipa::path(
-    put,
-    tag = "catalog",
-    path = "/api/v3/albums/{album_id}/edition",
-    params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
-    request_body = GroupEditionPinBody,
-    responses(
-        (status = 200, description = "Pinned", body = GroupEditionPinResponse),
-        (status = 400, description = "Not a MusicBrainz id or bad body"),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Not a curator"),
-        (status = 404, description = "Unknown album, edition not of this album, or album not in the library"),
-        (status = 409, description = "The library holds the album more than once"),
-    )
-)]
-pub async fn set_album_edition(
-    State(deps): State<CatalogDeps>,
-    SessionUser(user): SessionUser,
-    Path(id): Path<String>,
-    body: Result<Json<GroupEditionPinBody>, axum::extract::rejection::JsonRejection>,
-) -> Answer<GroupEditionPinResponse> {
-    let Json(body) = body.map_err(|cause| {
-        CatalogHttpError::invalid(format!("Invalid request body: {cause}"), deps.ids.as_ref())
-    })?;
-    answer(
-        &deps,
-        deps.catalog
-            .set_group_edition_pin(&user, &id, &body.release_mbid)
-            .await,
-    )
-}
-
-/// Clear the edition pin (v2's route). Curators only.
-#[utoipa::path(
-    delete,
-    tag = "catalog",
-    path = "/api/v3/albums/{album_id}/edition",
-    params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
-    responses(
-        (status = 200, description = "Cleared", body = GroupEditionPinResponse),
-        (status = 400, description = "Not a MusicBrainz id"),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Not a curator"),
-        (status = 404, description = "Unknown album or album not in the library"),
-        (status = 409, description = "The library holds the album more than once"),
-    )
-)]
-pub async fn clear_album_edition(
-    State(deps): State<CatalogDeps>,
-    SessionUser(user): SessionUser,
-    Path(id): Path<String>,
-) -> Answer<GroupEditionPinResponse> {
-    answer(
-        &deps,
-        deps.catalog.clear_group_edition_pin(&user, &id).await,
-    )
 }
 
 /// Albums by similar artists.
