@@ -3,14 +3,17 @@
 //! Order of checks per request: scope (non-v3 passes through; the layer mounts
 //! on the v3 router so this is defence in depth) -> public allowlist -> credential
 //! extraction (Bearer-then-cookie) -> session lookup (unknown/revoked/expired
-//! -> 401 + `WWW-Authenticate: Bearer`; each such failure also takes a token
-//! from the caller's auth-failure bucket, and an empty bucket answers 429)
+//! -> 401 + `WWW-Authenticate: Bearer`; the token and its user are read in
+//! one query, so a token whose user is gone fails the same way; each such
+//! failure also takes a token from the caller's auth-failure bucket, and an
+//! empty bucket answers 429)
 //! -> origin check on cookie mutations
 //! against the effective origin (forwarded host and scheme only from trusted
 //! proxies) and the addresses saved in the `public_address` setting (-> 403).
-//! Success stashes [`CurrentSession`] in the request
-//! extensions for handlers and role extractors; role gating itself is
-//! handler-level, as is the per-resource 403-or-404 choice.
+//! Success puts one [`Principal`] in the request extensions, which the
+//! `User`, `Curator` and `Admin` extractors read; role gating itself is
+//! handler-level, as is the per-resource 403-or-404 choice. Only this gate
+//! puts a principal in a production request.
 //!
 //! ## Layer order (wiring)
 //!
@@ -18,7 +21,7 @@
 //! first call to last: `rate_limit` (inner, closest to handlers), then
 //! `require_session`, then debug-only CORS (outer). Per request that runs
 //! CORS -> session -> rate limit -> handler, so the limiter sees the
-//! [`CurrentSession`] this gate stashes and keys by user. Public paths reach
+//! [`Principal`] this gate stashes and keys by user. Public paths reach
 //! the limiter without one and are keyed by client address. The
 //! request-scope middleware wraps the whole app outside all of these. Compat
 //! routers mount outside the session layer with their own app-password
@@ -73,11 +76,13 @@ use super::{
     store::{SessionKind, SessionStore, SessionStoreError, now_unix},
     tokens::hash_token,
 };
+use crate::users::roles::Principal;
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::runtime_config::origin::Origin;
 
-/// Authenticated session stashed in request extensions by the middleware.
+/// Authenticated session stashed in request extensions by the middleware,
+/// beside the [`Principal`], for the areas that still read it.
 #[derive(Debug, Clone)]
 pub struct CurrentSession {
     /// Owning user id.
@@ -201,7 +206,7 @@ where
                 .into_response();
         }
     };
-    let Some(record) = record else {
+    let Some(valid) = record else {
         return auth_failure(&auth.limits, &request, "Invalid or expired token");
     };
     let target = effective_origin(&request, &auth.trusted_proxies);
@@ -222,12 +227,21 @@ where
         return ApiError::forbidden("Origin not allowed").into_response();
     }
     let mut request = request;
+    let record = valid.record;
     request.extensions_mut().insert(CurrentSession {
-        user_id: record.user_id,
-        session_id: record.id,
+        user_id: record.user_id.clone(),
+        session_id: record.id.clone(),
         kind: record.kind,
         transport,
     });
+    request.extensions_mut().insert(Principal::from_session(
+        record.user_id,
+        valid.username,
+        valid.role,
+        record.id,
+        record.kind,
+        transport,
+    ));
     next.run(request).await
 }
 

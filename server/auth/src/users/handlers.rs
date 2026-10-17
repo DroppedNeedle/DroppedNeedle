@@ -26,7 +26,7 @@ use super::models::{
     LastFmTokenResponse, LocalPasswordSet, PasswordChange, PasswordReset, ProfileResponse,
     RecoveryCodeResponse, RoleUpdate, SessionListResponse, UserResponse, UsernameUpdate,
 };
-use super::roles::{CurrentAdmin, CurrentUser, Role};
+use super::roles::{Admin, Role, User};
 use super::services;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
@@ -63,9 +63,9 @@ impl From<UsersError> for ApiError {
 )]
 pub async fn get_profile(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
 ) -> Result<Json<ProfileResponse>, ApiError> {
-    services::get_profile(&deps, &ctx)
+    services::get_profile(&deps, &caller)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -81,10 +81,10 @@ pub async fn get_profile(
 )]
 pub async fn patch_profile(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
     ValidJson(body): ValidJson<DisplayNameUpdate>,
 ) -> Result<Json<UserResponse>, ApiError> {
-    services::update_display_name(&deps, &ctx, &body.display_name)
+    services::update_display_name(&deps, &caller, &body.display_name)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -100,10 +100,10 @@ pub async fn patch_profile(
 )]
 pub async fn put_username(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
     ValidJson(body): ValidJson<UsernameUpdate>,
 ) -> Result<Json<UserResponse>, ApiError> {
-    services::update_username(&deps, &ctx, &body.username)
+    services::update_username(&deps, &caller, &body.username)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -119,10 +119,10 @@ pub async fn put_username(
 )]
 pub async fn put_email(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
     ValidJson(body): ValidJson<EmailUpdate>,
 ) -> Result<Json<UserResponse>, ApiError> {
-    services::update_email(&deps, &ctx, body.email.as_deref())
+    services::update_email(&deps, &caller, body.email.as_deref())
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -138,10 +138,10 @@ pub async fn put_email(
 )]
 pub async fn post_password(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
     ValidJson(body): ValidJson<PasswordChange>,
 ) -> Result<Json<UserResponse>, ApiError> {
-    services::change_password(&deps, &ctx, &body.current_password, &body.new_password)
+    services::change_password(&deps, &caller, &body.current_password, &body.new_password)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -157,10 +157,10 @@ pub async fn post_password(
 )]
 pub async fn post_local_password(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
     ValidJson(body): ValidJson<LocalPasswordSet>,
 ) -> Result<Json<UserResponse>, ApiError> {
-    services::set_local_password(&deps, &ctx, &body.new_password)
+    services::set_local_password(&deps, &caller, &body.new_password)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -185,7 +185,7 @@ struct AvatarUploadBody {
 )]
 pub async fn post_avatar(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
     body: Body,
 ) -> Result<Json<UserResponse>, ApiError> {
     let bytes: Bytes = to_bytes(body, AVATAR_BODY_CAP)
@@ -195,7 +195,7 @@ pub async fn post_avatar(
         serde_json::from_slice(&bytes).map_err(|cause| UsersError::InvalidInput {
             message: format!("Invalid request body: {cause}"),
         })?;
-    services::upload_avatar(&deps, &ctx, &parsed.content_type, &parsed.image_base64)
+    services::upload_avatar(&deps, &caller, &parsed.content_type, &parsed.image_base64)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -211,10 +211,10 @@ pub async fn post_avatar(
 )]
 pub async fn get_avatar(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
     Path(user_id): Path<String>,
 ) -> Result<Response, ApiError> {
-    let (bytes, content_type) = services::get_avatar(&deps, &ctx, &user_id).await?;
+    let (bytes, content_type) = services::get_avatar(&deps, &caller, &user_id).await?;
     let mime = content_type
         .parse()
         .map_err(|_| UsersError::internal(&"stored avatar type is not a header value"))?;
@@ -241,9 +241,9 @@ pub async fn get_avatar(
 )]
 pub async fn list_sessions(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
 ) -> Result<Json<SessionListResponse>, ApiError> {
-    services::list_sessions(&deps, &ctx)
+    services::list_sessions(&deps, &caller)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -259,10 +259,10 @@ pub async fn list_sessions(
 )]
 pub async fn mint_device_session(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
     ValidJson(body): ValidJson<DeviceSessionMint>,
 ) -> Result<(StatusCode, Json<DeviceSessionResponse>), ApiError> {
-    services::mint_device_session(&deps, &ctx, &body)
+    services::mint_device_session(&deps, &caller, &body)
         .await
         .map(|minted| (StatusCode::CREATED, Json(minted)))
         .map_err(ApiError::from)
@@ -278,10 +278,10 @@ pub async fn mint_device_session(
 )]
 pub async fn revoke_session(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
     Path(session_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    services::revoke_session(&deps, &ctx, &session_id)
+    services::revoke_session(&deps, &caller, &session_id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(ApiError::from)
@@ -296,9 +296,9 @@ pub async fn revoke_session(
 )]
 pub async fn logout_all(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
 ) -> Result<StatusCode, ApiError> {
-    services::logout_all(&deps, &ctx)
+    services::logout_all(&deps, &caller)
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(ApiError::from)
@@ -332,9 +332,9 @@ pub async fn reset_password(
 )]
 pub async fn list_app_passwords(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
 ) -> Result<Json<super::models::AppPasswordListResponse>, ApiError> {
-    services::list_app_passwords(&deps, &ctx.user_id)
+    services::list_app_passwords(&deps, caller.user_id())
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -350,10 +350,10 @@ pub async fn list_app_passwords(
 )]
 pub async fn create_app_password(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
     ValidJson(body): ValidJson<AppPasswordCreate>,
 ) -> Result<(StatusCode, Json<AppPasswordCreatedResponse>), ApiError> {
-    services::create_app_password(&deps, &ctx, &body)
+    services::create_app_password(&deps, &caller, &body)
         .await
         .map(|created| (StatusCode::CREATED, Json(created)))
         .map_err(ApiError::from)
@@ -369,10 +369,10 @@ pub async fn create_app_password(
 )]
 pub async fn revoke_app_password(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
     Path(app_password_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    services::revoke_app_password(&deps, &ctx.user_id, &app_password_id)
+    services::revoke_app_password(&deps, caller.user_id(), &app_password_id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(ApiError::from)
@@ -387,9 +387,9 @@ pub async fn revoke_app_password(
 )]
 pub async fn lastfm_status(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
 ) -> Result<Json<LastFmStatusResponse>, ApiError> {
-    services::lastfm_status(&deps, &ctx.user_id)
+    services::lastfm_status(&deps, caller.user_id())
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -405,10 +405,10 @@ pub async fn lastfm_status(
 )]
 pub async fn lastfm_set_credentials(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
     ValidJson(body): ValidJson<LastFmCredentialsSet>,
 ) -> Result<Json<LastFmConfiguredResponse>, ApiError> {
-    services::lastfm_set_credentials(&deps, &ctx.user_id, &body.api_key, &body.shared_secret)
+    services::lastfm_set_credentials(&deps, caller.user_id(), &body.api_key, &body.shared_secret)
         .await
         .map(|link| {
             Json(LastFmConfiguredResponse {
@@ -428,9 +428,9 @@ pub async fn lastfm_set_credentials(
 )]
 pub async fn lastfm_token(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
 ) -> Result<Json<LastFmTokenResponse>, ApiError> {
-    services::lastfm_request_token(&deps, &ctx.user_id)
+    services::lastfm_request_token(&deps, caller.user_id())
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -446,10 +446,10 @@ pub async fn lastfm_token(
 )]
 pub async fn lastfm_session(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
     ValidJson(body): ValidJson<LastFmSessionExchange>,
 ) -> Result<Json<LastFmSessionResponse>, ApiError> {
-    services::lastfm_exchange_session(&deps, &ctx.user_id, &body.token)
+    services::lastfm_exchange_session(&deps, caller.user_id(), &body.token)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -464,9 +464,9 @@ pub async fn lastfm_session(
 )]
 pub async fn lastfm_unlink(
     State(deps): State<UsersDeps>,
-    CurrentUser(ctx): CurrentUser,
+    User(caller): User,
 ) -> Result<StatusCode, ApiError> {
-    services::lastfm_unlink(&deps, &ctx.user_id)
+    services::lastfm_unlink(&deps, caller.user_id())
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(ApiError::from)
@@ -481,7 +481,7 @@ pub async fn lastfm_unlink(
 )]
 pub async fn admin_list_users(
     State(deps): State<UsersDeps>,
-    CurrentAdmin(_): CurrentAdmin,
+    admin: Admin,
     ValidQuery(query): ValidQuery<HashMap<String, String>>,
 ) -> Result<Json<AdminUserListResponse>, ApiError> {
     let limit = query
@@ -491,7 +491,7 @@ pub async fn admin_list_users(
         .get("offset")
         .and_then(|value| value.parse::<u64>().ok());
     let (limit, offset) = services::clamp_admin_page(limit, offset);
-    services::admin_list_users(&deps, limit, offset)
+    services::admin_list_users(&deps, &admin, limit, offset)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -507,11 +507,12 @@ pub async fn admin_list_users(
 )]
 pub async fn admin_create_user(
     State(deps): State<UsersDeps>,
-    CurrentAdmin(_): CurrentAdmin,
+    admin: Admin,
     ValidJson(body): ValidJson<AdminUserCreate>,
 ) -> Result<(StatusCode, Json<UserResponse>), ApiError> {
     services::admin_create_user(
         &deps,
+        &admin,
         &body.username,
         &body.password,
         body.display_name.as_deref(),
@@ -533,10 +534,10 @@ pub async fn admin_create_user(
 )]
 pub async fn admin_get_user(
     State(deps): State<UsersDeps>,
-    CurrentAdmin(_): CurrentAdmin,
+    admin: Admin,
     Path(user_id): Path<String>,
 ) -> Result<Json<UserResponse>, ApiError> {
-    services::admin_get_user(&deps, &user_id)
+    services::admin_get_user(&deps, &admin, &user_id)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -553,11 +554,11 @@ pub async fn admin_get_user(
 )]
 pub async fn admin_set_role(
     State(deps): State<UsersDeps>,
-    CurrentAdmin(ctx): CurrentAdmin,
+    admin: Admin,
     Path(user_id): Path<String>,
     ValidJson(body): ValidJson<RoleUpdate>,
 ) -> Result<Json<UserResponse>, ApiError> {
-    services::admin_set_role(&deps, &ctx, &user_id, body.role)
+    services::admin_set_role(&deps, &admin, &user_id, body.role)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -573,10 +574,10 @@ pub async fn admin_set_role(
 )]
 pub async fn admin_delete_user(
     State(deps): State<UsersDeps>,
-    CurrentAdmin(ctx): CurrentAdmin,
+    admin: Admin,
     Path(user_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    services::admin_delete_user(&deps, &ctx, &user_id)
+    services::admin_delete_user(&deps, &admin, &user_id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(ApiError::from)
@@ -592,10 +593,10 @@ pub async fn admin_delete_user(
 )]
 pub async fn admin_revoke_sessions(
     State(deps): State<UsersDeps>,
-    CurrentAdmin(_): CurrentAdmin,
+    admin: Admin,
     Path(user_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    services::admin_revoke_user_sessions(&deps, &user_id)
+    services::admin_revoke_user_sessions(&deps, &admin, &user_id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(ApiError::from)
@@ -611,10 +612,10 @@ pub async fn admin_revoke_sessions(
 )]
 pub async fn admin_mint_recovery_code(
     State(deps): State<UsersDeps>,
-    CurrentAdmin(_): CurrentAdmin,
+    admin: Admin,
     Path(user_id): Path<String>,
 ) -> Result<(StatusCode, Json<RecoveryCodeResponse>), ApiError> {
-    services::admin_mint_recovery_code(&deps, &user_id)
+    services::admin_mint_recovery_code(&deps, &admin, &user_id)
         .await
         .map(|minted| (StatusCode::CREATED, Json(minted)))
         .map_err(ApiError::from)
@@ -629,9 +630,9 @@ pub async fn admin_mint_recovery_code(
 )]
 pub async fn admin_list_app_passwords(
     State(deps): State<UsersDeps>,
-    CurrentAdmin(_): CurrentAdmin,
+    admin: Admin,
 ) -> Result<Json<super::models::AdminAppPasswordListResponse>, ApiError> {
-    services::admin_list_app_passwords(&deps)
+    services::admin_list_app_passwords(&deps, &admin)
         .await
         .map(|rows| {
             Json(super::models::AdminAppPasswordListResponse {
@@ -651,10 +652,10 @@ pub async fn admin_list_app_passwords(
 )]
 pub async fn admin_revoke_app_password(
     State(deps): State<UsersDeps>,
-    CurrentAdmin(_): CurrentAdmin,
+    admin: Admin,
     Path(app_password_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    services::admin_revoke_app_password(&deps, &app_password_id)
+    services::admin_revoke_app_password(&deps, &admin, &app_password_id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(ApiError::from)
@@ -673,9 +674,9 @@ pub async fn admin_revoke_app_password(
 )]
 pub async fn admin_import_list_jellyfin(
     State(deps): State<UsersDeps>,
-    CurrentAdmin(_): CurrentAdmin,
+    admin: Admin,
 ) -> Result<Json<ImportCandidateListResponse>, ApiError> {
-    list_import_candidates(&deps, deps.jellyfin_directory.as_ref())
+    list_import_candidates(&deps, &admin, deps.jellyfin_directory.as_ref())
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -694,9 +695,9 @@ pub async fn admin_import_list_jellyfin(
 )]
 pub async fn admin_import_list_plex(
     State(deps): State<UsersDeps>,
-    CurrentAdmin(_): CurrentAdmin,
+    admin: Admin,
 ) -> Result<Json<ImportCandidateListResponse>, ApiError> {
-    list_import_candidates(&deps, deps.plex_directory.as_ref())
+    list_import_candidates(&deps, &admin, deps.plex_directory.as_ref())
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -713,7 +714,7 @@ pub async fn admin_import_list_plex(
 )]
 pub async fn admin_import_users(
     State(deps): State<UsersDeps>,
-    CurrentAdmin(_): CurrentAdmin,
+    admin: Admin,
     ValidJson(body): ValidJson<ImportUsersRequest>,
 ) -> Result<Json<ImportUsersResponse>, ApiError> {
     let directory = match body.provider.as_str() {
@@ -726,25 +727,8 @@ pub async fn admin_import_users(
             .into());
         }
     };
-    import_users(&deps, directory.as_ref(), &body.provider_uids)
+    import_users(&deps, &admin, directory.as_ref(), &body.provider_uids)
         .await
         .map(Json)
         .map_err(ApiError::from)
-}
-
-/// Curator probe body: proves the extractor admitted the caller.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, serde::Serialize, ToSchema)]
-pub struct CuratorProbeResponse {
-    /// Always true when this response is returned.
-    pub curator: bool,
-}
-
-/// Curator probe for tests: no production router mounts it; tests mount it
-/// to pin `CurrentCurator` behavior per route class.
-#[cfg(any(test, feature = "test-support"))]
-pub async fn curator_probe(
-    super::roles::CurrentCurator(_): super::roles::CurrentCurator,
-) -> Json<CuratorProbeResponse> {
-    Json(CuratorProbeResponse { curator: true })
 }

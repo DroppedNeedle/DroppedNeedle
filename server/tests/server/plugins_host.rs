@@ -7,7 +7,7 @@
 //! tick store. The real subprocess runtime is tested with the shipped
 //! examples in `plugins_examples`.
 
-use crate::common::auth::with_test_principal;
+use crate::common::auth::{test_principal, with_test_principal};
 use crate::common::{ScratchDir, TestApp};
 use std::collections::HashMap;
 use std::path::Path;
@@ -16,8 +16,7 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::Principal;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::jobs::plugin_ticks::{
@@ -68,13 +67,17 @@ fn rig(tag: &str) -> Rig {
     }
 }
 
-fn session(user_id: &str) -> CurrentSession {
-    CurrentSession {
-        user_id: user_id.to_owned(),
-        session_id: "session-1".to_owned(),
-        kind: SessionKind::Standard,
-        transport: Transport::Bearer,
-    }
+fn session(user_id: &str) -> Principal {
+    test_principal(
+        user_id,
+        if user_id == "admin-1" {
+            Role::Admin
+        } else {
+            Role::User
+        },
+        "session-1",
+        SessionKind::Standard,
+    )
 }
 
 fn deps_for(rig: &Rig, fetcher: Arc<FakeFetcher>, unpacker: Arc<FakeUnpacker>) -> PluginsDeps {

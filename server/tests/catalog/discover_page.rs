@@ -12,8 +12,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_catalog::reads::discover::adapters::content::LiveContent;
 use droppedneedle_catalog::reads::discover::adapters::page::sources::{
@@ -37,7 +36,7 @@ use droppedneedle_kernel::db::{DbRuntime, Lane};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-use crate::common::auth::with_test_principal;
+use crate::common::auth::{test_principal, with_test_principal};
 
 const SEED: &str = "11111111-1111-4111-8111-111111111111";
 
@@ -425,12 +424,7 @@ fn page_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
     );
     with_test_principal(
         router,
-        CurrentSession {
-            user_id: "user-1".to_owned(),
-            session_id: "sess-test".to_owned(),
-            kind: SessionKind::Standard,
-            transport: Transport::Bearer,
-        },
+        test_principal("user-1", Role::User, "sess-test", SessionKind::Standard),
     )
 }
 

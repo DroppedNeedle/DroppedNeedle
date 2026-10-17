@@ -16,14 +16,13 @@ use axum::{
 };
 use droppedneedle_auth::federated::password_import::PasswordHasher as _;
 use droppedneedle_auth::prod::{Argon2idHasher, ProdAuth};
-use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::{CurrentSession, SessionAuth};
 use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _, now_unix};
 use droppedneedle_auth::session::tokens;
 use droppedneedle_auth::sqlite::SqliteSessionStore;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::models::{LocalCredential, UserRecord};
-use droppedneedle_auth::users::roles::Role;
+use droppedneedle_auth::users::roles::{Admin, Principal, Role};
 use droppedneedle_auth::users::stores::{Clock, UserStore as _};
 use droppedneedle_auth::wiring::AuthSetup;
 use droppedneedle_kernel::db::DbRuntime;
@@ -59,6 +58,7 @@ pub struct AuthRig {
     pub clock: Arc<ManualClock>,
     /// The settings `deps` read live.
     pub config: Arc<ConfigStore>,
+    gate: SessionAuth<SqliteSessionStore>,
     runtime: Option<DbRuntime>,
     _scratch: ScratchDir,
 }
@@ -105,7 +105,7 @@ impl AuthRig {
             &scratch,
         );
         let http = HttpClientFactory::new().expect("http factory builds");
-        let deps = AuthSetup::build_with_upstreams(
+        let setup = AuthSetup::build_with_upstreams(
             auth.clone(),
             Arc::clone(&config),
             Arc::clone(&crypto),
@@ -126,10 +126,10 @@ impl AuthRig {
                 crypto,
                 Arc::clone(&config),
             ),
-        )
-        .users;
+        );
         Self {
-            deps,
+            deps: setup.users,
+            gate: setup.session_auth,
             auth,
             clock,
             config,
@@ -198,9 +198,10 @@ impl AuthRig {
         token
     }
 
-    /// The production session gate over the rig's sessions.
+    /// The production session gate over the rig's sessions, as the
+    /// production builder makes it.
     pub fn session_gate(&self) -> SessionAuth<SqliteSessionStore> {
-        SessionAuth::new(self.auth.sessions.clone(), "")
+        self.gate.clone()
     }
 
     /// Sign `user_id` in with the raw `token`: one standard session issued
@@ -227,34 +228,50 @@ impl AuthRig {
     }
 }
 
-/// What the session gate stashes for `user` on `session_id`.
-pub fn test_principal(user: &UserRecord, session_id: &str, companion: bool) -> CurrentSession {
-    CurrentSession {
-        user_id: user.id.clone(),
-        session_id: session_id.to_owned(),
-        kind: if companion {
-            SessionKind::Companion
-        } else {
-            SessionKind::Standard
-        },
-        transport: Transport::Cookie,
-    }
+/// A signed-in principal for `user_id`, as the session gate would resolve
+/// it for a token of `session_kind` on `session_id`.
+pub fn test_principal(
+    user_id: &str,
+    role: Role,
+    session_id: &str,
+    session_kind: SessionKind,
+) -> Principal {
+    Principal::for_tests(user_id, role, session_id, session_kind)
+}
+
+/// An admin's proof for `user_id`, for calling an admin service directly.
+pub fn test_admin(user_id: &str) -> Admin {
+    Admin::try_from(test_principal(
+        user_id,
+        Role::Admin,
+        "sess-test-admin",
+        SessionKind::Standard,
+    ))
+    .expect("an admin principal proves the role")
 }
 
 async fn insert_test_principal(
-    State(session): State<CurrentSession>,
+    State(principal): State<Principal>,
     mut request: Request,
     next: Next,
 ) -> Response {
+    let session = CurrentSession {
+        user_id: principal.user_id().to_owned(),
+        session_id: principal.session_id().to_owned(),
+        kind: principal.session_kind(),
+        transport: principal.transport(),
+    };
     request.extensions_mut().insert(session);
+    request.extensions_mut().insert(principal);
     next.run(request).await
 }
 
-/// Sign every request to `router` in as `session`, standing in for the
-/// session gate (no token lookup, no origin check).
-pub fn with_test_principal(router: Router, session: CurrentSession) -> Router {
+/// Sign every request to `router` in as `principal`, standing in for the
+/// session gate (no token lookup, no origin check). Until every area reads
+/// the principal, the matching `CurrentSession` goes in beside it.
+pub fn with_test_principal(router: Router, principal: Principal) -> Router {
     router.layer(middleware::from_fn_with_state(
-        session,
+        principal,
         insert_test_principal,
     ))
 }

@@ -3196,7 +3196,7 @@
             }
           },
           "403": {
-            "description": "Admin access required",
+            "description": "Admin role required",
             "content": {
               "application/json": {
                 "schema": {

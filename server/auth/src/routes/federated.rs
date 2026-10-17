@@ -25,14 +25,14 @@ use crate::federated::plex::{
 use crate::federated::users::FederatedUserStore;
 use crate::routes::native::PeerAddr;
 use crate::session::cookies;
-use crate::session::middleware::CurrentSession;
 use crate::session::rate_limit::{LOGIN_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
 use crate::session::tokens::{constant_time_eq, hash_token};
+use crate::users::roles::{Admin, RoleRequired, User};
 use axum::{
     Json, Router,
-    extract::{FromRequestParts, State},
-    http::{HeaderMap, HeaderValue, StatusCode, Uri, request::Parts},
+    extract::State,
+    http::{HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -59,30 +59,6 @@ pub const OIDC_BAD_CODE: &str = "Invalid or expired code";
 pub const PLEX_DENIED: &str = "Access denied";
 /// Plex link/connect start without a configured server, v2 message verbatim.
 pub const PLEX_NOT_CONFIGURED: &str = "Plex is not configured by the administrator";
-
-/// Session guard for the Plex link/connect polls: the middleware stashes
-/// [`CurrentSession`] on every authenticated request, and these polls hand
-/// out account Bearer tokens, which a PIN id alone must never unlock. This is the same
-/// contract as the users [`CurrentUser`] extractor minus the role lookup
-/// (the polls need no role, and this router's state is not `UsersDeps`, so
-/// `CurrentUser` cannot apply here); the allowlist is the outer gate and
-/// this is the inner one.
-///
-/// [`CurrentUser`]: crate::users::roles::CurrentUser
-pub struct AuthenticatedSession(pub CurrentSession);
-
-impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedSession {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
-        parts
-            .extensions
-            .get::<CurrentSession>()
-            .cloned()
-            .map(AuthenticatedSession)
-            .ok_or_else(|| ApiError::unauthorized("Authentication required"))
-    }
-}
 
 /// Live OIDC settings. A port (not a value in state) so admin config edits
 /// take effect without a restart.
@@ -598,10 +574,7 @@ where
             message: PLEX_NOT_CONFIGURED.to_owned(),
         }
         .into()),
-        Err(PlexStartDenied::Forbidden) => Err(AuthRouteError::Forbidden {
-            message: "Admin access required".to_owned(),
-        }
-        .into()),
+        Err(PlexStartDenied::Forbidden) => Err(RoleRequired::Admin.into()),
         // No caller credential is at fault here: the IdP is down, the
         // server lookup failed, or login is switched off.
         Err(PlexStartDenied::StartFailed(error)) => Err(federated_unavailable(&error).into()),
@@ -649,7 +622,7 @@ where
 )]
 pub async fn plex_start_link_handler<S, C, L, N>(
     State(state): State<PlexRouteState<S, C, L, N>>,
-    AuthenticatedSession(session): AuthenticatedSession,
+    User(caller): User,
 ) -> Result<Json<PlexStartBody>, ApiError>
 where
     S: FederatedUserStore,
@@ -657,7 +630,7 @@ where
     L: PlexConnectionLink,
     N: SessionIssuer,
 {
-    start_rendered(&state, PlexPurpose::Link, Some(&session.user_id)).await
+    start_rendered(&state, PlexPurpose::Link, Some(caller.user_id())).await
 }
 
 /// Start the settings sign-in that hands an admin their Plex token for
@@ -669,13 +642,13 @@ where
     responses(
         (status = 200, description = "Fresh PIN, browser URL and poll secret", body = PlexStartBody),
         (status = 401, description = "Missing or invalid session"),
-        (status = 403, description = "Admin access required"),
+        (status = 403, description = "Admin role required"),
         (status = 503, description = "Plex unreachable")
     )
 )]
 pub async fn plex_start_connect_handler<S, C, L, N>(
     State(state): State<PlexRouteState<S, C, L, N>>,
-    AuthenticatedSession(session): AuthenticatedSession,
+    admin: Admin,
 ) -> Result<Json<PlexStartBody>, ApiError>
 where
     S: FederatedUserStore,
@@ -683,7 +656,7 @@ where
     L: PlexConnectionLink,
     N: SessionIssuer,
 {
-    start_rendered(&state, PlexPurpose::Connect, Some(&session.user_id)).await
+    start_rendered(&state, PlexPurpose::Connect, Some(admin.user_id())).await
 }
 
 /// Plex login completion: polls the PIN, and once authorized imports the
@@ -777,7 +750,7 @@ where
 )]
 pub async fn plex_poll_link_handler<S, C, L, N>(
     State(state): State<PlexRouteState<S, C, L, N>>,
-    AuthenticatedSession(session): AuthenticatedSession,
+    User(caller): User,
     ValidJson(body): ValidJson<PlexPinBody>,
 ) -> Result<Json<PlexLinkPollResult>, ApiError>
 where
@@ -789,7 +762,7 @@ where
     let claim = PinClaim {
         pin_id: body.pin_id,
         pin_secret: &body.pin_secret,
-        user_id: Some(&session.user_id),
+        user_id: Some(caller.user_id()),
     };
     match state.journey.poll_link(&claim).await {
         Ok(PlexPoll::Pending) => Ok(Json(PlexLinkPollResult {
@@ -827,7 +800,7 @@ where
 )]
 pub async fn plex_poll_connect_handler<S, C, L, N>(
     State(state): State<PlexRouteState<S, C, L, N>>,
-    AuthenticatedSession(session): AuthenticatedSession,
+    User(caller): User,
     ValidJson(body): ValidJson<PlexPinBody>,
 ) -> Result<Json<PlexConnectPollResult>, ApiError>
 where
@@ -839,7 +812,7 @@ where
     let claim = PinClaim {
         pin_id: body.pin_id,
         pin_secret: &body.pin_secret,
-        user_id: Some(&session.user_id),
+        user_id: Some(caller.user_id()),
     };
     match state.journey.poll_connect(&claim).await {
         Ok(PlexPoll::Pending) => Ok(Json(PlexConnectPollResult {

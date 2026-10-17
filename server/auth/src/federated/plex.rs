@@ -33,8 +33,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::users::{
-    FederatedProfile, FederatedUserStore, PROVIDER_PLEX, ROLE_ADMIN, StoredUser,
-    find_or_create_federated_user,
+    FederatedProfile, FederatedUserStore, PROVIDER_PLEX, StoredUser, find_or_create_federated_user,
 };
 use super::{FederatedError, SessionIssuer, json_string};
 use crate::session::tokens::{constant_time_eq, hash_token, mint_token};
@@ -185,7 +184,7 @@ pub enum PlexStartDenied {
     /// Link start with no Plex server configured (the route maps this to
     /// 400 with the v2 message verbatim).
     NotConfigured,
-    /// Connect start by a non-admin.
+    /// Connect start with no signed-in caller.
     Forbidden,
     /// PIN creation or the server lookup failed, or login is switched off.
     StartFailed(FederatedError),
@@ -330,7 +329,9 @@ where
 {
     /// Start a flow: check who may start it, mint a PIN, and bind it to
     /// the caller with a fresh secret. `caller` is the signed-in user for
-    /// link and connect (the routes require a session for those).
+    /// link and connect (the routes require a session for those). A
+    /// connect caller must already have passed the `Admin` extractor: this
+    /// does not read the role again.
     pub async fn start(
         &self,
         purpose: PlexPurpose,
@@ -348,15 +349,7 @@ where
                 Err(error) => return Err(PlexStartDenied::StartFailed(error)),
             },
             PlexPurpose::Connect => {
-                let user = match caller {
-                    Some(user_id) => self
-                        .users
-                        .get_user_by_id(user_id)
-                        .await
-                        .map_err(PlexStartDenied::StartFailed)?,
-                    None => None,
-                };
-                if user.is_none_or(|user| user.role != ROLE_ADMIN) {
+                if caller.is_none() {
                     return Err(PlexStartDenied::Forbidden);
                 }
             }

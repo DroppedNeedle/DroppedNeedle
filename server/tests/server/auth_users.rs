@@ -10,21 +10,28 @@ use axum::{
     Router,
     body::Body,
     http::{Request, StatusCode},
+    middleware,
+    routing::post,
 };
-use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::session::middleware::require_session;
+use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::{
     Role, admin_router, import, models, public_router, stores::DirectoryUser, users_router,
 };
+use droppedneedle_auth::{Admin, Principal};
+use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-use crate::common::auth::{AuthRig, PASSWORD, TEST_NOW, test_principal, with_test_principal};
+use crate::common::auth::{
+    AuthRig, PASSWORD, TEST_NOW, test_admin, test_principal, with_test_principal,
+};
 use crate::common::auth_fakes::{FakeHibpHttp, FakeLastFmAuthClient, FakeUserDirectory};
 
 const OTHER_PASSWORD: &str = "another fine password here";
 
-fn test_app(rig: &AuthRig, principal: Option<CurrentSession>) -> Router {
+fn test_app(rig: &AuthRig, principal: Option<Principal>) -> Router {
     let app = Router::new()
         .nest("/api/v3", users_router(rig.deps.clone()))
         .nest("/api/v3", admin_router(rig.deps.clone()))
@@ -44,8 +51,8 @@ async fn rig_with_admin() -> (AuthRig, models::UserRecord, models::UserRecord) {
     (rig, admin, user)
 }
 
-fn principal_for(user: &models::UserRecord, session_id: &str) -> CurrentSession {
-    test_principal(user, session_id, false)
+fn principal_for(user: &models::UserRecord, session_id: &str) -> Principal {
+    test_principal(&user.id, user.role, session_id, SessionKind::Standard)
 }
 
 async fn call(app: Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -115,10 +122,67 @@ async fn password_change_needs_the_current_one_and_ends_other_sessions() {
     assert_eq!(live, vec!["sess-molly".to_owned()]);
 }
 
+/// `Admin` reads only what the production gate resolved, in a router with
+/// no state of its own, and judges the role before the body.
+#[tokio::test]
+async fn admin_works_in_any_router_behind_the_gate_and_judges_the_role_first() {
+    let (rig, admin, user) = rig_with_admin().await;
+    rig.sign_in(&admin.id, "admin-gate-token").await;
+    rig.sign_in(&user.id, "user-gate-token").await;
+    let app = || {
+        Router::new()
+            .route(
+                "/api/v3/admin-probe",
+                post(|_: Admin, ValidJson(_): ValidJson<Value>| async { StatusCode::NO_CONTENT }),
+            )
+            .layer(middleware::from_fn_with_state(
+                rig.session_gate(),
+                require_session,
+            ))
+    };
+    let probe = |token: &str, body: &'static str| {
+        Request::builder()
+            .method("POST")
+            .uri("/api/v3/admin-probe")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap()
+    };
+
+    let response = app()
+        .oneshot(probe("admin-gate-token", "{}"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let response = app()
+        .oneshot(probe("user-gate-token", "{not json"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"]["code"], json!("FORBIDDEN"));
+    assert_eq!(body["error"]["message"], json!("Admin role required"));
+}
+
 #[tokio::test]
 async fn device_tokens_cannot_create_credentials() {
     let (rig, _, user) = rig_with_admin().await;
-    let app = || test_app(&rig, Some(test_principal(&user, "sess-device", true)));
+    let app = || {
+        test_app(
+            &rig,
+            Some(test_principal(
+                &user.id,
+                user.role,
+                "sess-device",
+                SessionKind::Companion,
+            )),
+        )
+    };
     for (uri, body) in [
         ("/api/v3/auth/device-sessions", json!({"label": "Phone"})),
         ("/api/v3/me/app-passwords", json!({"name": "forever"})),
@@ -392,6 +456,7 @@ async fn import_creates_new_accounts_and_reports_known_emails() {
     ]);
     let batch = import::import_users(
         &rig.deps,
+        &test_admin("user-admin"),
         &plex,
         &[
             "px-new".to_owned(),

@@ -16,7 +16,7 @@ use super::models::{
     LastFmStatusResponse, LastFmTokenResponse, LocalCredential, PasswordReset, ProfileResponse,
     RecoveryCode, RecoveryCodeResponse, SessionListResponse, SessionView, UserRecord, UserResponse,
 };
-use super::roles::{AuthContext, Role, SessionKind};
+use super::roles::{Admin, Principal, Role, SessionKind};
 use super::stores::{
     LastFmError, LastFmKeys, RecoveryStore, RoleChange, StoreError, UserDeletion, UserStore,
 };
@@ -214,9 +214,9 @@ pub(crate) fn store_internal(error: StoreError) -> UsersError {
 /// Load the caller's own user row. A stale principal (row gone) is a 401:
 ///
 /// the session outlived the account.
-async fn own_user(deps: &UsersDeps, ctx: &AuthContext) -> Result<UserRecord, UsersError> {
+async fn own_user(deps: &UsersDeps, caller: &Principal) -> Result<UserRecord, UsersError> {
     deps.users
-        .get_by_id(&ctx.user_id)
+        .get_by_id(caller.user_id())
         .await
         .map_err(store_internal)?
         .ok_or_else(|| UsersError::Unauthorized {
@@ -255,9 +255,9 @@ pub(crate) async fn user_response(
 /// GET /me: own profile.
 pub async fn get_profile(
     deps: &UsersDeps,
-    ctx: &AuthContext,
+    caller: &Principal,
 ) -> Result<ProfileResponse, UsersError> {
-    let user = own_user(deps, ctx).await?;
+    let user = own_user(deps, caller).await?;
     Ok(ProfileResponse {
         user: user_response(deps, &user).await?,
     })
@@ -266,26 +266,26 @@ pub async fn get_profile(
 /// PATCH /me: change display name.
 pub async fn update_display_name(
     deps: &UsersDeps,
-    ctx: &AuthContext,
+    caller: &Principal,
     display_name: &str,
 ) -> Result<UserResponse, UsersError> {
     let name = validate_display_name(display_name)?;
     deps.users
-        .update_profile(&ctx.user_id, Some(&name), None)
+        .update_profile(caller.user_id(), Some(&name), None)
         .await
         .map_err(store_internal)?;
-    user_response(deps, &own_user(deps, ctx).await?).await
+    user_response(deps, &own_user(deps, caller).await?).await
 }
 
 /// PUT /me/username: rename self. Taken names are a 409.
 pub async fn update_username(
     deps: &UsersDeps,
-    ctx: &AuthContext,
+    caller: &Principal,
     username: &str,
 ) -> Result<UserResponse, UsersError> {
     let (lower, display) = validate_username(username)?;
     deps.users
-        .update_username(&ctx.user_id, &lower, &display)
+        .update_username(caller.user_id(), &lower, &display)
         .await
         .map_err(|error| match error {
             StoreError::Conflict => UsersError::Conflict {
@@ -294,13 +294,13 @@ pub async fn update_username(
             StoreError::Internal(cause) => UsersError::internal(&cause),
             StoreError::Busy => UsersError::Busy,
         })?;
-    user_response(deps, &own_user(deps, ctx).await?).await
+    user_response(deps, &own_user(deps, caller).await?).await
 }
 
 /// PUT /me/email: set or clear the email. Taken addresses are a 409.
 pub async fn update_email(
     deps: &UsersDeps,
-    ctx: &AuthContext,
+    caller: &Principal,
     email: Option<&str>,
 ) -> Result<UserResponse, UsersError> {
     let normalized = normalize_email(email)?;
@@ -310,14 +310,17 @@ pub async fn update_email(
             .get_by_email(candidate)
             .await
             .map_err(store_internal)?;
-        if existing.as_ref().is_some_and(|row| row.id != ctx.user_id) {
+        if existing
+            .as_ref()
+            .is_some_and(|row| row.id != caller.user_id())
+        {
             return Err(UsersError::Conflict {
                 message: "Email already in use".to_owned(),
             });
         }
     }
     deps.users
-        .update_email(&ctx.user_id, normalized.as_deref())
+        .update_email(caller.user_id(), normalized.as_deref())
         .await
         .map_err(|error| match error {
             StoreError::Conflict => UsersError::Conflict {
@@ -326,19 +329,19 @@ pub async fn update_email(
             StoreError::Internal(cause) => UsersError::internal(&cause),
             StoreError::Busy => UsersError::Busy,
         })?;
-    user_response(deps, &own_user(deps, ctx).await?).await
+    user_response(deps, &own_user(deps, caller).await?).await
 }
 
 /// POST /me/password: change password, proving the current one.
 pub async fn change_password(
     deps: &UsersDeps,
-    ctx: &AuthContext,
+    caller: &Principal,
     current_password: &str,
     new_password: &str,
 ) -> Result<UserResponse, UsersError> {
     let local = deps
         .users
-        .local_credential(&ctx.user_id)
+        .local_credential(caller.user_id())
         .await
         .map_err(store_internal)?
         .ok_or_else(|| UsersError::Conflict {
@@ -357,11 +360,11 @@ pub async fn change_password(
     let replaced = deps
         .users
         .change_local_hash(
-            &ctx.user_id,
+            caller.user_id(),
             &local.hash,
             native_scheme(),
             &hash,
-            &ctx.session_id,
+            caller.session_id(),
         )
         .await
         .map_err(store_internal)?;
@@ -370,20 +373,20 @@ pub async fn change_password(
             message: "Your password changed while this request was running. Try again.".to_owned(),
         });
     }
-    user_response(deps, &own_user(deps, ctx).await?).await
+    user_response(deps, &own_user(deps, caller).await?).await
 }
 
 /// POST /me/local-password: set the first local password on an account
 /// without one (SSO-created accounts). Needs a standard session.
 pub async fn set_local_password(
     deps: &UsersDeps,
-    ctx: &AuthContext,
+    caller: &Principal,
     new_password: &str,
 ) -> Result<UserResponse, UsersError> {
-    ctx.require_standard_session()?;
+    caller.require_standard_session()?;
     let existing = deps
         .users
-        .local_credential(&ctx.user_id)
+        .local_credential(caller.user_id())
         .await
         .map_err(store_internal)?;
     if existing.is_some() {
@@ -391,7 +394,7 @@ pub async fn set_local_password(
             message: "A local password already exists; use change password instead".to_owned(),
         });
     }
-    let user = own_user(deps, ctx).await?;
+    let user = own_user(deps, caller).await?;
     if user.username.is_none() {
         return Err(UsersError::InvalidInput {
             message: "Choose a username first".to_owned(),
@@ -403,7 +406,7 @@ pub async fn set_local_password(
     deps.users
         .insert_local_credential(LocalCredential {
             id: deps.ids.new_id(),
-            user_id: ctx.user_id.clone(),
+            user_id: caller.user_id().to_owned(),
             scheme: native_scheme().to_owned(),
             hash,
         })
@@ -415,7 +418,7 @@ pub async fn set_local_password(
             StoreError::Internal(cause) => UsersError::internal(&cause),
             StoreError::Busy => UsersError::Busy,
         })?;
-    user_response(deps, &own_user(deps, ctx).await?).await
+    user_response(deps, &own_user(deps, caller).await?).await
 }
 
 /// Served avatar path for one user. The version query busts image caches
@@ -427,7 +430,7 @@ pub fn avatar_url(user_id: &str, version: &str) -> String {
 /// POST /me/avatar: store a new avatar from a JSON base64 upload.
 pub async fn upload_avatar(
     deps: &UsersDeps,
-    ctx: &AuthContext,
+    caller: &Principal,
     content_type: &str,
     image_base64: &str,
 ) -> Result<UserResponse, UsersError> {
@@ -447,27 +450,27 @@ pub async fn upload_avatar(
         });
     }
     deps.avatars
-        .save(&ctx.user_id, content_type, &bytes)
+        .save(caller.user_id(), content_type, &bytes)
         .await
         .map_err(store_internal)?;
     let nonce = hex_encode(&random_bytes::<3>()?);
     let version = format!("{}-{nonce}", clock_now(deps));
-    let url = avatar_url(&ctx.user_id, &version);
+    let url = avatar_url(caller.user_id(), &version);
     deps.users
-        .update_profile(&ctx.user_id, None, Some(&url))
+        .update_profile(caller.user_id(), None, Some(&url))
         .await
         .map_err(store_internal)?;
-    user_response(deps, &own_user(deps, ctx).await?).await
+    user_response(deps, &own_user(deps, caller).await?).await
 }
 
 /// GET /users/{id}/avatar: self-or-admin read; admins need every avatar so
 /// the admin user list renders.
 pub async fn get_avatar(
     deps: &UsersDeps,
-    ctx: &AuthContext,
+    caller: &Principal,
     user_id: &str,
 ) -> Result<(Vec<u8>, String), UsersError> {
-    if ctx.user_id != user_id && !ctx.role.is_admin() {
+    if caller.user_id() != user_id && !caller.role().is_admin() {
         return Err(UsersError::Forbidden {
             message: "Forbidden".to_owned(),
         });
@@ -493,11 +496,11 @@ pub fn companion_label(user_agent: &str) -> &str {
 /// GET /auth/sessions: own sessions, current first, then newest first.
 pub async fn list_sessions(
     deps: &UsersDeps,
-    ctx: &AuthContext,
+    caller: &Principal,
 ) -> Result<SessionListResponse, UsersError> {
     let mut rows = deps
         .sessions
-        .list_for_user(&ctx.user_id)
+        .list_for_user(caller.user_id())
         .await
         .map_err(store_internal)?;
     rows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
@@ -513,7 +516,7 @@ pub async fn list_sessions(
             created_at: row.created_at,
             last_seen_at: row.last_seen_at,
             expires_at: row.expires_at,
-            current: row.id == ctx.session_id,
+            current: row.id == caller.session_id(),
         })
         .collect();
     views.sort_by(|a, b| b.current.cmp(&a.current));
@@ -525,19 +528,19 @@ pub async fn list_sessions(
 /// mint (403), so token trees stay one level deep.
 pub async fn mint_device_session(
     deps: &UsersDeps,
-    ctx: &AuthContext,
+    caller: &Principal,
     body: &DeviceSessionMint,
 ) -> Result<DeviceSessionResponse, UsersError> {
-    ctx.require_standard_session()?;
+    caller.require_standard_session()?;
     let label = validate_device_label(&body.label)?;
-    own_user(deps, ctx).await?;
+    own_user(deps, caller).await?;
     let token = fresh_secret()?;
     let now = clock_now(deps);
     let row = deps
         .sessions
         .replace_companion(
             &deps.ids.new_id(),
-            &ctx.user_id,
+            caller.user_id(),
             &tokens::hash_token(&token),
             &label,
             now,
@@ -557,12 +560,12 @@ pub async fn mint_device_session(
 /// ids are 404, never 403: no cross-user oracle.
 pub async fn revoke_session(
     deps: &UsersDeps,
-    ctx: &AuthContext,
+    caller: &Principal,
     session_id: &str,
 ) -> Result<(), UsersError> {
     let revoked = deps
         .sessions
-        .revoke_scoped(&ctx.user_id, session_id)
+        .revoke_scoped(caller.user_id(), session_id)
         .await
         .map_err(store_internal)?;
     if revoked {
@@ -573,16 +576,20 @@ pub async fn revoke_session(
 }
 
 /// POST /auth/logout-all: revoke every own session.
-pub async fn logout_all(deps: &UsersDeps, ctx: &AuthContext) -> Result<(), UsersError> {
+pub async fn logout_all(deps: &UsersDeps, caller: &Principal) -> Result<(), UsersError> {
     deps.sessions
-        .revoke_all_for_user(&ctx.user_id)
+        .revoke_all_for_user(caller.user_id())
         .await
         .map_err(store_internal)?;
     Ok(())
 }
 
 /// DELETE /admin/users/{id}/sessions: revoke every session of one user.
-pub async fn admin_revoke_user_sessions(deps: &UsersDeps, user_id: &str) -> Result<(), UsersError> {
+pub async fn admin_revoke_user_sessions(
+    deps: &UsersDeps,
+    _admin: &Admin,
+    user_id: &str,
+) -> Result<(), UsersError> {
     let user = deps
         .users
         .get_by_id(user_id)
@@ -612,6 +619,7 @@ pub fn clamp_admin_page(limit: Option<u64>, offset: Option<u64>) -> (u64, u64) {
 /// GET /admin/users: one page plus the total.
 pub async fn admin_list_users(
     deps: &UsersDeps,
+    _admin: &Admin,
     limit: u64,
     offset: u64,
 ) -> Result<AdminUserListResponse, UsersError> {
@@ -631,7 +639,11 @@ pub async fn admin_list_users(
 }
 
 /// GET /admin/users/{id}: one user.
-pub async fn admin_get_user(deps: &UsersDeps, user_id: &str) -> Result<UserResponse, UsersError> {
+pub async fn admin_get_user(
+    deps: &UsersDeps,
+    _admin: &Admin,
+    user_id: &str,
+) -> Result<UserResponse, UsersError> {
     let user = deps
         .users
         .get_by_id(user_id)
@@ -645,6 +657,7 @@ pub async fn admin_get_user(deps: &UsersDeps, user_id: &str) -> Result<UserRespo
 /// purpose (no username/email oracle for admins either).
 pub async fn admin_create_user(
     deps: &UsersDeps,
+    _admin: &Admin,
     username: &str,
     password: &str,
     display_name: Option<&str>,
@@ -787,11 +800,11 @@ fn vague_create_conflict() -> UsersError {
 /// the last admin is 409.
 pub async fn admin_set_role(
     deps: &UsersDeps,
-    ctx: &AuthContext,
+    admin: &Admin,
     user_id: &str,
     role: Role,
 ) -> Result<UserResponse, UsersError> {
-    if ctx.user_id == user_id && !role.is_admin() {
+    if admin.user_id() == user_id && !role.is_admin() {
         return Err(UsersError::Forbidden {
             message: "Cannot remove your own admin privileges".to_owned(),
         });
@@ -826,10 +839,10 @@ pub async fn admin_set_role(
 /// 409.
 pub async fn admin_delete_user(
     deps: &UsersDeps,
-    ctx: &AuthContext,
+    admin: &Admin,
     user_id: &str,
 ) -> Result<(), UsersError> {
-    if ctx.user_id == user_id {
+    if admin.user_id() == user_id {
         return Err(UsersError::Forbidden {
             message: "Cannot delete your own account".to_owned(),
         });
@@ -969,6 +982,7 @@ pub async fn issue_recovery_code(
 /// The code returns once; delivery is out of band (shown to the admin).
 pub async fn admin_mint_recovery_code(
     deps: &UsersDeps,
+    _admin: &Admin,
     user_id: &str,
 ) -> Result<RecoveryCodeResponse, UsersError> {
     issue_recovery_code(
@@ -1356,10 +1370,10 @@ pub async fn list_app_passwords(
 /// credential.
 pub async fn create_app_password(
     deps: &UsersDeps,
-    ctx: &AuthContext,
+    caller: &Principal,
     body: &AppPasswordCreate,
 ) -> Result<AppPasswordCreatedResponse, UsersError> {
-    ctx.require_standard_session()?;
+    caller.require_standard_session()?;
     let name = body
         .name
         .as_deref()
@@ -1378,7 +1392,7 @@ pub async fn create_app_password(
         .map_err(|cause| UsersError::internal(&cause))?;
     let row = AppPasswordRecord {
         id: deps.ids.new_id(),
-        user_id: ctx.user_id.clone(),
+        user_id: caller.user_id().to_owned(),
         name: name.to_owned(),
         secret_sha256: tokens::hash_token(&secret),
         secret_encrypted: encrypted,
@@ -1436,6 +1450,7 @@ pub async fn revoke_app_password(
 /// Ownerless rows (mid-cascade) are skipped, never shown as ghosts.
 pub async fn admin_list_app_passwords(
     deps: &UsersDeps,
+    _admin: &Admin,
 ) -> Result<Vec<AdminAppPasswordView>, UsersError> {
     let rows = deps
         .app_passwords
@@ -1476,6 +1491,7 @@ pub async fn admin_list_app_passwords(
 /// Unknown or already-revoked ids are 404.
 pub async fn admin_revoke_app_password(
     deps: &UsersDeps,
+    _admin: &Admin,
     app_password_id: &str,
 ) -> Result<(), UsersError> {
     let revoked = deps

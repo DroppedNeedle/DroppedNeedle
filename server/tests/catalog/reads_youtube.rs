@@ -9,8 +9,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 use droppedneedle_catalog::reads::discover::fakes::FakeYouTube;
@@ -18,7 +17,7 @@ use droppedneedle_catalog::reads::youtube::{self, YouTubeLinks, store::LinkStore
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-use crate::common::auth::with_test_principal;
+use crate::common::auth::{test_principal, with_test_principal};
 use crate::common::{FixedIdGenerator, ScratchDir};
 
 async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -59,12 +58,7 @@ async fn youtube_links_journey() {
     );
     let app = with_test_principal(
         Router::new().nest("/api/v3", youtube::router(links)),
-        CurrentSession {
-            user_id: "u-ada".to_owned(),
-            session_id: "sess-test".to_owned(),
-            kind: SessionKind::Standard,
-            transport: Transport::Bearer,
-        },
+        test_principal("u-ada", Role::User, "sess-test", SessionKind::Standard),
     );
 
     // Nothing saved yet: 204, not an error.

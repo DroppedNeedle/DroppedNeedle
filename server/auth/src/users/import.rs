@@ -20,7 +20,7 @@ use super::error::UsersError;
 use super::models::{
     ImportCandidateListResponse, ImportCandidateView, ImportUsersResponse, UserRecord,
 };
-use super::roles::Role;
+use super::roles::{Admin, Role};
 use super::services::{self, MAX_DISPLAY_NAME_LEN, store_internal, user_response as render_user};
 use super::stores::{DirectoryUser, StoreError, UserDirectory};
 use super::{UsersDeps, clock_now};
@@ -29,6 +29,7 @@ use super::{UsersDeps, clock_now};
 /// already-imported flag.
 pub async fn list_import_candidates(
     deps: &UsersDeps,
+    _admin: &Admin,
     directory: &dyn UserDirectory,
 ) -> Result<ImportCandidateListResponse, UsersError> {
     let users = directory
@@ -58,6 +59,7 @@ pub async fn list_import_candidates(
 /// catalog is re-read server-side; client display names are never trusted.
 pub async fn import_users(
     deps: &UsersDeps,
+    _admin: &Admin,
     directory: &dyn UserDirectory,
     provider_uids: &[String],
 ) -> Result<ImportUsersResponse, UsersError> {

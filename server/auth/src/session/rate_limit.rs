@@ -35,8 +35,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use super::middleware::CurrentSession;
 use crate::session::client_ip::client_ip;
+use crate::users::roles::Principal;
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::error::ApiError;
 
@@ -371,8 +371,8 @@ impl RateLimiter {
     /// Caller key for a request: the signed-in user when the session gate
     /// resolved one, else the client address.
     pub fn caller_key(&self, request: &Request) -> String {
-        if let Some(session) = request.extensions().get::<CurrentSession>() {
-            return format!("user:{}", session.user_id);
+        if let Some(principal) = request.extensions().get::<Principal>() {
+            return format!("user:{}", principal.user_id());
         }
         let peer = request.extensions().get::<ConnectInfo<SocketAddr>>();
         self.client_key(peer.map(|info| info.0), request.headers())

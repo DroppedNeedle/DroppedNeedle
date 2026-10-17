@@ -13,10 +13,13 @@ use super::{
 use crate::federated::password_import::HashScheme;
 use crate::federated::{FederatedError, SessionIssuer};
 use crate::passwords::{PendingRehash, RehashQueue};
-use crate::session::store::{SessionKind, SessionRecord, SessionStore, SessionStoreError};
+use crate::session::store::{
+    SessionKind, SessionRecord, SessionStore, SessionStoreError, ValidSession,
+};
 use crate::session::tokens::{constant_time_eq, expires_at};
 use crate::times::{parse_iso, to_iso};
 use crate::users::models::{ManagedSession, SessionOwner};
+use crate::users::roles::Role;
 use crate::users::services::COMPANION_LABEL_PREFIX;
 use crate::users::stores::{BoxFuture, Clock, SessionManager, StoreError};
 use droppedneedle_kernel::db::{Lane, map_sqlx_busy};
@@ -136,11 +139,14 @@ impl SessionStore for SqliteSessionStore {
         &self,
         token_hash: &str,
         now_unix: i64,
-    ) -> Result<Option<SessionRecord>, SessionStoreError> {
+    ) -> Result<Option<ValidSession>, SessionStoreError> {
         let (pool, lane) = (self.db.pool(), self.db.lane());
+        // The owner's row comes in the same read: a token whose user is
+        // gone matches nothing, and the role is the one for this request.
         let row = sqlx::query(
-            "SELECT id, user_id, token_hash, session_kind, user_agent, issued_at, expires_at, \
-             last_seen_at, revoked FROM auth_tokens WHERE token_hash = ?",
+            "SELECT t.id, t.user_id, t.token_hash, t.session_kind, t.user_agent, t.issued_at, \
+             t.expires_at, t.last_seen_at, t.revoked, u.username, u.role \
+             FROM auth_tokens t JOIN auth_users u ON u.id = t.user_id WHERE t.token_hash = ?",
         )
         .bind(token_hash)
         .fetch_optional(pool)
@@ -200,17 +206,22 @@ impl SessionStore for SqliteSessionStore {
                 tracing::warn!(%error, "session last_seen touch failed");
             }
         }
-        Ok(Some(SessionRecord {
-            id: row.get("id"),
-            user_id: row.get("user_id"),
-            token_hash: stored,
-            kind,
-            label,
-            issued_at: parse_iso(&issued_raw).unwrap_or(0),
-            expires_at: parse_iso(&expires_raw).unwrap_or(0),
-            last_seen_at,
-            revoked: false,
-            user_agent,
+        let role: String = row.get("role");
+        Ok(Some(ValidSession {
+            record: SessionRecord {
+                id: row.get("id"),
+                user_id: row.get("user_id"),
+                token_hash: stored,
+                kind,
+                label,
+                issued_at: parse_iso(&issued_raw).unwrap_or(0),
+                expires_at: parse_iso(&expires_raw).unwrap_or(0),
+                last_seen_at,
+                revoked: false,
+                user_agent,
+            },
+            username: row.get("username"),
+            role: Role::from_stored(&role),
         }))
     }
 }

@@ -10,8 +10,8 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::Principal;
+use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_catalog::reads::discover::fakes::{
     FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio,
@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
 use crate::common::TestApp;
-use crate::common::auth::{AuthRig, with_test_principal};
+use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -68,13 +68,8 @@ fn rig_with_youtube(configured: bool) -> Rig {
     }
 }
 
-fn principal(user_id: &str) -> CurrentSession {
-    CurrentSession {
-        user_id: user_id.to_owned(),
-        session_id: "sess-test".to_owned(),
-        kind: SessionKind::Standard,
-        transport: Transport::Bearer,
-    }
+fn principal(user_id: &str) -> Principal {
+    test_principal(user_id, Role::User, "sess-test", SessionKind::Standard)
 }
 
 fn app(rig: &Rig, user: Option<&str>) -> Router {

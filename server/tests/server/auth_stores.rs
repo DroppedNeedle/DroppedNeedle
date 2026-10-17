@@ -35,7 +35,7 @@ use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 use rusqlite::params;
 
-use crate::common::auth::{AuthRig, password_hash};
+use crate::common::auth::{AuthRig, password_hash, test_admin};
 
 /// Fixed test clock: 2023-11-14T22:13:20Z.
 const TEST_NOW: i64 = 1_700_000_000;
@@ -694,7 +694,7 @@ async fn recovery_reset_checks_the_code_first_then_revokes_and_consumes() {
     );
     assert_eq!(hibp.0.load(Ordering::SeqCst), 0);
 
-    let minted = services::admin_mint_recovery_code(&deps, "user-1")
+    let minted = services::admin_mint_recovery_code(&deps, &test_admin("admin-1"), "user-1")
         .await
         .unwrap();
     services::reset_password(&deps, &reset(&minted.recovery_code))

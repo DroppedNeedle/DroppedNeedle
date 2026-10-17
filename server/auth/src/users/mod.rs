@@ -8,8 +8,8 @@
 //! ## Wiring (as built)
 //!
 //! The routers below mount through [`AuthSetup`][wiring-setup] (`wiring.rs`),
-//! nested under `/api/v3` inside the session middleware (it stashes
-//! `session::middleware::CurrentSession`, which the role extractors read).
+//! nested under `/api/v3` inside the session middleware (it puts the
+//! request's [`Principal`] in the extensions, which the role extractors read).
 //! `POST /api/v3/auth/password-recovery/reset` is allowlisted public; the
 //! origin check guards cookie mutations. Stores are the `sqlite.rs`
 //! adapters over the 0001 baseline tables; hashing is the production
@@ -41,7 +41,7 @@ use axum::{
 };
 
 pub use error::UsersError;
-pub use roles::{AuthContext, CurrentAdmin, CurrentCurator, CurrentUser, Role, SessionKind};
+pub use roles::{Admin, AuthContext, Curator, Principal, Role, RoleRequired, SessionKind, User};
 
 use droppedneedle_kernel::{ids::IdGenerator, runtime_config::crypto::Crypto};
 use stores::{
@@ -134,7 +134,7 @@ pub fn users_router(deps: UsersDeps) -> Router {
         .with_state(deps)
 }
 
-/// Admin routes. Every handler takes `CurrentAdmin`.
+/// Admin routes. Every handler takes `Admin`.
 pub fn admin_router(deps: UsersDeps) -> Router {
     Router::new()
         .route(

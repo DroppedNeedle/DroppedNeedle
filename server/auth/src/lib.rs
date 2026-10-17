@@ -8,6 +8,8 @@ pub mod federated;
 pub mod session;
 pub mod users;
 
+pub use users::roles::{Admin, Curator, Principal, Role, RoleRequired, User};
+
 // Production adapters: password hashing, the SQLite stores, avatar files,
 // the routers, and the wiring that binds them.
 pub mod avatars;

@@ -845,9 +845,13 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
     // An admin in the web UI cannot do what the host command just did, and
     // a refused attempt leaves the host's code alone.
     assert!(
-        services::admin_mint_recovery_code(&deps, &alice.id)
-            .await
-            .is_err(),
+        services::admin_mint_recovery_code(
+            &deps,
+            &common::auth::test_admin("host-admin"),
+            &alice.id
+        )
+        .await
+        .is_err(),
         "the admin route refuses an account with no password"
     );
 

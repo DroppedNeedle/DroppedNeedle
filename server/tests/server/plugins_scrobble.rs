@@ -4,14 +4,13 @@
 //! verifier against a loopback stub.
 
 use crate::common::ScratchDir;
-use crate::common::auth::with_test_principal;
+use crate::common::auth::{test_principal, with_test_principal};
 use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::response::IntoResponse as _;
-use droppedneedle_auth::session::extract::Transport;
-use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::Principal;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, Lane, open_runtime};
@@ -31,13 +30,8 @@ fn test_crypto() -> Arc<Crypto> {
     Arc::new(Crypto::from_key_bytes(&[11u8; 32]).unwrap())
 }
 
-fn user_session(user_id: &str) -> CurrentSession {
-    CurrentSession {
-        user_id: user_id.to_owned(),
-        session_id: "session-1".to_owned(),
-        kind: SessionKind::Standard,
-        transport: Transport::Bearer,
-    }
+fn user_session(user_id: &str) -> Principal {
+    test_principal(user_id, Role::User, "session-1", SessionKind::Standard)
 }
 
 struct Rig {

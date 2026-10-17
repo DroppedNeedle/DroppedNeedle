@@ -12,6 +12,8 @@
 use serde::Serialize;
 use thiserror::Error;
 
+use crate::users::roles::Role;
+
 /// Session kind, v2 `session_kind` values kept verbatim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -47,6 +49,17 @@ pub struct SessionRecord {
     pub user_agent: Option<String>,
 }
 
+/// A session that verified, with what its owner's row said in the same read.
+#[derive(Debug, Clone)]
+pub struct ValidSession {
+    /// The token row.
+    pub record: SessionRecord,
+    /// The owner's login username, when the account has one.
+    pub username: Option<String>,
+    /// The owner's role. An unknown stored value reads as `user`.
+    pub role: Role,
+}
+
 /// Storage failure. Transports map `Busy` to a 503 with `Retry-After` and
 /// the rest to a 500, without leaking detail.
 #[derive(Debug, Error)]
@@ -71,13 +84,15 @@ pub trait SessionStore: Clone + Send + Sync + 'static {
         record: SessionRecord,
     ) -> impl Future<Output = Result<(), SessionStoreError>> + Send;
 
-    /// Look up by storage hash; returns `None` for unknown, revoked, or
-    /// expired rows. Comparison is constant-time over the candidate hash.
+    /// Look up by storage hash, reading the token and its owner together;
+    /// returns `None` for unknown, revoked or expired rows and for a token
+    /// whose owner is gone. Comparison is constant-time over the candidate
+    /// hash.
     fn lookup_valid(
         &self,
         token_hash: &str,
         now_unix: i64,
-    ) -> impl Future<Output = Result<Option<SessionRecord>, SessionStoreError>> + Send;
+    ) -> impl Future<Output = Result<Option<ValidSession>, SessionStoreError>> + Send;
 }
 
 /// Current unix time in whole seconds.
