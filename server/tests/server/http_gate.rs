@@ -3,9 +3,9 @@
 //! nothing outside the kernel and the request boundary builds an envelope
 //! or an error id. These scans fail the day an old way comes back.
 
-use std::path::{Path, PathBuf};
-
 use regex::Regex;
+
+use crate::common::sources::{Source, workspace_sources};
 
 /// One kind of code that may live only in the listed places.
 struct Rule {
@@ -43,16 +43,10 @@ const RULES: &[Rule] = &[
         what: "a raw Query or Json extractor",
         under: "",
         pattern: r"(?:^|[^:]):\s*(?:axum::(?:extract::)?)?(?:Query|Json)\s*<",
-        allowed: &[
-            (
-                "compat/src/",
-                "Subsonic and Jellyfin answer in their own protocol shapes",
-            ),
-            (
-                "testkit/src/",
-                "mock servers of outside services, not our API",
-            ),
-        ],
+        allowed: &[(
+            "compat/src/",
+            "Subsonic and Jellyfin answer in their own protocol shapes",
+        )],
     },
     Rule {
         what: "the literal error_id",
@@ -80,39 +74,10 @@ const RULES: &[Rule] = &[
     },
 ];
 
-/// `server/`, the workspace root.
-fn server_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-/// `server/src` and every crate's `src` under `server/`.
-fn source_roots() -> Vec<PathBuf> {
-    let root = server_dir();
-    let mut roots = vec![root.join("src")];
-    for entry in std::fs::read_dir(&root).unwrap() {
-        let src = entry.unwrap().path().join("src");
-        if src.is_dir() {
-            roots.push(src);
-        }
-    }
-    roots
-}
-
-fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    for entry in std::fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_dir() {
-            rust_files(&path, out);
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            out.push(path);
-        }
-    }
-}
-
 /// The file's code with comment lines blanked, so docs may name the rules.
-fn code_of(path: &Path) -> String {
-    std::fs::read_to_string(path)
-        .unwrap()
+fn code_of(source: &Source) -> String {
+    source
+        .text
         .lines()
         .map(|line| {
             if line.trim_start().starts_with("//") {
@@ -127,25 +92,17 @@ fn code_of(path: &Path) -> String {
 
 #[test]
 fn errors_and_extractors_have_one_way_in() {
-    let server = server_dir();
-    let mut files = Vec::new();
-    for root in source_roots() {
-        rust_files(&root, &mut files);
-    }
-    assert!(files.len() > 100, "the scan found the sources");
+    let sources = workspace_sources();
+    assert!(sources.len() > 100, "the scan found the sources");
     let mut found = Vec::new();
     for rule in RULES {
         let pattern = Regex::new(rule.pattern).unwrap();
-        for file in &files {
-            let relative = file
-                .strip_prefix(&server)
-                .unwrap()
-                .to_string_lossy()
-                .replace('\\', "/");
+        for source in &sources {
+            let relative = source.path.as_str();
             if !relative.starts_with(rule.under) {
                 continue;
             }
-            let code = code_of(file);
+            let code = code_of(source);
             for hit in pattern.find_iter(&code) {
                 let allowed = rule
                     .allowed
@@ -170,7 +127,11 @@ fn errors_and_extractors_have_one_way_in() {
 
     // The allowlisted files hold only the one thing each is allowed.
     let only = |file: &str, pattern: &str, expected: &[&str]| {
-        let code = code_of(&server.join(file));
+        let source = sources
+            .iter()
+            .find(|source| source.path == file)
+            .expect("the allowlisted file exists");
+        let code = code_of(source);
         let names: Vec<String> = Regex::new(pattern)
             .unwrap()
             .captures_iter(&code)
