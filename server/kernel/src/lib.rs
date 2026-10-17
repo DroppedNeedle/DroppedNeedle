@@ -13,6 +13,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod events;
+pub mod extract;
 pub mod http_client;
 pub mod ids;
 pub mod jobs;
