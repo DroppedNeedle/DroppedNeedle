@@ -258,5 +258,35 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Boot, probe, stop
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          # The pinned pnpm version is declared in the frontend package.
+          package_json_file: frontend/package.json
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .github/node-version
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright chromium
+        working-directory: ./frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Boot, probe, stop, then the browser journeys
         run: ./server/scripts/e2e-container.sh
+
+      - name: Upload journey traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: journey-traces
+          path: frontend/test-results/journeys/
+          if-no-files-found: ignore
+          retention-days: 7

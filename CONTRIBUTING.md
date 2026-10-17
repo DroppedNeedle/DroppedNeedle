@@ -58,6 +58,17 @@ make check                  # all of the above (not cargo audit, cargo deny or t
 
 Browser tests use Playwright. Install the browser once with `make frontend-browser-install`.
 
+### Browser journeys
+
+The journeys in `frontend/tests/journeys/` walk through the real app in a browser: set up a fresh server, sign in, and so on. They run against the container image, not the dev server:
+
+```bash
+make frontend-install frontend-browser-install   # once
+make container-e2e
+```
+
+This builds a test image, runs the container checks (boot, health, clean shutdown), then starts the image on a Docker network with no route out and runs the journeys against it. It needs Docker and takes a while, mostly for the image build. Each run starts from an empty server, and its containers and network are removed when it ends. A failed journey leaves a trace in `frontend/test-results/journeys/`; open it with `pnpm exec playwright show-trace <path>/trace.zip` from `frontend/`. CI runs the same script in the Container E2E job and keeps the traces of a failed run as the `journey-traces` artifact.
+
 If you change a route or a request or response type, run `make contract-write` and commit the regenerated `server/openapi/openapi.json` and `frontend/src/lib/api/v3/openapi.d.ts` with your change. Both targets read the document from the integration-test build, so they reuse what `cargo test` already compiled; CI runs `server/openapi/check.sh` against the server binary itself.
 
 ## Pull requests

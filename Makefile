@@ -16,7 +16,7 @@ COMPOSE_FILE ?= docker-compose.yml
 	server-run server-test server-lint server-fmt server-fmt-check contract-check contract-write \
 	frontend-install frontend-browser-install frontend-dev frontend-build frontend-check \
 	frontend-lint frontend-format-check frontend-test frontend-test-server frontend-test-client \
-	image rebuild
+	image rebuild container-e2e
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "} {printf "  %-24s %s\n", $$1, $$2}'
@@ -79,3 +79,6 @@ image: ## Build the container image as droppedneedle:local
 
 rebuild: image ## Build droppedneedle:local and recreate the container from COMPOSE_FILE
 	cd "$(ROOT_DIR)" && docker compose -f "$(COMPOSE_FILE)" up -d
+
+container-e2e: ## Build a test image, run the container checks and the browser journeys
+	"$(SERVER_DIR)/scripts/e2e-container.sh"
