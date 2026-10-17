@@ -284,7 +284,7 @@ async fn http_verifier_maps_stub_statuses() {
 async fn mirror_user(runtime: &DbRuntime, user_id: &str) {
     let user_id = user_id.to_owned();
     runtime
-        .lane()
+        .db()
         .write(Lane::Foreground, "scrobble-test-seed", move |tx| {
             tx.execute(
                 "INSERT INTO auth_users (id, display_name, role, created_at)
@@ -303,7 +303,7 @@ async fn sqlite_prefs_partial_upsert_survives_reopen() {
     let db_path = scratch.join("app.db");
     let runtime = crate::common::scratch_runtime(&db_path).await;
     mirror_user(&runtime, "user-1").await;
-    let store = SqliteScrobblePrefsStore::new(runtime.pool().clone(), runtime.lane().clone());
+    let store = SqliteScrobblePrefsStore::new(runtime.db().clone());
 
     // Unknown users read the defaults, like the memory store.
     let prefs = store.get("user-1").await;
@@ -333,7 +333,7 @@ async fn sqlite_prefs_partial_upsert_survives_reopen() {
     let runtime = open_runtime(&DbConfig::new(&db_path))
         .await
         .expect("runtime reopens");
-    let store = SqliteScrobblePrefsStore::new(runtime.pool().clone(), runtime.lane().clone());
+    let store = SqliteScrobblePrefsStore::new(runtime.db().clone());
     let prefs = store.get("user-1").await;
     assert!(prefs.scrobble_to_listenbrainz);
     assert_eq!(prefs.primary_music_source, "lastfm");
@@ -360,11 +360,7 @@ async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
     let db_path = scratch.join("app.db");
     let runtime = crate::common::scratch_runtime(&db_path).await;
     mirror_user(&runtime, "user-1").await;
-    let store = SqliteListenBrainzLinkStore::new(
-        runtime.pool().clone(),
-        runtime.lane().clone(),
-        test_crypto(),
-    );
+    let store = SqliteListenBrainzLinkStore::new(runtime.db().clone(), test_crypto());
 
     assert!(!store.has_link("user-1").await);
     store
@@ -383,7 +379,7 @@ async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
     // The raw row holds ciphertext, never the token.
     let raw: String =
         sqlx::query_scalar("SELECT connection_data FROM user_connections WHERE user_id = 'user-1'")
-            .fetch_one(runtime.pool())
+            .fetch_one(runtime.db().sqlx())
             .await
             .expect("raw row reads");
     assert!(!raw.contains("lb-token-1"), "{raw}");
@@ -393,11 +389,7 @@ async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
     let runtime = open_runtime(&DbConfig::new(&db_path))
         .await
         .expect("runtime reopens");
-    let store = SqliteListenBrainzLinkStore::new(
-        runtime.pool().clone(),
-        runtime.lane().clone(),
-        test_crypto(),
-    );
+    let store = SqliteListenBrainzLinkStore::new(runtime.db().clone(), test_crypto());
     assert_eq!(
         store.status("user-1").await.expect("link reads").username,
         "melody"

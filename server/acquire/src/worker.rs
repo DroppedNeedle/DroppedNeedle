@@ -49,7 +49,7 @@ use super::search_jobs::review::ReviewMode;
 use super::sources::{JournalOwnership, SabnzbdSource, SlskdSource};
 use super::target::Targets;
 use super::target::reasons::TrackReason;
-use droppedneedle_kernel::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
+use droppedneedle_kernel::db::{Db, DurableWorkWakeups, JobKind, JobState};
 
 mod controls;
 mod landings;
@@ -1842,24 +1842,24 @@ fn hex_task_id(planned: &str) -> String {
 pub async fn spawn_download_worker(
     worker: Arc<DownloadWorker>,
     wakeups: DurableWorkWakeups,
-    lane: WriteLane,
+    db: Db,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<tokio::task::JoinHandle<()>, String> {
     wakeups
-        .register_job(&lane, DOWNLOAD_WORKER_JOB, JobKind::Durable, None)
+        .register_job(&db, DOWNLOAD_WORKER_JOB, JobKind::Durable, None)
         .await
         .map_err(|error| error.to_string())?;
     let task = tokio::spawn(async move {
         // A pre-signaled shutdown skips the first pass entirely.
         if *shutdown.borrow() {
-            mark(&wakeups, &lane, JobState::Stopped).await;
+            mark(&wakeups, &db, JobState::Stopped).await;
             return;
         }
-        mark(&wakeups, &lane, JobState::Running).await;
+        mark(&wakeups, &db, JobState::Running).await;
         let mut pass: u64 = 0;
         loop {
             worker.run_once(pass).await;
-            if let Err(error) = wakeups.heartbeat(&lane, DOWNLOAD_WORKER_JOB).await {
+            if let Err(error) = wakeups.heartbeat(&db, DOWNLOAD_WORKER_JOB).await {
                 tracing::warn!(%error, "download worker heartbeat failed");
             }
             pass += 1;
@@ -1876,17 +1876,14 @@ pub async fn spawn_download_worker(
         // A landing mid-publish finishes (or reaches a durable step)
         // before the worker reports stopped.
         worker.wait_for_landings().await;
-        mark(&wakeups, &lane, JobState::Stopped).await;
+        mark(&wakeups, &db, JobState::Stopped).await;
     });
     Ok(task)
 }
 
 /// Record the worker job's state, logging a failed write.
-async fn mark(wakeups: &DurableWorkWakeups, lane: &WriteLane, state: JobState) {
-    if let Err(error) = wakeups
-        .set_job_state(lane, DOWNLOAD_WORKER_JOB, state)
-        .await
-    {
+async fn mark(wakeups: &DurableWorkWakeups, db: &Db, state: JobState) {
+    if let Err(error) = wakeups.set_job_state(db, DOWNLOAD_WORKER_JOB, state).await {
         tracing::warn!(%error, "download worker state write failed");
     }
 }

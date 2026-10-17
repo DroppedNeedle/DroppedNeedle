@@ -31,6 +31,10 @@ unicode-normalization.workspace = true
 utoipa.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+# Paused time for the writer lane briefs.
+tokio = { workspace = true, features = ["test-util"] }
+
 [features]
 # Fakes, memory stores and test constructors for the test suites above.
 test-support = []

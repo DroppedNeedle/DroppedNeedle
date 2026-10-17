@@ -26,10 +26,9 @@ use axum::{
     Router,
     routing::{get, post},
 };
-use sqlx::SqlitePool;
 
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_kernel::db::{BackupService, CheckpointService, DurableWorkWakeups, WriteLane};
+use droppedneedle_kernel::db::{BackupService, CheckpointService, Db, DurableWorkWakeups};
 use droppedneedle_providers::{InMemoryProviderCache, Providers};
 
 pub use error::AdminError;
@@ -44,21 +43,19 @@ pub use system::{ServiceHealthItem, SystemHealthResponse};
 /// Database handles the admin routes read and write through.
 #[derive(Clone)]
 pub struct AdminDb {
-    /// Pool for admin reads (wakeup rows, quota rows, task sizes).
-    pub pool: SqlitePool,
-    /// Writer lane for quota override writes.
-    pub lane: WriteLane,
+    /// The database: admin reads (wakeup rows, quota rows, task sizes)
+    /// and quota override writes.
+    pub db: Db,
     /// Durable fabric for the job-registry half of queue stats.
     pub wakeups: DurableWorkWakeups,
 }
 
 impl AdminDb {
-    /// Bundle the pool with its lane; the wakeup handle derives from the pool.
-    pub fn new(pool: SqlitePool, lane: WriteLane) -> Self {
+    /// Bundle the database with the wakeup handle over its reader pool.
+    pub fn new(db: Db) -> Self {
         Self {
-            wakeups: DurableWorkWakeups::new(pool.clone()),
-            pool,
-            lane,
+            wakeups: DurableWorkWakeups::new(db.sqlx().clone()),
+            db,
         }
     }
 }

@@ -148,6 +148,25 @@ pub enum Lane {
     Bulk,
 }
 
+/// The class of a durable write. A durable write is never held by the WAL,
+/// so it has no bulk class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DurableLane {
+    /// Request path.
+    Foreground,
+    /// Job state.
+    Background,
+}
+
+impl From<DurableLane> for Lane {
+    fn from(lane: DurableLane) -> Self {
+        match lane {
+            DurableLane::Foreground => Self::Foreground,
+            DurableLane::Background => Self::Background,
+        }
+    }
+}
+
 impl Lane {
     fn label(self) -> &'static str {
         match self {
@@ -505,10 +524,10 @@ impl CancelFlag {
 }
 
 /// The single writer. A cloneable handle over shared state; every write in
-/// the process takes its turn through it. Clones are cheap; every module
-/// shares one lane through `AppState`.
+/// the process takes its turn through it. Only [`super::Db`] holds one, so
+/// nothing outside this module reaches it.
 #[derive(Clone)]
-pub struct WriteLane {
+pub(in crate::db) struct WriteLane {
     shared: Arc<Shared>,
 }
 
@@ -1040,13 +1059,14 @@ impl WriteLane {
     /// stuck holder is not logged. The database runtime starts one for its
     /// lane, which is the only lane production opens. Nothing sets the WAL
     /// hold on a lane without a checkpoint service either.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn open(db_path: &Path) -> Result<Self, DbError> {
         Self::open_limited(db_path, LaneLimits::default())
     }
 
     /// [`WriteLane::open`] with other time limits, so a test can reach them
     /// without waiting out the real ones.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub fn open_with(db_path: &Path, limits: LaneLimits) -> Result<Self, DbError> {
         Self::open_limited(db_path, limits)
     }
@@ -1111,6 +1131,7 @@ impl WriteLane {
     }
 
     /// How long admissions have waited for their turn so far.
+    #[cfg(test)]
     pub fn wait_times(&self) -> WaitTimes {
         self.shared.state().waits
     }
@@ -1277,8 +1298,8 @@ impl WriteLane {
     /// two journal steps treats either as "stop here and recover at the
     /// next start".
     ///
-    /// A durable write is never held by the WAL: `Lane::Bulk` here means
-    /// `Lane::Background`.
+    /// A durable write is never held by the WAL, so its lane has no bulk
+    /// class.
     ///
     /// The time budget covers less of this write than of an ordinary one.
     /// Setting the pragma and `BEGIN` run before the abort clock starts. The
@@ -1286,17 +1307,17 @@ impl WriteLane {
     /// stuck on a disk that does not answer is not aborted: it shows only in
     /// the log line that names a write holding the lane past twice its
     /// budget.
-    pub fn write_durable<R, E, F>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, E>
+    pub fn write_durable<R, E, F>(
+        &self,
+        lane: DurableLane,
+        name: &'static str,
+        op: F,
+    ) -> Result<R, E>
     where
         F: FnOnce(&Transaction) -> Result<R, E>,
         E: From<DbError> + std::fmt::Display,
     {
-        // A durable write is never held, so it cannot be a bulk write.
-        let lane = match lane {
-            Lane::Bulk => Lane::Background,
-            other => other,
-        };
-        self.write_parked(lane, name, true, None, op)
+        self.write_parked(lane.into(), name, true, None, op)
             .map_err(TxError::into_caller)
     }
 

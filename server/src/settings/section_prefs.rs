@@ -17,7 +17,7 @@ use sqlx::{Row as _, SqlitePool};
 
 use super::models::{SectionPrefItem, SectionPrefsResponse, SectionPrefsUpdate};
 use droppedneedle_auth::users::stores::{LastFmStore, StoreError};
-use droppedneedle_kernel::db::{DbError, Lane, WriteLane, sqlx_is_busy};
+use droppedneedle_kernel::db::{Db, DbError, Lane, sqlx_is_busy};
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Visible pages.
@@ -402,10 +402,8 @@ impl LinkStatus for SqliteLinkStatus {
 
 /// Production toggle store over `user_section_prefs`.
 pub struct SqliteSectionPrefsStore {
-    /// Reader pool.
-    pub pool: SqlitePool,
-    /// Writer lane.
-    pub lane: Arc<WriteLane>,
+    /// The database.
+    pub db: Db,
 }
 
 impl SectionPrefsStore for SqliteSectionPrefsStore {
@@ -420,7 +418,7 @@ impl SectionPrefsStore for SqliteSectionPrefsStore {
             )
             .bind(user_id)
             .bind(page)
-            .fetch_all(&self.pool)
+            .fetch_all(self.db.sqlx())
             .await
             .map_err(|cause| {
                 if sqlx_is_busy(&cause) {
@@ -442,13 +440,13 @@ impl SectionPrefsStore for SqliteSectionPrefsStore {
         page: &'a str,
         disabled: &'a HashSet<String>,
     ) -> BoxFuture<'a, Result<(), StoreError>> {
-        let lane = self.lane.clone();
+        let db = self.db.clone();
         let user_id = user_id.to_owned();
         let page = page.to_owned();
         let mut disabled: Vec<String> = disabled.iter().cloned().collect();
         disabled.sort();
         Box::pin(async move {
-            lane.write(
+            db.write(
                 Lane::Foreground,
                 "settings.section_prefs.replace",
                 move |tx| {

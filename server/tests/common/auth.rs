@@ -97,8 +97,7 @@ impl AuthRig {
         let clock = Arc::new(ManualClock::new(TEST_NOW));
         let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
         let auth = ProdAuth::new(
-            runtime.pool(),
-            runtime.lane(),
+            runtime.db(),
             Arc::clone(&crypto),
             Arc::clone(&ids),
             Arc::clone(&clock) as Arc<dyn Clock>,
@@ -121,8 +120,7 @@ impl AuthRig {
                 ),
             ),
             droppedneedle::bootstrap::sign_in_links(
-                runtime.pool().clone(),
-                runtime.lane().clone(),
+                runtime.db().clone(),
                 crypto,
                 Arc::clone(&config),
             ),

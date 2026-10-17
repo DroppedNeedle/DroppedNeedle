@@ -84,18 +84,16 @@ pub trait ConnectionStore: Send + Sync {
     fn list<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Result<Vec<ConnectionRow>, String>>;
 }
 
-/// `user_connections` over the shared pool (reads) and the writer lane
-/// (writes).
+/// `user_connections` over the database.
 #[derive(Clone)]
 pub struct SqliteConnectionStore {
-    pool: sqlx::SqlitePool,
-    lane: droppedneedle_kernel::db::WriteLane,
+    db: droppedneedle_kernel::db::Db,
 }
 
 impl SqliteConnectionStore {
     /// Bind the store to a migrated database.
-    pub fn new(pool: sqlx::SqlitePool, lane: droppedneedle_kernel::db::WriteLane) -> Self {
-        Self { pool, lane }
+    pub fn new(db: droppedneedle_kernel::db::Db) -> Self {
+        Self { db }
     }
 }
 
@@ -112,7 +110,7 @@ impl ConnectionStore for SqliteConnectionStore {
             )
             .bind(user_id)
             .bind(service)
-            .fetch_optional(&self.pool)
+            .fetch_optional(self.db.sqlx())
             .await
             .map_err(|error| {
                 droppedneedle_kernel::db::map_sqlx_busy("remotes.connection.get", error).to_string()
@@ -134,7 +132,7 @@ impl ConnectionStore for SqliteConnectionStore {
         let user_id = user_id.to_owned();
         let service = service.to_owned();
         Box::pin(async move {
-            self.lane
+            self.db
                 .write(
                     droppedneedle_kernel::db::Lane::Foreground,
                     "remotes.connection.upsert",
@@ -165,7 +163,7 @@ impl ConnectionStore for SqliteConnectionStore {
         let user_id = user_id.to_owned();
         let service = service.to_owned();
         Box::pin(async move {
-            self.lane
+            self.db
                 .write(
                     droppedneedle_kernel::db::Lane::Foreground,
                     "remotes.connection.delete",
@@ -189,7 +187,7 @@ impl ConnectionStore for SqliteConnectionStore {
                  WHERE user_id = ?1 ORDER BY service",
             )
             .bind(user_id)
-            .fetch_all(&self.pool)
+            .fetch_all(self.db.sqlx())
             .await
             .map_err(|error| {
                 droppedneedle_kernel::db::map_sqlx_busy("remotes.connection.list", error)

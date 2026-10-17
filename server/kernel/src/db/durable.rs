@@ -8,7 +8,8 @@
 //! so a wakeup is never lost between request and pickup.
 //!
 //! Consumers live in `acquire`, `library`, and `jobs`; this module is the
-//! fabric they share. All table writes go through the [`WriteLane`]; reads use the pool.
+//! fabric they share. All table writes go through the writer lane of a
+//! [`Db`]; reads use the pool.
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,10 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sqlx::SqlitePool;
 use tokio::sync::Notify;
 
-use super::{
-    error::DbError,
-    writer::{Lane, WriteLane},
-};
+use super::{error::DbError, handle::Db, writer::Lane};
 
 /// Background work channel. Matches the `durable_work_wakeups` CHECK.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -178,12 +176,12 @@ impl DurableWorkWakeups {
     /// queue, so coalesced signals lose nothing. One worker per channel.
     pub async fn request(
         &self,
-        lane: &WriteLane,
+        db: &Db,
         lane_kind: Lane,
         channel: WakeupChannel,
     ) -> Result<i64, DbError> {
         let key = channel.as_str().to_owned();
-        let seq = lane
+        let seq = db
             .write(lane_kind, "durable-wakeup-request", move |tx| {
                 tx.execute(
                     "UPDATE durable_work_wakeups
@@ -224,13 +222,13 @@ impl DurableWorkWakeups {
     /// `through` never moves the marker back.
     pub async fn consume(
         &self,
-        lane: &WriteLane,
+        db: &Db,
         lane_kind: Lane,
         channel: WakeupChannel,
         through_seq: i64,
     ) -> Result<(), DbError> {
         let key = channel.as_str().to_owned();
-        lane.write(lane_kind, "durable-wakeup-consume", move |tx| {
+        db.write(lane_kind, "durable-wakeup-consume", move |tx| {
             tx.execute(
                 "UPDATE durable_work_wakeups
                  SET consumed_seq = MAX(consumed_seq, ?1), updated_at = ?2
@@ -245,7 +243,7 @@ impl DurableWorkWakeups {
     /// Register a job, or refresh the registration if the name exists.
     pub async fn register_job(
         &self,
-        lane: &WriteLane,
+        db: &Db,
         name: &str,
         kind: JobKind,
         wakeup_channel: Option<WakeupChannel>,
@@ -253,7 +251,7 @@ impl DurableWorkWakeups {
         let name = name.to_owned();
         let kind_text = kind.as_str().to_owned();
         let channel_text = wakeup_channel.map(WakeupChannel::as_str).map(str::to_owned);
-        lane.write(Lane::Background, "durable-job-register", move |tx| {
+        db.write(Lane::Background, "durable-job-register", move |tx| {
             tx.execute(
                 "INSERT INTO durable_job_registry
                      (name, kind, wakeup_channel, state, updated_at)
@@ -270,15 +268,10 @@ impl DurableWorkWakeups {
     }
 
     /// Move a job to a new liveness state.
-    pub async fn set_job_state(
-        &self,
-        lane: &WriteLane,
-        name: &str,
-        state: JobState,
-    ) -> Result<(), DbError> {
+    pub async fn set_job_state(&self, db: &Db, name: &str, state: JobState) -> Result<(), DbError> {
         let name = name.to_owned();
         let state_text = state.as_str().to_owned();
-        lane.write(Lane::Background, "durable-job-state", move |tx| {
+        db.write(Lane::Background, "durable-job-state", move |tx| {
             let changed = tx.execute(
                 "UPDATE durable_job_registry
                  SET state = ?1, updated_at = ?2 WHERE name = ?3",
@@ -296,9 +289,9 @@ impl DurableWorkWakeups {
     }
 
     /// Beat a job's heart without changing its state.
-    pub async fn heartbeat(&self, lane: &WriteLane, name: &str) -> Result<(), DbError> {
+    pub async fn heartbeat(&self, db: &Db, name: &str) -> Result<(), DbError> {
         let name = name.to_owned();
-        lane.write(Lane::Background, "durable-job-heartbeat", move |tx| {
+        db.write(Lane::Background, "durable-job-heartbeat", move |tx| {
             let changed = tx.execute(
                 "UPDATE durable_job_registry
                  SET last_heartbeat_at = ?1, updated_at = ?1 WHERE name = ?2",

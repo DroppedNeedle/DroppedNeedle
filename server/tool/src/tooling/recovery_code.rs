@@ -101,7 +101,7 @@ async fn issue_in(
     username: &str,
 ) -> Result<IssuedRecoveryCode, RecoveryCodeError> {
     let unknown = || RecoveryCodeError::UnknownUser(username.to_owned());
-    let db = AuthDb::new(runtime.pool(), runtime.lane());
+    let db = AuthDb::new(runtime.db());
     let users = SqliteUserStore::new(&db);
     let user = users
         .get_by_username(&username.trim().to_lowercase())
@@ -123,7 +123,7 @@ async fn issue_in(
 }
 
 async fn admins_in(runtime: &DbRuntime) -> Result<Vec<String>, RecoveryCodeError> {
-    let db = AuthDb::new(runtime.pool(), runtime.lane());
+    let db = AuthDb::new(runtime.db());
     let users = SqliteUserStore::new(&db);
     let mut names = Vec::new();
     let mut offset = 0;

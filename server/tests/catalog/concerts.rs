@@ -176,7 +176,7 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
         })
         .unwrap();
     runtime
-        .lane()
+        .db()
         .write(Lane::Foreground, "seed follows", |tx| {
             for user in ["u1", "u2"] {
                 tx.execute(
@@ -203,8 +203,7 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
 
     let recorder = Arc::new(Recorder::default());
     let setup = ConcertsSetup::new(
-        runtime.pool().clone(),
-        runtime.lane().clone(),
+        runtime.db().clone(),
         reqwest::Client::new(),
         Arc::clone(&config),
         Endpoints {

@@ -4,11 +4,11 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use droppedneedle::bootstrap::Port;
+use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
@@ -155,12 +155,12 @@ impl ScriptedContrib {
     }
 }
 
-/// A library bundle built the way the app builds it, over the database at
-/// `db_path` and the settings in `config`, with identification answering
-/// from scripted providers. Returns the bundle and those providers.
-pub fn library_at(db_path: &Path, config: Arc<ConfigStore>) -> (LibrarySetup, Arc<FakeProviders>) {
+/// A library bundle built the way the app builds it, over `db` and the
+/// settings in `config`, with identification answering from scripted
+/// providers. Returns the bundle and those providers.
+pub fn library_at(db: &Db, config: Arc<ConfigStore>) -> (LibrarySetup, Arc<FakeProviders>) {
     let scripted = Arc::new(FakeProviders::default());
-    let library = library_asking(db_path, config, scripted.clone());
+    let library = library_asking(db, config, scripted.clone());
     (library, scripted)
 }
 
@@ -168,7 +168,7 @@ pub fn library_at(db_path: &Path, config: Arc<ConfigStore>) -> (LibrarySetup, Ar
 /// answer from scripts with nothing scripted, and every other outside
 /// address is closed.
 pub fn library_asking(
-    db_path: &Path,
+    db: &Db,
     config: Arc<ConfigStore>,
     identify: Arc<dyn IdentifyProviders>,
 ) -> LibrarySetup {
@@ -184,7 +184,7 @@ pub fn library_asking(
         Arc::new(UuidGenerator),
         Arc::new(Providers::unpaced()),
         mb_source,
-        db_path,
+        db,
         config,
         outbound.library(),
     )

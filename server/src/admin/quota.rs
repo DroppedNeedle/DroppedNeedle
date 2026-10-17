@@ -153,7 +153,7 @@ async fn read_override(db: &AdminDb, user_id: &str) -> Result<Option<QuotaOverri
          FROM user_quotas WHERE user_id = ?1",
     )
     .bind(user_id)
-    .fetch_optional(&db.pool)
+    .fetch_optional(db.db.sqlx())
     .await
     .map_err(|error| AdminError::internal(&format_args!("quota override read failed: {error}")))?;
     Ok(row.map(|(count, days, storage)| QuotaOverride {
@@ -197,7 +197,7 @@ async fn write_override(
 ) -> Result<(), AdminError> {
     let user_id = user_id.to_owned();
     let row = row.clone();
-    db.lane
+    db.db
         .write(Lane::Foreground, "admin-quota-set", move |tx| {
             if row.request_count.is_none() && row.request_days.is_none() && row.storage_gb.is_none()
             {
@@ -243,7 +243,7 @@ async fn user_storage_bytes(db: &AdminDb, user_id: &str) -> Result<u64, AdminErr
          WHERE user_id = ?1 AND status = 'completed'",
     )
     .bind(user_id)
-    .fetch_one(&db.pool)
+    .fetch_one(db.db.sqlx())
     .await
     .map_err(|error| AdminError::internal(&format_args!("quota storage read failed: {error}")))?;
     Ok(total.unwrap_or(0).max(0) as u64)

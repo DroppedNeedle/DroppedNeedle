@@ -580,7 +580,7 @@ impl MixSources for FakeMix {
 async fn personal_mix_grant_build_and_refresh() {
     let (state, db, dispatch) = setup().await;
     let prefs = Arc::new(MemoryScrobblePrefsStore::new());
-    let playlists = PlaylistStore::new(CollectionsDb::new(db.pool().clone(), db.lane().clone()));
+    let playlists = PlaylistStore::new(CollectionsDb::new(db.db().clone()));
     let builder = Arc::new(PersonalMixBuilder::new(
         Arc::new(FakeMix),
         prefs.clone(),

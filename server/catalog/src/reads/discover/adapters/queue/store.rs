@@ -10,11 +10,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use sqlx::SqlitePool;
-
 use crate::reads::discover::adapters::ownership;
 use crate::reads::discover::models::{IgnoredRelease, QueueIgnoreRequest};
-use droppedneedle_kernel::db::{DbError, WriteLane, writer::Lane};
+use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 
 /// Snapshot key prefix the decks share with v2.
 const DECK_KEY_PREFIX: &str = "discover_queue:";
@@ -24,8 +22,7 @@ const MAX_BIND: usize = 500;
 /// The queue's tables.
 #[derive(Clone, Debug)]
 pub struct QueueDb {
-    pool: SqlitePool,
-    lane: WriteLane,
+    db: Db,
 }
 
 /// A saved deck as stored, plus whether something marked it stale.
@@ -42,9 +39,9 @@ fn deck_key(user_id: &str) -> String {
 }
 
 impl QueueDb {
-    /// Bind the tables over the reader pool and the writer lane.
-    pub fn new(pool: SqlitePool, lane: WriteLane) -> Self {
-        Self { pool, lane }
+    /// Bind the tables over the database.
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 
     /// Lowercased release-group ids the user ignored.
@@ -53,7 +50,7 @@ impl QueueDb {
             "SELECT release_group_mbid_lower FROM ignored_releases WHERE user_id = ?1",
         )
         .bind(user_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.sqlx())
         .await
         .map_err(|error| format!("ignored releases read: {error}"))?;
         Ok(rows
@@ -70,7 +67,7 @@ impl QueueDb {
              FROM ignored_releases WHERE user_id = ?1 ORDER BY ignored_at DESC",
         )
         .bind(user_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.sqlx())
         .await
         .map_err(|error| format!("ignored releases read: {error}"))?;
         Ok(rows
@@ -99,7 +96,7 @@ impl QueueDb {
     ) -> Result<(), String> {
         let user_id = user_id.to_owned();
         let release = release.clone();
-        self.lane
+        self.db
             .write(Lane::Foreground, "discover.queue.ignore", move |tx| {
                 tx.execute(
                     "INSERT INTO ignored_releases (user_id, release_group_mbid_lower, \
@@ -130,7 +127,7 @@ impl QueueDb {
     /// Drop ignores older than `before` (unix seconds). Returns how many
     /// went.
     pub async fn prune_ignored(&self, before: f64) -> Result<usize, String> {
-        self.lane
+        self.db
             .write(
                 Lane::Background,
                 "discover.queue.prune_ignored",
@@ -154,7 +151,7 @@ impl QueueDb {
              WHERE snapshot.snapshot_key = ?1 AND snapshot.catalog_revision = revision.value",
         )
         .bind(deck_key(user_id))
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.db.sqlx())
         .await
         .map_err(|error| format!("queue snapshot read: {error}"))?;
         Ok(row.map(|(payload, stale)| SavedDeck {
@@ -171,7 +168,7 @@ impl QueueDb {
         saved_at: f64,
     ) -> Result<(), String> {
         let user_id = user_id.to_owned();
-        self.lane
+        self.db
             .write(Lane::Background, "discover.queue.save_deck", move |tx| {
                 let revision: i64 = tx.query_row(
                     "SELECT COALESCE((SELECT value FROM library_catalog_revision \
@@ -213,7 +210,7 @@ impl QueueDb {
                 query = query.bind(mbid);
             }
             let rows = query
-                .fetch_all(&self.pool)
+                .fetch_all(self.db.sqlx())
                 .await
                 .map_err(|error| format!("resolution map read: {error}"))?;
             for (release, group) in rows {
@@ -229,7 +226,7 @@ impl QueueDb {
             return;
         }
         let written: Result<(), DbError> = self
-            .lane
+            .db
             .write(Lane::Background, "discover.queue.resolutions", move |tx| {
                 for (release, group) in &answers {
                     tx.execute(
@@ -253,7 +250,7 @@ impl QueueDb {
     /// identified as.
     pub async fn owned(&self, release_group_mbids: &[String]) -> Result<HashSet<String>, String> {
         let wanted: Vec<&str> = release_group_mbids.iter().map(String::as_str).collect();
-        ownership::owned_albums(&self.pool, &wanted)
+        ownership::owned_albums(self.db.sqlx(), &wanted)
             .await
             .map(|owned| owned.into_keys().collect())
             .map_err(|failure| failure.to_string())

@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use axum::Router;
 
-use droppedneedle_kernel::db::WriteLane;
+use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::jobs::plugin_ticks::SqliteTickStore;
 use droppedneedle_kernel::jobs::registry::JobRegistry;
 use droppedneedle_kernel::jobs::registry::StoreKind;
@@ -133,8 +133,7 @@ impl PluginsSetup {
         crypto: Arc<Crypto>,
         cache: Arc<dyn ProviderCache>,
         registry: JobRegistry<StoreKind>,
-        pool: sqlx::SqlitePool,
-        lane: WriteLane,
+        db: Db,
         github: GitHubHosts,
         listenbrainz: &str,
     ) -> Self {
@@ -145,9 +144,9 @@ impl PluginsSetup {
             listenbrainz,
             cache,
             registry,
-            TickStoreKind::Sqlite(SqliteTickStore::new(pool.clone(), lane.clone())),
-            Arc::new(SqliteScrobblePrefsStore::new(pool.clone(), lane.clone())),
-            Arc::new(SqliteListenBrainzLinkStore::new(pool, lane, crypto)),
+            TickStoreKind::Sqlite(SqliteTickStore::new(db.clone())),
+            Arc::new(SqliteScrobblePrefsStore::new(db.clone())),
+            Arc::new(SqliteListenBrainzLinkStore::new(db, crypto)),
         )
     }
 

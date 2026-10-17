@@ -396,12 +396,11 @@ impl PageSources for Scripted {
 
 fn page_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
     let config = crate::common::config_store(dir);
-    let pool = runtime.pool().clone();
-    let lane = runtime.lane().clone();
+    let pool = runtime.db().sqlx().clone();
     let page = LiveDiscover::new(PageInputs {
         sources: Arc::new(Scripted),
-        queue_db: QueueDb::new(pool.clone(), lane.clone()),
-        db: PageDb::new(pool.clone(), lane),
+        queue_db: QueueDb::new(runtime.db().clone()),
+        db: PageDb::new(runtime.db().clone()),
         config: config.clone(),
         queues: Arc::new(FakeQueues),
         warmer_enabled: false,
@@ -457,7 +456,7 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     let dir = crate::common::ScratchDir::new("discover-page");
     let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
     runtime
-        .lane()
+        .db()
         .write(Lane::Foreground, "test.seed", |tx| {
             tx.execute(
                 "INSERT INTO auth_users (id, display_name, role, created_at) \
@@ -506,7 +505,7 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
         "SELECT COUNT(*) FROM discovery_snapshots \
          WHERE snapshot_key = 'discover_response:user-1:True:False'",
     )
-    .fetch_one(runtime.pool())
+    .fetch_one(runtime.db().sqlx())
     .await
     .expect("snapshot count");
     assert_eq!(saved, 1);
@@ -533,7 +532,7 @@ async fn page_builds_in_the_background_is_saved_and_records_activity() {
     let recorded: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM discovery_activity WHERE user_id = 'user-1' AND feature = 'discover'",
     )
-    .fetch_one(runtime.pool())
+    .fetch_one(runtime.db().sqlx())
     .await
     .expect("activity count");
     assert_eq!(recorded, 1);

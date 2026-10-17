@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::{collections::HashMap, sync::Mutex};
 
 use droppedneedle_auth::times::to_iso;
-use droppedneedle_kernel::db::{DbError, WriteLane, writer::Lane};
+use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 
 use super::runtime::BoxFuture;
 use droppedneedle_providers::listenbrainz::ListenBrainzVerifier;
@@ -149,14 +149,13 @@ impl ScrobblePrefsStore for MemoryScrobblePrefsStore {
 /// process-local, so faults mean the whole database is down, not this row.
 #[derive(Clone, Debug)]
 pub struct SqliteScrobblePrefsStore {
-    pool: sqlx::SqlitePool,
-    lane: WriteLane,
+    db: Db,
 }
 
 impl SqliteScrobblePrefsStore {
-    /// Bind the store over a migrated pool plus the writer lane.
-    pub fn new(pool: sqlx::SqlitePool, lane: WriteLane) -> Self {
-        Self { pool, lane }
+    /// Bind the store over the database.
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 }
 
@@ -177,7 +176,7 @@ fn prefs_from_row(row: PrefsRow) -> ScrobblePrefs {
 
 impl ScrobblePrefsStore for SqliteScrobblePrefsStore {
     fn get(&self, user_id: &str) -> BoxFuture<'_, ScrobblePrefs> {
-        let pool = self.pool.clone();
+        let pool = self.db.sqlx().clone();
         let user_id = user_id.to_owned();
         Box::pin(async move {
             let row: Option<PrefsRow> = sqlx::query_as(
@@ -199,11 +198,11 @@ impl ScrobblePrefsStore for SqliteScrobblePrefsStore {
     }
 
     fn upsert(&self, user_id: &str, patch: &ScrobblePrefsPatch) -> BoxFuture<'_, ()> {
-        let lane = self.lane.clone();
+        let db = self.db.clone();
         let user_id = user_id.to_owned();
         let patch = patch.clone();
         Box::pin(async move {
-            if let Err(error) = lane
+            if let Err(error) = db
                 .write(Lane::Foreground, "scrobble.prefs.upsert", move |tx| {
                     use rusqlite::OptionalExtension as _;
 
@@ -416,8 +415,7 @@ impl ListenBrainzLinkStore for MemoryListenBrainzLinkStore {
 /// the reader pool; writes travel the writer lane. Failures degrade toward
 /// unlinked (safe: no token ever leaks through a failure) and log.
 pub struct SqliteListenBrainzLinkStore {
-    pool: sqlx::SqlitePool,
-    lane: WriteLane,
+    db: Db,
     crypto: Arc<droppedneedle_kernel::runtime_config::crypto::Crypto>,
 }
 
@@ -429,22 +427,16 @@ impl std::fmt::Debug for SqliteListenBrainzLinkStore {
 }
 
 impl SqliteListenBrainzLinkStore {
-    /// Bind the store over a migrated pool, the writer lane, and one
-    /// config key.
-    pub fn new(
-        pool: sqlx::SqlitePool,
-        lane: WriteLane,
-        crypto: Arc<droppedneedle_kernel::runtime_config::crypto::Crypto>,
-    ) -> Self {
-        Self { pool, lane, crypto }
+    /// Bind the store over the database and one config key.
+    pub fn new(db: Db, crypto: Arc<droppedneedle_kernel::runtime_config::crypto::Crypto>) -> Self {
+        Self { db, crypto }
     }
 }
 
 impl Clone for SqliteListenBrainzLinkStore {
     fn clone(&self) -> Self {
         Self {
-            pool: self.pool.clone(),
-            lane: self.lane.clone(),
+            db: self.db.clone(),
             crypto: Arc::clone(&self.crypto),
         }
     }
@@ -457,12 +449,12 @@ impl ListenBrainzLinkStore for SqliteListenBrainzLinkStore {
         username: &str,
         token: &str,
     ) -> BoxFuture<'_, Result<(), String>> {
-        let lane = self.lane.clone();
+        let db = self.db.clone();
         let user_id = user_id.to_owned();
         let sealed = seal_link(&self.crypto, username, token);
         Box::pin(async move {
             let sealed = sealed?;
-            lane.write(Lane::Foreground, "scrobble.lb.save", move |tx| {
+            db.write(Lane::Foreground, "scrobble.lb.save", move |tx| {
                 let now = to_iso(now_unix());
                 tx.execute(
                     "INSERT INTO user_connections
@@ -484,7 +476,7 @@ impl ListenBrainzLinkStore for SqliteListenBrainzLinkStore {
     }
 
     fn status(&self, user_id: &str) -> BoxFuture<'_, Option<ListenBrainzLink>> {
-        let pool = self.pool.clone();
+        let pool = self.db.sqlx().clone();
         let crypto = Arc::clone(&self.crypto);
         let user_id = user_id.to_owned();
         Box::pin(async move {
@@ -507,7 +499,7 @@ impl ListenBrainzLinkStore for SqliteListenBrainzLinkStore {
     }
 
     fn has_link(&self, user_id: &str) -> BoxFuture<'_, bool> {
-        let pool = self.pool.clone();
+        let pool = self.db.sqlx().clone();
         let user_id = user_id.to_owned();
         Box::pin(async move {
             let found: Option<String> = sqlx::query_scalar(
@@ -527,7 +519,7 @@ impl ListenBrainzLinkStore for SqliteListenBrainzLinkStore {
     }
 
     fn token_for(&self, user_id: &str) -> BoxFuture<'_, Option<String>> {
-        let pool = self.pool.clone();
+        let pool = self.db.sqlx().clone();
         let crypto = Arc::clone(&self.crypto);
         let user_id = user_id.to_owned();
         Box::pin(async move {
@@ -551,10 +543,10 @@ impl ListenBrainzLinkStore for SqliteListenBrainzLinkStore {
     }
 
     fn delete(&self, user_id: &str) -> BoxFuture<'_, bool> {
-        let lane = self.lane.clone();
+        let db = self.db.clone();
         let user_id = user_id.to_owned();
         Box::pin(async move {
-            lane.write(Lane::Foreground, "scrobble.lb.delete", move |tx| {
+            db.write(Lane::Foreground, "scrobble.lb.delete", move |tx| {
                 Ok(tx.execute(
                     "DELETE FROM user_connections WHERE user_id = ?1 AND service = ?2",
                     rusqlite::params![user_id, LISTENBRAINZ_SERVICE],

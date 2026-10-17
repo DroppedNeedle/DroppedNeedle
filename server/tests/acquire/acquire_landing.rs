@@ -195,7 +195,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         )
         .expect("config"),
     );
-    let (library, _) = library_at(acquire.db.path(), config);
+    let (library, _) = library_at(acquire.db.db(), config);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -477,7 +477,7 @@ async fn held_files_import_as_upgrades_or_discard() {
         )
         .expect("config"),
     );
-    let (library, _) = library_at(acquire.db.path(), config);
+    let (library, _) = library_at(acquire.db.db(), config);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -923,7 +923,7 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
         )
         .expect("config"),
     );
-    let (library, _) = library_at(acquire.db.path(), config);
+    let (library, _) = library_at(acquire.db.db(), config);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -1213,7 +1213,7 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
         )
         .expect("config"),
     );
-    let (library, _) = library_at(acquire.db.path(), config);
+    let (library, _) = library_at(acquire.db.db(), config);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library

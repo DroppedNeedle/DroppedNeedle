@@ -148,12 +148,10 @@ pub async fn scratch_runtime(path: &Path) -> droppedneedle_kernel::db::DbRuntime
 pub fn reads_inputs(
     config: Arc<droppedneedle_kernel::runtime_config::ConfigStore>,
     dir: &Path,
-    lane: droppedneedle_kernel::db::WriteLane,
 ) -> droppedneedle_catalog::reads::ReadsInputs {
     let http = test_http();
     droppedneedle_catalog::reads::ReadsInputs {
         config,
-        lane,
         covers_dir: dir.join("covers"),
         cover_cache_max_bytes: 16 * 1024 * 1024,
         http: http.shared().clone(),

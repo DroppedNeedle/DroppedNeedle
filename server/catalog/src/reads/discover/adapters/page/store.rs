@@ -14,7 +14,7 @@
 
 use sqlx::SqlitePool;
 
-use droppedneedle_kernel::db::{DbError, WriteLane, writer::Lane};
+use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 
 /// Activity older than this is forgotten.
 pub const ACTIVITY_WINDOW_SECS: f64 = 86_400.0;
@@ -65,19 +65,18 @@ pub struct ActivityRow {
 /// The page tables.
 #[derive(Clone, Debug)]
 pub struct PageDb {
-    pool: SqlitePool,
-    lane: WriteLane,
+    db: Db,
 }
 
 impl PageDb {
-    /// Bind the tables over the reader pool and the writer lane.
-    pub fn new(pool: SqlitePool, lane: WriteLane) -> Self {
-        Self { pool, lane }
+    /// Bind the tables over the database.
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 
-    /// The reader pool.
+    /// The sqlx reader pool.
     pub fn pool(&self) -> &SqlitePool {
-        &self.pool
+        self.db.sqlx()
     }
 
     /// The saved page under `key`, when it was built against the current
@@ -90,7 +89,7 @@ impl PageDb {
              WHERE snapshot.snapshot_key = ?1 AND snapshot.catalog_revision = revision.value",
         )
         .bind(key)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.db.sqlx())
         .await
         .map_err(|error| format!("discover snapshot read: {error}"))?;
         Ok(row.map(|(payload, saved_at, stale)| SavedPage {
@@ -110,7 +109,7 @@ impl PageDb {
     ) -> Result<(), String> {
         let key = key.to_owned();
         let user_id = user_id.to_owned();
-        self.lane
+        self.db
             .write(Lane::Background, "discover.page.save", move |tx| {
                 tx.execute(
                     "INSERT INTO discovery_snapshots \
@@ -137,7 +136,7 @@ impl PageDb {
     /// newest hundred rows per user. A source switch resets the row's
     /// schedule so the new source is warmed right away.
     pub async fn record_activity(&self, row: ActivityRow, now: f64) -> Result<(), String> {
-        self.lane
+        self.db
             .write(Lane::Background, "discover.activity.record", move |tx| {
                 tx.execute(
                     "DELETE FROM discovery_activity WHERE last_used < ?1",
@@ -189,7 +188,7 @@ impl PageDb {
         user_id: Option<&str>,
     ) -> Result<Vec<ActivityRow>, String> {
         let prune: Result<(), DbError> = self
-            .lane
+            .db
             .write(Lane::Background, "discover.activity.prune", move |tx| {
                 tx.execute(
                     "DELETE FROM discovery_activity WHERE last_used <= ?1",
@@ -212,7 +211,7 @@ impl PageDb {
         .bind(now - ACTIVITY_WINDOW_SECS)
         .bind(now)
         .bind(user_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.sqlx())
         .await
         .map_err(|error| format!("discover activity read: {error}"))?;
         Ok(rows
@@ -239,7 +238,7 @@ impl PageDb {
         retry_secs: f64,
     ) -> Result<(), String> {
         let row = row.clone();
-        self.lane
+        self.db
             .write(Lane::Background, "discover.activity.finish", move |tx| {
                 tx.execute(
                     "UPDATE discovery_activity SET serviced_at = ?1, retry_at = ?2, \
@@ -268,7 +267,7 @@ impl PageDb {
     pub async fn user_exists(&self, user_id: &str) -> Result<bool, String> {
         sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM auth_users WHERE id = ?1)")
             .bind(user_id)
-            .fetch_one(&self.pool)
+            .fetch_one(self.db.sqlx())
             .await
             .map_err(|error| format!("user check: {error}"))
     }
@@ -276,7 +275,7 @@ impl PageDb {
     /// Forget a deleted user's activity.
     pub async fn forget_user(&self, user_id: &str) -> Result<(), String> {
         let user_id = user_id.to_owned();
-        self.lane
+        self.db
             .write(Lane::Background, "discover.activity.forget", move |tx| {
                 for table in ["discovery_activity", "discovery_snapshots"] {
                     tx.execute(

@@ -238,7 +238,7 @@ async fn acquire_recovery_waits_out_a_busy_reader_and_stops_on_a_real_failure() 
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads = ReadsSetup::for_tests(ids.clone()).unwrap();
     let acquire = AcquireSetup::build(
-        AcquireDb::from_runtime(&runtime),
+        AcquireDb::new(runtime.db().clone()),
         &config,
         auth.deps.clone(),
         &HttpClientFactory::new().unwrap(),
@@ -250,7 +250,7 @@ async fn acquire_recovery_waits_out_a_busy_reader_and_stops_on_a_real_failure() 
     .unwrap();
     // The test holds the only reader through the first run, as a swapping
     // host would, and gives it back once that run has answered.
-    let held = Mutex::new(Some(runtime.pool().acquire().await.unwrap()));
+    let held = Mutex::new(Some(runtime.db().sqlx().acquire().await.unwrap()));
     let runs = AtomicUsize::new(0);
     let step = || {
         let (acquire, runs, held) = (&acquire, &runs, &held);
@@ -268,7 +268,7 @@ async fn acquire_recovery_waits_out_a_busy_reader_and_stops_on_a_real_failure() 
     assert_eq!(runs.load(Ordering::SeqCst), 2, "the busy run ran again");
 
     runtime
-        .lane()
+        .db()
         .write(Lane::Background, "test.break", |tx| {
             tx.execute_batch("ALTER TABLE request_history RENAME TO request_history_gone")?;
             Ok::<_, droppedneedle_kernel::db::DbError>(())

@@ -1,16 +1,22 @@
 //! SQLite runtime: pool factory, checkpoint, writer lanes, backup, durable fabric.
 //!
-//! This module owns every SQLite handle in the process. Reads go through the
-//! [`factory::DbRuntime`] pool; every write goes through the
-//! [`writer::WriteLane`] as one synchronous closure per transaction. There is
-//! no async API on the write path, so holding a write transaction across an
-//! await is unrepresentable.
+//! This module owns every SQLite handle in the process. [`open_runtime`]
+//! opens the database and hands out one [`Db`], the handle every area is
+//! given and the only one it holds. Every write goes through the `Db`'s
+//! writer lane as one synchronous closure per transaction; the lane itself
+//! is private to this module. There is no async API on the write path, so
+//! holding a write transaction across an await is unrepresentable.
 //!
-//! [`Db`] is the one handle that carries all of it: the lane's writes, and
-//! reads on two pools of read-only connections. `read` and `read_blocking`
-//! share the request pool and its one arrival-ordered queue, and are
-//! answered `Busy` after 5 s of waiting; `read_long` has a small pool of its
-//! own and waits until served or cancelled. One read closure is one
+//! A `Db` carries the lane's writes, reads on two pools of read-only
+//! connections, and the sqlx reader pool until the last area has moved its
+//! reads off it. The [`DbRuntime`] that opened it outlives it, and whoever
+//! opens a runtime shuts it down after the last use of its handles, or
+//! exits.
+//!
+//! `read` and `read_blocking` share the request pool and its one
+//! arrival-ordered queue, and are answered `Busy` after 5 s of waiting;
+//! `read_long` has a small pool of its own and waits until served or
+//! cancelled. One read closure is one
 //! connection and one snapshot for its whole length, so a request read runs
 //! one statement per closure unless its statements must agree. A read
 //! closure calls nothing on `Db` and waits on nothing: a write, another
@@ -70,6 +76,8 @@ pub mod factory;
 pub mod fold;
 pub mod fs;
 pub mod handle;
+#[cfg(test)]
+mod lane_tests;
 pub mod read_pool;
 mod scope;
 #[cfg(any(test, feature = "test-support"))]
@@ -99,9 +107,9 @@ pub use read_pool::{LONG_READERS, OldestRead, ReadActivity};
 pub use scope::block_on;
 pub use writer::{
     BACKGROUND_CHUNK_ROWS, BACKGROUND_HARD_BUDGET, BACKGROUND_QUEUE_CAPACITY,
-    BACKGROUND_SOFT_BUDGET, Budget, CancelFlag, FOREGROUND_BURST, FOREGROUND_HARD_BUDGET,
-    FOREGROUND_QUEUE_CAPACITY, FOREGROUND_SOFT_BUDGET, FOREGROUND_WAIT_LIMIT, HOLDER_LOG_EVERY,
-    Lane, LaneIdle, LaneLimits, LaneWatch, ReliefPass, WAIT_BUCKET_BOUNDS_MS, WATCH_TICK,
-    WaitTimes, WalHold, WriteLane, apply_connection_pragmas, decide_lane, open_connection,
-    open_journal_connection,
+    BACKGROUND_SOFT_BUDGET, Budget, CancelFlag, DurableLane, FOREGROUND_BURST,
+    FOREGROUND_HARD_BUDGET, FOREGROUND_QUEUE_CAPACITY, FOREGROUND_SOFT_BUDGET,
+    FOREGROUND_WAIT_LIMIT, HOLDER_LOG_EVERY, Lane, LaneIdle, LaneLimits, LaneWatch, ReliefPass,
+    WAIT_BUCKET_BOUNDS_MS, WATCH_TICK, WaitTimes, WalHold, apply_connection_pragmas, decide_lane,
+    open_connection, open_journal_connection,
 };

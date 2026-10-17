@@ -199,13 +199,13 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
         cover.display()
     );
     runtime
-        .lane()
+        .db()
         .write(Lane::Foreground, "home seed", move |tx| {
             tx.execute_batch(&seed).map_err(DbError::from)
         })
         .await
         .expect("seed");
-    let pool = runtime.pool().clone();
+    let pool = runtime.db().sqlx().clone();
     let sources: Arc<dyn HomeSources> = Arc::new(Scripted);
     let art = Arc::new(GenreArt::new(HomeLibrary::new(pool.clone())));
     let home = LiveHome::new(
@@ -282,7 +282,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     // the genre's revision, so the remembered collage is replaced.
     std::fs::remove_file(&cover).expect("cover removed");
     runtime
-        .lane()
+        .db()
         .write(Lane::Foreground, "art gone", |tx| {
             tx.execute(
                 "DELETE FROM local_album_artwork WHERE local_album_id = 'al1'",

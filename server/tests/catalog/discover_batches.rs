@@ -87,7 +87,7 @@ async fn batch_files_requests_and_removal_cancels_only_its_own() {
     });
     let slot = RequestsSlot::default();
     assert!(slot.set(counting.clone()).is_ok());
-    let batches = LiveBatches::new(db.pool().clone(), db.lane().clone(), slot);
+    let batches = LiveBatches::new(db.db().clone(), slot);
 
     // Bob asks for C first; Ada's batch then skips it as a duplicate.
     let bobs = batches

@@ -32,7 +32,7 @@ pub async fn queue_stats(
     let rows: Vec<(String, i64, i64)> = sqlx::query_as(
         "SELECT channel, seq, consumed_seq FROM durable_work_wakeups ORDER BY channel",
     )
-    .fetch_all(&db.pool)
+    .fetch_all(db.db.sqlx())
     .await
     .map_err(|error| AdminError::internal(&format_args!("queue demand read failed: {error}")))?;
     let jobs = db.wakeups.list_jobs().await.map_err(|error| {

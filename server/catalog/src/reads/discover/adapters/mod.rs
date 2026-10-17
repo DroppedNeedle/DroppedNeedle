@@ -29,7 +29,7 @@ use crate::reads::discover::{
     services::ReadsDeps,
 };
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_kernel::db::WriteLane;
+use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::AdvancedSettings};
 use droppedneedle_media::remotes::connections::{
     ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
@@ -45,10 +45,9 @@ use droppedneedle_providers::{
 
 /// What production discover needs from the composition root.
 pub struct DiscoverInputs {
-    /// Catalog reads (ownership, local files).
-    pub pool: sqlx::SqlitePool,
-    /// The writer lane (queue ignores and saved decks).
-    pub lane: WriteLane,
+    /// The database: catalog reads (ownership, local files), queue
+    /// ignores and saved decks.
+    pub db: Db,
     /// Runtime settings, read per call.
     pub config: Arc<ConfigStore>,
     /// The factory's shared client.
@@ -105,7 +104,7 @@ pub fn production_deps(inputs: DiscoverInputs) -> ReadsDeps {
                 ),
                 inputs.listenbrainz_links.clone(),
                 lastfm_charts,
-                inputs.pool.clone(),
+                inputs.db.sqlx().clone(),
             )),
             None => {
                 tracing::error!("no listenbrainz rate limit row; charts are unavailable");
@@ -135,27 +134,23 @@ pub fn production_deps(inputs: DiscoverInputs) -> ReadsDeps {
     let queues = live_queue(&inputs, sources.clone(), youtube.clone(), settings.clone());
     let radio = radio::LiveRadio::new(radio::RadioInputs {
         sources: sources.clone(),
-        queue_db: queue::store::QueueDb::new(inputs.pool.clone(), inputs.lane.clone()),
+        queue_db: queue::store::QueueDb::new(inputs.db.clone()),
         settings,
-        pool: inputs.pool.clone(),
-        catalog: Catalog::new(upstream, LocalCatalog::new(inputs.pool.clone())),
+        pool: inputs.db.sqlx().clone(),
+        catalog: Catalog::new(upstream, LocalCatalog::new(inputs.db.sqlx().clone())),
         previews: ReqwestGet::new(inputs.http.clone()),
     });
-    let batches = batches::LiveBatches::new(
-        inputs.pool.clone(),
-        inputs.lane.clone(),
-        inputs.batch_requests.clone(),
-    );
+    let batches = batches::LiveBatches::new(inputs.db.clone(), inputs.batch_requests.clone());
     let page = page::LiveDiscover::new(page::PageInputs {
         sources: sources.clone(),
-        queue_db: queue::store::QueueDb::new(inputs.pool.clone(), inputs.lane.clone()),
-        db: page::store::PageDb::new(inputs.pool.clone(), inputs.lane.clone()),
+        queue_db: queue::store::QueueDb::new(inputs.db.clone()),
+        db: page::store::PageDb::new(inputs.db.clone()),
         config: inputs.config.clone(),
         queues: queues.clone(),
         warmer_enabled: inputs.discover_warmer,
     });
     let (home, genre_art, charts) = home::wire(home::HomeWiring {
-        pool: inputs.pool.clone(),
+        pool: inputs.db.sqlx().clone(),
         config: inputs.config.clone(),
         sources: sources.clone(),
         discover: page.clone(),
@@ -164,7 +159,7 @@ pub fn production_deps(inputs: DiscoverInputs) -> ReadsDeps {
     });
     ReadsDeps {
         content: Arc::new(
-            content::LiveContent::new(inputs.config, inputs.pool.clone(), page)
+            content::LiveContent::new(inputs.config, inputs.db.sqlx().clone(), page)
                 .with_home(home, genre_art),
         ),
         queues,
@@ -197,10 +192,7 @@ fn live_upstream(inputs: &DiscoverInputs) -> Upstream {
 /// The live provider reads the queue, the page and radio share.
 fn live_sources(inputs: &DiscoverInputs, upstream: Upstream) -> queue::live_sources::LiveSources {
     let jellyfin = Arc::new(ConnectionResolver::new(
-        Arc::new(SqliteConnectionStore::new(
-            inputs.pool.clone(),
-            inputs.lane.clone(),
-        )),
+        Arc::new(SqliteConnectionStore::new(inputs.db.clone())),
         Arc::new(CredentialCoder::new(inputs.users.crypto.clone())),
         Arc::new(ConfigServers::new(inputs.config.clone())),
     ));
@@ -210,7 +202,7 @@ fn live_sources(inputs: &DiscoverInputs, upstream: Upstream) -> queue::live_sour
         inputs.http.clone(),
         inputs.listenbrainz_links.clone(),
         jellyfin,
-        inputs.pool.clone(),
+        inputs.db.sqlx().clone(),
     )
 }
 
@@ -221,7 +213,7 @@ fn live_queue(
     youtube: Arc<dyn YouTubeSource>,
     settings: queue::SettingsFn,
 ) -> Arc<dyn QueueStore> {
-    let db = queue::store::QueueDb::new(inputs.pool.clone(), inputs.lane.clone());
+    let db = queue::store::QueueDb::new(inputs.db.clone());
     let cache = inputs.providers.cache.clone();
     Arc::new(queue::LiveQueue::new(sources, db, youtube, cache, settings))
 }

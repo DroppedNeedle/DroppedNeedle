@@ -593,7 +593,7 @@ async fn linked_connections_survive_a_restart() {
     {
         let runtime = crate::common::scratch_runtime(&db).await;
         runtime
-            .lane()
+            .db()
             .write(droppedneedle_kernel::db::Lane::Foreground, "seed", |tx| {
                 tx.execute(
                     "INSERT INTO auth_users (id, username, display_name, role, created_at) \
@@ -604,7 +604,7 @@ async fn linked_connections_survive_a_restart() {
             })
             .await
             .expect("user seeds");
-        let rows = SqliteConnectionStore::new(runtime.pool().clone(), runtime.lane().clone());
+        let rows = SqliteConnectionStore::new(runtime.db().clone());
         let resolver = ConnectionResolver::new(Arc::new(rows), coder(), Arc::new(servers()));
         resolver
             .save_link(
@@ -616,7 +616,7 @@ async fn linked_connections_survive_a_restart() {
             )
             .await
             .expect("link saves");
-        SqliteFolderStore::new(runtime.pool().clone(), runtime.lane().clone())
+        SqliteFolderStore::new(runtime.db().clone())
             .set(
                 "user-ada",
                 FolderPreference {
@@ -630,14 +630,14 @@ async fn linked_connections_survive_a_restart() {
         let stored: String = sqlx::query_scalar(
             "SELECT connection_data FROM user_connections WHERE user_id = 'user-ada'",
         )
-        .fetch_one(runtime.pool())
+        .fetch_one(runtime.db().sqlx())
         .await
         .expect("row reads");
         assert!(!stored.contains("s3cret"), "sealed at rest");
         runtime.shutdown().await;
     }
     let runtime = open_runtime(&DbConfig::new(&db)).await.expect("db reopens");
-    let rows = SqliteConnectionStore::new(runtime.pool().clone(), runtime.lane().clone());
+    let rows = SqliteConnectionStore::new(runtime.db().clone());
     let resolver = ConnectionResolver::new(Arc::new(rows), coder(), Arc::new(servers()));
     let resolved = resolver
         .resolve("user-ada", SourceName::Navidrome)
@@ -645,7 +645,7 @@ async fn linked_connections_survive_a_restart() {
         .expect("link resolves after restart");
     assert_eq!(resolved.account_mode, "linked");
     assert_eq!(resolved.credential, "s3cret");
-    let preference = SqliteFolderStore::new(runtime.pool().clone(), runtime.lane().clone())
+    let preference = SqliteFolderStore::new(runtime.db().clone())
         .get("user-ada")
         .await
         .expect("preference reads");

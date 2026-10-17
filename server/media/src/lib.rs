@@ -16,7 +16,7 @@ pub mod playback;
 pub mod remotes;
 pub mod stream;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
@@ -47,7 +47,7 @@ use crate::stream::transcode::{
 };
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::config::AppConfig;
-use droppedneedle_kernel::db::WriteLane;
+use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
@@ -94,11 +94,11 @@ impl MediaWorkers {
 }
 
 impl MediaSetup {
-    /// Build the production bundle. `db_path` backs the playback stores;
-    /// `pool` and `lane` back the connection and folder rows; `config`
-    /// holds the admin's server settings and the transcode policy (read
-    /// per stream); `crypto` seals linked credentials;
-    /// `library_roots` plus the catalog in `pool` turn local stream keys
+    /// Build the production bundle. `db` backs the connection and folder
+    /// rows, and the playback stores open their own connections on its
+    /// file; `config` holds the admin's server settings and the transcode
+    /// policy (read per stream); `crypto` seals linked credentials;
+    /// `library_roots` plus the catalog in `db` turn local stream keys
     /// and download ids (track ids) into files under the live library
     /// roots (`None` keeps the constructor fallback for unwired builds and
     /// serves no downloads); `imports` is where remote playlist imports
@@ -106,15 +106,13 @@ impl MediaSetup {
     /// scrobble forwarding addresses.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
-        db_path: &Path,
+        db: &Db,
         app_config: &AppConfig,
         users: UsersDeps,
         crypto: Arc<Crypto>,
         http_factory: &droppedneedle_kernel::http_client::HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
         library_roots: Option<droppedneedle_library::wiring::RootSource>,
-        pool: sqlx::SqlitePool,
-        lane: WriteLane,
         config: Arc<ConfigStore>,
         imports: Arc<dyn ImportSink>,
         plex_tv: String,
@@ -122,11 +120,11 @@ impl MediaSetup {
     ) -> Result<(Self, MediaWorkers), String> {
         let http = http_factory.shared().clone();
         crate::stream::plugin_url::sweep_stale_spools();
-        let library = library_roots.map(|roots| LibraryFiles::new(pool.clone(), roots));
+        let library = library_roots.map(|roots| LibraryFiles::new(db.sqlx().clone(), roots));
         let download = DownloadState::new(library.clone(), access_from_config(config.clone()));
         let resolver = Arc::new(
             ConnectionResolver::new(
-                Arc::new(SqliteConnectionStore::new(pool.clone(), lane.clone())),
+                Arc::new(SqliteConnectionStore::new(db.clone())),
                 Arc::new(CredentialCoder::new(crypto.clone())),
                 Arc::new(ConfigServers::new(config.clone())),
             )
@@ -136,11 +134,7 @@ impl MediaSetup {
             ))),
         );
         let credentials = Arc::new(StoredScrobbleCredentials::new(
-            Arc::new(SqliteListenBrainzLinkStore::new(
-                pool.clone(),
-                lane.clone(),
-                crypto.clone(),
-            )),
+            Arc::new(SqliteListenBrainzLinkStore::new(db.clone(), crypto.clone())),
             users.lastfm.clone(),
             users.lastfm_switch.clone(),
             crypto,
@@ -148,7 +142,7 @@ impl MediaSetup {
         let service = RemotesService::new(
             http.clone(),
             resolver.clone(),
-            Arc::new(SqliteFolderStore::new(pool, lane)),
+            Arc::new(SqliteFolderStore::new(db.clone())),
             imports,
         );
         let remotes = RemotesDeps { service };
@@ -174,18 +168,18 @@ impl MediaSetup {
         let stream = StreamState {
             engine: Arc::new(engine),
         };
-        let db = Arc::new(PlaybackDb::open(db_path, ids.clone())?);
+        let playback_db = Arc::new(PlaybackDb::open(db.path(), ids.clone())?);
         let (queue, rx) = ReportQueue::channel();
         let (forwarder, forwards) =
-            ScrobbleForwarder::channel(db.clone(), users.lastfm_switch.clone());
+            ScrobbleForwarder::channel(playback_db.clone(), users.lastfm_switch.clone());
         let forwards = ForwardWorker::new(forwards, http.clone(), credentials, scrobbles);
         let playback = PlaybackDeps {
-            catalog: db.clone(),
+            catalog: playback_db.clone(),
             sinks: Arc::new(forwarder),
             remotes: Arc::new(queue),
-            history: db.clone(),
-            prefs: db.clone(),
-            names: db,
+            history: playback_db.clone(),
+            prefs: playback_db.clone(),
+            names: playback_db,
             sessions: SessionStore::new(),
             presence: PresenceRegistry::new(),
             dedup: ScrobbleDedup::new(),

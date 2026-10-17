@@ -52,7 +52,7 @@ async fn fixture(name: &str) -> AuthRig {
 
 async fn count(fx: &AuthRig, sql: &str) -> i64 {
     sqlx::query_scalar(sql)
-        .fetch_one(fx.runtime().pool())
+        .fetch_one(fx.runtime().db().sqlx())
         .await
         .unwrap()
 }
@@ -141,7 +141,7 @@ async fn v2_bcrypt_rows_log_in_and_rehash_to_argon2id() {
     // v2 verbatim shape: {"password_hash": ...} with no scheme tag.
     let legacy = serde_json::json!({ "password_hash": LEGACY_BCRYPT }).to_string();
     fx.runtime()
-        .lane()
+        .db()
         .write(Lane::Foreground, "test.seed", move |tx| {
             tx.execute(
                 "INSERT INTO auth_providers (id, user_id, provider, provider_uid, provider_data, \
@@ -535,7 +535,7 @@ async fn federated_tokens_are_sealed_at_rest() {
     assert_eq!(binding.user_id, user.id);
     let raw: String = sqlx::query_scalar("SELECT provider_data FROM auth_providers WHERE id = ?")
         .bind(&binding.id)
-        .fetch_one(fx.runtime().pool())
+        .fetch_one(fx.runtime().db().sqlx())
         .await
         .unwrap();
     assert!(raw.starts_with("v3:") && !raw.contains("canary"), "{raw}");
@@ -719,7 +719,7 @@ async fn recovery_reset_checks_the_code_first_then_revokes_and_consumes() {
 async fn oidc_states_consume_once_and_expired_ones_are_swept() {
     let fx = fixture("oidc-states").await;
     fx.runtime()
-        .lane()
+        .db()
         .write(Lane::Foreground, "test.seed", |tx| {
             tx.execute(
                 "INSERT INTO auth_oidc_states (state, created_at, expires_at, code_verifier) \

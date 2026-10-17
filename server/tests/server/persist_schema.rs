@@ -3413,7 +3413,7 @@ async fn migrations_upgrade_from_baseline() {
     let runtime = open_runtime(&DbConfig::new(&db_path))
         .await
         .expect("runtime opens");
-    apply_migrations(runtime.pool())
+    apply_migrations(runtime.db().sqlx())
         .await
         .expect("later migrations apply on top of 0001");
     let conn = rusqlite::Connection::open(&db_path).expect("scratch reopens");
@@ -3434,7 +3434,7 @@ async fn migrations_upgrade_from_baseline() {
     drop(conn);
 
     // A second run is a clean no-op (the boot path reruns every start).
-    apply_migrations(runtime.pool())
+    apply_migrations(runtime.db().sqlx())
         .await
         .expect("migrations rerun cleanly");
     let conn = rusqlite::Connection::open(&db_path).expect("scratch reopens");

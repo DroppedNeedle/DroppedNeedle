@@ -78,7 +78,11 @@ fn snapshot(root: &Path) -> BTreeMap<String, (u64, i64, String)> {
 /// `scratch/music` as its one root.
 fn bundle(scratch: &Path) -> LibrarySetup {
     migrated_db(&scratch.join("app.db"));
-    let (library, _) = library_at(&scratch.join("app.db"), config_store(scratch));
+    let (library, _) = library_at(
+        &droppedneedle_kernel::db::Db::open_for_tests(&scratch.join("app.db"))
+            .expect("database opens"),
+        config_store(scratch),
+    );
     let music = scratch.join("music");
     library
         .add_root(
@@ -4834,7 +4838,10 @@ async fn an_album_replaced_on_two_albums_is_left_to_a_person() {
     assert_eq!(rig.stars_and_aliases(&old_rows[0]).0, 1);
 
     rig.run(PERSON);
-    let (library, _) = library_at(&rig.db(), config_store(&rig.scratch));
+    let (library, _) = library_at(
+        &droppedneedle_kernel::db::Db::open_for_tests(&rig.db()).expect("database opens"),
+        config_store(&rig.scratch),
+    );
     let corrections = Corrections::new(&library);
     let listed = corrections.retag_pairs().expect("pairs listed");
     assert_eq!(listed.total, 2);

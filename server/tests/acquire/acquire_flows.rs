@@ -43,7 +43,7 @@ fn scratch_dir(name: &str) -> crate::common::ScratchDir {
 async fn runtime(name: &str) -> (DbRuntime, AcquireDb, crate::common::ScratchDir) {
     let dir = scratch_dir(name);
     let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
-    let db = AcquireDb::from_runtime(&runtime);
+    let db = AcquireDb::new(runtime.db().clone());
     (runtime, db, dir)
 }
 
@@ -345,13 +345,7 @@ async fn upgrade_sweep_gates_and_cap() {
     };
     let idle = sweep_tick(NOW, &mut LoopState::new(), &deps).await;
     assert!(idle.skipped_no_admin);
-    sqlx::query(
-        "INSERT INTO auth_users (id, display_name, role, created_at) \
-         VALUES ('admin-1', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
-    )
-    .execute(db.pool())
-    .await
-    .unwrap();
+    db.add_user("admin-1", "Admin", "admin").await.unwrap();
     let swept = sweep_tick(NOW, &mut LoopState::new(), &deps).await;
     assert_eq!(swept.enqueued, 2, "already-in-library never counts");
     let grabs = downloads.upgrades();
@@ -381,7 +375,7 @@ async fn loop_cadence_and_shutdown() {
     let (handle, _) = spawn_sync_loop(
         early,
         runtime.wakeups().clone(),
-        runtime.lane().clone(),
+        runtime.db().clone(),
         Arc::new(SystemClock),
         deps.clone(),
     )
@@ -394,7 +388,7 @@ async fn loop_cadence_and_shutdown() {
     let (handle, _) = spawn_sync_loop(
         sleeper.clone(),
         runtime.wakeups().clone(),
-        runtime.lane().clone(),
+        runtime.db().clone(),
         Arc::new(SystemClock),
         deps,
     )

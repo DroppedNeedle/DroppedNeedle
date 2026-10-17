@@ -107,8 +107,7 @@ impl E2e {
         let ids = Arc::new(UuidGenerator);
         let clock = Arc::new(SystemClock);
         let bundle = ProdAuth::new(
-            runtime.pool(),
-            runtime.lane(),
+            runtime.db(),
             Arc::clone(&crypto),
             Arc::clone(&ids) as Arc<dyn IdGenerator>,
             Arc::clone(&clock) as Arc<dyn droppedneedle_auth::users::stores::Clock>,
@@ -145,7 +144,7 @@ impl E2e {
 
     /// The scratch database pool, for assertions on stored rows.
     pub(crate) fn pool(&self) -> &sqlx::SqlitePool {
-        self.runtime.pool()
+        self.runtime.db().sqlx()
     }
 
     fn auth_setup(&self) -> AuthSetup {
@@ -165,8 +164,7 @@ impl E2e {
                 ),
             ),
             droppedneedle::bootstrap::sign_in_links(
-                self.runtime.pool().clone(),
-                self.runtime.lane().clone(),
+                self.runtime.db().clone(),
                 Arc::clone(&self.crypto),
                 Arc::clone(&self.store),
             ),
@@ -184,7 +182,7 @@ impl E2e {
     pub(crate) fn state(&self) -> AppState {
         let auth = self.auth_setup();
         let reads = ReadsSetup::build(
-            self.runtime.pool(),
+            self.runtime.db(),
             auth.users.clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             droppedneedle_catalog::reads::ReadsInputs {
@@ -195,15 +193,13 @@ impl E2e {
                 ..crate::common::reads_inputs(
                     Arc::clone(&self.store),
                     self.db_path.parent().expect("db dir"),
-                    self.runtime.lane().clone(),
                 )
             },
             None,
         )
         .with_collections(
             droppedneedle_catalog::reads::collections::db::CollectionsDb::new(
-                self.runtime.pool().clone(),
-                self.runtime.lane().clone(),
+                self.runtime.db().clone(),
             ),
         )
         .with_catalog(Catalog::new(
@@ -214,7 +210,7 @@ impl E2e {
                 auth.users.clone(),
                 droppedneedle::bootstrap::Outbound::live().catalog(),
             ),
-            LocalCatalog::new(self.runtime.pool().clone()),
+            LocalCatalog::new(self.runtime.db().sqlx().clone()),
         ));
         let mut app_config = AppConfig::new(DEFAULT_PORT);
         app_config.root_app_dir = self
@@ -223,17 +219,15 @@ impl E2e {
             .map(|parent| parent.to_path_buf())
             .unwrap_or_else(std::env::temp_dir);
         let (library, _) =
-            crate::common::library::library_at(&self.db_path, Arc::clone(&self.store));
+            crate::common::library::library_at(self.runtime.db(), Arc::clone(&self.store));
         let (media, _worker) = droppedneedle_media::MediaSetup::build(
-            &self.db_path,
+            self.runtime.db(),
             &app_config,
             auth.users.clone(),
             Arc::clone(&self.crypto),
             &self.http,
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             Some(library.root_source()),
-            self.runtime.pool().clone(),
-            self.runtime.lane().clone(),
             Arc::clone(&self.store),
             Arc::new(
                 droppedneedle_catalog::reads::collections::remote_import::PlaylistImportSink::new(
@@ -246,7 +240,7 @@ impl E2e {
         .expect("media bundle builds");
         let mut reads = reads;
         let acquire = droppedneedle_acquire::AcquireSetup::build(
-            droppedneedle_acquire::db::AcquireDb::from_runtime(&self.runtime),
+            droppedneedle_acquire::db::AcquireDb::new(self.runtime.db().clone()),
             &app_config,
             auth.users.clone(),
             &self.http,
@@ -282,8 +276,7 @@ impl E2e {
         // Concerts over the scratch database; the sources point at the
         // discard port so no row can reach a real provider.
         let concerts = droppedneedle_catalog::concerts::ConcertsSetup::new(
-            self.runtime.pool().clone(),
-            self.runtime.lane().clone(),
+            self.runtime.db().clone(),
             self.http.shared().clone(),
             Arc::clone(&self.store),
             droppedneedle_catalog::concerts::Endpoints {
@@ -299,8 +292,7 @@ impl E2e {
             providers.clone(),
         )
         .with_db(droppedneedle::admin::AdminDb::new(
-            self.runtime.pool().clone(),
-            self.runtime.lane().clone(),
+            self.runtime.db().clone(),
         ))
         .with_backups(droppedneedle_kernel::db::BackupService::new(
             &self.db_path,
@@ -318,12 +310,12 @@ impl E2e {
         .expect("test settings bundle builds")
         .with_impact_buckets(Arc::new(
             droppedneedle::settings::services::SqliteImpactBuckets {
-                pool: self.runtime.pool().clone(),
+                pool: self.runtime.db().sqlx().clone(),
             },
         ))
         .with_library_catalog(Arc::new(
             droppedneedle::settings::library_catalog::SqliteLibraryPolicyCatalog {
-                pool: self.runtime.pool().clone(),
+                pool: self.runtime.db().sqlx().clone(),
             },
         ));
         AppState::new(
@@ -3599,7 +3591,7 @@ async fn login_store_failure_is_a_500_not_bad_credentials() {
     let e2e = E2e::open("login-store-down").await;
     setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
     e2e.runtime
-        .lane()
+        .db()
         // A rename re-parses the whole schema, which outruns the request
         // budget on a busy host; the job budget fits it.
         .write(

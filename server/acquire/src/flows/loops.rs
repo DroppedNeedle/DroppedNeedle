@@ -18,7 +18,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use droppedneedle_kernel::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
+use droppedneedle_kernel::db::{Db, DurableWorkWakeups, JobKind, JobState};
 
 use super::seams::{
     CandidateSearch, Clock, DispatchKind, DispatchRequest, DownloadDispatch, FlowEvent,
@@ -1192,7 +1192,7 @@ impl FlowPass for PrunePass {
 pub async fn spawn_prune_loop<S>(
     sleeper: S,
     wakeups: DurableWorkWakeups,
-    lane: WriteLane,
+    db: Db,
     clock: Arc<dyn Clock>,
     deps: Arc<PruneDeps>,
 ) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
@@ -1206,7 +1206,7 @@ where
         PRUNE_INITIAL_DELAY,
         PRUNE_TICK,
         wakeups,
-        lane,
+        db,
         clock,
         PrunePass { deps, last: None },
     )
@@ -1420,11 +1420,11 @@ pub struct FlowHandle {
 /// Register one loop as an ephemeral job. Idempotent across restarts.
 pub async fn register_ephemeral_loop(
     wakeups: &DurableWorkWakeups,
-    lane: &WriteLane,
+    db: &Db,
     job: &str,
 ) -> Result<(), String> {
     wakeups
-        .register_job(lane, job, JobKind::Ephemeral, None)
+        .register_job(db, job, JobKind::Ephemeral, None)
         .await
         .map_err(|error| error.to_string())
 }
@@ -1501,7 +1501,7 @@ pub async fn spawn_wanted_loop<S, J>(
     sleeper: S,
     jitter: J,
     wakeups: DurableWorkWakeups,
-    lane: WriteLane,
+    db: Db,
     clock: Arc<dyn Clock>,
     deps: Arc<WantedDeps>,
 ) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
@@ -1516,7 +1516,7 @@ where
         WANTED_INITIAL_DELAY,
         WANTED_INTERVAL,
         wakeups,
-        lane,
+        db,
         clock,
         WantedPass { deps },
     )
@@ -1529,7 +1529,7 @@ pub async fn spawn_follow_loop<S, J>(
     sleeper: S,
     jitter: J,
     wakeups: DurableWorkWakeups,
-    lane: WriteLane,
+    db: Db,
     clock: Arc<dyn Clock>,
     deps: Arc<FollowDeps>,
 ) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
@@ -1544,7 +1544,7 @@ where
         FOLLOW_INITIAL_DELAY,
         FOLLOW_INTERVAL,
         wakeups,
-        lane,
+        db,
         clock,
         FollowPass { deps },
     )
@@ -1556,7 +1556,7 @@ where
 pub async fn spawn_sweep_loop<S>(
     sleeper: S,
     wakeups: DurableWorkWakeups,
-    lane: WriteLane,
+    db: Db,
     clock: Arc<dyn Clock>,
     deps: Arc<SweepDeps>,
 ) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
@@ -1571,7 +1571,7 @@ where
         UPGRADE_INITIAL_DELAY,
         Duration::from_secs(hours * 3600),
         wakeups,
-        lane,
+        db,
         clock,
         SweepPass { deps },
     )
@@ -1583,7 +1583,7 @@ where
 pub async fn spawn_sync_loop<S>(
     sleeper: S,
     wakeups: DurableWorkWakeups,
-    lane: WriteLane,
+    db: Db,
     clock: Arc<dyn Clock>,
     deps: Arc<SyncDeps>,
 ) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
@@ -1597,7 +1597,7 @@ where
         SYNC_INITIAL_DELAY,
         SYNC_INTERVAL,
         wakeups,
-        lane,
+        db,
         clock,
         SyncPass { deps },
     )
@@ -1613,7 +1613,7 @@ async fn spawn_flow<S, P>(
     initial_delay: Duration,
     interval: Duration,
     wakeups: DurableWorkWakeups,
-    lane: WriteLane,
+    db: Db,
     clock: Arc<dyn Clock>,
     mut pass: P,
 ) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
@@ -1621,7 +1621,7 @@ where
     S: Sleeper + Clone + Send + 'static,
     P: FlowPass + 'static,
 {
-    register_ephemeral_loop(&wakeups, &lane, job).await?;
+    register_ephemeral_loop(&wakeups, &db, job).await?;
     let registry = Arc::new(FlowRegistry::new());
     let task_registry = registry.clone();
     let task = tokio::spawn(async move {
@@ -1633,7 +1633,7 @@ where
             initial_delay,
             interval,
             &wakeups,
-            &lane,
+            &db,
             clock.as_ref(),
             &mut pass,
         )
@@ -1655,7 +1655,7 @@ async fn run_loop<S, P>(
     initial_delay: Duration,
     interval: Duration,
     wakeups: &DurableWorkWakeups,
-    lane: &WriteLane,
+    db: &Db,
     clock: &dyn Clock,
     pass: &mut P,
 ) where
@@ -1669,7 +1669,7 @@ async fn run_loop<S, P>(
             if registry.begin(job) {
                 pass.run(now, &mut state).await;
                 registry.finish(job);
-                if let Err(error) = wakeups.heartbeat(lane, job).await {
+                if let Err(error) = wakeups.heartbeat(db, job).await {
                     tracing::warn!(job, %error, "flow heartbeat failed");
                 }
             }
@@ -1681,7 +1681,7 @@ async fn run_loop<S, P>(
             }
         }
     }
-    if let Err(error) = wakeups.set_job_state(lane, job, JobState::Stopped).await {
+    if let Err(error) = wakeups.set_job_state(db, job, JobState::Stopped).await {
         tracing::warn!(job, %error, "flow stop state write failed");
     }
 }

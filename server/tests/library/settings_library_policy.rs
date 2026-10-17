@@ -42,7 +42,7 @@ async fn removed_root_restores_and_previews_count_the_catalog() {
         root = music.display()
     );
     runtime
-        .lane()
+        .db()
         .write(Lane::Foreground, "policy seed", move |tx| {
             tx.execute_batch(&seed).map_err(DbError::from)
         })
@@ -52,7 +52,7 @@ async fn removed_root_restores_and_previews_count_the_catalog() {
     let settings = SettingsSetup::for_tests(Arc::new(FixedIdGenerator::new(FIXED_ID)))
         .expect("settings bundle builds")
         .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
-            pool: runtime.pool().clone(),
+            pool: runtime.db().sqlx().clone(),
         }));
     let policy = settings.library_policy();
 

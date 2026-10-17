@@ -1577,7 +1577,12 @@ fn open_library(scratch: &Scratch) -> LibrarySetup {
         )
         .expect("config opens"),
     );
-    library_asking(&scratch.join("app.db"), config, scratch.identify.clone())
+    library_asking(
+        &droppedneedle_kernel::db::Db::open_for_tests(&scratch.join("app.db"))
+            .expect("database opens"),
+        config,
+        scratch.identify.clone(),
+    )
 }
 
 /// Add `music` as the only root and scan it.
@@ -11305,10 +11310,7 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     // it, never an old row that continued into one.
     let path = scratch.join("app.db");
     PlayMarkStore::new(CollectionsDb::new(
-        sqlx::sqlite::SqlitePoolOptions::new()
-            .connect_lazy(&format!("sqlite://{}", path.display()))
-            .expect("pool"),
-        droppedneedle_kernel::db::WriteLane::open(&path).expect("lane opens"),
+        droppedneedle_kernel::db::Db::open_for_tests(&path).expect("database opens"),
     ))
     .mark("listener", MarkScope::Album(&joined), false)
     .await

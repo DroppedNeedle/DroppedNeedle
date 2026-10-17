@@ -48,10 +48,10 @@ async fn seed_small() -> Fixture {
     let runtime = open_runtime(&DbConfig::new(&path))
         .await
         .expect("scratch runtime opens");
-    let pool = runtime.pool().clone();
+    let pool = runtime.db().sqlx().clone();
     let seed = seed_small_sql();
     runtime
-        .lane()
+        .db()
         .write(Lane::Foreground, "perf seed", move |tx| {
             tx.execute_batch(&seed)?;
             Ok::<_, DbError>(())
@@ -600,7 +600,7 @@ async fn ground_stats(pool: &SqlitePool) -> StatsRecord {
 async fn write_batch(fixture: &Fixture, label: &'static str, sql: String) {
     fixture
         .runtime
-        .lane()
+        .db()
         .write(Lane::Foreground, label, move |tx| {
             tx.execute_batch(&sql)?;
             Ok::<_, DbError>(())
@@ -2933,13 +2933,10 @@ async fn perf_100k_player_pages_hold_p95() {
     seed_100k_marks(&fixture).await;
     // Production statistics: the maintenance ANALYZE, then the hot plans
     // must still walk their indexes.
-    droppedneedle_kernel::db::AnalyzeService::new(
-        fixture.runtime.lane().clone(),
-        fixture.pool.clone(),
-    )
-    .run()
-    .await
-    .expect("analyze runs");
+    droppedneedle_kernel::db::AnalyzeService::new(fixture.runtime.db().clone())
+        .run()
+        .await
+        .expect("analyze runs");
     assert_hot_plans(&fixture.pool).await;
     assert_history_plans(&fixture.pool, "100k with statistics").await;
     let player = SqlitePlayerCatalog::new(&LibraryDb::new(&fixture.pool));
@@ -3182,7 +3179,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use droppedneedle_kernel::db::{Db, WriteLane};
+use droppedneedle_kernel::db::Db;
 use library::player::{
     AlbumOrder, AlbumQuery, OrderKey, PlayerAlbum, PlayerCatalog, PlayerTrack, SqlitePlayerCatalog,
     TrackOrder, TrackQuery,
@@ -4082,11 +4079,7 @@ const WRITER_ROWS: i64 = 256;
 /// One concurrent block: 16 tasks each run the 17 reads in turn for 20
 /// rounds while one writer commits 256-row transactions without pause.
 /// Returns the samples per read and the writer's commit count.
-async fn concurrent_block(
-    replay: &Arc<Replay>,
-    via: &Via,
-    lane: &WriteLane,
-) -> (Vec<Vec<f64>>, u64) {
+async fn concurrent_block(replay: &Arc<Replay>, via: &Via, lane: &Db) -> (Vec<Vec<f64>>, u64) {
     let stop = Arc::new(AtomicBool::new(false));
     let writer = tokio::spawn({
         let (stop, lane) = (Arc::clone(&stop), lane.clone());
@@ -4140,7 +4133,7 @@ async fn concurrent(
     replay: &Arc<Replay>,
     first: &Via,
     second: &Via,
-    lane: &WriteLane,
+    lane: &Db,
 ) -> (Vec<(f64, f64)>, (u64, u64)) {
     let mut samples = [vec![Vec::new(); READS.len()], vec![Vec::new(); READS.len()]];
     let mut commits = [0u64; 2];
@@ -4421,8 +4414,7 @@ async fn replayed_reads_match_the_catalog() {
     let replay = Arc::new(Replay::build(&fixture).await);
     let db = fixture.runtime.db().clone();
     replay.assert_same_records(&db).await;
-    let (samples, commits) =
-        concurrent_block(&replay, &Via::Pool(db), fixture.runtime.lane()).await;
+    let (samples, commits) = concurrent_block(&replay, &Via::Pool(db), fixture.runtime.db()).await;
     assert!(commits > 0, "the writer committed beside the reads");
     assert!(
         samples
@@ -4468,18 +4460,15 @@ async fn replay_pass(number: usize, file: PathBuf) -> Pass {
     seed_100k(&fixture).await;
     seed_replay(&fixture).await;
     // Production statistics, as the player acceptance test runs them.
-    droppedneedle_kernel::db::AnalyzeService::new(
-        fixture.runtime.lane().clone(),
-        fixture.pool.clone(),
-    )
-    .run()
-    .await
-    .expect("analyze runs");
+    droppedneedle_kernel::db::AnalyzeService::new(fixture.runtime.db().clone())
+        .run()
+        .await
+        .expect("analyze runs");
     settle(&fixture).await;
     let stats = fixture.catalog.stats().await.expect("stats read");
     assert_eq!(stats.total_tracks, 100007);
     let path = fixture.runtime.path().to_owned();
-    let lane = fixture.runtime.lane().clone();
+    let lane = fixture.runtime.db().clone();
     let replay = Arc::new(Replay::build(&fixture).await);
     for read in 0..READS.len() {
         replay.via_sqlx(read).await;

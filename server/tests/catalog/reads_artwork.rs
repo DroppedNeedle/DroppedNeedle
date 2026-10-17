@@ -101,7 +101,7 @@ async fn rig(seed_track: Option<&Path>) -> Rig {
         ));
     }
     runtime
-        .lane()
+        .db()
         .write(Lane::Foreground, "artwork seed", move |tx| {
             tx.execute_batch(&seed).map_err(DbError::from)
         })
@@ -119,7 +119,7 @@ impl Rig {
     fn app(&self, prefer_local: bool) -> Router {
         let service = ArtworkService::new(
             ArtworkCache::new(self.dir.join("covers"), 1024 * 1024),
-            LocalArtwork::new(self.runtime.pool().clone()),
+            LocalArtwork::new(self.runtime.db().sqlx().clone()),
             Some(Arc::new(cover_client(self.archive.clone()))),
             Arc::new(move || prefer_local),
         );
@@ -225,7 +225,7 @@ fn touch_dir(dir: &Path, secs: u64) {
 
 async fn art_version(rig: &Rig) -> Option<i64> {
     sqlx::query_scalar("SELECT version FROM local_album_artwork WHERE local_album_id = 'al1'")
-        .fetch_optional(rig.runtime.pool())
+        .fetch_optional(rig.runtime.db().sqlx())
         .await
         .unwrap()
 }

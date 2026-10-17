@@ -55,7 +55,8 @@ pub struct ReadsSetup {
 }
 
 impl ReadsSetup {
-    /// Build the production bundle. `pool` serves library and search reads;
+    /// Build the production bundle. `db` serves library and search reads
+    /// (through its sqlx pool) and discover's writes;
     /// `users` gives wrapped its display names and discover its batch
     /// callers and Last.fm links;
     /// `inputs` carries what cover art, the version check, wrapped and
@@ -63,17 +64,17 @@ impl ReadsSetup {
     /// carries the live provider pair (`None` keeps the
     /// unconfigured ports: bare enrichment echoes and empty lyrics).
     pub fn build(
-        pool: &sqlx::SqlitePool,
+        db: &droppedneedle_kernel::db::Db,
         users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
         inputs: ReadsInputs,
         enrichment: Option<enrichment::live::ProductionEnrichment>,
     ) -> Self {
+        let pool = db.sqlx();
         let inputs_config = inputs.config.clone();
         let discover_requests = discover::adapters::batches::RequestsSlot::default();
         let discover_inputs = discover::adapters::DiscoverInputs {
-            pool: pool.clone(),
-            lane: inputs.lane.clone(),
+            db: db.clone(),
             config: inputs.config.clone(),
             http: inputs.http.clone(),
             no_redirect: inputs.no_redirect.clone(),
@@ -188,8 +189,7 @@ impl ReadsSetup {
         self
     }
 
-    /// Serve collections and saved YouTube links from this database (pool
-    /// plus writer lane).
+    /// Serve collections and saved YouTube links from this database.
     #[must_use]
     pub fn with_collections(mut self, db: collections::db::CollectionsDb) -> Self {
         self.youtube = self
@@ -308,8 +308,6 @@ pub struct ReadsInputs {
     /// Runtime settings, read per request (wrapped key, local-art
     /// preference, YouTube and integration settings).
     pub config: Arc<droppedneedle_kernel::runtime_config::ConfigStore>,
-    /// The writer lane (discover queue ignores and saved decks).
-    pub lane: droppedneedle_kernel::db::WriteLane,
     /// Root of the cover cache (`<cache_dir>/covers`).
     pub covers_dir: std::path::PathBuf,
     /// Size bound of the cover cache in bytes.

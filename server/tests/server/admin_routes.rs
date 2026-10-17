@@ -51,7 +51,7 @@ impl Rig {
         let plain_user = rig.seed_user("molly", Role::User).await;
         let quota = Arc::new(
             droppedneedle_acquire::requests::quota::QuotaLedger::unlimited(
-                droppedneedle_acquire::db::AcquireDb::from_runtime(&runtime),
+                droppedneedle_acquire::db::AcquireDb::new(runtime.db().clone()),
             ),
         );
         let cache = Arc::new(droppedneedle_providers::InMemoryProviderCache::new());
@@ -61,7 +61,7 @@ impl Rig {
             jobs = jobs.with_precache_sources(sources);
         }
         let admin = AdminSetup::new(rig.deps.clone(), quota.clone(), cache.clone(), providers)
-            .with_db(AdminDb::new(runtime.pool().clone(), runtime.lane().clone()))
+            .with_db(AdminDb::new(runtime.db().clone()))
             .with_backups(droppedneedle_kernel::db::BackupService::new(
                 &dir.join("app.db"),
                 &dir.join("backups"),
@@ -200,7 +200,7 @@ async fn queue_stats_reports_a_failed_checkpoint_as_a_code() {
     let missing = dir.join("gone").join("app.db");
     let failing = droppedneedle_kernel::db::CheckpointService::new(
         &missing,
-        rig.runtime.pool().clone(),
+        rig.runtime.db().sqlx().clone(),
         Arc::default(),
         Arc::default(),
     );
@@ -538,7 +538,7 @@ async fn quota_round_trip_set_and_clear() {
          FROM user_quotas WHERE user_id = ?1",
     )
     .bind(&rig.user_id)
-    .fetch_optional(rig.runtime.pool())
+    .fetch_optional(rig.runtime.db().sqlx())
     .await
     .expect("override row reads");
     assert_eq!(stored, Some((Some(12), Some(30), Some(9))));
@@ -551,7 +551,7 @@ async fn quota_round_trip_set_and_clear() {
     let stored: Option<(String,)> =
         sqlx::query_as("SELECT user_id FROM user_quotas WHERE user_id = ?1")
             .bind(&rig.user_id)
-            .fetch_optional(rig.runtime.pool())
+            .fetch_optional(rig.runtime.db().sqlx())
             .await
             .expect("cleared row reads");
     assert_eq!(stored, None);
@@ -670,10 +670,7 @@ async fn quota_override_for_an_unmirrored_user_is_not_found() {
         rig.cache.clone(),
         providers,
     )
-    .with_db(AdminDb::new(
-        rig.runtime.pool().clone(),
-        rig.runtime.lane().clone(),
-    ));
+    .with_db(AdminDb::new(rig.runtime.db().clone()));
     let app = with_test_principal(
         admin.gated_router(),
         test_principal(&rig.admin_id, Role::Admin, "sess-1", SessionKind::Standard),
@@ -695,7 +692,7 @@ async fn quota_overrides_reload_into_the_ledger() {
         &[&rig.user_id],
     )
     .await;
-    let loaded = droppedneedle::admin::quota::reload_overrides(rig.runtime.pool(), &rig.quota)
+    let loaded = droppedneedle::admin::quota::reload_overrides(rig.runtime.db().sqlx(), &rig.quota)
         .await
         .expect("reload runs");
     assert_eq!(loaded, 1);
@@ -714,7 +711,7 @@ async fn lane_seed(rig: &Rig, sql: &str, params: &[&str]) {
     let sql = sql.to_owned();
     let params: Vec<String> = params.iter().map(|value| (*value).to_owned()).collect();
     rig.runtime
-        .lane()
+        .db()
         .write(Lane::Foreground, "admin-test-seed", move |tx| {
             let refs: Vec<&dyn rusqlite::ToSql> = params
                 .iter()

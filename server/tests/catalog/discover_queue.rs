@@ -274,7 +274,7 @@ fn queue_app(runtime: &DbRuntime) -> Router {
     };
     let queue = LiveQueue::new(
         Arc::new(Scripted),
-        QueueDb::new(runtime.pool().clone(), runtime.lane().clone()),
+        QueueDb::new(runtime.db().clone()),
         Arc::new(FakeYouTube::unconfigured()),
         Providers::with_memory_cache().cache.clone(),
         Arc::new(move || settings.clone()),

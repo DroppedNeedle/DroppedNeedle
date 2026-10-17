@@ -180,14 +180,15 @@ impl LibrarySetup {
     /// Build the production bundle over the live provider clients.
     /// Identification reads MusicBrainz identity-critical and keeps the
     /// release documents it fetches; AcoustID runs only for albums whose
-    /// tags are weak, with the key read from the settings per job.
+    /// tags are weak, with the key read from the settings per job. The
+    /// library's stores open their own connections on `db`'s file.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         http: &droppedneedle_kernel::http_client::HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
         providers: Arc<droppedneedle_providers::Providers>,
         mb_source: droppedneedle_providers::musicbrainz::SourceFn,
-        db_path: &Path,
+        db: &droppedneedle_kernel::db::Db,
         config: Arc<ConfigStore>,
         endpoints: Endpoints,
     ) -> Result<Self, String> {
@@ -263,7 +264,7 @@ impl LibrarySetup {
                 ))
             }),
         };
-        let mut setup = Self::assemble(ids, make, contrib, db_path, config)?;
+        let mut setup = Self::assemble(ids, make, contrib, db.path(), config)?;
         setup.releases = Some(imports);
         setup.http = Some(http.shared().clone());
         let registry = setup.registry.clone();

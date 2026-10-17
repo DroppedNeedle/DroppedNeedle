@@ -30,9 +30,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
-use sqlx::SqlitePool;
 
-use droppedneedle_kernel::db::{DbRuntime, WriteLane};
+use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Secret};
@@ -59,18 +58,18 @@ struct Live {
 }
 
 impl ConcertsSetup {
-    /// Production wiring over the serving runtime, the shared outbound
-    /// client, the settings store and the sources' addresses. `concerts_new` goes nowhere until the
-    /// event stream is wired through [`ConcertsSetup::with_events`].
-    pub fn from_runtime(
-        runtime: &DbRuntime,
+    /// Production wiring over the database, the shared outbound client, the
+    /// settings store and the sources' addresses. `concerts_new` goes
+    /// nowhere until the event stream is wired through
+    /// [`ConcertsSetup::with_events`].
+    pub fn from_db(
+        db: &Db,
         http: &HttpClientFactory,
         config: &Arc<ConfigStore>,
         endpoints: Endpoints,
     ) -> Self {
         Self::new(
-            runtime.pool().clone(),
-            runtime.lane().clone(),
+            db.clone(),
             http.shared().clone(),
             Arc::clone(config),
             endpoints,
@@ -79,15 +78,14 @@ impl ConcertsSetup {
 
     /// Wiring from parts; tests point `endpoints` at local fakes.
     pub fn new(
-        pool: SqlitePool,
-        lane: WriteLane,
+        db: Db,
         http: reqwest::Client,
         config: Arc<ConfigStore>,
         endpoints: Endpoints,
     ) -> Self {
         Self {
             live: Some(Live {
-                store: store::ConcertsStore::new(pool, lane),
+                store: store::ConcertsStore::new(db),
                 config,
                 sources: Arc::new(sources::Sources::new(http, endpoints)),
                 events: Arc::new(NoEventStream),

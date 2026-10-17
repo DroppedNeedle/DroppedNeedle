@@ -168,7 +168,7 @@ impl Journal {
         F: for<'a, 'b> FnOnce(&'a DownloadStore<'b>) -> Result<R, StoreError> + Send + 'static,
     {
         self.db
-            .lane()
+            .db()
             .write(lane, name, move |tx| {
                 let store = DownloadStore::new(tx);
                 op(&store).map_err(|error| match error {

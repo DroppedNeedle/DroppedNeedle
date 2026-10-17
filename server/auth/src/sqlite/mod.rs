@@ -46,7 +46,7 @@ use sqlx::SqlitePool;
 use super::federated::FederatedError;
 use super::federated::password_import::HashScheme;
 use super::users::stores::StoreError;
-use droppedneedle_kernel::db::{DbError, Lane, WriteLane};
+use droppedneedle_kernel::db::{Db, DbError, Lane};
 
 pub use app_passwords::SqliteAppPasswordStore;
 pub use federated::SqliteFederatedStore;
@@ -58,31 +58,27 @@ pub use sessions::{
 };
 pub use users::{SqliteCredentialLookup, SqliteUserStore};
 
-/// Shared SQLite handle for every auth adapter: the reader pool plus the
-/// writer lane. `Clone` is cheap; clones share both.
+/// Shared SQLite handle for every auth adapter. `Clone` is cheap; clones
+/// share the database.
 #[derive(Clone, Debug)]
 pub struct AuthDb {
-    pool: SqlitePool,
-    lane: WriteLane,
+    db: Db,
 }
 
 impl AuthDb {
-    /// Handle over the runtime's pool and lane.
-    pub fn new(pool: &SqlitePool, lane: &WriteLane) -> Self {
-        Self {
-            pool: pool.clone(),
-            lane: lane.clone(),
-        }
+    /// Handle over the runtime's database.
+    pub fn new(db: &Db) -> Self {
+        Self { db: db.clone() }
     }
 
-    /// The reader pool.
+    /// The sqlx reader pool.
     fn pool(&self) -> &SqlitePool {
-        &self.pool
+        self.db.sqlx()
     }
 
     /// The writer lane, its closures failing with [`WriteError`].
     fn lane(&self) -> AuthLane<'_> {
-        AuthLane(&self.lane)
+        AuthLane(&self.db)
     }
 
     /// Current unix time in whole seconds.
@@ -94,10 +90,10 @@ impl AuthDb {
 /// The writer lane with the auth closure error pinned, so a closure that
 /// only uses `?` needs no annotation.
 #[derive(Clone, Copy)]
-struct AuthLane<'a>(&'a WriteLane);
+struct AuthLane<'a>(&'a Db);
 
 impl AuthLane<'_> {
-    /// [`WriteLane::write`].
+    /// [`Db::write`].
     async fn write<R, F>(self, lane: Lane, name: &'static str, op: F) -> Result<R, WriteError>
     where
         F: FnOnce(&rusqlite::Transaction) -> Result<R, WriteError> + Send + 'static,

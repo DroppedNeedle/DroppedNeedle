@@ -29,7 +29,7 @@ use std::{
 use tokio::sync::Notify;
 
 pub use crate::db::durable::{JobKind, JobRecord, JobState, WakeupChannel};
-use crate::db::{DbError, durable::DurableWorkWakeups, writer::WriteLane};
+use crate::db::{Db, DbError, durable::DurableWorkWakeups};
 
 /// Boxed sendable future for object-safe async ports (house style: `async fn`
 /// is not object-safe, so traits hand-box).
@@ -156,13 +156,13 @@ impl RegistryStore for MemoryRegistryStore {
 #[derive(Clone)]
 pub struct DurableRegistryStore {
     wakeups: DurableWorkWakeups,
-    lane: WriteLane,
+    db: Db,
 }
 
 impl DurableRegistryStore {
-    /// Bind the store over a migrated pool's fabric and the writer lane.
-    pub fn new(wakeups: DurableWorkWakeups, lane: WriteLane) -> Self {
-        Self { wakeups, lane }
+    /// Bind the store over the durable-work fabric and the database.
+    pub fn new(wakeups: DurableWorkWakeups, db: Db) -> Self {
+        Self { wakeups, db }
     }
 
     fn log_failure(operation: &str, name: &str, error: &DbError) {
@@ -187,7 +187,7 @@ impl RegistryStore for DurableRegistryStore {
         Box::pin(async move {
             if let Err(error) = store
                 .wakeups
-                .register_job(&store.lane, &name, kind, channel)
+                .register_job(&store.db, &name, kind, channel)
                 .await
             {
                 Self::log_failure("register", &name, &error);
@@ -199,7 +199,7 @@ impl RegistryStore for DurableRegistryStore {
         let store = self.clone();
         let name = name.to_owned();
         Box::pin(async move {
-            if let Err(error) = store.wakeups.set_job_state(&store.lane, &name, state).await {
+            if let Err(error) = store.wakeups.set_job_state(&store.db, &name, state).await {
                 Self::log_failure("set-state", &name, &error);
             }
         })
@@ -209,7 +209,7 @@ impl RegistryStore for DurableRegistryStore {
         let store = self.clone();
         let name = name.to_owned();
         Box::pin(async move {
-            if let Err(error) = store.wakeups.heartbeat(&store.lane, &name).await {
+            if let Err(error) = store.wakeups.heartbeat(&store.db, &name).await {
                 Self::log_failure("heartbeat", &name, &error);
             }
         })

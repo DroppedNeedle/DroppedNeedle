@@ -440,7 +440,7 @@ impl Rig {
         let dir = ScratchDir::new("compat-catalog");
         let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
         runtime
-            .lane()
+            .db()
             .write(Lane::Foreground, "seed", |tx| {
                 tx.execute_batch(
                     "INSERT INTO auth_users (id, display_name, role, created_at) \
@@ -454,20 +454,13 @@ impl Rig {
         let auth = AuthRig::on(&runtime);
         let ids: Arc<dyn droppedneedle_kernel::ids::IdGenerator> = Arc::new(UuidGenerator);
         let reads = ReadsSetup::build(
-            runtime.pool(),
+            runtime.db(),
             auth.deps.clone(),
             ids,
-            crate::common::reads_inputs(
-                crate::common::config_store(&dir),
-                &dir,
-                runtime.lane().clone(),
-            ),
+            crate::common::reads_inputs(crate::common::config_store(&dir), &dir),
             None,
         )
-        .with_collections(CollectionsDb::new(
-            runtime.pool().clone(),
-            runtime.lane().clone(),
-        ));
+        .with_collections(CollectionsDb::new(runtime.db().clone()));
         Self {
             _dir: dir,
             runtime,
@@ -526,7 +519,7 @@ async fn native_playlists_export_to_m3u_with_their_files() {
 
     let out = ScratchDir::new("m3u-export");
     let folder = out.join("playlists");
-    let report = M3uPlaylistExporter::new(Some(rig.runtime.pool().clone()))
+    let report = M3uPlaylistExporter::new(Some(rig.runtime.db().sqlx().clone()))
         .sync(PlaylistSyncConfig {
             target_dir: folder.display().to_string(),
             scope: "all".to_owned(),
@@ -577,7 +570,7 @@ async fn jellyfin_ids_unknown_to_a_caller_without_sign_in_read_the_catalog_once(
     assert_eq!(ids.from_jf(&old).await, found);
 
     rig.runtime
-        .lane()
+        .db()
         .write(Lane::Foreground, "seed", |tx| {
             tx.execute_batch(
                 "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \

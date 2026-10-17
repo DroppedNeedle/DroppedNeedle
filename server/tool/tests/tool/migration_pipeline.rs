@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use droppedneedle_kernel::db::WriteLane;
+use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::{Crypto, Secret};
 use droppedneedle_tool::tooling::fixture::{UNKNOWN_USER_ID, build_v2_fixture, delete_orphan_rows};
 
@@ -255,11 +255,10 @@ async fn v2_passwords_log_in_and_rehash() {
     let (fixture, text) = repaired_export(&root);
     let (v3_root, pool) = seeded_target(&root).await;
     run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
-    let lane =
-        WriteLane::open(&v3_root.join("cache").join("library.db")).expect("writer lane opens");
+    let db = Db::open_for_tests(&v3_root.join("cache").join("library.db")).expect("database opens");
     login_rehashes(
         &pool,
-        &lane,
+        &db,
         "alice",
         &fixture.alice_id,
         &fixture.secrets.alice_password,
@@ -267,7 +266,7 @@ async fn v2_passwords_log_in_and_rehash() {
     .await;
     login_rehashes(
         &pool,
-        &lane,
+        &db,
         "bob",
         &fixture.bob_id,
         &fixture.secrets.bob_password,
@@ -290,9 +289,8 @@ async fn compat_clients_reauth_on_surviving_secrets() {
     let (fixture, text) = repaired_export(&root);
     let (v3_root, pool) = seeded_target(&root).await;
     run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
-    let lane =
-        WriteLane::open(&v3_root.join("cache").join("library.db")).expect("writer lane opens");
-    assert_compat_reauth(&pool, &lane, &v3_root, &fixture).await;
+    let db = Db::open_for_tests(&v3_root.join("cache").join("library.db")).expect("database opens");
+    assert_compat_reauth(&db, &v3_root, &fixture).await;
 }
 
 #[tokio::test]
@@ -513,11 +511,11 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
     // and v3's Spotify store reads the carried link as it is.
     let spotify = {
         use droppedneedle_acquire::imports::spotify::SpotifyConnectionStore as _;
-        let lane =
-            WriteLane::open(&v3_root.join("cache").join("library.db")).expect("writer lane opens");
+        let db =
+            Db::open_for_tests(&v3_root.join("cache").join("library.db")).expect("database opens");
         let key = Crypto::load(&v3_root.join("config")).expect("v3 key loads");
         droppedneedle_acquire::imports::spotify_store::SqliteSpotifyLinks::new(
-            droppedneedle_acquire::db::AcquireDb::new(pool.clone(), lane),
+            droppedneedle_acquire::db::AcquireDb::new(db),
             std::sync::Arc::new(key),
         )
         .get(&fixture.bob_id)
@@ -685,7 +683,7 @@ async fn run_pipeline_with(
 /// fails.
 async fn login_rehashes(
     pool: &sqlx::SqlitePool,
-    lane: &droppedneedle_kernel::db::WriteLane,
+    db: &Db,
     username: &str,
     user_id: &str,
     password: &str,
@@ -704,7 +702,7 @@ async fn login_rehashes(
     .expect("provider row reads");
     assert!(before.contains("$2b$"), "bcrypt carried verbatim: {before}");
 
-    let auth_db = AuthDb::new(pool, lane);
+    let auth_db = AuthDb::new(db);
     let hasher = droppedneedle_auth::passwords::Argon2idHasher::new();
     let mut sessions = SqliteSessionStore::new(&auth_db);
     sessions.set_rehash_queue(hasher.rehash_queue().clone());
@@ -784,8 +782,7 @@ async fn assert_follows_intact(
 /// recomputed SHA-256, decrypts under the v3 key, stamps use; the revoked
 /// secret resolves nowhere.
 async fn assert_compat_reauth(
-    pool: &sqlx::SqlitePool,
-    lane: &droppedneedle_kernel::db::WriteLane,
+    db: &Db,
     v3_root: &Path,
     fixture: &droppedneedle_tool::tooling::fixture::V2Fixture,
 ) {
@@ -793,7 +790,7 @@ async fn assert_compat_reauth(
     use droppedneedle_auth::sqlite::{AuthDb, SqliteAppPasswordStore};
     use droppedneedle_auth::users::stores::AppPasswordStore;
 
-    let auth_db = AuthDb::new(pool, lane);
+    let auth_db = AuthDb::new(db);
     let store = SqliteAppPasswordStore::new(&auth_db);
     let crypto = Crypto::load(&v3_root.join("config")).expect("v3 key loads");
 

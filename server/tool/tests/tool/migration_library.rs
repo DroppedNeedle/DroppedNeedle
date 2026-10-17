@@ -315,7 +315,10 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
         )
         .expect("config opens"),
     );
-    let (library, _) = library_at(&db_path, config);
+    let (library, _) = library_at(
+        &droppedneedle_kernel::db::Db::open_for_tests(&db_path).expect("database opens"),
+        config,
+    );
     drain_scans(&library).await;
 
     // Ids stay: the unchanged file and the re-read one keep their track,

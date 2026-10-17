@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use super::registry::{BoxFuture, JobCtx, JobExit, JobKind, JobRegistry, RegistryStore};
 use super::schedule::sleep_or_stop;
-use crate::db::{DbError, WriteLane, writer::Lane};
+use crate::db::{Db, DbError, writer::Lane};
 
 /// Registered-name prefix for tick loops: `plugin-tick:{name}`.
 pub const TICK_PREFIX: &str = "plugin-tick:";
@@ -295,17 +295,15 @@ impl TickStore for MemoryTickStore {
 /// uninstalls leave rows behind, so a reinstall reads its old state back.
 #[derive(Clone, Debug)]
 pub struct SqliteTickStore {
-    pool: sqlx::SqlitePool,
-    lane: WriteLane,
+    db: Db,
     plugins: Arc<Mutex<HashSet<String>>>,
 }
 
 impl SqliteTickStore {
-    /// Bind the store over a migrated pool plus the writer lane.
-    pub fn new(pool: sqlx::SqlitePool, lane: WriteLane) -> Self {
+    /// Bind the store over the database.
+    pub fn new(db: Db) -> Self {
         Self {
-            pool,
-            lane,
+            db,
             plugins: Arc::new(Mutex::new(HashSet::new())),
         }
     }
@@ -345,7 +343,7 @@ impl TickStore for SqliteTickStore {
             )
             .bind(&plugin)
             .bind(&key)
-            .fetch_optional(&store.pool)
+            .fetch_optional(store.db.sqlx())
             .await
             .map_err(|error| {
                 tracing::warn!(%plugin, key = %key, %error, "tick state read failed");
@@ -388,7 +386,7 @@ impl TickStore for SqliteTickStore {
             }
             let refused_plugin = plugin.clone();
             let stored = store
-                .lane
+                .db
                 .write(Lane::Background, "tick-state-write", move |tx| {
                     // Totals for the plugin's other keys, so a plugin cannot
                     // grow without bound through many small keys.

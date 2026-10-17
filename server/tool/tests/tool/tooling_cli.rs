@@ -829,7 +829,7 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
         droppedneedle_kernel::db::open_runtime(&droppedneedle_kernel::db::DbConfig::new(&db_path))
             .await
             .expect("database opens");
-    let auth_db = AuthDb::new(runtime.pool(), runtime.lane());
+    let auth_db = AuthDb::new(runtime.db());
     let hasher = Argon2idHasher::new();
     let rig = AuthRig::on(&runtime);
     rig.clock
@@ -905,7 +905,7 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
     // Read before the sign-in below, which sweeps revoked sessions.
     let revoked: i64 =
         sqlx::query_scalar("SELECT revoked FROM auth_tokens WHERE id = 'sess-alice'")
-            .fetch_one(runtime.pool())
+            .fetch_one(runtime.db().sqlx())
             .await
             .expect("session reads");
     assert_eq!(revoked, 1, "the reset ends the sessions from before it");

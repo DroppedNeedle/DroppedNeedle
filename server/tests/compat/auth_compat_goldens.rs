@@ -356,7 +356,7 @@ async fn conflicts_duplicates_and_missing_params_are_code_10() {
 #[tokio::test]
 async fn store_failure_is_generic_never_an_auth_code() {
     let (rig, store) = passwords("compat-broken").await;
-    rig.runtime().pool().close().await;
+    rig.runtime().db().sqlx().close().await;
     let params = SubsonicParams::new(vec![("u", "alice"), ("p", "alice-secret")]);
     assert_eq!(
         authenticate(&store, &params).await,

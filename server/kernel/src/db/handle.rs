@@ -2,9 +2,15 @@
 //!
 //! It carries the writer lane, the two read pools and, until the last area
 //! has moved its reads off it, the sqlx reader pool. The factory builds it
-//! once; clones are cheap and share everything.
+//! once; clones are cheap and share everything. Areas hold a `Db` and no
+//! other database handle.
+//!
+//! The runtime that opened a `Db` outlives it: past its runtime a handle
+//! has no `Busy` answer for a waiting read or write. So whoever opens a
+//! [`super::DbRuntime`] calls its `shutdown` after the last use of its
+//! handles, or exits.
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use rusqlite::{Connection, Transaction};
 use sqlx::SqlitePool;
@@ -12,7 +18,7 @@ use sqlx::SqlitePool;
 use super::{
     error::{ChunkedError, DbError},
     read_pool::ReadPools,
-    writer::{CancelFlag, Lane, WriteLane},
+    writer::{CancelFlag, DurableLane, Lane, WriteLane},
 };
 
 /// The database, for reads and writes. Cloneable; every clone shares the one
@@ -33,12 +39,36 @@ impl std::fmt::Debug for Db {
 }
 
 impl Db {
-    pub(crate) fn new(lane: WriteLane, reads: Arc<ReadPools>, sqlx: SqlitePool) -> Self {
+    pub(in crate::db) fn new(lane: WriteLane, reads: Arc<ReadPools>, sqlx: SqlitePool) -> Self {
         Self { lane, reads, sqlx }
     }
 
-    pub(crate) fn lane(&self) -> &WriteLane {
+    /// A handle on an existing, migrated database file with no runtime
+    /// behind it: the writer lane, both read pools and a lazy sqlx reader
+    /// pool, opened on the calling thread. For tests only. It starts no
+    /// watch, so a waiting write or read gets no `Busy` answer and a stuck
+    /// write is not logged, and nothing holds bulk writes for the WAL.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_for_tests(path: &Path) -> Result<Self, DbError> {
+        let lane = WriteLane::open(path)?;
+        let reads = ReadPools::open(
+            path,
+            lane.database(),
+            super::MAX_READERS as usize,
+            super::BUSY_TIMEOUT,
+            super::ACQUIRE_TIMEOUT,
+        )?;
+        let sqlx = super::factory::lazy_reader_pool_for_tests(path);
+        Ok(Self::new(lane, reads, sqlx))
+    }
+
+    pub(in crate::db) fn lane(&self) -> &WriteLane {
         &self.lane
+    }
+
+    /// The database file.
+    pub fn path(&self) -> &Path {
+        self.lane.db_path()
     }
 
     pub(crate) fn reads(&self) -> &Arc<ReadPools> {
@@ -106,7 +136,9 @@ impl Db {
         self.reads.read_long(name, cancel, op)
     }
 
-    /// [`WriteLane::write`] on this database's lane.
+    /// One write transaction from async code: the closure runs on the
+    /// writer lane's own thread when its turn comes. Who waits, who is
+    /// answered `Busy` and the time budgets are in [`super::writer`].
     pub async fn write<R, E, F>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, E>
     where
         F: FnOnce(&Transaction) -> Result<R, E> + Send + 'static,
@@ -116,7 +148,8 @@ impl Db {
         self.lane.write(lane, name, op).await
     }
 
-    /// [`WriteLane::write_blocking`] on this database's lane.
+    /// [`Db::write`] for synchronous code on a blocking thread: the closure
+    /// runs on the calling thread, so it may borrow.
     pub fn write_blocking<R, E, F>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, E>
     where
         F: FnOnce(&Transaction) -> Result<R, E>,
@@ -125,8 +158,14 @@ impl Db {
         self.lane.write_blocking(lane, name, op)
     }
 
-    /// [`WriteLane::write_durable`] on this database's lane.
-    pub fn write_durable<R, E, F>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, E>
+    /// [`Db::write_blocking`] whose commit is on disk before it returns. It
+    /// is never held by the WAL, so its lane has no bulk class.
+    pub fn write_durable<R, E, F>(
+        &self,
+        lane: DurableLane,
+        name: &'static str,
+        op: F,
+    ) -> Result<R, E>
     where
         F: FnOnce(&Transaction) -> Result<R, E>,
         E: From<DbError> + std::fmt::Display,
@@ -134,7 +173,10 @@ impl Db {
         self.lane.write_durable(lane, name, op)
     }
 
-    /// [`WriteLane::write_chunked`] on this database's lane.
+    /// Commit `items` in chunks, one bulk transaction each, so other writes
+    /// get in between and a full WAL holds the next chunk back. Any prefix
+    /// of the chunks may be all that lands; [`ChunkedError`] carries the
+    /// rows that committed.
     pub async fn write_chunked<T, E, F>(
         &self,
         name: &'static str,
@@ -153,7 +195,7 @@ impl Db {
             .await
     }
 
-    /// [`WriteLane::write_chunked_blocking`] on this database's lane.
+    /// [`Db::write_chunked`] for synchronous code on a blocking thread.
     pub fn write_chunked_blocking<T, E, F>(
         &self,
         name: &'static str,

@@ -71,14 +71,13 @@ pub trait FolderStore: Send + Sync {
 /// Preferences in `user_navidrome_folder_preferences`.
 #[derive(Clone)]
 pub struct SqliteFolderStore {
-    pool: sqlx::SqlitePool,
-    lane: droppedneedle_kernel::db::WriteLane,
+    db: droppedneedle_kernel::db::Db,
 }
 
 impl SqliteFolderStore {
     /// Bind the store to a migrated database.
-    pub fn new(pool: sqlx::SqlitePool, lane: droppedneedle_kernel::db::WriteLane) -> Self {
-        Self { pool, lane }
+    pub fn new(db: droppedneedle_kernel::db::Db) -> Self {
+        Self { db }
     }
 }
 
@@ -90,7 +89,7 @@ impl FolderStore for SqliteFolderStore {
                  FROM user_navidrome_folder_preferences WHERE user_id = ?1",
             )
             .bind(user_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(self.db.sqlx())
             .await
             .map_err(|error| {
                 droppedneedle_kernel::db::map_sqlx_busy("remotes.folders.get", error).to_string()
@@ -117,7 +116,7 @@ impl FolderStore for SqliteFolderStore {
         Box::pin(async move {
             let selected = serde_json::to_string(&preference.selected_folder_ids)
                 .map_err(|error| error.to_string())?;
-            self.lane
+            self.db
                 .write(
                     droppedneedle_kernel::db::Lane::Foreground,
                     "remotes.folders.set",

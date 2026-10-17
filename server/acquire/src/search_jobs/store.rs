@@ -420,7 +420,7 @@ impl JobStore {
         let job_id = job_id.to_owned();
         let outcome = self
             .db
-            .lane()
+            .db()
             .write(Lane::Foreground, "search_jobs.pick", move |tx| {
                 let at = now();
                 let status: Option<String> = tx

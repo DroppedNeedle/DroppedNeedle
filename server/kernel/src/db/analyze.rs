@@ -21,10 +21,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use sqlx::SqlitePool;
-
 use super::error::DbError;
-use super::writer::{Lane, WriteLane};
+use super::handle::Db;
+use super::writer::Lane;
 
 /// Statistics older than this are refreshed.
 pub const MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -41,8 +40,7 @@ const CHURN_MIN_TRACKS: i64 = 100;
 /// Runs `ANALYZE` on the writer lane when the statistics are stale.
 #[derive(Clone, Debug)]
 pub struct AnalyzeService {
-    lane: WriteLane,
-    pool: SqlitePool,
+    db: Db,
     last_check: Arc<Mutex<Option<Instant>>>,
 }
 
@@ -77,12 +75,11 @@ fn stale(last: Option<LastRun>, stats_present: bool, indexed_tracks: i64, now_un
 }
 
 impl AnalyzeService {
-    /// Wire the service over the reader pool (staleness checks) and the
-    /// writer lane (the `ANALYZE` steps).
-    pub fn new(lane: WriteLane, pool: SqlitePool) -> Self {
+    /// Wire the service over the database: the sqlx reader pool for the
+    /// staleness checks, the writer lane for the `ANALYZE` steps.
+    pub fn new(db: Db) -> Self {
         Self {
-            lane,
-            pool,
+            db,
             last_check: Arc::new(Mutex::new(None)),
         }
     }
@@ -94,7 +91,7 @@ impl AnalyzeService {
     /// into a WAL that cannot shrink. The skipped call does not count as a
     /// check, so the refresh comes with the first pass after the hold.
     pub async fn run_if_due(&self) -> Result<bool, DbError> {
-        if self.lane.wal_hold().is_on() {
+        if self.db.lane().wal_hold().is_on() {
             return Ok(false);
         }
         {
@@ -118,12 +115,12 @@ impl AnalyzeService {
         let last: Option<(i64, i64)> = sqlx::query_as(
             "SELECT analyzed_at, indexed_tracks FROM db_planner_stats WHERE singleton = 1",
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.db.sqlx())
         .await?;
         let stats_present: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'sqlite_stat1')",
         )
-        .fetch_one(&self.pool)
+        .fetch_one(self.db.sqlx())
         .await?;
         let indexed_tracks = self.indexed_tracks().await?;
         Ok(stale(
@@ -141,7 +138,7 @@ impl AnalyzeService {
         Ok(sqlx::query_scalar(
             "SELECT COALESCE(SUM(indexed_tracks), 0) FROM library_track_format_stats",
         )
-        .fetch_one(&self.pool)
+        .fetch_one(self.db.sqlx())
         .await?)
     }
 
@@ -154,7 +151,7 @@ impl AnalyzeService {
              AND name NOT LIKE 'sqlite_%' AND sql NOT LIKE 'CREATE VIRTUAL TABLE%' \
              AND name NOT LIKE '%\\_fts\\_%' ESCAPE '\\' ORDER BY name",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.sqlx())
         .await?;
         for table in tables {
             // A bounded sample per index keeps each step short on a large
@@ -163,7 +160,7 @@ impl AnalyzeService {
                 "PRAGMA analysis_limit={ANALYSIS_LIMIT}; ANALYZE \"{}\"",
                 table.replace('"', "\"\"")
             );
-            self.lane
+            self.db
                 .write(Lane::Background, "db.analyze", move |tx| {
                     tx.execute_batch(&statement).map_err(DbError::from)
                 })
@@ -171,7 +168,7 @@ impl AnalyzeService {
         }
         let indexed_tracks = self.indexed_tracks().await?;
         let at = now_unix();
-        self.lane
+        self.db
             .write(Lane::Background, "db.analyze.record", move |tx| {
                 tx.execute(
                     "INSERT INTO db_planner_stats (singleton, analyzed_at, indexed_tracks) \

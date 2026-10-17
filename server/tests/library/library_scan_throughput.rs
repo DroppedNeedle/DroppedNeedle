@@ -116,7 +116,11 @@ async fn full_scan_throughput() {
     let tree_bytes = generate(&music, files, one_artist);
 
     migrated_db(&scratch.join("app.db"));
-    let (library, _) = library_at(&scratch.join("app.db"), config_store(&scratch));
+    let (library, _) = library_at(
+        &droppedneedle_kernel::db::Db::open_for_tests(&scratch.join("app.db"))
+            .expect("database opens"),
+        config_store(&scratch),
+    );
     library
         .add_root(
             Some("music".to_owned()),

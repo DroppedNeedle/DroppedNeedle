@@ -291,7 +291,10 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
         )
         .expect("config opens"),
     );
-    let (library, scripted) = library_at(&db_path, config);
+    let (library, scripted) = library_at(
+        &droppedneedle_kernel::db::Db::open_for_tests(&db_path).expect("database opens"),
+        config,
+    );
     let facts = library
         .identify_store
         .album_facts(V2_ALBUM_ID)

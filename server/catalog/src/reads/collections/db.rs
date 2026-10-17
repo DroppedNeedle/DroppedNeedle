@@ -1,8 +1,8 @@
 //! Database handle for the collections stores.
 //!
-//! [`CollectionsDb`] carries the reader pool for queries and the writer
-//! lane for every write. The stores in `store/` hold a clone; nothing in
-//! collections opens its own connection.
+//! [`CollectionsDb`] carries the database: the reader pool for queries and
+//! the writer lane for every write. The stores in `store/` hold a clone;
+//! nothing in collections opens its own connection.
 //!
 //! Timestamps: playlist rows keep v2's ISO-8601 text columns. SQLite does
 //! the conversion in the statements (`strftime`), so the stores trade in
@@ -11,7 +11,7 @@
 use rusqlite::Transaction;
 use sqlx::SqlitePool;
 
-use droppedneedle_kernel::db::{DbError, Lane, WriteLane, map_sqlx_busy};
+use droppedneedle_kernel::db::{Db, DbError, Lane, map_sqlx_busy};
 
 /// Every way a store call can fail. The text goes to the log only.
 #[derive(Debug, thiserror::Error)]
@@ -38,18 +38,17 @@ impl StoreError {
     }
 }
 
-/// Reader pool plus writer lane over the application database.
+/// The application database, or none in bundles that never serve
+/// collections.
 #[derive(Clone, Debug, Default)]
 pub struct CollectionsDb {
-    live: Option<(SqlitePool, WriteLane)>,
+    live: Option<Db>,
 }
 
 impl CollectionsDb {
-    /// Handle over the serving runtime's pool and lane.
-    pub fn new(pool: SqlitePool, lane: WriteLane) -> Self {
-        Self {
-            live: Some((pool, lane)),
-        }
+    /// Handle over the serving runtime's database.
+    pub fn new(db: Db) -> Self {
+        Self { live: Some(db) }
     }
 
     /// A handle with no database: every call fails closed with a logged
@@ -60,7 +59,7 @@ impl CollectionsDb {
 
     /// Reader pool, or the unwired failure.
     pub fn pool(&self) -> Result<&SqlitePool, StoreError> {
-        self.live.as_ref().map(|(pool, _)| pool).ok_or_else(unwired)
+        self.live.as_ref().map(Db::sqlx).ok_or_else(unwired)
     }
 
     /// One request-path write transaction.
@@ -69,8 +68,8 @@ impl CollectionsDb {
         F: FnOnce(&Transaction) -> Result<R, DbError> + Send + 'static,
         R: Send + 'static,
     {
-        let (_, lane) = self.live.as_ref().ok_or_else(unwired)?;
-        lane.write(Lane::Foreground, name, op)
+        let db = self.live.as_ref().ok_or_else(unwired)?;
+        db.write(Lane::Foreground, name, op)
             .await
             .map_err(StoreError::from_db)
     }

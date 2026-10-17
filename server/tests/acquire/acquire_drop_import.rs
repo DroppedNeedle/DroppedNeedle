@@ -178,7 +178,7 @@ async fn bundles() -> (
         )
         .expect("config"),
     );
-    let (library, _) = library_at(acquire.db.path(), config);
+    let (library, _) = library_at(acquire.db.db(), config);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -629,7 +629,7 @@ async fn a_cut_off_upload_survives_a_sweep_that_cannot_read_its_jobs() {
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
     let acquire = droppedneedle_acquire::AcquireSetup::build(
-        droppedneedle_acquire::db::AcquireDb::from_runtime(&runtime),
+        droppedneedle_acquire::db::AcquireDb::new(runtime.db().clone()),
         &config,
         auth.deps.clone(),
         &droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http"),
@@ -661,7 +661,7 @@ async fn a_cut_off_upload_survives_a_sweep_that_cannot_read_its_jobs() {
         .expect("job");
 
     // The only reader is out, as on a swapping host at boot.
-    let held = runtime.pool().acquire().await.expect("reader");
+    let held = runtime.db().sqlx().acquire().await.expect("reader");
     acquire.drops.sweep_stale().await;
     drop(held);
     assert!(track.exists(), "the cut-off upload was swept");

@@ -40,14 +40,14 @@ impl Rig {
         let admin_user = rig.seed_user("brenda", Role::Admin).await;
         let quota = Arc::new(
             droppedneedle_acquire::requests::quota::QuotaLedger::unlimited(
-                droppedneedle_acquire::db::AcquireDb::from_runtime(&runtime),
+                droppedneedle_acquire::db::AcquireDb::new(runtime.db().clone()),
             ),
         );
         let cache = Arc::new(droppedneedle_providers::InMemoryProviderCache::new());
         let providers = Arc::new(droppedneedle_providers::Providers::new(cache.clone()));
         let backup_dir = dir.join("backups");
         let admin = AdminSetup::new(rig.deps.clone(), quota, cache, providers)
-            .with_db(AdminDb::new(runtime.pool().clone(), runtime.lane().clone()))
+            .with_db(AdminDb::new(runtime.db().clone()))
             .with_backups(droppedneedle_kernel::db::BackupService::new(
                 &dir.join("app.db"),
                 &backup_dir,

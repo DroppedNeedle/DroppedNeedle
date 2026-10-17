@@ -15,11 +15,11 @@
 use std::collections::{HashMap, HashSet};
 
 use rusqlite::params;
-use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
+use sqlx::{Row, sqlite::SqliteRow};
 
 use super::matching::{Confidence, EventRow, StoredConcert, SweepArtist, TmBasis};
 use super::models::{ConcertStatus, EventCity, EventSource};
-use droppedneedle_kernel::db::{DbError, Lane, WriteLane, map_sqlx_busy};
+use droppedneedle_kernel::db::{Db, DbError, Lane, map_sqlx_busy};
 
 /// A store failure. The text goes to the log only.
 #[derive(Debug, thiserror::Error)]
@@ -100,17 +100,16 @@ fn event_from_row(row: &SqliteRow) -> Result<Option<EventRow>, sqlx::Error> {
     }))
 }
 
-/// Pool plus writer lane over the application database.
+/// The concerts tables in the application database.
 #[derive(Clone, Debug)]
 pub struct ConcertsStore {
-    pool: SqlitePool,
-    lane: WriteLane,
+    db: Db,
 }
 
 impl ConcertsStore {
-    /// Store over the serving runtime's pool and lane.
-    pub fn new(pool: SqlitePool, lane: WriteLane) -> Self {
-        Self { pool, lane }
+    /// Store over the serving runtime's database.
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 
     // -- sweep set -----------------------------------------------------------
@@ -122,7 +121,7 @@ impl ConcertsStore {
              MIN(artist_name) AS artist_name FROM user_followed_artists \
              GROUP BY artist_mbid_lower ORDER BY artist_mbid_lower",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.sqlx())
         .await
         .map_err(read_error("concerts followed artists"))?;
         rows.iter()
@@ -153,7 +152,7 @@ impl ConcertsStore {
              AND t.availability = 'indexed') \
              GROUP BY lower(e.provider_artist_id) ORDER BY 1",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.sqlx())
         .await
         .map_err(read_error("concerts library artists"))?;
         rows.iter()
@@ -175,7 +174,7 @@ impl ConcertsStore {
             "SELECT artist_mbid_lower, last_checked_at FROM artist_event_check \
              WHERE last_checked_at IS NOT NULL",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.sqlx())
         .await
         .map_err(read_error("concerts cursor ages"))?;
         rows.iter()
@@ -196,7 +195,7 @@ impl ConcertsStore {
              ORDER BY user_id",
         )
         .bind(artist_mbid_lower)
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.sqlx())
         .await
         .map_err(read_error("concerts followers"))
     }
@@ -213,7 +212,7 @@ impl ConcertsStore {
              WHERE artist_mbid_lower = ?",
         )
         .bind(artist_mbid_lower)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.db.sqlx())
         .await
         .map_err(read_error("concerts tm resolution"))?;
         row.map(|row| {
@@ -237,7 +236,7 @@ impl ConcertsStore {
             "SELECT resolved_at FROM artist_skiddle_resolution WHERE artist_mbid_lower = ?",
         )
         .bind(artist_mbid_lower)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.db.sqlx())
         .await
         .map_err(read_error("concerts skiddle resolution"))?;
         let Some(resolved_at) = marker else {
@@ -248,7 +247,7 @@ impl ConcertsStore {
              ORDER BY skiddle_artistid",
         )
         .bind(artist_mbid_lower)
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.sqlx())
         .await
         .map_err(read_error("concerts skiddle ids"))?;
         Ok(Some(SkiddleResolution {
@@ -266,7 +265,7 @@ impl ConcertsStore {
         now: f64,
     ) -> Result<(), StoreError> {
         let artist = artist_mbid_lower.to_owned();
-        self.lane
+        self.db
             .write(Lane::Background, "concerts tm resolution", move |tx| {
                 tx.execute(
                     "INSERT INTO artist_tm_attraction \
@@ -291,7 +290,7 @@ impl ConcertsStore {
         now: f64,
     ) -> Result<(), StoreError> {
         let artist = artist_mbid_lower.to_owned();
-        self.lane
+        self.db
             .write(Lane::Background, "concerts skiddle resolution", move |tx| {
                 tx.execute(
                     "DELETE FROM artist_skiddle_ids WHERE artist_mbid_lower = ?1",
@@ -327,7 +326,7 @@ impl ConcertsStore {
             "SELECT source, source_event_id FROM live_event_feed WHERE artist_mbid_lower = ?",
         )
         .bind(artist_mbid_lower)
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.sqlx())
         .await
         .map_err(read_error("concerts event keys"))?;
         let mut keys = HashSet::with_capacity(rows.len());
@@ -356,7 +355,7 @@ impl ConcertsStore {
         now: f64,
     ) -> Result<(), StoreError> {
         let artist = artist_mbid_lower.to_owned();
-        self.lane
+        self.db
             .write(Lane::Background, "concerts apply sweep", move |tx| {
                 for (source, id) in &deletes {
                     tx.execute(
@@ -419,7 +418,7 @@ impl ConcertsStore {
         now: f64,
     ) -> Result<(), StoreError> {
         let artist = artist_mbid_lower.to_owned();
-        self.lane
+        self.db
             .write(Lane::Background, "concerts record failure", move |tx| {
                 upsert_cursor(tx, &artist, now, "error", Some(&error))?;
                 Ok::<_, DbError>(())
@@ -430,7 +429,7 @@ impl ConcertsStore {
 
     /// Delete rows dated strictly before `cutoff_local_date`.
     pub async fn prune_before(&self, cutoff_local_date: String) -> Result<usize, StoreError> {
-        self.lane
+        self.db
             .write(Lane::Background, "concerts prune", move |tx| {
                 Ok::<_, DbError>(tx.execute(
                     "DELETE FROM live_event_feed WHERE local_date < ?1",
@@ -475,7 +474,7 @@ impl ConcertsStore {
             query = query.bind(after);
         }
         let rows = query
-            .fetch_all(&self.pool)
+            .fetch_all(self.db.sqlx())
             .await
             .map_err(read_error("concerts list"))?;
         let mut concerts = Vec::with_capacity(rows.len());
@@ -500,7 +499,7 @@ impl ConcertsStore {
              FROM user_event_cities WHERE user_id = ? ORDER BY position",
         )
         .bind(user_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.sqlx())
         .await
         .map_err(read_error("concerts cities"))?;
         rows.iter()
@@ -524,7 +523,7 @@ impl ConcertsStore {
         cities: Vec<EventCity>,
     ) -> Result<(), StoreError> {
         let user_id = user_id.to_owned();
-        self.lane
+        self.db
             .write(Lane::Foreground, "concerts replace cities", move |tx| {
                 tx.execute(
                     "DELETE FROM user_event_cities WHERE user_id = ?1",
@@ -558,7 +557,7 @@ impl ConcertsStore {
         let seen: Option<f64> =
             sqlx::query_scalar("SELECT seen_at FROM user_event_seen WHERE user_id = ?")
                 .bind(user_id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(self.db.sqlx())
                 .await
                 .map_err(read_error("concerts seen at"))?;
         Ok(seen.unwrap_or(0.0))
@@ -567,7 +566,7 @@ impl ConcertsStore {
     /// Stamp the user's seen marker.
     pub async fn mark_seen(&self, user_id: &str, now: f64) -> Result<(), StoreError> {
         let user_id = user_id.to_owned();
-        self.lane
+        self.db
             .write(Lane::Foreground, "concerts mark seen", move |tx| {
                 tx.execute(
                     "INSERT INTO user_event_seen (user_id, seen_at) VALUES (?1, ?2) \

@@ -54,7 +54,7 @@ impl Rig {
             ("u-root", "Root", "admin"),
         ];
         runtime
-            .lane()
+            .db()
             .write(
                 droppedneedle_kernel::db::Lane::Foreground,
                 "seed users",
@@ -82,9 +82,9 @@ impl Rig {
 
     /// Collections wired to the acquire approval store, as production is.
     fn state(&self) -> CollectionsState {
-        let (pool, lane) = (self.runtime.pool().clone(), self.runtime.lane().clone());
-        let approvals = FollowApprovalStore::new(AcquireDb::new(pool.clone(), lane.clone()));
-        let mut state = CollectionsState::new(CollectionsDb::new(pool, lane));
+        let db = self.runtime.db().clone();
+        let approvals = FollowApprovalStore::new(AcquireDb::new(db.clone()));
+        let mut state = CollectionsState::new(CollectionsDb::new(db));
         state.acquire_approvals = Some(Arc::new(RequestsPendingSource::new(approvals.clone())));
         state.approval_seeds = Some(Arc::new(ApprovalSeedBridge::new(approvals)));
         state

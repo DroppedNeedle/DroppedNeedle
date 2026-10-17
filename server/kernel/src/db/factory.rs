@@ -214,6 +214,8 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
         config.read_wait,
     )?;
     let reads = pools.activity();
+    let db = Db::new(lane, Arc::clone(&pools), pool.clone());
+    let lane = db.lane();
     let (high_water, low_water) = config.wal_water;
     let checkpoint =
         CheckpointService::new(&path, pool.clone(), lane.idle_state(), lane.wal_hold())
@@ -221,10 +223,12 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
             .with_pooled_reads(reads.clone());
     // Cloned before the statistics service is attached: the relief thread
     // shares the policy, the hold and the latest record, and owns nothing
-    // that keeps the lane or the read pools alive.
+    // that keeps the lane or the read pools alive. A `Db` there would keep
+    // both alive from the watch it belongs to, and a runtime dropped
+    // without shutdown would leak the watch's threads.
     let relief = checkpoint.clone();
     let oldest = reads.clone();
-    let checkpoint = checkpoint.with_analyze(AnalyzeService::new(lane.clone(), pool.clone()));
+    let checkpoint = checkpoint.with_analyze(AnalyzeService::new(db.clone()));
     let mut watch = lane.watch(move || ReliefPass {
         error: relief.run_relief().error,
         oldest_read: oldest.oldest(),
@@ -238,11 +242,11 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
         &pools,
         |pools| pools.pass(),
     )?);
-    let wakeups = DurableWorkWakeups::new(pool.clone());
+    let wakeups = DurableWorkWakeups::new(pool);
 
     Ok(DbRuntime {
         path,
-        db: Db::new(lane, pools, pool),
+        db,
         reads,
         watch,
         shutdown_grace: config.shutdown_grace,
@@ -327,18 +331,6 @@ impl DbRuntime {
         &self.reads
     }
 
-    /// Reader pool. Reads only, enforced by `query_only=ON` on every
-    /// connection it opens; every write goes through
-    /// [`DbRuntime::lane`].
-    pub fn pool(&self) -> &SqlitePool {
-        self.db.sqlx()
-    }
-
-    /// The single writer.
-    pub fn lane(&self) -> &WriteLane {
-        self.db.lane()
-    }
-
     /// Checkpoint runner with the latest-record export.
     pub fn checkpoint(&self) -> &CheckpointService {
         &self.checkpoint
@@ -407,6 +399,33 @@ async fn open_pool(
     acquire_wait: Duration,
     read_only: bool,
 ) -> Result<SqlitePool, DbError> {
+    let (options, connect) = pool_options(path, readers, busy_timeout, acquire_wait, read_only);
+    if read_only {
+        return Ok(options.connect_lazy_with(connect));
+    }
+    Ok(options.connect_with(connect).await?)
+}
+
+/// The sqlx reader pool of [`super::Db::open_for_tests`]: the runtime's
+/// reader pool with no idle reaper and no warm connection, either of which
+/// would start a task on a tokio runtime the caller may not have.
+#[cfg(any(test, feature = "test-support"))]
+pub(in crate::db) fn lazy_reader_pool_for_tests(path: &Path) -> SqlitePool {
+    let (options, connect) = pool_options(path, MAX_READERS, BUSY_TIMEOUT, ACQUIRE_TIMEOUT, true);
+    options
+        .idle_timeout(None)
+        .min_connections(0)
+        .connect_lazy_with(connect)
+}
+
+/// The options behind [`open_pool`].
+fn pool_options(
+    path: &Path,
+    readers: u32,
+    busy_timeout: Duration,
+    acquire_wait: Duration,
+    read_only: bool,
+) -> (SqlitePoolOptions, SqliteConnectOptions) {
     let connect = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true)
@@ -434,10 +453,7 @@ async fn open_pool(
                 })
             },
         );
-    if read_only {
-        return Ok(options.connect_lazy_with(connect));
-    }
-    Ok(options.connect_with(connect).await?)
+    (options, connect)
 }
 
 /// Apply the pragma set to a new connection, then the read-only pin when

@@ -18,8 +18,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use sqlx::SqlitePool;
-
 use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::discover::models::{
     DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchItemStatus,
@@ -27,7 +25,7 @@ use crate::reads::discover::models::{
 };
 use crate::reads::discover::ports::{BatchFailure, BatchStore, BoxFuture, ProviderFailure};
 use droppedneedle_auth::{Admin, Principal};
-use droppedneedle_kernel::db::{DbError, WriteLane, writer::Lane};
+use droppedneedle_kernel::db::{Db, DbError, writer::Lane};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 /// Outcome of an album the batch filed a request for.
@@ -108,8 +106,7 @@ struct BatchItem {
 
 /// Batches over the catalog database.
 pub struct LiveBatches {
-    pool: SqlitePool,
-    lane: WriteLane,
+    db: Db,
     requests: RequestsSlot,
     /// Idempotency keys of creates in progress, so a retried "Download
     /// all" never files the same batch twice at once.
@@ -147,10 +144,9 @@ fn placeholders(count: usize) -> String {
 impl LiveBatches {
     /// Batches over this database, filing through `requests` once boot
     /// fills the slot.
-    pub fn new(pool: SqlitePool, lane: WriteLane, requests: RequestsSlot) -> Self {
+    pub fn new(db: Db, requests: RequestsSlot) -> Self {
         Self {
-            pool,
-            lane,
+            db,
             requests,
             creating: Mutex::new(HashSet::new()),
         }
@@ -172,7 +168,7 @@ impl LiveBatches {
              WHERE id = ?1",
         )
         .bind(batch_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.db.sqlx())
         .await
         .map_err(|error| failed(format!("batch read: {error}")))?;
         let Some((id, user_id, name, source_section, created_at)) = row else {
@@ -205,7 +201,7 @@ impl LiveBatches {
                 query = query.bind(id);
             }
             let rows = query
-                .fetch_all(&self.pool)
+                .fetch_all(self.db.sqlx())
                 .await
                 .map_err(|error| format!("batch items read: {error}"))?;
             for (batch_id, release_group_mbid, artist_mbid, album_name, artist_name, outcome) in
@@ -237,7 +233,7 @@ impl LiveBatches {
                 query = query.bind(mbid.to_ascii_lowercase());
             }
             let rows = query
-                .fetch_all(&self.pool)
+                .fetch_all(self.db.sqlx())
                 .await
                 .map_err(|error| format!("batch request states read: {error}"))?;
             states.extend(rows);
@@ -248,7 +244,7 @@ impl LiveBatches {
     /// The albums the library holds, lowercased.
     async fn owned(&self, mbids: &[String]) -> Result<HashSet<String>, String> {
         let lowered: Vec<String> = mbids.iter().map(|id| id.to_ascii_lowercase()).collect();
-        LocalCatalog::new(self.pool.clone())
+        LocalCatalog::new(self.db.sqlx().clone())
             .owned_albums(&lowered)
             .await
             .map_err(|error| format!("batch library check: {error}"))
@@ -275,7 +271,7 @@ impl LiveBatches {
             let rows = query
                 .bind(owner)
                 .bind(owner)
-                .fetch_all(&self.pool)
+                .fetch_all(self.db.sqlx())
                 .await
                 .map_err(|error| format!("batch filing read: {error}"))?;
             filed.extend(rows);
@@ -316,7 +312,7 @@ impl LiveBatches {
         )
         .bind(mbid.to_ascii_lowercase())
         .bind(owner)
-        .fetch_one(&self.pool)
+        .fetch_one(self.db.sqlx())
         .await
         .map_err(|error| format!("batch sharing check: {error}"))
     }
@@ -397,7 +393,7 @@ impl LiveBatches {
             head.source_section.clone(),
             head.created_at.clone(),
         );
-        self.lane
+        self.db
             .write(Lane::Foreground, "discover.batches.create", move |tx| {
                 tx.execute(
                     "INSERT INTO discovery_batches (id, user_id, name, source_section, \
@@ -435,7 +431,7 @@ impl LiveBatches {
         let owner: Option<String> =
             sqlx::query_scalar("SELECT user_id FROM discovery_batches WHERE id = ?1")
                 .bind(key)
-                .fetch_optional(&self.pool)
+                .fetch_optional(self.db.sqlx())
                 .await
                 .map_err(|error| failed(format!("batch key read: {error}")))?;
         match owner {
@@ -509,7 +505,7 @@ impl LiveBatches {
         // Fail closed: a batch must never request (and later recycle) an
         // album the library already holds because the check failed.
         let owned = self.owned(&ids).await.map_err(failed)?;
-        let active: HashSet<String> = LocalCatalog::new(self.pool.clone())
+        let active: HashSet<String> = LocalCatalog::new(self.db.sqlx().clone())
             .requested_albums(&ids)
             .await
             .map_err(|error| failed(format!("batch request check: {error}")))?;
@@ -594,7 +590,7 @@ impl LiveBatches {
              WHERE user_id = ?1 ORDER BY created_at DESC",
         )
         .bind(user_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.db.sqlx())
         .await
         .map_err(|error| failed(format!("batch list read: {error}")))?;
         let heads: Vec<BatchHead> = rows
@@ -698,7 +694,7 @@ impl LiveBatches {
             result.kept = detail.item_count;
         }
         let id = detail.id.clone();
-        self.lane
+        self.db
             .write(Lane::Foreground, "discover.batches.delete", move |tx| {
                 let mut keep = String::new();
                 for (index, _) in failed_items.iter().enumerate() {

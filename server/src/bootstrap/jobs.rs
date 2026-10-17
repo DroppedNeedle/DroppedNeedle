@@ -23,7 +23,7 @@ use std::time::Duration;
 use axum::Router;
 
 use droppedneedle_catalog::concerts::ConcertsSweep;
-use droppedneedle_kernel::db::{CheckpointService, DurableWorkWakeups, WriteLane};
+use droppedneedle_kernel::db::{CheckpointService, Db, DurableWorkWakeups};
 use droppedneedle_kernel::jobs::cache_sync::CacheSyncStatus;
 use droppedneedle_kernel::jobs::checkpoint::{self, CheckpointRunner};
 use droppedneedle_kernel::jobs::discovery_demand::{self, DemandTick, NoDemand};
@@ -285,16 +285,14 @@ impl JobsSetup {
     /// playlist export), and the concerts sweep (`None` only on states without concerts).
     pub fn build(
         wakeups: DurableWorkWakeups,
-        lane: WriteLane,
+        db: Db,
         checkpoint: CheckpointService,
         config: Arc<ConfigStore>,
         media: MediaJobs,
         watcher: Option<ConcertsSweep>,
     ) -> Self {
         Self {
-            registry: JobRegistry::new(StoreKind::Durable(DurableRegistryStore::new(
-                wakeups, lane,
-            ))),
+            registry: JobRegistry::new(StoreKind::Durable(DurableRegistryStore::new(wakeups, db))),
             checkpoint: CheckpointInput {
                 service: Some(checkpoint),
             },

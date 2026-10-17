@@ -12,8 +12,7 @@
 //! use droppedneedle_auth::prod::ProdAuth;
 //!
 //! let auth = ProdAuth::new(
-//!     runtime.pool(),
-//!     runtime.lane(),
+//!     runtime.db(),
 //!     crypto,
 //!     ids,
 //!     clock,
@@ -49,10 +48,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
-
 use super::users::stores::Clock;
-use droppedneedle_kernel::db::WriteLane;
+use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 
@@ -69,7 +66,7 @@ pub use super::times::{parse_iso, to_iso};
 
 /// Every production auth adapter, built from one database handle.
 ///
-/// Clones share the pool, lane, crypto, ids, and clock; hand clones to each
+/// Clones share the database, crypto, ids, and clock; hand clones to each
 /// router, service, and background loop that needs them.
 #[derive(Clone, Debug)]
 pub struct ProdAuth {
@@ -102,18 +99,17 @@ pub struct ProdAuth {
 }
 
 impl ProdAuth {
-    /// Build the live bundle. `pool` serves reads, `lane` serializes writes,
-    /// `crypto` seals federated tokens, `ids` mints row ids, `clock` drives
-    /// management-side expiry, and `avatar_dir` roots avatar files.
+    /// Build the live bundle. `db` serves reads and writes, `crypto` seals
+    /// federated tokens, `ids` mints row ids, `clock` drives management-side
+    /// expiry, and `avatar_dir` roots avatar files.
     pub fn new(
-        pool: &SqlitePool,
-        lane: &WriteLane,
+        db: &Db,
         crypto: Arc<Crypto>,
         ids: Arc<dyn IdGenerator>,
         clock: Arc<dyn Clock>,
         avatar_dir: &Path,
     ) -> Self {
-        let db = AuthDb::new(pool, lane);
+        let db = AuthDb::new(db);
         let hasher = Argon2idHasher::new();
         // Opportunistic rehash: the login verifier queues bcrypt upgrades
         // and the session insert drains them. One shared queue or the login

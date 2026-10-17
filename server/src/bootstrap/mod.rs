@@ -173,17 +173,15 @@ where
 }
 
 /// The media links a Plex or Jellyfin sign-in saves, written to the
-/// per-user connections table (the rows the remotes routes read) over
-/// `pool` and `lane`.
+/// per-user connections table (the rows the remotes routes read) in `db`.
 pub fn sign_in_links(
-    pool: sqlx::SqlitePool,
-    lane: droppedneedle_kernel::db::WriteLane,
+    db: droppedneedle_kernel::db::Db,
     crypto: Arc<Crypto>,
     config_store: Arc<ConfigStore>,
 ) -> MediaLinks {
     MediaLinks::new(Arc::new(SignInLinks::new(Arc::new(
         ConnectionResolver::new(
-            Arc::new(SqliteConnectionStore::new(pool, lane)),
+            Arc::new(SqliteConnectionStore::new(db)),
             Arc::new(CredentialCoder::new(crypto)),
             Arc::new(ConfigServers::new(config_store)),
         ),
@@ -228,6 +226,8 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         &DbConfig::new(&config.library_db_path).with_shutdown_grace(config.shutdown_grace),
     )
     .await?;
+    // The one database handle every area is given.
+    let db = runtime.db().clone();
     let web = prepare_web(&config).await?;
 
     let crypto = Arc::new(Crypto::load_or_generate(&config.config_dir())?);
@@ -251,8 +251,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let plugin_host =
         droppedneedle_plugins::wiring::new_host(config.plugins_dir(), config_store.clone());
     let auth_bundle = ProdAuth::new(
-        runtime.pool(),
-        runtime.lane(),
+        &db,
         crypto.clone(),
         ids.clone(),
         clock.clone(),
@@ -271,12 +270,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             http.shared().clone(),
             config_store.clone(),
         )),
-        sign_in_links(
-            runtime.pool().clone(),
-            runtime.lane().clone(),
-            crypto.clone(),
-            config_store.clone(),
-        ),
+        sign_in_links(db.clone(), crypto.clone(), config_store.clone()),
     )
     .with_trusted_proxies(config.trusted_proxies.clone());
 
@@ -318,20 +312,18 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         lyrics_enabled,
     );
     let mut reads = ReadsSetup::build(
-        runtime.pool(),
+        &db,
         auth.users.clone(),
         ids.clone(),
         ReadsInputs {
             config: config_store.clone(),
-            lane: runtime.lane().clone(),
             covers_dir: config.cache_dir.join("covers"),
             cover_cache_max_bytes: config.cover_cache_max_bytes,
             http: http.shared().clone(),
             no_redirect: http.no_redirect().clone(),
             providers: providers.clone(),
             listenbrainz_links: Arc::new(SqliteListenBrainzLinkStore::new(
-                runtime.pool().clone(),
-                runtime.lane().clone(),
+                db.clone(),
                 crypto.clone(),
             )),
             youtube_quota_path: config.cache_dir.join(QUOTA_FILE_NAME),
@@ -341,10 +333,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         },
         Some(enrichment),
     )
-    .with_collections(CollectionsDb::new(
-        runtime.pool().clone(),
-        runtime.lane().clone(),
-    ))
+    .with_collections(CollectionsDb::new(db.clone()))
     .with_catalog(
         Catalog::new(
             Upstream::new(
@@ -355,7 +344,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
                 endpoints.clone(),
             )
             .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone())),
-            LocalCatalog::new(runtime.pool().clone()),
+            LocalCatalog::new(db.sqlx().clone()),
         )
         .with_purchase_links(Arc::new(PluginPurchaseLinks(plugin_host.clone())))
         .with_details(Arc::new(PluginDetailsSource(plugin_host.clone()))),
@@ -378,7 +367,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         ids.clone(),
         providers.clone(),
         mb_source.clone(),
-        &config.library_db_path,
+        &db,
         config_store.clone(),
         outbound.library(),
     )
@@ -386,19 +375,17 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // Plugin library writes hold the same root leases as the publisher.
     plugin_host.set_library_fs(library.fs.clone());
     reads = reads.with_library_files(droppedneedle_media::stream::local_files::LibraryFiles::new(
-        runtime.pool().clone(),
+        db.sqlx().clone(),
         library.root_source(),
     ));
     let (media, media_workers) = MediaSetup::build(
-        &config.library_db_path,
+        &db,
         &config,
         auth.users.clone(),
         crypto.clone(),
         &http,
         ids.clone(),
         Some(library.root_source()),
-        runtime.pool().clone(),
-        runtime.lane().clone(),
         config_store.clone(),
         // Remote playlist imports land in the user's playlists.
         Arc::new(PlaylistImportSink::new(reads.collections.clone())),
@@ -412,7 +399,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         .engine
         .attach_plugins(plugin_host.clone(), http.direct_no_redirect().clone());
     let acquire = AcquireSetup::build(
-        droppedneedle_acquire::db::AcquireDb::from_runtime(&runtime),
+        droppedneedle_acquire::db::AcquireDb::new(db.clone()),
         &config,
         auth.users.clone(),
         &http,
@@ -437,7 +424,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             droppedneedle_acquire::landing::library::LibraryLanding::new(
                 library.clone(),
                 releases,
-                runtime.pool().clone(),
+                db.sqlx().clone(),
             ),
         )),
         None => acquire,
@@ -522,7 +509,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         provider_cache.clone(),
         providers.clone(),
     )
-    .with_db(AdminDb::new(runtime.pool().clone(), runtime.lane().clone()))
+    .with_db(AdminDb::new(db.clone()))
     .with_backups(BackupService::new(
         &config.library_db_path,
         runtime.backups().backup_dir(),
@@ -533,15 +520,15 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     match wait_out_busy(
         "quota overrides",
         |error: &DbError| matches!(error, DbError::Busy { .. }),
-        || reload_overrides(runtime.pool(), &acquire.requests.quota),
+        || reload_overrides(db.sqlx(), &acquire.requests.quota),
     )
     .await
     {
         Ok(loaded) => tracing::info!(loaded, "quota overrides reloaded"),
         Err(error) => tracing::warn!(%error, "quota overrides failed to reload; defaults apply"),
     }
-    let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_runtime(
-        &runtime,
+    let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_db(
+        &db,
         &http,
         &config_store,
         outbound.concerts(),
@@ -555,17 +542,8 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         &acquire.requests,
         providers.clone(),
         http.shared().clone(),
-        Arc::new(SqliteListenBrainzLinkStore::new(
-            runtime.pool().clone(),
-            runtime.lane().clone(),
-            crypto.clone(),
-        )),
-        Arc::new(
-            droppedneedle_plugins::scrobble::SqliteScrobblePrefsStore::new(
-                runtime.pool().clone(),
-                runtime.lane().clone(),
-            ),
-        ),
+        Arc::new(SqliteListenBrainzLinkStore::new(db.clone(), crypto.clone())),
+        Arc::new(droppedneedle_plugins::scrobble::SqliteScrobblePrefsStore::new(db.clone())),
         reads.collections.stores.playlists.clone(),
         mix_events,
         &outbound.listenbrainz,
@@ -579,14 +557,14 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // The one registry every background job registers on.
     let jobs = JobsSetup::build(
         runtime.wakeups().clone(),
-        runtime.lane().clone(),
+        db.clone(),
         runtime.checkpoint().clone(),
         config_store.clone(),
         MediaJobs {
             presence: media.playback.presence.clone(),
             resolver: Some(media.remotes.service.resolver().clone()),
             http: http.shared().clone(),
-            pool: Some(runtime.pool().clone()),
+            pool: Some(db.sqlx().clone()),
         },
         concerts.sweep(),
     )
@@ -654,20 +632,17 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         &outbound,
     )
     .with_section_prefs(
-        Arc::new(SqliteSectionPrefsStore {
-            pool: runtime.pool().clone(),
-            lane: Arc::new(runtime.lane().clone()),
-        }),
+        Arc::new(SqliteSectionPrefsStore { db: db.clone() }),
         Arc::new(SqliteLinkStatus {
-            pool: runtime.pool().clone(),
+            pool: db.sqlx().clone(),
             lastfm: auth.users.lastfm.clone(),
         }),
     )
     .with_impact_buckets(Arc::new(SqliteImpactBuckets {
-        pool: runtime.pool().clone(),
+        pool: db.sqlx().clone(),
     }))
     .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
-        pool: runtime.pool().clone(),
+        pool: db.sqlx().clone(),
     }));
     // Activation dry runs save the settings through the same service as
     // the settings page, so the two never save over each other.
@@ -684,8 +659,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         crypto,
         provider_cache,
         jobs.registry().clone(),
-        runtime.pool().clone(),
-        runtime.lane().clone(),
+        db.clone(),
         outbound.plugin_hosts(),
         &outbound.listenbrainz,
     )
@@ -734,11 +708,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .with_events(events.clone());
     let acquire_loops = state
         .acquire
-        .spawn_loops(
-            runtime.wakeups().clone(),
-            runtime.lane().clone(),
-            stop.clone(),
-        )
+        .spawn_loops(runtime.wakeups().clone(), db.clone(), stop.clone())
         .await
         .map_err(stage("acquire loops"))?;
     background.extend(acquire_loops);
@@ -748,7 +718,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         "event-revisions",
         tokio::spawn(droppedneedle_kernel::events::revisions::run(
             events.clone(),
-            runtime.pool().clone(),
+            db.sqlx().clone(),
             stop.clone(),
         )),
     );
@@ -757,7 +727,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         "event-downloads",
         tokio::spawn(droppedneedle_kernel::events::downloads::run(
             events.clone(),
-            runtime.pool().clone(),
+            db.sqlx().clone(),
             stop,
         )),
     );

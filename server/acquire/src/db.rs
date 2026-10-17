@@ -1,9 +1,8 @@
 //! Database handle for acquisition state.
 //!
-//! [`AcquireDb`] carries the two halves of the shared SQLite runtime the
-//! acquisition stores need: the reader pool for queries and the writer lane
-//! for every write. Stores hold a clone; nothing in acquisition opens its
-//! own connection.
+//! [`AcquireDb`] carries the database the acquisition stores share: the
+//! reader pool for queries and the writer lane for every write. Stores hold
+//! a clone; nothing in acquisition opens its own connection.
 
 use std::path::Path;
 #[cfg(any(test, feature = "test-support"))]
@@ -12,46 +11,39 @@ use std::sync::Arc;
 use rusqlite::Transaction;
 use sqlx::SqlitePool;
 
-use droppedneedle_kernel::db::{DbError, DbRuntime, Lane, WriteLane};
+use droppedneedle_kernel::db::{Db, DbError, Lane};
 
-/// Reader pool plus writer lane over the application database.
+/// The application database, for the acquisition stores.
 #[derive(Clone, Debug)]
 pub struct AcquireDb {
-    pool: SqlitePool,
-    lane: WriteLane,
+    db: Db,
     #[cfg(any(test, feature = "test-support"))]
     _scratch: Option<Arc<droppedneedle_kernel::db::scratch::ScratchDir>>,
 }
 
 impl AcquireDb {
-    /// Handle over the serving runtime.
-    pub fn from_runtime(runtime: &DbRuntime) -> Self {
-        Self::new(runtime.pool().clone(), runtime.lane().clone())
-    }
-
-    /// Handle over an explicit pool and lane on the same database file.
-    pub fn new(pool: SqlitePool, lane: WriteLane) -> Self {
+    /// Handle over the serving runtime's database.
+    pub fn new(db: Db) -> Self {
         Self {
-            pool,
-            lane,
+            db,
             #[cfg(any(test, feature = "test-support"))]
             _scratch: None,
         }
     }
 
-    /// Reader pool.
+    /// The sqlx reader pool.
     pub fn pool(&self) -> &SqlitePool {
-        &self.pool
+        self.db.sqlx()
     }
 
-    /// Writer lane.
-    pub fn lane(&self) -> &WriteLane {
-        &self.lane
+    /// The database, for a write that is not one of the two below.
+    pub fn db(&self) -> &Db {
+        &self.db
     }
 
-    /// Database file the lane writes to.
+    /// The database file.
     pub fn path(&self) -> &Path {
-        self.lane.db_path()
+        self.db.path()
     }
 
     /// One request-path write transaction.
@@ -60,7 +52,7 @@ impl AcquireDb {
         F: FnOnce(&Transaction) -> Result<R, DbError> + Send + 'static,
         R: Send + 'static,
     {
-        self.lane.write(Lane::Foreground, name, op).await
+        self.db.write(Lane::Foreground, name, op).await
     }
 
     /// One background-job write transaction.
@@ -69,13 +61,12 @@ impl AcquireDb {
         F: FnOnce(&Transaction) -> Result<R, DbError> + Send + 'static,
         R: Send + 'static,
     {
-        self.lane.write(Lane::Background, name, op).await
+        self.db.write(Lane::Background, name, op).await
     }
 
     /// Scratch database for tests: a private copy of the migrated template
-    /// in the temp dir, a lazy reader pool and a writer lane. The
-    /// directory is removed when the last clone drops. Call from inside a
-    /// tokio runtime (the lane spawns its scheduler there).
+    /// in the temp dir, opened through [`Db::open_for_tests`]. The directory
+    /// is removed when the last clone drops.
     #[cfg(any(test, feature = "test-support"))]
     pub fn scratch() -> Result<Self, String> {
         let scratch = Arc::new(
@@ -85,17 +76,9 @@ impl AcquireDb {
         let dir = scratch.to_path_buf();
         let path = dir.join("app.db");
         droppedneedle_kernel::schema::template::copy_to(&path)?;
-        let options = sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(&path)
-            .busy_timeout(std::time::Duration::from_secs(5))
-            .foreign_keys(true);
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(4)
-            .connect_lazy_with(options);
-        let lane = WriteLane::open(&path).map_err(|error| error.to_string())?;
+        let db = Db::open_for_tests(&path).map_err(|error| error.to_string())?;
         Ok(Self {
-            pool,
-            lane,
+            db,
             _scratch: Some(scratch),
         })
     }
