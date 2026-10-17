@@ -924,6 +924,62 @@ async fn journey_b_admin_user_lifecycle() {
     );
 }
 
+/// The role is read with the token on every request, so a demotion holds
+/// from the demoted admin's next request on the token they already have.
+#[tokio::test]
+async fn a_demoted_admin_is_refused_on_the_next_request() {
+    let e2e = E2e::open("demoted-admin").await;
+    let (_, owner_token) =
+        setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+    let owner_auth = bearer(owner_token.as_str().expect("owner token"));
+    let owner_headers = [("authorization", owner_auth.as_str())];
+    let (status, body, _) = call(
+        e2e.router(),
+        "POST",
+        "/api/v3/admin/users",
+        &owner_headers,
+        Some(json!({"username": "ada", "password": "ada-password-1234", "role": "admin"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let ada_id = body["id"].as_str().expect("ada id").to_owned();
+    let (status, body, _) = login(e2e.router(), "ada", "ada-password-1234", "bearer").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ada_auth = bearer(body["token"].as_str().expect("ada token"));
+    let ada_headers = [("authorization", ada_auth.as_str())];
+    let (status, body, _) = call(
+        e2e.router(),
+        "GET",
+        "/api/v3/admin/users",
+        &ada_headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (status, body, _) = call(
+        e2e.router(),
+        "PUT",
+        &format!("/api/v3/admin/users/{ada_id}/role"),
+        &owner_headers,
+        Some(json!({"role": "user"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (status, body, _) = call(
+        e2e.router(),
+        "GET",
+        "/api/v3/admin/users",
+        &ada_headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(error_code(&body), "FORBIDDEN");
+    assert_eq!(body["error"]["message"], json!("Admin role required"));
+}
+
 // ---------------------------------------------------------------------------
 // Journey C: app passwords across the compat contracts, rejected natively
 // ---------------------------------------------------------------------------
@@ -3004,6 +3060,72 @@ async fn auth_on_every_endpoint() {
             let (status, body, _) = login(fresh(), "molly", "molly-password-1234", "bearer").await;
             assert_eq!(status, StatusCode::OK, "user re-login: {body}");
             user_auth = bearer(body["token"].as_str().expect("fresh user token"));
+        }
+    }
+
+    // Trusted pass: a third account, promoted to trusted the way an admin
+    // does it, calls every admin and curator row. Admin rows answer 403;
+    // curator rows admit (not 401, not 403, not 5xx).
+    let (status, body, _) = call(
+        fresh(),
+        "POST",
+        "/api/v3/admin/users",
+        &[("authorization", admin_auth.as_str())],
+        Some(json!({"username": "tris", "password": "tris-password-1234"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let tris_id = body["id"].as_str().expect("tris id").to_owned();
+    let (status, body, _) = call(
+        fresh(),
+        "PUT",
+        &format!("/api/v3/admin/users/{tris_id}/role"),
+        &[("authorization", admin_auth.as_str())],
+        Some(json!({"role": "trusted"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body, _) = login(fresh(), "tris", "tris-password-1234", "bearer").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let trusted_auth = bearer(body["token"].as_str().expect("trusted token"));
+    for (method, template, posture) in MATRIX {
+        if !matches!(posture, Posture::Admin | Posture::Curator) {
+            continue;
+        }
+        let uri = concretize(template);
+        let mut body = match *method {
+            "POST" | "PUT" | "PATCH" => Some(json!({})),
+            _ => None,
+        };
+        if *template == "/api/v3/import/items/{item_id}/match" {
+            body = Some(json!({"release_group_mbid": "e2e-dummy-id"}));
+        }
+        let (status, response_body, _) = call_lenient(
+            fresh(),
+            method,
+            &uri,
+            &[("authorization", trusted_auth.as_str())],
+            body,
+        )
+        .await;
+        assert_ne!(
+            status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "{method} {uri}: trusted pass tripped the limiter"
+        );
+        if matches!(posture, Posture::Admin) {
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "trusted {method} {uri} must 403, got {status}: {response_body}"
+            );
+        } else {
+            assert!(
+                status != StatusCode::UNAUTHORIZED
+                    && status != StatusCode::FORBIDDEN
+                    && !status.is_server_error(),
+                "trusted {method} {uri} must be admitted, got {status}: {response_body}"
+            );
         }
     }
 
