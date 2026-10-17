@@ -484,6 +484,21 @@ impl Waiter {
     }
 }
 
+/// Answer each waiter without a turn. Refusing one drops its closure, which
+/// runs the caller's code; one that panics is logged and the rest are still
+/// answered, each with `why`.
+fn refuse_all(waiters: impl IntoIterator<Item = Waiter>, why: Refused) {
+    for waiter in waiters {
+        let operation = waiter.name;
+        if catch_unwind(AssertUnwindSafe(|| waiter.refuse(why))).is_err() {
+            tracing::error!(
+                operation,
+                "refusing a queued write panicked; the others are still answered"
+            );
+        }
+    }
+}
+
 /// The write that holds the turn.
 struct Holder {
     name: &'static str,
@@ -828,9 +843,7 @@ impl Shared {
         drop(connection);
         drop(runner);
         let refused = unserved.len();
-        for waiter in unserved {
-            waiter.refuse(Refused::Closed);
-        }
+        refuse_all(unserved, Refused::Closed);
         match stuck {
             // The lane's thread may be the one that is stuck. It ends by
             // itself once its write returns, so it is not waited for.
@@ -902,9 +915,7 @@ impl Shared {
                 "foreground writes waited past their limit; answering busy"
             );
         }
-        for waiter in overdue {
-            waiter.refuse(Refused::Busy);
-        }
+        refuse_all(overdue, Refused::Busy);
     }
 
     /// One pass of the relief thread, which has work only while a bulk write
@@ -937,9 +948,7 @@ impl Shared {
             (stopped, state.waiting[Class::Bulk as usize] > 0)
         };
         // Answered after the lock: refusing a write drops its closure.
-        for waiter in stopped {
-            waiter.refuse(Refused::Cancelled);
-        }
+        refuse_all(stopped, Refused::Cancelled);
         if !waiting {
             return;
         }
@@ -1134,6 +1143,12 @@ impl WriteLane {
     #[cfg(test)]
     pub fn wait_times(&self) -> WaitTimes {
         self.shared.state().waits
+    }
+
+    /// One pass of the watch thread, on the calling thread.
+    #[cfg(test)]
+    pub(in crate::db) fn watch_pass(&self) {
+        self.shared.watch_tick();
     }
 
     /// Start the watch for this lane: two threads that wake on real time,

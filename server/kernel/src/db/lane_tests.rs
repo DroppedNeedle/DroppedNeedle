@@ -6,6 +6,7 @@
 use std::{
     future::Future,
     pin::Pin,
+    sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
@@ -1355,4 +1356,110 @@ async fn planner_statistics_wait_out_the_wal_hold() {
         "the first check after the hold runs the refresh"
     );
     runtime.shutdown().await;
+}
+
+/// Refusing a waiter drops its closure, which runs the caller's code. When
+/// that panics, every other waiter in the same pass of the watch still
+/// hears `Busy`, and the line naming the write that holds the lane is
+/// logged before any of it.
+#[test]
+fn a_refusal_that_panics_still_answers_the_rest_of_the_pass() {
+    struct PanicOnDrop;
+    impl Drop for PanicOnDrop {
+        fn drop(&mut self) {
+            panic!("brief: dropping this closure panics");
+        }
+    }
+
+    let (lane, _dir) = scratch_lane_with(
+        "refusal-panics",
+        LaneLimits {
+            foreground_wait: Duration::ZERO,
+            background: Budget {
+                warn: Duration::ZERO,
+                abort: Duration::ZERO,
+            },
+            ..LaneLimits::default()
+        },
+    );
+    let (held, inside, let_go) = hold();
+    let holder = lane.clone();
+    let stuck = std::thread::spawn(move || {
+        holder.write_blocking(Lane::Background, "brief-stuck", move |tx| {
+            held.wait();
+            insert_label(tx, "stuck")
+        })
+    });
+    inside.blocking_recv().unwrap();
+
+    let mut cx = Context::from_waker(Waker::noop());
+    let bomb = PanicOnDrop;
+    let mut first = Box::pin(lane.write(Lane::Foreground, "brief-first", move |tx| {
+        let _bomb = &bomb;
+        insert_label(tx, "first")
+    }));
+    assert!(first.as_mut().poll(&mut cx).is_pending());
+    let mut rest: Vec<_> = (0..3)
+        .map(|_| {
+            Box::pin(lane.write(Lane::Foreground, "brief-rest", |tx| {
+                insert_label(tx, "rest")
+            }))
+        })
+        .collect();
+    for write in &mut rest {
+        assert!(write.as_mut().poll(&mut cx).is_pending());
+    }
+
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&buffer);
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || LogSink(Arc::clone(&sink)))
+        .with_ansi(false)
+        .finish();
+    // The watch thread carries on past a pass that panics; so does this.
+    tracing::subscriber::with_default(subscriber, || {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| lane.watch_pass()));
+    });
+
+    let refused = first.as_mut().poll(&mut cx);
+    assert!(
+        matches!(&refused, Poll::Ready(Err(DbError::Busy { operation })) if operation == "brief-first"),
+        "the waiter whose closure panicked was answered first, got {refused:?}"
+    );
+    for write in &mut rest {
+        let refused = write.as_mut().poll(&mut cx);
+        assert!(
+            matches!(&refused, Poll::Ready(Err(DbError::Busy { operation })) if operation == "brief-rest"),
+            "every other waiter in the pass hears Busy, got {refused:?}"
+        );
+    }
+    let logged = String::from_utf8_lossy(&buffer.lock().unwrap()).into_owned();
+    let holder_line = logged
+        .find("a write has held the lane well past its budget")
+        .expect("the holder is named");
+    let panic_line = logged
+        .find("refusing a queued write panicked")
+        .expect("the panic is logged");
+    assert!(
+        holder_line < panic_line,
+        "the holder line comes first: {logged}"
+    );
+
+    let_go.send(()).unwrap();
+    let _ = stuck.join().unwrap();
+    current_thread_runtime().block_on(lane.shutdown(DRAIN));
+}
+
+/// Log output collected for a brief.
+struct LogSink(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogSink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
