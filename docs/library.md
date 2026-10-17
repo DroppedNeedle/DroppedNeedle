@@ -68,9 +68,13 @@ You can download a single track or a whole album from the library. A track comes
 
 The web player and player apps show lyrics for a track. Lyrics your files carry come first: a `.lrc` file next to the track with the same name, else the file's lyrics tag. Jellyfin apps such as Finamp only offer lyrics for those tracks. When a file has none, the server asks LRCLIB ([lrclib.net](https://lrclib.net)), a free lyrics database, at the moment lyrics are opened, sending the track's title, artist, album and length. Nothing is written to your files. This is on unless an admin turns it off under Settings > Library > Lyrics; while it is off, the server never asks LRCLIB.
 
-## Ratings in player apps
+## Ratings
 
-A star rating (1 to 5) you give a track, an album or an artist in a Subsonic app is kept for your account and shown in your Subsonic apps, beside the average of every user's rating of it. Other users see their own rating and the same average, never yours. Setting 0 stars clears your rating. The "highest rated" album list shows the albums you rated, best first. When albums, artists or tracks are merged, their ratings move to the one that stays; if you rated both, the one that stays keeps its rating. The web app and Jellyfin apps don't show ratings.
+You can give an album 1 to 5 stars on its page, and each of its tracks that has a file in your library. An artist in your library can be rated on the artist's page. Clicking the star you gave clears the rating.
+
+Ratings are kept per account, and they are the same ratings Subsonic apps show and set: a rating given in either place shows in the other. In a Subsonic app, setting 0 stars clears your rating. Subsonic apps also show the average of every user's rating of an item; on a server with few users, that average can give your rating away. The web app shows only your own.
+
+The "highest rated" album list in Subsonic apps shows the albums you rated, best first. When albums, artists or tracks are merged, their ratings move to the one that stays; if you rated both, the one that stays keeps its rating. Jellyfin apps don't show ratings.
 
 ## Adding a missing album to MusicBrainz
 

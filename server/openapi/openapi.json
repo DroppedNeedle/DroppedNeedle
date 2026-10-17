@@ -15907,6 +15907,105 @@
         }
       }
     },
+    "/api/v3/ratings/lookup": {
+      "post": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "The caller's ratings of the given albums, tracks and artists.",
+        "description": "A read that takes its ids in a body, at most 1000 of each kind. Only\nrated ids are listed.",
+        "operationId": "rating_lookup_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RatingLookupBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The caller's ratings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RatingLookupResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body or too many ids"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/ratings/{kind}/{item_id}": {
+      "put": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Rate an album, track or artist, or clear the rating.",
+        "description": "Acts on the caller's own rating, the one Subsonic apps show and set.\n1 to 5 stars, 0 clears. The old id of a merged item rates the item it\nwent into, and the answer names that id.",
+        "operationId": "set_rating_handler",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "Kind: album, artist, or track",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "description": "Local id of the rated item",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetRatingBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The caller's rating now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RatingStatusResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad kind, rating or body"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "No live item holds the id"
+          }
+        }
+      }
+    },
     "/api/v3/remotes/navidrome/folders": {
       "get": {
         "tags": [
@@ -44981,6 +45080,105 @@
           }
         }
       },
+      "RatingLookupBody": {
+        "type": "object",
+        "description": "Rating-lookup body: local ids of each kind, at most 1000 of each.",
+        "properties": {
+          "album_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Album ids."
+          },
+          "artist_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Artist ids."
+          },
+          "track_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Track ids."
+          }
+        }
+      },
+      "RatingLookupResponse": {
+        "type": "object",
+        "description": "The caller's ratings of the looked-up ids. Each map holds only the ids\nthe caller rated: an absent id is not rated.",
+        "required": [
+          "albums",
+          "tracks",
+          "artists"
+        ],
+        "properties": {
+          "albums": {
+            "type": "object",
+            "description": "Album id to rating.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "artists": {
+            "type": "object",
+            "description": "Artist id to rating.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "tracks": {
+            "type": "object",
+            "description": "Track id to rating.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "RatingStatusResponse": {
+        "type": "object",
+        "description": "Rating-status answer.",
+        "required": [
+          "kind",
+          "item_id",
+          "rating"
+        ],
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "description": "The id the rating is stored under: the item's current id, which\ndiffers from the one sent after a merge."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Rated kind."
+          },
+          "rating": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The caller's rating now, 0 when cleared.",
+            "minimum": 0
+          }
+        }
+      },
       "RawAacTagPolicy": {
         "type": "string",
         "description": "Raw-AAC tag policy.",
@@ -49988,6 +50186,21 @@
               "null"
             ],
             "description": "Display name to keep, when favoriting."
+          }
+        }
+      },
+      "SetRatingBody": {
+        "type": "object",
+        "description": "Set-rating body.",
+        "required": [
+          "rating"
+        ],
+        "properties": {
+          "rating": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1 to 5 stars, or 0 to clear the rating.",
+            "minimum": 0
           }
         }
       },

@@ -32,6 +32,7 @@
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import RatingStars from '$lib/ui/RatingStars.svelte';
 
 	interface Props {
 		album: AlbumBasicInfo;
@@ -54,6 +55,10 @@
 		releaseGroupMbid?: string;
 		localCopies?: LibraryAlbumSummary[];
 		downloadAllowed?: boolean;
+		/** The caller's rating of the local album, 0 when not rated. */
+		rating?: number;
+		/** Rate the local album, or clear it with 0. The stars show only with this. */
+		onrate?: (rating: number) => void;
 		onrequest: () => void;
 		ondelete: () => void;
 		onrefresh: () => void;
@@ -79,6 +84,8 @@
 		releaseGroupMbid = '',
 		localCopies = [],
 		downloadAllowed = true,
+		rating = 0,
+		onrate,
 		onrequest,
 		ondelete,
 		onrefresh,
@@ -250,6 +257,16 @@
 					<span>{formatTotalDuration(tracksInfo.total_length)}</span>
 				{/if}
 			</div>
+
+			{#if onrate}
+				<RatingStars
+					size="md"
+					class="-ml-1 self-start"
+					value={rating}
+					label={album.title}
+					onchange={onrate}
+				/>
+			{/if}
 
 			{#if showPlate}
 				<EditionPlate copies={localCopies} groupMbid={releaseGroupMbid || album.musicbrainz_id} />

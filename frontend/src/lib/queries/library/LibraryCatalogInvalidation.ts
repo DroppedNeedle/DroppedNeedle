@@ -5,6 +5,7 @@ import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { ArtistReconciliationQueryKeyFactory } from '$lib/queries/artist-reconciliation/ArtistReconciliationQueryKeyFactory';
 import { LyricsQueryKeyFactory } from '$lib/queries/lyrics/LyricsQueryKeyFactory';
 import { LOCAL_KEYS } from '$lib/queries/local/LocalV3Keys';
+import { RatingQueryKeyFactory } from '$lib/queries/ratings/RatingQueryKeyFactory';
 import { searchStore } from '$lib/stores/search';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 
@@ -20,6 +21,7 @@ export async function invalidateLibraryCatalog(): Promise<void> {
 		invalidateQueriesWithPersister({ queryKey: DiscoverQueryKeyFactory.prefix }),
 		invalidateQueriesWithPersister({ queryKey: ArtistReconciliationQueryKeyFactory.prefix }),
 		invalidateQueriesWithPersister({ queryKey: LyricsQueryKeyFactory.prefix }),
-		invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root })
+		invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root }),
+		invalidateQueriesWithPersister({ queryKey: RatingQueryKeyFactory.prefix })
 	]);
 }

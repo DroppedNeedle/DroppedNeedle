@@ -1809,6 +1809,8 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     // Collections: favorites, follows, approvals, pins.
     ("GET", "/api/v3/favorites", Posture::User),
     ("PUT", "/api/v3/favorites/{kind}/{item_id}", Posture::User),
+    ("PUT", "/api/v3/ratings/{kind}/{item_id}", Posture::User),
+    ("POST", "/api/v3/ratings/lookup", Posture::User),
     (
         "GET",
         "/api/v3/artists/{artist_mbid}/follow-status",

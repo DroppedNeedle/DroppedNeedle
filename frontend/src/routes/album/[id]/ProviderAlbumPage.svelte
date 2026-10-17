@@ -32,6 +32,7 @@
 		getLibraryAlbumStatusQuery
 	} from '$lib/queries/library/LibraryQueries.svelte';
 	import LocalAlbumPage from './LocalAlbumPage.svelte';
+	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings/RatingQueries.svelte';
 
 	// The outage fallback only needs the local id; the v3 album view the
 	// route gate passes satisfies this, as does the v1 detail shape.
@@ -59,6 +60,17 @@
 	const localCopies = $derived(
 		localAlbumQuery.data ? [localAlbumQuery.data, ...(localCopiesQuery.data?.items ?? [])] : []
 	);
+	// One ratings read for the local album and the files behind its rows,
+	// once the album status is in. Only a library album is rated.
+	const ratingsQuery = getRatingsQuery(() =>
+		localAlbumId && libraryStatusQuery.isSuccess
+			? {
+					albumIds: [localAlbumId],
+					trackIds: (libraryStatusQuery.data?.tracks ?? []).map((track) => track.id)
+				}
+			: null
+	);
+	const rate = setRating();
 	const retagPairsQuery = getRetagPairsQuery(() => authStore.isAdmin);
 	const retagPairs = $derived(
 		localAlbumId
@@ -172,6 +184,10 @@
 				releaseGroupMbid={album.musicbrainz_id}
 				{localCopies}
 				downloadAllowed={state.localMatch?.download_allowed !== false}
+				rating={ratingOf(ratingsQuery.data, 'album', localAlbumId)}
+				onrate={localAlbumId
+					? (rating) => rate.mutate({ kind: 'album', itemId: localAlbumId, rating })
+					: undefined}
 				onrequest={state.handleRequest}
 				ondelete={state.handleDeleteClick}
 				onrefresh={state.refreshAll}
@@ -296,6 +312,9 @@
 						editionRows={state.editionRows}
 						releaseGroupMbid={album.musicbrainz_id}
 						releaseMbid={state.tracksInfo?.selected_release_mbid}
+						trackRatings={ratingsQuery.data?.tracks}
+						onRateTrack={(trackId, rating) =>
+							rate.mutate({ kind: 'track', itemId: trackId, rating })}
 						onPlaySourceTrack={state.playSourceTrack}
 						onTrackGenerated={state.handleTrackGenerated}
 						onQuotaUpdate={state.handleQuotaUpdate}

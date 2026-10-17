@@ -19,10 +19,11 @@ use super::{
         CoverUploadBody, CoverUploadResponse, CreatePlaylistBody, FavoriteListResponse,
         FavoriteQuery, FavoriteStatusResponse, FollowBody, FollowStatusResponse,
         FollowedArtistListResponse, NewReleaseListResponse, NewReleasePageQuery, PlaylistDetail,
-        PlaylistListResponse, PlaylistSummary, PlaylistTrack, RecentReleasesQuery,
-        RemoveTracksBody, RemoveTracksResponse, ReorderBody, ReorderResponse,
-        ResolveSourcesResponse, SetFavoriteBody, StatusResponse, UnseenCountResponse,
-        UpdatePlaylistBody, UpdateTrackBody, VisibilityBody,
+        PlaylistListResponse, PlaylistSummary, PlaylistTrack, RatingLookupBody,
+        RatingLookupResponse, RatingStatusResponse, RecentReleasesQuery, RemoveTracksBody,
+        RemoveTracksResponse, ReorderBody, ReorderResponse, ResolveSourcesResponse,
+        SetFavoriteBody, SetRatingBody, StatusResponse, UnseenCountResponse, UpdatePlaylistBody,
+        UpdateTrackBody, VisibilityBody,
     },
     service::CollectionsService,
     state::CollectionsState,
@@ -513,6 +514,67 @@ pub async fn set_favorite_handler(
     Ok(Json(
         CollectionsService::new(&state)
             .set_favorite(&caller.user_id, &kind, &item_id, body.favorited, body.name)
+            .await?,
+    ))
+}
+
+/// Rate an album, track or artist, or clear the rating.
+///
+/// Acts on the caller's own rating, the one Subsonic apps show and set.
+/// 1 to 5 stars, 0 clears. The old id of a merged item rates the item it
+/// went into, and the answer names that id.
+#[utoipa::path(
+    put,
+    path = "/api/v3/ratings/{kind}/{item_id}",
+    tag = "collections",
+    params(
+        ("kind" = String, Path, description = "Kind: album, artist, or track"),
+        ("item_id" = String, Path, description = "Local id of the rated item")
+    ),
+    request_body = SetRatingBody,
+    responses(
+        (status = 200, description = "The caller's rating now", body = RatingStatusResponse),
+        (status = 400, description = "Bad kind, rating or body"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "No live item holds the id"),
+    )
+)]
+pub async fn set_rating_handler(
+    State(state): State<CollectionsState>,
+    caller: Principal,
+    Path((kind, item_id)): Path<(String, String)>,
+    ValidJson(body): ValidJson<SetRatingBody>,
+) -> HttpResult<Json<RatingStatusResponse>> {
+    Ok(Json(
+        CollectionsService::new(&state)
+            .rate(&caller.user_id, &kind, &item_id, body.rating)
+            .await?,
+    ))
+}
+
+/// The caller's ratings of the given albums, tracks and artists.
+///
+/// A read that takes its ids in a body, at most 1000 of each kind. Only
+/// rated ids are listed.
+#[utoipa::path(
+    post,
+    path = "/api/v3/ratings/lookup",
+    tag = "collections",
+    request_body = RatingLookupBody,
+    responses(
+        (status = 200, description = "The caller's ratings", body = RatingLookupResponse),
+        (status = 400, description = "Bad body or too many ids"),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn rating_lookup_handler(
+    State(state): State<CollectionsState>,
+    caller: Principal,
+    ValidJson(body): ValidJson<RatingLookupBody>,
+) -> HttpResult<Json<RatingLookupResponse>> {
+    Ok(Json(
+        CollectionsService::new(&state)
+            .rating_lookup(&caller.user_id, &body)
             .await?,
     ))
 }

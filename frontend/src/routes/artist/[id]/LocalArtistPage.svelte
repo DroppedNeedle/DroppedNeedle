@@ -16,6 +16,8 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import RatingStars from '$lib/ui/RatingStars.svelte';
+	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings/RatingQueries.svelte';
 
 	interface Props {
 		artistId: string;
@@ -30,6 +32,8 @@
 		albums.filter((album) => album.album_identity_state === 'local_only')
 	);
 	const contributionMutation = createLibraryContributionMutation();
+	const ratingsQuery = getRatingsQuery(() => (artist ? { artistIds: [artist.id] } : null));
+	const rate = setRating();
 
 	function openContribution(album: LibraryAlbumSummary): void {
 		if (album.contribution_id) {
@@ -81,6 +85,13 @@
 			/>
 			<div class="min-w-0 flex-1">
 				<h1 class="text-4xl font-black tracking-tight sm:text-5xl">{artist.name}</h1>
+				<RatingStars
+					size="md"
+					class="mt-2 -ml-1"
+					value={ratingOf(ratingsQuery.data, 'artist', artist.id)}
+					label={artist.name}
+					onchange={(rating) => rate.mutate({ kind: 'artist', itemId: artist.id, rating })}
+				/>
 				<LocalIdentityBadge
 					state={artist.artist_identity_state}
 					subject="artist"

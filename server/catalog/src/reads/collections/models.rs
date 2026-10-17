@@ -384,6 +384,53 @@ pub struct FavoriteStatusResponse {
     pub favorited: bool,
 }
 
+// Ratings.
+
+/// Set-rating body.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SetRatingBody {
+    /// 1 to 5 stars, or 0 to clear the rating.
+    pub rating: u8,
+}
+
+/// Rating-status answer.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RatingStatusResponse {
+    /// Rated kind.
+    pub kind: String,
+    /// The id the rating is stored under: the item's current id, which
+    /// differs from the one sent after a merge.
+    pub item_id: String,
+    /// The caller's rating now, 0 when cleared.
+    pub rating: u8,
+}
+
+/// Rating-lookup body: local ids of each kind, at most 1000 of each.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct RatingLookupBody {
+    /// Album ids.
+    #[serde(default)]
+    pub album_ids: Vec<String>,
+    /// Track ids.
+    #[serde(default)]
+    pub track_ids: Vec<String>,
+    /// Artist ids.
+    #[serde(default)]
+    pub artist_ids: Vec<String>,
+}
+
+/// The caller's ratings of the looked-up ids. Each map holds only the ids
+/// the caller rated: an absent id is not rated.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RatingLookupResponse {
+    /// Album id to rating.
+    pub albums: HashMap<String, u8>,
+    /// Track id to rating.
+    pub tracks: HashMap<String, u8>,
+    /// Artist id to rating.
+    pub artists: HashMap<String, u8>,
+}
+
 // Follows.
 
 /// Follow-status answer for one artist.

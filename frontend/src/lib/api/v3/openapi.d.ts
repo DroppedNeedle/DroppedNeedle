@@ -6328,6 +6328,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/ratings/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The caller's ratings of the given albums, tracks and artists.
+         * @description A read that takes its ids in a body, at most 1000 of each kind. Only
+         *     rated ids are listed.
+         */
+        post: operations["rating_lookup_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/ratings/{kind}/{item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Rate an album, track or artist, or clear the rating.
+         * @description Acts on the caller's own rating, the one Subsonic apps show and set.
+         *     1 to 5 stars, 0 clears. The old id of a merged item rates the item it
+         *     went into, and the answer names that id.
+         */
+        put: operations["set_rating_handler"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/remotes/navidrome/folders": {
         parameters: {
             query?: never;
@@ -19607,6 +19650,48 @@ export interface components {
             /** @description Seed artist name. */
             artist_name?: string;
         };
+        /** @description Rating-lookup body: local ids of each kind, at most 1000 of each. */
+        RatingLookupBody: {
+            /** @description Album ids. */
+            album_ids?: string[];
+            /** @description Artist ids. */
+            artist_ids?: string[];
+            /** @description Track ids. */
+            track_ids?: string[];
+        };
+        /**
+         * @description The caller's ratings of the looked-up ids. Each map holds only the ids
+         *     the caller rated: an absent id is not rated.
+         */
+        RatingLookupResponse: {
+            /** @description Album id to rating. */
+            albums: {
+                [key: string]: number;
+            };
+            /** @description Artist id to rating. */
+            artists: {
+                [key: string]: number;
+            };
+            /** @description Track id to rating. */
+            tracks: {
+                [key: string]: number;
+            };
+        };
+        /** @description Rating-status answer. */
+        RatingStatusResponse: {
+            /**
+             * @description The id the rating is stored under: the item's current id, which
+             *     differs from the one sent after a merge.
+             */
+            item_id: string;
+            /** @description Rated kind. */
+            kind: string;
+            /**
+             * Format: int32
+             * @description The caller's rating now, 0 when cleared.
+             */
+            rating: number;
+        };
         /**
          * @description Raw-AAC tag policy.
          * @enum {string}
@@ -21777,6 +21862,14 @@ export interface components {
             favorited: boolean;
             /** @description Display name to keep, when favoriting. */
             name?: string | null;
+        };
+        /** @description Set-rating body. */
+        SetRatingBody: {
+            /**
+             * Format: int32
+             * @description 1 to 5 stars, or 0 to clear the rating.
+             */
+            rating: number;
         };
         /** @description First-admin setup body. Runs only against an empty user table. */
         SetupBody: {
@@ -39030,6 +39123,94 @@ export interface operations {
             };
             /** @description GitHub is rate limiting this server */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    rating_lookup_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RatingLookupBody"];
+            };
+        };
+        responses: {
+            /** @description The caller's ratings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RatingLookupResponse"];
+                };
+            };
+            /** @description Bad body or too many ids */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    set_rating_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Kind: album, artist, or track */
+                kind: string;
+                /** @description Local id of the rated item */
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetRatingBody"];
+            };
+        };
+        responses: {
+            /** @description The caller's rating now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RatingStatusResponse"];
+                };
+            };
+            /** @description Bad kind, rating or body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No live item holds the id */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

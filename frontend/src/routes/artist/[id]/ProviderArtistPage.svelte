@@ -47,6 +47,7 @@
 	import ArtistReleasePagination from '$lib/components/ArtistReleasePagination.svelte';
 	import { mergeArtistReleasePages } from '$lib/queries/artist/artistReleasePages';
 	import { mergeArtistImages } from '$lib/queries/catalog/catalogAdapters';
+	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings/RatingQueries.svelte';
 
 	interface Props {
 		data: { artistId: string; primarySource: MusicSource };
@@ -54,6 +55,12 @@
 	}
 
 	let { data, localArtist }: Props = $props();
+
+	// Only an artist the library holds is rated, under its local id.
+	const ratingsQuery = getRatingsQuery(() =>
+		localArtist ? { artistIds: [localArtist.id] } : null
+	);
+	const rate = setRating();
 
 	// svelte-ignore state_referenced_locally
 	let activeSource = new PersistedState<MusicSource>(
@@ -370,6 +377,10 @@
 						showBackButton
 						refreshing={refreshingArtist}
 						onrefresh={handleRefreshClick}
+						rating={localArtist ? ratingOf(ratingsQuery.data, 'artist', localArtist.id) : 0}
+						onrate={localArtist
+							? (rating) => rate.mutate({ kind: 'artist', itemId: localArtist.id, rating })
+							: undefined}
 					/>
 
 					<div class="flex flex-wrap items-center gap-x-4 gap-y-2 justify-center sm:justify-start">

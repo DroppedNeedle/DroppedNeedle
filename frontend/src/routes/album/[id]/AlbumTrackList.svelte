@@ -33,6 +33,7 @@
 	import { ChevronDown, ChevronUp, TriangleAlert, TrendingUp, Check } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import RatingStars from '$lib/ui/RatingStars.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import type { LibraryFileMeta, DownloadTask, HeldImport } from '$lib/types';
 	import TrackRequestButton from '$lib/components/downloads/TrackRequestButton.svelte';
@@ -75,6 +76,10 @@
 		editionRows?: Map<string, EditionTrackRow> | null;
 		releaseGroupMbid?: string;
 		releaseMbid?: string | null;
+		/** The caller's rating of each local track they rated, by track id. */
+		trackRatings?: Record<string, number>;
+		/** Rate a local track, or clear it with 0. Rows with a file show stars only with this. */
+		onRateTrack?: (trackId: string, rating: number) => void;
 		onPlaySourceTrack: (
 			source: 'jellyfin' | 'local' | 'navidrome' | 'plex',
 			trackPosition: number,
@@ -123,6 +128,8 @@
 		editionRows = null,
 		releaseGroupMbid = '',
 		releaseMbid = null,
+		trackRatings = {},
+		onRateTrack,
 		onPlaySourceTrack,
 		onTrackGenerated,
 		onQuotaUpdate,
@@ -271,6 +278,7 @@
 					!!upgradeRecordingId &&
 					!trackTask &&
 					$integrationStore.download_client}
+				{@const rateTrack = libMeta && onRateTrack ? onRateTrack : null}
 				<li
 					class="list-row group transition-colors p-3 sm:p-4 {isCurrentlyPlaying
 						? 'bg-accent/12'
@@ -306,6 +314,15 @@
 
 						{#if editionRow?.missing}
 							<span class="badge badge-sm badge-warning badge-outline shrink-0">Missing</span>
+						{/if}
+						{#if rateTrack && libMeta}
+							<div class="hidden sm:block">
+								<RatingStars
+									value={trackRatings[libMeta.id] ?? 0}
+									label={track.title}
+									onchange={(rating) => rateTrack(libMeta.id, rating)}
+								/>
+							</div>
 						{/if}
 						<div class="text-base-content/60 text-sm shrink-0">
 							{formatDuration(editionRow ? editionRow.lengthMs : track.length)}
@@ -479,16 +496,30 @@
 							/>
 						{/if}
 					</div>
-					{#if editionRow?.yourVersionMs || editionRow?.note}
+					{#if editionRow?.yourVersionMs || editionRow?.note || rateTrack}
 						<!-- Under the title, on a line of its own so a phone keeps it readable. -->
-						<div class="list-col-wrap -mt-2 flex flex-col pl-12 text-xs">
-							{#if editionRow.yourVersionMs}
+						<div
+							class="list-col-wrap -mt-2 flex flex-col items-start pl-12 text-xs {editionRow?.yourVersionMs ||
+							editionRow?.note
+								? ''
+								: 'sm:hidden'}"
+						>
+							{#if editionRow?.yourVersionMs}
 								<span class="text-base-content/60"
 									>Your version {formatDuration(editionRow.yourVersionMs)}</span
 								>
 							{/if}
-							{#if editionRow.note}
+							{#if editionRow?.note}
 								<span class="text-info">{editionRow.note}</span>
+							{/if}
+							{#if rateTrack && libMeta}
+								<div class="sm:hidden">
+									<RatingStars
+										value={trackRatings[libMeta.id] ?? 0}
+										label={track.title}
+										onchange={(rating) => rateTrack(libMeta.id, rating)}
+									/>
+								</div>
 							{/if}
 						</div>
 					{/if}

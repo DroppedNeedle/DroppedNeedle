@@ -9,6 +9,7 @@ import { LibraryManagementQueryKeyFactory } from './library-management/LibraryMa
 import { LibraryContributionQueryKeyFactory } from './libraryContributions/LibraryContributionQueryKeyFactory';
 import { LidarrImportQueryKeyFactory } from './lidarr-import/LidarrImportQueryKeyFactory';
 import { PluginQueryKeyFactory } from './plugins/PluginQueryKeyFactory';
+import { RatingQueryKeyFactory } from './ratings/RatingQueryKeyFactory';
 import { ScrobblePreferencesQueryKeyFactory } from './scrobble-preferences/ScrobblePreferencesQueryKeyFactory';
 import { SourcePlaylistQueryKeyFactory } from './source-playlists/SourcePlaylistQueryKeyFactory';
 
@@ -28,6 +29,7 @@ const userKeys: Record<string, UserKey> = {
 	'lidarr candidates': (u) => LidarrImportQueryKeyFactory.candidates(u),
 	'plugin sources': (u) => PluginQueryKeyFactory.sources(u),
 	'plugin ui': (u) => PluginQueryKeyFactory.ui(u, 'plugin-1'),
+	ratings: (u) => RatingQueryKeyFactory.lookup(u, ['album-1'], ['track-1'], []),
 	'scrobble preferences': (u) => ScrobblePreferencesQueryKeyFactory.get(u),
 	'source playlists': (u) => SourcePlaylistQueryKeyFactory.list(u, 'navidrome', 20),
 	'import candidates': (u) => AuthQueryKeyFactory.importCandidates('plex', u)

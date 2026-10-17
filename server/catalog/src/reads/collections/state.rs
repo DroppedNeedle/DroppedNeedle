@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use super::db::CollectionsDb;
 use super::store::Stores;
+use crate::reads::library::player::SqlitePlayerCatalog;
+use crate::reads::library::sqlite::LibraryDb;
 
 /// Auto-download state of one follow, as the routes show it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +117,10 @@ pub struct CollectionsState {
     pub db: CollectionsDb,
     /// The SQLite stores.
     pub stores: Stores,
+    /// The library's live artists, albums and tracks, which a rating
+    /// names: the same id resolution and existence check Subsonic's
+    /// `setRating` goes through, over the same database.
+    pub items: SqlitePlayerCatalog,
     /// Acquire-owned pending approvals, when wired.
     pub acquire_approvals: Option<Arc<dyn PendingApprovalsSource>>,
     /// Seed sink into the acquire approval store, when wired.
@@ -124,8 +130,12 @@ pub struct CollectionsState {
 impl CollectionsState {
     /// State over one database, with the acquisition seams unwired.
     pub fn new(db: CollectionsDb) -> Self {
+        let library = db
+            .pool()
+            .map_or_else(|_| LibraryDb::unwired(), LibraryDb::new);
         Self {
             stores: Stores::new(&db),
+            items: SqlitePlayerCatalog::new(&library),
             db,
             acquire_approvals: None,
             approval_seeds: None,

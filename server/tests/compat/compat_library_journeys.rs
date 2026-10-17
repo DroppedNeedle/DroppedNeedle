@@ -2509,6 +2509,142 @@ async fn subsonic_ratings_are_per_user_and_follow_a_merge() {
     rig.stop().await;
 }
 
+/// The player's web session: the account `login_user` made, signed in again.
+async fn player_web_session(rig: &CompatApp) -> String {
+    let (status, body) = rig
+        .app
+        .call(
+            "POST",
+            "/api/v3/auth/login",
+            &[],
+            Some(json!({
+                "username": PLAYER,
+                "password": format!("{PLAYER}-password-1234"),
+                "transport": "bearer",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    format!("Bearer {}", body["token"].as_str().expect("session token"))
+}
+
+/// One web rating call as `session`: its status and answer.
+async fn rate_on_web(
+    rig: &CompatApp,
+    session: &str,
+    kind: &str,
+    id: &str,
+    rating: u8,
+) -> (StatusCode, Value) {
+    rig.app
+        .call(
+            "PUT",
+            &format!("/api/v3/ratings/{kind}/{id}"),
+            &[("authorization", session)],
+            Some(json!({ "rating": rating })),
+        )
+        .await
+}
+
+/// The web lookup of `ids` (album, track, artist) as `session`.
+async fn web_ratings(rig: &CompatApp, session: &str, ids: [&str; 3]) -> Value {
+    let (status, body) = rig
+        .app
+        .call(
+            "POST",
+            "/api/v3/ratings/lookup",
+            &[("authorization", session)],
+            Some(json!({
+                "album_ids": [ids[0]],
+                "track_ids": [ids[1]],
+                "artist_ids": [ids[2]],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+/// A rating set on the web is the one a Subsonic app shows, and the other
+/// way round. Each user, the admin included, sees only their own; 0
+/// clears; a bad rating or kind is a 400 and an unknown id a 404 that
+/// stores nothing; a merged album's old id rates the album it went into.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn web_and_subsonic_apps_share_one_rating() {
+    let rig = CompatApp::start("compat-web-ratings").await;
+    let (track, album, artist) = catalog_ids(&rig, "Radiohead/OK Computer/01 Airbag.flac");
+    let (teardrop, mezzanine, _) = catalog_ids(&rig, "Massive Attack/Mezzanine/04 Teardrop.m4a");
+    let mine = rig.subsonic_auth("web-ratings");
+    let web = player_web_session(&rig).await;
+    let ids = [album.as_str(), track.as_str(), artist.as_str()];
+    let get_song = format!("getSong?id=tr-{track}");
+    let none = json!({"albums": {}, "tracks": {}, "artists": {}});
+
+    let (status, body) = rate_on_web(&rig, &web, "track", &track, 4).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!({"kind": "track", "item_id": track, "rating": 4})
+    );
+    assert_eq!(
+        subsonic(&rig, &get_song, &mine).await["song"]["userRating"],
+        4
+    );
+
+    let set = subsonic(&rig, &format!("setRating?id=al-{album}&rating=3"), &mine).await;
+    assert_eq!(set["status"], "ok", "{set}");
+    assert_eq!(
+        web_ratings(&rig, &web, ids).await,
+        json!({"albums": {(album.as_str()): 3}, "tracks": {(track.as_str()): 4}, "artists": {}})
+    );
+    let (status, body) = rate_on_web(&rig, &web, "artist", &artist, 5).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let answer = subsonic(&rig, &format!("getArtist?id=ar-{artist}"), &mine).await;
+    assert_eq!(answer["artist"]["userRating"], 5, "{answer}");
+
+    let theirs = rig.app.login_user("listener").await.authorization;
+    assert_eq!(web_ratings(&rig, &theirs, ids).await, none);
+    let (status, body) = rate_on_web(&rig, &theirs, "track", &track, 2).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(web_ratings(&rig, &web, ids).await["tracks"][&track], 4);
+    let admin = rig.app.login_admin().await;
+    assert_eq!(web_ratings(&rig, &admin, ids).await, none);
+
+    let (status, body) = rate_on_web(&rig, &web, "track", &track, 0).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["rating"], 0);
+    assert_eq!(
+        subsonic(&rig, &get_song, &mine).await["song"]["userRating"],
+        Value::Null
+    );
+    assert_eq!(web_ratings(&rig, &web, ids).await["tracks"], json!({}));
+
+    let (status, body) = rate_on_web(&rig, &web, "track", &track, 6).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, body) = rate_on_web(&rig, &web, "playlist", &track, 3).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, body) = rate_on_web(&rig, &web, "track", "no-such-track", 3).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let stored: i64 = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT COUNT(*) FROM library_user_ratings WHERE item_id = 'no-such-track'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("ratings read");
+    assert_eq!(stored, 0);
+
+    merge_albums(&rig, &teardrop, &album).await;
+    let (status, body) = rate_on_web(&rig, &web, "album", &mezzanine, 2).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["item_id"], json!(album));
+    let survivor = subsonic(&rig, &format!("getAlbum?id=al-{album}"), &mine).await;
+    assert_eq!(survivor["album"]["userRating"], 2, "{survivor}");
+    rig.stop().await;
+}
+
 /// LRCLIB as the lyrics lookup sees it, counting every lookup: synced
 /// lyrics for "Paranoid Android", nothing for anything else.
 async fn counted_lyrics_server() -> (

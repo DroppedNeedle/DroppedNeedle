@@ -10,15 +10,27 @@
 	import BackButton from './BackButton.svelte';
 	import HeroBackdrop from './HeroBackdrop.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import RatingStars from '$lib/ui/RatingStars.svelte';
 
 	interface Props {
 		artist: ArtistInfo;
 		showBackButton?: boolean;
 		refreshing?: boolean;
 		onrefresh?: () => void;
+		/** The caller's rating of the library artist, 0 when not rated. */
+		rating?: number;
+		/** Rate the library artist, or clear it with 0. The stars show only with this. */
+		onrate?: (rating: number) => void;
 	}
 
-	let { artist, showBackButton = false, refreshing = false, onrefresh }: Props = $props();
+	let {
+		artist,
+		showBackButton = false,
+		refreshing = false,
+		onrefresh,
+		rating = 0,
+		onrate
+	}: Props = $props();
 
 	let heroGradient = $state(DEFAULT_GRADIENT);
 	let heroImageLoaded = $state(false);
@@ -129,6 +141,12 @@
 
 					{#if validLinks.length > 0}
 						<ArtistLinks links={validLinks} />
+					{/if}
+
+					{#if onrate}
+						<div class="mt-2">
+							<RatingStars size="md" value={rating} label={artist.name} onchange={onrate} />
+						</div>
 					{/if}
 
 					<div class="mt-3">

@@ -1,4 +1,4 @@
-//! Collections: playlists, favorites, follows, approval reads.
+//! Collections: playlists, favorites, ratings, follows, approval reads.
 //!
 //! Layout: `handlers` parse and render, `service` holds the rules and
 //! returns the domain [`error::CollectionsError`], `store` reads and
@@ -24,7 +24,7 @@ pub use state::CollectionsState;
 
 /// The collections routes behind the header test gate, for tests that
 /// mount them without the session middleware. Route posture per handler
-/// docs: playlists, favorites and follows need any authenticated user,
+/// docs: playlists, favorites, ratings and follows need any authenticated user,
 /// approvals need admin.
 #[cfg(any(test, feature = "test-support"))]
 pub fn collections_router(state: CollectionsState) -> Router {
@@ -84,6 +84,14 @@ pub fn collections_routes(state: CollectionsState) -> Router {
         .route(
             "/favorites/{kind}/{item_id}",
             routing::put(handlers::set_favorite_handler),
+        )
+        .route(
+            "/ratings/lookup",
+            routing::post(handlers::rating_lookup_handler),
+        )
+        .route(
+            "/ratings/{kind}/{item_id}",
+            routing::put(handlers::set_rating_handler),
         )
         .route(
             "/artists/{artist_mbid}/follow-status",

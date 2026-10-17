@@ -13,6 +13,7 @@ import {
 	FavoriteQueryKeyFactory,
 	PlaylistQueryKeyFactory
 } from '$lib/queries/playlists/PlaylistQueryKeyFactory';
+import { RatingQueryKeyFactory } from '$lib/queries/ratings/RatingQueryKeyFactory';
 import { invalidateQueriesWithPersister, queryClient } from '$lib/queries/QueryClient';
 import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
@@ -168,7 +169,7 @@ export function restoreEditionExtras() {
 }
 
 // Match one file to a track of the album's edition by hand, and undo it.
-// A match can carry a missing track's plays, stars and playlist entries
+// A match can carry a missing track's plays, stars, ratings and playlist entries
 // to the file, for every listener, so those lists refresh too. A refusal
 // means the plan on screen was stale, so it is read again either way.
 function invalidateHandMatchScope(localId: string): void {
@@ -177,6 +178,7 @@ function invalidateHandMatchScope(localId: string): void {
 	for (const queryKey of [
 		LibraryQueryKeyFactory.catalog.albumHistory(userId, localId),
 		FavoriteQueryKeyFactory.prefix,
+		RatingQueryKeyFactory.prefix,
 		PlaylistQueryKeyFactory.prefix
 	]) {
 		void invalidateQueriesWithPersister({ queryKey });

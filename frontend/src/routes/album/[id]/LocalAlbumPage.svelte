@@ -13,6 +13,8 @@
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import RatingStars from '$lib/ui/RatingStars.svelte';
+	import { getRatingsQuery, ratingOf, setRating } from '$lib/queries/ratings/RatingQueries.svelte';
 	import { getDownloadAccessQuery } from '$lib/queries/local/DownloadAccessQuery.svelte';
 	import {
 		getAlbumEditionStatusQuery,
@@ -56,6 +58,14 @@
 		album?.download_allowed !== false && downloadAccessQuery.data?.allowed !== false
 	);
 	const contributionMutation = createLibraryContributionMutation();
+
+	// One ratings read for the album and its tracks, once the tracks are in.
+	const ratingsQuery = getRatingsQuery(() =>
+		album && tracksQuery.isSuccess
+			? { albumIds: [album.id], trackIds: tracks.map((track) => track.id) }
+			: null
+	);
+	const rate = setRating();
 
 	// The edition plan's word on single files, read under the plate's keys.
 	const userId = () => authStore.user?.id;
@@ -218,6 +228,13 @@
 						>
 					{/if}
 				</p>
+				<RatingStars
+					size="md"
+					class="mt-2 -ml-1"
+					value={ratingOf(ratingsQuery.data, 'album', album.id)}
+					label={album.title}
+					onchange={(rating) => rate.mutate({ kind: 'album', itemId: album.id, rating })}
+				/>
 				<div class="mt-4">
 					<EditionPlate copies={[album]} />
 				</div>
@@ -293,6 +310,8 @@
 					{tracks}
 					notes={fileNotes}
 					getTrackMenuItems={getLocalTrackMenuItems}
+					trackRatings={ratingsQuery.data?.tracks}
+					onRateTrack={(trackId, rating) => rate.mutate({ kind: 'track', itemId: trackId, rating })}
 				/>
 			{/if}
 		</section>

@@ -199,6 +199,12 @@ vi.mock('$lib/queries/library/LibraryRetagPairQueries.svelte', () => ({
 	dismissRetagPair: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
+vi.mock('$lib/queries/ratings/RatingQueries.svelte', () => ({
+	getRatingsQuery: () => ({ data: undefined }),
+	ratingOf: () => 0,
+	setRating: () => ({ mutate: vi.fn() })
+}));
+
 vi.mock('$lib/queries/library/LibraryEditionQueries.svelte', () => ({
 	getReleaseEditionSearchQuery: () => ({
 		data: {

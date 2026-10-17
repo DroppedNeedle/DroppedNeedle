@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Play } from 'lucide-svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import RatingStars from '$lib/ui/RatingStars.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { formatBytes, formatDurationSec } from '$lib/utils/formatting';
@@ -13,9 +14,13 @@
 		/** A sentence about a file, by track id, shown on its row. */
 		notes?: Map<string, string>;
 		getTrackMenuItems?: (track: NativeTrackListItem) => MenuItem[];
+		/** The caller's rating of each track they rated, by track id. */
+		trackRatings?: Record<string, number>;
+		/** Rate a track, or clear it with 0. Rows show stars only with this. */
+		onRateTrack?: (trackId: string, rating: number) => void;
 	}
 
-	let { tracks, notes, getTrackMenuItems }: Props = $props();
+	let { tracks, notes, getTrackMenuItems, trackRatings = {}, onRateTrack }: Props = $props();
 </script>
 
 <ol
@@ -42,10 +47,28 @@
 				{#if notes?.get(track.id)}
 					<p class="text-xs text-info">{notes.get(track.id)}</p>
 				{/if}
+				{#if onRateTrack}
+					<div class="sm:hidden">
+						<RatingStars
+							value={trackRatings[track.id] ?? 0}
+							label={track.title}
+							onchange={(rating) => onRateTrack(track.id, rating)}
+						/>
+					</div>
+				{/if}
 			</div>
 			{#if track.format}<span class="hidden text-xs uppercase text-base-content/40 sm:block"
 					>{track.format}</span
 				>{/if}
+			{#if onRateTrack}
+				<div class="hidden sm:block">
+					<RatingStars
+						value={trackRatings[track.id] ?? 0}
+						label={track.title}
+						onchange={(rating) => onRateTrack(track.id, rating)}
+					/>
+				</div>
+			{/if}
 			<span class="text-xs tabular-nums text-base-content/45"
 				>{formatDurationSec(track.duration_seconds)}</span
 			>
