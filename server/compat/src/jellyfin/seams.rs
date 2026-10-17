@@ -2,9 +2,10 @@
 //! generic over every trait here; `compat::setup` binds the production
 //! adapters and `fake` holds the test doubles.
 //!
-//! - Auth: [`droppedneedle_auth::compat_auth::jellyfin::JellyfinPasswordStore`]
-//!   (from `compat_auth`). This file only adds the thin [`Principal`]
-//!   view over its `JellyfinUser`. Login bodies reuse `compat_auth`'s
+//! - Auth: not a seam. The routes name the app-password store,
+//!   [`droppedneedle_auth::compat_auth::prod::ProdCompatPasswords`],
+//!   directly; this file only adds the thin [`Principal`] view over its
+//!   `JellyfinUser`. Login bodies reuse `compat_auth`'s
 //!   `login_echo_json`, so the Finamp/Manet login contract has one owner.
 //! - Library reads: [`LibraryRead`]. The routes describe one page
 //!   ([`TrackFilter`], [`AlbumFilter`], [`ItemSort`], start, limit) and the

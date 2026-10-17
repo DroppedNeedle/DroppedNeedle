@@ -11,6 +11,8 @@
 
 use sha2::{Digest, Sha256};
 
+use super::prod::ProdCompatPasswords;
+
 /// Stable server id: `sha256("droppedneedle-jellyfin-server")` hex,
 /// first 32 chars (v2 `models.py` parity, restart-stable).
 pub fn server_id() -> String {
@@ -147,34 +149,6 @@ pub fn extract_version(request: &JellyfinRequest) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JellyfinStoreError;
 
-/// App-password lookups. The production adapter reads
-/// `connect_app_passwords` and `auth_users` only: account passwords and
-/// native tokens are unreachable here by construction, so presenting one
-/// fails exactly like an unknown credential (401, empty body).
-pub trait JellyfinPasswordStore: Clone + Send + Sync + 'static {
-    /// User for a presented token (SHA-256 lookup inside).
-    fn user_for_token(
-        &self,
-        token: &str,
-    ) -> impl Future<Output = Result<Option<JellyfinUser>, JellyfinStoreError>> + Send;
-
-    /// User for a username plus app password. The username rule is v2
-    /// verbatim: the stored lowercased username must equal the input
-    /// stripped and lowercased (display names never match).
-    fn user_for_credentials(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> impl Future<Output = Result<Option<JellyfinUser>, JellyfinStoreError>> + Send;
-
-    /// Best-effort use stamp (production throttles to ~5 min per secret).
-    fn note_use(
-        &self,
-        secret_plaintext: &str,
-        client: Option<&str>,
-    ) -> impl Future<Output = ()> + Send;
-}
-
 /// Auth denial: always 401 with an empty body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JellyfinDenied {
@@ -207,8 +181,8 @@ impl JellyfinDenied {
 }
 
 /// `AuthenticateByName`: check the username plus app password.
-pub async fn authenticate_by_name<S: JellyfinPasswordStore>(
-    store: &S,
+pub async fn authenticate_by_name(
+    store: &ProdCompatPasswords,
     username: &str,
     password: &str,
     client: Option<&str>,
@@ -235,8 +209,8 @@ pub async fn authenticate_by_name<S: JellyfinPasswordStore>(
 
 /// Resolve a request token to its user. `None`, empty, overlong, and
 /// unknown tokens all deny identically.
-pub async fn resolve_token<S: JellyfinPasswordStore>(
-    store: &S,
+pub async fn resolve_token(
+    store: &ProdCompatPasswords,
     token: Option<&str>,
 ) -> Result<JellyfinUser, JellyfinDenied> {
     let Some(token) = token else {

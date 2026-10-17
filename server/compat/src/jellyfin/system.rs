@@ -5,8 +5,8 @@ use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
 use axum::response::Response;
 use droppedneedle_auth::compat_auth::jellyfin::{
-    JellyfinPasswordStore, JellyfinRequest, SessionFacts, authenticate_by_name, extract_client,
-    extract_device, extract_version, login_echo_json, server_id,
+    JellyfinRequest, SessionFacts, authenticate_by_name, extract_client, extract_device,
+    extract_version, login_echo_json, server_id,
 };
 use droppedneedle_auth::session::client_ip::ClientIp;
 use uuid::Uuid;
@@ -18,12 +18,11 @@ use super::seams::{IdMap, LibraryRead, PlaybackSessions, StreamEngine};
 
 // ===== System / identity =====
 
-pub(super) async fn system_info_public<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn system_info_public<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -47,12 +46,11 @@ where
     )
 }
 
-pub(super) async fn system_info<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn system_info<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -133,11 +131,10 @@ fn system_architecture() -> &'static str {
 }
 
 /// QuickConnect is unsupported: the literal `false` (v2 `_handle` lambda).
-pub(super) async fn quick_connect<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn quick_connect<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -149,11 +146,10 @@ where
     raw_json(StatusCode::OK, "false")
 }
 
-pub(super) async fn sessions_logout<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn sessions_logout<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -170,12 +166,11 @@ where
 /// `AuthenticateByName`: the app password echoes verbatim as `AccessToken`
 /// with a fresh `SessionInfo` and the full non-null user object
 /// (`compat_auth` renders it; bad credentials → 401, never 403).
-pub(super) async fn authenticate<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn authenticate<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -252,12 +247,11 @@ fn unix_now() -> f64 {
         .unwrap_or(0.0)
 }
 
-pub(super) async fn users_me<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn users_me<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -286,13 +280,12 @@ where
 
 /// The `{user_id}` path id is ignored; the caller is always returned (v2
 /// `_user_dto(u)` parity).
-pub(super) async fn user_by_id<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn user_by_id<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(_user_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,

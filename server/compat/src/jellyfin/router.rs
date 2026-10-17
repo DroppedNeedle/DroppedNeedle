@@ -21,8 +21,9 @@ use axum::http::{HeaderMap, Request, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
 use droppedneedle_auth::compat_auth::jellyfin::{
-    JellyfinPasswordStore, JellyfinRequest, extract_client, extract_token, resolve_token, server_id,
+    JellyfinRequest, extract_client, extract_token, resolve_token, server_id,
 };
+use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_kernel::ids::RequestId;
 use uuid::Uuid;
 
@@ -43,14 +44,14 @@ use super::system::*;
 
 // ===== State + registration =====
 
-/// Router dependencies. Every seam is a generic so production binds the
-/// real adapters without touching the routes: `S` app-password store
-/// (from `compat_auth`), `L` library reads, `E` stream engine, `P` scrobble
-/// adapter, `I` persisted id map.
+/// Router dependencies. Every seam but the app-password store is a generic
+/// so production binds the real adapters without touching the routes: `L`
+/// library reads, `E` stream engine, `P` scrobble adapter, `I` persisted id
+/// map.
 #[derive(Clone)]
-pub struct JellyfinState<S, L, E, P, I> {
-    /// App-password store (`compat_auth`'s `JellyfinPasswordStore`).
-    pub passwords: S,
+pub struct JellyfinState<L, E, P, I> {
+    /// App-password store.
+    pub passwords: ProdCompatPasswords,
     /// Library reads.
     pub library: L,
     /// Streaming engine.
@@ -67,10 +68,10 @@ pub struct JellyfinState<S, L, E, P, I> {
     pub listener: ListenerConfig,
 }
 
-impl<S, L, E, P, I> JellyfinState<S, L, E, P, I> {
+impl<L, E, P, I> JellyfinState<L, E, P, I> {
     /// Assemble state; `server_id()` is restart-stable.
     pub fn new(
-        passwords: S,
+        passwords: ProdCompatPasswords,
         library: L,
         engine: E,
         sessions: P,
@@ -92,135 +93,114 @@ impl<S, L, E, P, I> JellyfinState<S, L, E, P, I> {
 }
 
 /// Build the `/jellyfin`-prefixed router.
-pub fn router<S, L, E, P, I>(state: JellyfinState<S, L, E, P, I>) -> Router
+pub fn router<L, E, P, I>(state: JellyfinState<L, E, P, I>) -> Router
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
     I: IdMap,
 {
     Router::new()
-        .route(
-            "/System/Info/Public",
-            get(system_info_public::<S, L, E, P, I>),
-        )
-        .route("/System/Info", get(system_info::<S, L, E, P, I>))
-        .route("/QuickConnect/Enabled", get(quick_connect::<S, L, E, P, I>))
-        .route("/Sessions/Logout", post(sessions_logout::<S, L, E, P, I>))
+        .route("/System/Info/Public", get(system_info_public::<L, E, P, I>))
+        .route("/System/Info", get(system_info::<L, E, P, I>))
+        .route("/QuickConnect/Enabled", get(quick_connect::<L, E, P, I>))
+        .route("/Sessions/Logout", post(sessions_logout::<L, E, P, I>))
         .route(
             "/Users/AuthenticateByName",
-            post(authenticate::<S, L, E, P, I>),
+            post(authenticate::<L, E, P, I>),
         )
-        .route("/Users/Me", get(users_me::<S, L, E, P, I>))
-        .route("/Users/{user_id}", get(user_by_id::<S, L, E, P, I>))
-        .route("/Users/{user_id}/Views", get(views::<S, L, E, P, I>))
-        .route("/UserViews", get(views::<S, L, E, P, I>))
-        .route("/Users/{user_id}/Items", get(browse::<S, L, E, P, I>))
-        .route("/Items", get(browse::<S, L, E, P, I>))
+        .route("/Users/Me", get(users_me::<L, E, P, I>))
+        .route("/Users/{user_id}", get(user_by_id::<L, E, P, I>))
+        .route("/Users/{user_id}/Views", get(views::<L, E, P, I>))
+        .route("/UserViews", get(views::<L, E, P, I>))
+        .route("/Users/{user_id}/Items", get(browse::<L, E, P, I>))
+        .route("/Items", get(browse::<L, E, P, I>))
         // Not recorded: Jellyfin 10.10.6 serves this from
         // `UserLibraryController.GetLatestMedia`, the user from the token.
         // Jellify asks here (`@jellyfin/sdk` 0.13.0). Before `/Items/{item_id}`.
-        .route("/Items/Latest", get(latest::<S, L, E, P, I>))
-        .route(
-            "/Users/{user_id}/Items/Latest",
-            get(latest::<S, L, E, P, I>),
-        )
-        .route("/Artists", get(artists::<S, L, E, P, I>))
-        .route("/Artists/AlbumArtists", get(album_artists::<S, L, E, P, I>))
-        .route("/Genres", get(genres::<S, L, E, P, I>))
-        .route("/MusicGenres", get(genres::<S, L, E, P, I>))
+        .route("/Items/Latest", get(latest::<L, E, P, I>))
+        .route("/Users/{user_id}/Items/Latest", get(latest::<L, E, P, I>))
+        .route("/Artists", get(artists::<L, E, P, I>))
+        .route("/Artists/AlbumArtists", get(album_artists::<L, E, P, I>))
+        .route("/Genres", get(genres::<L, E, P, I>))
+        .route("/MusicGenres", get(genres::<L, E, P, I>))
         // Filters before `/{item_id}`: "Filters" must never be an id.
-        .route("/Items/Filters", get(filters::<S, L, E, P, I>))
-        .route(
-            "/Users/{user_id}/Items/Filters",
-            get(filters::<S, L, E, P, I>),
-        )
+        .route("/Items/Filters", get(filters::<L, E, P, I>))
+        .route("/Users/{user_id}/Items/Filters", get(filters::<L, E, P, I>))
         .route(
             "/Users/{user_id}/Items/{item_id}",
-            get(single_item_legacy::<S, L, E, P, I>),
+            get(single_item_legacy::<L, E, P, I>),
         )
-        .route("/Items/{item_id}", get(single_item::<S, L, E, P, I>))
+        .route("/Items/{item_id}", get(single_item::<L, E, P, I>))
         .route(
             "/Items/{item_id}/Images/{image_type}",
-            get(image::<S, L, E, P, I>),
+            get(image::<L, E, P, I>),
         )
         .route(
             "/Items/{item_id}/Images/{image_type}/{index}",
-            get(image_indexed::<S, L, E, P, I>),
+            get(image_indexed::<L, E, P, I>),
         )
         .route(
             "/Audio/{item_id}/{tail}",
-            get(audio::<S, L, E, P, I>).head(audio_head::<S, L, E, P, I>),
+            get(audio::<L, E, P, I>).head(audio_head::<L, E, P, I>),
         )
         .route(
             "/Items/{item_id}/File",
-            get(item_file::<S, L, E, P, I>).head(item_file_head::<S, L, E, P, I>),
+            get(item_file::<L, E, P, I>).head(item_file_head::<L, E, P, I>),
         )
         .route(
             "/Items/{item_id}/Download",
-            get(item_download::<S, L, E, P, I>).head(item_download_head::<S, L, E, P, I>),
+            get(item_download::<L, E, P, I>).head(item_download_head::<L, E, P, I>),
         )
         .route(
             "/Items/{item_id}/PlaybackInfo",
-            get(playback_info::<S, L, E, P, I>).post(playback_info::<S, L, E, P, I>),
+            get(playback_info::<L, E, P, I>).post(playback_info::<L, E, P, I>),
         )
         .route(
             "/Users/{user_id}/FavoriteItems/{item_id}",
-            post(favorite_add_legacy::<S, L, E, P, I>)
-                .delete(favorite_remove_legacy::<S, L, E, P, I>),
+            post(favorite_add_legacy::<L, E, P, I>).delete(favorite_remove_legacy::<L, E, P, I>),
         )
         .route(
             "/UserFavoriteItems/{item_id}",
-            post(favorite_add_modern::<S, L, E, P, I>)
-                .delete(favorite_remove_modern::<S, L, E, P, I>),
+            post(favorite_add_modern::<L, E, P, I>).delete(favorite_remove_modern::<L, E, P, I>),
         )
         .route(
             "/Users/{user_id}/PlayedItems/{item_id}",
-            post(played_add_legacy::<S, L, E, P, I>).delete(played_remove_legacy::<S, L, E, P, I>),
+            post(played_add_legacy::<L, E, P, I>).delete(played_remove_legacy::<L, E, P, I>),
         )
         .route(
             "/UserPlayedItems/{item_id}",
-            post(played_add_modern::<S, L, E, P, I>).delete(played_remove_modern::<S, L, E, P, I>),
+            post(played_add_modern::<L, E, P, I>).delete(played_remove_modern::<L, E, P, I>),
         )
-        .route("/Sessions/Playing", post(playing::<S, L, E, P, I>))
+        .route("/Sessions/Playing", post(playing::<L, E, P, I>))
         .route(
             "/Sessions/Playing/Progress",
-            post(playing_progress::<S, L, E, P, I>),
+            post(playing_progress::<L, E, P, I>),
         )
         .route(
             "/Sessions/Playing/Stopped",
-            post(playing_stopped::<S, L, E, P, I>),
+            post(playing_stopped::<L, E, P, I>),
         )
-        .route(
-            "/Sessions/Playing/Ping",
-            post(sessions_ping::<S, L, E, P, I>),
-        )
+        .route("/Sessions/Playing/Ping", post(sessions_ping::<L, E, P, I>))
         .route(
             "/Sessions/Capabilities/Full",
-            post(sessions_capabilities::<S, L, E, P, I>),
+            post(sessions_capabilities::<L, E, P, I>),
         )
-        .route("/Playlists", post(create_playlist::<S, L, E, P, I>))
-        .route(
-            "/Playlists/{playlist_id}",
-            get(get_playlist::<S, L, E, P, I>),
-        )
+        .route("/Playlists", post(create_playlist::<L, E, P, I>))
+        .route("/Playlists/{playlist_id}", get(get_playlist::<L, E, P, I>))
         .route(
             "/Playlists/{playlist_id}/Items",
-            get(playlist_items::<S, L, E, P, I>)
-                .post(playlist_add::<S, L, E, P, I>)
-                .delete(playlist_remove::<S, L, E, P, I>),
+            get(playlist_items::<L, E, P, I>)
+                .post(playlist_add::<L, E, P, I>)
+                .delete(playlist_remove::<L, E, P, I>),
         )
         .route(
             "/Playlists/{playlist_id}/Items/{entry_id}/Move/{new_index}",
-            post(playlist_move::<S, L, E, P, I>),
+            post(playlist_move::<L, E, P, I>),
         )
-        .route("/Items/{item_id}/Similar", get(similar::<S, L, E, P, I>))
-        .route("/Items/{item_id}/InstantMix", get(similar::<S, L, E, P, I>))
-        .route(
-            "/Artists/{item_id}/InstantMix",
-            get(similar::<S, L, E, P, I>),
-        )
+        .route("/Items/{item_id}/Similar", get(similar::<L, E, P, I>))
+        .route("/Items/{item_id}/InstantMix", get(similar::<L, E, P, I>))
+        .route("/Artists/{item_id}/InstantMix", get(similar::<L, E, P, I>))
         .with_state(state)
 }
 
@@ -434,8 +414,8 @@ impl QueryTokens {
 }
 
 /// Resolve the caller or return the 401 (empty body, never raises).
-pub(super) async fn authed<S: JellyfinPasswordStore>(
-    passwords: &S,
+pub(super) async fn authed(
+    passwords: &ProdCompatPasswords,
     headers: &HeaderMap,
     raw_query: Option<&str>,
 ) -> Result<Authed, Response> {
@@ -457,7 +437,7 @@ pub(super) async fn authed<S: JellyfinPasswordStore>(
 }
 
 /// The kill-switch gate: disabled → 404 before any handler lookup.
-pub(super) fn gate<S, L, E, P, I>(state: &JellyfinState<S, L, E, P, I>) -> Option<Response> {
+pub(super) fn gate<L, E, P, I>(state: &JellyfinState<L, E, P, I>) -> Option<Response> {
     if state.settings.jellyfin().enabled {
         None
     } else {
@@ -468,8 +448,8 @@ pub(super) fn gate<S, L, E, P, I>(state: &JellyfinState<S, L, E, P, I>) -> Optio
 /// The address of this API as `request` reached it ([`base_address`]) plus
 /// `/jellyfin`. `LocalAddress` is required, so a request that names no host
 /// gets `http://localhost` and the base path.
-pub(super) fn local_address<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) fn local_address<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     request: &Request<Body>,
 ) -> String {
     let base = base_address(request, &state.listener, &state.settings)
@@ -477,7 +457,7 @@ pub(super) fn local_address<S, L, E, P, I>(
     format!("{base}/jellyfin")
 }
 
-pub(super) fn builder<'a, S, L, E, P, I>(state: &'a JellyfinState<S, L, E, P, I>) -> Builder<'a, I>
+pub(super) fn builder<'a, L, E, P, I>(state: &'a JellyfinState<L, E, P, I>) -> Builder<'a, I>
 where
     I: IdMap,
 {

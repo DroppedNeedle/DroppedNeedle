@@ -5,7 +5,7 @@ use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
 use axum::response::Response;
-use droppedneedle_auth::compat_auth::jellyfin::{JellyfinPasswordStore, server_id};
+use droppedneedle_auth::compat_auth::jellyfin::server_id;
 
 use super::builders::{self, Builder, LIBRARY_INTERNAL_ID};
 use super::models::{BaseItemDto, BaseItemDtoQueryResult};
@@ -20,12 +20,11 @@ use super::seams::{
 // ===== Library browsing =====
 
 /// The single "Music" view, both dialects (v2 `_views`).
-pub(super) async fn views<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn views<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -59,12 +58,11 @@ where
 }
 /// Decode a Jellyfin id to an artist mbid, `None` when undecodable or not an
 /// artist (v2 `_decode_artist`).
-pub(super) async fn decode_artist<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn decode_artist<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     jf_id: &str,
 ) -> Option<String>
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -77,14 +75,13 @@ where
 /// One item by decoded kind. Genre and library kinds have no branch in v2
 /// `_single_item` either, so they resolve to `None` (skipped in `Ids`
 /// lookups, 404 for direct fetch), as v2 does.
-pub(super) async fn fetch_item<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn fetch_item<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     user_id: &str,
     kind: &str,
     internal: &str,
 ) -> Option<super::models::BaseItemDto>
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -130,14 +127,13 @@ fn result(items: Vec<BaseItemDto>, total: usize, start: usize) -> Response {
 }
 
 /// One item in the long form Jellyfin sends for a fetch by id.
-async fn fetch_full_item<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+async fn fetch_full_item<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     user: &super::seams::Principal,
     kind: &str,
     internal: &str,
 ) -> Option<BaseItemDto>
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -190,12 +186,11 @@ fn sort_or(sort_key: Option<SortKey>, desc: bool, fallback: ItemSort) -> ItemSor
 }
 
 /// Decode artist ids; undecodable ids drop out.
-async fn decode_artists<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+async fn decode_artists<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     jf_ids: &[String],
 ) -> Vec<String>
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -237,12 +232,11 @@ async fn build_artists<I: IdMap>(b: &Builder<'_, I>, artists: &[ArtistView]) -> 
 }
 
 /// Main browse, both dialects (v2 `_browse`, same branch order).
-pub(super) async fn browse<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn browse<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -378,8 +372,8 @@ where
 /// Favorite listing for browse (v2 `_favorite_items`): one batch read per
 /// kind, DTOs for the page only. `played` narrows favourite tracks and
 /// albums to the ones that are or are not played for the caller.
-pub(super) async fn favorites_browse<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn favorites_browse<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     user_id: &str,
     types: &[String],
     played: Option<bool>,
@@ -387,7 +381,6 @@ pub(super) async fn favorites_browse<S, L, E, P, I>(
     limit: usize,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -432,8 +425,8 @@ where
 
 /// Track browse arm (v2 `_browse` `Audio` branch).
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn audio_browse<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn audio_browse<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     user_id: &str,
     search: Option<&str>,
     album_artist_ids: &[String],
@@ -445,7 +438,6 @@ pub(super) async fn audio_browse<S, L, E, P, I>(
     limit: usize,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -490,8 +482,8 @@ where
 
 /// Album browse arm (v2 `_browse` fallthrough branch).
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn album_browse<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn album_browse<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     user_id: &str,
     search: Option<&str>,
     album_artist_ids: &[String],
@@ -504,7 +496,6 @@ pub(super) async fn album_browse<S, L, E, P, I>(
     limit: usize,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -577,12 +568,11 @@ where
 
 /// Jellify Recently Added: a bare JSON array of the newest albums (v2
 /// `_latest`). `ParentId`, when given, must be the music library.
-pub(super) async fn latest<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn latest<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -622,12 +612,11 @@ where
     json(StatusCode::OK, &build_albums(&b, &albums).await)
 }
 
-pub(super) async fn artists<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn artists<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -636,12 +625,11 @@ where
     artists_scoped(State(state), request, ArtistScope::All).await
 }
 
-pub(super) async fn album_artists<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn album_artists<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -650,13 +638,12 @@ where
     artists_scoped(State(state), request, ArtistScope::Album).await
 }
 
-pub(super) async fn artists_scoped<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn artists_scoped<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
     scope: ArtistScope,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -690,12 +677,11 @@ where
 }
 
 /// Both genre dialects share one handler (v2 `_genres`).
-pub(super) async fn genres<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn genres<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -727,12 +713,11 @@ where
 /// Manet's boot call: a 404 here can leave the library empty (v2
 /// `_items_filters`). Genres and album years are the facets modelled; the
 /// key name `OfficialRatings` is v2-verbatim.
-pub(super) async fn filters<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn filters<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -762,13 +747,12 @@ where
     )
 }
 
-pub(super) async fn single_item<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn single_item<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -795,13 +779,12 @@ where
 /// The older address, with a user id in the path. The id is not read: the
 /// token decides whose library answers, as on the other `/Users/{id}/...`
 /// routes.
-pub(super) async fn single_item_legacy<S, L, E, P, I>(
-    state: State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn single_item_legacy<L, E, P, I>(
+    state: State<JellyfinState<L, E, P, I>>,
     Path((_user_id, item_id)): Path<(String, String)>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -816,13 +799,12 @@ where
 /// resolves the artist from an artist/track/album id and serves same-artist
 /// tracks. Unknown ids and unresolvable kinds yield an empty result, not a
 /// 404. (No real similarity ranking is bound yet.)
-pub(super) async fn similar<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn similar<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,

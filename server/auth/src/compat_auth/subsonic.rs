@@ -15,6 +15,8 @@
 
 use sha2::{Digest, Sha256};
 
+use super::prod::ProdCompatPasswords;
+
 /// Advertised protocol version, in every envelope.
 pub const API_VERSION: &str = "1.16.1";
 /// Envelope namespace.
@@ -362,43 +364,11 @@ pub struct AppSecret {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubsonicStoreError;
 
-/// App-password lookups. The production adapter reads
-/// `connect_app_passwords` (decrypting `secret_encrypted`) and
-/// `auth_users` only: account passwords and native tokens are unreachable
-/// here by construction, so presenting one fails exactly like an unknown
-/// credential.
-pub trait SubsonicPasswordStore: Clone + Send + Sync + 'static {
-    /// User id for a lowercased username.
-    fn user_id_for_username(
-        &self,
-        username_lower: &str,
-    ) -> impl Future<Output = Result<Option<String>, SubsonicStoreError>> + Send;
-
-    /// Active secrets for a user (plaintext needed for `t/s` auth).
-    fn active_secrets(
-        &self,
-        user_id: &str,
-    ) -> impl Future<Output = Result<Vec<AppSecret>, SubsonicStoreError>> + Send;
-
-    /// Owning user id for a secret hash.
-    fn owner_of_secret(
-        &self,
-        secret_sha256: &str,
-    ) -> impl Future<Output = Result<Option<String>, SubsonicStoreError>> + Send;
-
-    /// Best-effort use stamp (production throttles to ~5 min per secret).
-    fn note_use(
-        &self,
-        secret_plaintext: &str,
-        client: Option<&str>,
-    ) -> impl Future<Output = ()> + Send;
-}
-
 /// Run the three schemes. Error precedence mirrors v2 exactly: duplicate
 /// keys, presence conflicts, apiKey rules, presence of `u`, length caps,
 /// user lookup, then per-scheme verification.
-pub async fn authenticate<S: SubsonicPasswordStore>(
-    store: &S,
+pub async fn authenticate(
+    store: &ProdCompatPasswords,
     params: &SubsonicParams,
 ) -> Result<SubsonicPrincipal, SubsonicDenied> {
     for key in ["u", "t", "s", "p", "apiKey", "c"] {

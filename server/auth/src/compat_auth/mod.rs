@@ -11,15 +11,11 @@
 //! (`_dispatch`, `_binary_error`, `getAvatar`, `_user_dto`,
 //! `_authenticate`), serialization, and the app password service.
 //!
-//! Store contract: the production
-//! [`subsonic::SubsonicPasswordStore`] and
-//! [`jellyfin::JellyfinPasswordStore`] read `connect_app_passwords`
+//! Store: [`prod::ProdCompatPasswords`] reads `connect_app_passwords`
 //! (decrypting `secret_encrypted` for the Subsonic token scheme) and
 //! `auth_users`; `note_use` throttles `last_used_at` writes to one per
 //! ~5 minutes per secret.
 
-#[cfg(any(test, feature = "test-support"))]
-pub mod fakes;
 pub mod jellyfin;
 pub mod prod;
 pub mod subsonic;

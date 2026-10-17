@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::jellyfin::{JellyfinPasswordStore, JellyfinStoreError, JellyfinUser};
-use super::subsonic::{AppSecret, SubsonicPasswordStore, SubsonicStoreError};
+use super::jellyfin::{JellyfinStoreError, JellyfinUser};
+use super::subsonic::{AppSecret, SubsonicStoreError};
 use crate::session::tokens;
 use crate::users::models::UserRecord;
 use crate::users::stores::StoreError;
@@ -58,7 +58,7 @@ impl ProdCompatPasswords {
     /// Best-effort throttled use stamp. A failed stamp logs and never fails
     /// auth; stamps closer than [`TOUCH_THROTTLE`] apart are skipped to
     /// spare the writer.
-    async fn touch(&self, secret: &str, client: Option<&str>) {
+    pub(crate) async fn note_use(&self, secret: &str, client: Option<&str>) {
         let sha = tokens::hash_token(secret);
         let now = Instant::now();
         let due = self
@@ -85,10 +85,9 @@ impl ProdCompatPasswords {
             tracing::warn!(%error, "app-password use stamp failed");
         }
     }
-}
 
-impl SubsonicPasswordStore for ProdCompatPasswords {
-    async fn user_id_for_username(
+    /// User id for a lowercased username.
+    pub(crate) async fn user_id_for_username(
         &self,
         username_lower: &str,
     ) -> Result<Option<String>, SubsonicStoreError> {
@@ -99,7 +98,11 @@ impl SubsonicPasswordStore for ProdCompatPasswords {
         Ok(row.map(|row| row.id))
     }
 
-    async fn active_secrets(&self, user_id: &str) -> Result<Vec<AppSecret>, SubsonicStoreError> {
+    /// Active secrets for a user (plaintext needed for `t/s` auth).
+    pub(crate) async fn active_secrets(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<AppSecret>, SubsonicStoreError> {
         let rows = self
             .users
             .app_passwords
@@ -120,7 +123,8 @@ impl SubsonicPasswordStore for ProdCompatPasswords {
         Ok(out)
     }
 
-    async fn owner_of_secret(
+    /// Owning user id for a secret hash.
+    pub(crate) async fn owner_of_secret(
         &self,
         secret_sha256: &str,
     ) -> Result<Option<String>, SubsonicStoreError> {
@@ -133,13 +137,8 @@ impl SubsonicPasswordStore for ProdCompatPasswords {
             .map(|row| row.user_id))
     }
 
-    async fn note_use(&self, secret_plaintext: &str, client: Option<&str>) {
-        self.touch(secret_plaintext, client).await;
-    }
-}
-
-impl JellyfinPasswordStore for ProdCompatPasswords {
-    async fn user_for_token(
+    /// User for a presented token (SHA-256 lookup inside).
+    pub async fn user_for_token(
         &self,
         token: &str,
     ) -> Result<Option<JellyfinUser>, JellyfinStoreError> {
@@ -163,7 +162,10 @@ impl JellyfinPasswordStore for ProdCompatPasswords {
             .map(|user| Self::jellyfin_user(user, secret.last_used_at)))
     }
 
-    async fn user_for_credentials(
+    /// User for a username plus app password. The username rule is v2
+    /// verbatim: the stored lowercased username must equal the input
+    /// stripped and lowercased (display names never match).
+    pub(crate) async fn user_for_credentials(
         &self,
         username: &str,
         password: &str,
@@ -190,9 +192,5 @@ impl JellyfinPasswordStore for ProdCompatPasswords {
             .filter(|row| row.username.as_deref() == Some(wanted.as_str()))
             .as_ref()
             .map(|user| Self::jellyfin_user(user, secret.last_used_at)))
-    }
-
-    async fn note_use(&self, secret_plaintext: &str, client: Option<&str>) {
-        self.touch(secret_plaintext, client).await;
     }
 }

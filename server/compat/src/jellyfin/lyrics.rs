@@ -8,7 +8,6 @@
 
 use axum::http::StatusCode;
 use axum::response::Response;
-use droppedneedle_auth::compat_auth::jellyfin::JellyfinPasswordStore;
 
 use super::models::{LyricDto, LyricLine, LyricMetadata};
 use super::router::*;
@@ -19,13 +18,12 @@ const TICKS_PER_MILLISECOND: i64 = 10_000;
 
 /// Answer the lyrics of `item_id`, or `missing` (Jellyfin's 404) when it
 /// has none.
-pub(super) async fn lyrics<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn lyrics<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     item_id: &str,
     missing: Response,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,

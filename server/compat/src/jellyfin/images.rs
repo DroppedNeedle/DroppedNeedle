@@ -10,7 +10,6 @@ use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
 use axum::response::Response;
-use droppedneedle_auth::compat_auth::jellyfin::JellyfinPasswordStore;
 
 use super::params::CiParams;
 use super::router::*;
@@ -61,13 +60,12 @@ pub(super) fn image_size(q: &CiParams) -> &'static str {
     "500"
 }
 
-pub(super) async fn image<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn image<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path((item_id, image_type)): Path<(String, String)>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -79,13 +77,12 @@ where
 
 /// Indexed variant: the index is accepted and ignored (v2 takes an int and
 /// never reads it either).
-pub(super) async fn image_indexed<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn image_indexed<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path((item_id, image_type, _index)): Path<(String, String, String)>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -95,14 +92,13 @@ where
     serve_image(&state, query.as_deref(), &item_id, &image_type).await
 }
 
-pub(super) async fn serve_image<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn serve_image<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     query: Option<&str>,
     item_id: &str,
     image_type: &str,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,

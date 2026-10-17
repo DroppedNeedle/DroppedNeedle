@@ -4,7 +4,6 @@ use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::response::Response;
-use droppedneedle_auth::compat_auth::jellyfin::JellyfinPasswordStore;
 
 use super::builders::{self};
 use super::models::{PlaybackProgressInfo, PlaybackStartInfo, PlaybackStopInfo, UserItemDataDto};
@@ -18,14 +17,13 @@ use super::seams::{
 
 /// The caller's state of one item as the item's own read gives it, `None`
 /// when that read finds nothing (a missing track, say).
-async fn item_state<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+async fn item_state<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     user_id: &str,
     kind: &str,
     internal: &str,
 ) -> Result<Option<UserItemDataDto>, ReadFailed>
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -46,15 +44,14 @@ where
 /// playlist, genre or library is 400, and a failed read 500. The answer
 /// names the item's current id, also when the app sent an old album or
 /// artist id.
-async fn change_item<S, L, E, P, I, W>(
-    state: &JellyfinState<S, L, E, P, I>,
+async fn change_item<L, E, P, I, W>(
+    state: &JellyfinState<L, E, P, I>,
     user_id: &str,
     item_id: &str,
     missing: Response,
     write: impl FnOnce(String, String) -> W,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -82,15 +79,14 @@ where
     }
 }
 
-pub(super) async fn set_favorite<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn set_favorite<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     user_id: &str,
     item_id: &str,
     add: bool,
     missing: Response,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -114,15 +110,14 @@ where
 /// Mark an item played or unplayed for the caller, never anyone else: the
 /// user in the legacy path and a `userId` parameter are ignored. Nothing
 /// is played, scrobbled or shown as playing.
-pub(super) async fn set_played<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn set_played<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     user_id: &str,
     item_id: &str,
     played: bool,
     missing: Response,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -143,13 +138,12 @@ where
     .await
 }
 
-pub(super) async fn favorite_add_legacy<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn favorite_add_legacy<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path((_user_id, item_id)): Path<(String, String)>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -161,13 +155,12 @@ where
     })
 }
 
-pub(super) async fn favorite_add_modern<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn favorite_add_modern<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -179,13 +172,12 @@ where
     })
 }
 
-pub(super) async fn favorite_remove_legacy<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn favorite_remove_legacy<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path((_user_id, item_id)): Path<(String, String)>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -197,13 +189,12 @@ where
     })
 }
 
-pub(super) async fn favorite_remove_modern<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn favorite_remove_modern<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -215,13 +206,12 @@ where
     })
 }
 
-pub(super) async fn played_add_legacy<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn played_add_legacy<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path((_user_id, item_id)): Path<(String, String)>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -233,13 +223,12 @@ where
     })
 }
 
-pub(super) async fn played_add_modern<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn played_add_modern<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -251,13 +240,12 @@ where
     })
 }
 
-pub(super) async fn played_remove_legacy<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn played_remove_legacy<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path((_user_id, item_id)): Path<(String, String)>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -269,13 +257,12 @@ where
     })
 }
 
-pub(super) async fn played_remove_modern<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn played_remove_modern<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -291,12 +278,11 @@ where
 
 /// Item id → file id for session reports (`None` for unknown/non-track,
 /// v2 `_track_from_item_id`).
-pub(super) async fn report_file_id<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn report_file_id<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     item_id: &str,
 ) -> Option<String>
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -320,12 +306,11 @@ pub(super) async fn read_body_lenient<T: serde::de::DeserializeOwned>(
 }
 
 /// Start → presence + now-playing (v2 `_playing_start`).
-pub(super) async fn playing<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn playing<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -360,12 +345,11 @@ where
 
 /// Progress → live scrubber + heartbeat, never a scrobble (v2
 /// `_playing_progress`).
-pub(super) async fn playing_progress<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn playing_progress<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -397,12 +381,11 @@ where
 
 /// Stop → always drop presence, then scrobble only if past the threshold (v2
 /// `_playing_stopped`). `Failed` stops skip the scrobble.
-pub(super) async fn playing_stopped<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn playing_stopped<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -456,12 +439,11 @@ where
     no_content()
 }
 
-pub(super) async fn sessions_ping<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn sessions_ping<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -472,12 +454,11 @@ where
 
 /// No session registry stores reported capabilities; accept and 204 to
 /// avoid a 404 (v2 `_handle` lambda).
-pub(super) async fn sessions_capabilities<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn sessions_capabilities<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,

@@ -34,15 +34,11 @@ use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_media::MediaEngine;
 use droppedneedle_media::playback::services::PlaybackDeps;
 
-/// Subsonic verifier over the app-password store.
-pub type CompatVerifier = SubsonicVerifier<ProdCompatPasswords>;
-
 /// Subsonic audio over the stream engine.
 pub type CompatAudio = GatewayAudio<MediaEngine>;
 
 /// Wired Jellyfin router state.
 pub type CompatJellyfinState = crate::jellyfin::JellyfinState<
-    ProdCompatPasswords,
     JellyfinLibrary,
     GatewayStream<MediaEngine>,
     CompatPlayback,
@@ -102,7 +98,7 @@ impl CompatDeps {
 /// Everything `create_app` needs to mount the compat routers.
 #[derive(Clone)]
 pub struct CompatSetup {
-    verifier: CompatVerifier,
+    verifier: SubsonicVerifier,
     store: SubsonicStore,
     audio: CompatAudio,
     jellyfin: CompatJellyfinState,
@@ -278,7 +274,7 @@ impl CompatSetup {
     }
 
     fn assemble(
-        verifier: &CompatVerifier,
+        verifier: &SubsonicVerifier,
         store: &SubsonicStore,
         audio: &CompatAudio,
         settings: &LiveSettings,

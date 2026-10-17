@@ -4,7 +4,6 @@ use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::response::Response;
-use droppedneedle_auth::compat_auth::jellyfin::JellyfinPasswordStore;
 use uuid::Uuid;
 
 use super::builders::{self};
@@ -48,12 +47,11 @@ pub(super) fn map_codec(codec: Option<&str>) -> Option<String> {
 }
 
 /// Decode an audio item id to its file id (v2 `_decode_track`).
-pub(super) async fn decode_track<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn decode_track<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     item_id: &str,
 ) -> Result<String, Response>
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -68,8 +66,8 @@ where
 /// Run the policy and serve direct or transcoded bytes (v2
 /// `_stream_decided`, minus the plugin fallback: no plugin seam exists
 /// here yet, so a local miss is a plain 404.
-pub(super) async fn stream_decided<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn stream_decided<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     range: Option<&str>,
     internal: &str,
     req_format: Option<String>,
@@ -78,7 +76,6 @@ pub(super) async fn stream_decided<S, L, E, P, I>(
     force: bool,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -115,13 +112,12 @@ where
     }
 }
 
-pub(super) async fn audio<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn audio<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path((item_id, tail)): Path<(String, String)>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -174,13 +170,12 @@ const HLS_SEGMENT: &str = "main.ts";
 /// needs no segment cache. The segment URL carries the request's query, so
 /// `ApiKey` and `audioBitRate` reach it. Without ffmpeg, or with
 /// transcoding off, there is nothing to serve: 404.
-pub(super) async fn hls_playlist<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn hls_playlist<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     query: Option<&str>,
     item_id: &str,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -224,13 +219,12 @@ where
 /// `GET /Audio/{id}/main.ts`: the playlist's segment, the whole track as
 /// AAC in MPEG-TS at the client's `audioBitRate` (bits per second), else
 /// the AAC default, capped by the server ceiling.
-pub(super) async fn hls_segment<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn hls_segment<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     query: Option<&str>,
     item_id: &str,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -271,13 +265,12 @@ where
 /// plays the tracks it does not transcode from it, so it asks for sign-in
 /// only and never reads the download setting, as in Jellyfin 10.10.6
 /// (`GetFile` is plain `[Authorize]`).
-pub(super) async fn item_file<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn item_file<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -296,13 +289,12 @@ where
 }
 
 /// `HEAD /Items/{id}/File`: the headers GET would answer, no body, no lease.
-pub(super) async fn item_file_head<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn item_file_head<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -332,13 +324,12 @@ where
 /// attachment after the file on disk. Here it is named after the track's
 /// title, as the Subsonic download is, so no name from the host is sent.
 /// The header is always sent.
-pub(super) async fn item_download<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn item_download<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -358,13 +349,12 @@ where
 
 /// `HEAD /Items/{id}/Download`: the headers GET would answer, refused for
 /// the same users.
-pub(super) async fn item_download_head<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn item_download_head<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -401,8 +391,8 @@ enum Original {
 
 /// The original file for both `/Items/{id}/File` and
 /// `/Items/{id}/Download`. The download setting is read on every request.
-async fn original_file<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+async fn original_file<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     headers: &HeaderMap,
     query: Option<&str>,
     item_id: &str,
@@ -410,7 +400,6 @@ async fn original_file<S, L, E, P, I>(
     head: bool,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -486,13 +475,12 @@ fn served_format(outcome: &ByteOutcome) -> &'static str {
 }
 
 /// HEAD for one item: the status and headers a direct GET would answer.
-async fn head_response<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+async fn head_response<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     headers: &HeaderMap,
     item_id: &str,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -523,13 +511,12 @@ fn head_outcome_response(outcome: &ByteOutcome) -> Response {
 /// `HEAD /Audio/...`: the same status and headers GET would answer
 /// (200/206/416; HEAD honors Range), always with an empty body, no
 /// lease (v2 `_audio_stream_head`).
-pub(super) async fn audio_head<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn audio_head<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path((item_id, tail)): Path<(String, String)>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -570,14 +557,13 @@ where
 }
 
 /// `/universal` container negotiation (v2 `_universal`).
-pub(super) async fn universal<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn universal<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     headers: &HeaderMap,
     query: Option<&str>,
     item_id: &str,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -620,14 +606,13 @@ where
 
 /// `/stream[.ext]`: `static=true` (case-insensitive) forces direct (v2
 /// `_audio_stream`).
-pub(super) async fn audio_stream<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn audio_stream<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     headers: &HeaderMap,
     query: Option<&str>,
     item_id: &str,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -663,13 +648,12 @@ where
 /// container appear only when the policy says transcode; Finamp's 15
 /// non-null fields are always present (MediaStream 5 + MediaSourceInfo 10,
 /// v2 issue #438).
-pub(super) async fn playback_info<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn playback_info<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(item_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,

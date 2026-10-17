@@ -28,8 +28,6 @@
 //!   [`users::FederatedUserStore`] and must seal `token_json` at rest with
 //!   the deployment key before writing `provider_data`.
 
-#[cfg(any(test, feature = "test-support"))]
-pub mod fakes;
 pub mod jellyfin_http;
 pub mod jellyfin_login;
 pub mod jellyfin_models;

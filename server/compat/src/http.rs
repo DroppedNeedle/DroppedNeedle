@@ -37,7 +37,8 @@ use crate::subsonic::{
     AudioBackend, Request as SubsonicRequest, Settings, Store, Verifier, classify, dispatch_with,
     normalize_endpoint,
 };
-use droppedneedle_auth::compat_auth::jellyfin::{JellyfinPasswordStore, extract_token};
+use droppedneedle_auth::compat_auth::jellyfin::extract_token;
+use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::session::client_ip::ClientIp;
 use droppedneedle_kernel::config::TrustedProxies;
 
@@ -165,9 +166,7 @@ pub async fn cors_layer(request: Request, next: Next) -> Response {
     response
 }
 
-/// Object-safe token → user lookup for limit labeling (the
-/// [`JellyfinPasswordStore`] trait is not object-safe, and axum middleware
-/// fns must be non-generic, so this erases the store type).
+/// Token → user lookup for limit labeling.
 pub trait LabelLookup: Send + Sync {
     /// User id for a token, or `None` when unknown or the store fails.
     fn user_for_token<'a>(
@@ -176,20 +175,20 @@ pub trait LabelLookup: Send + Sync {
     ) -> futures_util::future::BoxFuture<'a, Option<String>>;
 }
 
-/// [`LabelLookup`] over any Jellyfin password store.
+/// [`LabelLookup`] over the app-password store.
 #[derive(Clone)]
-pub struct StoreLabels<S> {
-    passwords: S,
+pub struct StoreLabels {
+    passwords: ProdCompatPasswords,
 }
 
-impl<S> StoreLabels<S> {
+impl StoreLabels {
     /// Wrap the store.
-    pub fn new(passwords: S) -> Self {
+    pub fn new(passwords: ProdCompatPasswords) -> Self {
         Self { passwords }
     }
 }
 
-impl<S: JellyfinPasswordStore> LabelLookup for StoreLabels<S> {
+impl LabelLookup for StoreLabels {
     fn user_for_token<'a>(
         &'a self,
         token: &'a str,

@@ -6,9 +6,8 @@
 
 use crate::subsonic::auth::{Credentials, Principal};
 use crate::subsonic::error::SubsonicError;
-use droppedneedle_auth::compat_auth::subsonic::{
-    SubsonicDenied, SubsonicParams, SubsonicPasswordStore, authenticate,
-};
+use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
+use droppedneedle_auth::compat_auth::subsonic::{SubsonicDenied, SubsonicParams, authenticate};
 use droppedneedle_auth::users::UsersDeps;
 
 /// Profile facts the compat handlers read off a principal.
@@ -77,19 +76,19 @@ impl Principal for CompatPrincipal {
 /// caps); denials keep their codes, and a vanished account fails as code
 /// 40 like an unknown credential.
 #[derive(Clone)]
-pub struct SubsonicVerifier<P> {
-    passwords: P,
+pub struct SubsonicVerifier {
+    passwords: ProdCompatPasswords,
     users: UsersDeps,
 }
 
-impl<P> SubsonicVerifier<P> {
-    /// Wrap a password store and the users the profiles come from.
-    pub fn new(passwords: P, users: UsersDeps) -> Self {
+impl SubsonicVerifier {
+    /// Wrap the password store and the users the profiles come from.
+    pub fn new(passwords: ProdCompatPasswords, users: UsersDeps) -> Self {
         Self { passwords, users }
     }
 }
 
-impl<P: SubsonicPasswordStore> crate::subsonic::Verifier for SubsonicVerifier<P> {
+impl crate::subsonic::Verifier for SubsonicVerifier {
     type Principal = CompatPrincipal;
 
     async fn verify(&self, credentials: &Credentials) -> Result<CompatPrincipal, SubsonicError> {

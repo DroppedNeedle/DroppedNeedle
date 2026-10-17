@@ -4,7 +4,6 @@ use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
 use axum::response::Response;
-use droppedneedle_auth::compat_auth::jellyfin::JellyfinPasswordStore;
 
 use super::models::{BaseItemDtoQueryResult, CreatePlaylistDto};
 use super::params::{self, CiParams};
@@ -15,12 +14,11 @@ use super::seams::{IdMap, LibraryRead, PlaybackSessions, StreamEngine};
 
 // ===== Playlists =====
 
-pub(super) async fn decode_playlist<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn decode_playlist<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     jf_id: &str,
 ) -> Result<String, Response>
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -34,12 +32,11 @@ where
 
 /// Create from a JSON body or `?name=`/`?ids=` (v2 `_create_playlist`).
 /// Unknown track ids are skipped silently.
-pub(super) async fn create_playlist<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn create_playlist<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -89,13 +86,12 @@ where
     )
 }
 
-pub(super) async fn get_playlist<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn get_playlist<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(playlist_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -131,13 +127,12 @@ where
     })
 }
 
-pub(super) async fn playlist_items<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn playlist_items<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(playlist_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -157,14 +152,13 @@ where
 }
 
 /// Real playlist-items body, split out so the auth gate stays readable.
-pub(super) async fn playlist_items_inner<S, L, E, P, I>(
-    state: &JellyfinState<S, L, E, P, I>,
+pub(super) async fn playlist_items_inner<L, E, P, I>(
+    state: &JellyfinState<L, E, P, I>,
     user_id: &str,
     playlist_id: &str,
     q: &CiParams,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -222,13 +216,12 @@ where
     )
 }
 
-pub(super) async fn playlist_add<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn playlist_add<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(playlist_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -261,13 +254,12 @@ where
     no_content()
 }
 
-pub(super) async fn playlist_remove<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn playlist_remove<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path(playlist_id): Path<String>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
@@ -299,13 +291,12 @@ where
     no_content()
 }
 
-pub(super) async fn playlist_move<S, L, E, P, I>(
-    State(state): State<JellyfinState<S, L, E, P, I>>,
+pub(super) async fn playlist_move<L, E, P, I>(
+    State(state): State<JellyfinState<L, E, P, I>>,
     Path((playlist_id, entry_id, new_index)): Path<(String, String, String)>,
     request: Request<Body>,
 ) -> Response
 where
-    S: JellyfinPasswordStore,
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
