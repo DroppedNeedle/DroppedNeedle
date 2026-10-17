@@ -399,7 +399,7 @@ Either way the user's own media account is linked for playback, so plays count f
 - Scan finds nothing or files pile into manual review: check the library path is readable. Untagged files with no fingerprint match need a human.
 - Now playing, scan progress and "download started" pop-ups only change when you reload: each open tab keeps one long-lived connection to `/api/v3/events/stream` for live updates, and something in between is holding it back. Behind nginx, add `proxy_buffering off;` and `proxy_read_timeout 1h;` for that path (the app already sends `X-Accel-Buffering: no`). Other proxies have a similar "don't buffer" switch. Don't let the proxy compress `text/event-stream` either.
 - Signed in, but every save answers `403 Origin not allowed`: that is the reverse proxy, not the account. See [Public address](docs/reverse-proxy-and-security.md#public-address), which ends with `droppedneedle-tool public-address`, the host command for it.
-- The web UI is blank while the content-security policy is enforced: see [Content-security policy](docs/reverse-proxy-and-security.md#content-security-policy) for the host command that switches it back to report-only.
+- The web UI is a blank page and the browser console names the content-security policy: usually a reverse proxy that rewrites the page or injects a script, such as Cloudflare's Rocket Loader. Turn that off for DroppedNeedle, or switch the policy to report-only from the host: see [Content-security policy](docs/reverse-proxy-and-security.md#content-security-policy).
 
 ---
 

@@ -315,6 +315,16 @@ machine and its data folders can run it.
   address, or on the host with `droppedneedle-tool public-address`:
   [Reverse proxy and security](reverse-proxy-and-security.md#public-address)
   has the steps.
+- **Content-security policy.** v2 sent none. v3 tells the browser what
+  the web UI may load and run, and enforces it. You may notice it in two
+  places: a dashboard that shows DroppedNeedle in a frame (below), and a
+  reverse proxy that rewrites the page or injects a script, such as
+  Cloudflare's Rocket Loader, which leaves a blank page whose browser
+  console names the policy. The switch is under Settings > Security >
+  Content-security policy, and on the host with `droppedneedle-tool
+  content-security-policy` when the page is blank:
+  [Reverse proxy and security](reverse-proxy-and-security.md#content-security-policy)
+  has the steps.
 - **Showing DroppedNeedle in a dashboard.** v2 could be shown in a frame
   by any page. v3 refuses that by default. If you open DroppedNeedle inside
   a dashboard such as Homarr or Organizr, add the dashboard's address under
