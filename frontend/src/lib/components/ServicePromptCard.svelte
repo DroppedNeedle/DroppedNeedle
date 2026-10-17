@@ -3,6 +3,9 @@
 	import { ArrowRight, Headphones, Tv, Download, Radio, Music, X } from 'lucide-svelte';
 	import { dismiss } from '$lib/utils/dismissedPrompts';
 	import type { ComponentType } from 'svelte';
+	import Button, { type ButtonVariant } from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	const serviceIcons: Record<string, ComponentType> = {
 		listenbrainz: Headphones,
@@ -45,16 +48,16 @@
 		return `color: rgb(var(${v}));`;
 	}
 
-	function getPromptButtonClass(color: string): string {
+	function getPromptButtonVariant(color: string): ButtonVariant {
 		switch (color) {
 			case 'primary':
-				return 'btn-primary';
+				return 'primary';
 			case 'secondary':
-				return 'btn-secondary';
+				return 'outline';
 			case 'accent':
-				return 'btn-accent';
+				return 'accent';
 			default:
-				return 'btn-neutral';
+				return 'neutral';
 		}
 	}
 
@@ -72,19 +75,20 @@
 	const SvelteComponent = $derived(serviceIcons[prompt.service] || Music);
 </script>
 
-<div
-	class="card overflow-hidden border-l-4 bg-base-200/50 border border-base-300/50 shadow-sm {getBorderColor()}"
+<Card
+	variant="bordered"
+	padding="md"
+	class="overflow-hidden border-l-4 {getBorderColor()}"
 	style={getBorderStyle()}
 >
-	<div class="card-body flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:p-6 relative">
-		<button
-			class="absolute top-2 right-2 btn btn-ghost btn-xs btn-circle text-base-content/40 hover:text-base-content"
-			onclick={handleDismiss}
-			aria-label="Dismiss {prompt.title}"
-			title="Dismiss"
-		>
-			<X class="h-3.5 w-3.5" />
-		</button>
+	<IconButton
+		size="xs"
+		icon={X}
+		label="Dismiss {prompt.title}"
+		class="absolute top-2 right-2"
+		onclick={handleDismiss}
+	/>
+	<div class="flex flex-col gap-4 sm:flex-row sm:items-center">
 		<div class="shrink-0" style={getIconColor()}>
 			<SvelteComponent class="h-10 w-10 sm:h-12 sm:w-12" />
 		</div>
@@ -100,13 +104,15 @@
 			</div>
 		</div>
 		<div class="shrink-0">
-			<a
+			<Button
+				variant={getPromptButtonVariant(prompt.color)}
+				size="sm"
+				icon={ArrowRight}
+				iconPosition="end"
 				href={getSettingsLink(prompt.service)}
-				class="btn btn-sm sm:btn-md {getPromptButtonClass(prompt.color)}"
 			>
 				Connect
-				<ArrowRight class="h-4 w-4" />
-			</a>
+			</Button>
 		</div>
 	</div>
-</div>
+</Card>

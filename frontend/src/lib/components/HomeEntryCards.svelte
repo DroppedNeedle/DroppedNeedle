@@ -135,25 +135,26 @@
 		arrow: 'group-hover:text-accent',
 		cta: 'text-accent'
 	});
+	import Card from '$lib/ui/Card.svelte';
 </script>
 
 {#snippet entryCard(card: EntryCard)}
 	{@const Icon = card.icon}
-	<a
+	<Card
+		variant="bordered"
 		href={withBasePath(card.href)}
-		class="group card relative overflow-hidden border border-base-content/10 bg-gradient-to-br {card.gradient} shadow-lg transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none"
+		class="group relative overflow-hidden bg-gradient-to-br {card.gradient} shadow-lg transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl"
 	>
 		<div
 			aria-hidden="true"
-			class="pointer-events-none absolute inset-0 opacity-[0.04]"
-			style="background-image: url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 200 200%22><filter id=%22n%22><feTurbulence type=%22fractalNoise%22 baseFrequency=%220.9%22 numOctaves=%224%22 stitchTiles=%22stitch%22/></filter><rect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23n)%22 opacity=%220.5%22/></svg>'); background-size: 200px;"
+			class="pointer-events-none absolute inset-0 opacity-[0.04] [background-image:var(--grain-texture)] [background-size:200px]"
 		></div>
 		<div
 			aria-hidden="true"
 			class="pointer-events-none absolute -top-12 -right-12 h-44 w-44 rounded-full {card.orb} blur-3xl transition-transform duration-500 group-hover:scale-125"
 		></div>
 
-		<div class="card-body relative gap-4 p-5 sm:p-6">
+		<div class="relative flex flex-1 flex-col gap-4">
 			<div class="flex items-start justify-between gap-3">
 				<div class="flex items-center gap-3">
 					<div
@@ -226,7 +227,7 @@
 				</div>
 			{/if}
 		</div>
-	</a>
+	</Card>
 {/snippet}
 
 <div

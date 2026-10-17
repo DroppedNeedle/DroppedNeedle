@@ -19,6 +19,8 @@
 	import { toSearchRemoteStatus, toV1Artist } from '$lib/queries/search/SearchV3Adapters';
 	import { RefreshCw } from 'lucide-svelte';
 	import { SvelteMap } from 'svelte/reactivity';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		data: { query: string };
@@ -152,39 +154,25 @@
 	});
 </script>
 
-<div class="px-8 pt-4 pb-2">
+<div class="px-4 pt-4 pb-2 sm:px-8">
 	<div class="flex gap-2">
-		<button
-			class="badge badge-lg cursor-pointer transition-colors border-none bg-base-300 text-primary"
-			onclick={navigateBack}
-		>
-			All
-		</button>
-		<button class="badge badge-lg cursor-pointer border-none bg-primary text-primary-content">
-			Artists
-		</button>
-		<button
-			class="badge badge-lg cursor-pointer transition-colors border-none bg-base-300 text-primary"
-			onclick={() => navigateToBucket('albums')}
-		>
-			Albums
-		</button>
+		<Button size="sm" pill onclick={navigateBack}>All</Button>
+		<Button variant="primary" size="sm" pill aria-current="page">Artists</Button>
+		<Button size="sm" pill onclick={() => navigateToBucket('albums')}>Albums</Button>
 	</div>
 </div>
 
-<section class="px-8 py-4">
+<section class="px-4 py-4 sm:px-8">
 	{#if normalizedQuery && statusNotice}
 		<div class="alert {statusNotice.className} mb-3" role="status">
 			<span>{statusNotice.message}</span>
-			<button class="btn btn-sm" onclick={retryRemoteSearch}>
-				<RefreshCw class="h-4 w-4" /> Retry
-			</button>
+			<Button size="sm" icon={RefreshCw} onclick={retryRemoteSearch}>Retry</Button>
 		</div>
 	{/if}
 	{#if !normalizedQuery}
 		<p class="text-center mt-32 text-base-content/50">Enter a search query to get started.</p>
 	{:else if loading && artists.length === 0}
-		<div class="bg-base-200 rounded-box p-4">
+		<Card padding="md">
 			<div
 				class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 			>
@@ -192,16 +180,16 @@
 					<ArtistCardSkeleton variant="detailed" />
 				{/each}
 			</div>
-		</div>
+		</Card>
 	{:else if artists.length === 0 && !loading}
-		<div class="p-8 bg-base-200 rounded-box text-center text-gray-500">No artists found</div>
+		<Card><p class="text-center text-base-content/50">No artists found</p></Card>
 	{:else}
 		{#if topArtist}
 			<div class="mb-4">
 				<SearchTopResult artist={topArtist} />
 			</div>
 		{/if}
-		<div class="bg-base-200 rounded-box p-4">
+		<Card padding="md">
 			<div
 				class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 			>
@@ -213,7 +201,7 @@
 					/>
 				{/each}
 			</div>
-		</div>
+		</Card>
 
 		<div bind:this={sentinel} class="h-20 flex items-center justify-center">
 			{#if loading}

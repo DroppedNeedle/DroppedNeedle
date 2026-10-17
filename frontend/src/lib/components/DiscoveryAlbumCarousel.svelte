@@ -4,6 +4,8 @@
 	import HorizontalCarousel from './HorizontalCarousel.svelte';
 	import CarouselSkeleton from './CarouselSkeleton.svelte';
 	import AlbumCard from './AlbumCard.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		albums: DiscoveryAlbum[];
@@ -40,15 +42,18 @@
 	{#if loading}
 		<CarouselSkeleton count={6} cardWidth="w-36" />
 	{:else if !configured}
-		<div class="bg-base-200 rounded-lg p-6 text-center">
-			<p class="text-base-content/70">Connect a music service to see recommendations</p>
-			<a href={withBasePath('/profile#scrobbling')} class="btn btn-primary btn-sm mt-3">Configure</a
-			>
-		</div>
+		<Card>
+			<div class="text-center">
+				<p class="text-base-content/70">Connect a music service to see recommendations</p>
+				<Button variant="primary" size="sm" href={withBasePath('/profile#scrobbling')} class="mt-3">
+					Configure
+				</Button>
+			</div>
+		</Card>
 	{:else if albums.length === 0}
-		<div class="bg-base-200 rounded-lg p-6 text-center">
-			<p class="text-base-content/70">{emptyMessage}</p>
-		</div>
+		<Card>
+			<p class="text-center text-base-content/70">{emptyMessage}</p>
+		</Card>
 	{:else}
 		<HorizontalCarousel>
 			{#each albums as album (album.musicbrainz_id)}

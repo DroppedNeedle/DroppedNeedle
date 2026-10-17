@@ -3,6 +3,7 @@
 	import { ChevronRight } from 'lucide-svelte';
 	import { reveal } from '$lib/actions/reveal';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
 
 	interface AlbumItem {
 		name: string;
@@ -83,13 +84,15 @@
 
 	{#if seeAllHref && albums.length > maxItems}
 		<div class="mt-4 flex justify-center">
-			<a
+			<Button
+				variant="ghost"
+				size="sm"
+				icon={ChevronRight}
+				iconPosition="end"
 				href={withBasePath(seeAllHref)}
-				class="btn btn-ghost btn-sm gap-1 text-xs font-medium text-base-content/60 hover:text-base-content"
 			>
 				{seeAllLabel}
-				<ChevronRight class="h-4 w-4" />
-			</a>
+			</Button>
 		</div>
 	{/if}
 </div>

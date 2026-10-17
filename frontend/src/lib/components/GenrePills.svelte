@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Globe, Shuffle } from 'lucide-svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
 		title: string;
@@ -45,14 +46,13 @@
 		<Globe class="size-5 text-primary" />
 		<h2 class="text-lg font-bold sm:text-xl">{title}</h2>
 		{#if onShuffle}
-			<button
-				class="btn btn-ghost btn-sm btn-circle ml-auto tooltip tooltip-left"
-				data-tip="Shuffle genres"
+			<IconButton
+				size="sm"
+				icon={Shuffle}
+				label="Shuffle genres"
+				class="ml-auto"
 				onclick={onShuffle}
-				aria-label="Shuffle genres"
-			>
-				<Shuffle class="size-4" />
-			</button>
+			/>
 		{/if}
 	</div>
 

@@ -45,26 +45,24 @@
 	function subtitle(city: CitySearchResult): string {
 		return [city.region, city.country].filter(Boolean).join(', ');
 	}
+	import Input from '$lib/ui/Input.svelte';
 </script>
 
 <div class="relative {className}">
-	<label class="input input-soft flex w-full items-center gap-2">
-		<Search class="h-4 w-4 shrink-0 opacity-50" aria-hidden="true" />
-		<!-- svelte-ignore a11y_autofocus -->
-		<input
-			type="text"
-			class="grow"
-			{placeholder}
-			{autofocus}
-			bind:value={input}
-			{oninput}
-			onfocus={() => (open = debounced.trim().length >= 2)}
-			aria-label="Search a city"
-		/>
-		{#if searching}
-			<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-		{/if}
-	</label>
+	<Input
+		label="Search a city"
+		icon={Search}
+		class="w-full pr-9"
+		{placeholder}
+		{autofocus}
+		bind:value={input}
+		{oninput}
+		onfocus={() => (open = debounced.trim().length >= 2)}
+	/>
+	{#if searching}
+		<span class="loading loading-spinner loading-xs absolute right-3 top-3" aria-hidden="true"
+		></span>
+	{/if}
 
 	{#if open && debounced.trim().length >= 2}
 		<ul

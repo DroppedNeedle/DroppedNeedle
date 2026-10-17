@@ -2,6 +2,8 @@
 	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
 	import { RefreshCw, Sparkles } from 'lucide-svelte';
 	import type { Snippet } from 'svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		title: string;
@@ -31,16 +33,9 @@
 			<h2 class="text-lg font-semibold text-base-content sm:text-xl">{title}</h2>
 		</div>
 		{#if onrefresh}
-			<button
-				class="btn btn-ghost btn-sm gap-1 text-xs font-medium text-base-content/60 hover:text-base-content"
-				onclick={onrefresh}
-				disabled={loading}
-			>
-				<span class:animate-spin={loading}>
-					<RefreshCw class="h-4 w-4" />
-				</span>
+			<Button variant="ghost" size="sm" icon={RefreshCw} {loading} onclick={onrefresh}>
 				Refresh
-			</button>
+			</Button>
 		{/if}
 	</div>
 
@@ -49,9 +44,9 @@
 	{:else}
 		{#if actions}{@render actions()}{/if}
 		{#if empty}
-			<div class="rounded-lg bg-base-200 p-6 text-center">
-				<p class="text-sm text-base-content/50">{emptyMessage}</p>
-			</div>
+			<Card>
+				<p class="text-center text-sm text-base-content/50">{emptyMessage}</p>
+			</Card>
 		{:else}
 			{@render children()}
 		{/if}

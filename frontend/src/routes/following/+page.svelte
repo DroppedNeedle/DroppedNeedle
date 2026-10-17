@@ -13,6 +13,8 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { KM_PER_MILE } from '$lib/constants';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	const RELEASE_STRIP = 7; // 1 large + 6 small covers
 	const RELEASE_WINDOW_DAYS = 30;
@@ -92,13 +94,16 @@
 		<div class="flex flex-col gap-5">
 			<!-- each section is one big click target: the header link stretches
 			     over the whole card via ::after; inner links sit above on z-10 -->
-			<section
+			<Card
+				as="section"
+				variant="bordered"
+				padding="md"
 				aria-label="New releases"
-				class="group/card relative rounded-2xl border border-base-300 bg-base-200/40 p-4 transition-colors hover:border-primary sm:p-5"
+				class="group/card transition-colors hover:border-primary"
 			>
 				<a
 					href={withBasePath('/following/new-releases')}
-					class="mb-3 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-2xl after:content-['']"
+					class="mb-1 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-box after:content-['']"
 				>
 					<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">
 						New releases
@@ -166,15 +171,18 @@
 						Nothing released in the last {RELEASE_WINDOW_DAYS} days - quiet month.
 					</p>
 				{/if}
-			</section>
+			</Card>
 
-			<section
+			<Card
+				as="section"
+				variant="bordered"
+				padding="md"
 				aria-label="Coming up"
-				class="group/card relative rounded-2xl border border-base-300 bg-base-200/40 p-4 transition-colors hover:border-primary sm:p-5"
+				class="group/card transition-colors hover:border-primary"
 			>
 				<a
 					href={withBasePath('/following/events')}
-					class="mb-3 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-2xl after:content-['']"
+					class="mb-1 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-box after:content-['']"
 				>
 					<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">
 						Coming up
@@ -225,14 +233,19 @@
 									<p class="truncate text-sm text-base-content/60">{gigLine(concert)}</p>
 								</div>
 								{#if outsideLink(concert.ticket_url)}
-									<a
+									<Button
+										variant="ghost"
+										size="xs"
+										pill
+										icon={ExternalLink}
+										iconPosition="end"
 										href={outsideLink(concert.ticket_url)}
 										target="_blank"
 										rel="noopener noreferrer"
-										class="btn btn-ghost btn-xs shrink-0 gap-1 rounded-full"
+										class="shrink-0"
 									>
-										Tickets <ExternalLink class="h-3 w-3" aria-hidden="true" />
-									</a>
+										Tickets
+									</Button>
 								{/if}
 							</li>
 						{/each}
@@ -254,15 +267,18 @@
 						Set up an events source to see gigs from artists you follow
 					</a>
 				{/if}
-			</section>
+			</Card>
 
-			<section
+			<Card
+				as="section"
+				variant="bordered"
+				padding="md"
 				aria-label="Your artists"
-				class="group/card relative rounded-2xl border border-base-300 bg-base-200/40 p-4 transition-colors hover:border-primary sm:p-5"
+				class="group/card transition-colors hover:border-primary"
 			>
 				<a
 					href={withBasePath('/following/artists')}
-					class="mb-3 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-2xl after:content-['']"
+					class="mb-1 flex items-baseline justify-between after:absolute after:inset-0 after:rounded-box after:content-['']"
 				>
 					<h2 class="text-sm font-semibold uppercase tracking-wider text-base-content/50">
 						Your artists <span class="text-base-content/35">({artists.length})</span>
@@ -296,7 +312,7 @@
 						</a>
 					{/if}
 				</div>
-			</section>
+			</Card>
 		</div>
 	{/if}
 </div>

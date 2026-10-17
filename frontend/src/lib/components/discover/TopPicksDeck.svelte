@@ -15,6 +15,9 @@
 	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
 	import { albumHrefOrNull, artistHrefOrNull } from '$lib/utils/entityRoutes';
 	import { libraryStore } from '$lib/stores/library';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
 		section: TopPicksSection;
@@ -74,9 +77,7 @@
 
 {#if picks.length > 0 && featured}
 	<section class="mb-6 sm:mb-8">
-		<div
-			class="relative overflow-hidden rounded-2xl border border-primary/15 bg-base-200/40 p-5 shadow-[0_4px_24px_oklch(from_var(--color-primary)_l_c_h_/_0.08)] sm:p-6"
-		>
+		<Card variant="bordered" class="relative overflow-hidden">
 			<HeroBackdrop
 				imageUrl={featured.album.mbid ? coverSrc('release-group', featured.album.mbid, 500) : null}
 				opacity={0.1}
@@ -86,7 +87,7 @@
 				position="full"
 			/>
 
-			<div class="relative mb-4 flex items-center justify-between gap-3">
+			<div class="relative mb-2 flex items-center justify-between gap-3">
 				<div class="flex items-center gap-2">
 					<span class="animate-glow-pulse rounded-lg p-1">
 						<Sparkles class="h-5 w-5 text-primary" />
@@ -111,23 +112,16 @@
 				</div>
 				{#if picks.length > 1}
 					<div class="flex items-center gap-1">
-						<button
-							class="btn btn-circle btn-ghost btn-sm"
+						<IconButton
+							size="sm"
+							icon={ChevronLeft}
+							label="Previous pick"
 							onclick={() => cycle(-1)}
-							aria-label="Previous pick"
-						>
-							<ChevronLeft class="h-4 w-4" />
-						</button>
+						/>
 						<span class="font-mono text-xs text-base-content/40">
 							{featuredIndex + 1}/{picks.length}
 						</span>
-						<button
-							class="btn btn-circle btn-ghost btn-sm"
-							onclick={() => cycle(1)}
-							aria-label="Next pick"
-						>
-							<ChevronRight class="h-4 w-4" />
-						</button>
+						<IconButton size="sm" icon={ChevronRight} label="Next pick" onclick={() => cycle(1)} />
 					</div>
 				{/if}
 			</div>
@@ -249,15 +243,16 @@
 									/>
 								{/if}
 								{#if onignore && featured.album.mbid && featured.album.artist_mbid}
-									<button
-										class="btn btn-ghost btn-sm gap-1.5 text-base-content/60"
-										onclick={() => void ignoreFeatured()}
+									<Button
+										variant="ghost"
+										size="sm"
+										icon={ThumbsDown}
 										disabled={dismissing}
 										title="Show fewer recommendations like this"
+										onclick={() => void ignoreFeatured()}
 									>
-										<ThumbsDown class="h-4 w-4" />
 										<span class="hidden sm:inline">Not for me</span>
-									</button>
+									</Button>
 								{/if}
 							</div>
 						</div>
@@ -266,7 +261,7 @@
 			{/key}
 
 			{#if picks.length > 1}
-				<div class="relative mt-5">
+				<div class="relative mt-3">
 					<HorizontalCarousel>
 						{#each picks as pick, i (pick.album.mbid ?? `${pick.album.name}-${i}`)}
 							<button
@@ -298,7 +293,7 @@
 					</HorizontalCarousel>
 				</div>
 			{/if}
-		</div>
+		</Card>
 	</section>
 {/if}
 

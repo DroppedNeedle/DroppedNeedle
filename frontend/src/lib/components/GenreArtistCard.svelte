@@ -2,6 +2,7 @@
 	import { Check } from 'lucide-svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import ArtistCardDownloadButton from '$lib/components/ArtistCardDownloadButton.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import type { HomeArtist } from '$lib/types';
 
 	interface Props {
@@ -14,18 +15,25 @@
 	let { artist, showLibraryBadge = false, onclick, href = null }: Props = $props();
 </script>
 
-<svelte:element
-	this={href ? 'a' : 'button'}
+<Card
+	padding="none"
 	href={href ?? undefined}
-	type={href ? undefined : 'button'}
 	onclick={href ? undefined : onclick}
-	onkeydown={href || !onclick ? undefined : (e: KeyboardEvent) => e.key === 'Enter' && onclick()}
+	onkeydown={href || !onclick
+		? undefined
+		: (e: KeyboardEvent) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					onclick();
+				}
+			}}
 	role={href || !onclick ? undefined : 'button'}
 	tabindex={href || !onclick ? undefined : 0}
-	class="card bg-base-200/50 hover:bg-base-200 hover:scale-[1.03] hover:shadow-lg transition-all duration-200 group relative {href ||
-	onclick
-		? 'cursor-pointer'
-		: 'cursor-default'}"
+	class="group {href
+		? ''
+		: onclick
+			? 'cursor-pointer transition-colors hover:bg-base-300 focus-visible:outline-2 focus-visible:outline-primary'
+			: 'cursor-default'}"
 >
 	{#if artist.mbid}
 		<ArtistCardDownloadButton artistName={artist.name} artistMbid={artist.mbid} />
@@ -38,7 +46,7 @@
 			</div>
 		{/if}
 	</figure>
-	<div class="card-body p-3 items-center text-center">
+	<div class="flex flex-col items-center gap-2 px-3 pt-1 pb-3 text-center">
 		<h3 class="font-semibold text-sm line-clamp-1">{artist.name}</h3>
 		{#if artist.listen_count}
 			<p class="text-xs text-base-content/50">
@@ -46,4 +54,4 @@
 			</p>
 		{/if}
 	</div>
-</svelte:element>
+</Card>

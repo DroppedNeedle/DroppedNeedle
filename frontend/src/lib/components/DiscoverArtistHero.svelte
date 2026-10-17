@@ -54,8 +54,7 @@
 			</h2>
 			{#if entry.listen_count > 0}
 				<span
-					class="inline-flex items-center gap-1.5 shrink-0 rounded-full px-3 py-1 text-xs font-medium"
-					style="background: rgb(var(--brand-discover) / 0.12); color: rgb(var(--brand-discover));"
+					class="inline-flex items-center gap-1.5 shrink-0 rounded-full px-3 py-1 text-xs font-medium bg-[rgb(var(--brand-discover)/0.12)] text-[rgb(var(--brand-discover))]"
 				>
 					<Headphones class="w-3 h-3" />
 					{entry.listen_count} listens this week

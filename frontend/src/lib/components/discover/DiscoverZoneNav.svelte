@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import Button from '$lib/ui/Button.svelte';
 
 	interface Zone {
 		id: string;
@@ -30,12 +31,15 @@
 		<div class="flex items-center gap-2">
 			<div class="flex flex-1 gap-1.5 overflow-x-auto">
 				{#each zones as zone (zone.id)}
-					<button
-						class="btn btn-ghost btn-xs shrink-0 whitespace-nowrap rounded-full border border-base-content/10 font-medium text-base-content/60 hover:border-primary/30 hover:text-primary"
+					<Button
+						variant="ghost"
+						size="xs"
+						pill
+						class="shrink-0 whitespace-nowrap"
 						onclick={() => jump(zone.id)}
 					>
 						{zone.label}
-					</button>
+					</Button>
 				{/each}
 			</div>
 			{#if action}

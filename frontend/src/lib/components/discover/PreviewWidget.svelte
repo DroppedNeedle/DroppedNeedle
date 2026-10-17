@@ -34,6 +34,7 @@
 		}
 		wasPlaying = playing;
 	});
+	import IconButton from '$lib/ui/IconButton.svelte';
 </script>
 
 {#if visible && entry}
@@ -113,37 +114,25 @@
 
 			<!-- controls -->
 			<div class="flex shrink-0 items-center gap-0.5">
-				<button
-					class="btn btn-circle btn-secondary btn-sm"
-					onclick={() => deckSampler.togglePlay()}
-					aria-label={deckSampler.status === 'paused' ? 'Resume preview' : 'Pause preview'}
+				<IconButton
+					variant="accent"
+					size="sm"
+					icon={deckSampler.status === 'paused' ? Play : Pause}
+					label={deckSampler.status === 'paused' ? 'Resume preview' : 'Pause preview'}
+					class="[&_svg]:fill-current"
 					disabled={deckSampler.status === 'loading'}
-				>
-					{#if deckSampler.status === 'paused'}
-						<Play class="h-4 w-4" fill="currentColor" />
-					{:else}
-						<Pause class="h-4 w-4" fill="currentColor" />
-					{/if}
-				</button>
+					onclick={() => deckSampler.togglePlay()}
+				/>
 				{#if deckSampler.hasNext}
-					<button
-						class="btn btn-circle btn-ghost btn-sm"
-						onclick={() => deckSampler.next()}
-						aria-label="Skip to next album"
-						title="Skip to next album"
+					<IconButton
+						size="sm"
+						icon={SkipForward}
+						label="Skip to next album"
 						disabled={deckSampler.status === 'loading'}
-					>
-						<SkipForward class="h-4 w-4" />
-					</button>
+						onclick={() => deckSampler.next()}
+					/>
 				{/if}
-				<button
-					class="btn btn-circle btn-ghost btn-sm"
-					onclick={() => deckSampler.stop()}
-					aria-label="Close preview"
-					title="Stop preview"
-				>
-					<X class="h-4 w-4" />
-				</button>
+				<IconButton size="sm" icon={X} label="Close preview" onclick={() => deckSampler.stop()} />
 			</div>
 		</div>
 

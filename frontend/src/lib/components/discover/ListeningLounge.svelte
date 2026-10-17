@@ -98,13 +98,17 @@
 
 	const RING_R = 15;
 	const RING_C = 2 * Math.PI * RING_R;
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 </script>
 
 {#if pool.length > 0}
-	<section
-		class="relative overflow-hidden rounded-2xl border border-secondary/15 bg-gradient-to-br from-secondary/8 via-base-200/50 to-primary/6 p-5 shadow-[0_4px_24px_oklch(from_var(--color-secondary)_l_c_h_/_0.08)] sm:p-6"
+	<Card
+		as="section"
+		variant="bordered"
+		class="relative overflow-hidden bg-gradient-to-br from-secondary/8 via-base-200/50 to-primary/6"
 	>
-		<div class="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+		<div class="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
 			<div class="flex items-center gap-2">
 				<span class="animate-glow-pulse rounded-lg p-1">
 					<Headphones class="h-5 w-5 text-secondary" />
@@ -121,10 +125,15 @@
 				{#if updating}
 					<LiveUpdatingBadge label="Updating lounge" className="px-2 py-0.5" />
 				{/if}
-				<button class="btn btn-secondary btn-sm gap-2" onclick={playAll}>
-					<Play class="h-4 w-4" fill="currentColor" />
+				<Button
+					variant="accent"
+					size="sm"
+					icon={Play}
+					class="[&_svg]:fill-current"
+					onclick={playAll}
+				>
 					Play all
-				</button>
+				</Button>
 				<label class="flex items-center gap-1.5" title="Preview volume">
 					<Volume2 class="h-3.5 w-3.5 shrink-0 text-base-content/40" />
 					<input
@@ -219,7 +228,7 @@
 
 		{#if activeAlbum}
 			<div
-				class="mt-3 flex items-center gap-3 rounded-xl border border-secondary/15 bg-base-100/60 px-4 py-2 backdrop-blur-sm"
+				class="mt-1 flex items-center gap-3 rounded-xl border border-secondary/15 bg-base-100/60 px-4 py-2 backdrop-blur-sm"
 			>
 				<span class="text-secondary">♪</span>
 				<p class="min-w-0 flex-1 truncate text-sm">
@@ -234,22 +243,18 @@
 					{/if}
 				</p>
 				{#if $integrationStore.download_client && !activeAlbum.in_library}
-					<button
-						class="btn btn-secondary btn-xs gap-1.5"
+					<Button
+						variant="outline"
+						size="xs"
+						icon={activeRequested ? Check : Download}
+						loading={requesting}
+						disabled={activeRequested}
 						onclick={requestActive}
-						disabled={requesting || activeRequested}
 					>
-						{#if requesting}
-							<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
-						{:else if activeRequested}
-							<Check class="h-3.5 w-3.5" />
-						{:else}
-							<Download class="h-3.5 w-3.5" />
-						{/if}
 						{activeRequested ? 'Requested' : 'Request'}
-					</button>
+					</Button>
 				{/if}
 			</div>
 		{/if}
-	</section>
+	</Card>
 {/if}

@@ -6,6 +6,9 @@
 	import { getTimeRangeFallbackPath } from '$lib/utils/timeRangeFallback';
 	import { ChevronLeft, ChevronDown, CircleAlert } from 'lucide-svelte';
 	import type { ComponentType } from 'svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import {
 		getChartOverviewQuery,
 		getChartRangeQuery,
@@ -96,13 +99,7 @@
 
 <div class="container mx-auto p-4 md:p-6 lg:p-8">
 	<div class="mb-6 flex items-center gap-4">
-		<button
-			class="btn btn-circle btn-ghost"
-			onclick={() => goto(withBasePath('/'))}
-			aria-label="Back to home"
-		>
-			<ChevronLeft class="h-6 w-6" />
-		</button>
+		<IconButton icon={ChevronLeft} label="Back to home" onclick={() => goto(withBasePath('/'))} />
 		<div>
 			<h1 class="text-3xl font-bold">{title}</h1>
 			<p class="mt-1 text-sm text-base-content/70">{subtitle}</p>
@@ -123,7 +120,7 @@
 			{/if}
 			<h2 class="mb-2 text-2xl font-semibold">Unable to load {itemType}s</h2>
 			<p class="mb-4 text-base-content/70">Please try again later.</p>
-			<button class="btn btn-primary" onclick={loadOverview}>Retry</button>
+			<Button variant="primary" onclick={loadOverview}>Retry</Button>
 		</div>
 	{:else}
 		<div class="space-y-8">
@@ -132,9 +129,9 @@
 				{@const items = getItemsForRange(range.key)}
 				{@const isExpanded = expandedRange === range.key}
 
-				<section class="rounded-2xl bg-base-200/50 p-4 sm:p-6">
+				<Card as="section" padding="md">
 					<button
-						class="mb-4 flex w-full items-center justify-between text-left"
+						class="mb-2 flex w-full items-center justify-between text-left"
 						onclick={() => expandRange(range.key)}
 						aria-label="{isExpanded ? 'Collapse' : 'Expand'} {range.label}"
 					>
@@ -157,7 +154,7 @@
 									href={featuredHref}
 									rank={1}
 									variant="featured"
-									className="overflow-hidden bg-base-100 shadow-lg transition-all hover:shadow-xl lg:col-span-1"
+									className="self-start overflow-hidden lg:col-span-1"
 									onFallbackClick={handleItemClick}
 								/>
 							{/if}
@@ -172,7 +169,7 @@
 										href={itemHref}
 										{rank}
 										variant="overview"
-										className="bg-base-100 shadow-sm transition-all hover:scale-105 hover:shadow-lg active:scale-95"
+										className=""
 										onFallbackClick={handleItemClick}
 									/>
 								{/each}
@@ -193,7 +190,7 @@
 									href={itemHref}
 									{rank}
 									variant="expanded"
-									className="bg-base-100 shadow-sm transition-all hover:scale-105 hover:shadow-lg active:scale-95"
+									className=""
 									onFallbackClick={handleItemClick}
 								/>
 							{/each}
@@ -201,20 +198,16 @@
 
 						{#if rangeQuery.hasNextPage}
 							<div class="mt-6 flex justify-center">
-								<button class="btn btn-outline btn-wide" onclick={loadMore} disabled={loadingMore}>
-									{#if loadingMore}
-										<span class="loading loading-spinner loading-sm"></span>
-									{:else}
-										Load More
-									{/if}
-								</button>
+								<Button variant="outline" loading={loadingMore} class="w-64" onclick={loadMore}>
+									Load More
+								</Button>
 							</div>
 							{#if paginationError}
 								<p class="mt-2 text-center text-sm text-error">{paginationError}</p>
 							{/if}
 						{/if}
 					{/if}
-				</section>
+				</Card>
 			{/each}
 		</div>
 	{/if}

@@ -1,7 +1,10 @@
 <script lang="ts">
-	import { Check, Download, LoaderCircle, X } from 'lucide-svelte';
+	import { Check, Download } from 'lucide-svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
+	import TextField from '$lib/ui/TextField.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { libraryStore } from '$lib/stores/library';
 	import { createDiscoveryBatchV3 } from '$lib/queries/discover/DiscoverV3Mutations.svelte';
@@ -16,7 +19,6 @@
 
 	let { open = $bindable(false), sectionTitle, sectionKey, albums }: Props = $props();
 
-	let dialogEl: HTMLDialogElement | undefined = $state();
 	let name = $state('');
 	let deselected = new SvelteSet<string>();
 	let submitting = $state(false);
@@ -32,7 +34,6 @@
 	const needsApproval = $derived(authStore.user?.role === 'user');
 
 	$effect(() => {
-		if (!dialogEl) return;
 		if (open) {
 			name = `${sectionTitle} - ${new Date().toLocaleDateString(undefined, {
 				month: 'short',
@@ -42,9 +43,6 @@
 			for (const album of eligible.filter((item) => item.in_library || isRequested(item))) {
 				deselected.add(album.mbid!);
 			}
-			dialogEl.showModal();
-		} else if (dialogEl.open) {
-			dialogEl.close();
 		}
 	});
 
@@ -80,28 +78,17 @@
 	}
 </script>
 
-<dialog bind:this={dialogEl} class="modal" onclose={() => (open = false)}>
-	<div class="modal-box max-w-xl">
-		<div class="mb-1 flex items-start justify-between gap-3">
-			<h3 class="text-lg font-bold">Download this section</h3>
-			<button class="btn btn-circle btn-ghost btn-sm" onclick={() => (open = false)}>
-				<X class="h-4 w-4" />
-			</button>
-		</div>
-		<p class="mb-4 text-sm text-base-content/60">
-			Requests each selected album using the same rules as an individual request.
-			{#if needsApproval}These will wait for admin approval.{/if}
-			You can remove the batch later from Downloads.
-		</p>
-
-		<label class="form-control mb-4 w-full">
-			<span
-				class="label-text mb-1 text-xs font-semibold uppercase tracking-wide text-base-content/50"
-			>
-				Batch name
-			</span>
-			<input type="text" class="input input-bordered input-sm w-full" bind:value={name} />
-		</label>
+<Modal
+	bind:open
+	title="Download this section"
+	description={needsApproval
+		? 'Requests each selected album using the same rules as an individual request. These will wait for admin approval. You can remove the batch later from Downloads.'
+		: 'Requests each selected album using the same rules as an individual request. You can remove the batch later from Downloads.'}
+	size="lg"
+	closeButton
+>
+	<div class="space-y-4">
+		<TextField label="Batch name" bind:value={name} />
 
 		<div class="max-h-80 space-y-1 overflow-y-auto pr-1">
 			{#each eligible as album (album.mbid)}
@@ -113,7 +100,7 @@
 				>
 					<input
 						type="checkbox"
-						class="checkbox checkbox-primary checkbox-sm"
+						class="checkbox checkbox-sm"
 						checked={!deselected.has(album.mbid!)}
 						disabled={album.in_library || isRequested(album)}
 						onchange={() => toggle(album.mbid!)}
@@ -142,24 +129,19 @@
 				</label>
 			{/each}
 		</div>
-
-		<div class="modal-action">
-			<button class="btn btn-ghost btn-sm" onclick={() => (open = false)}>Cancel</button>
-			<button
-				class="btn btn-primary btn-sm gap-2"
-				disabled={submitting || selectedCount === 0}
-				onclick={submit}
-			>
-				{#if submitting}
-					<LoaderCircle class="h-4 w-4 animate-spin" />
-				{:else}
-					<Download class="h-4 w-4" />
-				{/if}
-				Request {selectedCount} album{selectedCount === 1 ? '' : 's'}
-			</button>
-		</div>
 	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button>close</button>
-	</form>
-</dialog>
+
+	{#snippet actions()}
+		<Button variant="ghost" size="sm" onclick={() => (open = false)}>Cancel</Button>
+		<Button
+			variant="primary"
+			size="sm"
+			icon={Download}
+			loading={submitting}
+			disabled={selectedCount === 0}
+			onclick={submit}
+		>
+			Request {selectedCount} album{selectedCount === 1 ? '' : 's'}
+		</Button>
+	{/snippet}
+</Modal>

@@ -6,6 +6,7 @@
 	import { createUnfollowMutation } from '$lib/queries/following/FollowMutations.svelte';
 	import type { FollowedArtist } from '$lib/queries/following/types';
 	import { withBasePath } from '$lib/utils/basePath';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	const query = getFollowedArtistsQuery();
 	const artists = $derived(query.data ?? []);
@@ -26,13 +27,12 @@
 
 <div class="mx-auto w-full max-w-6xl px-2 py-4 sm:px-4 sm:py-8 lg:px-8">
 	<div class="mb-6 flex items-center gap-3">
-		<a
+		<IconButton
+			size="sm"
+			icon={ArrowLeft}
+			label="Back to Following"
 			href={withBasePath('/following')}
-			class="btn btn-ghost btn-sm btn-circle"
-			aria-label="Back to Following"
-		>
-			<ArrowLeft class="h-5 w-5" />
-		</a>
+		/>
 		<Heart class="h-6 w-6 text-primary" aria-hidden="true" />
 		<h1 class="text-2xl font-bold sm:text-3xl">Your Artists</h1>
 		<div class="flex-1"></div>
@@ -65,15 +65,15 @@
 								className="w-full aspect-square object-cover transition-transform duration-300 group-hover:scale-105"
 							/>
 						</a>
-						<button
-							class="btn btn-circle btn-xs btn-error absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100"
-							onclick={() => unfollow.mutate(a.mbid)}
+						<IconButton
+							variant="danger"
+							size="xs"
+							icon={X}
+							label="Unfollow {a.name}"
 							disabled={unfollow.isPending}
-							aria-label="Unfollow {a.name}"
-							title="Unfollow"
-						>
-							<X class="h-3.5 w-3.5" />
-						</button>
+							class="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+							onclick={() => unfollow.mutate(a.mbid)}
+						/>
 					</div>
 					<a href={withBasePath(`/artist/${a.mbid}`)} class="truncate font-semibold hover:underline"
 						>{a.name}</a

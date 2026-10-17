@@ -3,6 +3,7 @@
 	import { formatDurationSec } from '$lib/utils/formatting';
 	import GenrePillFilter from './GenrePillFilter.svelte';
 	import type { QueueItem } from '$lib/player/types';
+	import Button from '$lib/ui/Button.svelte';
 
 	export type BrowseTrack = {
 		id: string;
@@ -99,8 +100,8 @@
 		</div>
 	{:else if selectedGenres.length > 0 && songs.length > 0}
 		<div class="flex items-center gap-2 mb-2">
-			<button class="btn btn-primary btn-sm" onclick={() => playSongs()}>Play All</button>
-			<button class="btn btn-ghost btn-sm" onclick={shuffleSongs}>Shuffle</button>
+			<Button variant="primary" size="sm" onclick={() => playSongs()}>Play All</Button>
+			<Button variant="ghost" size="sm" onclick={shuffleSongs}>Shuffle</Button>
 		</div>
 		<div class="max-h-[32rem] overflow-y-auto overflow-x-auto rounded-lg">
 			<table class="table table-sm">
@@ -115,7 +116,17 @@
 				</thead>
 				<tbody>
 					{#each songs as track, i (track.id + '-' + i)}
-						<tr class="hover cursor-pointer" onclick={() => playSongs(i)}>
+						<tr
+							class="hover cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+							onclick={() => playSongs(i)}
+							onkeydown={(e) =>
+								e.target === e.currentTarget &&
+								(e.key === 'Enter' || e.key === ' ') &&
+								(e.preventDefault(), playSongs(i))}
+							tabindex="0"
+							role="button"
+							aria-label="Play {track.title}"
+						>
 							<td class="text-base-content/50">{i + 1}</td>
 							<td class="font-medium">{track.title}</td>
 							<td class="text-base-content/60">{track.artist_name}</td>
@@ -130,13 +141,7 @@
 		</div>
 		{#if songs.length >= offset + PAGE_SIZE}
 			<div class="flex justify-center">
-				<button class="btn btn-ghost btn-sm" onclick={loadMore} disabled={loading}>
-					{#if loading}
-						<span class="loading loading-spinner loading-xs"></span>
-					{:else}
-						Show more
-					{/if}
-				</button>
+				<Button variant="ghost" size="sm" {loading} onclick={loadMore}>Show more</Button>
 			</div>
 		{/if}
 	{:else if selectedGenres.length > 0}

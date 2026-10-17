@@ -20,6 +20,7 @@
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import LiveUpdatingBadge from '$lib/components/LiveUpdatingBadge.svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import { isDismissed } from '$lib/utils/dismissedPrompts';
 	import { withBasePath } from '$lib/utils/basePath';
 	import {
@@ -260,14 +261,15 @@
 				<svelte:boundary>
 					<DiscoverZoneNav {zones}>
 						{#snippet action()}
-							<a
+							<Button
+								variant="ghost"
+								size="xs"
+								icon={SlidersHorizontal}
 								href={withBasePath('/settings?tab=discover')}
-								class="btn btn-ghost btn-xs gap-1.5 text-base-content/60 hover:text-primary"
 								title="Choose which sections appear here"
 							>
-								<SlidersHorizontal class="h-3.5 w-3.5" />
 								<span class="hidden sm:inline">Customise</span>
-							</a>
+							</Button>
 						{/snippet}
 					</DiscoverZoneNav>
 					<div class="space-y-10 sm:space-y-12" class:is-refreshing={isUpdatingInBackground}>
@@ -538,7 +540,7 @@
 									Connect a music service to get recommendations. The more you connect, the better
 									they get.
 								</p>
-								<a href={withBasePath('/settings')} class="btn btn-primary">Connect Services</a>
+								<Button variant="primary" href={withBasePath('/settings')}>Connect Services</Button>
 							</div>
 						{:else if !hasContent && degradedSources.length > 0}
 							<div class="flex flex-col items-center justify-center py-12 sm:py-16">
@@ -551,16 +553,9 @@
 									{degradedVerb} temporarily unavailable, so we couldn't build recommendations. We'll
 									keep retrying in the background - your page will fill in as soon as it recovers.
 								</p>
-								<button
-									class="btn btn-primary"
-									onclick={() => void handleRefresh()}
-									disabled={refreshing}
-								>
-									{#if refreshing}
-										<span class="loading loading-spinner loading-sm"></span>
-									{/if}
+								<Button variant="primary" loading={refreshing} onclick={() => void handleRefresh()}>
 									Retry Now
-								</button>
+								</Button>
 							</div>
 						{:else if !hasContent && !queueEnabled}
 							<div class="flex flex-col items-center justify-center py-12 sm:py-16">
@@ -573,10 +568,13 @@
 								<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
 									Turn some discovery sections back on to fill this page.
 								</p>
-								<a href={withBasePath('/settings?tab=discover')} class="btn btn-primary gap-2">
-									<SlidersHorizontal class="h-4 w-4" />
+								<Button
+									variant="primary"
+									icon={SlidersHorizontal}
+									href={withBasePath('/settings?tab=discover')}
+								>
 									Customise Sections
-								</a>
+								</Button>
 							</div>
 						{:else if !hasContent}
 							<div class="flex flex-col items-center justify-center py-12 sm:py-16">
@@ -585,16 +583,9 @@
 								<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
 									Your recommendations are still loading. Try refreshing.
 								</p>
-								<button
-									class="btn btn-primary"
-									onclick={() => void handleRefresh()}
-									disabled={refreshing}
-								>
-									{#if refreshing}
-										<span class="loading loading-spinner loading-sm"></span>
-									{/if}
+								<Button variant="primary" loading={refreshing} onclick={() => void handleRefresh()}>
 									Refresh Recommendations
-								</button>
+								</Button>
 							</div>
 						{/if}
 					</div>
@@ -606,7 +597,7 @@
 							<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
 								Part of the Discover page failed to render. The rest of the app still works.
 							</p>
-							<button class="btn btn-primary" onclick={() => reset()}>Try Again</button>
+							<Button variant="primary" onclick={() => reset()}>Try Again</Button>
 						</div>
 					{/snippet}
 				</svelte:boundary>

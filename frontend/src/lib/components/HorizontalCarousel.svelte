@@ -48,17 +48,19 @@
 			observer.disconnect();
 		};
 	});
+	import IconButton from '$lib/ui/IconButton.svelte';
 </script>
 
 <div class="relative group/carousel">
 	{#if showLeftArrow}
-		<button
-			class="absolute left-0 top-1/2 z-10 btn btn-circle btn-sm bg-base-100/90 shadow-lg animate-slide-in-left hidden sm:flex"
+		<IconButton
+			variant="neutral"
+			size="sm"
+			icon={ChevronLeft}
+			label="Scroll left"
+			class="absolute left-0 top-1/2 z-10 hidden animate-slide-in-left sm:flex"
 			onclick={scrollLeft}
-			aria-label="Scroll left"
-		>
-			<ChevronLeft class="w-5 h-5" />
-		</button>
+		/>
 	{/if}
 
 	<div
@@ -70,12 +72,13 @@
 	</div>
 
 	{#if showRightArrow}
-		<button
-			class="absolute right-0 top-1/2 z-10 btn btn-circle btn-sm bg-base-100/90 shadow-lg animate-slide-in-right hidden sm:flex"
+		<IconButton
+			variant="neutral"
+			size="sm"
+			icon={ChevronRight}
+			label="Scroll right"
+			class="absolute right-0 top-1/2 z-10 hidden animate-slide-in-right sm:flex"
 			onclick={scrollRight}
-			aria-label="Scroll right"
-		>
-			<ChevronRight class="w-5 h-5" />
-		</button>
+		/>
 	{/if}
 </div>

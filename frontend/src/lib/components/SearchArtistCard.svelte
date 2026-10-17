@@ -6,6 +6,7 @@
 	import { Music2 } from 'lucide-svelte';
 	import ArtistImage from './ArtistImage.svelte';
 	import ArtistCardDownloadButton from './ArtistCardDownloadButton.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		artist: Artist;
@@ -18,11 +19,13 @@
 	let listenTitle = $derived(getListenTitle(enrichmentSource, 'artist'));
 </script>
 
-<a
+<Card
+	variant="raised"
+	padding="none"
 	href={artistHref(artist.musicbrainz_id)}
 	onpointerenter={artist.local_id === artist.musicbrainz_id ? undefined : onenrichmentrequest}
 	onfocus={artist.local_id === artist.musicbrainz_id ? undefined : onenrichmentrequest}
-	class="card bg-base-100 w-full shadow-sm shrink-0 cursor-pointer transition-all hover:scale-105 hover:glow-primary group relative"
+	class="group w-full shrink-0"
 >
 	{#if !artist.local_id || artist.local_id !== artist.musicbrainz_id}
 		<ArtistCardDownloadButton artistName={artist.title} artistMbid={artist.musicbrainz_id} />
@@ -40,7 +43,7 @@
 		/>
 	</figure>
 
-	<div class="card-body p-3 pt-2 items-center text-center gap-0.5">
+	<div class="flex flex-col items-center gap-0.5 px-3 pb-3 text-center">
 		<h2 class="font-semibold text-sm line-clamp-1">{artist.title}</h2>
 
 		<p class="text-xs text-base-content/60 line-clamp-1 min-h-[1rem]">
@@ -55,17 +58,12 @@
 			{/if}
 			{#if artist.listen_count != null}
 				{#if enrichmentSource === 'lastfm'}
-					<span
-						class="badge badge-sm border-0"
-						style="background-color: rgb(var(--brand-lastfm) / 0.15); color: rgb(var(--brand-lastfm));"
-						title={listenTitle}
-					>
+					<span class="badge badge-sm border-0 bg-lastfm/15 text-lastfm" title={listenTitle}>
 						Last.fm {formatListenCount(artist.listen_count, true)}
 					</span>
 				{:else if enrichmentSource === 'listenbrainz'}
 					<span
-						class="badge badge-sm border-0"
-						style="background-color: rgb(var(--brand-listenbrainz) / 0.15); color: rgb(var(--brand-listenbrainz));"
+						class="badge badge-sm border-0 bg-listenbrainz/15 text-listenbrainz"
 						title={listenTitle}
 					>
 						LB {formatListenCount(artist.listen_count, true)}
@@ -79,4 +77,4 @@
 			{/if}
 		</div>
 	</div>
-</a>
+</Card>

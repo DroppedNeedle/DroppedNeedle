@@ -4,6 +4,7 @@
 	import RadioPlayButton from '$lib/components/discover/RadioPlayButton.svelte';
 	import { integrationStore } from '$lib/stores/integration';
 	import { libraryStore } from '$lib/stores/library';
+	import Button from '$lib/ui/Button.svelte';
 	import type { HomeAlbum, HomeSection, RadioPlanRequest } from '$lib/types';
 
 	interface Props {
@@ -30,15 +31,15 @@
 <div class="flex flex-wrap items-center gap-2">
 	<RadioPlayButton {seed} size="sm" label="Play all" />
 	{#if canDownload}
-		<button
-			type="button"
-			class="btn btn-outline btn-sm gap-2"
-			onclick={() => (batchModalOpen = true)}
+		<Button
+			variant="outline"
+			size="sm"
+			icon={Download}
 			title="Request every album you don't own"
+			onclick={() => (batchModalOpen = true)}
 		>
-			<Download class="h-4 w-4" />
 			Download all
-		</button>
+		</Button>
 	{/if}
 </div>
 

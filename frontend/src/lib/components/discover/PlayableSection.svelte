@@ -5,6 +5,7 @@
 	import DiscoveryBatchModal from '$lib/components/discover/DiscoveryBatchModal.svelte';
 	import { integrationStore } from '$lib/stores/integration';
 	import { SvelteSet } from 'svelte/reactivity';
+	import Button from '$lib/ui/Button.svelte';
 	import type { HomeAlbum, HomeSection as HomeSectionType, RadioSeedItem } from '$lib/types';
 
 	interface Props {
@@ -55,14 +56,15 @@
 				/>
 			{/if}
 			{#if showDownloadAll}
-				<button
-					class="btn btn-ghost btn-xs gap-1 text-base-content/60"
-					onclick={() => (batchModalOpen = true)}
+				<Button
+					variant="ghost"
+					size="xs"
+					icon={Download}
 					title="Request every album in this section as a removable batch"
+					onclick={() => (batchModalOpen = true)}
 				>
-					<Download class="h-3.5 w-3.5" />
 					All
-				</button>
+				</Button>
 			{/if}
 		</div>
 	{/snippet}

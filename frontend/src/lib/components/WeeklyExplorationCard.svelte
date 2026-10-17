@@ -1,12 +1,13 @@
 <script lang="ts">
 	import type { WeeklyExplorationTrack } from '$lib/types';
-	import { getApiUrl } from '$lib/api/api-utils';
 	import { Music2, Disc3 } from 'lucide-svelte';
 	import { albumHrefOrNull, artistHrefOrNull } from '$lib/utils/entityRoutes';
 	import { integrationStore } from '$lib/stores/integration';
 	import { libraryStore } from '$lib/stores/library';
 	import AlbumRequestButton from './AlbumRequestButton.svelte';
 	import SampleButton from './discover/SampleButton.svelte';
+	import AlbumImage from './AlbumImage.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		track: WeeklyExplorationTrack;
@@ -26,126 +27,119 @@
 		const sec = totalSec % 60;
 		return `${min}:${sec.toString().padStart(2, '0')}`;
 	}
-
-	let imgError = $state(false);
 </script>
 
-<div
-	class="flex w-44 shrink-0 flex-col rounded-xl bg-base-100 shadow-sm
-	transition-all duration-200 hover:glow-primary-soft"
->
-	{#if albumHref}
-		<a
-			href={albumHref}
-			class="group relative aspect-square w-full overflow-hidden rounded-t-xl bg-base-200"
-		>
-			{#if track.cover_url && !imgError}
-				<img
-					src={getApiUrl(track.cover_url)}
-					alt={track.album_name || track.title}
-					class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-					loading="lazy"
-					onerror={() => {
-						imgError = true;
-					}}
-				/>
-			{:else}
-				<div class="flex h-full w-full items-center justify-center">
-					<Disc3 class="h-10 w-10 text-base-content/20" />
-				</div>
-			{/if}
-
-			{#if track.duration_ms}
-				<span
-					class="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px]
-					font-medium text-white/90 backdrop-blur-sm"
-				>
-					{formatDuration(track.duration_ms)}
-				</span>
-			{/if}
-		</a>
-	{:else}
-		<div class="relative aspect-square w-full overflow-hidden rounded-t-xl bg-base-200">
-			{#if track.cover_url && !imgError}
-				<img
-					src={getApiUrl(track.cover_url)}
-					alt={track.album_name || track.title}
-					class="h-full w-full object-cover"
-					loading="lazy"
-					onerror={() => {
-						imgError = true;
-					}}
-				/>
-			{:else}
-				<div class="flex h-full w-full items-center justify-center">
-					<Disc3 class="h-10 w-10 text-base-content/20" />
-				</div>
-			{/if}
-
-			{#if track.duration_ms}
-				<span
-					class="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px]
-					font-medium text-white/90 backdrop-blur-sm"
-				>
-					{formatDuration(track.duration_ms)}
-				</span>
-			{/if}
-		</div>
-	{/if}
-
-	<div class="flex flex-1 flex-col gap-0.5 p-2.5 pb-1.5">
-		<h3 class="text-sm font-semibold leading-tight line-clamp-1 text-base-content">
-			{track.title}
-		</h3>
-		{#if artistHref}
+<Card variant="raised" padding="none" class="w-44 shrink-0 overflow-hidden">
+	<div class="flex flex-1 flex-col">
+		{#if albumHref}
 			<a
-				href={artistHref}
-				class="text-xs text-base-content/60 line-clamp-1 hover:text-primary transition-colors"
+				href={albumHref}
+				class="group relative aspect-square w-full overflow-hidden rounded-t-xl bg-base-200"
 			>
-				{track.artist_name}
+				{#if track.cover_url}
+					<AlbumImage
+						customUrl={track.cover_url}
+						alt={track.album_name || track.title}
+						size="full"
+						rounded="none"
+						className="h-full w-full transition-transform duration-300 group-hover:scale-105"
+					/>
+				{:else}
+					<div class="flex h-full w-full items-center justify-center">
+						<Disc3 class="h-10 w-10 text-base-content/20" />
+					</div>
+				{/if}
+
+				{#if track.duration_ms}
+					<span
+						class="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px]
+					font-medium text-white/90 backdrop-blur-sm"
+					>
+						{formatDuration(track.duration_ms)}
+					</span>
+				{/if}
 			</a>
 		{:else}
-			<p class="text-xs text-base-content/60 line-clamp-1">{track.artist_name}</p>
+			<div class="relative aspect-square w-full overflow-hidden rounded-t-xl bg-base-200">
+				{#if track.cover_url}
+					<AlbumImage
+						customUrl={track.cover_url}
+						alt={track.album_name || track.title}
+						size="full"
+						rounded="none"
+						className="h-full w-full"
+					/>
+				{:else}
+					<div class="flex h-full w-full items-center justify-center">
+						<Disc3 class="h-10 w-10 text-base-content/20" />
+					</div>
+				{/if}
+
+				{#if track.duration_ms}
+					<span
+						class="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px]
+					font-medium text-white/90 backdrop-blur-sm"
+					>
+						{formatDuration(track.duration_ms)}
+					</span>
+				{/if}
+			</div>
 		{/if}
-		{#if track.album_name}
-			{#if albumHref}
+
+		<div class="flex flex-1 flex-col gap-0.5 p-2.5 pb-1.5">
+			<h3 class="text-sm font-semibold leading-tight line-clamp-1 text-base-content">
+				{track.title}
+			</h3>
+			{#if artistHref}
 				<a
-					href={albumHref}
-					class="text-[11px] text-base-content/40 line-clamp-1 flex items-center gap-1
-						hover:text-primary transition-colors"
+					href={artistHref}
+					class="text-xs text-base-content/60 line-clamp-1 hover:text-primary transition-colors"
 				>
-					<Music2 class="h-2.5 w-2.5 shrink-0" />
-					{track.album_name}
+					{track.artist_name}
 				</a>
 			{:else}
-				<p class="text-[11px] text-base-content/40 line-clamp-1 flex items-center gap-1">
-					<Music2 class="h-2.5 w-2.5 shrink-0" />
-					{track.album_name}
-				</p>
+				<p class="text-xs text-base-content/60 line-clamp-1">{track.artist_name}</p>
 			{/if}
-		{/if}
-	</div>
+			{#if track.album_name}
+				{#if albumHref}
+					<a
+						href={albumHref}
+						class="text-[11px] text-base-content/40 line-clamp-1 flex items-center gap-1
+						hover:text-primary transition-colors"
+					>
+						<Music2 class="h-2.5 w-2.5 shrink-0" />
+						{track.album_name}
+					</a>
+				{:else}
+					<p class="text-[11px] text-base-content/40 line-clamp-1 flex items-center gap-1">
+						<Music2 class="h-2.5 w-2.5 shrink-0" />
+						{track.album_name}
+					</p>
+				{/if}
+			{/if}
+		</div>
 
-	<div class="mt-auto flex items-center justify-center gap-3 px-2 pb-1 pt-0.5">
-		{#if albumMbid && $integrationStore.download_client && !isRequested}
-			<AlbumRequestButton
-				mbid={albumMbid}
-				artistName={track.artist_name}
-				albumName={track.album_name || track.title}
-				artistMbid={track.artist_mbid ?? undefined}
+		<div class="mt-auto flex items-center justify-center gap-3 px-2 pb-1 pt-0.5">
+			{#if albumMbid && $integrationStore.download_client && !isRequested}
+				<AlbumRequestButton
+					mbid={albumMbid}
+					artistName={track.artist_name}
+					albumName={track.album_name || track.title}
+					artistMbid={track.artist_mbid ?? undefined}
+				/>
+			{/if}
+			<SampleButton
+				sampleKey={`track:${track.artist_name}|${track.title}`}
+				artist={track.artist_name}
+				title={track.title}
+				kind="track"
+				size="md"
+				albumMbid={track.release_group_mbid}
+				artistMbid={track.artist_mbid}
+				coverUrl={track.cover_url}
 			/>
-		{/if}
-		<SampleButton
-			sampleKey={`track:${track.artist_name}|${track.title}`}
-			artist={track.artist_name}
-			title={track.title}
-			kind="track"
-			size="md"
-			albumMbid={track.release_group_mbid}
-			artistMbid={track.artist_mbid}
-			coverUrl={track.cover_url}
-		/>
-	</div>
+		</div>
 
-	<div class="pb-1.5"></div>
-</div>
+		<div class="pb-1.5"></div>
+	</div>
+</Card>

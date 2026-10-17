@@ -15,6 +15,8 @@
 		Disc3,
 		ArrowDownToLine
 	} from 'lucide-svelte';
+	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
 		tracks: CrateTrack[];
@@ -222,14 +224,13 @@
 					stroke-dashoffset={ringOffset}
 				/>
 			</svg>
-			<button
-				class="btn btn-circle btn-ghost btn-xs"
+			<IconButton
+				size="xs"
+				icon={RefreshCw}
+				label="Shuffle the crate now"
+				loading={isLoading}
 				onclick={onRefresh}
-				aria-label="Shuffle the crate now"
-				title="Shuffle the crate now"
-			>
-				<RefreshCw class="h-3.5 w-3.5 {isLoading ? 'animate-spin' : ''}" />
-			</button>
+			/>
 		</div>
 	</header>
 
@@ -270,11 +271,12 @@
 							class="relative h-12 w-12 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
 						>
 							{#if cover}
-								<img
-									src={cover}
+								<AlbumImage
+									customUrl={cover}
 									alt={t.album_name}
-									class="h-full w-full object-cover"
-									loading="lazy"
+									size="full"
+									rounded="none"
+									className="h-full w-full"
 								/>
 							{:else}
 								<div class="flex h-full w-full items-center justify-center bg-base-300">
@@ -291,24 +293,15 @@
 							</span>
 						</div>
 						<div
-							class="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100"
+							class="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
 						>
-							<button
-								class="btn btn-circle btn-ghost btn-xs"
-								onclick={() => onPlay(t)}
-								aria-label="Play now"
-								title="Play now"
-							>
-								<Play class="h-3.5 w-3.5" />
-							</button>
-							<button
-								class="btn btn-circle btn-ghost btn-xs"
+							<IconButton size="xs" icon={Play} label="Play now" onclick={() => onPlay(t)} />
+							<IconButton
+								size="xs"
+								icon={ListPlus}
+								label="Add to queue"
 								onclick={() => onQueue(t)}
-								aria-label="Add to queue"
-								title="Add to queue"
-							>
-								<ListPlus class="h-3.5 w-3.5" />
-							</button>
+							/>
 						</div>
 					</div>
 				{/each}

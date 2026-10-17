@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { LoaderCircle, Play, Shuffle } from 'lucide-svelte';
+	import { Play, Shuffle } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import { fromStore } from 'svelte/store';
 	import { launchRadio, type RadioMode } from '$lib/player/launchRadio';
 	import { deckSampler, type SampleEntry } from '$lib/stores/deckSampler.svelte';
@@ -74,39 +75,32 @@
 			shuffling = false;
 		}
 	}
-
-	const sizeClass = $derived(size === 'xs' ? 'btn-xs' : size === 'md' ? 'btn-md' : 'btn-sm');
-	const variantClass = $derived(variant === 'ghost' ? 'btn-ghost' : 'btn-primary');
 </script>
 
 <div class="flex items-center gap-2 {className}">
-	<button
-		class="btn {sizeClass} {variantClass} gap-2"
-		onclick={() => start(false)}
-		disabled={tuning || shuffling}
+	<Button
+		{variant}
+		{size}
+		icon={Play}
+		loading={tuning}
+		disabled={shuffling}
+		class="[&_svg]:fill-current"
 		title="Play a station seeded from this"
+		onclick={() => start(false)}
 	>
-		{#if tuning}
-			<LoaderCircle class="h-4 w-4 animate-spin" />
-			Tuning…
-		{:else}
-			<Play class="h-4 w-4" fill="currentColor" />
-			{label}
-		{/if}
-	</button>
+		{tuning ? 'Tuning…' : label}
+	</Button>
 	{#if showShuffle}
-		<button
-			class="btn {sizeClass} btn-outline gap-2"
-			onclick={() => start(true)}
-			disabled={tuning || shuffling}
+		<Button
+			variant="outline"
+			{size}
+			icon={Shuffle}
+			loading={shuffling}
+			disabled={tuning}
 			title="Shuffle a station seeded from this"
+			onclick={() => start(true)}
 		>
-			{#if shuffling}
-				<LoaderCircle class="h-4 w-4 animate-spin" />
-			{:else}
-				<Shuffle class="h-4 w-4" />
-			{/if}
 			Shuffle
-		</button>
+		</Button>
 	{/if}
 </div>

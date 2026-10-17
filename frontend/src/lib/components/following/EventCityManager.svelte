@@ -4,6 +4,7 @@
 	import { createReplaceEventCitiesMutation } from '$lib/queries/following/FollowMutations.svelte';
 	import type { CitySearchResult, EventCity } from '$lib/queries/following/types';
 	import { KM_PER_MILE } from '$lib/constants';
+	import Button from '$lib/ui/Button.svelte';
 
 	interface Props {
 		cities: EventCity[];
@@ -94,13 +95,7 @@
 
 	{#if adding}
 		<CitySearchInput onpick={addCity} autofocus className="w-64" />
-		<button
-			type="button"
-			class="btn btn-ghost btn-xs rounded-full"
-			onclick={() => (adding = false)}
-		>
-			Cancel
-		</button>
+		<Button variant="ghost" size="xs" pill onclick={() => (adding = false)}>Cancel</Button>
 	{:else}
 		<button
 			type="button"

@@ -29,6 +29,8 @@
 	import DiscoverTeaserBand from '$lib/components/discover/DiscoverTeaserBand.svelte';
 	import { getHomeQuery } from '$lib/queries/HomeQuery.svelte';
 	import { useDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	useDiscoverActivity(() => ({ feature: 'home' }));
 
@@ -170,14 +172,15 @@
 	</PageHeader>
 
 	<div class="flex justify-end px-4 -mt-4 mb-4 sm:px-6 lg:px-8">
-		<a
+		<Button
+			variant="ghost"
+			size="sm"
+			icon={SlidersHorizontal}
 			href={withBasePath('/settings?tab=home')}
-			class="btn btn-ghost btn-sm gap-2 text-base-content/60 hover:text-base-content"
 			title="Choose which sections appear here"
 		>
-			<SlidersHorizontal class="h-4 w-4" />
 			<span class="hidden sm:inline">Customise</span>
-		</a>
+		</Button>
 	</div>
 
 	<div class="mb-10 px-4 sm:mb-12 sm:px-6 lg:px-8">
@@ -195,10 +198,10 @@
 				class:is-refreshing={homeData?.refreshing}
 			>
 				{#if !downloadClientConfigured && downloadClientPrompt}
-					<div
-						class="card bg-linear-to-br from-accent/20 via-accent/10 to-base-200 border-2 border-accent/40 shadow-xl relative overflow-hidden"
+					<Card
+						class="relative overflow-hidden border-2 border-accent/40 bg-linear-to-br from-accent/20 via-accent/10 to-base-200 shadow-xl"
 					>
-						<div class="card-body items-center text-center py-12 stagger-fade-in">
+						<div class="flex flex-col items-center gap-2 py-6 text-center stagger-fade-in">
 							<Music class="h-16 w-16 mb-4 animate-float text-accent" />
 							<h2 class="card-title text-3xl sm:text-4xl lg:text-5xl font-bold mb-2">
 								Welcome to <span class="text-primary">DroppedNeedle</span>!
@@ -212,15 +215,16 @@
 									<span class="badge badge-accent badge-lg">{feature}</span>
 								{/each}
 							</div>
-							<a
+							<Button
+								variant="accent"
+								size="lg"
+								icon={Download}
 								href={withBasePath('/settings?tab=download-client')}
-								class="btn btn-accent btn-lg gap-2"
 							>
-								<Download class="h-5 w-5" />
 								Configure Download Client
-							</a>
+							</Button>
 						</div>
-					</div>
+					</Card>
 				{/if}
 
 				{#if otherPrompts.length > 0 && downloadClientConfigured}
@@ -346,16 +350,16 @@
 								Your library is empty. Add a library path and start a scan to fill it.
 							</p>
 							<div class="flex flex-wrap justify-center gap-2">
-								<a href={withBasePath('/settings?tab=library')} class="btn btn-primary"
-									>Start scan</a
-								>
-								<a href={withBasePath('/library')} class="btn btn-ghost">Go to Library</a>
+								<Button variant="primary" href={withBasePath('/settings?tab=library')}>
+									Start scan
+								</Button>
+								<Button variant="ghost" href={withBasePath('/library')}>Go to Library</Button>
 							</div>
 						{:else}
 							<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
 								Your library is being prepared. An admin is setting things up - check back soon.
 							</p>
-							<a href={withBasePath('/library')} class="btn btn-ghost">Go to Library</a>
+							<Button variant="ghost" href={withBasePath('/library')}>Go to Library</Button>
 						{/if}
 					</div>
 				{/if}
@@ -368,7 +372,7 @@
 					<p class="mb-6 max-w-md px-4 text-center text-sm text-base-content/70 sm:text-base">
 						Part of the Home page failed to render. The rest of the app still works.
 					</p>
-					<button class="btn btn-primary" onclick={() => reset()}>Try Again</button>
+					<Button variant="primary" onclick={() => reset()}>Try Again</Button>
 				</div>
 			{/snippet}
 		</svelte:boundary>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import CarouselSkeleton from '$lib/components/CarouselSkeleton.svelte';
+	import Card from '$lib/ui/Card.svelte';
 </script>
 
 <div class="space-y-8 animate-pulse" role="status" aria-busy="true">
@@ -14,9 +15,9 @@
 	{#each ['Recently Added', 'Favorites', 'Browse Albums'] as title (title)}
 		<section class="space-y-3">
 			<div class="skeleton skeleton-shimmer h-6 w-40 rounded"></div>
-			<div class="rounded-xl bg-base-100/40 p-4 shadow-sm">
+			<Card variant="raised" padding="md">
 				<CarouselSkeleton />
-			</div>
+			</Card>
 		</section>
 	{/each}
 </div>

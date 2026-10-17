@@ -50,7 +50,7 @@
 <a
 	{href}
 	class="group relative flex items-end gap-4 overflow-hidden rounded-box p-4 sm:p-6 min-h-44 sm:min-h-56 transition-shadow hover:shadow-lg"
-	style="--hero-glow-color: var(--brand-hero);"
+	style:--hero-glow-color="var(--brand-hero)"
 >
 	<div class="absolute inset-0 bg-base-200"></div>
 	<HeroBackdrop

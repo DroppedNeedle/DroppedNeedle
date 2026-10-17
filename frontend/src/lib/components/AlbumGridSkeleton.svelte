@@ -1,4 +1,6 @@
 <script lang="ts">
+	import Card from '$lib/ui/Card.svelte';
+
 	interface Props {
 		title?: string;
 		count?: number;
@@ -15,16 +17,16 @@
 
 	<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
 		{#each Array(count) as _, i (i)}
-			<div class="card bg-base-100 w-full shadow-sm">
+			<Card variant="raised" padding="none" class="w-full">
 				<figure class="aspect-square overflow-hidden relative">
 					<div class="skeleton skeleton-shimmer w-full h-full absolute inset-0"></div>
 				</figure>
-				<div class="card-body p-4">
+				<div class="px-4 pt-2 pb-4">
 					<div class="skeleton skeleton-shimmer h-5 w-full mb-2"></div>
 					<div class="skeleton skeleton-shimmer h-4 w-3/4 mb-1"></div>
 					<div class="skeleton skeleton-shimmer h-3 w-1/2"></div>
 				</div>
-			</div>
+			</Card>
 		{/each}
 	</div>
 </div>

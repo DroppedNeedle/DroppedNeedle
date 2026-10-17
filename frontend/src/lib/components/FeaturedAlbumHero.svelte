@@ -82,7 +82,8 @@
 			<div class="relative z-10 flex items-center gap-6">
 				<button
 					class="shrink-0 overflow-hidden rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.5)] transition-transform duration-500 hover:scale-[1.03]"
-					style="transform-style: preserve-3d; transform: perspective(600px) rotateY(-2deg);"
+					style:transform-style="preserve-3d"
+					style:transform="perspective(600px) rotateY(-2deg)"
 					aria-label="Play {hero.name} by {hero.artist_name}"
 					onclick={() => onAlbumClick?.(hero)}
 				>
@@ -116,13 +117,11 @@
 
 		{#if thumbnails.length > 0}
 			<div
-				class="-mt-5 flex gap-3 overflow-x-auto px-6 pb-4 pt-5 scrollbar-hide"
-				style="-webkit-mask-image: linear-gradient(to bottom, transparent, black 30%); mask-image: linear-gradient(to bottom, transparent, black 30%);"
+				class="-mt-5 flex gap-3 overflow-x-auto px-6 pb-4 pt-5 scrollbar-hide [mask-image:linear-gradient(to_bottom,transparent,black_30%)]"
 			>
 				{#each thumbnails as album (getId(album))}
 					<button
-						class="shrink-0 overflow-hidden rounded-lg ring-2 ring-base-100/30 transition-all duration-300 hover:scale-105 hover:ring-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-						style="transition-timing-function: var(--ease-overshoot);"
+						class="shrink-0 overflow-hidden rounded-lg ring-2 ring-base-100/30 transition-all duration-300 ease-[var(--ease-overshoot)] hover:scale-105 hover:ring-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
 						aria-label="Play {album.name}"
 						onclick={() => onAlbumClick?.(album)}
 					>

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { LoaderCircle, Play, Square } from 'lucide-svelte';
 	import { deckSampler } from '$lib/stores/deckSampler.svelte';
+	import Button from '$lib/ui/Button.svelte';
 
 	interface Props {
 		/** stable id, e.g. the release-group mbid or `track:artist|title` */
@@ -51,11 +52,11 @@
 	}
 </script>
 
-<button
-	type="button"
-	class="relative {size === 'xs'
-		? 'flex h-6 w-6 items-center justify-center rounded-full text-primary hover:bg-base-content/10'
-		: `btn btn-circle btn-sm ${size === 'sm' ? 'min-h-[36px] min-w-[36px]' : 'min-h-[44px] min-w-[44px]'} border-none bg-base-content/10 shadow-sm hover:bg-base-content/20`} active:scale-[0.95]"
+<Button
+	variant={size === 'xs' ? 'ghost' : 'neutral'}
+	{size}
+	pill
+	class="relative"
 	title={active
 		? 'Stop preview'
 		: kind === 'album'
@@ -65,7 +66,7 @@
 	onclick={toggle}
 >
 	{#if loading}
-		<LoaderCircle class="h-4 w-4 animate-spin" />
+		<LoaderCircle class="h-4 w-4 animate-spin motion-reduce:animate-none" />
 	{:else if active}
 		<Square class="h-3.5 w-3.5" fill="currentColor" />
 		<svg viewBox="0 0 20 20" class="pointer-events-none absolute inset-0 h-full w-full -rotate-90">
@@ -81,6 +82,6 @@
 			/>
 		</svg>
 	{:else}
-		<Play class="h-4 w-4" fill="currentColor" />
+		<Play class="h-4 w-4 {size === 'xs' ? 'text-primary' : ''}" fill="currentColor" />
 	{/if}
-</button>
+</Button>

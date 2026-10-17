@@ -10,6 +10,9 @@
 	} from '$lib/queries/local/LocalV3Adapters';
 	import { fly } from 'svelte/transition';
 	import { Search, X, Disc3, Music2, Play, ListPlus, GripVertical, Loader } from 'lucide-svelte';
+	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import Input from '$lib/ui/Input.svelte';
 
 	interface Props {
 		reducedMotion?: boolean;
@@ -89,30 +92,26 @@
 		<h2 class="text-sm font-bold uppercase tracking-wider text-base-content/80">Search library</h2>
 	</header>
 
-	<label
-		class="input input-sm flex items-center gap-2 rounded-xl bg-base-200/70 focus-within:outline-accent"
-	>
-		<Search class="h-4 w-4 shrink-0 text-base-content/40" />
-		<input
+	<div class="relative">
+		<Input
 			type="search"
-			class="grow bg-transparent"
+			size="sm"
+			icon={Search}
+			label="Search your library for albums and songs"
 			placeholder="Albums &amp; songs to spin…"
+			class="w-full pr-9"
 			bind:value={term}
-			aria-label="Search your library for albums and songs"
 		/>
-		{#if isActive && isFetching}
-			<Loader class="h-4 w-4 shrink-0 animate-spin text-base-content/40" />
-		{:else if term}
-			<button
-				class="btn btn-circle btn-ghost btn-xs"
-				onclick={() => (term = '')}
-				aria-label="Clear search"
-				title="Clear"
-			>
-				<X class="h-3.5 w-3.5" />
-			</button>
-		{/if}
-	</label>
+		<div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center">
+			{#if isActive && isFetching}
+				<Loader
+					class="mr-1 h-4 w-4 shrink-0 animate-spin text-base-content/40 motion-reduce:animate-none"
+				/>
+			{:else if term}
+				<IconButton size="xs" icon={X} label="Clear search" onclick={() => (term = '')} />
+			{/if}
+		</div>
+	</div>
 
 	<div class="flex-1 space-y-2 overflow-y-auto pr-0.5">
 		{#if !isActive}
@@ -166,7 +165,13 @@
 							class="relative h-11 w-11 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
 						>
 							{#if cover}
-								<img src={cover} alt={a.name} class="h-full w-full object-cover" loading="lazy" />
+								<AlbumImage
+									customUrl={cover}
+									alt={a.name}
+									size="full"
+									rounded="none"
+									className="h-full w-full"
+								/>
 							{:else}
 								<div class="flex h-full w-full items-center justify-center bg-base-300">
 									<Disc3 class="h-4 w-4 text-base-content/30" />
@@ -181,24 +186,15 @@
 							</span>
 						</div>
 						<div
-							class="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100"
+							class="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
 						>
-							<button
-								class="btn btn-circle btn-ghost btn-xs"
-								onclick={() => onPlayAlbum(a)}
-								aria-label="Play album"
-								title="Play album"
-							>
-								<Play class="h-3.5 w-3.5" />
-							</button>
-							<button
-								class="btn btn-circle btn-ghost btn-xs"
+							<IconButton size="xs" icon={Play} label="Play album" onclick={() => onPlayAlbum(a)} />
+							<IconButton
+								size="xs"
+								icon={ListPlus}
+								label="Queue album"
 								onclick={() => onQueueAlbum(a)}
-								aria-label="Queue album"
-								title="Queue album"
-							>
-								<ListPlus class="h-3.5 w-3.5" />
-							</button>
+							/>
 						</div>
 					</div>
 				{:else}
@@ -228,11 +224,12 @@
 							class="relative h-11 w-11 shrink-0 overflow-hidden rounded-md ring-1 ring-base-content/10"
 						>
 							{#if trackCover}
-								<img
-									src={trackCover}
+								<AlbumImage
+									customUrl={trackCover}
 									alt={t.album_name}
-									class="h-full w-full object-cover"
-									loading="lazy"
+									size="full"
+									rounded="none"
+									className="h-full w-full"
 								/>
 							{:else}
 								<div class="flex h-full w-full items-center justify-center bg-base-300">
@@ -250,24 +247,15 @@
 							</span>
 						</div>
 						<div
-							class="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100"
+							class="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
 						>
-							<button
-								class="btn btn-circle btn-ghost btn-xs"
-								onclick={() => onPlayTrack(t)}
-								aria-label="Play now"
-								title="Play now"
-							>
-								<Play class="h-3.5 w-3.5" />
-							</button>
-							<button
-								class="btn btn-circle btn-ghost btn-xs"
+							<IconButton size="xs" icon={Play} label="Play now" onclick={() => onPlayTrack(t)} />
+							<IconButton
+								size="xs"
+								icon={ListPlus}
+								label="Add to queue"
 								onclick={() => onQueueTrack(t)}
-								aria-label="Add to queue"
-								title="Add to queue"
-							>
-								<ListPlus class="h-3.5 w-3.5" />
-							</button>
+							/>
 						</div>
 					</div>
 				{/if}

@@ -111,10 +111,7 @@
 	}
 </script>
 
-<div
-	class="grid grid-cols-1 gap-5 sm:grid-cols-2 sm:gap-6 md:grid-cols-3"
-	style="perspective: 1200px;"
->
+<div class="grid grid-cols-1 gap-5 perspective-[1200px] sm:grid-cols-2 sm:gap-6 md:grid-cols-3">
 	{#each cards as card, i (card.label)}
 		{@const colors = colorClasses[card.colorScheme]}
 		{@const Icon = iconMap[card.icon]}

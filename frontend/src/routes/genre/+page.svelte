@@ -20,6 +20,8 @@
 	import RadioPlayButton from '$lib/components/discover/RadioPlayButton.svelte';
 	import type { RadioMode } from '$lib/player/launchRadio';
 	import type { SampleEntry } from '$lib/stores/deckSampler.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	let genreName = $derived(page.url.searchParams.get('name') || '');
 	let loadAlbumPages = $state(false);
@@ -103,15 +105,17 @@
 </svelte:head>
 
 <div class="min-h-screen bg-base-100 relative overflow-hidden">
-	<div class="container mx-auto p-4 max-w-7xl relative" style="z-index: 1;">
+	<div class="container relative z-[1] mx-auto max-w-7xl p-4">
 		<header class="mb-10 pt-2">
-			<a
+			<Button
+				variant="ghost"
+				size="sm"
+				icon={ArrowLeft}
 				href={withBasePath('/')}
-				class="btn btn-ghost btn-sm gap-2 mb-6 -ml-2 opacity-70 hover:opacity-100"
+				class="mb-6 -ml-2"
 			>
-				<ArrowLeft class="w-4 h-4" />
 				Back
-			</a>
+			</Button>
 			<div class="flex items-center gap-5">
 				<div
 					class="relative isolate w-20 h-20 overflow-hidden rounded-2xl flex items-center justify-center shrink-0"
@@ -152,27 +156,42 @@
 						label="Play"
 					/>
 					<div class="join" role="radiogroup" aria-label="Station mode">
-						<button
-							class="btn btn-xs join-item {radioMode === 'hybrid' ? 'btn-active' : 'btn-ghost'}"
+						<Button
+							variant={radioMode === 'hybrid' ? 'neutral' : 'ghost'}
+							size="xs"
+							active={radioMode === 'hybrid'}
+							class="join-item"
+							role="radio"
+							aria-checked={radioMode === 'hybrid'}
 							onclick={() => (radioMode = 'hybrid')}
 							title="Your library plus streamed full tracks"
 						>
 							Full tracks
-						</button>
-						<button
-							class="btn btn-xs join-item {radioMode === 'previews' ? 'btn-active' : 'btn-ghost'}"
+						</Button>
+						<Button
+							variant={radioMode === 'previews' ? 'neutral' : 'ghost'}
+							size="xs"
+							active={radioMode === 'previews'}
+							class="join-item"
+							role="radio"
+							aria-checked={radioMode === 'previews'}
 							onclick={() => (radioMode = 'previews')}
 							title="30-second tastes - fast crate-digging"
 						>
 							Quick previews
-						</button>
-						<button
-							class="btn btn-xs join-item {radioMode === 'library' ? 'btn-active' : 'btn-ghost'}"
+						</Button>
+						<Button
+							variant={radioMode === 'library' ? 'neutral' : 'ghost'}
+							size="xs"
+							active={radioMode === 'library'}
+							class="join-item"
+							role="radio"
+							aria-checked={radioMode === 'library'}
 							onclick={() => (radioMode = 'library')}
 							title="Only music you own"
 						>
 							My library
-						</button>
+						</Button>
 					</div>
 				</div>
 			{/if}
@@ -191,13 +210,13 @@
 					class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 				>
 					{#each Array(12) as _, i (`genre-artist-skeleton-${i}`)}
-						<div class="card bg-base-200/50">
+						<Card padding="none">
 							<div class="skeleton aspect-square rounded-t-2xl"></div>
-							<div class="p-3">
+							<div class="px-3 pb-3 pt-1">
 								<div class="skeleton h-4 w-3/4 mb-2"></div>
 								<div class="skeleton h-3 w-1/2"></div>
 							</div>
-						</div>
+						</Card>
 					{/each}
 				</div>
 			</section>
@@ -214,13 +233,13 @@
 					class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 				>
 					{#each Array(6) as _, i (`genre-album-skeleton-${i}`)}
-						<div class="card bg-base-200/50">
+						<Card padding="none">
 							<div class="skeleton aspect-square rounded-t-2xl"></div>
-							<div class="p-3">
+							<div class="px-3 pb-3 pt-1">
 								<div class="skeleton h-4 w-3/4 mb-2"></div>
 								<div class="skeleton h-3 w-1/2"></div>
 							</div>
-						</div>
+						</Card>
 					{/each}
 				</div>
 			</section>
@@ -316,18 +335,15 @@
 					</div>
 					{#if genreQuery.hasNextPage}
 						<div class="flex justify-center mt-8">
-							<button
-								class="btn btn-outline btn-wide gap-2"
+							<Button
+								variant="outline"
+								icon={ChevronDown}
+								loading={loadingMoreArtists}
+								class="w-64"
 								onclick={() => genreQuery.fetchNextPage()}
-								disabled={loadingMoreArtists}
 							>
-								{#if loadingMoreArtists}
-									<span class="loading loading-spinner loading-sm"></span>
-								{:else}
-									<ChevronDown class="w-4 h-4" />
-								{/if}
 								View More Artists
-							</button>
+							</Button>
 						</div>
 					{/if}
 				{/if}
@@ -361,18 +377,15 @@
 					</div>
 					{#if hasMoreAlbums}
 						<div class="flex justify-center mt-8">
-							<button
-								class="btn btn-outline btn-wide gap-2"
+							<Button
+								variant="outline"
+								icon={ChevronDown}
+								loading={loadingMoreAlbums}
+								class="w-64"
 								onclick={loadMoreAlbums}
-								disabled={loadingMoreAlbums}
 							>
-								{#if loadingMoreAlbums}
-									<span class="loading loading-spinner loading-sm"></span>
-								{:else}
-									<ChevronDown class="w-4 h-4" />
-								{/if}
 								View More Albums
-							</button>
+							</Button>
 						</div>
 					{/if}
 				{/if}

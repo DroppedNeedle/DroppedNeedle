@@ -23,8 +23,11 @@
 		toV1Album,
 		toV1Artist
 	} from '$lib/queries/search/SearchV3Adapters';
-	import { Check, ArrowRight, RefreshCw } from 'lucide-svelte';
+	import { ArrowRight, RefreshCw } from 'lucide-svelte';
 	import SearchTopResult from '$lib/components/SearchTopResult.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import { toastStore } from '$lib/stores/toast';
 
 	interface Props {
 		data: { query: string };
@@ -32,7 +35,6 @@
 
 	let { data }: Props = $props();
 
-	let showToast = $state(false);
 	let enrichment: EnrichmentResponseV3 | null = $state(null);
 	let enrichmentSource: EnrichmentSource = $state('none');
 	let enrichmentQuery = $state('');
@@ -103,10 +105,7 @@
 	}
 
 	function handleAlbumAdded() {
-		showToast = true;
-		setTimeout(() => {
-			showToast = false;
-		}, 3000);
+		toastStore.show({ message: 'Added to Library', type: 'success' });
 	}
 
 	$effect(() => {
@@ -139,29 +138,17 @@
 </script>
 
 {#if hasSearched || isSearching}
-	<div class="px-8 pt-4 pb-2">
+	<div class="px-4 pt-4 pb-2 sm:px-8">
 		<div class="flex gap-2">
-			<button class="badge badge-lg cursor-pointer border-none bg-primary text-primary-content">
-				All
-			</button>
-			<button
-				class="badge badge-lg cursor-pointer transition-colors border-none bg-base-300 text-primary"
-				onclick={() => navigateToBucket('artists')}
-			>
-				Artists
-			</button>
-			<button
-				class="badge badge-lg cursor-pointer transition-colors border-none bg-base-300 text-primary"
-				onclick={() => navigateToBucket('albums')}
-			>
-				Albums
-			</button>
+			<Button variant="primary" size="sm" pill aria-current="page">All</Button>
+			<Button size="sm" pill onclick={() => navigateToBucket('artists')}>Artists</Button>
+			<Button size="sm" pill onclick={() => navigateToBucket('albums')}>Albums</Button>
 		</div>
 	</div>
 {/if}
 
 {#if hasSearched}
-	<section class="px-8 py-4 space-y-8">
+	<section class="px-4 py-4 sm:px-8 space-y-8">
 		{#if isSearching}
 			<div
 				class="grid grid-flow-col auto-cols-[85%] gap-3 overflow-x-auto sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-2 sm:overflow-visible"
@@ -188,13 +175,11 @@
 			{#if artistNotice}
 				<div class="alert {artistNotice.className} mb-3" role="status">
 					<span>{artistNotice.message}</span>
-					<button class="btn btn-sm" onclick={() => searchQuery.refetch()}>
-						<RefreshCw class="h-4 w-4" /> Retry
-					</button>
+					<Button size="sm" icon={RefreshCw} onclick={() => searchQuery.refetch()}>Retry</Button>
 				</div>
 			{/if}
 			{#if loadingArtists}
-				<div class="bg-base-200 rounded-box p-4">
+				<Card padding="md">
 					<div
 						class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 					>
@@ -202,9 +187,9 @@
 							<ArtistCardSkeleton variant="detailed" />
 						{/each}
 					</div>
-				</div>
+				</Card>
 			{:else if displayedArtists.length > 0}
-				<div class="bg-base-200 rounded-box p-4 overflow-hidden">
+				<Card padding="md" class="overflow-hidden">
 					<div
 						class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 						aria-label="Artist search results"
@@ -222,9 +207,9 @@
 							<ArtistCardSkeleton variant="detailed" />
 						{/each}
 					</div>
-				</div>
+				</Card>
 			{:else}
-				<div class="p-8 bg-base-200 rounded-box text-center text-gray-500">No artists found</div>
+				<Card><p class="text-center text-base-content/50">No artists found</p></Card>
 			{/if}
 		</div>
 
@@ -243,13 +228,11 @@
 			{#if albumNotice}
 				<div class="alert {albumNotice.className} mb-3" role="status">
 					<span>{albumNotice.message}</span>
-					<button class="btn btn-sm" onclick={() => searchQuery.refetch()}>
-						<RefreshCw class="h-4 w-4" /> Retry
-					</button>
+					<Button size="sm" icon={RefreshCw} onclick={() => searchQuery.refetch()}>Retry</Button>
 				</div>
 			{/if}
 			{#if loadingAlbums}
-				<div class="bg-base-200 rounded-box p-4">
+				<Card padding="md">
 					<div
 						class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 					>
@@ -257,9 +240,9 @@
 							<AlbumCardSkeleton />
 						{/each}
 					</div>
-				</div>
+				</Card>
 			{:else if displayedAlbums.length > 0}
-				<div class="bg-base-200 rounded-box p-4">
+				<Card padding="md">
 					<div
 						class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 					>
@@ -273,21 +256,12 @@
 							/>
 						{/each}
 					</div>
-				</div>
+				</Card>
 			{:else}
-				<div class="p-8 bg-base-200 rounded-box text-center text-gray-500">No albums found</div>
+				<Card><p class="text-center text-base-content/50">No albums found</p></Card>
 			{/if}
 		</div>
 	</section>
 {:else}
 	<p class="text-center mt-32 text-base-content/50">Enter a search query to get started.</p>
-{/if}
-
-{#if showToast}
-	<div class="toast toast-end toast-bottom">
-		<div class="alert alert-success">
-			<Check class="h-6 w-6" />
-			<span>Added to Library</span>
-		</div>
-	</div>
 {/if}

@@ -2,6 +2,7 @@
 	import { Sparkles } from 'lucide-svelte';
 	import { reveal } from '$lib/actions/reveal';
 	import type { Snippet } from 'svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		children: Snippet;
@@ -11,14 +12,12 @@
 </script>
 
 <div use:reveal class="relative mt-8 mb-4">
-	<div
-		class="relative overflow-hidden rounded-2xl border border-base-content/5 bg-base-200/20 shadow-sm backdrop-blur-sm"
-	>
+	<Card variant="bordered" class="relative overflow-hidden">
 		<div
 			class="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent"
 		></div>
 
-		<div class="p-6 space-y-5">
+		<div class="space-y-5">
 			<div class="flex items-center gap-2.5">
 				<div class="flex items-center justify-center rounded-lg bg-primary/10 p-1.5">
 					<Sparkles class="h-4.5 w-4.5 text-primary" />
@@ -28,5 +27,5 @@
 
 			{@render children()}
 		</div>
-	</div>
+	</Card>
 </div>

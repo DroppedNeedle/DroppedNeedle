@@ -1,12 +1,13 @@
 <script lang="ts">
+	import Card from '$lib/ui/Card.svelte';
 </script>
 
-<div class="card bg-base-100 w-full shadow-sm shrink-0">
+<Card variant="raised" padding="none" class="w-full shrink-0">
 	<figure class="aspect-square overflow-hidden relative">
 		<div class="skeleton skeleton-shimmer w-full h-full absolute inset-0"></div>
 	</figure>
-	<div class="card-body p-3">
+	<div class="flex flex-col gap-2 px-3 pt-1 pb-3">
 		<div class="skeleton skeleton-shimmer h-5 w-full min-h-[2.5rem]"></div>
 		<div class="skeleton skeleton-shimmer h-4 w-3/4"></div>
 	</div>
-</div>
+</Card>

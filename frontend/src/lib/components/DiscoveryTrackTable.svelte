@@ -35,12 +35,21 @@
 		<tbody>
 			{#each tracks as track, i (track.id)}
 				<tr
-					class="group cursor-pointer border-l-2 border-l-transparent transition-all duration-150 hover:border-l-primary hover:bg-base-content/[0.03]"
+					class="group cursor-pointer border-l-2 border-l-transparent transition-all duration-150 hover:border-l-primary hover:bg-base-content/[0.03] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
 					onclick={() => onplay(i)}
+					onkeydown={(e) =>
+						e.target === e.currentTarget &&
+						(e.key === 'Enter' || e.key === ' ') &&
+						(e.preventDefault(), onplay(i))}
+					tabindex="0"
+					role="button"
+					aria-label="Play {track.title}"
 				>
 					<td class="w-10">
-						<span class="text-base-content/40 group-hover:hidden">{i + 1}</span>
-						<span class="hidden text-primary group-hover:inline">
+						<span class="text-base-content/40 group-hover:hidden group-focus-visible:hidden"
+							>{i + 1}</span
+						>
+						<span class="hidden text-primary group-hover:inline group-focus-visible:inline">
 							<Play class="h-3.5 w-3.5 fill-current" />
 						</span>
 					</td>

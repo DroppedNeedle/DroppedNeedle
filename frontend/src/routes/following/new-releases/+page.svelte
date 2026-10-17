@@ -9,6 +9,8 @@
 	import type { NewRelease } from '$lib/queries/following/types';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { SvelteSet } from 'svelte/reactivity';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	const PAGE = 48;
 	const MAX_LIMIT = 480; // the backend caps the recent endpoint at 500
@@ -55,13 +57,12 @@
 
 <div class="mx-auto w-full max-w-6xl px-2 py-4 sm:px-4 sm:py-8 lg:px-8">
 	<div class="mb-6 flex flex-wrap items-center gap-3">
-		<a
+		<IconButton
+			size="sm"
+			icon={ArrowLeft}
+			label="Back to Following"
 			href={withBasePath('/following')}
-			class="btn btn-ghost btn-sm btn-circle"
-			aria-label="Back to Following"
-		>
-			<ArrowLeft class="h-5 w-5" />
-		</a>
+		/>
 		<Disc3 class="h-6 w-6 text-primary" aria-hidden="true" />
 		<h1 class="text-2xl font-bold sm:text-3xl">New Releases</h1>
 
@@ -70,7 +71,7 @@
 				<input type="checkbox" class="toggle toggle-sm toggle-primary" bind:checked={hideOwned} />
 				Hide owned
 			</label>
-			<select class="select select-sm select-bordered" bind:value={days} aria-label="Time period">
+			<select class="select select-sm" bind:value={days} aria-label="Time period">
 				{#each PERIODS as period (period.days)}
 					<option value={period.days}>{period.label}</option>
 				{/each}
@@ -145,17 +146,15 @@
 						{#if item.in_library}
 							<span class="text-xs font-medium text-success">In library</span>
 						{:else}
-							<button
-								class="btn btn-xs gap-1 {isRequested ? 'btn-success btn-outline' : 'btn-accent'}"
-								onclick={() => onRequest(item)}
+							<Button
+								variant={isRequested ? 'outline' : 'accent'}
+								size="xs"
+								icon={isRequested ? Check : Plus}
 								disabled={isRequested}
+								onclick={() => onRequest(item)}
 							>
-								{#if isRequested}
-									<Check class="h-3.5 w-3.5" /> Requested
-								{:else}
-									<Plus class="h-3.5 w-3.5" /> Request
-								{/if}
-							</button>
+								{isRequested ? 'Requested' : 'Request'}
+							</Button>
 						{/if}
 					</div>
 				</div>
@@ -164,13 +163,13 @@
 
 		{#if items.length < total && limit < MAX_LIMIT}
 			<div class="mt-6 flex justify-center">
-				<button
-					class="btn btn-outline"
-					onclick={() => (limit = Math.min(limit + PAGE, MAX_LIMIT))}
+				<Button
+					variant="outline"
 					disabled={query.isFetching}
+					onclick={() => (limit = Math.min(limit + PAGE, MAX_LIMIT))}
 				>
 					{query.isFetching ? 'Loading...' : `Load more (${total - items.length} more)`}
-				</button>
+				</Button>
 			</div>
 		{/if}
 	{/if}

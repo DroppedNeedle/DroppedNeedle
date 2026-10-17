@@ -1,10 +1,12 @@
 <script lang="ts">
-	import { Check, Search } from 'lucide-svelte';
+	import { Check, Headphones, Search } from 'lucide-svelte';
 	import type { HomeAlbum, HomeArtist } from '$lib/types';
 	import { formatListenCount } from '$lib/utils/formatting';
 	import AlbumImage from './AlbumImage.svelte';
 	import ArtistImage from './ArtistImage.svelte';
 	import AlbumCardOverlay from './AlbumCardOverlay.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	type ItemType = 'album' | 'artist';
 	type TimeRangeCardVariant = 'featured' | 'overview' | 'expanded';
@@ -30,7 +32,8 @@
 	}
 
 	function handleCardKeydown(event: KeyboardEvent) {
-		if (event.key === 'Enter') {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
 			onFallbackClick(item);
 		}
 	}
@@ -41,10 +44,13 @@
 	}
 </script>
 
-<svelte:element
-	this={href ? 'a' : 'div'}
+<Card
+	variant="raised"
+	padding="none"
 	href={href ?? undefined}
-	class={`card ${className} group ${href ? 'cursor-pointer' : 'cursor-default'}`}
+	class="group {className} {href
+		? ''
+		: 'cursor-pointer transition hover:shadow-md motion-safe:hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-primary'}"
 	onclick={href ? undefined : handleCardClick}
 	onkeydown={href ? undefined : handleCardKeydown}
 	role={href ? undefined : 'button'}
@@ -100,18 +106,21 @@
 					<p class="line-clamp-1 text-sm text-white/80">{item.artist_name}</p>
 				{/if}
 				{#if item.listen_count !== null && item.listen_count !== undefined}
-					<p class="mt-1 text-sm text-white/60">🎧 {formatListenCount(item.listen_count)}</p>
+					<p class="mt-1 flex items-center gap-1 text-sm text-white/60">
+						<Headphones class="h-3.5 w-3.5" aria-hidden="true" />
+						{formatListenCount(item.listen_count)}
+					</p>
 				{/if}
 			</div>
 			{#if !item.mbid}
-				<button
-					type="button"
-					class="btn btn-ghost btn-xs btn-circle absolute bottom-3 right-3 text-white"
-					title={itemType === 'album' ? 'Search album' : 'Search artist'}
+				<IconButton
+					variant="neutral"
+					size="xs"
+					icon={Search}
+					label={itemType === 'album' ? 'Search album' : 'Search artist'}
+					class="absolute bottom-3 right-3"
 					onclick={handleSearchClick}
-				>
-					<Search class="h-3 w-3" />
-				</button>
+				/>
 			{/if}
 		</figure>
 	{:else}
@@ -148,14 +157,13 @@
 					#{rank}
 				</div>
 				{#if !item.mbid}
-					<button
-						type="button"
-						class="btn btn-ghost btn-xs btn-circle absolute bottom-1 right-1"
-						title="Search album"
+					<IconButton
+						size="xs"
+						icon={Search}
+						label="Search album"
+						class="absolute bottom-1 right-1"
 						onclick={handleSearchClick}
-					>
-						<Search class="h-3 w-3" />
-					</button>
+					/>
 				{/if}
 			</figure>
 		{:else}
@@ -186,18 +194,21 @@
 					#{rank}
 				</div>
 				{#if !item.mbid}
-					<button
-						type="button"
-						class="btn btn-ghost btn-xs btn-circle absolute bottom-1 right-1"
-						title="Search artist"
+					<IconButton
+						size="xs"
+						icon={Search}
+						label="Search artist"
+						class="absolute bottom-1 right-1"
 						onclick={handleSearchClick}
-					>
-						<Search class="h-3 w-3" />
-					</button>
+					/>
 				{/if}
 			</figure>
 		{/if}
-		<div class={variant === 'expanded' ? 'card-body p-2 sm:p-3' : 'card-body p-2'}>
+		<div
+			class={variant === 'expanded'
+				? 'flex flex-col gap-2 px-2 pb-2 sm:px-3 sm:pb-3'
+				: 'flex flex-col gap-2 px-2 pb-2'}
+		>
 			<h3
 				class={variant === 'expanded'
 					? 'card-title line-clamp-1 text-xs sm:text-sm'
@@ -213,4 +224,4 @@
 			{/if}
 		</div>
 	{/if}
-</svelte:element>
+</Card>

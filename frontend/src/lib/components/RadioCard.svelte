@@ -12,6 +12,8 @@
 	import DiscoveryShelfActions from '$lib/components/discover/DiscoveryShelfActions.svelte';
 	import { tilt } from '$lib/actions/tilt';
 	import { slide } from 'svelte/transition';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		seedType: string;
@@ -43,31 +45,32 @@
 			queryKey: DiscoverQueryKeyFactory.v3.radio(authStore.user?.id, seedType, seedId, {})
 		});
 	}
+
+	const TILT_TRANSITION =
+		'transform 0.5s var(--ease-spring), box-shadow 0.5s var(--ease-spring), border-color 0.3s ease';
 </script>
 
 {#if section}
 	<div class="w-full">
-		<div style="perspective: 1200px;">
+		<div class="perspective-[1200px]">
 			<button
 				use:tilt={{ shadowColorVar: 'var(--color-secondary)' }}
 				type="button"
-				class="group relative w-full overflow-hidden rounded-2xl border transition-all cursor-pointer text-left
+				class="group relative w-full overflow-hidden rounded-2xl border cursor-pointer text-left
 					focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-secondary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100
 					active:scale-[0.98]
 					{expanded ? 'border-secondary/30' : 'border-secondary/15'}"
-				style="
-					transform-style: preserve-3d;
-					transform: var(--tilt-transform, rotateX(0) rotateY(0));
-					box-shadow: var(--tilt-shadow);
-					transition: transform 0.5s var(--ease-spring), box-shadow 0.5s var(--ease-spring), border-color 0.3s ease;
-				"
+				style:transform-style="preserve-3d"
+				style:transform="var(--tilt-transform, rotateX(0) rotateY(0))"
+				style:box-shadow="var(--tilt-shadow)"
+				style:transition={TILT_TRANSITION}
 				onclick={toggleExpanded}
 				aria-expanded={expanded}
 				aria-label="{section.title} radio. {albumCount
 					? `${albumCount} album${albumCount === 1 ? '' : 's'}.`
 					: 'Tracks load when you press Play all.'} {expanded ? 'Collapse' : 'Expand'} to browse."
 			>
-				<div class="absolute inset-0" style="height: 140px;">
+				<div class="absolute inset-0 h-[140px]">
 					{#if featuredAlbum}
 						<AlbumImage
 							mbid={featuredAlbum.mbid || ''}
@@ -94,13 +97,11 @@
 				</div>
 
 				<div
-					class="absolute inset-0 bg-gradient-to-t from-black/75 via-black/45 to-black/25"
-					style="height: 140px;"
+					class="absolute inset-0 h-[140px] bg-gradient-to-t from-black/75 via-black/45 to-black/25"
 				></div>
 
 				<div
-					class="radio-waves pointer-events-none absolute inset-0 overflow-hidden"
-					style="height: 140px;"
+					class="radio-waves pointer-events-none absolute inset-0 h-[140px] overflow-hidden"
 					aria-hidden="true"
 				>
 					<div class="wave wave-1"></div>
@@ -109,20 +110,19 @@
 				</div>
 
 				<div
-					class="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-br from-secondary/[0.06] to-transparent"
-					style="height: 140px;"
+					class="pointer-events-none absolute inset-0 h-[140px] rounded-2xl bg-gradient-to-br from-secondary/[0.06] to-transparent"
 				></div>
 
 				<div
-					class="pointer-events-none absolute inset-0 rounded-2xl"
-					style="background: var(--tilt-specular-bg, transparent); height: 140px;"
+					class="pointer-events-none absolute inset-0 h-[140px] rounded-2xl"
+					style:background="var(--tilt-specular-bg, transparent)"
 				></div>
 
-				<div class="absolute right-3 top-3 opacity-20" style="height: auto;">
+				<div class="absolute right-3 top-3 opacity-20">
 					<Radio class="h-6 w-6 text-white" />
 				</div>
 
-				<div class="relative flex items-end justify-between p-4" style="height: 140px;">
+				<div class="relative flex h-[140px] items-end justify-between p-4">
 					<div class="mr-3 flex min-w-0 flex-1 flex-col gap-1.5">
 						<h3
 							class="line-clamp-2 text-sm font-bold leading-tight text-white drop-shadow-lg sm:text-base"
@@ -155,7 +155,7 @@
 
 	{#if expanded}
 		<div transition:slide={{ duration: 300 }} class="col-span-full overflow-hidden">
-			<div class="mt-3 rounded-2xl border border-secondary/15 bg-base-200/45 p-4">
+			<Card variant="bordered" padding="md" class="mt-3">
 				<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
 					<p class="text-sm text-base-content/60">
 						{#if albumCount}
@@ -176,18 +176,19 @@
 								seed_id: seedId
 							}}
 						/>
-						<button
-							class="btn btn-ghost btn-sm gap-1"
+						<Button
+							variant="ghost"
+							size="sm"
+							icon={RefreshCw}
+							loading={radioQuery.isFetching}
 							onclick={handleRefresh}
-							disabled={radioQuery.isFetching}
 						>
-							<RefreshCw class="h-3.5 w-3.5 {radioQuery.isFetching ? 'animate-spin' : ''}" />
 							Refresh
-						</button>
+						</Button>
 					</div>
 				</div>
 				{#if albumCount}<HomeSection {section} showConnectCard={false} />{/if}
-			</div>
+			</Card>
 		</div>
 	{/if}
 {/if}

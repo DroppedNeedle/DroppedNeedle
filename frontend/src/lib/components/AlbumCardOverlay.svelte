@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Play, Shuffle, ListPlus, ListStart, ListMusic, Download } from 'lucide-svelte';
 	import ContextMenu from './ContextMenu.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import type { MenuItem } from './ContextMenu.svelte';
 	import { integrationStore } from '$lib/stores/integration';
 	import {
@@ -123,28 +124,23 @@
 		class="absolute bottom-2 right-2 z-20 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
 	>
 		{#if size === 'md'}
-			<button
-				class="btn btn-circle btn-sm btn-ghost bg-black/50 backdrop-blur-sm text-white shadow-md hover:bg-black/70"
+			<IconButton
+				variant="neutral"
+				size="sm"
+				icon={Shuffle}
+				label="Shuffle {albumName}"
+				loading={isShuffling}
 				onclick={handleShuffle}
-				aria-label="Shuffle {albumName}"
-			>
-				{#if isShuffling}
-					<span class="loading loading-spinner loading-xs"></span>
-				{:else}
-					<Shuffle class="h-3.5 w-3.5" />
-				{/if}
-			</button>
+			/>
 		{/if}
-		<button
-			class="btn btn-circle btn-sm btn-primary shadow-md"
+		<IconButton
+			variant="primary"
+			size="sm"
+			icon={Play}
+			label="Play {albumName}"
+			loading={isPlaying}
+			class="[&_svg]:fill-current"
 			onclick={handlePlay}
-			aria-label="Play {albumName}"
-		>
-			{#if isPlaying}
-				<span class="loading loading-spinner loading-xs"></span>
-			{:else}
-				<Play class="h-4 w-4 fill-current" />
-			{/if}
-		</button>
+		/>
 	</div>
 {/if}

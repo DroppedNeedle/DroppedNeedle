@@ -3,6 +3,8 @@
 	import { ChevronRight } from 'lucide-svelte';
 	import type { Snippet } from 'svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		title: string;
@@ -31,21 +33,23 @@
 			<h2 class="text-lg font-semibold text-base-content sm:text-xl">{title}</h2>
 		{/if}
 		{#if seeAllHref}
-			<a
+			<Button
+				variant="ghost"
+				size="sm"
+				icon={ChevronRight}
+				iconPosition="end"
 				href={withBasePath(seeAllHref)}
-				class="btn btn-ghost btn-sm gap-1 text-xs font-medium text-base-content/60 hover:text-base-content"
 			>
 				View all
-				<ChevronRight class="h-4 w-4" />
-			</a>
+			</Button>
 		{/if}
 	</div>
 
-	<div class="rounded-xl bg-base-100/40 p-4 shadow-sm">
+	<Card variant="raised" padding="md">
 		{#if loading}
 			<CarouselSkeleton />
 		{:else}
 			{@render children()}
 		{/if}
-	</div>
+	</Card>
 </section>

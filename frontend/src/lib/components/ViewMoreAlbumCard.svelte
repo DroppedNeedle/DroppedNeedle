@@ -3,12 +3,7 @@
 	import { page } from '$app/state';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { ChevronRight } from 'lucide-svelte';
-
-	let imgError = $state(false);
-
-	function handleError() {
-		imgError = true;
-	}
+	import AlbumImage from './AlbumImage.svelte';
 
 	function handleClick() {
 		const query = page.url.searchParams.get('q') || '';
@@ -22,25 +17,18 @@
 	class="relative w-full aspect-square cursor-pointer transition-transform duration-200 ease-in-out hover:scale-105 rounded-box overflow-hidden"
 	onclick={handleClick}
 >
-	{#if imgError}
-		<div class="absolute inset-0 bg-base-200"></div>
-	{:else}
-		<div class="absolute inset-0 overflow-hidden">
-			<img
-				data-testid="view-more-album-background"
-				src={withBasePath('/img/album_bg-250.webp')}
-				srcset={`${withBasePath('/img/album_bg-250.webp')} 250w, ${withBasePath('/img/album_bg-500.webp')} 500w`}
-				sizes="200px"
-				width="500"
-				height="500"
-				alt=""
-				class="w-full h-full object-cover"
-				style="filter: blur(8px);"
-				decoding="async"
-				onerror={handleError}
-			/>
-		</div>
-	{/if}
+	<div class="absolute inset-0 overflow-hidden bg-base-200">
+		<AlbumImage
+			customUrl={withBasePath('/img/album_bg-250.webp')}
+			alt=""
+			size="full"
+			rounded="none"
+			showPlaceholder={false}
+			lazy={false}
+			testId="view-more-album-background"
+			className="h-full w-full blur-[8px]"
+		/>
+	</div>
 	<div class="absolute inset-0 z-10 flex flex-col items-center justify-center p-2">
 		<div
 			class="px-2 py-1 rounded-lg bg-base-300/40 light:bg-base-100/80 text-accent backdrop-blur-sm shadow-lg max-w-full"
