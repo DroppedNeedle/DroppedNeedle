@@ -3,7 +3,6 @@
 	import HomeSection from '$lib/components/HomeSection.svelte';
 	import RadioPlayButton from '$lib/components/discover/RadioPlayButton.svelte';
 	import DiscoveryBatchModal from '$lib/components/discover/DiscoveryBatchModal.svelte';
-	import { integrationStore } from '$lib/stores/integration';
 	import { SvelteSet } from 'svelte/reactivity';
 	import Button from '$lib/ui/Button.svelte';
 	import type { HomeAlbum, HomeSection as HomeSectionType, RadioSeedItem } from '$lib/types';
@@ -22,9 +21,7 @@
 
 	const albums = $derived(section.items as HomeAlbum[]);
 	const requestableCount = $derived(albums.filter((a) => a.mbid && !a.in_library).length);
-	const showDownloadAll = $derived(
-		downloadable && $integrationStore.download_client && requestableCount > 1
-	);
+	const showDownloadAll = $derived(downloadable && requestableCount > 1);
 
 	const seedItems = $derived.by(() => {
 		const items: RadioSeedItem[] = [];

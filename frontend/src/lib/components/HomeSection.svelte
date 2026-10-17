@@ -17,7 +17,6 @@
 		localArtistHref
 	} from '$lib/utils/entityRoutes';
 	import { formatListenCount, formatListenedAt } from '$lib/utils/formatting';
-	import { integrationStore } from '$lib/stores/integration';
 	import { libraryStore } from '$lib/stores/library';
 	import ArtistImage from './ArtistImage.svelte';
 	import AlbumImage from './AlbumImage.svelte';
@@ -252,9 +251,9 @@
 								{/if}
 							</div>
 						</Card>
-						{#if item.mbid && (($integrationStore.download_client && !item.in_library && !isItemRequested) || showPreview)}
+						{#if item.mbid && ((!item.in_library && !isItemRequested) || showPreview)}
 							<div class="flex items-center justify-center gap-1 mt-1 pb-1">
-								{#if $integrationStore.download_client && !item.in_library && !isItemRequested}
+								{#if !item.in_library && !isItemRequested}
 									<AlbumRequestButton
 										mbid={item.mbid}
 										artistName={item.artist_name ?? ''}

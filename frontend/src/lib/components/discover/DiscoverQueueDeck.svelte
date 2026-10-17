@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { coverSrc } from '$lib/api/covers';
-	import { integrationStore } from '$lib/stores/integration';
 	import { onDestroy, onMount } from 'svelte';
 	import { fly } from '$lib/ui/motion';
 	import {
@@ -608,7 +607,7 @@
 										</label>
 									</div>
 
-									{#if $integrationStore.download_client && !current.in_library}
+									{#if !current.in_library}
 										<Button
 											variant="primary"
 											size="sm"

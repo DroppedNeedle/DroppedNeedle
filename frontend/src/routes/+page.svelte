@@ -207,8 +207,7 @@
 								Welcome to <span class="text-primary">DroppedNeedle</span>!
 							</h2>
 							<p class="text-base-content/70 max-w-lg mb-6">
-								Get started by connecting a download client. You need it to request albums and
-								tracks for your library.
+								Connect a download source to fetch your requests. Until then, requests wait.
 							</p>
 							<div class="flex flex-wrap justify-center gap-2 mb-6">
 								{#each downloadClientPrompt.features as feature (feature)}

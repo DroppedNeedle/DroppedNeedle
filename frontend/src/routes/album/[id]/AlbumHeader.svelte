@@ -193,7 +193,7 @@
 	</div>
 
 	<div class="relative z-10 flex flex-col lg:flex-row gap-6 lg:gap-8 p-4 sm:p-6 lg:p-8">
-		{#if (inLibrary || isRequested) && downloadClientConfigured}
+		{#if inLibrary || isRequested}
 			<IconButton
 				size="sm"
 				icon={RefreshCw}
@@ -337,83 +337,81 @@
 				{/if}
 			</div>
 
-			{#if downloadClientConfigured}
-				<div class="pt-4 flex flex-col gap-3">
-					{#if headerDownloadTask}
-						<AlbumDownloadStatus task={headerDownloadTask} {managementHeld} />
-					{/if}
-					<div class="flex flex-wrap items-start gap-3">
-						{#if inLibrary || libraryInLibrary}
-							{#if libraryUnmatchedOnly}
-								<div class="badge badge-error h-8 gap-2 px-3">
-									<TriangleAlert class="h-4 w-4" />
-									Unmatched files only
-								</div>
-							{:else}
-								<div class="badge h-8 gap-2 border-none bg-accent px-3 text-accent-content">
-									<Check class="h-4 w-4" />
-									{libraryComplete || !editionCounts
-										? 'In Library'
-										: `In Library • ${editionCounts.kept}/${editionCounts.total}`}
-								</div>
-							{/if}
-							<AlbumDownloadButton
-								albumId={localCopies[0]?.id || null}
-								mbid={localCopies[0]?.id ? null : releaseGroupMbid || album.musicbrainz_id || null}
-								totalSizeBytes={localCopies[0]?.total_size_bytes ?? null}
-								trackCount={libraryTrackCount}
-								{downloadAllowed}
-								size="sm"
-							/>
-							{#if authStore.isAdmin}
-								<Button variant="danger-ghost" size="sm" icon={Trash2} onclick={ondelete}>
-									Remove
-								</Button>
-							{/if}
-						{:else if isRequested}
-							{#if !headerDownloadTask}
-								<div class="badge badge-lg badge-warning gap-2">
-									<Clock class="h-4 w-4" />
-									Requested
-								</div>
-							{/if}
-							{#if authStore.isAdmin}
-								<Button variant="danger-ghost" size="sm" icon={Trash2} onclick={ondelete}>
-									Remove
-								</Button>
-							{/if}
+			<div class="pt-4 flex flex-col gap-3">
+				{#if headerDownloadTask}
+					<AlbumDownloadStatus task={headerDownloadTask} {managementHeld} />
+				{/if}
+				<div class="flex flex-wrap items-start gap-3">
+					{#if inLibrary || libraryInLibrary}
+						{#if libraryUnmatchedOnly}
+							<div class="badge badge-error h-8 gap-2 px-3">
+								<TriangleAlert class="h-4 w-4" />
+								Unmatched files only
+							</div>
 						{:else}
-							<Button
-								variant="accent"
-								size="lg"
-								icon={Plus}
-								loading={requesting}
-								onclick={() => onrequest()}
-							>
-								{requesting ? 'Requesting...' : 'Add to Library'}
+							<div class="badge h-8 gap-2 border-none bg-accent px-3 text-accent-content">
+								<Check class="h-4 w-4" />
+								{libraryComplete || !editionCounts
+									? 'In Library'
+									: `In Library • ${editionCounts.kept}/${editionCounts.total}`}
+							</div>
+						{/if}
+						<AlbumDownloadButton
+							albumId={localCopies[0]?.id || null}
+							mbid={localCopies[0]?.id ? null : releaseGroupMbid || album.musicbrainz_id || null}
+							totalSizeBytes={localCopies[0]?.total_size_bytes ?? null}
+							trackCount={libraryTrackCount}
+							{downloadAllowed}
+							size="sm"
+						/>
+						{#if authStore.isAdmin}
+							<Button variant="danger-ghost" size="sm" icon={Trash2} onclick={ondelete}>
+								Remove
 							</Button>
 						{/if}
-						{#if !inLibrary}
-							<Button
-								variant="outline"
-								size="lg"
-								active={headerSampling}
-								onclick={toggleHeaderSample}
-								title="Hear 30-second samples of this album before you grab it"
-							>
-								{#if headerSampling && deckSampler.status === 'loading'}
-									<span class="loading loading-spinner loading-sm"></span>
-								{:else if headerSampling}
-									<Square class="h-4 w-4" fill="currentColor" />
-								{:else}
-									<Disc3 class="h-5 w-5" />
-								{/if}
-								{headerSampling ? 'Stop sample' : 'Sample'}
+					{:else if isRequested}
+						{#if !headerDownloadTask}
+							<div class="badge badge-lg badge-warning gap-2">
+								<Clock class="h-4 w-4" />
+								Requested
+							</div>
+						{/if}
+						{#if authStore.isAdmin}
+							<Button variant="danger-ghost" size="sm" icon={Trash2} onclick={ondelete}>
+								Remove
 							</Button>
 						{/if}
-					</div>
+					{:else}
+						<Button
+							variant="accent"
+							size="lg"
+							icon={Plus}
+							loading={requesting}
+							onclick={() => onrequest()}
+						>
+							{requesting ? 'Requesting...' : 'Add to Library'}
+						</Button>
+					{/if}
+					{#if !inLibrary}
+						<Button
+							variant="outline"
+							size="lg"
+							active={headerSampling}
+							onclick={toggleHeaderSample}
+							title="Hear 30-second samples of this album before you grab it"
+						>
+							{#if headerSampling && deckSampler.status === 'loading'}
+								<span class="loading loading-spinner loading-sm"></span>
+							{:else if headerSampling}
+								<Square class="h-4 w-4" fill="currentColor" />
+							{:else}
+								<Disc3 class="h-5 w-5" />
+							{/if}
+							{headerSampling ? 'Stop sample' : 'Sample'}
+						</Button>
+					{/if}
 				</div>
-			{/if}
+			</div>
 		</div>
 	</div>
 </div>

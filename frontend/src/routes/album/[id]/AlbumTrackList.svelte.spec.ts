@@ -30,7 +30,7 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	}
 }));
 
-// download_client gates the Request button
+// download_client gates the Upgrade button
 vi.mock('$lib/stores/integration', () => ({
 	integrationStore: {
 		subscribe: (cb: (v: unknown) => void) => {

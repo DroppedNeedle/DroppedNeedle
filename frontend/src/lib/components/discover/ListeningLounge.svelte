@@ -3,7 +3,6 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { deckSampler, type SampleEntry } from '$lib/stores/deckSampler.svelte';
-	import { integrationStore } from '$lib/stores/integration';
 	import { libraryStore } from '$lib/stores/library';
 	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { albumHrefOrNull } from '$lib/utils/entityRoutes';
@@ -242,7 +241,7 @@
 						</span>
 					{/if}
 				</p>
-				{#if $integrationStore.download_client && !activeAlbum.in_library}
+				{#if !activeAlbum.in_library}
 					<Button
 						variant="outline"
 						size="xs"

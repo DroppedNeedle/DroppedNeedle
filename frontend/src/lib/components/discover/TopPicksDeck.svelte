@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { coverSrc } from '$lib/api/covers';
-	import { integrationStore } from '$lib/stores/integration';
 	import { ChevronLeft, ChevronRight, Sparkles, ThumbsDown } from 'lucide-svelte';
 	import { fly } from '$lib/ui/motion';
 	import type { TopPickItem, TopPicksSection } from '$lib/types';
@@ -215,7 +214,7 @@
 							{/if}
 
 							<div class="mt-3 flex items-center justify-center gap-2 sm:justify-start">
-								{#if featured.album.mbid && $integrationStore.download_client && !featured.album.in_library && !isFeaturedRequested}
+								{#if featured.album.mbid && !featured.album.in_library && !isFeaturedRequested}
 									<AlbumRequestButton
 										mbid={featured.album.mbid}
 										artistName={featured.album.artist_name ?? ''}

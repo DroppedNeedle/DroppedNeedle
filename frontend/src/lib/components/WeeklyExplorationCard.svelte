@@ -2,7 +2,6 @@
 	import type { WeeklyExplorationTrack } from '$lib/types';
 	import { Music2, Disc3 } from 'lucide-svelte';
 	import { albumHrefOrNull, artistHrefOrNull } from '$lib/utils/entityRoutes';
-	import { integrationStore } from '$lib/stores/integration';
 	import { libraryStore } from '$lib/stores/library';
 	import AlbumRequestButton from './AlbumRequestButton.svelte';
 	import SampleButton from './discover/SampleButton.svelte';
@@ -120,7 +119,7 @@
 		</div>
 
 		<div class="mt-auto flex items-center justify-center gap-3 px-2 pb-1 pt-0.5">
-			{#if albumMbid && $integrationStore.download_client && !isRequested}
+			{#if albumMbid && !isRequested}
 				<AlbumRequestButton
 					mbid={albumMbid}
 					artistName={track.artist_name}

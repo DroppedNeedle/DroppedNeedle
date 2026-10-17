@@ -264,12 +264,7 @@
 					? (trackDownloadTasks.get(track.recording_id) ?? null)
 					: null}
 				{@const showTrackDownload = !libMeta && !!trackTask}
-				{@const showRequest =
-					!libMeta &&
-					!trackTask &&
-					!heldMeta &&
-					!!track.recording_id &&
-					$integrationStore.download_client}
+				{@const showRequest = !libMeta && !trackTask && !heldMeta && !!track.recording_id}
 				{@const upgradeRecordingId =
 					track.recording_id ?? libMeta?.musicbrainz_recording_id ?? null}
 				{@const showUpgrade =

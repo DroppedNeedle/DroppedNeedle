@@ -25,7 +25,6 @@
 	import { formatDuration } from '$lib/utils/formatting';
 	import type { HomeAlbum, Track } from '$lib/types';
 	import { toastStore } from '$lib/stores/toast';
-	import { integrationStore } from '$lib/stores/integration';
 	import { libraryStore } from '$lib/stores/library';
 	import { albumHrefOrNull } from '$lib/utils/entityRoutes';
 	import Button from '$lib/ui/Button.svelte';
@@ -473,7 +472,7 @@
 												</div>
 											{/if}
 
-											{#if $integrationStore.download_client && !album.in_library && !isAlbumRequested}
+											{#if !album.in_library && !isAlbumRequested}
 												<div class="tooltip tooltip-bottom" data-tip="Request album">
 													<AlbumRequestButton
 														mbid={album.mbid}

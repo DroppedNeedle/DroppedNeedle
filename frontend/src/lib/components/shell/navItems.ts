@@ -143,7 +143,7 @@ export const navItems: NavItem[] = [
 		label: 'Requests',
 		icon: Inbox,
 		href: '/requests',
-		audience: 'download-client',
+		audience: 'everyone',
 		sidebar: { group: 'requests' },
 		more: { active: within('/requests') }
 	},

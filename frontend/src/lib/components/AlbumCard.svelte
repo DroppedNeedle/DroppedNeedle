@@ -2,7 +2,6 @@
 	import type { Album, EnrichmentSource } from '$lib/types';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import { libraryStore } from '$lib/stores/library';
-	import { integrationStore } from '$lib/stores/integration';
 	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { formatListenCount } from '$lib/utils/formatting';
 	import { getListenTitle } from '$lib/utils/enrichment';
@@ -156,7 +155,7 @@
 		{#if album.type_info && album.type_info !== 'Album'}
 			<span class="badge badge-sm {getTypeBadgeClass(album.type_info)}">{album.type_info}</span>
 		{/if}
-		{#if $integrationStore.download_client && !isLocalOnly}
+		{#if !isLocalOnly}
 			{#if inLibrary}
 				<LibraryBadge
 					status="library"
@@ -177,7 +176,7 @@
 		{/if}
 	</div>
 
-	{#if $integrationStore.download_client && !inLibrary && !isRequested}
+	{#if !inLibrary && !isRequested}
 		<IconButton
 			variant="accent"
 			shape="square"

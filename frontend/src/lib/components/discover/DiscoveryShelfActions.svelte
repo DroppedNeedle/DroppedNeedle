@@ -2,7 +2,6 @@
 	import { Download } from 'lucide-svelte';
 	import DiscoveryBatchModal from '$lib/components/discover/DiscoveryBatchModal.svelte';
 	import RadioPlayButton from '$lib/components/discover/RadioPlayButton.svelte';
-	import { integrationStore } from '$lib/stores/integration';
 	import { libraryStore } from '$lib/stores/library';
 	import Button from '$lib/ui/Button.svelte';
 	import type { HomeAlbum, HomeSection, RadioPlanRequest } from '$lib/types';
@@ -25,7 +24,7 @@
 				album.mbid && !album.in_library && !album.requested && !libraryStore.isRequested(album.mbid)
 		).length
 	);
-	const canDownload = $derived($integrationStore.download_client && requestableCount > 0);
+	const canDownload = $derived(requestableCount > 0);
 </script>
 
 <div class="flex flex-wrap items-center gap-2">
