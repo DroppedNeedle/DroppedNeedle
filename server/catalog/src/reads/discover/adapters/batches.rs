@@ -26,7 +26,7 @@ use crate::reads::discover::models::{
     DiscoveryBatchRemoveResult, DiscoveryBatchSummary,
 };
 use crate::reads::discover::ports::{BatchFailure, BatchStore, BoxFuture, ProviderFailure};
-use droppedneedle_auth::users::{roles::Role, stores::UserStore};
+use droppedneedle_auth::{Admin, Principal};
 use droppedneedle_kernel::db::{WriteLane, writer::Lane};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
@@ -42,17 +42,6 @@ pub const OUTCOME_NOT_REQUESTED: &str = "not_requested";
 
 /// Request states that mean "still cancellable, nothing on disk yet".
 const PENDING_STATUSES: [&str; 4] = ["awaiting_approval", "pending", "queued", "downloading"];
-
-/// Who is asking, resolved fresh from the user store.
-#[derive(Debug, Clone)]
-pub struct BatchCaller {
-    /// User id.
-    pub user_id: String,
-    /// Login name, when the account has one.
-    pub username: Option<String>,
-    /// Current role.
-    pub role: Role,
-}
 
 /// One album the batch asks for.
 #[derive(Debug, Clone)]
@@ -75,7 +64,7 @@ pub trait BatchRequests: Send + Sync {
     /// quota and approval rules. A refusal files nothing.
     fn request_albums<'a>(
         &'a self,
-        caller: &'a BatchCaller,
+        caller: &'a Principal,
         albums: Vec<BatchAlbum>,
     ) -> BoxFuture<'a, Result<(), BatchFailure>>;
     /// Withdraw the batch owner's ask for one album: the owner detaches
@@ -88,11 +77,10 @@ pub trait BatchRequests: Send + Sync {
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<bool, String>>;
     /// Move one album's files to the recycle bin and clear its download
-    /// state. Admins only: anyone else is refused. True when the library
-    /// held it.
+    /// state, as `admin`. True when the library held it.
     fn remove_album<'a>(
         &'a self,
-        caller: &'a BatchCaller,
+        admin: &'a Admin,
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<bool, String>>;
 }
@@ -122,7 +110,6 @@ struct BatchItem {
 pub struct LiveBatches {
     pool: SqlitePool,
     lane: WriteLane,
-    users: Arc<dyn UserStore>,
     requests: RequestsSlot,
     /// Idempotency keys of creates in progress, so a retried "Download
     /// all" never files the same batch twice at once.
@@ -160,16 +147,10 @@ fn placeholders(count: usize) -> String {
 impl LiveBatches {
     /// Batches over this database, filing through `requests` once boot
     /// fills the slot.
-    pub fn new(
-        pool: SqlitePool,
-        lane: WriteLane,
-        users: Arc<dyn UserStore>,
-        requests: RequestsSlot,
-    ) -> Self {
+    pub fn new(pool: SqlitePool, lane: WriteLane, requests: RequestsSlot) -> Self {
         Self {
             pool,
             lane,
-            users,
             requests,
             creating: Mutex::new(HashSet::new()),
         }
@@ -183,26 +164,9 @@ impl LiveBatches {
         })
     }
 
-    async fn caller(&self, user_id: &str) -> Result<BatchCaller, BatchFailure> {
-        match self.users.get_by_id(user_id).await {
-            Ok(Some(user)) => Ok(BatchCaller {
-                user_id: user.id,
-                username: user.username,
-                role: user.role,
-            }),
-            // The session outlived its account: nothing is theirs to see.
-            Ok(None) => Err(BatchFailure::NotFound),
-            Err(error) => Err(failed(format!("batch caller read: {error:?}"))),
-        }
-    }
-
     /// The batch when the caller may see it: their own, or any for an
     /// admin. Anything else reads as missing.
-    async fn visible(
-        &self,
-        caller: &BatchCaller,
-        batch_id: &str,
-    ) -> Result<BatchHead, BatchFailure> {
+    async fn visible(&self, caller: &Principal, batch_id: &str) -> Result<BatchHead, BatchFailure> {
         let row: Option<(String, String, String, String, String)> = sqlx::query_as(
             "SELECT id, user_id, name, source_section, created_at FROM discovery_batches \
              WHERE id = ?1",
@@ -214,7 +178,7 @@ impl LiveBatches {
         let Some((id, user_id, name, source_section, created_at)) = row else {
             return Err(BatchFailure::NotFound);
         };
-        if user_id != caller.user_id && caller.role != Role::Admin {
+        if user_id != caller.user_id() && !caller.is_admin() {
             return Err(BatchFailure::NotFound);
         }
         Ok(BatchHead {
@@ -465,7 +429,7 @@ impl LiveBatches {
     /// The caller's batch already made under this idempotency key.
     async fn existing(
         &self,
-        caller: &BatchCaller,
+        caller: &Principal,
         key: &str,
     ) -> Result<Option<DiscoveryBatchDetail>, BatchFailure> {
         let owner: Option<String> =
@@ -476,7 +440,7 @@ impl LiveBatches {
                 .map_err(|error| failed(format!("batch key read: {error}")))?;
         match owner {
             None => Ok(None),
-            Some(owner) if owner == caller.user_id => {
+            Some(owner) if owner == caller.user_id() => {
                 let head = self.visible(caller, key).await?;
                 self.detail_of(head).await.map(Some)
             }
@@ -488,11 +452,10 @@ impl LiveBatches {
 
     async fn create_batch(
         &self,
-        user_id: &str,
+        caller: &Principal,
         body: &DiscoveryBatchCreate,
     ) -> Result<DiscoveryBatchDetail, BatchFailure> {
         let requests = self.requests()?;
-        let caller = self.caller(user_id).await?;
         // A retried create with the same key answers with the batch it
         // already made instead of filing again.
         let key = match body.idempotency_key.as_deref().map(str::trim) {
@@ -509,7 +472,7 @@ impl LiveBatches {
         };
         let _guard = match &key {
             Some(key) => {
-                if let Some(existing) = self.existing(&caller, key).await? {
+                if let Some(existing) = self.existing(caller, key).await? {
                     return Ok(existing);
                 }
                 let mut creating = self
@@ -588,11 +551,11 @@ impl LiveBatches {
             .iter()
             .map(|album| album.release_group_mbid.clone())
             .collect();
-        requests.request_albums(&caller, to_request).await?;
+        requests.request_albums(caller, to_request).await?;
         // Record what filing actually did for each album, not what the
         // check above expected.
         let filed = self
-            .filed_for(&caller.user_id, &asked)
+            .filed_for(caller.user_id(), &asked)
             .await
             .map_err(failed)?;
         for row in &mut rows {
@@ -609,7 +572,7 @@ impl LiveBatches {
         let name = body.name.trim();
         let head = BatchHead {
             id: key.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-            user_id: caller.user_id.clone(),
+            user_id: caller.user_id().to_owned(),
             name: if name.is_empty() {
                 "Discovery batch".to_owned()
             } else {
@@ -659,12 +622,11 @@ impl LiveBatches {
 
     async fn remove_batch(
         &self,
-        user_id: &str,
+        caller: &Principal,
         batch_id: &str,
         remove_albums: bool,
     ) -> Result<DiscoveryBatchRemoveResult, BatchFailure> {
-        let caller = self.caller(user_id).await?;
-        let head = self.visible(&caller, batch_id).await?;
+        let head = self.visible(caller, batch_id).await?;
         let owner = head.user_id.clone();
         let detail = self.detail_of(head).await?;
         let mut result = DiscoveryBatchRemoveResult {
@@ -676,18 +638,20 @@ impl LiveBatches {
         let mut failed_items: Vec<String> = Vec::new();
         if remove_albums {
             let requests = self.requests()?;
+            // Recycling is for admins: anyone else's landed albums stay.
+            let admin = Admin::try_from(caller.clone()).ok();
             for status in &detail.items {
                 let mbid = status.release_group_mbid.as_str();
                 // Only albums this batch caused; skipped ones are never touched.
                 if status.outcome != OUTCOME_REQUESTED {
                     result.kept += 1;
                 } else if status.in_library {
-                    // Recycling is for admins, and never takes an album
-                    // someone else asked for, favourited or played.
-                    if caller.role != Role::Admin {
+                    // Never takes an album someone else asked for,
+                    // favourited or played.
+                    let Some(admin) = &admin else {
                         result.kept += 1;
                         continue;
-                    }
+                    };
                     match self.held_by_others(mbid, &owner).await {
                         Ok(false) => {}
                         Ok(true) => {
@@ -701,7 +665,7 @@ impl LiveBatches {
                             continue;
                         }
                     }
-                    match requests.remove_album(&caller, mbid).await {
+                    match requests.remove_album(admin, mbid).await {
                         Ok(true) => result.removed_albums += 1,
                         Ok(false) => result.kept += 1,
                         Err(cause) => {
@@ -768,10 +732,10 @@ impl LiveBatches {
 impl BatchStore for LiveBatches {
     fn create<'a>(
         &'a self,
-        user_id: &'a str,
+        caller: &'a Principal,
         body: &'a DiscoveryBatchCreate,
     ) -> BoxFuture<'a, Result<DiscoveryBatchDetail, BatchFailure>> {
-        Box::pin(self.create_batch(user_id, body))
+        Box::pin(self.create_batch(caller, body))
     }
 
     fn list<'a>(
@@ -783,22 +747,21 @@ impl BatchStore for LiveBatches {
 
     fn detail<'a>(
         &'a self,
-        user_id: &'a str,
+        caller: &'a Principal,
         batch_id: &'a str,
     ) -> BoxFuture<'a, Result<DiscoveryBatchDetail, BatchFailure>> {
         Box::pin(async move {
-            let caller = self.caller(user_id).await?;
-            let head = self.visible(&caller, batch_id).await?;
+            let head = self.visible(caller, batch_id).await?;
             self.detail_of(head).await
         })
     }
 
     fn remove<'a>(
         &'a self,
-        user_id: &'a str,
+        caller: &'a Principal,
         batch_id: &'a str,
         remove_albums: bool,
     ) -> BoxFuture<'a, Result<DiscoveryBatchRemoveResult, BatchFailure>> {
-        Box::pin(self.remove_batch(user_id, batch_id, remove_albums))
+        Box::pin(self.remove_batch(caller, batch_id, remove_albums))
     }
 }

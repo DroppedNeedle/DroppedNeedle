@@ -22,7 +22,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::store::{ItemRecord, JobRecord};
 use super::{DropError, DropImports, MAX_FILES_PER_DROP, Viewer, extract};
-use crate::requests::{auth::is_admin, error::RequestsError};
+use crate::requests::error::RequestsError;
 use droppedneedle_auth::Curator;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
@@ -157,7 +157,7 @@ fn item_number(raw: &str) -> Result<i64, ApiError> {
 fn viewer(curator: &Curator) -> Viewer {
     Viewer {
         user_id: curator.user_id().to_owned(),
-        admin: is_admin(curator),
+        admin: curator.is_admin(),
     }
 }
 
@@ -184,7 +184,7 @@ pub async fn upload_handler(
     let job = service
         .create_job(
             &viewer.user_id,
-            curator.display_name(),
+            curator.username_display(),
             staged.files.clone(),
         )
         .await?;

@@ -35,7 +35,6 @@ use super::db::now_epoch;
 use super::dispatch::Journal;
 use super::downloads::store::{NewTask, TaskDetails, TaskRow};
 use super::edition::library_holds;
-use super::requests::auth::is_admin;
 use super::requests::dispatch::DispatchOrigin;
 use super::requests::error::RequestsError;
 use super::requests::ledger::{WATCH_DORMANT, WATCH_FULFILLED, WATCH_STOPPED, WantedWatch};
@@ -347,7 +346,7 @@ impl SearchJobs {
             .await
             .map_err(SearchJobError::Internal)?
             .ok_or(SearchJobError::NotFound)?;
-        let admin = admin_ok && is_admin(principal);
+        let admin = admin_ok && principal.is_admin();
         if row.user_id != principal.user_id() && !admin {
             return Err(SearchJobError::Forbidden);
         }

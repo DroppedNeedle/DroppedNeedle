@@ -91,7 +91,7 @@ enum Origin {
 pub struct Principal {
     user_id: String,
     username: Option<String>,
-    display_name: Option<String>,
+    username_display: Option<String>,
     role: Role,
     session_id: String,
     session_kind: SessionKind,
@@ -105,7 +105,7 @@ impl Principal {
     pub(crate) fn from_session(
         user_id: String,
         username: Option<String>,
-        display_name: Option<String>,
+        username_display: Option<String>,
         role: Role,
         session_id: String,
         session_kind: SessionKind,
@@ -114,7 +114,7 @@ impl Principal {
         Self {
             user_id,
             username,
-            display_name,
+            username_display,
             role,
             session_id,
             session_kind,
@@ -127,19 +127,19 @@ impl Principal {
     /// Weekly Mix standing grant or removing a discovery batch as its owner.
     ///
     /// Only the service that performs the work calls this, never a handler,
-    /// and `user_id` and `display_name` come from the stored row the work
+    /// and `user_id` and `username_display` come from the stored row the work
     /// belongs to, never from request data. The result is never put in a
     /// request. It has no session: it cannot create credentials, and
-    /// `Curator` and `Admin` refuse it whatever its role.
+    /// `User`, `Curator` and `Admin` refuse it whatever its role.
     pub fn acting_for(
         user_id: impl Into<String>,
         role: Role,
-        display_name: Option<String>,
+        username_display: Option<String>,
     ) -> Self {
         Self {
             user_id: user_id.into(),
             username: None,
-            display_name,
+            username_display,
             role,
             session_id: String::new(),
             session_kind: SessionKind::Companion,
@@ -168,10 +168,10 @@ impl Principal {
         )
     }
 
-    /// The same test principal shown under `display_name`.
+    /// The same test principal shown under `username_display`.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn with_display_name(mut self, display_name: &str) -> Self {
-        self.display_name = Some(display_name.to_owned());
+    pub fn with_username_display(mut self, username_display: &str) -> Self {
+        self.username_display = Some(username_display.to_owned());
         self
     }
 
@@ -185,15 +185,29 @@ impl Principal {
         self.username.as_deref()
     }
 
-    /// The name to show for this user, as in "requested by": the display
-    /// username, else the login, else the user id.
-    pub fn display_name(&self) -> &str {
-        self.display_name.as_deref().unwrap_or(&self.user_id)
+    /// The name to show for this user, as in "requested by": the login as
+    /// typed at sign-up (`auth_users.username_display`), else the login,
+    /// else the user id. Not the profile's `display_name`.
+    pub fn username_display(&self) -> &str {
+        self.username_display.as_deref().unwrap_or(&self.user_id)
     }
 
-    /// Account role, read with the token for this request.
+    /// Account role, read with the token for this request. Auto-approval
+    /// and quota skips read it; access is proven by an extractor.
     pub fn role(&self) -> Role {
         self.role
+    }
+
+    /// Whether this is a signed-in admin, the test [`Admin`] makes, without
+    /// taking the principal. Work done for a user never is.
+    pub fn is_admin(&self) -> bool {
+        self.origin == Origin::Session && self.role.is_admin()
+    }
+
+    /// Whether this is a signed-in curator (admin or trusted), the test
+    /// [`Curator`] makes. Work done for a user never is.
+    fn is_curator(&self) -> bool {
+        self.origin == Origin::Session && self.role.is_curator()
     }
 
     /// Authenticating session id (for the `current` marker in listings).
@@ -242,24 +256,6 @@ impl From<RoleRequired> for ApiError {
     }
 }
 
-/// The interim shape of the account principal, still built by catalog's
-/// `LibraryUser` and acquire's import extractors.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthContext {
-    /// Owning user id.
-    pub user_id: String,
-    /// Login username, when the account has one.
-    pub username: Option<String>,
-    /// Account role, resolved fresh for this request.
-    pub role: Role,
-    /// Authenticating session id (for the `current` marker in listings).
-    pub session_id: String,
-    /// Kind of the authenticating session.
-    pub session_kind: SessionKind,
-    /// True when the session came from the cookie rather than Bearer.
-    pub via_cookie: bool,
-}
-
 /// Any signed-in caller. No principal is 401.
 #[derive(Debug, Clone)]
 pub struct User(pub Principal);
@@ -278,7 +274,7 @@ impl TryFrom<Principal> for Curator {
     type Error = RoleRequired;
 
     fn try_from(principal: Principal) -> Result<Self, Self::Error> {
-        if principal.origin == Origin::Session && principal.role.is_curator() {
+        if principal.is_curator() {
             Ok(Self(principal))
         } else {
             Err(RoleRequired::Curator)
@@ -290,7 +286,7 @@ impl TryFrom<Principal> for Admin {
     type Error = RoleRequired;
 
     fn try_from(principal: Principal) -> Result<Self, Self::Error> {
-        if principal.origin == Origin::Session && principal.role.is_admin() {
+        if principal.is_admin() {
             Ok(Self(principal))
         } else {
             Err(RoleRequired::Admin)
@@ -339,11 +335,13 @@ impl Deref for Admin {
 }
 
 /// The principal the session gate (or the test sign-in layer) put in the
-/// request. None means the request never passed the gate: 401.
+/// request. None means the request never passed the gate: 401. So is a
+/// principal for work done for a user, which never belongs in a request.
 fn request_principal(parts: &Parts) -> Result<Principal, ApiError> {
     parts
         .extensions
         .get::<Principal>()
+        .filter(|principal| principal.origin == Origin::Session)
         .cloned()
         .ok_or_else(|| ApiError::unauthorized("Authentication required"))
 }
@@ -452,6 +450,13 @@ mod tests {
             refused("Admin role required")
         );
         assert_eq!(answer::<Admin>(signed_in(Role::Admin)).await, None);
+
+        // A principal for work done for a user, put in a request by
+        // mistake, signs nobody in.
+        let acting = || Some(Principal::acting_for("u", Role::Admin, None));
+        assert_eq!(answer::<User>(acting()).await, unauthorized);
+        assert_eq!(answer::<Curator>(acting()).await, unauthorized);
+        assert_eq!(answer::<Admin>(acting()).await, unauthorized);
     }
 
     #[test]

@@ -236,7 +236,7 @@ async fn acquire_recovery_waits_out_a_busy_reader_and_stops_on_a_real_failure() 
     let runtime = open_runtime(&db).await.unwrap();
     let auth = AuthRig::on(&runtime);
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let mut reads = ReadsSetup::for_tests(auth.deps.clone(), ids.clone()).unwrap();
+    let mut reads = ReadsSetup::for_tests(ids.clone()).unwrap();
     let acquire = AcquireSetup::build(
         AcquireDb::from_runtime(&runtime),
         &config,

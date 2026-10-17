@@ -29,7 +29,7 @@ use super::queue_rows::{ListFilter, Viewer};
 use super::state::TaskStatus;
 use super::store::QuarantineRow;
 use super::upgrades::Upgrades;
-use crate::requests::{auth::is_admin, error::RequestsError};
+use crate::requests::error::RequestsError;
 use crate::search_jobs::candidates::SearchCandidateView;
 use crate::search_jobs::{AlbumSearch, JobView, SearchJobError, SearchJobs, StartOutcome};
 use crate::worker::{DownloadWorker, ReimportError};
@@ -432,7 +432,7 @@ pub struct DownloadsState {
 fn viewer(principal: &Principal) -> Viewer {
     Viewer {
         user_id: principal.user_id().to_owned(),
-        admin: is_admin(principal),
+        admin: principal.is_admin(),
     }
 }
 

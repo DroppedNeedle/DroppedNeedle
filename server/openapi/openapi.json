@@ -21141,7 +21141,7 @@
             }
           },
           "403": {
-            "description": "Admin access required",
+            "description": "Admin role required",
             "content": {
               "application/json": {
                 "schema": {
@@ -21195,7 +21195,7 @@
             }
           },
           "403": {
-            "description": "Admin access required",
+            "description": "Admin role required",
             "content": {
               "application/json": {
                 "schema": {
@@ -21267,7 +21267,7 @@
             }
           },
           "403": {
-            "description": "Admin access required",
+            "description": "Admin role required",
             "content": {
               "application/json": {
                 "schema": {
@@ -21349,7 +21349,7 @@
             }
           },
           "403": {
-            "description": "Admin access required",
+            "description": "Admin role required",
             "content": {
               "application/json": {
                 "schema": {
@@ -21430,7 +21430,7 @@
             }
           },
           "403": {
-            "description": "Admin access required",
+            "description": "Admin role required",
             "content": {
               "application/json": {
                 "schema": {
@@ -21521,7 +21521,7 @@
             }
           },
           "403": {
-            "description": "Admin access required",
+            "description": "Admin role required",
             "content": {
               "application/json": {
                 "schema": {
@@ -21644,7 +21644,7 @@
             }
           },
           "403": {
-            "description": "Admin access required",
+            "description": "Admin role required",
             "content": {
               "application/json": {
                 "schema": {
@@ -21704,7 +21704,7 @@
             }
           },
           "403": {
-            "description": "Admin access required",
+            "description": "Admin role required",
             "content": {
               "application/json": {
                 "schema": {
@@ -21765,7 +21765,7 @@
             }
           },
           "403": {
-            "description": "Admin access required",
+            "description": "Admin role required",
             "content": {
               "application/json": {
                 "schema": {
@@ -21847,7 +21847,7 @@
             }
           },
           "403": {
-            "description": "Admin access required",
+            "description": "Admin role required",
             "content": {
               "application/json": {
                 "schema": {
@@ -28200,7 +28200,7 @@
             }
           },
           "403": {
-            "description": "Admin access required",
+            "description": "Admin role required",
             "content": {
               "application/json": {
                 "schema": {

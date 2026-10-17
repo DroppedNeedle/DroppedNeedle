@@ -8,8 +8,7 @@ use axum::{
 use super::handlers;
 use crate::wiring::LibrarySetup;
 
-/// Library router. The wiring mounts this inside the session gate
-/// with the principal-translation layer.
+/// Library router. The wiring mounts this inside the session gate.
 pub fn library_router(state: LibrarySetup) -> Router {
     Router::new()
         .route(

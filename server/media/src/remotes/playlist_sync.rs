@@ -45,7 +45,7 @@ where
     responses(
         (status = 200, description = "Sync report", body = PlaylistSyncResult),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin access required"),
+        (status = 403, description = "Admin role required"),
     )
 )]
 pub(crate) async fn sync_now<T, E>(

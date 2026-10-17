@@ -9,10 +9,8 @@ use super::error::{QUOTA_EXCEEDED, RequestsError, STORAGE_FULL};
 use super::models::{BatchIntake, BatchItem, RequestKind};
 use super::service::RequestsService;
 use super::{RequestsState, ledger::STATUS_FAILED};
-use droppedneedle_auth::{Principal, Role};
-use droppedneedle_catalog::reads::discover::adapters::batches::{
-    BatchAlbum, BatchCaller, BatchRequests,
-};
+use droppedneedle_auth::{Admin, Principal, Role};
+use droppedneedle_catalog::reads::discover::adapters::batches::{BatchAlbum, BatchRequests};
 use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BatchRefusal, ProviderFailure};
 use droppedneedle_library::mutations::{MutationError, Mutations};
 use droppedneedle_library::wiring::LibrarySetup;
@@ -59,7 +57,7 @@ fn batch_failure(error: RequestsError) -> BatchFailure {
 impl BatchRequests for DiscoveryBatchRequests {
     fn request_albums<'a>(
         &'a self,
-        caller: &'a BatchCaller,
+        caller: &'a Principal,
         albums: Vec<BatchAlbum>,
     ) -> BoxFuture<'a, Result<(), BatchFailure>> {
         Box::pin(async move {
@@ -77,12 +75,8 @@ impl BatchRequests for DiscoveryBatchRequests {
                 monitor_artist: false,
                 auto_download_artist: false,
             };
-            let name = caller
-                .username
-                .clone()
-                .unwrap_or_else(|| caller.user_id.clone());
             let response = RequestsService::new(&self.requests)
-                .file_batch(&caller.user_id, name, caller.role, &body)
+                .request_batch(caller, &body)
                 .await
                 .map_err(batch_failure)?;
             if response.status == STATUS_FAILED && response.requested == 0 {
@@ -117,18 +111,15 @@ impl BatchRequests for DiscoveryBatchRequests {
 
     fn remove_album<'a>(
         &'a self,
-        caller: &'a BatchCaller,
+        admin: &'a Admin,
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<bool, String>> {
         Box::pin(async move {
-            if !caller.role.is_admin() {
-                return Err("only admins recycle batch albums".to_owned());
-            }
             let Some(library) = self.library.clone() else {
                 return Ok(false);
             };
             let hook = library.removal_hook.get().cloned();
-            let (album, actor_id) = (release_group_mbid.to_owned(), caller.user_id.clone());
+            let (album, actor_id) = (release_group_mbid.to_owned(), admin.user_id().to_owned());
             let removed = tokio::task::spawn_blocking(move || {
                 Mutations::new(&library).remove_album(&album, true, &actor_id)
             })

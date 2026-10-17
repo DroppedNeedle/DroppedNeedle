@@ -8,16 +8,24 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use droppedneedle_acquire::requests::RequestsState;
 use droppedneedle_acquire::requests::discovery::DiscoveryBatchRequests;
-use droppedneedle_auth::sqlite::{AuthDb, SqliteUserStore};
+use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_auth::{Admin, Principal, Role};
 use droppedneedle_catalog::reads::discover::adapters::batches::{
-    BatchAlbum, BatchCaller, BatchRequests, LiveBatches, RequestsSlot,
+    BatchAlbum, BatchRequests, LiveBatches, RequestsSlot,
 };
 use droppedneedle_catalog::reads::discover::models::{DiscoveryBatchCreate, DiscoveryBatchItemIn};
 use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BatchStore, BoxFuture};
 
+use crate::common::auth::test_principal;
+
 const MBID_A: &str = "11111111-1111-4111-8111-111111111111";
 const MBID_B: &str = "22222222-2222-4222-8222-222222222222";
 const MBID_C: &str = "33333333-3333-4333-8333-333333333333";
+
+/// A plain user signed in, as the session gate would hand the handler.
+fn user(user_id: &str) -> Principal {
+    test_principal(user_id, Role::User, "sess-batches", SessionKind::Standard)
+}
 
 fn batch(name: &str, ids: &[&str]) -> DiscoveryBatchCreate {
     DiscoveryBatchCreate {
@@ -45,7 +53,7 @@ struct Counting {
 impl BatchRequests for Counting {
     fn request_albums<'a>(
         &'a self,
-        caller: &'a BatchCaller,
+        caller: &'a Principal,
         albums: Vec<BatchAlbum>,
     ) -> BoxFuture<'a, Result<(), BatchFailure>> {
         self.inner.request_albums(caller, albums)
@@ -59,11 +67,11 @@ impl BatchRequests for Counting {
     }
     fn remove_album<'a>(
         &'a self,
-        caller: &'a BatchCaller,
+        admin: &'a Admin,
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<bool, String>> {
         self.recycles.fetch_add(1, Ordering::SeqCst);
-        self.inner.remove_album(caller, release_group_mbid)
+        self.inner.remove_album(admin, release_group_mbid)
     }
 }
 
@@ -79,16 +87,18 @@ async fn batch_files_requests_and_removal_cancels_only_its_own() {
     });
     let slot = RequestsSlot::default();
     assert!(slot.set(counting.clone()).is_ok());
-    let users = Arc::new(SqliteUserStore::new(&AuthDb::new(db.pool(), db.lane())));
-    let batches = LiveBatches::new(db.pool().clone(), db.lane().clone(), users, slot);
+    let batches = LiveBatches::new(db.pool().clone(), db.lane().clone(), slot);
 
     // Bob asks for C first; Ada's batch then skips it as a duplicate.
     let bobs = batches
-        .create("u-bob", &batch("Bob's", &[MBID_C]))
+        .create(&user("u-bob"), &batch("Bob's", &[MBID_C]))
         .await
         .expect("bob's batch");
     let adas = batches
-        .create("u-ada", &batch("", &[MBID_A, MBID_B, MBID_C, MBID_A]))
+        .create(
+            &user("u-ada"),
+            &batch("", &[MBID_A, MBID_B, MBID_C, MBID_A]),
+        )
         .await
         .expect("ada's batch");
     assert_eq!(adas.name, "Discovery batch");
@@ -117,17 +127,19 @@ async fn batch_files_requests_and_removal_cancels_only_its_own() {
 
     // Only already-owned or already-requested albums: nothing to file.
     assert!(matches!(
-        batches.create("u-ada", &batch("Again", &[MBID_C])).await,
+        batches
+            .create(&user("u-ada"), &batch("Again", &[MBID_C]))
+            .await,
         Err(BatchFailure::Invalid(_))
     ));
 
     // Another user's batch reads as missing, and stays out of their list.
     assert_eq!(
-        batches.detail("u-bob", &adas.id).await.err(),
+        batches.detail(&user("u-bob"), &adas.id).await.err(),
         Some(BatchFailure::NotFound)
     );
     assert_eq!(
-        batches.remove("u-bob", &adas.id, true).await.err(),
+        batches.remove(&user("u-bob"), &adas.id, true).await.err(),
         Some(BatchFailure::NotFound)
     );
     let listed = batches.list("u-bob").await.expect("bob's list");
@@ -160,7 +172,7 @@ async fn batch_files_requests_and_removal_cancels_only_its_own() {
     // Removing Ada's batch cancels her pending request for B, leaves Bob's
     // C alone, and never recycles A: plain users don't recycle albums.
     let removed = batches
-        .remove("u-ada", &adas.id, true)
+        .remove(&user("u-ada"), &adas.id, true)
         .await
         .expect("removal");
     assert_eq!(
@@ -174,7 +186,7 @@ async fn batch_files_requests_and_removal_cancels_only_its_own() {
     assert_eq!(counting.recycles.load(Ordering::SeqCst), 0);
     assert!(batches.list("u-ada").await.expect("ada's list").is_empty());
     let bob = batches
-        .detail("u-bob", &bobs.id)
+        .detail(&user("u-bob"), &bobs.id)
         .await
         .expect("bob's batch");
     assert_eq!(bob.items[0].request_status, waiting);

@@ -194,7 +194,7 @@ fn plugin_info(
     responses(
         (status = 200, description = "Plugin listing", body = PluginListResponse),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin access required"),
+        (status = 403, description = "Admin role required"),
     )
 )]
 pub async fn list_plugins(
@@ -255,7 +255,7 @@ async fn install_staged(deps: &PluginsDeps, staged: StagedPlugin) -> Result<Stri
         (status = 200, description = "What would be installed", body = PluginInstallPreview),
         (status = 400, description = "Not a usable plugin repository"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin access required"),
+        (status = 403, description = "Admin role required"),
         (status = 502, description = "GitHub refused the request or could not be reached"),
         (status = 503, description = "GitHub is rate limiting this server"),
     )
@@ -306,7 +306,7 @@ pub async fn preview_plugin_install(
         (status = 201, description = "Installed plugin", body = PluginInfo),
         (status = 400, description = "Not a usable plugin repository"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin access required"),
+        (status = 403, description = "Admin role required"),
         (status = 409, description = "The repository moved since the preview"),
         (status = 502, description = "GitHub refused the request or could not be reached"),
         (status = 503, description = "GitHub is rate limiting this server"),
@@ -347,7 +347,7 @@ pub async fn install_plugin(
         (status = 200, description = "Update outcome", body = PluginSourceUpdateResponse),
         (status = 400, description = "No GitHub source, or not a usable plugin"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin access required"),
+        (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown plugin"),
         (status = 409, description = "The repository moved since the preview"),
         (status = 502, description = "GitHub refused the request or could not be reached"),
@@ -418,7 +418,7 @@ pub async fn update_plugin_from_source(
         (status = 200, description = "Updated plugin", body = PluginInfo),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin access required"),
+        (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown plugin"),
     )
 )]
@@ -458,7 +458,7 @@ pub async fn update_plugin(
     responses(
         (status = 200, description = "Uninstall receipt", body = StatusMessage),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin access required"),
+        (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown plugin"),
     )
 )]
@@ -708,7 +708,7 @@ fn percent_decode(part: &str) -> Option<String> {
     responses(
         (status = 200, description = "Plugin answer"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin access required"),
+        (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown plugin or route"),
         (status = 429, description = "Too many requests"),
     )
@@ -734,7 +734,7 @@ pub async fn plugin_ext_get(
     responses(
         (status = 200, description = "Plugin answer"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin access required"),
+        (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown plugin or route"),
         (status = 413, description = "Request body too large"),
         (status = 429, description = "Too many requests"),
@@ -761,7 +761,7 @@ pub async fn plugin_ext_post(
     responses(
         (status = 200, description = "Plugin answer"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin access required"),
+        (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown plugin or route"),
         (status = 429, description = "Too many requests"),
     )
@@ -879,7 +879,7 @@ fn http_date(when: SystemTime) -> String {
         (status = 200, description = "Panel page", content_type = "text/html"),
         (status = 304, description = "Not modified"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin access required"),
+        (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown plugin or panel"),
     )
 )]

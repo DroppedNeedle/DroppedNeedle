@@ -158,7 +158,7 @@ type Answer<T> = Result<Json<T>, ApiError>;
 // ---------------------------------------------------------------------------
 
 /// The session-gated contribution routes, relative to `/api/v3`. The
-/// library router merges them, so they share its principal layer.
+/// library router merges them.
 pub fn router(state: LibrarySetup) -> Router {
     Router::new()
         .route(

@@ -41,7 +41,7 @@ use axum::{
 };
 
 pub use error::UsersError;
-pub use roles::{Admin, AuthContext, Curator, Principal, Role, RoleRequired, SessionKind, User};
+pub use roles::{Admin, Curator, Principal, Role, RoleRequired, SessionKind, User};
 
 use droppedneedle_kernel::{ids::IdGenerator, runtime_config::crypto::Crypto};
 use stores::{

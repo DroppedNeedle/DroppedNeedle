@@ -223,8 +223,7 @@ impl E2e {
             .map(|parent| parent.to_path_buf())
             .unwrap_or_else(std::env::temp_dir);
         let library = droppedneedle_library::wiring::LibrarySetup::for_tests(
-            auth.users.clone(),
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
+            Arc::clone(&self.ids) as Arc<dyn IdGenerator>
         )
         .expect("library bundle builds");
         let (media, _worker) = droppedneedle_media::MediaSetup::build(
@@ -281,7 +280,7 @@ impl E2e {
             .parent()
             .map(|parent| parent.join("backups"))
             .unwrap_or_else(std::env::temp_dir);
-        let jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests(auth.users.clone());
+        let jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests();
         // Concerts over the scratch database; the sources point at the
         // discard port so no row can reach a real provider.
         let concerts = droppedneedle_catalog::concerts::ConcertsSetup::new(
@@ -2845,10 +2844,7 @@ fn documented_routes() -> Vec<(String, String)> {
     routes
 }
 
-// Multi-thread: the plugins role lookup bridges the async user store with
-// `block_in_place`, which needs a multi-thread runtime (production runs
-// one; the other e2e tests never reach those extractors).
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
 async fn auth_on_every_endpoint() {
     // Coverage first, both directions: a documented route without a matrix
     // row fails by name, and a stale row fails too.

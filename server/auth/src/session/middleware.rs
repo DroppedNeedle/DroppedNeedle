@@ -73,27 +73,13 @@ use super::{
     origin::{OriginDecision, check_origin, is_unsafe_method, named_origin},
     rate_limit::{AUTH_FAILURE_CLASS, RateLimiter, rate_limited},
     stated::StatedAddresses,
-    store::{SessionKind, SessionStore, SessionStoreError, now_unix},
+    store::{SessionStore, SessionStoreError, now_unix},
     tokens::hash_token,
 };
 use crate::users::roles::Principal;
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::runtime_config::origin::Origin;
-
-/// Authenticated session stashed in request extensions by the middleware,
-/// beside the [`Principal`], for the areas that still read it.
-#[derive(Debug, Clone)]
-pub struct CurrentSession {
-    /// Owning user id.
-    pub user_id: String,
-    /// Session row id (for the session-list `current` marker).
-    pub session_id: String,
-    /// Standard or companion.
-    pub kind: SessionKind,
-    /// Transport that carried the credential (origin-check audit).
-    pub transport: Transport,
-}
 
 /// A warning worth one log line per process: the first caller to claim it
 /// logs, everyone after stays quiet. Clones share the flag.
@@ -228,16 +214,10 @@ where
     }
     let mut request = request;
     let record = valid.record;
-    request.extensions_mut().insert(CurrentSession {
-        user_id: record.user_id.clone(),
-        session_id: record.id.clone(),
-        kind: record.kind,
-        transport,
-    });
     request.extensions_mut().insert(Principal::from_session(
         record.user_id,
         valid.username,
-        valid.display_name,
+        valid.username_display,
         valid.role,
         record.id,
         record.kind,

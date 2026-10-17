@@ -95,7 +95,7 @@ async fn call(
     let mut app: Router = requests::requests_routes(state.clone());
     if let Some((user_id, role, name)) = identity {
         let principal = test_principal(user_id, role, "sess-test", SessionKind::Standard)
-            .with_display_name(name);
+            .with_username_display(name);
         app = with_test_principal(app, principal);
     }
     let mut builder = Request::builder().method(method).uri(uri);

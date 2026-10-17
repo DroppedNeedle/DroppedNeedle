@@ -38,7 +38,6 @@ use super::scan::roots::RootRegistry;
 use super::scan::sqlite_store::SqliteScanStore;
 use super::scan::watcher::{DirtyScopes, WatcherState, WorkWakeups};
 use super::service::ServiceError;
-use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
@@ -147,8 +146,6 @@ pub type ScanCompletedSlot = Arc<std::sync::OnceLock<Arc<dyn Fn() + Send + Sync>
 /// Everything `create_app` needs to mount the library engine, built once.
 #[derive(Clone)]
 pub struct LibrarySetup {
-    /// User store for principal translation.
-    pub users: UsersDeps,
     /// Id generator for jobs, runs, and preview tokens.
     pub ids: Arc<dyn IdGenerator>,
     /// Runtime settings: roots, schedule, and watcher are re-read from
@@ -244,7 +241,6 @@ impl LibrarySetup {
     /// tags are weak, with the key read from the settings per job.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
-        users: UsersDeps,
         http: &droppedneedle_kernel::http_client::HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
         providers: Arc<droppedneedle_providers::Providers>,
@@ -325,7 +321,7 @@ impl LibrarySetup {
                 ))
             }),
         };
-        let mut setup = Self::assemble(users, ids, make, contrib, db_path, config)?;
+        let mut setup = Self::assemble(ids, make, contrib, db_path, config)?;
         setup.releases = Some(imports);
         setup.http = Some(http.shared().clone());
         let registry = setup.registry.clone();
@@ -344,12 +340,11 @@ impl LibrarySetup {
     /// Test bundle over scripted providers on a fresh scratch database
     /// and config file under the temp dir.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
+    pub fn for_tests(ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         let scripted = Arc::new(FakeProviders::default());
         let (dir, config) = scratch_state()?;
         let contrib = TestContribProviders::default();
         let mut setup = Self::assemble(
-            users,
             ids,
             scripted_factory(scripted.clone()),
             contrib.providers(),
@@ -369,7 +364,6 @@ impl LibrarySetup {
     /// over the same state.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests_at(
-        users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
         db_path: &Path,
         config: Arc<ConfigStore>,
@@ -377,7 +371,6 @@ impl LibrarySetup {
         let scripted = Arc::new(FakeProviders::default());
         let contrib = TestContribProviders::default();
         let mut setup = Self::assemble(
-            users,
             ids,
             scripted_factory(scripted.clone()),
             contrib.providers(),
@@ -394,14 +387,12 @@ impl LibrarySetup {
     /// `for_tests` shape stays the default everywhere else.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests_with_providers(
-        users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
         providers: Arc<dyn super::identify::providers::IdentifyProviders>,
     ) -> Result<Self, String> {
         let (dir, config) = scratch_state()?;
         let contrib = TestContribProviders::default();
         let mut setup = Self::assemble(
-            users,
             ids,
             Box::new(move |_| providers),
             contrib.providers(),
@@ -414,7 +405,6 @@ impl LibrarySetup {
     }
 
     fn assemble(
-        users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
         make_providers: ProviderFactory,
         contrib_providers: ContribProviders,
@@ -504,7 +494,6 @@ impl LibrarySetup {
         let publish = PublishCell::new(db_path);
         let placement = publish.placement();
         Ok(Self {
-            users,
             ids,
             config,
             registry,

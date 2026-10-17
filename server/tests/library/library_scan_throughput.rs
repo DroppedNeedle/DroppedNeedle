@@ -24,7 +24,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::common::ScratchDir;
-use crate::common::auth::AuthRig;
 use droppedneedle_library::scan::{
     EffectivePolicy, ScanKind, ScanRequest, ScanState, ScanTrigger, counter_names,
 };
@@ -117,12 +116,8 @@ async fn full_scan_throughput() {
     let one_artist = std::env::var(ONE_ARTIST_ENV).is_ok_and(|value| value == "1");
     let tree_bytes = generate(&music, files, one_artist);
 
-    let auth = AuthRig::new("scan-throughput").await;
-    let library = LibrarySetup::for_tests(
-        auth.deps.clone(),
-        Arc::new(droppedneedle_kernel::ids::UuidGenerator),
-    )
-    .expect("library bundle builds");
+    let library = LibrarySetup::for_tests(Arc::new(droppedneedle_kernel::ids::UuidGenerator))
+        .expect("library bundle builds");
     library
         .add_root(
             Some("music".to_owned()),

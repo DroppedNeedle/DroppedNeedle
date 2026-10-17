@@ -15,7 +15,6 @@ use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::common::auth::AuthRig;
 use crate::common::library::ScriptedIdentify;
 use crate::common::{ScratchDir, TestApp, closed_outbound};
 use axum::http::StatusCode;
@@ -1541,11 +1540,9 @@ fn control_revision(activity: &Value) -> u64 {
     })
 }
 
-/// A library test's scratch folder, and the auth rig its users read
-/// through. Derefs to the folder.
+/// A library test's scratch folder. Derefs to the folder.
 struct Scratch {
     dir: ScratchDir,
-    auth: AuthRig,
 }
 
 impl std::ops::Deref for Scratch {
@@ -1561,7 +1558,6 @@ impl std::ops::Deref for Scratch {
 async fn bare_library(tag: &str) -> (Scratch, LibrarySetup, PathBuf) {
     let scratch = Scratch {
         dir: ScratchDir::new(tag),
-        auth: AuthRig::new(tag).await,
     };
     let connection = droppedneedle_kernel::db::open_connection(&scratch.join("app.db"))
         .expect("scratch db opens");
@@ -1583,7 +1579,6 @@ fn open_library(scratch: &Scratch) -> LibrarySetup {
         .expect("config opens"),
     );
     LibrarySetup::for_tests_at(
-        scratch.auth.deps.clone(),
         Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,
         &scratch.join("app.db"),
         config,

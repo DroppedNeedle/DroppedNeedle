@@ -6,7 +6,7 @@
 //! only, written once by the request boundary.
 
 use axum::http::StatusCode;
-use droppedneedle_kernel::error::{ApiError, Unavailable};
+use droppedneedle_kernel::error::ApiError;
 
 /// No connection or settings stored for this import (Lidarr/Spotify).
 pub const IMPORT_NOT_CONFIGURED: &str = "IMPORT_NOT_CONFIGURED";
@@ -14,16 +14,6 @@ pub const IMPORT_NOT_CONFIGURED: &str = "IMPORT_NOT_CONFIGURED";
 /// Every failure the imports routes can return to a caller.
 #[derive(Debug)]
 pub enum ImportsError {
-    /// No valid session.
-    Unauthorized {
-        /// User-safe reason, e.g. "Authentication required".
-        message: String,
-    },
-    /// Authenticated but not an admin.
-    Forbidden {
-        /// User-safe reason, e.g. "Admin access required".
-        message: String,
-    },
     /// Unknown id. Fixed message, no details.
     NotFound,
     /// Bad input. The message is shown to the user.
@@ -52,11 +42,6 @@ pub enum ImportsError {
         /// What failed, for the log only.
         cause: String,
     },
-    /// The database was too busy to answer in time.
-    Busy {
-        /// Operation name for the log line.
-        operation: String,
-    },
     /// Server fault.
     Internal {
         /// What went wrong, for the log only.
@@ -76,8 +61,6 @@ impl ImportsError {
 impl From<ImportsError> for ApiError {
     fn from(error: ImportsError) -> Self {
         match error {
-            ImportsError::Unauthorized { message } => ApiError::unauthorized(message),
-            ImportsError::Forbidden { message } => ApiError::forbidden(message),
             ImportsError::NotFound => ApiError::not_found(),
             ImportsError::InvalidInput { message } => ApiError::invalid_input(message),
             ImportsError::Conflict { message } => ApiError::conflict(message),
@@ -87,10 +70,6 @@ impl From<ImportsError> for ApiError {
             ImportsError::AuthFailed { cause } | ImportsError::Unavailable { cause } => {
                 ApiError::fault(StatusCode::BAD_GATEWAY, cause)
             }
-            ImportsError::Busy { operation } => ApiError::unavailable(
-                Unavailable::ServerBusy,
-                format_args!("database busy: {operation}"),
-            ),
             ImportsError::Internal { cause } => ApiError::internal(cause),
         }
     }

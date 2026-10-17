@@ -56,8 +56,9 @@ pub struct ValidSession {
     pub record: SessionRecord,
     /// The owner's login username, when the account has one.
     pub username: Option<String>,
-    /// The owner's display username, else their login, when they have one.
-    pub display_name: Option<String>,
+    /// The owner's login as typed at sign-up, else their login, when they
+    /// have one. Not the profile's `display_name`.
+    pub username_display: Option<String>,
     /// The owner's role. An unknown stored value reads as `user`.
     pub role: Role,
 }

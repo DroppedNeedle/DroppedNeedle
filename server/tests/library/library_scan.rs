@@ -78,11 +78,8 @@ fn snapshot(root: &Path) -> BTreeMap<String, (u64, i64, String)> {
 /// the auth rig its users read through.
 async fn bundle(music: &Path) -> (LibrarySetup, AuthRig) {
     let auth = AuthRig::new("scan").await;
-    let library = LibrarySetup::for_tests(
-        auth.deps.clone(),
-        Arc::new(droppedneedle_kernel::ids::UuidGenerator),
-    )
-    .expect("library bundle builds");
+    let library = LibrarySetup::for_tests(Arc::new(droppedneedle_kernel::ids::UuidGenerator))
+        .expect("library bundle builds");
     library
         .add_root(
             Some("music".to_owned()),
@@ -4845,9 +4842,7 @@ async fn an_album_replaced_on_two_albums_is_left_to_a_person() {
         )
         .expect("config opens"),
     );
-    let auth = AuthRig::new("scan-pairs").await;
     let library = LibrarySetup::for_tests_at(
-        auth.deps.clone(),
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),
         &rig.db(),
         config,

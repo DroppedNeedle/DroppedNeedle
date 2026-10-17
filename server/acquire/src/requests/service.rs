@@ -11,7 +11,7 @@ mod edition;
 
 use std::sync::Arc;
 
-use super::auth::{auto_approves, is_admin};
+use super::auth::auto_approves;
 use super::bridges::FollowDecisionSink;
 use super::dispatch::{
     DispatchError, DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTaskState,
@@ -38,7 +38,7 @@ use super::sqlite::{
 use super::{RequestsState, dispatch::DownloadDispatch};
 use crate::db::AcquireDb;
 use crate::edition::chosen_edition;
-use droppedneedle_auth::{Admin, Principal, Role};
+use droppedneedle_auth::{Admin, Principal};
 
 /// Batch row cap (v2 `BatchAlbumRequest` schema `max_length=500`).
 const BATCH_MAX_ITEMS: usize = 500;
@@ -275,7 +275,7 @@ impl RequestsService {
                     RequestKind::Track,
                     &mbid,
                     principal.user_id(),
-                    Some(principal.display_name().to_owned()),
+                    Some(principal.username_display().to_owned()),
                     now,
                 )
                 .await?;
@@ -301,7 +301,7 @@ impl RequestsService {
             duration_seconds: body.duration_seconds,
             track_release_group_mbid: body.release_group_mbid.clone(),
             user_id: Some(principal.user_id().to_owned()),
-            requested_by_name: Some(principal.display_name().to_owned()),
+            requested_by_name: Some(principal.username_display().to_owned()),
             requesters: Vec::new(),
             requested_at: now,
             completed_at: None,
@@ -327,7 +327,7 @@ impl RequestsService {
                         RequestKind::Track,
                         &mbid,
                         principal.user_id(),
-                        Some(principal.display_name().to_owned()),
+                        Some(principal.username_display().to_owned()),
                         now,
                     )
                     .await?;
@@ -359,24 +359,8 @@ impl RequestsService {
         principal: &Principal,
         body: &BatchIntake,
     ) -> Result<BatchIntakeResponse, RequestsError> {
-        self.file_batch(
-            principal.user_id(),
-            principal.display_name().to_owned(),
-            principal.role(),
-            body,
-        )
-        .await
-    }
-
-    /// File a batch for `user_id`, recorded under `name`. `role` decides
-    /// approval and quotas, as for any ask.
-    pub(crate) async fn file_batch(
-        &self,
-        user_id: &str,
-        name: String,
-        role: Role,
-        body: &BatchIntake,
-    ) -> Result<BatchIntakeResponse, RequestsError> {
+        let (user_id, role) = (principal.user_id(), principal.role());
+        let name = principal.username_display().to_owned();
         if body.items.len() > BATCH_MAX_ITEMS {
             return Err(RequestsError::InvalidInput {
                 message: format!("Batch must hold at most {BATCH_MAX_ITEMS} items"),
@@ -612,7 +596,7 @@ impl RequestsService {
         ids: &[String],
         kind: RequestKind,
     ) -> Result<BatchCancelResponse, RequestsError> {
-        let is_admin = is_admin(principal);
+        let is_admin = principal.is_admin();
         let now = now_epoch();
         let mut cancelled = 0_u32;
         let mut failed = 0_u32;
@@ -674,7 +658,7 @@ impl RequestsService {
             .claim_approval(
                 kind,
                 &mbid,
-                Some(admin.display_name().to_owned()),
+                Some(admin.username_display().to_owned()),
                 now,
                 record.generation,
             )
@@ -785,7 +769,7 @@ impl RequestsService {
             .claim_rejection(
                 kind,
                 &mbid,
-                Some(admin.display_name().to_owned()),
+                Some(admin.username_display().to_owned()),
                 now,
                 record.generation,
             )
@@ -820,7 +804,7 @@ impl RequestsService {
                 message: "Request not found".to_owned(),
             });
         };
-        if !is_admin(principal) {
+        if !principal.is_admin() {
             return self
                 .requester_cancel_verbose(kind, &mbid, &record, principal.user_id(), now)
                 .await;
@@ -926,7 +910,7 @@ impl RequestsService {
                 principal.user_id(),
                 target,
                 can_dispatch,
-                !is_admin(principal),
+                !principal.is_admin(),
                 now,
                 record.generation,
             )
@@ -936,7 +920,7 @@ impl RequestsService {
             super::ledger::RetryClaim::Lost => {
                 let current = self.store.get(kind, &mbid).await?;
                 let current_status = current.as_ref().map(|row| row.status.as_str());
-                if !is_admin(principal)
+                if !principal.is_admin()
                     && current_status.is_some_and(|s| RETRYABLE_STATUSES.contains(&s))
                     && !self
                         .store
@@ -1029,7 +1013,7 @@ impl RequestsService {
         let Some(record) = self.store.get(kind, &mbid).await? else {
             return Ok(ClearHistoryResponse { success: false });
         };
-        if !is_admin(principal)
+        if !principal.is_admin()
             && !self
                 .store
                 .is_requester(kind, &mbid, principal.user_id())
@@ -1042,7 +1026,7 @@ impl RequestsService {
         if !CLEARABLE_STATUSES.contains(&record.status.as_str()) {
             return Ok(ClearHistoryResponse { success: false });
         }
-        let cleared = if is_admin(principal) {
+        let cleared = if principal.is_admin() {
             self.store.delete(kind, &mbid).await?
         } else {
             self.store.dismiss(kind, &mbid, principal.user_id()).await?
@@ -1058,7 +1042,7 @@ impl RequestsService {
         principal: &Principal,
     ) -> Result<ActiveRequestsResponse, RequestsError> {
         self.sync_request_statuses().await?;
-        let owner = (!is_admin(principal)).then_some(principal.user_id());
+        let owner = (!principal.is_admin()).then_some(principal.user_id());
         let rows = self.store.active(owner, None).await?;
         let items = self.to_items(&rows).await;
         Ok(ActiveRequestsResponse {
@@ -1073,7 +1057,7 @@ impl RequestsService {
         principal: &Principal,
     ) -> Result<ActiveCountResponse, RequestsError> {
         self.sync_request_statuses().await?;
-        let owner = (!is_admin(principal)).then_some(principal.user_id());
+        let owner = (!principal.is_admin()).then_some(principal.user_id());
         Ok(ActiveCountResponse {
             count: self.store.active(owner, None).await?.len() as u32,
         })
@@ -1110,7 +1094,7 @@ impl RequestsService {
                 )
             }
         };
-        let owner = (!is_admin(principal)).then_some(principal.user_id());
+        let owner = (!principal.is_admin()).then_some(principal.user_id());
         let offset = page.saturating_sub(1).saturating_mul(page_size);
         let (rows, total) = self
             .store
@@ -1163,7 +1147,7 @@ impl RequestsService {
 
     /// Wanted watches plus the still-retrying set. Admins see every row.
     pub async fn wanted(&self, principal: &Principal) -> Result<WantedResponse, RequestsError> {
-        let is_admin = is_admin(principal);
+        let is_admin = principal.is_admin();
         let watches = self
             .wanted
             .watches_for(principal.user_id(), is_admin)
@@ -1203,7 +1187,7 @@ impl RequestsService {
         &self,
         principal: &Principal,
     ) -> Result<Vec<WantedRetryingItem>, RequestsError> {
-        let is_admin = is_admin(principal);
+        let is_admin = principal.is_admin();
         let mut out = Vec::new();
         for status in [STATUS_FAILED, STATUS_INCOMPLETE] {
             for record in self.store.with_status(RequestKind::Album, status).await? {
@@ -1257,7 +1241,7 @@ impl RequestsService {
         let mbid = validate_mbid(mbid)?;
         let change = self
             .wanted
-            .stop(&mbid, principal.user_id(), is_admin(principal))
+            .stop(&mbid, principal.user_id(), principal.is_admin())
             .await?;
         watch_action(change)
     }
@@ -1271,7 +1255,12 @@ impl RequestsService {
         let mbid = validate_mbid(mbid)?;
         let change = self
             .wanted
-            .resume(&mbid, principal.user_id(), is_admin(principal), now_epoch())
+            .resume(
+                &mbid,
+                principal.user_id(),
+                principal.is_admin(),
+                now_epoch(),
+            )
             .await?;
         watch_action(change)
     }
@@ -1285,7 +1274,7 @@ impl RequestsService {
         let mbid = validate_mbid(mbid)?;
         let change = self
             .wanted
-            .mark_seen(&mbid, principal.user_id(), is_admin(principal))
+            .mark_seen(&mbid, principal.user_id(), principal.is_admin())
             .await?;
         watch_action(change)
     }
@@ -1706,7 +1695,7 @@ impl RequestsService {
                 RequestKind::Album,
                 &existing.key,
                 principal.user_id(),
-                Some(principal.display_name().to_owned()),
+                Some(principal.username_display().to_owned()),
                 now_epoch(),
             )
             .await?;
@@ -1769,7 +1758,7 @@ impl RequestsService {
             duration_seconds: None,
             track_release_group_mbid: None,
             user_id: Some(principal.user_id().to_owned()),
-            requested_by_name: Some(principal.display_name().to_owned()),
+            requested_by_name: Some(principal.username_display().to_owned()),
             requesters: Vec::new(),
             requested_at: now,
             completed_at: None,
@@ -2229,7 +2218,7 @@ async fn cancel_linked(dispatch: &dyn DownloadDispatch, task_id: &str) -> bool {
 fn reviewer(principal: &Principal) -> (&str, Option<String>) {
     (
         principal.user_id(),
-        Some(principal.display_name().to_owned()),
+        Some(principal.username_display().to_owned()),
     )
 }
 

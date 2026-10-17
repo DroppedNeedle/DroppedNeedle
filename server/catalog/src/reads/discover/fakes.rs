@@ -10,6 +10,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use droppedneedle_auth::Principal;
+
 use crate::reads::discover::{
     models::{
         ChartAlbum, ChartArtist, ChartRange, ChartSection, ChartSource, DiscoverActivityResponse,
@@ -837,7 +839,7 @@ impl FakeBatches {
 impl BatchStore for FakeBatches {
     fn create<'a>(
         &'a self,
-        user_id: &'a str,
+        caller: &'a Principal,
         body: &'a DiscoveryBatchCreate,
     ) -> BoxFuture<'a, Result<DiscoveryBatchDetail, BatchFailure>> {
         Box::pin(async move {
@@ -868,7 +870,7 @@ impl BatchStore for FakeBatches {
                 pending_count: items.len() as i64,
                 items,
             };
-            rows.insert(0, (user_id.to_owned(), detail.clone()));
+            rows.insert(0, (caller.user_id().to_owned(), detail.clone()));
             Ok(detail)
         })
     }
@@ -900,21 +902,24 @@ impl BatchStore for FakeBatches {
 
     fn detail<'a>(
         &'a self,
-        user_id: &'a str,
+        caller: &'a Principal,
         batch_id: &'a str,
     ) -> BoxFuture<'a, Result<DiscoveryBatchDetail, BatchFailure>> {
-        Box::pin(async move { self.owned(user_id, batch_id).ok_or(BatchFailure::NotFound) })
+        Box::pin(async move {
+            self.owned(caller.user_id(), batch_id)
+                .ok_or(BatchFailure::NotFound)
+        })
     }
 
     fn remove<'a>(
         &'a self,
-        user_id: &'a str,
+        caller: &'a Principal,
         batch_id: &'a str,
         remove_albums: bool,
     ) -> BoxFuture<'a, Result<DiscoveryBatchRemoveResult, BatchFailure>> {
         Box::pin(async move {
             let row = self
-                .owned(user_id, batch_id)
+                .owned(caller.user_id(), batch_id)
                 .ok_or(BatchFailure::NotFound)?;
             if let Ok(mut rows) = self.rows.lock() {
                 rows.retain(|(_, kept)| kept.id != batch_id);

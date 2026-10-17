@@ -56,7 +56,7 @@ impl Rig {
         );
         let cache = Arc::new(droppedneedle_providers::InMemoryProviderCache::new());
         let providers = Arc::new(droppedneedle_providers::Providers::new(cache.clone()));
-        let mut jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests(rig.deps.clone());
+        let mut jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests();
         if let Some(sources) = precache {
             jobs = jobs.with_precache_sources(sources);
         }

@@ -17,11 +17,6 @@ pub const REMOTE_UNSUPPORTED: &str = "REMOTE_UNSUPPORTED";
 /// Every failure the remotes routes can return to a caller.
 #[derive(Debug)]
 pub enum RemotesError {
-    /// No valid session.
-    Unauthorized {
-        /// User-safe reason, e.g. "Authentication required".
-        message: String,
-    },
     /// Unknown id. Fixed message, no details.
     NotFound,
     /// Bad input. The message is shown to the user.
@@ -54,8 +49,6 @@ pub enum RemotesError {
         /// What is missing where, e.g. "Plex has no similar-tracks endpoint".
         message: String,
     },
-    /// The database was too busy to answer in time.
-    Busy,
     /// Server fault.
     Internal {
         /// What went wrong, for the log only.
@@ -66,7 +59,6 @@ pub enum RemotesError {
 impl From<RemotesError> for ApiError {
     fn from(error: RemotesError) -> Self {
         match error {
-            RemotesError::Unauthorized { message } => ApiError::unauthorized(message),
             RemotesError::NotFound => ApiError::not_found(),
             RemotesError::InvalidInput { message } => {
                 ApiError::new(StatusCode::BAD_REQUEST, INVALID_INPUT, message)
@@ -87,7 +79,6 @@ impl From<RemotesError> for ApiError {
             RemotesError::Unsupported { message } => {
                 ApiError::new(StatusCode::BAD_REQUEST, REMOTE_UNSUPPORTED, message)
             }
-            RemotesError::Busy => ApiError::from(Unavailable::ServerBusy),
             RemotesError::Internal { cause } => ApiError::internal(cause),
         }
     }

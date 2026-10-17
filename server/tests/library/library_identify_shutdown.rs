@@ -18,20 +18,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crate::common::ScratchDir;
-use droppedneedle_auth::prod::ProdAuth;
-use droppedneedle_auth::users::stores::SystemClock;
-use droppedneedle_auth::wiring::AuthSetup;
-use droppedneedle_kernel::db::DbRuntime;
-use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
-use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::identify::models::{
     IdentifyKind, JobState, LocalAlbumFacts, RecallResult,
 };
 use droppedneedle_library::identify::providers::{IdentifyProviders, RecallOutcome};
 use droppedneedle_library::wiring::LibrarySetup;
-use droppedneedle_media::remotes::plex::ConfiguredPlexServer;
 use droppedneedle_providers::musicbrainz::Criticality;
 use tokio::sync::{oneshot, watch};
 
@@ -118,68 +110,16 @@ impl IdentifyProviders for GateWait {
 
 /// Scratch library bundle over scripted providers.
 struct Lib {
-    /// Held, never read: dropping it would close the pool out from under
-    /// the adapters.
-    #[allow(dead_code)]
-    runtime: DbRuntime,
     library: LibrarySetup,
-    /// Dropped last: the scratch directory goes away with the test.
-    _scratch: ScratchDir,
 }
 
 impl Lib {
-    async fn open(tag: &str, providers: Arc<dyn IdentifyProviders>) -> Self {
-        let scratch = ScratchDir::new(&format!("lib-ident-shutdown-{tag}"));
-        let dir = scratch.to_path_buf();
-        let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
-        let crypto = Arc::new(Crypto::from_key_bytes(&[7u8; 32]).expect("test key"));
-        let store = Arc::new(
-            ConfigStore::open(
-                &dir.join("config.json"),
-                Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
-            )
-            .expect("scratch config opens"),
-        );
+    async fn open(providers: Arc<dyn IdentifyProviders>) -> Self {
         let ids = Arc::new(UuidGenerator);
-        let clock = Arc::new(SystemClock);
-        let bundle = ProdAuth::new(
-            runtime.pool(),
-            runtime.lane(),
-            Arc::clone(&crypto),
-            Arc::clone(&ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&clock) as Arc<dyn droppedneedle_auth::users::stores::Clock>,
-            &dir.join("avatars"),
-        );
-        let http = HttpClientFactory::new().expect("http factory builds");
-        let users = AuthSetup::build_with_upstreams(
-            bundle,
-            Arc::clone(&store),
-            Arc::clone(&crypto),
-            &http,
-            Arc::clone(&ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&clock) as Arc<dyn droppedneedle_auth::users::stores::Clock>,
-            "",
-            &droppedneedle::bootstrap::Outbound::live().sign_in(),
-            Arc::new(ConfiguredPlexServer::new(
-                http.shared().clone(),
-                Arc::clone(&store),
-            )),
-            droppedneedle::bootstrap::sign_in_links(
-                runtime.pool().clone(),
-                runtime.lane().clone(),
-                Arc::clone(&crypto),
-                Arc::clone(&store),
-            ),
-        )
-        .users;
         let library =
-            LibrarySetup::for_tests_with_providers(users, ids as Arc<dyn IdGenerator>, providers)
+            LibrarySetup::for_tests_with_providers(ids as Arc<dyn IdGenerator>, providers)
                 .expect("library bundle builds");
-        Self {
-            runtime,
-            library,
-            _scratch: scratch,
-        }
+        Self { library }
     }
 }
 
@@ -225,7 +165,7 @@ fn job_state(library: &LibrarySetup, job_id: &str) -> JobState {
 #[tokio::test]
 async fn identify_tick_pre_signalled_shutdown_attempts_nothing() {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let lib = Lib::open("quiet", Arc::new(EmptyRecall)).await;
+    let lib = Lib::open(Arc::new(EmptyRecall)).await;
     seed_jobs(&lib.library, 3);
     shutdown_tx.send(true).expect("shutdown sends");
     let attempted = lib.library.identify_tick_with_shutdown(&shutdown_rx).await;
@@ -241,7 +181,7 @@ async fn identify_tick_pre_signalled_shutdown_attempts_nothing() {
 #[tokio::test]
 async fn identify_tick_abandons_drain_after_mid_attempt_shutdown() {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let lib = Lib::open("mid-drain", Arc::new(SignalOnFirstRecall::new(shutdown_tx))).await;
+    let lib = Lib::open(Arc::new(SignalOnFirstRecall::new(shutdown_tx))).await;
     seed_jobs(&lib.library, 5);
     let attempted = lib.library.identify_tick_with_shutdown(&shutdown_rx).await;
     assert_eq!(
@@ -264,7 +204,7 @@ async fn identify_tick_abandons_drain_after_mid_attempt_shutdown() {
 async fn identify_tick_abandons_in_flight_gate_wait_on_shutdown() {
     let (entered_tx, entered_rx) = oneshot::channel();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let lib = Lib::open("gate-wait", Arc::new(GateWait::new(entered_tx))).await;
+    let lib = Lib::open(Arc::new(GateWait::new(entered_tx))).await;
     seed_jobs(&lib.library, 3);
     let library = lib.library.clone();
     let tick = tokio::spawn(async move { library.identify_tick_with_shutdown(&shutdown_rx).await });
@@ -295,7 +235,7 @@ async fn identify_tick_abandons_in_flight_gate_wait_on_shutdown() {
 
 #[tokio::test]
 async fn identify_tick_without_signal_still_drains_everything() {
-    let lib = Lib::open("full-drain", Arc::new(EmptyRecall)).await;
+    let lib = Lib::open(Arc::new(EmptyRecall)).await;
     seed_jobs(&lib.library, 3);
     let attempted = lib.library.identify_tick().await;
     assert_eq!(attempted, 3, "no signal keeps the full drain");

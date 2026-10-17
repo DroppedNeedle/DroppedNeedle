@@ -24,7 +24,7 @@ use super::held_rows::HeldRow;
 use super::queue_rows::Viewer;
 use super::upgrades::{UpgradeAsk, UpgradeError, UpgradeOutcome, Upgrades};
 use crate::flows::seams::DispatchKind;
-use crate::requests::{auth::is_admin, error::RequestsError};
+use crate::requests::error::RequestsError;
 use droppedneedle_auth::{Admin, Curator, Principal, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
@@ -238,7 +238,7 @@ pub struct ReviewState {
 fn viewer(principal: &Principal) -> Viewer {
     Viewer {
         user_id: principal.user_id().to_owned(),
-        admin: is_admin(principal),
+        admin: principal.is_admin(),
     }
 }
 

@@ -93,7 +93,7 @@ pub(super) fn run_view(run: &ScanRun) -> ScanRunView {
 /// Run view for `caller`: only administrators see who asked for a run.
 fn caller_run_view(caller: &Principal, run: &ScanRun) -> ScanRunView {
     let mut view = run_view(run);
-    if !caller.role().is_admin() {
+    if !caller.is_admin() {
         view.requested_by_user_id = None;
     }
     view
@@ -504,7 +504,7 @@ pub async fn manage_undo(
         return Err(ApiError::invalid_input("Bundle id must not be empty"));
     }
     // An admin undoes any bundle; a curator only one they applied.
-    let only_by = (!caller.role().is_admin()).then_some(caller.user_id().to_owned());
+    let only_by = (!caller.is_admin()).then_some(caller.user_id().to_owned());
     let applied =
         tokio::task::spawn_blocking(move || state.undo_bundle(&body.bundle_id, only_by.as_deref()))
             .await

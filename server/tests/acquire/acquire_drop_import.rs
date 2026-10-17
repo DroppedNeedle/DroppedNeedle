@@ -162,8 +162,7 @@ async fn bundles() -> (
     let auth = AuthRig::new("drop-import").await;
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
-            .expect("reads bundle");
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
     let acquire =
         droppedneedle_acquire::AcquireSetup::for_tests(ids.clone(), &mut reads.collections)
             .expect("acquire bundle");
@@ -178,8 +177,8 @@ async fn bundles() -> (
         )
         .expect("config"),
     );
-    let library = LibrarySetup::for_tests_at(auth.deps.clone(), ids, acquire.db.path(), config)
-        .expect("library bundle");
+    let library =
+        LibrarySetup::for_tests_at(ids, acquire.db.path(), config).expect("library bundle");
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -628,8 +627,7 @@ async fn a_cut_off_upload_survives_a_sweep_that_cannot_read_its_jobs() {
     let auth = AuthRig::on(&runtime);
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
-            .expect("reads bundle");
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
     let acquire = droppedneedle_acquire::AcquireSetup::build(
         droppedneedle_acquire::db::AcquireDb::from_runtime(&runtime),
         &config,

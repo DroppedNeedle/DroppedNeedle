@@ -40209,7 +40209,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Admin access required */
+            /** @description Admin role required */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -40250,7 +40250,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Admin access required */
+            /** @description Admin role required */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -40309,7 +40309,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Admin access required */
+            /** @description Admin role required */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -40377,7 +40377,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Admin access required */
+            /** @description Admin role required */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -40446,7 +40446,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Admin access required */
+            /** @description Admin role required */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -40524,7 +40524,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Admin access required */
+            /** @description Admin role required */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -40625,7 +40625,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Admin access required */
+            /** @description Admin role required */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -40675,7 +40675,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Admin access required */
+            /** @description Admin role required */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -40732,7 +40732,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Admin access required */
+            /** @description Admin role required */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -40795,7 +40795,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Admin access required */
+            /** @description Admin role required */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -45462,7 +45462,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description Admin access required */
+            /** @description Admin role required */
             403: {
                 headers: {
                     [name: string]: unknown;

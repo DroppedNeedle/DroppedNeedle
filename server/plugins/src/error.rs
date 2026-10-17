@@ -24,14 +24,9 @@ pub enum SourceFault {
 /// Every failure the plugin routes can return to a caller.
 #[derive(Debug)]
 pub enum PluginError {
-    /// No valid session. Carries the `WWW-Authenticate` challenge.
-    Unauthorized {
-        /// User-safe reason, e.g. "Authentication required".
-        message: String,
-    },
     /// Valid session, wrong role.
     Forbidden {
-        /// User-safe reason, e.g. "Admin access required".
+        /// User-safe reason, e.g. "Admin role required".
         message: String,
     },
     /// Unknown plugin, route, or link. Always the same fixed message, so
@@ -78,7 +73,6 @@ impl PluginError {
 impl From<PluginError> for ApiError {
     fn from(error: PluginError) -> Self {
         match error {
-            PluginError::Unauthorized { message } => ApiError::unauthorized(message),
             PluginError::Forbidden { message } => ApiError::forbidden(message),
             PluginError::NotFound => ApiError::not_found(),
             PluginError::InvalidInput { message } => ApiError::invalid_input(message),

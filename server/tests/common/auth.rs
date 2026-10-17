@@ -16,7 +16,7 @@ use axum::{
 };
 use droppedneedle_auth::federated::password_import::PasswordHasher as _;
 use droppedneedle_auth::prod::{Argon2idHasher, ProdAuth};
-use droppedneedle_auth::session::middleware::{CurrentSession, SessionAuth};
+use droppedneedle_auth::session::middleware::SessionAuth;
 use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _, now_unix};
 use droppedneedle_auth::session::tokens;
 use droppedneedle_auth::sqlite::SqliteSessionStore;
@@ -255,20 +255,12 @@ async fn insert_test_principal(
     mut request: Request,
     next: Next,
 ) -> Response {
-    let session = CurrentSession {
-        user_id: principal.user_id().to_owned(),
-        session_id: principal.session_id().to_owned(),
-        kind: principal.session_kind(),
-        transport: principal.transport(),
-    };
-    request.extensions_mut().insert(session);
     request.extensions_mut().insert(principal);
     next.run(request).await
 }
 
 /// Sign every request to `router` in as `principal`, standing in for the
-/// session gate (no token lookup, no origin check). Until every area reads
-/// the principal, the matching `CurrentSession` goes in beside it.
+/// session gate (no token lookup, no origin check).
 pub fn with_test_principal(router: Router, principal: Principal) -> Router {
     router.layer(middleware::from_fn_with_state(
         principal,

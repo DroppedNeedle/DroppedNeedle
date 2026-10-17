@@ -470,7 +470,7 @@ pub async fn get_avatar(
     caller: &Principal,
     user_id: &str,
 ) -> Result<(Vec<u8>, String), UsersError> {
-    if caller.user_id() != user_id && !caller.role().is_admin() {
+    if caller.user_id() != user_id && !caller.is_admin() {
         return Err(UsersError::Forbidden {
             message: "Forbidden".to_owned(),
         });

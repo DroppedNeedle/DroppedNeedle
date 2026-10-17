@@ -24,7 +24,6 @@ use rusqlite::params;
 use sha2::{Digest as _, Sha256};
 
 use crate::common::ScratchDir;
-use crate::common::auth::AuthRig;
 
 const PASSPHRASE: &str = "operator-passphrase";
 /// The second track: v2 has it, its file changed since, so v3 re-reads it.
@@ -316,9 +315,7 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
         )
         .expect("config opens"),
     );
-    let auth = AuthRig::new("migration-library").await;
     let library = LibrarySetup::for_tests_at(
-        auth.deps.clone(),
         Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,
         &db_path,
         config,

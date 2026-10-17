@@ -551,7 +551,7 @@ pub async fn library_activity(
     State(state): State<LibrarySetup>,
     User(caller): User,
 ) -> Result<Json<LibraryActivity>, ApiError> {
-    let admin = caller.role().is_admin();
+    let admin = caller.is_admin();
     Ok(Json(
         blocking(move || state.library_activity(admin)).await??,
     ))

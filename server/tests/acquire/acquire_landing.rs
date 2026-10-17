@@ -170,11 +170,9 @@ fn new_task(id: &str, group: &str) -> NewTask {
 
 #[tokio::test]
 async fn finished_downloads_land_in_the_library_or_wait_for_review() {
-    let auth = AuthRig::new("landing").await;
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
-            .expect("reads bundle");
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
     let acquire =
         droppedneedle_acquire::AcquireSetup::for_tests(ids.clone(), &mut reads.collections)
             .expect("acquire bundle");
@@ -196,8 +194,8 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         )
         .expect("config"),
     );
-    let library = LibrarySetup::for_tests_at(auth.deps.clone(), ids, acquire.db.path(), config)
-        .expect("library bundle");
+    let library =
+        LibrarySetup::for_tests_at(ids, acquire.db.path(), config).expect("library bundle");
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -455,11 +453,9 @@ fn files_under(dir: &Path, extension: &str) -> Vec<PathBuf> {
 // answers 404; a discarded file is deleted and leaves the list.
 #[tokio::test]
 async fn held_files_import_as_upgrades_or_discard() {
-    let auth = AuthRig::new("landing").await;
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
-            .expect("reads bundle");
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
     let acquire =
         droppedneedle_acquire::AcquireSetup::for_tests(ids.clone(), &mut reads.collections)
             .expect("acquire bundle");
@@ -481,8 +477,8 @@ async fn held_files_import_as_upgrades_or_discard() {
         )
         .expect("config"),
     );
-    let library = LibrarySetup::for_tests_at(auth.deps.clone(), ids, acquire.db.path(), config)
-        .expect("library bundle");
+    let library =
+        LibrarySetup::for_tests_at(ids, acquire.db.path(), config).expect("library bundle");
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -653,8 +649,7 @@ async fn bare_acquire() -> (droppedneedle_acquire::AcquireSetup, PathBuf, AuthRi
     let auth = AuthRig::new("landing-bare").await;
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
-            .expect("reads bundle");
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
     let acquire = droppedneedle_acquire::AcquireSetup::for_tests(ids, &mut reads.collections)
         .expect("acquire bundle");
     acquire
@@ -910,11 +905,9 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
 
     const TASK: &str = "0123456789abcdef0123456789abcdef";
 
-    let auth = AuthRig::new("landing").await;
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
-            .expect("reads bundle");
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
     let acquire =
         droppedneedle_acquire::AcquireSetup::for_tests(ids.clone(), &mut reads.collections)
             .expect("acquire bundle");
@@ -931,8 +924,8 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
         )
         .expect("config"),
     );
-    let library = LibrarySetup::for_tests_at(auth.deps.clone(), ids, acquire.db.path(), config)
-        .expect("library bundle");
+    let library =
+        LibrarySetup::for_tests_at(ids, acquire.db.path(), config).expect("library bundle");
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -1223,8 +1216,8 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
         .expect("config"),
     );
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let library = LibrarySetup::for_tests_at(auth.deps.clone(), ids, acquire.db.path(), config)
-        .expect("library bundle");
+    let library =
+        LibrarySetup::for_tests_at(ids, acquire.db.path(), config).expect("library bundle");
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library

@@ -369,7 +369,7 @@ impl JobsSetup {
     /// Route tests exercise the playlist route through this; loop tests
     /// bind the memory stores directly.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(_users: droppedneedle_auth::users::UsersDeps) -> Self {
+    pub fn for_tests() -> Self {
         let media = MediaJobs::for_tests();
         Self {
             registry: JobRegistry::new(StoreKind::Memory(

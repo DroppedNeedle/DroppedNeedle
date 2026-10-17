@@ -144,7 +144,6 @@ pub fn production_deps(inputs: DiscoverInputs) -> ReadsDeps {
     let batches = batches::LiveBatches::new(
         inputs.pool.clone(),
         inputs.lane.clone(),
-        inputs.users.users.clone(),
         inputs.batch_requests.clone(),
     );
     let page = page::LiveDiscover::new(page::PageInputs {

@@ -4,6 +4,8 @@
 
 use std::sync::Arc;
 
+use droppedneedle_auth::Principal;
+
 use crate::reads::discover::{
     models::{
         AlbumPreviewResponse, ChartRange, ChartSection, ChartSource, DiscoverActivityResponse,
@@ -702,7 +704,7 @@ fn batch_failure(failure: BatchFailure) -> ServiceError {
 /// as a real album request, under the caller's quota and approval rules.
 pub async fn create_batch(
     deps: &ReadsDeps,
-    user_id: &str,
+    caller: &Principal,
     body: &DiscoveryBatchCreate,
 ) -> Result<DiscoveryBatchDetail, ServiceError> {
     if body.items.is_empty() {
@@ -726,7 +728,7 @@ pub async fn create_batch(
         )));
     }
     deps.batches
-        .create(user_id, body)
+        .create(caller, body)
         .await
         .map_err(batch_failure)
 }
@@ -744,11 +746,11 @@ pub async fn list_batches(
 /// One batch. Foreign ids read as missing.
 pub async fn get_batch(
     deps: &ReadsDeps,
-    user_id: &str,
+    caller: &Principal,
     batch_id: &str,
 ) -> Result<DiscoveryBatchDetail, ServiceError> {
     deps.batches
-        .detail(user_id, batch_id)
+        .detail(caller, batch_id)
         .await
         .map_err(batch_failure)
 }
@@ -756,12 +758,12 @@ pub async fn get_batch(
 /// Remove one batch. Foreign ids read as missing.
 pub async fn remove_batch(
     deps: &ReadsDeps,
-    user_id: &str,
+    caller: &Principal,
     batch_id: &str,
     remove_albums: bool,
 ) -> Result<DiscoveryBatchRemoveResult, ServiceError> {
     deps.batches
-        .remove(user_id, batch_id, remove_albums)
+        .remove(caller, batch_id, remove_albums)
         .await
         .map_err(batch_failure)
 }

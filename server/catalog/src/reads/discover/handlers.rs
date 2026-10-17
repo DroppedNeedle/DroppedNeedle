@@ -619,7 +619,7 @@ pub async fn create_batch(
     User(user): User,
     ValidJson(body): ValidJson<DiscoveryBatchCreate>,
 ) -> Result<(StatusCode, Json<DiscoveryBatchDetail>), ApiError> {
-    services::create_batch(&deps, user.user_id(), &body)
+    services::create_batch(&deps, &user, &body)
         .await
         .map(|detail| (StatusCode::ACCEPTED, Json(detail)))
         .map_err(ApiError::from)
@@ -664,7 +664,7 @@ pub async fn get_batch(
     User(user): User,
     Path(batch_id): Path<String>,
 ) -> Result<Json<DiscoveryBatchDetail>, ApiError> {
-    services::get_batch(&deps, user.user_id(), &batch_id)
+    services::get_batch(&deps, &user, &batch_id)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -694,15 +694,10 @@ pub async fn remove_batch(
     Path(batch_id): Path<String>,
     ValidQuery(query): ValidQuery<RemoveBatchQuery>,
 ) -> Result<Json<DiscoveryBatchRemoveResult>, ApiError> {
-    services::remove_batch(
-        &deps,
-        user.user_id(),
-        &batch_id,
-        query.remove_albums.unwrap_or(true),
-    )
-    .await
-    .map(Json)
-    .map_err(ApiError::from)
+    services::remove_batch(&deps, &user, &batch_id, query.remove_albums.unwrap_or(true))
+        .await
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 // ---------------------------------------------------------------------------

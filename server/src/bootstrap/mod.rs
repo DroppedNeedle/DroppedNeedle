@@ -374,7 +374,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         })
     };
     let library = LibrarySetup::build(
-        auth.users.clone(),
         &http,
         ids.clone(),
         providers.clone(),

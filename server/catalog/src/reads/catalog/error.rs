@@ -22,9 +22,6 @@ pub enum CatalogError {
     /// what.
     #[error("missing: {0}")]
     Missing(String),
-    /// The request conflicts with the library's state.
-    #[error("conflict: {0}")]
-    Conflict(String),
     /// MusicBrainz could not answer and the library has no copy to show.
     #[error("musicbrainz unavailable: {0}")]
     Unavailable(String),
@@ -48,7 +45,6 @@ impl From<CatalogError> for ApiError {
             CatalogError::Missing(message) => {
                 ApiError::new(StatusCode::NOT_FOUND, NOT_FOUND, message)
             }
-            CatalogError::Conflict(message) => ApiError::conflict(message),
             CatalogError::Unavailable(cause) => {
                 ApiError::fault(StatusCode::SERVICE_UNAVAILABLE, cause)
             }

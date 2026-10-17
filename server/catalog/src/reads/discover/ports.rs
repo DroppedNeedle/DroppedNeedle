@@ -11,6 +11,8 @@ use std::collections::HashMap;
 
 pub use futures_util::future::BoxFuture;
 
+use droppedneedle_auth::Principal;
+
 use crate::reads::discover::models::{
     ChartRange, ChartSection, ChartSource, DiscoverActivityResponse, DiscoverQueuePreview,
     DiscoverQueueStatusResponse, DiscoverResponse, GenreDetailResponse, HomeResponse,
@@ -316,7 +318,7 @@ pub trait BatchStore: Send + Sync {
     /// File the batch's albums as requests and record the batch.
     fn create<'a>(
         &'a self,
-        user_id: &'a str,
+        caller: &'a Principal,
         body: &'a DiscoveryBatchCreate,
     ) -> BoxFuture<'a, Result<DiscoveryBatchDetail, BatchFailure>>;
     /// The caller's batches, newest first.
@@ -327,14 +329,14 @@ pub trait BatchStore: Send + Sync {
     /// One batch with each album's current state.
     fn detail<'a>(
         &'a self,
-        user_id: &'a str,
+        caller: &'a Principal,
         batch_id: &'a str,
     ) -> BoxFuture<'a, Result<DiscoveryBatchDetail, BatchFailure>>;
     /// Remove one batch, and with `remove_albums` the albums it caused:
     /// pending requests are cancelled, landed albums go to the recycle bin.
     fn remove<'a>(
         &'a self,
-        user_id: &'a str,
+        caller: &'a Principal,
         batch_id: &'a str,
         remove_albums: bool,
     ) -> BoxFuture<'a, Result<DiscoveryBatchRemoveResult, BatchFailure>>;
