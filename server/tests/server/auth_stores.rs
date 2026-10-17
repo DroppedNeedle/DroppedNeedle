@@ -26,7 +26,7 @@ use droppedneedle_auth::session::tokens;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::hibp::{HibpHttp, HibpHttpError, HibpScreen};
 use droppedneedle_auth::users::memory::{
-    CounterIdGenerator, ManualClock, Sha256TestHasher, StaticSecurityPolicy, TestRig,
+    CounterIdGenerator, Sha256TestHasher, StaticSecurityPolicy, TestRig,
 };
 use droppedneedle_auth::users::models::{
     AppPasswordRecord, LocalCredential, PasswordReset, UserRecord,
@@ -41,6 +41,8 @@ use droppedneedle_kernel::db::{DbRuntime, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use rusqlite::params;
+
+use crate::common::auth_fakes::ManualClock;
 
 /// Fixed test clock: 2023-11-14T22:13:20Z.
 const TEST_NOW: i64 = 1_700_000_000;

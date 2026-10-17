@@ -12,13 +12,15 @@ use axum::{
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::{
     Role, admin_router, import,
-    memory::{self, FakeUserDirectory, TestRig},
+    memory::{self, TestRig},
     models, public_router,
     stores::{DirectoryUser, SessionManager as _, UserStore as _},
     users_router,
 };
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
+
+use crate::common::auth_fakes::{FakeHibpHttp, FakeUserDirectory};
 
 const PASSWORD: &str = "correct horse battery staple";
 const OTHER_PASSWORD: &str = "another fine password here";
@@ -347,7 +349,7 @@ async fn admins_cannot_demote_or_delete_themselves() {
 
 #[tokio::test]
 async fn breached_passwords_reject_when_screening_is_on() {
-    use droppedneedle_auth::users::{hibp::HibpScreen, memory::FakeHibpHttp, stores::HibpPolicy};
+    use droppedneedle_auth::users::{hibp::HibpScreen, stores::HibpPolicy};
 
     let (mut rig, _, user) = rig_with_admin().await;
     let digest = droppedneedle_auth::users::hibp::sha1_hex_upper(b"password12xxxx");

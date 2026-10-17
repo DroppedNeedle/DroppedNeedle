@@ -663,7 +663,7 @@ async fn a_scrobble_reaches_listenbrainz_once() {
 
     let (forwarder, rx) = ScrobbleForwarder::channel(
         Arc::new(ListenBrainzOnly),
-        Arc::new(droppedneedle_auth::users::memory::StaticLastFmSwitch(true)),
+        Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
     );
     let worker = ForwardWorker::new(
         rx,
