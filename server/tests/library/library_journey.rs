@@ -15743,6 +15743,289 @@ async fn an_identified_album_links_its_artist() {
     );
 }
 
+/// An artist whose older files carry an id MusicBrainz has since merged
+/// away. A newer album tagged with the current id lands on a second row.
+/// Once the older album is matched to an edition crediting the current id,
+/// MusicBrainz's answer about the old id joins the two rows into the
+/// older one, which keeps its favorite and play and is linked to the
+/// current id. A full rescan and a run that writes the current id into
+/// the files keep it that way.
+#[tokio::test]
+async fn an_artist_whose_files_carry_a_merged_id_is_linked_and_kept() {
+    use droppedneedle_library::identify::sources::ArtistAnswer;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::{TagField, read_fields};
+
+    // Recorded from MusicBrainz on 2026-10-17: the first id answers with a
+    // redirect to the second.
+    const RETIRED: &str = "3ec87112-9081-467b-8327-e18286f1b020";
+    const CURRENT: &str = "ffbcb0c1-37ad-4df8-a78d-e31bd590d7ea";
+    let rig = Rig::start("lib-merged-artist-id").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let paused = rig.pause_identification().await;
+    let music = app.config.root_app_dir.join("music");
+    let one = |value: &str| vec![value.to_owned()];
+    let tag = |file: &Path, number: usize, album: &str, id: &str, recording: &str| {
+        let mut edits = vec![
+            TagEdit::verbatim(TagField::Title, one(&format!("{album} {number}"))),
+            TagEdit::verbatim(TagField::TrackNumber, one(&number.to_string())),
+            TagEdit::verbatim(TagField::Album, one(album)),
+            TagEdit::verbatim(TagField::Compilation, Vec::new()),
+            TagEdit::verbatim(TagField::Artist, one("Artist X")),
+            TagEdit::verbatim(TagField::Artists, one("Artist X")),
+            TagEdit::verbatim(TagField::ArtistSort, Vec::new()),
+            TagEdit::verbatim(TagField::AlbumArtist, one("Artist X")),
+            TagEdit::verbatim(TagField::AlbumArtists, one("Artist X")),
+            TagEdit::verbatim(TagField::AlbumArtistSort, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzArtistId, one(id)),
+            TagEdit::verbatim(TagField::MusicBrainzAlbumArtistId, one(id)),
+            TagEdit::verbatim(TagField::MusicBrainzRecordingId, one(recording)),
+        ];
+        if album == "Later" {
+            edits.push(TagEdit::verbatim(
+                TagField::MusicBrainzReleaseId,
+                Vec::new(),
+            ));
+            edits.push(TagEdit::verbatim(
+                TagField::MusicBrainzReleaseGroupId,
+                Vec::new(),
+            ));
+        }
+        save_tags(file, &edits).expect("fixture tagged");
+    };
+    let first = [
+        ("first/01.flac", "management_full.flac"),
+        ("first/02.mp3", "management_full.mp3"),
+        ("first/03.m4a", "management_full.m4a"),
+    ];
+    for (index, (relative, fixture)) in first.iter().enumerate() {
+        let recording = format!("30000000-0000-4000-8000-00000000010{}", index + 1);
+        tag(
+            &plant(&music, relative, fixture),
+            index + 1,
+            "First",
+            RETIRED,
+            &recording,
+        );
+    }
+    app.add_library_folder("music", &music).await;
+    let track = rig
+        .scan_store
+        .track_at("music", "first/01.flac")
+        .expect("track indexed");
+    let album = rig.scan_store.album_for_track(&track).expect("album");
+    let db = app.db();
+    let text = |sql: &str| texts(&db, sql);
+    let artist = text(&format!(
+        "SELECT album_artist_id FROM local_albums WHERE id = '{album}'"
+    ))[0]
+        .clone();
+    let user = text("SELECT id FROM auth_users WHERE role = 'admin'")[0].clone();
+    db.execute_batch(&format!(
+        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('{user}', 'artist', '{artist}', 1); \
+         INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
+         artist_name, played_at) VALUES ('play-1', '{user}', '{artist}', 'First 1', \
+         'Artist X', '2026-01-01T00:00:00Z');"
+    ))
+    .expect("favorite and play seeded");
+
+    tag(
+        &plant(&music, "later/01.flac", "management_full.flac"),
+        1,
+        "Later",
+        CURRENT,
+        "30000000-0000-4000-8000-000000000901",
+    );
+    app.scan_library().await;
+    let later = rig
+        .scan_store
+        .track_at("music", "later/01.flac")
+        .expect("later indexed");
+    let later_rows = format!(
+        "SELECT local_artist_id FROM local_track_artists WHERE local_track_id = '{later}' \
+         UNION SELECT a.album_artist_id FROM local_albums a JOIN local_tracks t \
+         ON t.local_album_id = a.id WHERE t.id = '{later}'"
+    );
+    let split = text(&later_rows);
+    assert_eq!(split.len(), 1, "{split:?}");
+    assert_ne!(split[0], artist, "the current id lands on a row of its own");
+    let newer = split[0].clone();
+
+    rig.identify.recall_from(|facts| {
+        if facts.title != "First" {
+            return RecallResult::default();
+        }
+        let mut release = tagged_from(facts);
+        let credit = CreditedArtist {
+            id: CURRENT.to_owned(),
+            name: "Artist X".to_owned(),
+            sort_name: None,
+            join: String::new(),
+        };
+        release.artists = vec![credit.clone()];
+        for track in &mut release.tracks {
+            track.artists = vec![credit.clone()];
+        }
+        RecallResult {
+            releases: vec![release],
+            ..RecallResult::default()
+        }
+    });
+    rig.identify
+        .set_artist(RETIRED, ArtistAnswer::MergedInto(CURRENT.to_owned()));
+    rig.identify.set_artist(CURRENT, ArtistAnswer::Current);
+    rig.resume_identification(paused).await;
+    let link = format!(
+        "SELECT provider_artist_id || ' ' || decision_source \
+         FROM local_artist_external_identities WHERE local_artist_id = '{artist}'"
+    );
+    let checks = "SELECT artist_mbid || ' ' || state || ' ' || COALESCE(canonical_mbid, '') \
+                  FROM library_identify_artist_id_checks ORDER BY artist_mbid";
+    app.until("the merged id is followed", || {
+        let done = texts(&db, &link) == [format!("{CURRENT} automatic")]
+            && texts(&db, checks).len() == 2
+            && !texts(&db, checks)
+                .iter()
+                .any(|row| row.contains(" pending "));
+        async move { done.then_some(()) }
+    })
+    .await;
+
+    assert_eq!(
+        text(checks),
+        [
+            format!("{RETIRED} merged {CURRENT}"),
+            format!("{CURRENT} kept "),
+        ]
+    );
+    let held_ids = format!(
+        "SELECT artist_mbid FROM local_track_artists WHERE local_artist_id = '{artist}' \
+         UNION SELECT artist_mbid FROM local_album_artists WHERE local_artist_id = '{artist}'"
+    );
+    assert_eq!(text(&held_ids), [CURRENT]);
+    assert_eq!(
+        text(&format!(
+            "SELECT retired_into_artist_id FROM local_artists WHERE id = '{newer}'"
+        )),
+        [artist.as_str()]
+    );
+    assert_eq!(
+        text(&format!(
+            "SELECT kind FROM local_artist_aliases WHERE alias = '{newer}'"
+        )),
+        ["merged_artist"]
+    );
+    assert_eq!(text(&later_rows), [artist.as_str()]);
+    assert_eq!(
+        text(
+            "SELECT CAST(count(*) AS TEXT) FROM library_catalog_actions \
+             WHERE reason_code = 'AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE'"
+        ),
+        ["1"]
+    );
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/artists/{artist}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["artist_mbid"], json!(CURRENT), "{body}");
+    let people_made = "SELECT item_id FROM library_user_favorites WHERE item_kind = 'artist' \
+                       UNION ALL SELECT local_artist_id FROM library_play_history";
+    assert_eq!(text(people_made), vec![artist.clone(); 2]);
+    let asked = rig.identify.artists_asked();
+    assert_eq!(
+        asked.iter().filter(|id| id.as_str() == RETIRED).count(),
+        1,
+        "{asked:?}"
+    );
+    assert_eq!(
+        asked.iter().filter(|id| id.as_str() == CURRENT).count(),
+        1,
+        "{asked:?}"
+    );
+
+    // A full rescan reads the old id in First's files again.
+    let rows = "SELECT DISTINCT c.local_artist_id || ' ' || c.artist_mbid \
+                FROM local_track_artists c JOIN local_tracks t ON t.id = c.local_track_id \
+                WHERE t.availability = 'indexed' UNION SELECT DISTINCT local_artist_id || ' ' \
+                || artist_mbid FROM local_album_artists \
+                WHERE local_album_id IN (SELECT local_album_id FROM local_tracks)";
+    let revision =
+        format!("SELECT CAST(row_revision AS TEXT) FROM local_artists WHERE id = '{artist}'");
+    let before = text(&revision);
+    let (status, body) = app
+        .call("GET", "/api/v3/settings/library", &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let policy = body["policy_revision"].as_str().expect("policy").to_owned();
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/scan/runs",
+            &headers,
+            Some(json!({
+                "kind": "rescan_files",
+                "scope_ids": ["music"],
+                "expected_policy_revision": policy,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    app.scan_ended(body["run_id"].as_str().expect("run id"))
+        .await;
+    assert_eq!(text(rows), [format!("{artist} {CURRENT}")]);
+    assert_eq!(text(&revision), before, "the rescan changes nothing");
+
+    // A run that writes MusicBrainz's ids into First's files.
+    let retag =
+        |rel_path: &str| json!({"root_id": "music", "rel_path": rel_path, "managed_updates": {}});
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/preview",
+            &headers,
+            Some(json!({
+                "kind": "retag",
+                "album_id": album,
+                "items": first.iter().map(|(relative, _)| retag(relative)).collect::<Vec<_>>(),
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/apply",
+            &headers,
+            Some(json!({"preview_token": body["preview_token"]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!body.to_string().contains("ALBUM_CHANGED"), "{body}");
+    let written = read_fields(&music.join("first/01.flac")).expect("fields read");
+    assert_eq!(
+        written[&TagField::MusicBrainzArtistId],
+        vec![CURRENT.to_owned()]
+    );
+    app.scan_library().await;
+    assert_eq!(text(rows), [format!("{artist} {CURRENT}")]);
+    assert_eq!(
+        text(&format!(
+            "SELECT id FROM local_artists WHERE display_name = 'Artist X' \
+             AND retired_into_artist_id IS NULL AND id <> '{artist}'"
+        )),
+        Vec::<String>::new()
+    );
+    rig.stop().await;
+}
+
 /// A custom edition under a release group credited to another artist is
 /// refused while a person linked the album's artist, and sealed while the
 /// link is the app's own, which a person has no other way to correct.

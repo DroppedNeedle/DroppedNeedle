@@ -156,6 +156,7 @@ library_edition_choice_undo
 library_edition_remap_queue
 library_event_stream_revisions
 library_identification_attempts
+library_identify_artist_id_checks
 library_identify_jobs
 library_identify_reviews
 library_identity_repair_findings

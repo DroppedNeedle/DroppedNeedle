@@ -1,7 +1,8 @@
 //! Where identification gets releases and fingerprints.
 //!
 //! [`ReleaseSource`] is the MusicBrainz side: release search, a release
-//! with its full tracklist, and the canonical id of a merged recording.
+//! with its full tracklist, and the canonical id of a merged recording or
+//! artist.
 //! Production binds it to the shared MusicBrainz client (which honors the
 //! source setting, official or BrainzMash, and its rate limits); every
 //! call runs identity-critical, so a dead provider defers the job rather
@@ -32,13 +33,46 @@ use droppedneedle_providers::degradation::DegradationSink;
 use droppedneedle_providers::limiter::Pacer;
 use droppedneedle_providers::musicbrainz::models::Relation;
 use droppedneedle_providers::musicbrainz::{
-    ArtistCreditName, Criticality, MbRelease, MbTransport, MusicBrainzClient, ReleaseSearchHit,
-    build_release_match_query, hit_score,
+    ArtistCreditName, Criticality, MbError, MbRelease, MbTransport, MusicBrainzClient,
+    ReleaseSearchHit, build_release_match_query, hit_score, is_valid_mbid,
 };
 
 /// The provider could not answer; the job waits and retries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceError(pub String);
+
+/// What MusicBrainz says about one artist id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArtistAnswer {
+    /// The id names an artist MusicBrainz still has.
+    Current,
+    /// MusicBrainz merged the id into this one (lowercased).
+    MergedInto(String),
+    /// No artist has the id.
+    Missing,
+    /// MusicBrainz refused the id, or answered in a shape the client
+    /// refuses. The reason is for the log.
+    Refused(String),
+}
+
+/// The source could not answer about an artist id, so nothing is
+/// learned: it was down, rate limited or not set up, or it cannot tell.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unanswered {
+    pub error: SourceError,
+    /// How long the service asked to be left alone, when it said.
+    pub retry_after_secs: Option<f64>,
+}
+
+impl Unanswered {
+    /// A source that has no way to look artists up.
+    pub fn cannot_tell() -> Self {
+        Self {
+            error: SourceError("this source cannot tell".to_owned()),
+            retry_after_secs: None,
+        }
+    }
+}
 
 /// One release search hit, before its tracklist is fetched.
 #[derive(Debug, Clone, PartialEq)]
@@ -127,6 +161,15 @@ pub trait ReleaseSource: Send + Sync {
         _query: &'a EditionQuery,
     ) -> BoxFuture<'a, Result<EditionPage, SourceError>> {
         Box::pin(async { Ok(EditionPage::default()) })
+    }
+
+    /// What MusicBrainz says about artist id `mbid`: current, merged into
+    /// another id, missing, or refused. The default cannot tell.
+    fn canonical_artist<'a>(
+        &'a self,
+        _mbid: &'a str,
+    ) -> BoxFuture<'a, Result<ArtistAnswer, Unanswered>> {
+        Box::pin(async { Err(Unanswered::cannot_tell()) })
     }
 }
 
@@ -284,6 +327,48 @@ impl<T: MbTransport, S: DegradationSink> ReleaseSource for MusicBrainzClient<T, 
                 .await
                 .map(|found| found.map(|id| id.to_ascii_lowercase()))
                 .map_err(|error| SourceError(error.to_string()))
+        })
+    }
+
+    /// Verified 2026-10-17 against BrainzMash (`api.brainzmash.cc/ws/2`):
+    /// a merged artist id answers 301 with an absolute same-origin
+    /// `Location` ending `?fmt=json`, whose 200 names the kept id; an
+    /// unknown id answers 404. The official service refused this host.
+    fn canonical_artist<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<ArtistAnswer, Unanswered>> {
+        Box::pin(async move {
+            let asked = mbid.trim().to_ascii_lowercase();
+            let unanswered = |error: MbError, retry_after_secs| Unanswered {
+                error: SourceError(error.to_string()),
+                retry_after_secs,
+            };
+            match self
+                .lookup_artist(&asked, &[], Criticality::IdentityCritical)
+                .await
+            {
+                Ok(Some(lookup)) => {
+                    let id = lookup.entity.id.trim().to_ascii_lowercase();
+                    Ok(if id == asked {
+                        ArtistAnswer::Current
+                    } else if is_valid_mbid(&id) {
+                        ArtistAnswer::MergedInto(id)
+                    } else {
+                        ArtistAnswer::Refused(format!("the answer names {id:?}"))
+                    })
+                }
+                Ok(None) => Ok(ArtistAnswer::Missing),
+                Err(
+                    error @ (MbError::InvalidMbid(_)
+                    | MbError::RedirectRejected(_)
+                    | MbError::Contract(_)),
+                ) => Ok(ArtistAnswer::Refused(error.to_string())),
+                Err(error @ MbError::RateLimited { retry_after_secs }) => {
+                    Err(unanswered(error, retry_after_secs))
+                }
+                Err(error) => Err(unanswered(error, None)),
+            }
         })
     }
 

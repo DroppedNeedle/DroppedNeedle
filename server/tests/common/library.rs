@@ -1,13 +1,16 @@
 //! MusicBrainz and AcoustID as library identification sees them, scripted
 //! by a journey.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use droppedneedle_library::identify::models::{LocalAlbumFacts, RecallResult};
 use droppedneedle_library::identify::providers::{IdentifyProviders, RecallOutcome};
-use droppedneedle_library::identify::sources::{EditionPage, EditionQuery, SourceError};
+use droppedneedle_library::identify::sources::{
+    ArtistAnswer, EditionPage, EditionQuery, SourceError, Unanswered,
+};
 use droppedneedle_providers::musicbrainz::Criticality;
 
 type Recall = Box<dyn Fn(&LocalAlbumFacts) -> RecallResult + Send>;
@@ -17,6 +20,9 @@ type Recall = Box<dyn Fn(&LocalAlbumFacts) -> RecallResult + Send>;
 pub struct ScriptedIdentify {
     recall: Mutex<Recall>,
     editions: Mutex<EditionPage>,
+    /// What each artist id answers, and every id asked about.
+    artists: Mutex<HashMap<String, ArtistAnswer>>,
+    artists_asked: Mutex<Vec<String>>,
 }
 
 impl ScriptedIdentify {
@@ -24,7 +30,23 @@ impl ScriptedIdentify {
         Arc::new(Self {
             recall: Mutex::new(Box::new(|_| RecallResult::default())),
             editions: Mutex::new(EditionPage::default()),
+            artists: Mutex::new(HashMap::new()),
+            artists_asked: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Answer a lookup of artist id `mbid` with `answer`. An id with no
+    /// answer scripted gets none.
+    pub fn set_artist(&self, mbid: &str, answer: ArtistAnswer) {
+        self.artists
+            .lock()
+            .expect("artist script")
+            .insert(mbid.to_owned(), answer);
+    }
+
+    /// Every artist id looked up so far, in order.
+    pub fn artists_asked(&self) -> Vec<String> {
+        self.artists_asked.lock().expect("artist asks").clone()
     }
 
     /// Answer every recall with `result`.
@@ -84,5 +106,22 @@ impl IdentifyProviders for ScriptedIdentify {
     ) -> Pin<Box<dyn Future<Output = Result<EditionPage, SourceError>> + Send + '_>> {
         let page = self.editions.lock().expect("edition script").clone();
         Box::pin(async move { Ok(page) })
+    }
+
+    fn canonical_artist(
+        &self,
+        mbid: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<ArtistAnswer, Unanswered>> + Send + '_>> {
+        self.artists_asked
+            .lock()
+            .expect("artist asks")
+            .push(mbid.to_owned());
+        let answer = self
+            .artists
+            .lock()
+            .expect("artist script")
+            .get(mbid)
+            .cloned();
+        Box::pin(async move { answer.ok_or_else(Unanswered::cannot_tell) })
     }
 }

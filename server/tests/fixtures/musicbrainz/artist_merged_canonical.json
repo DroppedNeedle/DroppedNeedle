@@ -1,0 +1,48 @@
+{
+  "isnis": [],
+  "country": "DE",
+  "gender-id": "36d3d30a-839d-3eda-8cb3-29be4384e4a9",
+  "type": "Person",
+  "area": {
+    "sort-name": "Germany",
+    "type-id": null,
+    "disambiguation": "",
+    "type": null,
+    "id": "85752fda-13c4-31a3-bee5-0e5cb1f51dad",
+    "iso-3166-1-codes": [
+      "DE"
+    ],
+    "name": "Germany"
+  },
+  "id": "ffbcb0c1-37ad-4df8-a78d-e31bd590d7ea",
+  "name": "Ewald Heidepriem",
+  "sort-name": "Heidepriem, Ewald",
+  "gender": "Male",
+  "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+  "ipis": [],
+  "disambiguation": "",
+  "end-area": {
+    "id": "2948328a-dde2-47f1-bafb-4b21cde9d917",
+    "name": "Freiburg im Breisgau",
+    "sort-name": "Freiburg im Breisgau",
+    "type-id": null,
+    "disambiguation": "large city",
+    "type": null
+  },
+  "begin-area": {
+    "disambiguation": "",
+    "type": null,
+    "sort-name": "Germany",
+    "type-id": null,
+    "iso-3166-1-codes": [
+      "DE"
+    ],
+    "name": "Germany",
+    "id": "85752fda-13c4-31a3-bee5-0e5cb1f51dad"
+  },
+  "life-span": {
+    "ended": true,
+    "begin": "1929-12-26",
+    "end": "1998-10-17"
+  }
+}

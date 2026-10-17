@@ -10,7 +10,9 @@ use crate::matching::Release;
 pub const RELEASE_FRESH_SECS: u64 = 7 * 24 * 3600;
 
 /// Keep every candidate document the store does not hold fresh, on a
-/// blocking thread: the stores are synchronous SQLite.
+/// blocking thread: the stores are synchronous SQLite. A fresh document
+/// that does not yet answer to a merged id the fetched one came through
+/// learns that id, so a lookup by it finds the document.
 pub async fn keep_releases(store: &std::sync::Arc<SqliteIdentifyStore>, releases: Vec<Release>) {
     if releases.is_empty() {
         return;
@@ -18,11 +20,13 @@ pub async fn keep_releases(store: &std::sync::Arc<SqliteIdentifyStore>, releases
     let store = store.clone();
     let kept = tokio::task::spawn_blocking(move || {
         for release in &releases {
-            if store
-                .release(&release.id, Some(RELEASE_FRESH_SECS))
-                .is_none()
-            {
-                store.save_release(release);
+            match store.release(&release.id, Some(RELEASE_FRESH_SECS)) {
+                None => store.save_release(release),
+                Some(stored) => {
+                    if release.old_ids.iter().any(|old| !stored.answers_to(old)) {
+                        store.keep_old_ids(release);
+                    }
+                }
             }
         }
     })

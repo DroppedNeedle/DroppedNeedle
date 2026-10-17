@@ -28,8 +28,8 @@ use std::sync::Arc;
 use super::evidence::local_album;
 use super::models::{LocalAlbumFacts, RecallResult};
 use super::sources::{
-    AlbumQuery, EditionPage, EditionQuery, FingerprintSource, ReleaseHit, ReleaseSource,
-    SourceError, group_editions,
+    AlbumQuery, ArtistAnswer, EditionPage, EditionQuery, FingerprintSource, ReleaseHit,
+    ReleaseSource, SourceError, Unanswered, group_editions,
 };
 use super::sqlite::SqliteIdentifyStore;
 use super::stores::{fresh_release, keep_releases};
@@ -79,6 +79,15 @@ pub trait IdentifyProviders: Send + Sync {
         _query: EditionQuery,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<EditionPage, SourceError>> + Send + '_>> {
         Box::pin(async { Ok(EditionPage::default()) })
+    }
+
+    /// What MusicBrainz says about one artist id. The default cannot
+    /// tell, so nothing is learned.
+    fn canonical_artist(
+        &self,
+        _mbid: &str,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<ArtistAnswer, Unanswered>> + Send + '_>> {
+        Box::pin(async { Err(Unanswered::cannot_tell()) })
     }
 }
 
@@ -358,6 +367,14 @@ impl<R: ReleaseSource, F: FingerprintSource> IdentifyProviders for LiveProviders
         query: EditionQuery,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<EditionPage, SourceError>> + Send + '_>> {
         Box::pin(async move { self.releases.search_editions(&query).await })
+    }
+
+    fn canonical_artist(
+        &self,
+        mbid: &str,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<ArtistAnswer, Unanswered>> + Send + '_>> {
+        let mbid = mbid.to_owned();
+        Box::pin(async move { self.releases.canonical_artist(&mbid).await })
     }
 }
 

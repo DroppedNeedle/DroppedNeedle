@@ -6,7 +6,11 @@
 //! and weak matches become reviews with their distances; contradicting
 //! ids retract automatic identities.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use droppedneedle_kernel::jobs::schedule::SplitMix64;
+use tokio::time::Instant;
 
 use super::evidence::{candidate_evidence, local_album};
 use super::models::{
@@ -42,13 +46,33 @@ pub type PreferenceSource = Arc<dyn Fn() -> Preferences + Send + Sync>;
 pub struct IdentifyService {
     deps: IdentifyDeps,
     preferences: PreferenceSource,
+    /// When artist id lookups may run again after MusicBrainz could not
+    /// answer. In memory only: a restart asks again at once.
+    artist_hold: Mutex<ArtistHold>,
 }
+
+/// The wait after an artist id lookup MusicBrainz could not answer.
+struct ArtistHold {
+    until: Option<Instant>,
+    failures: u32,
+    rng: SplitMix64,
+}
+
+/// The first wait after a failed lookup with no `Retry-After`; it doubles
+/// with each failure in a row, up to [`ARTIST_HOLD_CAP`].
+const ARTIST_HOLD: Duration = Duration::from_secs(5 * 60);
+const ARTIST_HOLD_CAP: Duration = Duration::from_secs(3600);
 
 impl IdentifyService {
     pub fn new(deps: IdentifyDeps) -> Self {
         Self {
             deps,
             preferences: Arc::new(Preferences::default),
+            artist_hold: Mutex::new(ArtistHold {
+                until: None,
+                failures: 0,
+                rng: SplitMix64::new(SplitMix64::seed_from_time()),
+            }),
         }
     }
 
@@ -183,6 +207,72 @@ impl IdentifyService {
             keep_releases(&self.deps.releases, outcome.result.releases.clone()).await;
         }
         outcome.result
+    }
+
+    /// Ask MusicBrainz about up to `limit` artist ids waiting for an
+    /// answer, newest first, and write each answer in its own transaction.
+    /// A lookup that gets no answer stops the batch and holds lookups back
+    /// for the `Retry-After` it gave, else 5 minutes doubling to an hour,
+    /// each with up to 20% more. Returns how many ids were answered.
+    pub async fn resolve_merged_artist_ids(&self, limit: usize) -> usize {
+        if self
+            .hold_guard()
+            .until
+            .is_some_and(|until| Instant::now() < until)
+        {
+            return 0;
+        }
+        let mut answered = 0;
+        for mbid in self.deps.identities.pending_artist_ids(limit) {
+            match self.deps.providers.canonical_artist(&mbid).await {
+                Ok(answer) => {
+                    {
+                        let mut hold = self.hold_guard();
+                        hold.until = None;
+                        hold.failures = 0;
+                    }
+                    if !self.deps.identities.answer_artist_id(&mbid, &answer) {
+                        self.hold(None);
+                        tracing::debug!(
+                            artist_mbid = mbid,
+                            "an artist id answer could not be written; lookups wait"
+                        );
+                        break;
+                    }
+                    answered += 1;
+                }
+                Err(unanswered) => {
+                    self.hold(unanswered.retry_after_secs);
+                    tracing::debug!(
+                        artist_mbid = mbid,
+                        error = unanswered.error.0,
+                        "MusicBrainz could not answer about an artist id; lookups wait"
+                    );
+                    break;
+                }
+            }
+        }
+        answered
+    }
+
+    fn hold_guard(&self) -> std::sync::MutexGuard<'_, ArtistHold> {
+        self.artist_hold
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Hold artist id lookups back after one went unanswered.
+    fn hold(&self, retry_after_secs: Option<f64>) {
+        let mut hold = self.hold_guard();
+        let base = match retry_after_secs.filter(|secs| secs.is_finite() && *secs > 0.0) {
+            Some(secs) => Duration::from_secs_f64(secs.min(ARTIST_HOLD_CAP.as_secs_f64())),
+            None => ARTIST_HOLD
+                .saturating_mul(1 << hold.failures.min(4))
+                .min(ARTIST_HOLD_CAP),
+        };
+        let jitter = hold.rng.below_duration(base / 5);
+        hold.failures = hold.failures.saturating_add(1);
+        hold.until = Some(Instant::now() + base + jitter);
     }
 
     /// One page of MusicBrainz releases for a curator choosing an edition.

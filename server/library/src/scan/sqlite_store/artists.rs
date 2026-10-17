@@ -7,7 +7,9 @@
 //! already proven to be the artist, whatever name the tag now gives it.
 //! Names never prove anything: a credit without an id lands where its name
 //! keys, and an id never joins a row whose links or files say it is
-//! another artist.
+//! another artist. An id MusicBrainz merged into another, as identification
+//! recorded it (`identify::merged_ids`), is read as the id it was merged
+//! into, so files tagged before and after the merge land on one row.
 //!
 //! A row is proven to be artist `x` when a person or a v2 import linked it
 //! to `x`; when the app linked it to `x` (a matched album proved it,
@@ -21,6 +23,7 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::commit::{TRACK_GONE, UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID, stable_id};
+use crate::identify::merged_ids;
 use crate::matching::model::VARIOUS_ARTISTS_MBID;
 use crate::tags::AudioArtistCredit;
 use droppedneedle_kernel::db::fold_text;
@@ -39,7 +42,8 @@ pub(super) struct Credit {
     pub credited_name: String,
     pub join_phrase: String,
     /// The credit's MusicBrainz artist id, lowercased, when its side of
-    /// the file is aligned ([`credits`]).
+    /// the file is aligned ([`credits`]): MusicBrainz's current id when
+    /// the file's was recorded as merged into it.
     pub mbid: Option<String>,
 }
 
@@ -75,36 +79,40 @@ fn aligned_ids(names: &[AudioArtistCredit], ids: &[String], listed: bool) -> Opt
 }
 
 /// One side's credits: from the tags, else one credit from the fallback
-/// name. An aligned side gives each credit its id; Various Artists and
-/// the "Unknown Artist" sentinel carry none.
+/// name. An aligned side gives each credit its id, or the id MusicBrainz
+/// merged it into; Various Artists and the "Unknown Artist" sentinel carry
+/// none.
 pub(super) fn credits(
+    tx: &Connection,
     from_tags: &[AudioArtistCredit],
     ids: &[String],
     listed: bool,
     fallback: &str,
     fallback_sort: Option<&str>,
-) -> Vec<Credit> {
+) -> rusqlite::Result<Vec<Credit>> {
     let aligned = aligned_ids(from_tags, ids, listed);
-    let mut out: Vec<Credit> = from_tags
-        .iter()
-        .enumerate()
-        .filter(|(_, credit)| !credit.name.trim().is_empty())
-        .map(|(position, credit)| {
-            let name = credit.name.trim().to_owned();
-            let mbid = aligned
-                .as_ref()
-                .and_then(|ids| ids.get(position))
-                .filter(|id| id.as_str() != VARIOUS_ARTISTS_MBID && name != UNKNOWN_ARTIST)
-                .cloned();
-            Credit {
-                sort_name: credit.sort_name.clone(),
-                credited_name: credit.credited_name.clone().unwrap_or_else(|| name.clone()),
-                join_phrase: credit.join_phrase.clone(),
-                name,
-                mbid,
-            }
-        })
-        .collect();
+    let mut out: Vec<Credit> = Vec::new();
+    for (position, credit) in from_tags.iter().enumerate() {
+        if credit.name.trim().is_empty() {
+            continue;
+        }
+        let name = credit.name.trim().to_owned();
+        let mbid = match aligned
+            .as_ref()
+            .and_then(|ids| ids.get(position))
+            .filter(|id| id.as_str() != VARIOUS_ARTISTS_MBID && name != UNKNOWN_ARTIST)
+        {
+            Some(id) => Some(merged_ids::merged_into(tx, id)?.unwrap_or_else(|| id.clone())),
+            None => None,
+        };
+        out.push(Credit {
+            sort_name: credit.sort_name.clone(),
+            credited_name: credit.credited_name.clone().unwrap_or_else(|| name.clone()),
+            join_phrase: credit.join_phrase.clone(),
+            name,
+            mbid,
+        });
+    }
     if out.is_empty() {
         out.push(Credit {
             name: fallback.to_owned(),
@@ -114,7 +122,7 @@ pub(super) fn credits(
             mbid: None,
         });
     }
-    out
+    Ok(out)
 }
 
 /// Insert the row `id` with the credit's names unless it exists.

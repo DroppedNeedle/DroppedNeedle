@@ -13,6 +13,7 @@
 
 pub mod artist_links;
 pub mod evidence;
+pub mod merged_ids;
 pub mod models;
 pub mod providers;
 pub mod queue;

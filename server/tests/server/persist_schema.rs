@@ -61,7 +61,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 159);
+    assert_eq!(table_names(&pool).await.len(), 160);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -2861,6 +2861,138 @@ async fn play_marks_arrive_empty_and_go_with_their_user_and_track() {
         [("u1".to_owned(), "t2".to_owned())],
         "the mark went with its track"
     );
+}
+
+/// Migration 0063 adds the artist ids identification asks MusicBrainz
+/// about, empty and strict, with a state listing exactly the code's values
+/// and a merged id only on a merged row. Every album's artist stamp is
+/// reset, so the matched albums are worked through again.
+#[tokio::test]
+async fn artist_id_checks_arrive_empty_and_every_album_is_worked_again() {
+    use droppedneedle_library::identify::merged_ids::CheckState;
+
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 63)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO library_artist_reconciliation_state (local_album_id, input_revision, \
+         state, reason_code, updated_at) VALUES ('al1', 'stamp', 'projected', \
+         'CREDITS_LINE_UP', 1);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 63 && stamped == latest_version(), "{stamped}");
+    let reset: (String, String) = sqlx::query_as(
+        "SELECT input_revision, state FROM library_artist_reconciliation_state \
+         WHERE local_album_id = 'al1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(reset, (String::new(), "projected".to_owned()));
+
+    let table = "library_identify_artist_id_checks";
+    assert_eq!(
+        column_names(&pool, table).await,
+        [
+            "artist_mbid",
+            "state",
+            "canonical_mbid",
+            "nominated_at",
+            "checked_at"
+        ]
+    );
+    let sql: String =
+        sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(sql.trim_end().ends_with("STRICT"), "{sql}");
+    let marker = "CHECK(state IN (";
+    let values = &sql[sql.find(marker).expect("state has a CHECK") + marker.len()..];
+    let listed: Vec<String> = values[..values.find(')').expect("the list ends")]
+        .split(',')
+        .map(|value| value.trim().trim_matches('\'').to_owned())
+        .collect();
+    assert_eq!(
+        listed,
+        CheckState::ALL.map(|state| state.as_str().to_owned())
+    );
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_identify_artist_id_checks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    for (index, columns) in [
+        ("idx_identify_artist_id_checks_state", "state,nominated_at"),
+        ("idx_identify_artist_id_checks_canonical", "canonical_mbid"),
+    ] {
+        let found: String = sqlx::query_scalar(
+            "SELECT group_concat(name, ',') FROM (SELECT name FROM pragma_index_info(?1) \
+             ORDER BY seqno)",
+        )
+        .bind(index)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(found, columns, "{index}");
+    }
+
+    let id = "3ec87112-9081-467b-8327-e18286f1b020";
+    let other = "ffbcb0c1-37ad-4df8-a78d-e31bd590d7ea";
+    for (row, refused) in [
+        (format!("('{id}', 'pending', NULL, 1, NULL)"), false),
+        (format!("('{other}', 'merged', '{id}', 1, 2)"), false),
+        (
+            format!("('{}', 'pending', NULL, 1, NULL)", id.to_uppercase()),
+            true,
+        ),
+        ("('not-an-id', 'pending', NULL, 1, NULL)".to_owned(), true),
+        (format!("('{other}', 'gone', NULL, 1, 2)"), true),
+        (format!("('{other}', 'kept', '{id}', 1, 2)"), true),
+        (format!("('{other}', 'merged', NULL, 1, 2)"), true),
+        (format!("('{other}', 'merged', '{other}', 1, 2)"), true),
+        (format!("('{other}', 'pending', NULL, 1, 2)"), true),
+        (format!("('{other}', 'kept', NULL, 1, NULL)"), true),
+    ] {
+        sqlx::query("DELETE FROM library_identify_artist_id_checks WHERE artist_mbid <> ?1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let written = sqlx::query(&format!(
+            "INSERT OR REPLACE INTO library_identify_artist_id_checks VALUES {row}"
+        ))
+        .execute(&pool)
+        .await;
+        assert_eq!(written.is_err(), refused, "{row}");
+    }
 }
 
 /// Every table in the migrated schema is listed once in

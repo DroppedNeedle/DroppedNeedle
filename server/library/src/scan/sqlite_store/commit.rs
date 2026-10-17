@@ -788,19 +788,21 @@ fn write_item(
         .or_else(|| parsed.as_ref().and_then(|names| names.year));
 
     let album_credits = artists::credits(
+        tx,
         &tag.album_artists,
         &tag.musicbrainz_album_artist_ids,
         tag.album_artists_listed,
         &album_artist,
         tag.album_artist_sort.as_deref(),
-    );
+    )?;
     let track_credits = artists::credits(
+        tx,
         &tag.artists,
         &tag.musicbrainz_artist_ids,
         tag.artists_listed,
         &track_artist,
         tag.artist_sort.as_deref(),
-    );
+    )?;
 
     let release_mbid = tag
         .musicbrainz_release_id

@@ -15,13 +15,17 @@
 //! is then linked to `x` when its current proofs and its files' ids name
 //! `x` and nothing else, and no other row holds `x`. These links are the
 //! app's own (`automatic`): they follow the match and the files and give
-//! way to a person. A person's or v2's link is never touched.
+//! way to a person. A person's or v2's link is never touched, except to
+//! follow an artist MusicBrainz merged into another ([`merged_ids`]). A
+//! release id MusicBrainz merged counts as the id it was merged into, and
+//! the ids that disagree on a row are recorded to be asked about.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use sha2::{Digest as _, Sha256};
 
+use super::merged_ids;
 use super::sqlite::stored_release;
 use crate::corrections::continuation::accepted_release;
 use crate::matching::model::{ArtistNames, CreditedArtist, Release, VARIOUS_ARTISTS_MBID};
@@ -39,7 +43,7 @@ pub const SWEEP_BATCH: usize = 50;
 /// `[dialogue]`, all of type "Other" and described as special purpose
 /// artists. `41ece0f7-91f6-4c87-982c-3a39c5a02586`, which the catalog
 /// hides, answered as "/v/", a real group, so it is not listed here.
-const PLACEHOLDER_ARTISTS: [&str; 7] = [
+pub(crate) const PLACEHOLDER_ARTISTS: [&str; 7] = [
     VARIOUS_ARTISTS_MBID,
     "125ec42a-7229-4250-afc5-e057484327fe",
     "f731ccc4-e22a-43af-a747-64213329e088",
@@ -230,10 +234,11 @@ fn side_credits(
     .collect()
 }
 
-/// The release credit's ids, lowercased, when the side lines up with it:
-/// as many credits, positions in order, distinct UUIDs, and no row twice.
-fn lined_up(side: &[LocalCredit], release: &[CreditedArtist]) -> Option<Vec<String>> {
-    if side.is_empty() || side.len() != release.len() {
+/// The release credit's ids (lowercased, MusicBrainz's current ones),
+/// when the side lines up with them: as many credits, positions in order,
+/// distinct UUIDs, and no row twice.
+fn lined_up(side: &[LocalCredit], ids: Vec<String>) -> Option<Vec<String>> {
+    if side.is_empty() || side.len() != ids.len() {
         return None;
     }
     if side
@@ -244,10 +249,6 @@ fn lined_up(side: &[LocalCredit], release: &[CreditedArtist]) -> Option<Vec<Stri
         return None;
     }
     let rows: BTreeSet<&str> = side.iter().map(|credit| credit.artist.as_str()).collect();
-    let ids: Vec<String> = release
-        .iter()
-        .map(|artist| artist.id.trim().to_ascii_lowercase())
-        .collect();
     let distinct: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
     let valid = ids
         .iter()
@@ -282,7 +283,7 @@ fn names_agree(
         })
 }
 
-fn placeholder(mbid: &str) -> bool {
+pub(crate) fn placeholder(mbid: &str) -> bool {
     PLACEHOLDER_ARTISTS.contains(&mbid)
 }
 
@@ -337,10 +338,12 @@ impl Proof {
     }
 }
 
-/// What one side proves, position by position. `None` when it does not
-/// line up.
+/// What one side proves, position by position: `false` when it does not
+/// line up. A release id MusicBrainz merged counts as the id it was merged
+/// into; the names are still looked up by the document's own id.
 #[allow(clippy::too_many_arguments)]
 fn prove_side(
+    conn: &Connection,
     side: &[LocalCredit],
     credits: &[CreditedArtist],
     names: Option<&ArtistNames>,
@@ -349,19 +352,22 @@ fn prove_side(
     release: &str,
     album_revision: i64,
     out: &mut Vec<Proof>,
-) -> bool {
-    let Some(ids) = lined_up(side, credits) else {
-        return false;
+) -> rusqlite::Result<bool> {
+    let current = credits
+        .iter()
+        .map(|artist| merged_ids::current_id(conn, &artist.id))
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let Some(ids) = lined_up(side, current) else {
+        return Ok(false);
     };
     for ((credit, artist), mbid) in side.iter().zip(credits).zip(ids) {
-        if placeholder(&mbid)
-            || !credit.provable
-            || !names_agree(&credit.name, artist, &mbid, names)
+        let own = artist.id.trim().to_ascii_lowercase();
+        if placeholder(&mbid) || !credit.provable || !names_agree(&credit.name, artist, &own, names)
         {
             continue;
         }
         let canonical = names
-            .and_then(|names| names.artists.get(&mbid))
+            .and_then(|names| names.artists.get(&own))
             .map(|known| known.name.clone())
             .unwrap_or_else(|| artist.name.clone());
         out.push(Proof {
@@ -380,7 +386,7 @@ fn prove_side(
             track_revision: track.map(|(_, _, revision)| revision),
         });
     }
-    true
+    Ok(true)
 }
 
 /// What an album's accepted match proves: its proofs and its state.
@@ -396,6 +402,7 @@ fn prove(
     let mut proofs = Vec::new();
     let album_side = side_credits(conn, "local_album_artists", "local_album_id", album)?;
     let lines_up = prove_side(
+        conn,
         &album_side,
         &document.artists,
         names,
@@ -404,7 +411,7 @@ fn prove(
         identity_release,
         album_revision,
         &mut proofs,
-    );
+    )?;
     let tracks: Vec<(String, String, i64)> = conn
         .prepare_cached(
             "SELECT t.id, i.release_track_mbid, i.row_revision FROM local_tracks t \
@@ -429,6 +436,7 @@ fn prove(
         };
         let side = side_credits(conn, "local_track_artists", "local_track_id", track)?;
         prove_side(
+            conn,
             &side,
             &on_release.artists,
             names,
@@ -437,7 +445,7 @@ fn prove(
             identity_release,
             album_revision,
             &mut proofs,
-        );
+        )?;
     }
     Ok(if lines_up {
         (proofs, CreditState::Projected, "CREDITS_LINE_UP")
@@ -671,6 +679,18 @@ fn row_ids(conn: &Connection, artist: &str) -> rusqlite::Result<BTreeSet<String>
 /// (the oldest row wins among rows settled together); any other row loses
 /// the app's link. Reads only.
 pub fn plan(conn: &Connection, rows: &[String]) -> rusqlite::Result<Vec<LinkChange>> {
+    Ok(plan_rows(conn, rows)?.changes)
+}
+
+/// What settling some rows would change, and the ids that disagree on
+/// them: every id of a row proven to be more than one, and for a row a
+/// person or v2 linked, its link's id and ids when they name another.
+struct Planned {
+    changes: Vec<LinkChange>,
+    conflicts: BTreeSet<String>,
+}
+
+fn plan_rows(conn: &Connection, rows: &[String]) -> rusqlite::Result<Planned> {
     struct Candidate {
         created: f64,
         artist: String,
@@ -680,6 +700,7 @@ pub fn plan(conn: &Connection, rows: &[String]) -> rusqlite::Result<Vec<LinkChan
     let rows: BTreeSet<&String> = rows.iter().collect();
     let mut unlinks: BTreeSet<String> = BTreeSet::new();
     let mut candidates: Vec<Candidate> = Vec::new();
+    let mut conflicts: BTreeSet<String> = BTreeSet::new();
     for artist in rows {
         let row: Option<(f64, bool)> = conn
             .prepare_cached(
@@ -703,17 +724,23 @@ pub fn plan(conn: &Connection, rows: &[String]) -> rusqlite::Result<Vec<LinkChan
             )?
             .query_row(params![artist], |row| Ok((row.get(0)?, row.get(1)?)))
             .optional()?;
-        if link
-            .as_ref()
-            .is_some_and(|(_, source)| matches!(source.as_str(), "manual" | "legacy_import"))
-        {
-            continue;
-        }
         let ids = if provable {
             row_ids(conn, artist)?
         } else {
             BTreeSet::new()
         };
+        if let Some((linked, source)) = &link
+            && matches!(source.as_str(), "manual" | "legacy_import")
+        {
+            if ids.iter().any(|id| id != linked) {
+                conflicts.insert(linked.clone());
+                conflicts.extend(ids);
+            }
+            continue;
+        }
+        if ids.len() > 1 {
+            conflicts.extend(ids.iter().cloned());
+        }
         let only = (ids.len() == 1)
             .then(|| ids.into_iter().next())
             .flatten()
@@ -775,26 +802,31 @@ pub fn plan(conn: &Connection, rows: &[String]) -> rusqlite::Result<Vec<LinkChan
             });
         }
     }
-    Ok(changes)
+    Ok(Planned { changes, conflicts })
+}
+
+/// Move the artist's `updated_at` (seconds) and revision once.
+pub(crate) fn touch_artist(tx: &Transaction<'_>, artist: &str, now: f64) -> rusqlite::Result<()> {
+    tx.prepare_cached(
+        "UPDATE local_artists SET updated_at = ?2, row_revision = row_revision + 1 WHERE id = ?1",
+    )?
+    .execute(params![artist, now])?;
+    Ok(())
 }
 
 /// Settle the links of `rows` ([`plan`]) and apply the changes: the app's
-/// links only, removals first. Each row whose link changed moves its
-/// revision once, and the catalog moves once when anything changed.
-/// Returns the ids newly linked.
+/// links only, removals first, after a person's or v2's link to an id
+/// MusicBrainz merged follows the merge. Each row whose link changed moves
+/// its revision once, and the catalog moves once when anything changed.
+/// The ids that disagree on a row are recorded to be checked. Returns the
+/// ids newly linked.
 pub fn settle(tx: &Transaction<'_>, rows: &[String], now_ms: i64) -> rusqlite::Result<Vec<String>> {
-    let changes = plan(tx, rows)?;
+    let mut changed = merged_ids::follow_person_links(tx, rows, now_ms)?;
+    let Planned { changes, conflicts } = plan_rows(tx, rows)?;
+    merged_ids::nominate(tx, &conflicts, now_ms)?;
     let now = now_ms as f64 / 1000.0;
-    let mut changed = false;
     let mut linked = Vec::new();
-    let touch = |artist: &str| -> rusqlite::Result<()> {
-        tx.prepare_cached(
-            "UPDATE local_artists SET updated_at = ?2, row_revision = row_revision + 1 \
-             WHERE id = ?1",
-        )?
-        .execute(params![artist, now])?;
-        Ok(())
-    };
+    let touch = |artist: &str| touch_artist(tx, artist, now);
     for change in &changes {
         if let LinkChange::Unlink { artist } = change {
             let removed = tx

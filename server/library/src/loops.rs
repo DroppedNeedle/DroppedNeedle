@@ -24,6 +24,11 @@ const SUPERVISOR_IDLE_CEILING: Duration = Duration::from_secs(5);
 /// Identify queue poll cadence.
 const IDENTIFY_POLL: Duration = Duration::from_secs(2);
 
+/// Artist ids asked about after each identification attempt, and when
+/// the queue is empty.
+const ATTEMPT_ARTIST_LOOKUPS: usize = 3;
+const IDLE_ARTIST_LOOKUPS: usize = 20;
+
 /// Publish maintenance cadence (snapshot purge plus preview sweep).
 const PUBLISH_MAINTENANCE: Duration = Duration::from_secs(3600);
 
@@ -174,7 +179,11 @@ impl LibrarySetup {
             let claimed = self
                 .identify_store
                 .claim(now_ms(), super::identify::queue::LEASE_SECONDS * 1000);
-            let Some(job) = claimed else { break };
+            let Some(job) = claimed else {
+                self.resolve_merged_artist_ids(IDLE_ARTIST_LOOKUPS, &mut shutdown)
+                    .await;
+                break;
+            };
             let attempt = self.identify.run_claimed_job(&job.id, now_ms());
             tokio::select! {
                 biased;
@@ -186,6 +195,11 @@ impl LibrarySetup {
                         // before automatic management plans the album.
                         self.identify_store
                             .link_and_merge_album_artists(&report.job.local_album_id);
+                        // An artist id the pass found disagreeing may be one
+                        // MusicBrainz merged; asking now lets the answer land
+                        // before a managed run writes the current id.
+                        self.resolve_merged_artist_ids(ATTEMPT_ARTIST_LOOKUPS, &mut shutdown)
+                            .await;
                         // A settled match is what automatic management
                         // waits for after a scan finds an album.
                         if matches!(
@@ -218,6 +232,20 @@ impl LibrarySetup {
             }
         }
         attempted
+    }
+
+    /// Ask MusicBrainz about up to `limit` artist ids the passes found
+    /// disagreeing, unless identification is paused. Shutdown stops the
+    /// lookups; an id not answered stays pending.
+    async fn resolve_merged_artist_ids(&self, limit: usize, shutdown: &mut watch::Receiver<bool>) {
+        if *shutdown.borrow() || self.identification_paused() {
+            return;
+        }
+        tokio::select! {
+            biased;
+            _ = shutdown.changed() => {}
+            _ = self.identify.resolve_merged_artist_ids(limit) => {}
+        }
     }
 
     /// One publish maintenance tick: purge expired operation

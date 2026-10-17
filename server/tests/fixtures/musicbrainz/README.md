@@ -37,3 +37,26 @@ The artists of the release's and each release track's credit carry an
 artists carry none. Aliases have null `primary`, `locale` and `type-id`
 when unset. All three are far under the 20 s planning call limit and the
 read cap.
+
+# MusicBrainz artist lookups
+
+`artist_merged_*.json` are recorded answers to artist lookups with no
+includes, fetched read-only on 2026-10-17 from BrainzMash
+(`https://api.brainzmash.cc/ws/2`) with the app's User-Agent, one request
+at a time, redirects not followed. The merged id came from Wikidata's
+deprecated MusicBrainz artist ids marked as redirects; the mirror's own
+answer is what shows the merge.
+
+- `artist/3ec87112-9081-467b-8327-e18286f1b020` (merged away): `301`,
+  `Location: https://api.brainzmash.cc/ws/2/artist/ffbcb0c1-37ad-4df8-a78d-e31bd590d7ea?fmt=json`
+  (absolute, same origin, with `?fmt=json`). The body is the kept
+  artist's document: `artist_merged_redirect.json`.
+- `artist/ffbcb0c1-37ad-4df8-a78d-e31bd590d7ea` (Ewald Heidepriem, the
+  kept id): `200`, a document whose `id` is the id asked about:
+  `artist_merged_canonical.json`.
+- `artist/5b0c7e7a-3f0e-4d4a-9a51-2f6c1d8e9b30` (well formed, names
+  nothing): `404`, `artist_merged_missing.json`.
+
+Re-indented and otherwise unchanged. The official service
+(`https://musicbrainz.org/ws/2`) reset the connection from this host that
+day, so only the mirror's shapes are recorded.

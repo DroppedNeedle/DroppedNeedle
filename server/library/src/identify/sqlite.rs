@@ -22,12 +22,14 @@ use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use sha2::{Digest as _, Sha256};
 
 use super::artist_links;
+use super::merged_ids;
 use super::models::{
     AlbumIdentity, Alias, AliasKind, AutomaticSeal, CandidateEvidence, DecisionSource, IdentifyJob,
     IdentifyKind, JobState, LocalAlbumFacts, LocalTrackFacts, MatchFlag, MatchFlagState,
     PriorAlbumIdentity, PriorTrackIdentity, ReviewItem, ReviewState, TrackIdentity,
 };
 use super::queue::PRIORITY_NEW_OR_CHANGED;
+use super::sources::ArtistAnswer;
 use super::stores::{Approval, RELEASE_FRESH_SECS, StoreError};
 use crate::corrections::artist_convergence::converge_ids;
 use crate::corrections::continuation::{Scope, continue_tracks};
@@ -1026,6 +1028,30 @@ impl SqliteIdentifyStore {
         }
     }
 
+    /// Up to `limit` artist ids waiting for MusicBrainz's answer, newest
+    /// first.
+    pub fn pending_artist_ids(&self, limit: usize) -> Vec<String> {
+        self.read("pending artist ids", |conn| {
+            merged_ids::pending(conn, limit)
+        })
+        .unwrap_or_default()
+    }
+
+    /// Write MusicBrainz's answer about artist id `mbid` in one
+    /// transaction, then merge the records it proves to be one artist.
+    /// `false` when the write failed (logged).
+    pub fn answer_artist_id(&self, mbid: &str, answer: &ArtistAnswer) -> bool {
+        self.write("artist id answer", |tx| {
+            let now = now_ms();
+            let ids = merged_ids::answer(tx, mbid, answer, now)?;
+            if !ids.is_empty() {
+                converge_ids(tx, &ids, now as f64 / 1000.0)?;
+            }
+            Ok(())
+        })
+        .is_some()
+    }
+
     fn swept_guard(&self) -> MutexGuard<'_, Option<Swept>> {
         self.swept
             .lock()
@@ -1137,87 +1163,132 @@ impl SqliteIdentifyStore {
 
 impl SqliteIdentifyStore {
     /// Graft fetched parts (credits, artist names) onto the stored
-    /// document for a release, in one transaction: the current row is
-    /// read, grafted and written back under every id that shares its
-    /// payload (merged ids too), keeping when the document was fetched and
-    /// when it expires. Returns the grafted document, or `None` when none
-    /// is stored or the write failed.
+    /// document for a release, in one transaction ([`rewrite_document`]).
+    /// Returns the grafted document, or `None` when none is stored or the
+    /// write failed.
     pub fn graft_extras(
         &self,
         release_mbid: &str,
         fetched: &crate::matching::model::ReleaseExtras,
     ) -> Option<Release> {
-        let entity = release_mbid.trim().to_ascii_lowercase();
         self.write("graft release extras", |tx| {
-            let current: Option<(String, String)> = tx
-                .query_row(
-                    "SELECT canonical_payload_json, payload_sha256 \
-                     FROM library_management_metadata_snapshots \
-                     WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3 \
-                     AND input_hash = ?4 ORDER BY fetched_at DESC LIMIT 1",
-                    params![PROVIDER, RELEASE_KIND, entity, release_input_hash()],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()?;
-            let Some((payload, old_sha)) = current else {
-                return Ok(None);
-            };
-            let mut release: Release = match serde_json::from_str(&payload) {
-                Ok(release) => release,
-                Err(error) => {
-                    tracing::warn!(%error, release_mbid, "stored release document did not decode");
-                    return Ok(None);
-                }
-            };
-            release.graft_extras(fetched);
-            let payload = match serde_json::to_string(&release) {
-                Ok(payload) => payload,
-                Err(error) => {
-                    tracing::error!(%error, release_mbid, "release document did not encode");
-                    return Ok(None);
-                }
-            };
-            let payload_sha = hex_sha256(payload.as_bytes());
-            let rows: Vec<(String, String, f64, Option<f64>)> = {
-                let mut statement = tx.prepare(
-                    "SELECT entity_id, input_hash, fetched_at, expires_at \
-                     FROM library_management_metadata_snapshots \
-                     WHERE provider = ?1 AND entity_kind = ?2 AND payload_sha256 = ?3",
-                )?;
-                statement
-                    .query_map(params![PROVIDER, RELEASE_KIND, old_sha], |row| {
-                        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                    })?
-                    .collect::<rusqlite::Result<_>>()?
-            };
-            // Rows are immutable, so each is replaced.
-            tx.execute(
-                "DELETE FROM library_management_metadata_snapshots \
-                 WHERE provider = ?1 AND entity_kind = ?2 AND payload_sha256 = ?3",
-                params![PROVIDER, RELEASE_KIND, old_sha],
-            )?;
-            for (entity, input_hash, fetched_at, expires_at) in rows {
-                tx.execute(
-                    "INSERT INTO library_management_metadata_snapshots (id, provider, \
-                     entity_kind, entity_id, input_hash, canonical_payload_json, payload_sha256, \
-                     fetched_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                    params![
-                        hex_sha256(format!("{entity}\0{payload_sha}").as_bytes()),
-                        PROVIDER,
-                        RELEASE_KIND,
-                        entity,
-                        input_hash,
-                        payload,
-                        payload_sha,
-                        fetched_at,
-                        expires_at,
-                    ],
-                )?;
-            }
-            Ok(Some(release))
+            rewrite_document(tx, release_mbid, |release| release.graft_extras(fetched))
         })
         .flatten()
     }
+
+    /// Add the merged ids `fetched` answers to that the stored document of
+    /// its release lacks, so a lookup by a merged id finds it. The stored
+    /// document is otherwise kept as it is ([`rewrite_document`]). `false`
+    /// when none is stored or the write failed.
+    pub fn keep_old_ids(&self, fetched: &Release) -> bool {
+        self.write("keep merged release ids", |tx| {
+            rewrite_document(tx, &fetched.id, |stored| {
+                for old in &fetched.old_ids {
+                    let old = old.trim().to_ascii_lowercase();
+                    if !old.is_empty() && !stored.answers_to(&old) {
+                        stored.old_ids.push(old);
+                    }
+                }
+            })
+        })
+        .flatten()
+        .is_some()
+    }
+}
+
+/// Change the stored document for release `release_mbid` with `edit` and
+/// write it back under every id that shared its payload and every id it
+/// answers to (merged ids too), keeping when it was fetched and when it
+/// expires. `None` when no document is stored or it does not code.
+fn rewrite_document(
+    tx: &rusqlite::Transaction<'_>,
+    release_mbid: &str,
+    edit: impl FnOnce(&mut Release),
+) -> rusqlite::Result<Option<Release>> {
+    let entity = release_mbid.trim().to_ascii_lowercase();
+    let current: Option<(String, String, f64, Option<f64>)> = tx
+        .query_row(
+            "SELECT canonical_payload_json, payload_sha256, fetched_at, expires_at \
+             FROM library_management_metadata_snapshots \
+             WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3 \
+             AND input_hash = ?4 ORDER BY fetched_at DESC LIMIT 1",
+            params![PROVIDER, RELEASE_KIND, entity, release_input_hash()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    let Some((payload, old_sha, fetched_at, expires_at)) = current else {
+        return Ok(None);
+    };
+    let mut release: Release = match serde_json::from_str(&payload) {
+        Ok(release) => release,
+        Err(error) => {
+            tracing::warn!(%error, release_mbid, "stored release document did not decode");
+            return Ok(None);
+        }
+    };
+    edit(&mut release);
+    let payload = match serde_json::to_string(&release) {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::error!(%error, release_mbid, "release document did not encode");
+            return Ok(None);
+        }
+    };
+    let payload_sha = hex_sha256(payload.as_bytes());
+    let mut rows: Vec<(String, String, f64, Option<f64>)> = {
+        let mut statement = tx.prepare(
+            "SELECT entity_id, input_hash, fetched_at, expires_at \
+             FROM library_management_metadata_snapshots \
+             WHERE provider = ?1 AND entity_kind = ?2 AND payload_sha256 = ?3",
+        )?;
+        statement
+            .query_map(params![PROVIDER, RELEASE_KIND, old_sha], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    let answers: Vec<String> = std::iter::once(&release.id)
+        .chain(&release.old_ids)
+        .map(|id| id.trim().to_ascii_lowercase())
+        .filter(|id| !id.is_empty())
+        .collect();
+    for id in answers {
+        if !rows.iter().any(|(known, ..)| *known == id) {
+            rows.push((id, release_input_hash(), fetched_at, expires_at));
+        }
+    }
+    // Rows are immutable, so each is replaced, along with any other
+    // document an id it now answers to had.
+    tx.execute(
+        "DELETE FROM library_management_metadata_snapshots \
+         WHERE provider = ?1 AND entity_kind = ?2 AND payload_sha256 = ?3",
+        params![PROVIDER, RELEASE_KIND, old_sha],
+    )?;
+    for (entity, input_hash, fetched_at, expires_at) in rows {
+        tx.execute(
+            "DELETE FROM library_management_metadata_snapshots \
+             WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3",
+            params![PROVIDER, RELEASE_KIND, entity],
+        )?;
+        tx.execute(
+            "INSERT INTO library_management_metadata_snapshots (id, provider, \
+             entity_kind, entity_id, input_hash, canonical_payload_json, payload_sha256, \
+             fetched_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                hex_sha256(format!("{entity}\0{payload_sha}").as_bytes()),
+                PROVIDER,
+                RELEASE_KIND,
+                entity,
+                input_hash,
+                payload,
+                payload_sha,
+                fetched_at,
+                expires_at,
+            ],
+        )?;
+    }
+    Ok(Some(release))
 }
 
 /// Point what people made of a merged album, artist or track (favorites,
