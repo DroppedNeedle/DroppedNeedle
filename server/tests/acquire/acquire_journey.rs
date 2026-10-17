@@ -35,8 +35,17 @@ fn journal_tasks(db_path: &Path) -> Vec<(String, String)> {
 async fn acquire_request_approve_land() {
     let app = TestApp::start("request").await;
     let admin = app.login_admin().await;
-    let molly = app.login_user("molly").await.authorization;
+    let molly = app.login_user("Molly").await.authorization;
     let db_path = app.config.library_db_path.clone();
+    let (status, body) = app
+        .call(
+            "PATCH",
+            "/api/v3/me",
+            &[("authorization", molly.as_str())],
+            Some(json!({"display_name": "M. Profile"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
 
     // Molly asks; a plain user needs approval.
     let (status, body) = app
@@ -54,6 +63,20 @@ async fn acquire_request_approve_land() {
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     assert_eq!(body["success"], true);
     assert_eq!(body["status"], "awaiting_approval");
+
+    // The request carries the name the session gate read with her token:
+    // her login as she typed it, not the lowercase login or her profile
+    // name.
+    let (status, body) = app
+        .call(
+            "GET",
+            "/api/v3/requests/approvals",
+            &[("authorization", admin.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"][0]["requested_by_name"], "Molly", "{body}");
 
     // The admin approves: one queued download task lands in the journal.
     let (status, body) = app

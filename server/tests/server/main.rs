@@ -10,6 +10,7 @@ mod auth_federated;
 mod auth_stores;
 mod auth_users;
 mod boot;
+mod caller_shapes;
 mod config_secrets;
 mod contract;
 mod envelope;
