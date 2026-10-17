@@ -1,10 +1,8 @@
 //! Thin Axum handlers and route assembly.
 //!
 //! Every handler answers one route: extract the caller, call the host or
-//! service, render. Status mapping lives in
-//! [`PluginError`](super::error::PluginError). Bodies parse through
-//! [`ValidJson`], which keeps malformed input inside the shared error
-//! envelope instead of Axum's default plain-text 400.
+//! service, render. Status mapping lives in the `From<PluginError>` impl
+//! for [`ApiError`]. Bodies parse through the kernel's [`ValidJson`].
 //!
 //! Blocking host mutations (install, update, uninstall) run on the
 //! blocking pool; dispatches and ticks stay on the async runtime.
@@ -16,14 +14,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use axum::{
     Json,
     body::Body,
-    extract::{FromRequest, FromRequestParts, Path, Request, State},
+    extract::{FromRequestParts, Path, Request, State},
     http::{StatusCode, header, request::Parts},
     response::{IntoResponse, Response},
 };
-use serde::de::DeserializeOwned;
 
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::roles::Role;
+use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 
@@ -65,7 +64,7 @@ pub struct PluginsDeps {
     pub config: Arc<ConfigStore>,
     /// Role lookups for admin gating.
     pub roles: Arc<dyn UserRoles>,
-    /// Error ids.
+    /// Not read by the routes.
     pub ids: Arc<dyn IdGenerator>,
     /// Where installs reach GitHub.
     pub github: super::install::GitHubHosts,
@@ -87,7 +86,7 @@ pub struct ScrobbleHttpDeps {
     pub roles: Arc<dyn UserRoles>,
     /// Standing-grant state reader.
     pub mix_state: Arc<dyn MixStateReader>,
-    /// Error ids.
+    /// Not read by the routes.
     pub ids: Arc<dyn IdGenerator>,
 }
 
@@ -145,13 +144,15 @@ impl RouteCaller {
 pub struct AuthenticatedUser(pub RouteCaller);
 
 impl FromRequestParts<PluginsDeps> for AuthenticatedUser {
-    type Rejection = PluginError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
         state: &PluginsDeps,
     ) -> Result<Self, Self::Rejection> {
-        RouteCaller::require(parts, state.roles.as_ref()).map(AuthenticatedUser)
+        RouteCaller::require(parts, state.roles.as_ref())
+            .map(AuthenticatedUser)
+            .map_err(ApiError::from)
     }
 }
 
@@ -159,7 +160,7 @@ impl FromRequestParts<PluginsDeps> for AuthenticatedUser {
 pub struct AdminUser(pub RouteCaller);
 
 impl FromRequestParts<PluginsDeps> for AdminUser {
-    type Rejection = PluginError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -169,9 +170,7 @@ impl FromRequestParts<PluginsDeps> for AdminUser {
         if caller.role == Role::Admin {
             Ok(AdminUser(caller))
         } else {
-            Err(PluginError::Forbidden {
-                message: "Admin access required".to_owned(),
-            })
+            Err(ApiError::forbidden("Admin access required"))
         }
     }
 }
@@ -180,52 +179,29 @@ impl FromRequestParts<PluginsDeps> for AdminUser {
 pub struct ScrobbleUser(pub RouteCaller);
 
 impl FromRequestParts<ScrobbleHttpDeps> for ScrobbleUser {
-    type Rejection = PluginError;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
         state: &ScrobbleHttpDeps,
     ) -> Result<Self, Self::Rejection> {
-        RouteCaller::require(parts, state.roles.as_ref()).map(ScrobbleUser)
+        RouteCaller::require(parts, state.roles.as_ref())
+            .map(ScrobbleUser)
+            .map_err(ApiError::from)
     }
 }
 
-/// JSON body extractor that renders failures in the shared envelope.
-pub struct ValidJson<T>(pub T);
-
-impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
-    type Rejection = PluginError;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Json::<T>::from_request(req, state)
-            .await
-            .map(|Json(value)| Self(value))
-            .map_err(|cause| PluginError::InvalidInput {
-                message: format!("Invalid request body: {cause}"),
-            })
-    }
-}
-
-fn map_install(error: InstallError, ids: &dyn IdGenerator) -> PluginError {
-    let fault = match &error {
-        InstallError::Io(reason) => return PluginError::internal(reason, ids),
-        InstallError::Denied => SourceFault::Refused,
-        InstallError::RateLimited { retry_after } => SourceFault::RateLimited {
-            retry_after: *retry_after,
-        },
-        InstallError::Download => SourceFault::Unreachable,
-        _ => {
-            return PluginError::InvalidInput {
-                message: error.to_string(),
-            };
+fn map_install(error: InstallError) -> PluginError {
+    match error {
+        InstallError::Io(reason) => PluginError::internal(reason),
+        InstallError::Denied => PluginError::Source(SourceFault::Refused),
+        InstallError::RateLimited { retry_after } => {
+            PluginError::Source(SourceFault::RateLimited { retry_after })
         }
-    };
-    let error_id = ids.new_id();
-    tracing::warn!(error_id, ?fault, "GitHub stopped a plugin install");
-    PluginError::Source {
-        fault,
-        message: error.to_string(),
-        error_id,
+        InstallError::Download => PluginError::Source(SourceFault::Unreachable),
+        other => PluginError::InvalidInput {
+            message: other.to_string(),
+        },
     }
 }
 
@@ -233,14 +209,13 @@ fn map_install(error: InstallError, ids: &dyn IdGenerator) -> PluginError {
 fn plugin_info(
     host: &PluginHost,
     config: &ConfigStore,
-    ids: &dyn IdGenerator,
     name: &str,
 ) -> Result<PluginInfo, PluginError> {
     let plugin = host.get(name).ok_or(PluginError::NotFound)?;
     let manifest = &plugin.manifest;
     let stored = config
         .get_plugin_masked(name, &manifest.secret_keys())
-        .map_err(|error| PluginError::internal(&error, ids))?;
+        .map_err(|error| PluginError::internal(&error))?;
     let mut values = HashMap::new();
     for field in &manifest.settings {
         values.insert(
@@ -328,13 +303,12 @@ fn plugin_info(
 pub async fn list_plugins(
     State(deps): State<PluginsDeps>,
     _admin: AdminUser,
-) -> Result<Json<PluginListResponse>, PluginError> {
+) -> Result<Json<PluginListResponse>, ApiError> {
     let mut plugins = Vec::new();
     for plugin in deps.host.list_plugins() {
         plugins.push(plugin_info(
             deps.host.as_ref(),
             deps.config.as_ref(),
-            deps.ids.as_ref(),
             &plugin.manifest.name,
         )?);
     }
@@ -347,11 +321,10 @@ async fn stage_request(
     url: &str,
     reference: Option<&str>,
 ) -> Result<StagedPlugin, PluginError> {
-    let ids = deps.ids.as_ref();
-    let source = parse_source(url, reference).map_err(|error| map_install(error, ids))?;
+    let source = parse_source(url, reference).map_err(map_install)?;
     let resolved = resolve(deps.fetcher.as_ref(), &deps.github, source)
         .await
-        .map_err(|error| map_install(error, ids))?;
+        .map_err(map_install)?;
     stage(
         deps.fetcher.as_ref(),
         deps.unpacker.as_ref(),
@@ -359,7 +332,7 @@ async fn stage_request(
         resolved,
     )
     .await
-    .map_err(|error| map_install(error, ids))
+    .map_err(map_install)
 }
 
 /// Write a staged plugin to disk off the async workers, then re-sync ticks.
@@ -367,8 +340,8 @@ async fn install_staged(deps: &PluginsDeps, staged: StagedPlugin) -> Result<Stri
     let host = Arc::clone(&deps.host);
     let name = tokio::task::spawn_blocking(move || host.install_staged(&staged))
         .await
-        .map_err(|error| PluginError::internal(&error, deps.ids.as_ref()))?
-        .map_err(|error| map_install(error, deps.ids.as_ref()))?;
+        .map_err(|error| PluginError::internal(&error))?
+        .map_err(map_install)?;
     deps.tick_sync.sync_host(&deps.host).await;
     Ok(name)
 }
@@ -394,7 +367,7 @@ pub async fn preview_plugin_install(
     State(deps): State<PluginsDeps>,
     _admin: AdminUser,
     ValidJson(body): ValidJson<PluginInstallRequest>,
-) -> Result<Json<PluginInstallPreview>, PluginError> {
+) -> Result<Json<PluginInstallPreview>, ApiError> {
     let staged = stage_request(&deps, &body.repository_url, body.reference.as_deref()).await?;
     let manifest = &staged.manifest;
     let installed_version = deps
@@ -446,7 +419,7 @@ pub async fn install_plugin(
     State(deps): State<PluginsDeps>,
     _admin: AdminUser,
     ValidJson(body): ValidJson<PluginInstallRequest>,
-) -> Result<(StatusCode, Json<PluginInfo>), PluginError> {
+) -> Result<(StatusCode, Json<PluginInfo>), ApiError> {
     let staged = stage_request(&deps, &body.repository_url, body.reference.as_deref()).await?;
     if let Some(expected) = body
         .commit
@@ -455,17 +428,12 @@ pub async fn install_plugin(
         .filter(|text| !text.is_empty())
         && !expected.eq_ignore_ascii_case(&staged.resolved.commit)
     {
-        return Err(PluginError::Conflict {
-            message: "The repository changed since the preview. Preview it again to see what would be installed".to_owned(),
-        });
+        return Err(ApiError::conflict(
+            "The repository changed since the preview. Preview it again to see what would be installed",
+        ));
     }
     let name = install_staged(&deps, staged).await?;
-    let info = plugin_info(
-        deps.host.as_ref(),
-        deps.config.as_ref(),
-        deps.ids.as_ref(),
-        &name,
-    )?;
+    let info = plugin_info(deps.host.as_ref(), deps.config.as_ref(), &name)?;
     Ok((StatusCode::CREATED, Json(info)))
 }
 
@@ -494,12 +462,12 @@ pub async fn update_plugin_from_source(
     _admin: AdminUser,
     Path(name): Path<String>,
     ValidJson(body): ValidJson<PluginSourceUpdateRequest>,
-) -> Result<Json<PluginSourceUpdateResponse>, PluginError> {
+) -> Result<Json<PluginSourceUpdateResponse>, ApiError> {
     deps.host.get(&name).ok_or(PluginError::NotFound)?;
     let record = deps
         .host
         .install_record(&name)
-        .ok_or_else(|| map_install(InstallError::NoSource, deps.ids.as_ref()))?;
+        .ok_or_else(|| map_install(InstallError::NoSource))?;
     let asked = body
         .reference
         .as_deref()
@@ -518,12 +486,10 @@ pub async fn update_plugin_from_source(
     let url = format!("https://github.com/{}", record.repository);
     let staged = stage_request(&deps, &url, reference.as_deref()).await?;
     if staged.manifest.name != name {
-        return Err(PluginError::InvalidInput {
-            message: format!(
-                "That repository now holds a plugin named '{}', not '{name}'",
-                staged.manifest.name
-            ),
-        });
+        return Err(ApiError::invalid_input(format!(
+            "That repository now holds a plugin named '{}', not '{name}'",
+            staged.manifest.name
+        )));
     }
     if let Some(expected) = body
         .commit
@@ -532,20 +498,15 @@ pub async fn update_plugin_from_source(
         .filter(|text| !text.is_empty())
         && !expected.eq_ignore_ascii_case(&staged.resolved.commit)
     {
-        return Err(PluginError::Conflict {
-            message: "The repository changed since the preview. Preview it again to see what would be installed".to_owned(),
-        });
+        return Err(ApiError::conflict(
+            "The repository changed since the preview. Preview it again to see what would be installed",
+        ));
     }
     let updated = staged.resolved.commit != record.commit;
     if updated {
         install_staged(&deps, staged).await?;
     }
-    let plugin = plugin_info(
-        deps.host.as_ref(),
-        deps.config.as_ref(),
-        deps.ids.as_ref(),
-        &name,
-    )?;
+    let plugin = plugin_info(deps.host.as_ref(), deps.config.as_ref(), &name)?;
     Ok(Json(PluginSourceUpdateResponse { updated, plugin }))
 }
 
@@ -569,27 +530,24 @@ pub async fn update_plugin(
     _admin: AdminUser,
     Path(name): Path<String>,
     ValidJson(body): ValidJson<PluginUpdateRequest>,
-) -> Result<Json<PluginInfo>, PluginError> {
+) -> Result<Json<PluginInfo>, ApiError> {
     let host = Arc::clone(&deps.host);
     let saved = tokio::task::spawn_blocking(move || {
         host.update_settings(&name, body.enabled, body.settings)
     })
     .await
-    .map_err(|error| PluginError::internal(&error, deps.ids.as_ref()))?;
+    .map_err(|error| PluginError::internal(&error))?;
     match saved {
         Ok(plugin) => {
             deps.tick_sync.sync_host(&deps.host).await;
             Ok(Json(plugin_info(
                 deps.host.as_ref(),
                 deps.config.as_ref(),
-                deps.ids.as_ref(),
                 &plugin.manifest.name,
             )?))
         }
-        Err(UpdateError::NotFound) => Err(PluginError::NotFound),
-        Err(UpdateError::StoreFailed(reason)) => {
-            Err(PluginError::internal(&reason, deps.ids.as_ref()))
-        }
+        Err(UpdateError::NotFound) => Err(ApiError::not_found()),
+        Err(UpdateError::StoreFailed(reason)) => Err(ApiError::internal(reason)),
     }
 }
 
@@ -611,14 +569,14 @@ pub async fn uninstall_plugin(
     State(deps): State<PluginsDeps>,
     _admin: AdminUser,
     Path(name): Path<String>,
-) -> Result<Json<StatusMessage>, PluginError> {
+) -> Result<Json<StatusMessage>, ApiError> {
     let host = Arc::clone(&deps.host);
     let removed = tokio::task::spawn_blocking({
         let name = name.clone();
         move || host.uninstall(&name)
     })
     .await
-    .map_err(|error| PluginError::internal(&error, deps.ids.as_ref()))?;
+    .map_err(|error| PluginError::internal(&error))?;
     match removed {
         Ok(()) => {
             deps.tick_sync.sync_host(&deps.host).await;
@@ -627,7 +585,7 @@ pub async fn uninstall_plugin(
                 message: format!("Removed {name}"),
             }))
         }
-        Err(UninstallError::NotFound) => Err(PluginError::NotFound),
+        Err(UninstallError::NotFound) => Err(ApiError::not_found()),
     }
 }
 
@@ -863,8 +821,8 @@ pub async fn plugin_ext_get(
     caller: AuthenticatedUser,
     Path((name, subpath)): Path<(String, String)>,
     request: Request,
-) -> Result<Response, PluginError> {
-    serve_ext(&deps, &caller.0, &name, &subpath, "GET", request).await
+) -> Result<Response, ApiError> {
+    Ok(serve_ext(&deps, &caller.0, &name, &subpath, "GET", request).await?)
 }
 
 /// Serve one declared plugin POST route.
@@ -890,8 +848,8 @@ pub async fn plugin_ext_post(
     caller: AuthenticatedUser,
     Path((name, subpath)): Path<(String, String)>,
     request: Request,
-) -> Result<Response, PluginError> {
-    serve_ext(&deps, &caller.0, &name, &subpath, "POST", request).await
+) -> Result<Response, ApiError> {
+    Ok(serve_ext(&deps, &caller.0, &name, &subpath, "POST", request).await?)
 }
 
 /// Serve one declared plugin DELETE route.
@@ -916,8 +874,8 @@ pub async fn plugin_ext_delete(
     caller: AuthenticatedUser,
     Path((name, subpath)): Path<(String, String)>,
     request: Request,
-) -> Result<Response, PluginError> {
-    serve_ext(&deps, &caller.0, &name, &subpath, "DELETE", request).await
+) -> Result<Response, ApiError> {
+    Ok(serve_ext(&deps, &caller.0, &name, &subpath, "DELETE", request).await?)
 }
 
 // ---------------------------------------------------------------------------
@@ -1033,7 +991,7 @@ pub async fn plugin_panel_page(
     _admin: AdminUser,
     Path(name): Path<String>,
     request: Request,
-) -> Result<Response, PluginError> {
+) -> Result<Response, ApiError> {
     if name.is_empty()
         || name.contains('/')
         || name.contains('\\')
@@ -1041,15 +999,15 @@ pub async fn plugin_panel_page(
         || name.starts_with('.')
         || name.contains('\0')
     {
-        return Err(PluginError::NotFound);
+        return Err(ApiError::not_found());
     }
     let plugin = match deps.host.get(&name) {
         Some(plugin) if plugin.enabled && plugin.runtime.is_some() => plugin,
-        _ => return Err(PluginError::NotFound),
+        _ => return Err(ApiError::not_found()),
     };
     let entry = plugin.manifest.ui_entry.clone();
     if entry.is_empty() {
-        return Err(PluginError::NotFound);
+        return Err(ApiError::not_found());
     }
     let normalized = entry.replace('\\', "/");
     if normalized.is_empty()
@@ -1059,10 +1017,10 @@ pub async fn plugin_panel_page(
         || normalized.split('/').any(|part| part == "..")
         || normalized.contains('\0')
     {
-        return Err(PluginError::NotFound);
+        return Err(ApiError::not_found());
     }
     if plugin.directory.is_empty() {
-        return Err(PluginError::NotFound);
+        return Err(ApiError::not_found());
     }
     let if_none_match = request
         .headers()
@@ -1076,9 +1034,9 @@ pub async fn plugin_panel_page(
         &name,
         &if_none_match,
         &panel_page_policy(&deps.config),
-        deps.ids.as_ref(),
     )
     .await
+    .map_err(ApiError::from)
 }
 
 async fn serve_panel_file(
@@ -1087,7 +1045,6 @@ async fn serve_panel_file(
     plugin_name: &str,
     if_none_match: &str,
     policy: &str,
-    ids: &dyn IdGenerator,
 ) -> Result<Response, PluginError> {
     let base = tokio::fs::canonicalize(directory)
         .await
@@ -1150,7 +1107,7 @@ async fn serve_panel_file(
         return builder
             .status(StatusCode::NOT_MODIFIED)
             .body(Body::empty())
-            .map_err(|error| PluginError::internal(&error, ids));
+            .map_err(|error| PluginError::internal(&error));
     }
     let bytes = tokio::fs::read(&target)
         .await
@@ -1164,7 +1121,7 @@ async fn serve_panel_file(
     builder
         .status(StatusCode::OK)
         .body(Body::from(page))
-        .map_err(|error| PluginError::internal(&error, ids))
+        .map_err(|error| PluginError::internal(&error))
 }
 
 // ---------------------------------------------------------------------------
@@ -1221,7 +1178,7 @@ pub async fn update_scrobble_preferences(
     State(deps): State<ScrobbleHttpDeps>,
     user: ScrobbleUser,
     ValidJson(body): ValidJson<ScrobblePreferencesUpdate>,
-) -> Result<Json<ScrobblePreferences>, PluginError> {
+) -> Result<Json<ScrobblePreferences>, ApiError> {
     let patch = ScrobblePrefsPatch {
         scrobble_to_lastfm: body.scrobble_to_lastfm,
         scrobble_to_listenbrainz: body.scrobble_to_listenbrainz,
@@ -1234,7 +1191,7 @@ pub async fn update_scrobble_preferences(
         Ok(_) => Ok(Json(
             prefs_response(&deps, &user.0.user_id, user.0.role).await,
         )),
-        Err(PrefsError::InvalidValue(message)) => Err(PluginError::InvalidInput { message }),
+        Err(PrefsError::InvalidValue(message)) => Err(ApiError::invalid_input(message)),
     }
 }
 
@@ -1256,7 +1213,7 @@ pub async fn connect_listenbrainz_route(
     State(deps): State<ScrobbleHttpDeps>,
     user: ScrobbleUser,
     ValidJson(body): ValidJson<ListenBrainzConnectRequest>,
-) -> Result<Json<ConnectionStatus>, PluginError> {
+) -> Result<Json<ConnectionStatus>, ApiError> {
     match connect_listenbrainz(
         &deps.deps,
         &user.0.user_id,
@@ -1270,14 +1227,12 @@ pub async fn connect_listenbrainz_route(
             enabled: true,
             username: link.username,
         })),
-        Err(ConnectError::UsernameRequired) => Err(PluginError::InvalidInput {
-            message: "A ListenBrainz username is required".to_owned(),
-        }),
-        Err(ConnectError::RateLimited) => Err(PluginError::RateLimited { retry_after: 60 }),
-        Err(ConnectError::Rejected(message)) => Err(PluginError::InvalidInput { message }),
-        Err(ConnectError::StoreFailed(reason)) => {
-            Err(PluginError::internal(&reason, deps.ids.as_ref()))
-        }
+        Err(ConnectError::UsernameRequired) => Err(ApiError::invalid_input(
+            "A ListenBrainz username is required",
+        )),
+        Err(ConnectError::RateLimited) => Err(ApiError::rate_limited(60)),
+        Err(ConnectError::Rejected(message)) => Err(ApiError::invalid_input(message)),
+        Err(ConnectError::StoreFailed(reason)) => Err(ApiError::internal(reason)),
     }
 }
 
@@ -1295,14 +1250,14 @@ pub async fn connect_listenbrainz_route(
 pub async fn listenbrainz_status(
     State(deps): State<ScrobbleHttpDeps>,
     user: ScrobbleUser,
-) -> Result<Json<ConnectionStatus>, PluginError> {
+) -> Result<Json<ConnectionStatus>, ApiError> {
     match deps.deps.links.status(&user.0.user_id).await {
         Some(link) => Ok(Json(ConnectionStatus {
             service: "listenbrainz".to_owned(),
             enabled: true,
             username: link.username,
         })),
-        None => Err(PluginError::NotFound),
+        None => Err(ApiError::not_found()),
     }
 }
 
@@ -1320,14 +1275,14 @@ pub async fn listenbrainz_status(
 pub async fn disconnect_listenbrainz_route(
     State(deps): State<ScrobbleHttpDeps>,
     user: ScrobbleUser,
-) -> Result<Json<StatusMessage>, PluginError> {
+) -> Result<Json<StatusMessage>, ApiError> {
     if disconnect_listenbrainz(&deps.deps, &user.0.user_id).await {
         Ok(Json(StatusMessage {
             status: "ok".to_owned(),
             message: "Disconnected listenbrainz".to_owned(),
         }))
     } else {
-        Err(PluginError::NotFound)
+        Err(ApiError::not_found())
     }
 }
 

@@ -25,17 +25,19 @@ pub const ROUTE_BODY_MAX_BYTES: usize = 1024 * 1024;
 /// Methods a route may declare.
 const ROUTE_METHODS: &[&str] = &["GET", "POST", "DELETE"];
 
+/// A failed route. The handler answers it with a fixed 502 of its own.
 fn failed() -> PluginRouteResponse {
     PluginRouteResponse {
         status: 502,
-        body: json!({"error": {"code": "EXTERNAL_SERVICE_UNAVAILABLE", "message": "Plugin route failed", "details": null}}),
+        body: Value::Null,
     }
 }
 
+/// An unknown route. The handler answers it with the shared 404.
 fn not_found() -> PluginRouteResponse {
     PluginRouteResponse {
         status: 404,
-        body: json!({"error": {"code": "NOT_FOUND", "message": "Not found", "details": null}}),
+        body: Value::Null,
     }
 }
 

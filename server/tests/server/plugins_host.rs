@@ -373,11 +373,18 @@ fn admin_app(scope: &TestApp, deps: PluginsDeps) -> axum::Router {
     ))
 }
 
-async fn post_for_status(
-    router: axum::Router,
-    uri: &str,
-    body: serde_json::Value,
-) -> (StatusCode, Option<String>) {
+/// What an admin reads when a request fails: status, code, sentence, and
+/// the wait GitHub asked for in the header and in `details`.
+#[derive(Debug, PartialEq)]
+struct Refusal {
+    status: StatusCode,
+    code: String,
+    message: String,
+    retry_after: Option<String>,
+    details_retry_after: Option<u64>,
+}
+
+async fn post_for_refusal(router: axum::Router, uri: &str, body: serde_json::Value) -> Refusal {
     let request = Request::builder()
         .method("POST")
         .uri(uri)
@@ -385,21 +392,52 @@ async fn post_for_status(
         .body(Body::from(body.to_string()))
         .unwrap();
     let response = router.oneshot(request).await.unwrap();
+    let status = response.status();
     let retry_after = response
         .headers()
         .get("retry-after")
         .map(|value| value.to_str().unwrap().to_owned());
-    (response.status(), retry_after)
+    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    Refusal {
+        status,
+        code: json["error"]["code"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+        message: json["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+        retry_after,
+        details_retry_after: json["error"]["details"]["retry_after"].as_u64(),
+    }
 }
 
+/// An install or update GitHub refuses, limits or cannot answer tells the
+/// admin which, in the installer's own sentence, through the request
+/// boundary that replaces every other 5xx body.
 #[tokio::test]
 async fn a_github_refusal_never_falls_back_to_the_default_branch() {
+    let refusal = |status, code: &str, message: &str, retry_after: Option<u64>| Refusal {
+        status,
+        code: code.to_owned(),
+        message: message.to_owned(),
+        retry_after: retry_after.map(|seconds| seconds.to_string()),
+        details_retry_after: retry_after,
+    };
     let cases = [
         (
             Fetched::Denied,
             InstallError::Denied,
-            StatusCode::BAD_GATEWAY,
-            None,
+            refusal(
+                StatusCode::BAD_GATEWAY,
+                "UPSTREAM_REFUSED",
+                "GitHub refused the request",
+                None,
+            ),
         ),
         (
             Fetched::RateLimited {
@@ -408,18 +446,26 @@ async fn a_github_refusal_never_falls_back_to_the_default_branch() {
             InstallError::RateLimited {
                 retry_after: Some(90),
             },
-            StatusCode::SERVICE_UNAVAILABLE,
-            Some("90".to_owned()),
+            refusal(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "UPSTREAM_RATE_LIMITED",
+                "GitHub is rate limiting this server, try again later",
+                Some(90),
+            ),
         ),
         (
             Fetched::Failed(502),
             InstallError::Download,
-            StatusCode::BAD_GATEWAY,
-            None,
+            refusal(
+                StatusCode::BAD_GATEWAY,
+                "UPSTREAM_ERROR",
+                "GitHub could not be reached",
+                None,
+            ),
         ),
     ];
     let scope = TestApp::start("plugins-refused").await;
-    for (index, (answer, kind, status, retry_after)) in cases.into_iter().enumerate() {
+    for (index, (answer, kind, expected)) in cases.into_iter().enumerate() {
         let rig = rig(&format!("refused-{index}"));
         let fetcher = Arc::new(FakeFetcher::new());
         github(&fetcher);
@@ -439,18 +485,18 @@ async fn a_github_refusal_never_falls_back_to_the_default_branch() {
         let admin = admin_app(&scope, deps_for(&rig, Arc::clone(&fetcher), toy_archive()));
         let body = json!({"repository_url": "https://github.com/acme/toy"});
         for uri in ["/plugins/install/preview", "/plugins/install"] {
-            let got = post_for_status(admin.clone(), uri, body.clone()).await;
-            assert_eq!(got, (status, retry_after.clone()), "{uri}");
+            let got = post_for_refusal(admin.clone(), uri, body.clone()).await;
+            assert_eq!(got, expected, "{uri}");
         }
         assert!(!rig.dir.join("plugins").join("toy").exists());
 
         // An installed release must not start following the branch either.
         github(&fetcher);
-        let (got, _) = post_for_status(admin.clone(), "/plugins/install", body).await;
+        let (got, _) = send(admin.clone(), "POST", "/plugins/install", Some(body)).await;
         assert_eq!(got, StatusCode::CREATED);
         fetcher.answer(LATEST_RELEASE, answer);
-        let got = post_for_status(admin, "/plugins/toy/update", json!({})).await;
-        assert_eq!(got, (status, retry_after), "update");
+        let got = post_for_refusal(admin, "/plugins/toy/update", json!({})).await;
+        assert_eq!(got, expected, "update");
         let record = rig.host.install_record("toy").unwrap();
         assert_eq!(
             (record.ref_kind, record.commit.as_str()),
