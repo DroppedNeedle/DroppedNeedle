@@ -59,6 +59,9 @@ pub const MAX_READERS: u32 = 7;
 pub const MIN_CONNECTIONS: u32 = 1;
 /// Pool checkout horizon, shared with the busy timeout.
 pub const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long boot waits to open its migration connection. Boot serves no
+/// request, so a slow or swapping disk is waited out, not refused.
+const BOOT_WAIT: Duration = Duration::from_secs(60);
 /// Lock wait on every connection. The v2 value, unchanged.
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(5000);
 /// Idle connections older than this are reaped. No max lifetime: SQLite
@@ -183,15 +186,10 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
     // reader pool opens, so every reader connection is read-only from the
     // moment it opens. The boot pool connects eagerly with the same pragma
     // set, so a database that refuses it still fails boot; the reader pool
-    // then opens its connections as reads need them.
-    let boot = open_pool(
-        &path,
-        config.readers,
-        config.busy_timeout,
-        ACQUIRE_TIMEOUT,
-        false,
-    )
-    .await?;
+    // then opens its connections as reads need them. One connection: the
+    // migrator and the stamp check take turns on it rather than open a
+    // second one while the first is still on its way back to the pool.
+    let boot = open_pool(&path, 1, config.busy_timeout, BOOT_WAIT, false).await?;
     let migrated = crate::schema::apply_migrations(&boot).await;
     boot.close().await;
     migrated?;
