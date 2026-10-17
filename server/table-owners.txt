@@ -29,6 +29,9 @@
 #                                           track_source_id of local entries
 #                                           moved to the track it continues
 #   compat_bookmarks              compat    moved to the track it continues
+#   library_user_play_marks       catalog   moved to the track it continues;
+#                                           a user's marks on both rows
+#                                           merge, the later of each time
 #   compat_play_queue_items       compat    moved to the track it continues
 #
 # One more, also by library code in its own transaction: the repair that
@@ -116,6 +119,7 @@ library_genre_artwork_revisions
 library_track_format_stats
 library_user_favorite_names
 library_user_favorites
+library_user_play_marks
 library_user_ratings
 live_event_feed
 mbid_resolution_map

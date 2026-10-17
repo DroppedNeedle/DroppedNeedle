@@ -87,6 +87,7 @@ const HOLDING_ALIASES: &str = "WITH dead AS (SELECT x.alias FROM local_track_ali
       WHERE item_kind = 'track' AND item_id IN dead \
     UNION SELECT library_file_id FROM playlist_tracks WHERE library_file_id IN dead \
     UNION SELECT file_id FROM compat_bookmarks WHERE file_id IN dead \
+    UNION SELECT local_track_id FROM library_user_play_marks WHERE local_track_id IN dead \
     UNION SELECT file_id FROM compat_play_queue_items WHERE file_id IN dead \
     UNION SELECT o.local_track_id FROM library_management_overrides o \
       JOIN local_track_aliases x ON x.alias = o.local_track_id \
@@ -587,6 +588,69 @@ fn sweep(
         }
     }
 
+    // Where the user has played marks on both rows, the two merge on the
+    // new row: the later of each time, and no played mark older than the
+    // unplayed one, so plays the user hid stay hidden. The old row goes;
+    // the audit keeps it and the new row as it was.
+    let mut marks_moved = Vec::new();
+    let mut marks_merged = Vec::new();
+    let mut marks_deleted = Vec::new();
+    type Mark = (Option<i64>, Option<i64>);
+    let marks: Vec<(String, Mark, Option<Mark>)> = tx
+        .prepare(
+            "SELECT m.user_id, m.marked_played_at, m.marked_unplayed_at, \
+             n.local_track_id IS NOT NULL, n.marked_played_at, n.marked_unplayed_at \
+             FROM library_user_play_marks m LEFT JOIN library_user_play_marks n \
+             ON n.user_id = m.user_id AND n.local_track_id = ?2 \
+             WHERE m.local_track_id = ?1",
+        )?
+        .query_map(params![old, new], |row| {
+            let theirs: bool = row.get(3)?;
+            Ok((
+                row.get(0)?,
+                (row.get(1)?, row.get(2)?),
+                theirs
+                    .then(|| Ok::<_, rusqlite::Error>((row.get(4)?, row.get(5)?)))
+                    .transpose()?,
+            ))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let mark_json = |user: &str, track: &str, (played, unplayed): Mark| {
+        json!({
+            "user_id": user,
+            "local_track_id": track,
+            "marked_played_at": played,
+            "marked_unplayed_at": unplayed,
+        })
+    };
+    for (user, mine, theirs) in marks {
+        let Some(theirs) = theirs else {
+            tx.execute(
+                "UPDATE library_user_play_marks SET local_track_id = ?3 \
+                 WHERE user_id = ?1 AND local_track_id = ?2",
+                params![user, old, new],
+            )?;
+            marks_moved.push(user);
+            continue;
+        };
+        let unplayed = mine.1.max(theirs.1);
+        let played = mine
+            .0
+            .max(theirs.0)
+            .filter(|at| unplayed.is_none_or(|cut| *at >= cut));
+        tx.execute(
+            "UPDATE library_user_play_marks SET marked_played_at = ?3, marked_unplayed_at = ?4 \
+             WHERE user_id = ?1 AND local_track_id = ?2",
+            params![user, new, played, unplayed],
+        )?;
+        tx.execute(
+            "DELETE FROM library_user_play_marks WHERE user_id = ?1 AND local_track_id = ?2",
+            params![user, old],
+        )?;
+        marks_merged.push(mark_json(&user, new, theirs));
+        marks_deleted.push(mark_json(&user, old, mine));
+    }
+
     let queue: Vec<Value> = tx
         .prepare(
             "SELECT user_id, item_index FROM compat_play_queue_items WHERE file_id = ?1 \
@@ -648,6 +712,10 @@ fn sweep(
         "compat_bookmarks",
         bookmarks_moved.len() + bookmarks_deleted.len(),
     );
+    count(
+        "library_user_play_marks",
+        marks_moved.len() + marks_deleted.len(),
+    );
     count("compat_play_queue_items", queue.len());
     count("library_management_overrides", overrides.len());
     Ok(json!({
@@ -657,6 +725,8 @@ fn sweep(
             "rating_user_ids": ratings_moved,
             "playlist_entry_ids": entries,
             "bookmark_user_ids": bookmarks_moved,
+            "play_mark_user_ids": marks_moved,
+            "play_marks_merged_into": marks_merged,
             "queue_entries": queue,
             "overrides": overrides
                 .iter()
@@ -672,6 +742,7 @@ fn sweep(
             "stars": stars_deleted,
             "ratings": ratings_deleted,
             "bookmarks": bookmarks_deleted,
+            "play_marks": marks_deleted,
         },
     }))
 }

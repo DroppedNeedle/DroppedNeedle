@@ -61,7 +61,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 158);
+    assert_eq!(table_names(&pool).await.len(), 159);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -2703,6 +2703,164 @@ async fn lyrics_marks_arrive_empty_and_go_with_their_track() {
         .await
         .unwrap();
     assert_eq!(left, 0, "the mark went with its track");
+}
+
+/// Migration 0062 adds users' played marks, empty and strict. A database
+/// from before keeps its users, tracks and plays; a mark holds at least
+/// one time and goes with its user or its track.
+#[tokio::test]
+async fn play_marks_arrive_empty_and_go_with_their_user_and_track() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 62)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
+         ('u1', 'One', 'user', 'now'), ('u2', 'Two', 'user', 'now'); \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, ingest_source, imported_at, \
+         membership_source) VALUES \
+         ('t1', 'al1', 'r1', '/m/1.flac', '1.flac', 'h1', 1, 0, 's', 'T', 't', 'T', 't', \
+         'flac', 'scan', 0, 'automatic'), \
+         ('t2', 'al1', 'r1', '/m/2.flac', '2.flac', 'h2', 1, 0, 's', 'U', 'u', 'T', 't', \
+         'flac', 'scan', 0, 'automatic'); \
+         INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         track_name, artist_name, played_at) VALUES \
+         ('p1', 'u1', 't2', 'al1', 'U', 'A', '2026-01-01T00:00:00+00:00');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    async fn counts(pool: &SqlitePool) -> (i64, i64, i64) {
+        sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM auth_users), (SELECT COUNT(*) FROM local_tracks), \
+             (SELECT COUNT(*) FROM library_play_history)",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+    async fn marks(pool: &SqlitePool) -> Vec<(String, String)> {
+        sqlx::query_as(
+            "SELECT user_id, local_track_id FROM library_user_play_marks \
+             ORDER BY user_id, local_track_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    assert_eq!(counts(&pool).await, (2, 2, 1));
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 62 && stamped == latest_version(), "{stamped}");
+    assert_eq!(counts(&pool).await, (2, 2, 1));
+    let table = "library_user_play_marks";
+    assert_eq!(
+        column_names(&pool, table).await,
+        [
+            "user_id",
+            "local_track_id",
+            "marked_played_at",
+            "marked_unplayed_at"
+        ]
+    );
+    let strict: i64 = sqlx::query_scalar("SELECT strict FROM pragma_table_list WHERE name = ?")
+        .bind(table)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(strict, 1);
+    assert!(marks(&pool).await.is_empty());
+    let key: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM pragma_table_info('library_user_play_marks') WHERE pk > 0 ORDER BY pk",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(key, ["user_id", "local_track_id"]);
+    let indexed: Vec<String> = sqlx::query_scalar(
+        "SELECT c.name FROM pragma_index_info('idx_user_play_marks_track') c ORDER BY c.seqno",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(indexed, ["local_track_id"]);
+    let mut keys: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT \"from\", \"table\", on_delete \
+         FROM pragma_foreign_key_list('library_user_play_marks')",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            ("local_track_id", "local_tracks", "CASCADE"),
+            ("user_id", "auth_users", "CASCADE")
+        ]
+        .map(|(from, to, rule)| (from.to_owned(), to.to_owned(), rule.to_owned()))
+    );
+
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        sqlx::query("INSERT INTO library_user_play_marks VALUES ('u1', 't1', NULL, NULL)")
+            .execute(&pool)
+            .await
+            .is_err(),
+        "a mark with no time is refused"
+    );
+    sqlx::raw_sql(
+        "INSERT INTO library_user_play_marks VALUES ('u1', 't1', 5, NULL), \
+         ('u1', 't2', NULL, 6), ('u2', 't1', 7, 3);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM auth_users WHERE id = 'u2'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        marks(&pool).await,
+        [("u1", "t1"), ("u1", "t2")].map(|(user, track)| (user.to_owned(), track.to_owned())),
+        "the marks went with their user"
+    );
+    sqlx::query("DELETE FROM local_tracks WHERE id = 't1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        marks(&pool).await,
+        [("u1".to_owned(), "t2".to_owned())],
+        "the mark went with its track"
+    );
 }
 
 /// Every table in the migrated schema is listed once in

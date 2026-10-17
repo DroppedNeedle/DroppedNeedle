@@ -19,6 +19,8 @@ use crate::common::library::ScriptedIdentify;
 use crate::common::{ScratchDir, TestApp, closed_outbound};
 use axum::http::StatusCode;
 use droppedneedle::bootstrap::Port;
+use droppedneedle_catalog::reads::collections::db::CollectionsDb;
+use droppedneedle_catalog::reads::collections::store::play_marks::{MarkScope, PlayMarkStore};
 use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::contrib::ContribProviders;
@@ -10877,12 +10879,14 @@ fn old_row(db: &rusqlite::Connection, track: &str) -> OldRow {
 /// the edition; then what people made on each old track is on the track
 /// that took its place: plays, stars (a star a person already had on the
 /// new track keeps its date, the old one goes), a playlist entry,
-/// bookmarks (the later of two stays), a saved queue in its order and at
-/// its place, and track overrides (the new track's own for a field wins).
+/// bookmarks (the later of two stays), played marks (two merge, the later
+/// of each time kept), a saved queue in its order and at its place, and
+/// track overrides (the new track's own for a field wins).
 /// The old rows keep their ids, paths, the day they went missing and
 /// their records, and one audit row tells it, with every row it deleted.
-/// A second scan moves nothing more; a star and a playlist entry a stale
-/// client writes against an old id move at the next scan's end.
+/// An album marked played or unplayed afterwards leaves the old rows
+/// alone. A second scan moves nothing more; a star and a playlist entry a
+/// stale client writes against an old id move at the next scan's end.
 #[tokio::test]
 async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     let (scratch, library, music, album, tracks) = album_at_rest("lib-continue-chosen", 5).await;
@@ -10926,7 +10930,9 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
          INSERT INTO library_management_overrides (id, subject_kind, local_track_id, \
          field_name, value_json, mode, subject_revision, created_at, updated_at) VALUES \
          ('ov-title', 'track', '{o4}', 'title', '\"Mine\"', 'replace', 1, 1, 1), \
-         ('ov-old', 'track', '{o5}', 'comment', '\"Old\"', 'replace', 1, 1, 1);"
+         ('ov-old', 'track', '{o5}', 'comment', '\"Old\"', 'replace', 1, 1, 1); \
+         INSERT INTO library_user_play_marks (user_id, local_track_id, marked_played_at, \
+         marked_unplayed_at) VALUES ('curator', '{o4}', 100, NULL), ('listener', '{o4}', 10, 5);"
     ))
     .expect("people made things");
 
@@ -10955,9 +10961,11 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
          changed_at) VALUES ('listener', '{n4}', 3000, 'earlier', 1, 20); \
          INSERT INTO library_management_overrides (id, subject_kind, local_track_id, \
          field_name, value_json, mode, subject_revision, created_at, updated_at) VALUES \
-         ('ov-new', 'track', '{n5}', 'comment', '\"New\"', 'replace', 1, 1, 1);"
+         ('ov-new', 'track', '{n5}', 'comment', '\"New\"', 'replace', 1, 1, 1); \
+         INSERT INTO library_user_play_marks (user_id, local_track_id, marked_played_at, \
+         marked_unplayed_at) VALUES ('listener', '{n4}', 60, NULL);"
     ))
-    .expect("the listener starred and bookmarked the new track");
+    .expect("the listener starred, bookmarked and marked the new track");
     let records = [old_row(&db, o4), old_row(&db, o5)];
     remap_once(&library, fitting_release(&library, &joined)).await;
 
@@ -11009,6 +11017,26 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
             ("curator".to_owned(), "mine".to_owned()),
             ("listener".to_owned(), "later".to_owned())
         ]
+    );
+    let marks: Vec<(String, String, Option<i64>, Option<i64>)> = db
+        .prepare(
+            "SELECT user_id, local_track_id, marked_played_at, marked_unplayed_at \
+             FROM library_user_play_marks ORDER BY user_id",
+        )
+        .expect("prepare")
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .expect("marks")
+        .collect::<Result<_, _>>()
+        .expect("marks read");
+    assert_eq!(
+        marks,
+        vec![
+            ("curator".to_owned(), n4.clone(), Some(100), None),
+            ("listener".to_owned(), n4.clone(), Some(60), Some(5))
+        ],
+        "marks on both rows merge, the later of each time kept"
     );
     let queue: Vec<String> = db
         .prepare("SELECT file_id FROM compat_play_queue_items ORDER BY item_index")
@@ -11085,6 +11113,28 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
         json!([{"id": "ov-title", "updated_at": 1.0, "row_revision": 1}]),
         "{audit}"
     );
+    assert_eq!(
+        pair["moved"]["play_mark_user_ids"],
+        json!(["curator"]),
+        "{audit}"
+    );
+    assert_eq!(
+        pair["moved"]["play_marks_merged_into"],
+        json!([{"user_id": "listener", "local_track_id": n4, "marked_played_at": 60,
+                "marked_unplayed_at": null}]),
+        "{audit}"
+    );
+    assert_eq!(
+        pair["deleted"]["play_marks"],
+        json!([{"user_id": "listener", "local_track_id": o4, "marked_played_at": 10,
+                "marked_unplayed_at": 5}]),
+        "{audit}"
+    );
+    assert_eq!(
+        audit["moved"]["library_user_play_marks"],
+        json!(2),
+        "{audit}"
+    );
 
     let titles: Vec<String> = db
         .prepare(
@@ -11118,6 +11168,27 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     ] {
         assert!(!sent.contains(private), "{private} in {sent}");
     }
+
+    // An album marked from a player app marks the tracks that answer for
+    // it, never an old row that continued into one.
+    let path = scratch.join("app.db");
+    PlayMarkStore::new(CollectionsDb::new(
+        sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_lazy(&format!("sqlite://{}", path.display()))
+            .expect("pool"),
+        droppedneedle_kernel::db::WriteLane::open(&path).expect("lane opens"),
+    ))
+    .mark("listener", MarkScope::Album(&joined), false)
+    .await
+    .expect("the album is marked");
+    let on_old_rows: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_user_play_marks WHERE local_track_id IN (?1, ?2)",
+            [o4, o5],
+            |row| row.get(0),
+        )
+        .expect("marks count");
+    assert_eq!(on_old_rows, 0, "an album mark skips the continued rows");
 
     rescan(&library).await;
     assert_eq!(continuations(&db), 1, "a second scan moves nothing");

@@ -319,8 +319,8 @@ impl LiveBatches {
         Ok(filed)
     }
 
-    /// Whether anyone but `owner` requested, favourited, rated or played
-    /// this album. Such an album is never recycled with a batch.
+    /// Whether anyone but `owner` requested, favourited, rated, played or
+    /// marked played or unplayed this album. Such an album is never recycled with a batch.
     async fn held_by_others(&self, mbid: &str, owner: &str) -> Result<bool, String> {
         sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (SELECT 1 FROM request_history WHERE request_kind = 'album' \
@@ -341,6 +341,10 @@ impl LiveBatches {
                  OR (r.item_kind = 'track' AND r.item_id IN (SELECT t.id FROM local_tracks t \
                      JOIN local_album_external_identities e ON e.local_album_id = t.local_album_id \
                      WHERE lower(e.release_group_mbid) = ?1)))) \
+             OR EXISTS (SELECT 1 FROM library_user_play_marks k WHERE k.user_id != ?2 \
+                 AND k.local_track_id IN (SELECT t.id FROM local_tracks t \
+                     JOIN local_album_external_identities e ON e.local_album_id = t.local_album_id \
+                     WHERE lower(e.release_group_mbid) = ?1)) \
              OR EXISTS (SELECT 1 FROM library_play_history p WHERE p.user_id != ?2 AND ( \
                  lower(p.release_group_mbid) = ?1 OR p.local_album_id IN (SELECT e.local_album_id \
                      FROM local_album_external_identities e \

@@ -5,12 +5,14 @@
 pub mod favorites;
 pub mod follows;
 pub mod pins;
+pub mod play_marks;
 pub mod playlists;
 pub mod ratings;
 
 pub use favorites::FavoriteStore;
 pub use follows::FollowStore;
 pub use pins::PinStore;
+pub use play_marks::PlayMarkStore;
 pub use playlists::PlaylistStore;
 pub use ratings::RatingStore;
 
@@ -29,6 +31,8 @@ pub struct Stores {
     pub pins: PinStore,
     /// Star ratings.
     pub ratings: RatingStore,
+    /// Played and unplayed marks.
+    pub play_marks: PlayMarkStore,
 }
 
 impl Stores {
@@ -40,6 +44,7 @@ impl Stores {
             follows: FollowStore::new(db.clone()),
             pins: PinStore::new(db.clone()),
             ratings: RatingStore::new(db.clone()),
+            play_marks: PlayMarkStore::new(db.clone()),
         }
     }
 }

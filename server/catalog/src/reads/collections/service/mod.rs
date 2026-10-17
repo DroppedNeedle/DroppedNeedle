@@ -10,6 +10,7 @@ mod approvals;
 mod favorites;
 mod follows;
 mod pins;
+mod play_marks;
 mod playlists;
 mod ratings;
 
