@@ -1,163 +1,20 @@
-//! An administrator's decisions on the catalog: settling a
-//! re-identification (exact release, custom edition, or leave unmanaged),
-//! the same custom edition and "leave unmanaged" made directly on an
-//! album, and undoing an automatic edition. Each runs in the caller's
-//! transaction, checks the revisions the administrator was shown, writes
-//! the identities as curator decisions, records an audit row in
-//! `library_catalog_actions`, and moves the catalog revision.
+//! A person's decisions on the catalog: a custom edition or "leave
+//! unmanaged" made directly on an album, and undoing an automatic edition.
+//! Each runs in the caller's transaction, checks the revisions the person
+//! was shown, writes the identities as curator decisions, records an audit
+//! row in `library_catalog_actions`, and moves the catalog revision.
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use super::models::{
-    CandidateChoice, DecisionMode, OperationError, OperationJob, OperationState,
-    ReidentificationCandidate, UndoOutcome,
-};
+use super::models::{OperationError, ReidentificationCandidate, UndoOutcome};
 use super::reasons;
-use super::store::{PROVIDER, album_revisions, job, job_after, matches_snapshot, snapshot};
+use super::store::{PROVIDER, album_revisions};
 use crate::identify::models::{
     AlbumIdentity, EvidenceClass, PriorAlbumIdentity, PriorTrackIdentity,
 };
 use crate::identify::sqlite::{album_identity_row, track_identity_rows};
-
-/// Settle a re-identification with the administrator's choice: seal the
-/// exact release, seal a custom edition, or leave the album unmanaged.
-pub fn select_candidate(
-    tx: &Transaction<'_>,
-    job_id: &str,
-    choice: &CandidateChoice,
-    actor: &str,
-    now: f64,
-) -> Result<OperationJob, OperationError> {
-    let current = job(tx, job_id)?
-        .filter(OperationJob::is_reidentification)
-        .ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))?;
-    let snap =
-        snapshot(tx, job_id)?.ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))?;
-    let open = current.state == OperationState::Ready
-        || (current.state == OperationState::Succeeded
-            && choice.decision_mode == DecisionMode::LeaveUnmanaged);
-    if !open || current.row_revision != choice.expected_row_revision {
-        return Err(OperationError::Conflict(reasons::CANDIDATES_CHANGED));
-    }
-    if !matches_snapshot(tx, &snap)? {
-        return Err(OperationError::Conflict(
-            reasons::ALBUM_CHANGED_SINCE_EVALUATION,
-        ));
-    }
-    let mut evaluation = snap.evaluation.clone().unwrap_or_default();
-    let candidate = if choice.candidate_key.is_empty() {
-        None
-    } else {
-        Some(
-            evaluation
-                .candidates
-                .iter()
-                .find(|candidate| candidate.candidate_key == choice.candidate_key)
-                .cloned()
-                .ok_or(OperationError::Conflict(reasons::CANDIDATE_GONE))?,
-        )
-    };
-    let album_id = snap.local_album_id.clone();
-    let before = album_identity(tx, &album_id)?;
-    let (terminal, reason, selected) = match choice.decision_mode {
-        DecisionMode::LeaveUnmanaged => {
-            leave_unmanaged(
-                tx,
-                &album_id,
-                candidate.as_ref(),
-                before.as_ref(),
-                actor,
-                now,
-            )?;
-            evaluation.outcome = "leave_unmanaged".into();
-            ("LEFT_UNMANAGED", "MANAGEMENT_EXCLUDED", None)
-        }
-        DecisionMode::CustomEdition => {
-            let candidate = candidate.ok_or(OperationError::Conflict(reasons::CANDIDATE_GONE))?;
-            if !choice.confirmation {
-                return Err(OperationError::Invalid(
-                    reasons::CUSTOM_EDITION_NEEDS_CONFIRMATION,
-                ));
-            }
-            let manifest = seal_custom_edition(
-                tx,
-                &album_id,
-                &snap.expected_input_revision,
-                &candidate,
-                before.as_ref(),
-                actor,
-                now,
-            )?;
-            evaluation.outcome = "custom_edition".into();
-            evaluation.custom_manifest_id = Some(manifest);
-            (
-                "CUSTOM_EDITION_SEALED",
-                "CUSTOM_EDITION_SEALED",
-                Some(candidate.candidate_key),
-            )
-        }
-        DecisionMode::ExactRelease => {
-            let candidate = candidate.ok_or(OperationError::Conflict(reasons::CANDIDATE_GONE))?;
-            let needs_confirmation =
-                !candidate.automatic_safe || snap.requested_release_mbid.is_some();
-            if needs_confirmation && !choice.confirmation {
-                return Err(OperationError::Invalid(reasons::CONFIRMATION_REQUIRED));
-            }
-            super::choice::apply_choice(tx, &album_id, &candidate, Some(actor), Some(job_id), now)?;
-            evaluation.outcome = "identified".into();
-            (
-                "IDENTIFIED",
-                "EXPLICIT_CANDIDATE_ACCEPTED",
-                Some(candidate.candidate_key),
-            )
-        }
-    };
-    evaluation.selected_candidate_key = selected.clone();
-    settle_reviews(
-        tx,
-        &album_id,
-        if choice.decision_mode == DecisionMode::LeaveUnmanaged {
-            "rejected"
-        } else {
-            "approved"
-        },
-        selected.as_deref(),
-        actor,
-    )?;
-    let stored = serde_json::to_string(&evaluation)
-        .map_err(|error| OperationError::Store(error.to_string()))?;
-    tx.execute(
-        "UPDATE library_reidentification_snapshots SET selected_candidate_key = ?2, \
-         result_json = ?3 WHERE job_id = ?1",
-        params![job_id, selected, stored],
-    )?;
-    let changed = tx.execute(
-        "UPDATE library_operation_jobs SET state = 'succeeded', terminal_code = ?2, \
-         terminal_at = ?3, updated_at = ?3, row_revision = row_revision + 1, \
-         event_revision = event_revision + 1 WHERE id = ?1 AND row_revision = ?4",
-        params![job_id, terminal, now, choice.expected_row_revision],
-    )?;
-    if changed != 1 {
-        return Err(OperationError::Conflict(reasons::CANDIDATES_CHANGED));
-    }
-    record_action(
-        tx,
-        CatalogAction {
-            actor,
-            kind: "explicit_reidentification",
-            album_id: &album_id,
-            job_id: Some(job_id),
-            before: serde_json::to_value(&before).unwrap_or_default(),
-            after: serde_json::to_value(&evaluation).unwrap_or_default(),
-            reason,
-        },
-        now,
-    )?;
-    bump_catalog(tx)?;
-    job_after(tx, job_id)
-}
 
 /// What a person saw of the album before asking for a custom edition: its
 /// identity revision (0 with none), and its row and input revisions read
@@ -245,7 +102,7 @@ pub fn leave_album_unmanaged(
     }
     let point = super::choice::undo_point(tx, album_id)?;
     let before = album_identity(tx, album_id)?;
-    leave_unmanaged(tx, album_id, None, before.as_ref(), actor, now)?;
+    leave_unmanaged(tx, album_id, before.as_ref(), actor, now)?;
     settle_waiting(tx, album_id)?;
     settle_reviews(tx, album_id, "rejected", None, actor)?;
     super::choice::keep_undo_point(
@@ -394,12 +251,10 @@ pub(crate) fn upsert_track_identity(
 }
 
 /// Keep the album out of Library Management. An existing identity keeps
-/// its release group but loses the exact edition; without one, the
-/// candidate's release group is kept when its names do not conflict.
+/// its release group but loses the exact edition.
 fn leave_unmanaged(
     tx: &Transaction<'_>,
     album_id: &str,
-    candidate: Option<&ReidentificationCandidate>,
     before: Option<&AlbumIdentity>,
     actor: &str,
     now: f64,
@@ -410,15 +265,6 @@ fn leave_unmanaged(
              decision_source = 'manual', selected_by_user_id = ?2, selected_at = ?3, \
              row_revision = row_revision + 1 WHERE local_album_id = ?1 AND provider = ?4",
             params![album_id, actor, now, PROVIDER],
-        )?;
-    } else if let Some(candidate) = candidate.filter(|candidate| names_hold(candidate)) {
-        seal_album(
-            tx,
-            album_id,
-            &candidate.evidence.release_group_mbid,
-            None,
-            Some(actor),
-            now,
         )?;
     }
     tx.execute(

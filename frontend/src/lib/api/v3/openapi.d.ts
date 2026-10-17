@@ -3387,27 +3387,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/library/albums/{album_id}/reidentify": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Start an explicit re-identification of one album. The job scores every
-         *     candidate and waits for an administrator's choice; nothing seals on
-         *     its own.
-         */
-        post: operations["reidentify_album"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v3/library/albums/{album_id}/rescan": {
         parameters: {
             query?: never;
@@ -4855,26 +4834,6 @@ export interface paths {
         get: operations["get_operation"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/library/operations/{job_id}/candidate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Settle a re-identification: seal a candidate's exact release, seal a
-         *     custom edition, or leave the album unmanaged.
-         */
-        post: operations["select_reidentification_candidate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11883,22 +11842,6 @@ export interface components {
              */
             total_items: number;
         };
-        /** @description Choose a re-identification candidate. */
-        CandidateChoiceBody: {
-            /** @description The chosen candidate; empty only to leave the album unmanaged. */
-            candidate_key?: string;
-            /**
-             * @description Required for a candidate that is not automatic-safe, a release the
-             *     administrator named, or a custom edition.
-             */
-            confirmation?: boolean;
-            decision_mode?: components["schemas"]["DecisionModeBody"];
-            /**
-             * Format: int64
-             * @description The job's `row_revision` as last read.
-             */
-            expected_row_revision: number;
-        };
         /** @description One file a candidate would fetch. */
         CandidateFile: {
             /**
@@ -12493,11 +12436,6 @@ export interface components {
             /** @description Shelves, oldest decade first. */
             items: components["schemas"]["DecadeShelf"][];
         };
-        /**
-         * @description How to settle a re-identification.
-         * @enum {string}
-         */
-        DecisionModeBody: "exact_release" | "custom_edition" | "leave_unmanaged";
         /** @description One deferred identification job, named. */
         DeferredJobView: {
             album_title: string | null;
@@ -19816,22 +19754,6 @@ export interface components {
             evidence: components["schemas"]["OperationCandidateEvidenceView"];
             /** @description Changes whenever the job re-evaluates. */
             evidence_revision: string;
-        };
-        /** @description Start an explicit re-identification. */
-        ReidentifyBody: {
-            /**
-             * Format: int64
-             * @description The album's revision as last read; refused when it moved.
-             */
-            expected_album_revision?: number | null;
-            /** @description The album's input revision as last read; refused when it moved. */
-            expected_input_revision?: string | null;
-            /** @description Makes a retried request return the same job. */
-            idempotency_key?: string | null;
-            /** @description Confirms a one-off lookup for files under a Local metadata policy. */
-            one_off_local_metadata?: boolean;
-            /** @description Evaluate only this exact MusicBrainz release. */
-            release_mbid?: string | null;
         };
         /** @description Reimport outcome: the task as the import left it. */
         ReimportResponse: {
@@ -30598,68 +30520,6 @@ export interface operations {
             };
         };
     };
-    reidentify_album: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Local album id */
-                album_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReidentifyBody"];
-            };
-        };
-        responses: {
-            /** @description Re-identification job (new or the one this key started) */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OperationView"];
-                };
-            };
-            /** @description Bad body or release MBID */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Admin role required */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Unknown album, or no indexed files */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The album moved, is excluded, or needs the Local metadata confirmation */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     rescan_album: {
         parameters: {
             query?: never;
@@ -35013,68 +34873,6 @@ export interface operations {
             };
             /** @description Unknown job */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    select_reidentification_candidate: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Re-identification job id */
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CandidateChoiceBody"];
-            };
-        };
-        responses: {
-            /** @description Settled job */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OperationView"];
-                };
-            };
-            /** @description Confirmation missing, the release does not map every file, or the custom edition cannot be sealed */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Admin role required */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Unknown job */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The job or the album changed since it was read */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };

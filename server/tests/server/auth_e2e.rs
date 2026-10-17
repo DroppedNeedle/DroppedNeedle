@@ -2568,16 +2568,6 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         Posture::Admin,
     ),
     (
-        "POST",
-        "/api/v3/library/operations/{job_id}/candidate",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/reidentify",
-        Posture::Admin,
-    ),
-    (
         "GET",
         "/api/v3/library/albums/{album_id}/reidentification/releases",
         Posture::Curator,

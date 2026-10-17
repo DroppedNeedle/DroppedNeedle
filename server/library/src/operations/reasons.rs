@@ -69,11 +69,6 @@ pub const CONTROL_KEY_EMPTY: Reason = reason(
     "The request carried an empty idempotency key.",
     "Send a key with some text in it, or leave it out.",
 );
-pub const CONFIRMATION_REQUIRED: Reason = reason(
-    "CONFIRMATION_REQUIRED",
-    "The evidence does not fully support this release, so choosing it needs your confirmation.",
-    "Review the evidence, then confirm your choice.",
-);
 
 // Conflicts with the album or job as it is.
 pub const ALBUM_EXCLUDED: Reason = reason(
@@ -107,21 +102,6 @@ pub const OPERATION_CHANGED: Reason = reason(
     STALE,
     "The operation changed since you last loaded it.",
     "Reload the operation and try again.",
-);
-pub const CANDIDATES_CHANGED: Reason = reason(
-    STALE,
-    "The candidates changed before your choice reached the server.",
-    "Reload the candidates and choose again.",
-);
-pub const ALBUM_CHANGED_SINCE_EVALUATION: Reason = reason(
-    STALE,
-    "The album changed after its candidates were found.",
-    "Run Re-identify again to get fresh candidates.",
-);
-pub const CANDIDATE_GONE: Reason = reason(
-    STALE,
-    "The release you chose is no longer among the candidates.",
-    "Reload the candidates and choose again.",
 );
 pub const UNDO_STALE: Reason = reason(
     STALE,
@@ -238,11 +218,6 @@ pub const TRACK_ID_ELSEWHERE: Reason = reason(
 );
 
 // A custom edition cannot be sealed.
-pub const CUSTOM_EDITION_NEEDS_CONFIRMATION: Reason = reason(
-    NOT_SEALABLE,
-    "Creating a custom edition needs your confirmation.",
-    "Confirm the custom edition and try again.",
-);
 pub const CUSTOM_EDITION_NAMES_CONFLICT: Reason = reason(
     NOT_SEALABLE,
     "The album's title or artist conflicts with the chosen release group.",

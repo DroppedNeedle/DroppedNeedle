@@ -593,8 +593,6 @@ use droppedneedle_plugins::{
         droppedneedle_library::http::operations::pause_operation,
         droppedneedle_library::http::operations::resume_operation,
         droppedneedle_library::http::operations::stop_operation,
-        droppedneedle_library::http::operations::select_reidentification_candidate,
-        droppedneedle_library::http::operations::reidentify_album,
         droppedneedle_library::http::operations::search_reidentification_releases,
         droppedneedle_library::http::operations::undo_automatic_edition,
         droppedneedle_library::http::repairs::create_repair,

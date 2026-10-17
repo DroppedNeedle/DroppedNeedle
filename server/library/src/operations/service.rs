@@ -12,8 +12,8 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehav
 
 use super::decisions::indexed_track_ids;
 use super::models::{
-    CandidateChoice, Control, EditionChoice, OperationDetail, OperationError, OperationJob,
-    ReidentificationCandidate, ReidentifyInput, ReleaseSearch, UndoOutcome,
+    Control, EditionChoice, OperationDetail, OperationError, OperationJob,
+    ReidentificationCandidate, ReleaseSearch, UndoOutcome,
 };
 use super::plan::{self, EditionPlan, PlanReading};
 use super::reasons;
@@ -134,31 +134,6 @@ impl Operations {
                 now_unix(),
             )
         })
-    }
-
-    /// Start (or find) an explicit re-identification of one album. Blocking.
-    pub fn reidentify(
-        &self,
-        album_id: &str,
-        user_id: &str,
-        input: ReidentifyInput,
-    ) -> Result<OperationJob, OperationError> {
-        let release_mbid = input
-            .release_mbid
-            .as_deref()
-            .map(parse_release)
-            .transpose()?;
-        let new = NewReidentification {
-            job_id: self.ids.new_id(),
-            requested_by_user_id: user_id.to_owned(),
-            idempotency_key: input.idempotency_key,
-            local_album_id: album_id.to_owned(),
-            one_off_local_metadata: input.one_off_local_metadata,
-            release_mbid,
-            expected_album_revision: input.expected_album_revision,
-            expected_input_revision: input.expected_input_revision,
-        };
-        self.write(|tx| store::create_reidentification(tx, &new, now_unix()))
     }
 
     /// A plain re-identification of one album: no release, no revision
@@ -371,16 +346,6 @@ impl Operations {
             }
         }
         Ok(outcome)
-    }
-
-    /// Settle a re-identification with the administrator's choice. Blocking.
-    pub fn select_candidate(
-        &self,
-        job_id: &str,
-        choice: &CandidateChoice,
-        user_id: &str,
-    ) -> Result<OperationJob, OperationError> {
-        self.write(|tx| decisions::select_candidate(tx, job_id, choice, user_id, now_unix()))
     }
 
     /// Choose the album's edition: any MusicBrainz release, from the

@@ -187,10 +187,6 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/operations/{job_id}/resume', { path: { job_id: jobId } }),
 	stopOperation: (jobId: string) =>
 		v3('/api/v3/library/operations/{job_id}/stop', { path: { job_id: jobId } }),
-	operationCandidate: (jobId: string) =>
-		v3('/api/v3/library/operations/{job_id}/candidate', { path: { job_id: jobId } }),
-	reidentifyAlbum: (albumId: string) =>
-		v3('/api/v3/library/albums/{album_id}/reidentify', { path: { album_id: albumId } }),
 	reidentificationReleases: (
 		albumId: string,
 		params: {

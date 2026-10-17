@@ -1,6 +1,6 @@
-//! Library operation routes: watch and control an operation job, start an
-//! explicit re-identification and settle it, search MusicBrainz releases
-//! for the edition finder, and undo an automatic edition.
+//! Library operation routes: watch and control an operation job, search
+//! MusicBrainz releases for the edition finder, and undo an automatic
+//! edition.
 //!
 //! Every route is admin-only, as in v2, except the release search, which
 //! curators use to choose an edition. Store work runs on
@@ -21,8 +21,7 @@ use super::error::{LibraryError, ValidJson, ValidQuery};
 use super::models::PenaltyView;
 use crate::identify::models::EvidenceClass;
 use crate::operations::models::{
-    CandidateChoice, Control, DecisionMode, OperationDetail, OperationError, OperationJob,
-    ReidentificationCandidate, ReidentifyInput,
+    Control, OperationDetail, OperationError, OperationJob, ReidentificationCandidate,
 };
 use crate::operations::reasons::{self, Reason};
 use crate::operations::service::{Operations, RELEASE_PAGE_MAX};
@@ -41,14 +40,6 @@ pub fn operations_router() -> Router<LibrarySetup> {
             post(resume_operation),
         )
         .route("/library/operations/{job_id}/stop", post(stop_operation))
-        .route(
-            "/library/operations/{job_id}/candidate",
-            post(select_reidentification_candidate),
-        )
-        .route(
-            "/library/albums/{album_id}/reidentify",
-            post(reidentify_album),
-        )
         .route(
             "/library/albums/{album_id}/reidentification/releases",
             get(search_reidentification_releases),
@@ -272,52 +263,6 @@ pub struct OperationControlBody {
     pub expected_row_revision: i64,
     /// Makes a retried control a no-op.
     pub idempotency_key: Option<String>,
-}
-
-/// How to settle a re-identification.
-#[derive(Debug, Clone, Copy, Default, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DecisionModeBody {
-    /// Make the candidate's release the album's edition; files it has no
-    /// track for keep their recording.
-    #[default]
-    ExactRelease,
-    /// Keep the release group and seal the files as they are.
-    CustomEdition,
-    /// Keep the album out of Library Management.
-    LeaveUnmanaged,
-}
-
-/// Choose a re-identification candidate.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-pub struct CandidateChoiceBody {
-    /// The job's `row_revision` as last read.
-    pub expected_row_revision: i64,
-    /// The chosen candidate; empty only to leave the album unmanaged.
-    #[serde(default)]
-    pub candidate_key: String,
-    /// Required for a candidate that is not automatic-safe, a release the
-    /// administrator named, or a custom edition.
-    #[serde(default)]
-    pub confirmation: bool,
-    #[serde(default)]
-    pub decision_mode: DecisionModeBody,
-}
-
-/// Start an explicit re-identification.
-#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
-pub struct ReidentifyBody {
-    /// The album's revision as last read; refused when it moved.
-    pub expected_album_revision: Option<i64>,
-    /// The album's input revision as last read; refused when it moved.
-    pub expected_input_revision: Option<String>,
-    /// Makes a retried request return the same job.
-    pub idempotency_key: Option<String>,
-    /// Confirms a one-off lookup for files under a Local metadata policy.
-    #[serde(default)]
-    pub one_off_local_metadata: bool,
-    /// Evaluate only this exact MusicBrainz release.
-    pub release_mbid: Option<String>,
 }
 
 /// Undo the album's last automatic edition.
@@ -654,86 +599,6 @@ pub async fn stop_operation(
     ValidJson(body): ValidJson<OperationControlBody>,
 ) -> Result<Json<OperationView>, OperationsHttpError> {
     control(state, job_id, Control::Stop, body).await
-}
-
-/// Settle a re-identification: seal a candidate's exact release, seal a
-/// custom edition, or leave the album unmanaged.
-#[utoipa::path(
-    post,
-    tag = "library management",
-    path = "/api/v3/library/operations/{job_id}/candidate",
-    params(("job_id" = String, Path, description = "Re-identification job id")),
-    request_body = CandidateChoiceBody,
-    responses(
-        (status = 200, description = "Settled job", body = OperationView),
-        (status = 400, description = "Confirmation missing, the release does not map every file, or the custom edition cannot be sealed"),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin role required"),
-        (status = 404, description = "Unknown job"),
-        (status = 409, description = "The job or the album changed since it was read"),
-    )
-)]
-pub async fn select_reidentification_candidate(
-    State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
-    Path(job_id): Path<String>,
-    ValidJson(body): ValidJson<CandidateChoiceBody>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
-    let ops = Operations::new(&state);
-    let user_id = caller.0.user_id;
-    let choice = CandidateChoice {
-        expected_row_revision: body.expected_row_revision,
-        candidate_key: body.candidate_key,
-        confirmation: body.confirmation,
-        decision_mode: match body.decision_mode {
-            DecisionModeBody::ExactRelease => DecisionMode::ExactRelease,
-            DecisionModeBody::CustomEdition => DecisionMode::CustomEdition,
-            DecisionModeBody::LeaveUnmanaged => DecisionMode::LeaveUnmanaged,
-        },
-    };
-    let detail = blocking(move || {
-        ops.select_candidate(&job_id, &choice, &user_id)?;
-        ops.get(&job_id)
-    })
-    .await?;
-    Ok(Json(detail_view(&detail)))
-}
-
-/// Start an explicit re-identification of one album. The job scores every
-/// candidate and waits for an administrator's choice; nothing seals on
-/// its own.
-#[utoipa::path(
-    post,
-    tag = "library management",
-    path = "/api/v3/library/albums/{album_id}/reidentify",
-    params(("album_id" = String, Path, description = "Local album id")),
-    request_body = ReidentifyBody,
-    responses(
-        (status = 200, description = "Re-identification job (new or the one this key started)", body = OperationView),
-        (status = 400, description = "Bad body or release MBID"),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin role required"),
-        (status = 404, description = "Unknown album, or no indexed files"),
-        (status = 409, description = "The album moved, is excluded, or needs the Local metadata confirmation"),
-    )
-)]
-pub async fn reidentify_album(
-    State(state): State<LibrarySetup>,
-    caller: RequireAdmin,
-    Path(album_id): Path<String>,
-    ValidJson(body): ValidJson<ReidentifyBody>,
-) -> Result<Json<OperationView>, OperationsHttpError> {
-    let ops = Operations::new(&state);
-    let user_id = caller.0.user_id;
-    let input = ReidentifyInput {
-        expected_album_revision: body.expected_album_revision,
-        expected_input_revision: body.expected_input_revision,
-        idempotency_key: body.idempotency_key.filter(|key| !key.trim().is_empty()),
-        one_off_local_metadata: body.one_off_local_metadata,
-        release_mbid: body.release_mbid.filter(|mbid| !mbid.trim().is_empty()),
-    };
-    let job = blocking(move || ops.reidentify(&album_id, &user_id, input)).await?;
-    Ok(Json(job_view(&job)))
 }
 
 /// Search MusicBrainz releases for an album's edition finder.

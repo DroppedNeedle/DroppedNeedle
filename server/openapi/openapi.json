@@ -7435,63 +7435,6 @@
         }
       }
     },
-    "/api/v3/library/albums/{album_id}/reidentify": {
-      "post": {
-        "tags": [
-          "library management"
-        ],
-        "summary": "Start an explicit re-identification of one album. The job scores every\ncandidate and waits for an administrator's choice; nothing seals on\nits own.",
-        "operationId": "reidentify_album",
-        "parameters": [
-          {
-            "name": "album_id",
-            "in": "path",
-            "description": "Local album id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReidentifyBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Re-identification job (new or the one this key started)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationView"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad body or release MBID"
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Admin role required"
-          },
-          "404": {
-            "description": "Unknown album, or no indexed files"
-          },
-          "409": {
-            "description": "The album moved, is excluded, or needs the Local metadata confirmation"
-          }
-        }
-      }
-    },
     "/api/v3/library/albums/{album_id}/rescan": {
       "post": {
         "tags": [
@@ -11742,63 +11685,6 @@
           },
           "404": {
             "description": "Unknown job"
-          }
-        }
-      }
-    },
-    "/api/v3/library/operations/{job_id}/candidate": {
-      "post": {
-        "tags": [
-          "library management"
-        ],
-        "summary": "Settle a re-identification: seal a candidate's exact release, seal a\ncustom edition, or leave the album unmanaged.",
-        "operationId": "select_reidentification_candidate",
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "description": "Re-identification job id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CandidateChoiceBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Settled job",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationView"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Confirmation missing, the release does not map every file, or the custom edition cannot be sealed"
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Admin role required"
-          },
-          "404": {
-            "description": "Unknown job"
-          },
-          "409": {
-            "description": "The job or the album changed since it was read"
           }
         }
       }
@@ -28118,31 +28004,6 @@
           }
         }
       },
-      "CandidateChoiceBody": {
-        "type": "object",
-        "description": "Choose a re-identification candidate.",
-        "required": [
-          "expected_row_revision"
-        ],
-        "properties": {
-          "candidate_key": {
-            "type": "string",
-            "description": "The chosen candidate; empty only to leave the album unmanaged."
-          },
-          "confirmation": {
-            "type": "boolean",
-            "description": "Required for a candidate that is not automatic-safe, a release the\nadministrator named, or a custom edition."
-          },
-          "decision_mode": {
-            "$ref": "#/components/schemas/DecisionModeBody"
-          },
-          "expected_row_revision": {
-            "type": "integer",
-            "format": "int64",
-            "description": "The job's `row_revision` as last read."
-          }
-        }
-      },
       "CandidateFile": {
         "type": "object",
         "description": "One file a candidate would fetch.",
@@ -29591,15 +29452,6 @@
             "description": "Shelves, oldest decade first."
           }
         }
-      },
-      "DecisionModeBody": {
-        "type": "string",
-        "description": "How to settle a re-identification.",
-        "enum": [
-          "exact_release",
-          "custom_edition",
-          "leave_unmanaged"
-        ]
       },
       "DeferredJobView": {
         "type": "object",
@@ -45602,45 +45454,6 @@
           "evidence_revision": {
             "type": "string",
             "description": "Changes whenever the job re-evaluates."
-          }
-        }
-      },
-      "ReidentifyBody": {
-        "type": "object",
-        "description": "Start an explicit re-identification.",
-        "properties": {
-          "expected_album_revision": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "The album's revision as last read; refused when it moved."
-          },
-          "expected_input_revision": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The album's input revision as last read; refused when it moved."
-          },
-          "idempotency_key": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Makes a retried request return the same job."
-          },
-          "one_off_local_metadata": {
-            "type": "boolean",
-            "description": "Confirms a one-off lookup for files under a Local metadata policy."
-          },
-          "release_mbid": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Evaluate only this exact MusicBrainz release."
           }
         }
       },

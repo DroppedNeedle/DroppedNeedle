@@ -2601,12 +2601,11 @@ fn track_row(db: &Path, track_id: &str) -> TrackRow {
     .expect("track identity row")
 }
 
-/// Automatic edition undone to review, then an explicit re-identification:
-/// controls, candidate review, the administrator's choice, and the
-/// edition finder, all through the HTTP routes.
+/// An automatic edition undone to review through the HTTP route: stale
+/// revisions are refused, a curator's track row is untouched, and the
+/// automatic one returns to its earlier release.
 #[tokio::test]
-async fn library_journey_undo_edition_then_reidentify() {
-    use droppedneedle_library::identify::sources::{Edition, EditionPage};
+async fn library_journey_undo_automatic_edition() {
     use droppedneedle_library::operations::decisions::live_automatic_edition_undo;
 
     let rig = Rig::start("lib-operations").await;
@@ -2735,115 +2734,6 @@ async fn library_journey_undo_edition_then_reidentify() {
     let (status, _) = app.call("POST", &undo, &headers, Some(fresh)).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "an undo is used once");
 
-    // Start a re-identification; the same key returns the same job.
-    let start = format!("/api/v3/library/albums/{album}/reidentify");
-    let key = json!({"idempotency_key": "again-1"});
-    let (status, job) = app.call("POST", &start, &headers, Some(key.clone())).await;
-    assert_eq!(status, StatusCode::OK, "{job}");
-    assert_eq!(job["state"], json!("queued"));
-    assert_eq!(job["kind"], json!("explicit_reidentification"));
-    let job_id = job["id"].as_str().expect("job id").to_owned();
-    let (_, again) = app.call("POST", &start, &headers, Some(key)).await;
-    assert_eq!(again["id"], json!(job_id));
-
-    // Stop it while queued, then resume: it starts over.
-    let operation = format!("/api/v3/library/operations/{job_id}");
-    let (status, stopped) = app
-        .call(
-            "POST",
-            &format!("{operation}/stop"),
-            &headers,
-            Some(json!({"expected_row_revision": job["row_revision"]})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{stopped}");
-    assert_eq!(stopped["state"], json!("stopped"));
-    let (status, body) = app
-        .call(
-            "POST",
-            &format!("{operation}/resume"),
-            &headers,
-            Some(json!({"expected_row_revision": job["row_revision"]})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::CONFLICT, "stale revision: {body}");
-    let (_, resumed) = app
-        .call(
-            "POST",
-            &format!("{operation}/resume"),
-            &headers,
-            Some(json!({"expected_row_revision": stopped["row_revision"]})),
-        )
-        .await;
-    assert_eq!(resumed["state"], json!("queued"));
-
-    // The worker scores the candidates and waits for a choice.
-    let ready = app
-        .until("the worker scores the candidates", || async {
-            let (status, job) = app.call("GET", &operation, &headers, None).await;
-            assert_eq!(status, StatusCode::OK, "{job}");
-            (!matches!(job["state"].as_str(), Some("queued" | "running"))).then_some(job)
-        })
-        .await;
-    assert_eq!(ready["state"], json!("ready"), "{ready}");
-    let candidates = ready["reidentification_candidates"]
-        .as_array()
-        .expect("candidates");
-    assert_eq!(candidates.len(), 1);
-    assert_eq!(candidates[0]["automatic_safe"], json!(true));
-    assert_eq!(
-        candidates[0]["evidence"]["track_evidence"][0]["classification"],
-        json!("supported")
-    );
-    assert!(
-        rig.identify_store.album_identity(&album).is_none(),
-        "nothing seals before the choice"
-    );
-
-    // The edition finder marks nothing current yet.
-    scripted.set_editions(EditionPage {
-        items: vec![Edition {
-            release_mbid: release.id.clone(),
-            release_group_mbid: release.release_group_id.clone(),
-            title: release.title.clone(),
-            score: 100,
-            ..Edition::default()
-        }],
-        total: 1,
-        offset: 0,
-    });
-    let finder =
-        format!("/api/v3/library/albums/{album}/reidentification/releases?title=OK%20Computer");
-    let (status, found) = app.call("GET", &finder, &headers, None).await;
-    assert_eq!(status, StatusCode::OK, "{found}");
-    assert_eq!(found["items"][0]["is_current_release"], json!(false));
-
-    // The choice seals a manual identity and settles the review.
-    let (status, done) = app
-        .call(
-            "POST",
-            &format!("{operation}/candidate"),
-            &headers,
-            Some(json!({
-                "expected_row_revision": ready["row_revision"],
-                "candidate_key": candidates[0]["candidate_key"],
-            })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{done}");
-    assert_eq!(done["state"], json!("succeeded"));
-    assert_eq!(done["terminal_code"], json!("IDENTIFIED"));
-    assert_eq!(
-        done["selected_reidentification_candidate_key"],
-        candidates[0]["candidate_key"]
-    );
-    let manual = rig.identify_store.album_identity(&album).expect("sealed");
-    assert_eq!(manual.release_mbid.as_deref(), Some(release.id.as_str()));
-    assert_eq!(manual.decision_source.as_str(), "manual");
-    let (_, body) = app.call("GET", &reviews, &headers, None).await;
-    assert_eq!(body["reviews"], json!([]), "the review is settled");
-    let (_, found) = app.call("GET", &finder, &headers, None).await;
-    assert_eq!(found["items"][0]["is_current_release"], json!(true));
     rig.stop().await;
 }
 

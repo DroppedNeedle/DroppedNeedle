@@ -1,14 +1,12 @@
 //! Explicit re-identification: an administrator asks for another look at
-//! one album, sees every candidate the matcher scored, and chooses.
+//! one album and sees every candidate the matcher scored.
 //!
 //! Unlike a queued identification, nothing seals on its own. The worker
 //! recalls candidates (every release the usual recall finds, or only the
 //! release the administrator named), scores them with the matching
 //! engine, and parks the job as `ready` with the candidates on its
-//! snapshot. The administrator then settles it through
-//! [`super::decisions::select_candidate`]. A MusicBrainz outage defers the
-//! job for two minutes, at most five times, before it fails with a code
-//! that can be resumed.
+//! snapshot. A MusicBrainz outage defers the job for two minutes, at most
+//! five times, before it fails with a code that can be resumed.
 
 use super::models::{CandidateTrack, Evaluation, ReidentificationCandidate};
 use crate::identify::models::{EvidenceClass, LocalAlbumFacts, RecallResult};

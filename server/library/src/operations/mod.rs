@@ -1,12 +1,11 @@
 //! Library operation jobs: long-running administrator work an
 //! administrator can watch, pause, resume, and stop.
 //!
-//! Jobs live in `library_operation_jobs`. The worker here runs explicit
+//! Jobs live in `library_operation_jobs`. The worker here runs
 //! re-identifications: an administrator asks for another look at one
-//! album, the job scores every candidate release, and waits until the
-//! administrator picks one (or keeps the album as it is). The same module
-//! undoes an automatic edition and searches MusicBrainz releases for the
-//! edition finder.
+//! album, and the job scores every candidate release and keeps them on its
+//! snapshot. The same module undoes an automatic edition and searches
+//! MusicBrainz releases for the edition finder.
 //!
 //! Layout: `models` holds the types, `control` the pause, resume, and stop
 //! rules, `store` the job SQL, `decisions` the administrator's catalog

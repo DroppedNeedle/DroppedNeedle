@@ -179,18 +179,6 @@ pub struct OperationDetail {
     pub selected_candidate_key: Option<String>,
 }
 
-/// How an administrator settles a re-identification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DecisionMode {
-    /// Accept the candidate's exact release; every file must map to it.
-    ExactRelease,
-    /// Keep the release group and seal the files as they are.
-    CustomEdition,
-    /// Keep the files out of Library Management.
-    LeaveUnmanaged,
-}
-
 /// Where one local file lands on a candidate release.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CandidateTrack {
@@ -230,25 +218,6 @@ pub struct Evaluation {
     pub selected_candidate_key: Option<String>,
     #[serde(default)]
     pub custom_manifest_id: Option<String>,
-}
-
-/// Start an explicit re-identification.
-#[derive(Debug, Clone, Default)]
-pub struct ReidentifyInput {
-    pub expected_album_revision: Option<i64>,
-    pub expected_input_revision: Option<String>,
-    pub idempotency_key: Option<String>,
-    pub one_off_local_metadata: bool,
-    pub release_mbid: Option<String>,
-}
-
-/// Settle a re-identification.
-#[derive(Debug, Clone)]
-pub struct CandidateChoice {
-    pub expected_row_revision: i64,
-    pub candidate_key: String,
-    pub confirmation: bool,
-    pub decision_mode: DecisionMode,
 }
 
 /// The result of undoing an automatic edition.
