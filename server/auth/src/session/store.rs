@@ -1,4 +1,4 @@
-//! Session store port plus an in-memory fake.
+//! Session store port.
 //!
 //! The port is what the middleware and login service program against; the
 //! production adapter over `auth_tokens` is
@@ -9,14 +9,8 @@
 //! Throttled `last_seen_at` writes (at most one per ~5 min per token) and the
 //! list/revoke surface belong to the users session management, not here.
 
-#[cfg(any(test, feature = "test-support"))]
-use std::{collections::HashMap, sync::RwLock};
-
 use serde::Serialize;
 use thiserror::Error;
-
-#[cfg(any(test, feature = "test-support"))]
-use super::tokens::constant_time_eq;
 
 /// Session kind, v2 `session_kind` values kept verbatim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -57,7 +51,7 @@ pub struct SessionRecord {
 /// the rest to a 500, without leaking detail.
 #[derive(Debug, Error)]
 pub enum SessionStoreError {
-    /// The backend failed (lock poisoned in the fake; io in production).
+    /// The backend failed.
     #[error("session store unavailable")]
     Unavailable,
     /// The database is busy: no reader or write turn came in time. Nothing
@@ -92,117 +86,4 @@ pub fn now_unix() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
-}
-
-/// In-memory store for tests and scratch harnesses. Never production: sessions
-/// must survive restarts, which needs the SQLite adapter. Clones share the
-/// same rows, like a connection pool handle.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone, Default)]
-pub struct MemorySessionStore {
-    rows: std::sync::Arc<RwLock<HashMap<String, SessionRecord>>>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl MemorySessionStore {
-    /// Empty store.
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl SessionStore for MemorySessionStore {
-    async fn insert(&self, record: SessionRecord) -> Result<(), SessionStoreError> {
-        let mut rows = self
-            .rows
-            .write()
-            .map_err(|_| SessionStoreError::Unavailable)?;
-        if rows.contains_key(&record.token_hash) {
-            return Err(SessionStoreError::Duplicate);
-        }
-        rows.insert(record.token_hash.clone(), record);
-        Ok(())
-    }
-
-    async fn lookup_valid(
-        &self,
-        token_hash: &str,
-        now_unix: i64,
-    ) -> Result<Option<SessionRecord>, SessionStoreError> {
-        let rows = self
-            .rows
-            .read()
-            .map_err(|_| SessionStoreError::Unavailable)?;
-        for (stored_hash, record) in rows.iter() {
-            if constant_time_eq(stored_hash, token_hash) {
-                if record.revoked || record.expires_at <= now_unix {
-                    return Ok(None);
-                }
-                return Ok(Some(record.clone()));
-            }
-        }
-        Ok(None)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::tokens;
-    use super::*;
-
-    fn record(hash: &str, now: i64) -> SessionRecord {
-        SessionRecord {
-            id: "id-1".to_owned(),
-            user_id: "user-1".to_owned(),
-            token_hash: hash.to_owned(),
-            kind: SessionKind::Standard,
-            label: None,
-            issued_at: now,
-            expires_at: tokens::expires_at(now),
-            last_seen_at: now,
-            revoked: false,
-            user_agent: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn lookup_accepts_live_and_rejects_revoked_or_expired() {
-        let now = 1_700_000_000;
-        let store = MemorySessionStore::new();
-        let live = tokens::hash_token("live-token");
-        let mut revoked = record(&tokens::hash_token("revoked-token"), now);
-        revoked.revoked = true;
-        let mut old = record(
-            &tokens::hash_token("old-token"),
-            now - tokens::SESSION_MAX_AGE_SECS - 1,
-        );
-        old.expires_at = now - 1;
-        store.insert(record(&live, now)).await.unwrap();
-        store.insert(revoked).await.unwrap();
-        store.insert(old).await.unwrap();
-
-        assert!(store.lookup_valid(&live, now).await.unwrap().is_some());
-        assert!(
-            store
-                .lookup_valid(&tokens::hash_token("revoked-token"), now)
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            store
-                .lookup_valid(&tokens::hash_token("old-token"), now)
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            store
-                .lookup_valid(&tokens::hash_token("unknown"), now)
-                .await
-                .unwrap()
-                .is_none()
-        );
-    }
 }

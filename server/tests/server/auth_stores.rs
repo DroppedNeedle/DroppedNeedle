@@ -7,7 +7,7 @@
 //! the first federated admin) plus the sweeps that keep auth tables small.
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use droppedneedle_auth::compat_auth::subsonic::md5_hex;
 use droppedneedle_auth::federated::oidc::OidcStateStore as _;
@@ -17,7 +17,7 @@ use droppedneedle_auth::federated::users::{
 };
 use droppedneedle_auth::prod::{Argon2idHasher, OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST};
 use droppedneedle_auth::session::login::{
-    LoginContext, LoginRequest, LoginService, PasswordVerifier as _, TransportParam,
+    LoginContext, LoginError, LoginRequest, LoginService, PasswordVerifier, TransportParam,
 };
 use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _, now_unix};
 use droppedneedle_auth::session::tokens;
@@ -182,6 +182,62 @@ async fn v2_bcrypt_rows_log_in_and_rehash_to_argon2id() {
         .unwrap();
     assert_eq!(stored.scheme, "argon2id", "the login persisted the upgrade");
     assert!(Argon2idHasher::new().verify_argon2id(LEGACY_PASSWORD, &stored.hash));
+}
+
+/// The production verifier, counting what each login cost it.
+#[derive(Clone)]
+struct CountingVerifier {
+    hasher: Argon2idHasher,
+    verifies: Arc<AtomicUsize>,
+    dummies: Arc<AtomicUsize>,
+}
+
+impl PasswordVerifier for CountingVerifier {
+    fn verify(&self, candidate: &str, stored: &str) -> bool {
+        self.verifies.fetch_add(1, Ordering::SeqCst);
+        PasswordVerifier::verify(&self.hasher, candidate, stored)
+    }
+
+    fn dummy_verify(&self) {
+        self.dummies.fetch_add(1, Ordering::SeqCst);
+        PasswordVerifier::dummy_verify(&self.hasher);
+    }
+}
+
+/// An unknown user costs one dummy verify and fails exactly as a wrong
+/// password does, so neither the answer nor its cost names an account.
+#[tokio::test]
+async fn unknown_user_costs_one_dummy_and_matches_bad_password() {
+    let fx = fixture("dummy-verify").await;
+    fx.seed_user("ada", Role::User).await;
+    let verifier = CountingVerifier {
+        hasher: fx.auth.hasher.clone(),
+        verifies: Arc::default(),
+        dummies: Arc::default(),
+    };
+    let login = LoginService::new(
+        fx.auth.sessions.clone(),
+        verifier.clone(),
+        fx.auth.credentials.clone(),
+    );
+    let mut failures = Vec::new();
+    for (username, password) in [("nobody", "whatever"), ("ada", "wrong")] {
+        let request = LoginRequest {
+            username: username.to_owned(),
+            password: password.to_owned(),
+            transport: TransportParam::Cookie,
+        };
+        let context = LoginContext {
+            user_agent: None,
+            now_unix: TEST_NOW,
+        };
+        failures.push(login.login(request, context).await);
+    }
+    for failure in failures {
+        assert!(matches!(failure, Err(LoginError::InvalidCredentials)));
+    }
+    assert_eq!(verifier.dummies.load(Ordering::SeqCst), 1);
+    assert_eq!(verifier.verifies.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

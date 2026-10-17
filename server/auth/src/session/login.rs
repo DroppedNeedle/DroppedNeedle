@@ -17,16 +17,11 @@
 //!
 //! Password hashing seam: production wires bcrypt verification for imported
 //! rows with opportunistic Argon2id rehash on success, rows tagged
-//! `bcrypt | argon2id`. This module defines the `PasswordVerifier` port and
-//! a fake; [`crate::passwords`] holds the production verifier.
+//! `bcrypt | argon2id`. This module defines the `PasswordVerifier` port;
+//! [`crate::passwords`] holds the production verifier.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-#[cfg(any(test, feature = "test-support"))]
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
 use thiserror::Error;
 
 use super::{
@@ -218,181 +213,9 @@ impl From<TransportParam> for Transport {
     }
 }
 
-/// Stable session-row id derived from the token hash (the production adapter
-/// mints a uuid; the fake needs no uuid dependency at this layer).
+/// Stable session-row id derived from the token hash, so this layer needs
+/// no uuid dependency.
 fn uuid_simple(raw_token: &str, now_unix: i64) -> String {
     let digest = Sha256::digest(format!("{raw_token}:{now_unix}").as_bytes());
     format!("{digest:x}")
-}
-
-/// Fake verifier for tests: SHA-256 compare plus a counted dummy path.
-/// Stored fake hashes are `fake$<sha256-hex>`.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone)]
-pub struct FakePasswordVerifier {
-    dummy_calls: Arc<AtomicUsize>,
-    verify_calls: Arc<AtomicUsize>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl FakePasswordVerifier {
-    /// Fresh fake with zeroed counters.
-    pub fn new() -> Self {
-        Self {
-            dummy_calls: Arc::new(AtomicUsize::new(0)),
-            verify_calls: Arc::new(AtomicUsize::new(0)),
-        }
-    }
-
-    /// Hash a password into the fake stored format.
-    pub fn store(password: &str) -> String {
-        format!("fake${:x}", Sha256::digest(password.as_bytes()))
-    }
-
-    /// How many dummy verifies ran (unknown-user logins).
-    pub fn dummy_calls(&self) -> usize {
-        self.dummy_calls.load(Ordering::SeqCst)
-    }
-
-    /// How many real verifies ran (known-user logins).
-    pub fn verify_calls(&self) -> usize {
-        self.verify_calls.load(Ordering::SeqCst)
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Default for FakePasswordVerifier {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl PasswordVerifier for FakePasswordVerifier {
-    fn verify(&self, candidate: &str, stored: &str) -> bool {
-        self.verify_calls.fetch_add(1, Ordering::SeqCst);
-        let candidate_hash = format!("{:x}", Sha256::digest(candidate.as_bytes()));
-        let expected = stored.strip_prefix("fake$").unwrap_or("");
-        tokens::constant_time_eq(&candidate_hash, expected)
-    }
-
-    fn dummy_verify(&self) {
-        self.dummy_calls.fetch_add(1, Ordering::SeqCst);
-        let candidate_hash = format!("{:x}", Sha256::digest(b"dummy"));
-        let _ = tokens::constant_time_eq(&candidate_hash, &Self::store("dummy-seed"));
-    }
-}
-
-/// Fake user table for tests: map of lowercased username to credential.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone, Default)]
-pub struct FakeUserTable {
-    users: Arc<std::collections::HashMap<String, LocalCredential>>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl FakeUserTable {
-    /// Table with one user.
-    pub fn with_user(username: &str, password: &str, user_id: &str, display_name: &str) -> Self {
-        let mut users = std::collections::HashMap::new();
-        users.insert(
-            username.to_lowercase(),
-            LocalCredential {
-                user_id: user_id.to_owned(),
-                display_name: display_name.to_owned(),
-                stored_hash: FakePasswordVerifier::store(password),
-            },
-        );
-        Self {
-            users: Arc::new(users),
-        }
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl CredentialLookup for FakeUserTable {
-    async fn local_user(&self, username_lc: &str) -> Result<Option<LocalCredential>, LoginError> {
-        Ok(self.users.get(username_lc).cloned())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::{store::MemorySessionStore, store::SessionStore};
-    use super::*;
-
-    fn service() -> (
-        LoginService<MemorySessionStore, FakePasswordVerifier, FakeUserTable>,
-        FakePasswordVerifier,
-    ) {
-        let verifier = FakePasswordVerifier::new();
-        let users = FakeUserTable::with_user("Ada", "correct-horse-99", "user-1", "Ada");
-        (
-            LoginService::new(MemorySessionStore::new(), verifier.clone(), users),
-            verifier,
-        )
-    }
-
-    fn ctx() -> LoginContext {
-        LoginContext {
-            user_agent: None,
-            now_unix: 1_700_000_000,
-        }
-    }
-
-    #[tokio::test]
-    async fn unknown_user_costs_one_dummy_and_matches_bad_password() {
-        let (service, verifier) = service();
-        let unknown = service
-            .login(
-                LoginRequest {
-                    username: "nobody".to_owned(),
-                    password: "whatever".to_owned(),
-                    transport: TransportParam::Cookie,
-                },
-                ctx(),
-            )
-            .await;
-        let wrong = service
-            .login(
-                LoginRequest {
-                    username: "ada".to_owned(),
-                    password: "wrong".to_owned(),
-                    transport: TransportParam::Cookie,
-                },
-                ctx(),
-            )
-            .await;
-        assert!(matches!(unknown, Err(LoginError::InvalidCredentials)));
-        assert!(matches!(wrong, Err(LoginError::InvalidCredentials)));
-        assert_eq!(verifier.dummy_calls(), 1);
-        assert_eq!(verifier.verify_calls(), 1);
-    }
-
-    #[tokio::test]
-    async fn success_mints_a_verifiable_session_per_transport() {
-        let (service, _) = service();
-        for transport in [TransportParam::Cookie, TransportParam::Bearer] {
-            let success = service
-                .login(
-                    LoginRequest {
-                        username: "ADA".to_owned(),
-                        password: "correct-horse-99".to_owned(),
-                        transport,
-                    },
-                    ctx(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(success.user_id, "user-1");
-            assert_eq!(success.transport, Transport::from(transport));
-            let stored = tokens::hash_token(&success.raw_token);
-            let found = service
-                .sessions
-                .lookup_valid(&stored, ctx().now_unix)
-                .await
-                .unwrap();
-            assert_eq!(found.map(|r| r.user_id).as_deref(), Some("user-1"));
-        }
-    }
 }
