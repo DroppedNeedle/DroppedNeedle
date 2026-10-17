@@ -210,9 +210,7 @@
 							>
 								<div class="h-10 w-10 shrink-0 overflow-hidden rounded-full">
 									<ArtistImage
-										mbid={artist.id}
-										source="local"
-										available={artist.musicbrainz_artist_id !== null}
+										mbid={artist.musicbrainz_artist_id ?? ''}
 										alt={artist.name}
 										size="xs"
 										className="h-full w-full object-cover"
@@ -244,11 +242,12 @@
 							>
 								<div class="h-10 w-10 shrink-0 overflow-hidden rounded-md">
 									<AlbumImage
-										mbid={album.id}
-										source="local"
+										albumId={album.id}
+										mbid={album.musicbrainz_release_group_id ?? ''}
 										available={album.cover_available}
 										alt={album.title}
 										size="xs"
+										requestSize={250}
 										rounded="none"
 										className="h-full w-full object-cover"
 									/>
@@ -280,11 +279,12 @@
 							>
 								<div class="relative h-10 w-10 shrink-0 overflow-hidden rounded-md">
 									<AlbumImage
-										mbid={track.album_id}
-										source="local"
+										albumId={track.album_id}
+										mbid={track.musicbrainz_release_group_id ?? ''}
 										available={track.cover_available}
 										alt={track.album_title}
 										size="xs"
+										requestSize={250}
 										rounded="none"
 										className="h-full w-full object-cover"
 									/>

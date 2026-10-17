@@ -4,7 +4,6 @@
 		getLocalRecentV3Query,
 		getLocalStatsV3Query
 	} from '$lib/queries/local/LocalV3Queries.svelte';
-	import { albumCardToSummary } from '$lib/queries/local/LocalV3Adapters';
 	import { formatBytes } from '$lib/utils/formatting';
 	import { createLibraryTrackLoader } from '$lib/utils/libraryTrackLoader.svelte';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
@@ -21,7 +20,6 @@
 	const recentQuery = getLocalRecentV3Query(() => 1);
 	const stats = $derived(statsQuery.data);
 	const backdropCard = $derived(recentQuery.data?.[0]);
-	const backdropAlbum = $derived(backdropCard ? albumCardToSummary(backdropCard) : null);
 
 	const PAGE_SIZE = 100;
 	const loader = createLibraryTrackLoader<NativeTrackListItem>(
@@ -100,15 +98,16 @@
 <section
 	class="group relative isolate overflow-hidden rounded-3xl border border-base-content/10 shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-base-content/20 hover:shadow-2xl"
 >
-	{#if backdropAlbum}
+	{#if backdropCard}
 		<div
 			aria-hidden="true"
 			class="pointer-events-none absolute inset-0 scale-110 blur-2xl"
 			data-testid="local-files-backdrop"
 		>
 			<AlbumImage
-				mbid={backdropAlbum.musicbrainz_id}
-				customUrl={backdropAlbum.cover_url}
+				albumId={backdropCard.id}
+				mbid={backdropCard.release_group_mbid ?? ''}
+				available={backdropCard.cover_available}
 				alt=""
 				size="full"
 				requestSize={250}

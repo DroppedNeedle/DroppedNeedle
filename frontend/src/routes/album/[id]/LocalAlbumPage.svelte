@@ -191,11 +191,12 @@
 	{:else}
 		<header class="grid gap-6 md:grid-cols-[16rem_1fr] md:items-end">
 			<AlbumImage
-				mbid={album.id}
-				source="local"
+				albumId={album.id}
+				mbid={album.musicbrainz_release_group_id ?? ''}
 				available={album.cover_available}
 				alt={`Cover for ${album.title}`}
 				size="full"
+				requestSize={500}
 				className="aspect-square w-full rounded-2xl shadow-xl"
 			/>
 			<div class="min-w-0">

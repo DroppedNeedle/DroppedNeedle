@@ -51,7 +51,10 @@
 		subtitle: string;
 		image: {
 			kind: 'album' | 'artist';
+			/** Local album id for album art; unused for artists. */
 			id: string;
+			/** Release group for albums, the artist's own MBID for artists. */
+			mbid: string;
 			available: boolean;
 		} | null;
 	}
@@ -209,6 +212,7 @@
 				image: {
 					kind: 'artist',
 					id: artist.id,
+					mbid: artist.musicbrainz_artist_id ?? '',
 					available: artist.musicbrainz_artist_id !== null
 				}
 			}));
@@ -218,7 +222,12 @@
 				id: album.id,
 				title: album.title,
 				subtitle: `${album.artist_name} · ${quantity(album.track_count, 'track')}`,
-				image: { kind: 'album', id: album.id, available: album.cover_available }
+				image: {
+					kind: 'album',
+					id: album.id,
+					mbid: album.musicbrainz_release_group_id ?? '',
+					available: album.cover_available
+				}
 			}));
 		}
 		if (selectionKind === 'tracks') {
@@ -226,7 +235,12 @@
 				id: track.id,
 				title: track.title,
 				subtitle: `${track.artist_name} · ${track.album_title}`,
-				image: { kind: 'album', id: track.album_id, available: track.cover_available }
+				image: {
+					kind: 'album',
+					id: track.album_id,
+					mbid: track.musicbrainz_release_group_id ?? '',
+					available: track.cover_available
+				}
 			}));
 		}
 		return [];
@@ -446,8 +460,8 @@
 										<div class="management-selected-scope__item">
 											{#if item.image?.kind === 'album'}
 												<AlbumImage
-													mbid={item.image.id}
-													source="local"
+													albumId={item.image.id}
+													mbid={item.image.mbid}
 													available={item.image.available}
 													alt=""
 													size="xs"
@@ -457,8 +471,7 @@
 												/>
 											{:else if item.image?.kind === 'artist'}
 												<ArtistImage
-													mbid={item.image.id}
-													source="local"
+													mbid={item.image.mbid}
 													available={item.image.available}
 													alt=""
 													size="xs"
@@ -565,8 +578,8 @@
 											checked={selectedIds.includes(item.id)}
 											onchange={() => toggleResult(item)}
 										/>{#if item.image?.kind === 'album'}<AlbumImage
-												mbid={item.image.id}
-												source="local"
+												albumId={item.image.id}
+												mbid={item.image.mbid}
 												available={item.image.available}
 												alt=""
 												size="xs"
@@ -574,8 +587,7 @@
 												className="h-11 w-11 border border-base-content/10"
 												testId={`search-scope-artwork-${item.id}`}
 											/>{:else if item.image?.kind === 'artist'}<ArtistImage
-												mbid={item.image.id}
-												source="local"
+												mbid={item.image.mbid}
 												available={item.image.available}
 												alt=""
 												size="xs"

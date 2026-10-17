@@ -95,8 +95,8 @@
 							aria-label={`Open ${appearance.album.title}`}
 						>
 							<AlbumImage
-								mbid={appearance.album.id}
-								source="local"
+								albumId={appearance.album.id}
+								mbid={appearance.album.musicbrainz_release_group_id ?? ''}
 								available={appearance.album.cover_available}
 								alt={`Cover for ${appearance.album.title}`}
 								size="full"

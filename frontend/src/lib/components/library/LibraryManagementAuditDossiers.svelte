@@ -208,7 +208,9 @@
 								(dossier.albumId && dossier.albumArtworkVersion !== null)
 									? ''
 									: (dossier.albumMbid ?? '')}
-								albumId={dossier.artworkUrl ? undefined : (dossier.albumId ?? undefined)}
+								albumId={dossier.artworkUrl || dossier.albumArtworkVersion === null
+									? undefined
+									: (dossier.albumId ?? undefined)}
 								coverVersion={dossier.artworkUrl
 									? undefined
 									: (dossier.albumArtworkVersion ?? undefined)}

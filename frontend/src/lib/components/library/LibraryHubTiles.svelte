@@ -17,6 +17,7 @@
 
 	interface Art {
 		key: string;
+		albumId?: string;
 		mbid: string;
 		remoteUrl: string | null;
 		type: 'album' | 'artist';
@@ -29,7 +30,8 @@
 	const albumArt = $derived<Art[]>(
 		(recentlyAddedQuery.data?.items ?? []).slice(0, 9).map((a) => ({
 			key: a.id,
-			mbid: a.id,
+			albumId: a.id,
+			mbid: a.musicbrainz_release_group_id ?? '',
 			remoteUrl: null,
 			type: 'album',
 			available: a.cover_available
@@ -38,7 +40,7 @@
 	const artistArt = $derived<Art[]>(
 		(artistThumbsQuery.data?.items ?? []).slice(0, 9).map((a) => ({
 			key: a.id,
-			mbid: a.id,
+			mbid: a.musicbrainz_artist_id ?? '',
 			remoteUrl: null,
 			type: 'artist',
 			available: a.musicbrainz_artist_id !== null
@@ -141,8 +143,8 @@
 				>
 					{#if slot.item.type === 'album'}
 						<AlbumImage
+							albumId={slot.item.albumId}
 							mbid={slot.item.mbid}
-							source="local"
 							available={slot.item.available}
 							remoteUrl={slot.item.remoteUrl}
 							alt=""
@@ -156,7 +158,6 @@
 					{:else}
 						<ArtistImage
 							mbid={slot.item.mbid}
-							source="local"
 							available={slot.item.available}
 							remoteUrl={slot.item.remoteUrl}
 							alt=""

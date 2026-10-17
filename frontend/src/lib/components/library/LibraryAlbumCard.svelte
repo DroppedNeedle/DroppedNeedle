@@ -23,8 +23,8 @@
 >
 	<figure class="aspect-square overflow-hidden relative">
 		<AlbumImage
-			mbid={album.id}
-			source="local"
+			albumId={album.id}
+			mbid={album.musicbrainz_release_group_id ?? ''}
 			available={album.cover_available}
 			alt={album.title}
 			size="full"

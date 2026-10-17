@@ -47,12 +47,13 @@ export function coverPath(kind: CoverKind, id: string, size: CoverSize = 500): s
 
 /**
  * Root-relative path to a library album's own art (folder image or embedded
- * picture). `coverVersion` makes a matching version cache for good.
+ * picture), by local album id. `coverVersion` makes a matching version cache
+ * for good; without `size` the server sends the full-size image.
  */
-export function albumArtworkPath(albumId: string, coverVersion: number): string {
+export function albumArtworkPath(albumId: string, coverVersion?: number, size?: CoverSize): string {
 	return v3('/api/v3/library/albums/{id}/artwork', {
 		path: { id: albumId },
-		query: { v: coverVersion }
+		query: { v: coverVersion, size }
 	});
 }
 

@@ -405,11 +405,11 @@
 					{#each findings as finding (finding.id)}
 						<div class="flex items-center gap-3 p-3">
 							<AlbumImage
-								mbid={finding.local_album_id}
-								source="local"
+								albumId={finding.local_album_id}
 								available={finding.cover_available}
 								alt={`Cover for ${finding.album_title}`}
 								size="sm"
+								requestSize={250}
 								className="h-12 w-12 border border-base-content/10"
 							/>
 							<div class="min-w-0 flex-1">
