@@ -1,11 +1,13 @@
 //! Shared test doubles: a fixed-id generator proving the trait seam, state
 //! builders for hooked and production-like apps, the whole app for
-//! journeys, and a scratch directory that removes itself.
+//! journeys, the auth rig with its test sign-in layer, and a scratch
+//! directory that removes itself.
 
 // Each test binary uses part of this module.
 #![allow(dead_code, unused_imports)]
 
 mod app;
+pub mod auth;
 pub mod auth_fakes;
 pub mod compat;
 pub mod library;
