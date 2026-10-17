@@ -663,10 +663,18 @@ async fn jellyfin_refs(rig: &CompatApp) -> BTreeMap<String, String> {
     let get = |uri: &'static str| rig.app.call("GET", uri, &auth, None);
     let (_, tracks) = get("/jellyfin/Items?Recursive=true&IncludeItemTypes=Audio").await;
     let (_, artists) = get("/jellyfin/Artists").await;
+    // Various Artists leads the compilation and is credited on no track.
+    let (_, album_artists) = get("/jellyfin/Artists/AlbumArtists").await;
     let (_, views) = get("/jellyfin/UserViews").await;
+    let every: Vec<Value> = [&artists["Items"], &album_artists["Items"]]
+        .into_iter()
+        .filter_map(Value::as_array)
+        .flatten()
+        .cloned()
+        .collect();
     let mut refs = library_refs(
         &tracks["Items"],
-        &artists["Items"],
+        &Value::Array(every),
         ("Name", "Id", "AlbumId"),
     );
     refs.insert("user".to_owned(), rig.user_id.clone());
@@ -710,7 +718,15 @@ async fn compat_answers_have_the_shape_jellyfin_returns() {
     comparison
         .replay("jellyfin-10.10.6-lyrics", "lyrics/")
         .await;
+    // Played marks were recorded on a fresh server too.
+    let played = CompatApp::start("compat-reference-jellyfin-played").await;
+    comparison.rig = &played;
+    comparison.refs = jellyfin_refs(&played).await;
+    comparison
+        .replay("jellyfin-10.10.6-played", "played/")
+        .await;
     comparison.settle();
+    played.stop().await;
     lyrics.stop().await;
     rig.stop().await;
 }

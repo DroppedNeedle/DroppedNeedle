@@ -1,4 +1,4 @@
-//! Favorites, played markers and playback reporting.
+//! Favorites, played marks and playback reporting.
 
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -10,22 +10,75 @@ use super::builders::{self};
 use super::models::{PlaybackProgressInfo, PlaybackStartInfo, PlaybackStopInfo, UserItemDataDto};
 use super::router::*;
 use super::seams::{
-    IdMap, LibraryRead, PlaybackSessions, StreamEngine, TICKS_PER_SECOND, should_scrobble,
+    IdMap, ItemView, LibraryRead, PlaybackSessions, ReadFailed, StreamEngine, TICKS_PER_SECOND,
+    WriteRefusal, should_scrobble,
 };
 
 // ===== Favorites + played (both dialects, 200 UserItemDataDto) =====
 
-pub(super) fn marker(item_id: &str, is_favorite: bool, played: bool) -> UserItemDataDto {
-    UserItemDataDto {
-        item_id: item_id.to_owned(),
-        key: item_id.to_owned(),
-        playback_position_ticks: 0,
-        play_count: 0,
-        is_favorite,
-        played,
-        last_played_date: None,
-        rating: None,
-        played_percentage: None,
+/// The caller's state of one item as the item's own read gives it, `None`
+/// when that read finds nothing (a missing track, say).
+async fn item_state<S, L, E, P, I>(
+    state: &JellyfinState<S, L, E, P, I>,
+    user_id: &str,
+    kind: &str,
+    internal: &str,
+) -> Result<Option<UserItemDataDto>, ReadFailed>
+where
+    S: JellyfinPasswordStore,
+    L: LibraryRead,
+    E: StreamEngine,
+    P: PlaybackSessions,
+    I: IdMap,
+{
+    let b = builder(state);
+    Ok(match state.library.item(user_id, kind, internal).await? {
+        Some(ItemView::Track(track)) => b.audio(&track).await.user_data,
+        Some(ItemView::Album(album)) => b.album(&album).await.user_data,
+        Some(ItemView::Artist(artist)) => b.artist(&artist).await.user_data,
+        None => None,
+    })
+}
+
+/// Change one item's state for the caller with `write`, then answer the
+/// item's state as its own read gives it. An unknown id, or one whose read
+/// finds nothing, is `missing` (Jellyfin's 404) and nothing is written; a
+/// playlist, genre or library is 400, and a failed read 500. The answer
+/// names the item's current id, also when the app sent an old album or
+/// artist id.
+async fn change_item<S, L, E, P, I, W>(
+    state: &JellyfinState<S, L, E, P, I>,
+    user_id: &str,
+    item_id: &str,
+    missing: Response,
+    write: impl FnOnce(String, String) -> W,
+) -> Response
+where
+    S: JellyfinPasswordStore,
+    L: LibraryRead,
+    E: StreamEngine,
+    P: PlaybackSessions,
+    I: IdMap,
+    W: Future<Output = Result<(), WriteRefusal>>,
+{
+    let Some((kind, internal)) = state.ids.from_jf(item_id).await else {
+        return missing;
+    };
+    if kind != "artist" && kind != "album" && kind != "track" {
+        return error(StatusCode::BAD_REQUEST);
+    }
+    match item_state(state, user_id, &kind, &internal).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return missing,
+        Err(ReadFailed) => return error(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+    if let Err(refusal) = write(kind.clone(), internal.clone()).await {
+        return refused(refusal);
+    }
+    match item_state(state, user_id, &kind, &internal).await {
+        Ok(Some(answer)) => json(StatusCode::OK, &answer),
+        Ok(None) => missing,
+        Err(ReadFailed) => error(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
 
@@ -34,6 +87,7 @@ pub(super) async fn set_favorite<S, L, E, P, I>(
     user_id: &str,
     item_id: &str,
     add: bool,
+    missing: Response,
 ) -> Response
 where
     S: JellyfinPasswordStore,
@@ -42,29 +96,30 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    let Some((kind, internal)) = state.ids.from_jf(item_id).await else {
-        return error(StatusCode::NOT_FOUND);
-    };
-    if kind != "artist" && kind != "album" && kind != "track" {
-        return error(StatusCode::BAD_REQUEST);
-    }
-    if let Err(refusal) = state
-        .library
-        .set_favorite(user_id, &kind, &internal, add)
-        .await
-    {
-        return refused(refusal);
-    }
-    // The answer names the item's current id, also when the app sent an
-    // old album or artist id.
-    let current = state.ids.to_jf(&kind, &internal).await;
-    json(StatusCode::OK, &marker(&current, add, false))
+    change_item(
+        state,
+        user_id,
+        item_id,
+        missing,
+        |kind, internal| async move {
+            state
+                .library
+                .set_favorite(user_id, &kind, &internal, add)
+                .await
+        },
+    )
+    .await
 }
 
+/// Mark an item played or unplayed for the caller, never anyone else: the
+/// user in the legacy path and a `userId` parameter are ignored. Nothing
+/// is played, scrobbled or shown as playing.
 pub(super) async fn set_played<S, L, E, P, I>(
     state: &JellyfinState<S, L, E, P, I>,
+    user_id: &str,
     item_id: &str,
     played: bool,
+    missing: Response,
 ) -> Response
 where
     S: JellyfinPasswordStore,
@@ -73,13 +128,19 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    // Marker only: play counting goes via Sessions/Playing/Stopped, so this
-    // writes nothing (avoids unwanted scrobble forwards, v2 `_set_played`).
-    let Some((kind, internal)) = state.ids.from_jf(item_id).await else {
-        return error(StatusCode::NOT_FOUND);
-    };
-    let current = state.ids.to_jf(&kind, &internal).await;
-    json(StatusCode::OK, &marker(&current, false, played))
+    change_item(
+        state,
+        user_id,
+        item_id,
+        missing,
+        |kind, internal| async move {
+            state
+                .library
+                .set_played(user_id, &kind, &internal, played)
+                .await
+        },
+    )
+    .await
 }
 
 pub(super) async fn favorite_add_legacy<S, L, E, P, I>(
@@ -95,7 +156,8 @@ where
     I: IdMap,
 {
     authed_handler!(state, request, |ctx| {
-        set_favorite(&state, &ctx.principal.id, &item_id, true).await
+        let missing = not_found_item(&request);
+        set_favorite(&state, &ctx.principal.id, &item_id, true, missing).await
     })
 }
 
@@ -112,7 +174,8 @@ where
     I: IdMap,
 {
     authed_handler!(state, request, |ctx| {
-        set_favorite(&state, &ctx.principal.id, &item_id, true).await
+        let missing = not_found_item(&request);
+        set_favorite(&state, &ctx.principal.id, &item_id, true, missing).await
     })
 }
 
@@ -129,7 +192,8 @@ where
     I: IdMap,
 {
     authed_handler!(state, request, |ctx| {
-        set_favorite(&state, &ctx.principal.id, &item_id, false).await
+        let missing = not_found_item(&request);
+        set_favorite(&state, &ctx.principal.id, &item_id, false, missing).await
     })
 }
 
@@ -146,7 +210,8 @@ where
     I: IdMap,
 {
     authed_handler!(state, request, |ctx| {
-        set_favorite(&state, &ctx.principal.id, &item_id, false).await
+        let missing = not_found_item(&request);
+        set_favorite(&state, &ctx.principal.id, &item_id, false, missing).await
     })
 }
 
@@ -162,8 +227,10 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    authed_handler!(state, request, |_ctx| set_played(&state, &item_id, true)
-        .await)
+    authed_handler!(state, request, |ctx| {
+        let missing = not_found_item(&request);
+        set_played(&state, &ctx.principal.id, &item_id, true, missing).await
+    })
 }
 
 pub(super) async fn played_add_modern<S, L, E, P, I>(
@@ -178,8 +245,10 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    authed_handler!(state, request, |_ctx| set_played(&state, &item_id, true)
-        .await)
+    authed_handler!(state, request, |ctx| {
+        let missing = not_found_item(&request);
+        set_played(&state, &ctx.principal.id, &item_id, true, missing).await
+    })
 }
 
 pub(super) async fn played_remove_legacy<S, L, E, P, I>(
@@ -194,8 +263,10 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    authed_handler!(state, request, |_ctx| set_played(&state, &item_id, false)
-        .await)
+    authed_handler!(state, request, |ctx| {
+        let missing = not_found_item(&request);
+        set_played(&state, &ctx.principal.id, &item_id, false, missing).await
+    })
 }
 
 pub(super) async fn played_remove_modern<S, L, E, P, I>(
@@ -210,8 +281,10 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    authed_handler!(state, request, |_ctx| set_played(&state, &item_id, false)
-        .await)
+    authed_handler!(state, request, |ctx| {
+        let missing = not_found_item(&request);
+        set_played(&state, &ctx.principal.id, &item_id, false, missing).await
+    })
 }
 
 // ===== Playback reporting / scrobbling (all 204, lenient bodies) =====

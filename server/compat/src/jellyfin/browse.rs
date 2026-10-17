@@ -364,6 +364,7 @@ where
                 &album_artist_ids,
                 &artist_ids,
                 &contributing_ids,
+                played,
                 sort_key,
                 sort_desc,
                 start,
@@ -375,8 +376,8 @@ where
 }
 
 /// Favorite listing for browse (v2 `_favorite_items`): one batch read per
-/// kind, DTOs for the page only. `played` narrows favourite tracks to the
-/// ones the caller has or has not played.
+/// kind, DTOs for the page only. `played` narrows favourite tracks and
+/// albums to the ones that are or are not played for the caller.
 pub(super) async fn favorites_browse<S, L, E, P, I>(
     state: &JellyfinState<S, L, E, P, I>,
     user_id: &str,
@@ -403,13 +404,16 @@ where
         "track" => {
             let mut tracks = state.library.tracks_by_ids(user_id, &ids).await;
             if let Some(played) = played {
-                tracks.retain(|track| (track.play_count > 0) == played);
+                tracks.retain(|track| track.played == played);
             }
             let (tracks, total) = page(&tracks, start, limit);
             result(build_tracks(&b, &tracks).await, total, start)
         }
         "album" => {
-            let albums = state.library.albums_by_ids(user_id, &ids).await;
+            let mut albums = state.library.albums_by_ids(user_id, &ids).await;
+            if let Some(played) = played {
+                albums.retain(|album| album.played == played);
+            }
             let (albums, total) = page(&albums, start, limit);
             result(build_albums(&b, &albums).await, total, start)
         }
@@ -493,6 +497,7 @@ pub(super) async fn album_browse<S, L, E, P, I>(
     album_artist_ids: &[String],
     artist_ids: &[String],
     contributing_ids: &[String],
+    played: Option<bool>,
     sort_key: Option<SortKey>,
     sort_desc: bool,
     start: usize,
@@ -562,6 +567,7 @@ where
             size,
         )
     };
+    let filter = AlbumFilter { played, ..filter };
     let (albums, total) = state
         .library
         .album_page(user_id, &filter, sort, offset, size)

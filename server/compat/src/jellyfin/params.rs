@@ -79,9 +79,10 @@ pub fn wants_favorites(params: &CiParams) -> bool {
 /// The played filter: `?IsPlayed=true|false`, or `Filters` containing
 /// `IsPlayed` or `IsUnplayed`. `Some(true)` asks for played items only,
 /// `Some(false)` for unplayed ones. Verified against the Jellyfin 10.10.6
-/// recording: `Filters=IsPlayed` only. The parameter, `IsUnplayed`, and
-/// which of the two a server follows when a request sends both and they
-/// disagree are not verified; here the parameter is read first.
+/// recordings: `Filters=IsPlayed` on tracks and albums, `Filters=IsUnplayed`
+/// on albums. The parameter, and which of the two a server follows when a
+/// request sends both and they disagree, are not verified; here the
+/// parameter is read first.
 pub fn played_filter(params: &CiParams) -> Option<bool> {
     match params
         .get("isPlayed")

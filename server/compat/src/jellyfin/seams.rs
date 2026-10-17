@@ -200,8 +200,11 @@ pub struct TrackView {
     pub path: Option<String>,
     /// Caller-scoped favorite flag, filled by the read methods.
     pub starred: bool,
+    /// Caller-scoped play state, with the caller's played and unplayed
+    /// marks weighed in: played, play count, and the last play in unix
+    /// seconds.
+    pub played: bool,
     pub play_count: u64,
-    /// Unix seconds of the last play, for the history sorts.
     pub last_played: Option<f64>,
     /// `AlbumPrimaryImageTag` of the owning album, when it has art.
     pub album_image_tag: Option<String>,
@@ -216,6 +219,14 @@ pub struct LyricsView {
     pub lines: Vec<(String, Option<i64>)>,
     /// True when the lines carry timestamps.
     pub synced: bool,
+}
+
+/// One track, album or artist, as the browse reads give it.
+#[derive(Debug, Clone)]
+pub enum ItemView {
+    Track(Box<TrackView>),
+    Album(Box<AlbumView>),
+    Artist(Box<ArtistView>),
 }
 
 /// A library read failed; the handler answers 500.
@@ -247,6 +258,9 @@ pub struct AlbumView {
     /// Unix seconds added.
     pub date_added: Option<f64>,
     pub starred: bool,
+    /// Caller-scoped play state, as for a track: played once every
+    /// streamable track on it is.
+    pub played: bool,
     pub play_count: u64,
     pub last_played: Option<f64>,
     /// `ImageTags.Primary`, when the album has art.
@@ -359,7 +373,7 @@ pub struct TrackFilter {
     pub album_artists: Vec<String>,
     /// Title, artist or album substring, case-insensitive.
     pub search: Option<String>,
-    /// Only tracks the caller has played (`true`) or never played
+    /// Only tracks that are played for the caller (`true`) or not
     /// (`false`).
     pub played: Option<bool>,
 }
@@ -374,6 +388,9 @@ pub struct AlbumFilter {
     pub appears_on: Vec<String>,
     /// Title or artist substring, case-insensitive.
     pub search: Option<String>,
+    /// Only albums that are played for the caller (`true`) or not
+    /// (`false`).
+    pub played: Option<bool>,
 }
 
 /// Page order. The play-history keys (`DatePlayed`, `PlayCount`) keep
@@ -440,6 +457,15 @@ pub trait LibraryRead: Clone + Send + Sync + 'static {
         limit: usize,
     ) -> impl Future<Output = (Vec<ArtistView>, usize)> + Send;
     fn artist(&self, user_id: &str, mbid: &str) -> impl Future<Output = Option<ArtistView>> + Send;
+    /// One track, album or artist (`kind`) as the reads above give it,
+    /// `Ok(None)` when there is none (any other kind has none), `Err` when
+    /// the read failed.
+    fn item(
+        &self,
+        user_id: &str,
+        kind: &str,
+        internal: &str,
+    ) -> impl Future<Output = Result<Option<ItemView>, ReadFailed>> + Send;
     fn genres(&self) -> impl Future<Output = Vec<GenreView>> + Send;
     /// Every year a playable album has, ascending.
     fn years(&self) -> impl Future<Output = Vec<i32>> + Send;
@@ -481,6 +507,16 @@ pub trait LibraryRead: Clone + Send + Sync + 'static {
         kind: &str,
         internal: &str,
         add: bool,
+    ) -> impl Future<Output = Result<(), WriteRefusal>> + Send;
+    /// Mark a track played or unplayed for the caller; an album marks each
+    /// of its tracks, an artist the tracks on the albums it leads. The play
+    /// history is not touched.
+    fn set_played(
+        &self,
+        user_id: &str,
+        kind: &str,
+        internal: &str,
+        played: bool,
     ) -> impl Future<Output = Result<(), WriteRefusal>> + Send;
     /// Release art bytes (`size` is the 250/500/1200 bucket); `None` renders
     /// 404 with no placeholder, unlike Subsonic (v2 `_image`).

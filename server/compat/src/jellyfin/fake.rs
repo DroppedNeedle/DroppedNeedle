@@ -307,9 +307,7 @@ impl LibraryRead for FakeLibrary {
                                 || t.album_artist_id
                                     .as_ref()
                                     .is_some_and(|m| filter.album_artists.contains(m)))
-                            && filter
-                                .played
-                                .is_none_or(|played| (t.play_count > 0) == played)
+                            && filter.played.is_none_or(|played| t.played == played)
                             && filter.search.as_deref().is_none_or(|needle| {
                                 matches(
                                     &[
@@ -395,6 +393,7 @@ impl LibraryRead for FakeLibrary {
                                 .as_ref()
                                 .is_some_and(|m| filter.artists.contains(m)))
                             && (filter.appears_on.is_empty() || appears_on.contains(a.id.as_str()))
+                            && filter.played.is_none_or(|played| a.played == played)
                             && filter.search.as_deref().is_none_or(|needle| {
                                 matches(&[Some(a.title.as_str()), a.artist_name.as_deref()], needle)
                             })
@@ -637,6 +636,40 @@ impl LibraryRead for FakeLibrary {
                 rows.favorites.remove(&key);
             }
         });
+        Ok(())
+    }
+
+    async fn item(
+        &self,
+        user_id: &str,
+        kind: &str,
+        internal: &str,
+    ) -> Result<Option<ItemView>, ReadFailed> {
+        Ok(match kind {
+            "track" => self
+                .track(user_id, internal)
+                .await
+                .map(|item| ItemView::Track(Box::new(item))),
+            "album" => self
+                .album(user_id, internal)
+                .await
+                .map(|item| ItemView::Album(Box::new(item))),
+            "artist" => self
+                .artist(user_id, internal)
+                .await
+                .map(|item| ItemView::Artist(Box::new(item))),
+            _ => None,
+        })
+    }
+
+    /// The fake keeps no marks: the tests over it never send one.
+    async fn set_played(
+        &self,
+        _user_id: &str,
+        _kind: &str,
+        _internal: &str,
+        _played: bool,
+    ) -> Result<(), WriteRefusal> {
         Ok(())
     }
 

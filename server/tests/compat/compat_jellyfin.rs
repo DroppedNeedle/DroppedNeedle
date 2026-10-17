@@ -111,6 +111,7 @@ fn seed_jellyfin(library: &FakeLibrary, engine: &MemoryEngine) {
             total_duration_seconds: Some(seconds),
             date_added: Some(added),
             starred: false,
+            played: plays > 0,
             play_count: plays,
             last_played,
             image_tag: None,

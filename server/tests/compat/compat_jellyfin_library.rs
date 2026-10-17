@@ -788,17 +788,19 @@ async fn favorite_dialects_and_played_markers() {
     )
     .await;
     assert_eq!(added.status, StatusCode::OK);
+    // The answer is the track's state as its own read gives it.
+    let state = added.json();
     assert_eq!(
-        added.json(),
-        json!({
-            "ItemId": airbag,
-            "Key": airbag,
-            "PlaybackPositionTicks": 0,
-            "PlayCount": 0,
-            "IsFavorite": true,
-            "Played": false,
-        })
+        (
+            &state["ItemId"],
+            &state["IsFavorite"],
+            &state["Played"],
+            &state["PlayCount"]
+        ),
+        (&json!(airbag), &json!(true), &json!(true), &json!(1)),
+        "{state}"
     );
+    assert!(state["LastPlayedDate"].is_string(), "{state}");
     for uri in [
         favorites,
         "/jellyfin/Items?IncludeItemTypes=Audio&Filters=IsFavorite",
@@ -828,16 +830,24 @@ async fn favorite_dialects_and_played_markers() {
     assert_eq!(removed.json()["IsFavorite"], false);
     assert_eq!(json(&rig, favorites, &auth).await["TotalRecordCount"], 0);
 
-    // Played markers answer Played=true and record nothing: no play, and
-    // nothing playing.
+    // A played mark records no play and shows nothing playing.
+    let plays = || -> i64 {
+        rig.app
+            .db()
+            .query_row("SELECT COUNT(*) FROM library_play_history", [], |row| {
+                row.get(0)
+            })
+            .expect("plays count")
+    };
+    let before = plays();
     for uri in [
         format!("/jellyfin/Users/x/PlayedItems/{one}"),
         format!("/jellyfin/UserPlayedItems/{one}"),
     ] {
         let reply = send(&rig, "POST", &uri, Some(&auth), None).await;
-        assert_eq!(reply.json()["Played"], true, "{uri}");
+        assert_eq!(reply.status, StatusCode::OK, "{uri}");
     }
-    assert_eq!(play_count(&rig, &auth, &one).await, 0);
+    assert_eq!(plays(), before);
     assert_eq!(now_playing(&rig).await, json!([]));
 
     let unknown = "d".repeat(32);

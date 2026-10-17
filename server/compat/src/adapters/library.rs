@@ -15,12 +15,13 @@ use std::sync::Arc;
 use droppedneedle_catalog::reads::collections::service::{
     CollectionsService, LOCAL_SOURCE, Visible,
 };
+use droppedneedle_catalog::reads::collections::store::play_marks::MarkScope;
 use droppedneedle_catalog::reads::collections::store::playlists::NewEntry;
 use droppedneedle_catalog::reads::collections::store::ratings::{ItemRating, RatedKind};
 use droppedneedle_catalog::reads::collections::{CollectionsState, error::CollectionsError};
 use droppedneedle_catalog::reads::library::player::{
-    AlbumOrder, AlbumQuery, PlayStat, PlayerAlbum, PlayerCatalog, PlayerIds, PlayerTrack,
-    ShuffleSeeds, TrackOrder, TrackQuery,
+    AlbumOrder, AlbumQuery, PlayStat, PlayedValues, PlayerAlbum, PlayerCatalog, PlayerIds,
+    PlayerTrack, ShuffleSeeds, TrackOrder, TrackQuery,
 };
 use droppedneedle_catalog::reads::library::stores::{
     ArtistRecord, ArtistScope, ArtistSort, GenreRecord, LibraryCatalog, LyricDoc, LyricsPort,
@@ -444,6 +445,27 @@ impl CompatLibrary {
         ids: &[String],
     ) -> Result<HashMap<String, PlayStat>, CompatError> {
         Ok(self.player.play_stats(user_id, kind, ids).await?)
+    }
+
+    /// The user's values for some albums or tracks as Jellyfin apps see
+    /// them, with the user's played and unplayed marks weighed in.
+    pub async fn played_values(
+        &self,
+        user_id: &str,
+        kind: &str,
+        ids: &[String],
+    ) -> Result<HashMap<String, PlayedValues>, CompatError> {
+        Ok(self.player.played_values(user_id, kind, ids).await?)
+    }
+
+    /// Mark the tracks `scope` covers played or unplayed for the user.
+    pub async fn mark_played(
+        &self,
+        user_id: &str,
+        scope: MarkScope<'_>,
+        played: bool,
+    ) -> Result<(), CompatError> {
+        Ok(self.service().mark_played(user_id, scope, played).await?)
     }
 
     /// The MusicBrainz ids players are sent for some albums and artists.

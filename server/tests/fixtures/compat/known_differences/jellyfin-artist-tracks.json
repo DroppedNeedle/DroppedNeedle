@@ -1,0 +1,5 @@
+{
+  "differences": [
+    {"server": "jellyfin", "object": "body", "key": "Items", "kind": "empty", "rows": ["played/items.artist-ids.various_artists"], "reason": "Jellyfin's ArtistIds filter also lists the tracks on albums the artist leads, so the compilation's song is listed under Various Artists, its album artist. The app's ArtistIds lists the tracks that credit the artist, and no track credits Various Artists; its AlbumArtistIds lists the song, as Jellyfin's does."}
+  ]
+}

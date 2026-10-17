@@ -2691,3 +2691,291 @@ async fn lyrics_come_from_the_file_first() {
     rig.stop().await;
     server.abort();
 }
+
+/// A Jellyfin GET as the app with `auth` sends it, answered 200.
+async fn jellyfin_get(rig: &CompatApp, auth: &str, uri: &str) -> Value {
+    let (status, body) = rig
+        .app
+        .call("GET", uri, &[("X-Emby-Authorization", auth)], None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+    body
+}
+
+/// The names a Jellyfin list holds, in its order.
+async fn jellyfin_names(rig: &CompatApp, auth: &str, uri: &str) -> Vec<String> {
+    jellyfin_get(rig, auth, uri).await["Items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| item["Name"].as_str().expect("a name").to_owned())
+        .collect()
+}
+
+/// `(Played, PlayCount, has a LastPlayedDate)` of one item's `UserData`.
+fn play_state(user_data: &Value) -> (Value, Value, bool) {
+    (
+        user_data["Played"].clone(),
+        user_data["PlayCount"].clone(),
+        user_data["LastPlayedDate"].is_string(),
+    )
+}
+
+/// Marking played and unplayed in Finamp (legacy paths) and Jellify
+/// (modern routes) is kept for the caller alone, whoever the path or a
+/// `userId` names, and only Jellyfin answers weigh it. A track marked
+/// unplayed counts only its later plays, and a track marked played with
+/// none counts once, newest in the history sort. One played track does not
+/// make a two-track album played; marking the album marks both, and
+/// unmarking it unmarks both. The play history, Subsonic's play counts and
+/// the other user's answers stay as they were.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jellyfin_played_marks_are_the_callers_and_leave_plays_alone() {
+    let rig = CompatApp::start("compat-played-marks").await;
+    let client = |name: &str, device: &str, token: &str| {
+        format!(
+            "MediaBrowser Client=\"{name}\", Device=\"{device}\", DeviceId=\"{device}\", \
+             Token=\"{token}\""
+        )
+    };
+    let finamp = client("Finamp", "pixel", &rig.secret);
+    let jellify = client("Jellify", "iphone", &rig.secret);
+    let subsonic_auth = rig.subsonic_auth("marks");
+    let login = rig.app.login_user("bystander").await;
+    let other = client(
+        "Finamp",
+        "tablet",
+        &rig.app_password(&login.authorization).await,
+    );
+    let other_id = jellyfin_get(&rig, &other, "/jellyfin/Users/Me").await["Id"]
+        .as_str()
+        .expect("the other user's id")
+        .to_owned();
+
+    let tracks_uri = "/jellyfin/Items?Recursive=true&IncludeItemTypes=Audio";
+    let tracks = jellyfin_get(&rig, &finamp, tracks_uri).await;
+    let jf_track = |title: &str| {
+        named(&tracks["Items"], "Name", title)["Id"]
+            .as_str()
+            .expect("a track id")
+            .to_owned()
+    };
+    let (one, teardrop, airbag, paranoid) = (
+        jf_track("One"),
+        jf_track("Teardrop"),
+        jf_track("Airbag"),
+        jf_track("Paranoid Android"),
+    );
+    let ok_computer = named(&tracks["Items"], "Name", "Airbag")["AlbumId"]
+        .as_str()
+        .expect("the album id")
+        .to_owned();
+    let songs = subsonic(&rig, "search3?query=&songCount=500", &subsonic_auth).await;
+    let song = |title: &str| {
+        named(&songs["searchResult3"]["song"], "title", title)["id"]
+            .as_str()
+            .expect("a song id")
+            .to_owned()
+    };
+    let state = |auth: &str, id: &str| {
+        let (rig, auth, uri) = (&rig, auth.to_owned(), format!("/jellyfin/Items/{id}"));
+        async move { play_state(&jellyfin_get(rig, &auth, &uri).await["UserData"]) }
+    };
+    let watched = [&one, &teardrop, &airbag, &paranoid, &ok_computer];
+    let mut bystander = Vec::new();
+    for id in watched {
+        bystander.push(state(&other, id).await);
+    }
+    let plays = || -> i64 {
+        rig.app
+            .db()
+            .query_row("SELECT COUNT(*) FROM library_play_history", [], |row| {
+                row.get(0)
+            })
+            .expect("plays count")
+    };
+    let now_ms = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("a clock after 1970")
+            .as_millis() as i64
+    };
+    // A play from a Subsonic app `ago` seconds back, waited for.
+    let scrobble = |title: &str, ago: i64| {
+        let call = format!(
+            "scrobble?id={}&submission=true&time={}",
+            song(title),
+            now_ms() - ago * 1000
+        );
+        let (rig, auth) = (&rig, subsonic_auth.clone());
+        async move {
+            let before = plays();
+            assert_eq!(subsonic(rig, &call, &auth).await["status"], "ok");
+            rig.app
+                .until("the play is recorded", || async {
+                    (plays() > before).then_some(())
+                })
+                .await;
+        }
+    };
+    let mark = |auth: &str, method: &str, uri: String| {
+        let (rig, auth, method) = (&rig, auth.to_owned(), method.to_owned());
+        async move {
+            let (status, answer) = rig
+                .app
+                .call(
+                    &method,
+                    &uri,
+                    &[("X-Emby-Authorization", auth.as_str())],
+                    None,
+                )
+                .await;
+            assert_eq!(status, StatusCode::OK, "{method} {uri}: {answer}");
+            play_state(&answer)
+        }
+    };
+    let subsonic_plays = |title: &str| {
+        let (rig, call, auth) = (
+            &rig,
+            format!("getSong?id={}", song(title)),
+            subsonic_auth.clone(),
+        );
+        async move { subsonic(rig, &call, &auth).await["song"]["playCount"].clone() }
+    };
+    let played = (json!(true), json!(1), true);
+    let unplayed = (json!(false), json!(0), false);
+
+    // A track with a play, marked unplayed in Finamp on a path naming the
+    // other user: the mark is the caller's, and the play is kept.
+    scrobble("One", 3600).await;
+    assert_eq!(state(&finamp, &one).await, played);
+    let recorded = plays();
+    let answer = mark(
+        &finamp,
+        "DELETE",
+        format!("/jellyfin/Users/{other_id}/PlayedItems/{one}"),
+    )
+    .await;
+    assert_eq!(answer, unplayed);
+    assert_eq!(state(&finamp, &one).await, unplayed);
+    let filtered = |filter: &str| format!("{tracks_uri}&Filters={filter}");
+    assert!(
+        !jellyfin_names(&rig, &finamp, &filtered("IsPlayed"))
+            .await
+            .contains(&"One".to_owned())
+    );
+    assert!(
+        jellyfin_names(&rig, &finamp, &filtered("IsUnplayed"))
+            .await
+            .contains(&"One".to_owned())
+    );
+    assert_eq!(plays(), recorded);
+    assert_eq!(subsonic_plays("One").await, json!(1));
+
+    // A stop after the mark counts again. A mark and a play both read the
+    // clock, a play in whole seconds, so the mark moves back a minute.
+    rig.app
+        .db()
+        .execute(
+            "UPDATE library_user_play_marks SET marked_unplayed_at = marked_unplayed_at - 60000",
+            [],
+        )
+        .expect("the mark moves back");
+    let (status, _) = rig
+        .app
+        .call(
+            "POST",
+            "/jellyfin/Sessions/Playing/Stopped",
+            &[("X-Emby-Authorization", finamp.as_str())],
+            Some(json!({"ItemId": one})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    rig.app
+        .until("the stop counts", || async {
+            (state(&finamp, &one).await.1 == json!(1)).then_some(())
+        })
+        .await;
+    assert_eq!(state(&finamp, &one).await, played);
+
+    // A track never played, marked played in Jellify with another user's
+    // id as `userId`: one play, dated now, ahead of a play two hours old.
+    scrobble("Song A", 7200).await;
+    let recorded = plays();
+    let teardrop_plays = subsonic_plays("Teardrop").await;
+    let answer = mark(
+        &jellify,
+        "POST",
+        format!("/jellyfin/UserPlayedItems/{teardrop}?userId={other_id}"),
+    )
+    .await;
+    assert_eq!(answer, played);
+    assert_eq!(state(&jellify, &teardrop).await, played);
+    let recent = jellyfin_names(
+        &rig,
+        &jellify,
+        &format!("{tracks_uri}&SortBy=DatePlayed&SortOrder=Descending"),
+    )
+    .await;
+    let at = |title: &str| {
+        recent
+            .iter()
+            .position(|name| name == title)
+            .expect("listed")
+    };
+    assert!(at("Teardrop") < at("Song A"), "{recent:?}");
+    assert_eq!(plays(), recorded);
+    assert_eq!(subsonic_plays("Teardrop").await, teardrop_plays);
+
+    // One of the album's two tracks played: the album is not played. The
+    // album marked played marks both, and unmarked, unmarks both.
+    scrobble("Airbag", 3600).await;
+    let recorded = plays();
+    let albums_uri = "/jellyfin/Items?Recursive=true&IncludeItemTypes=MusicAlbum";
+    let albums = |filter: &str| {
+        let (rig, uri) = (&rig, format!("{albums_uri}&Filters={filter}"));
+        let auth = finamp.clone();
+        async move { jellyfin_names(rig, &auth, &uri).await }
+    };
+    let ok = "OK Computer".to_owned();
+    assert_eq!(state(&finamp, &ok_computer).await.0, json!(false));
+    assert!(!albums("IsPlayed").await.contains(&ok));
+    assert!(albums("IsUnplayed").await.contains(&ok));
+    let answer = mark(
+        &finamp,
+        "POST",
+        format!("/jellyfin/Users/{other_id}/PlayedItems/{ok_computer}"),
+    )
+    .await;
+    assert_eq!(answer.0, json!(true));
+    assert_eq!(state(&finamp, &ok_computer).await.0, json!(true));
+    for track in [&airbag, &paranoid] {
+        assert_eq!(state(&finamp, track).await, played);
+    }
+    assert!(albums("IsPlayed").await.contains(&ok));
+    let answer = mark(
+        &jellify,
+        "DELETE",
+        format!("/jellyfin/UserPlayedItems/{ok_computer}"),
+    )
+    .await;
+    assert_eq!(answer, unplayed);
+    for item in [&ok_computer, &airbag, &paranoid] {
+        assert_eq!(state(&jellify, item).await, unplayed);
+    }
+    assert!(!albums("IsPlayed").await.contains(&ok));
+    assert_eq!(plays(), recorded);
+    assert_eq!(subsonic_plays("Airbag").await, json!(1));
+    assert_eq!(subsonic_plays("One").await, json!(2));
+
+    // The other user saw none of it.
+    for (id, before) in watched.into_iter().zip(&bystander) {
+        assert_eq!(&state(&other, id).await, before, "{id}");
+    }
+    assert!(
+        jellyfin_names(&rig, &other, &filtered("IsPlayed"))
+            .await
+            .is_empty()
+    );
+    rig.stop().await;
+}

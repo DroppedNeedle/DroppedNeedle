@@ -2,8 +2,9 @@
 //!
 //! [`JellyfinLibrary`] serves the Jellyfin routes from the v3 catalog and
 //! the shared collections. Every list is one SQL page (filter, order,
-//! LIMIT) plus its count; the caller's favorites and play counts are read
-//! for that page only, and image tags come from the rows themselves.
+//! LIMIT) plus its count; the caller's favorites and play state (plays
+//! weighed against the caller's played and unplayed marks) are read for
+//! that page only, and image tags come from the rows themselves.
 //!
 //! [`CatalogIds`] makes album and artist ids with the data key, so nobody
 //! without an account can work one out, and every other id as
@@ -21,10 +22,11 @@ use crate::jellyfin::builders::LIBRARY_INTERNAL_ID;
 use crate::jellyfin::params::SortKey;
 use crate::jellyfin::seams::{
     AlbumFilter, AlbumView, ArtistScope, ArtistView, CoverBytes, GenreView, IdMap, ItemSort,
-    LibraryRead, LyricsView, PlaylistDetail, PlaylistEntry, PlaylistView, ReadFailed, TrackFilter,
-    TrackView, WriteRefusal,
+    ItemView, LibraryRead, LyricsView, PlaylistDetail, PlaylistEntry, PlaylistView, ReadFailed,
+    TrackFilter, TrackView, WriteRefusal,
 };
 use crate::subsonic::views::{genre_slug, song_path};
+use droppedneedle_catalog::reads::collections::store::play_marks::MarkScope;
 use droppedneedle_catalog::reads::library::player::{
     AlbumOrder, AlbumQuery, OrderKey, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
 };
@@ -81,6 +83,7 @@ fn track_view(track: PlayerTrack) -> TrackView {
         release_mbid: None,
         path: song_path(&track.relative_path),
         starred: false,
+        played: false,
         play_count: 0,
         last_played: None,
         album_image_tag,
@@ -107,6 +110,7 @@ fn album_view(album: PlayerAlbum) -> AlbumView {
         total_duration_seconds: Some(record.total_duration_seconds),
         date_added: record.date_added,
         starred: false,
+        played: false,
         play_count: 0,
         last_played: None,
         image_tag,
@@ -160,7 +164,7 @@ impl JellyfinLibrary {
             .map(|view| view.file_id.clone())
             .collect::<Vec<_>>();
         let starred = self.library.starred(user_id, "track", &ids).await?;
-        let plays = self.library.plays(user_id, "track", &ids).await?;
+        let plays = self.library.played_values(user_id, "track", &ids).await?;
         let player_ids = self
             .library
             .player_ids(
@@ -185,9 +189,10 @@ impl JellyfinLibrary {
                 view.artist_musicbrainz_id = Some(mbid.clone());
             }
             view.starred = starred.contains_key(&view.file_id);
-            if let Some((count, last)) = plays.get(&view.file_id) {
-                view.play_count = *count;
-                view.last_played = *last;
+            if let Some(values) = plays.get(&view.file_id) {
+                view.played = values.played;
+                view.play_count = values.plays;
+                view.last_played = values.last_played;
             }
         }
         Ok(views)
@@ -200,7 +205,7 @@ impl JellyfinLibrary {
     ) -> Result<Vec<AlbumView>, CompatError> {
         let ids = views.iter().map(|view| view.id.clone()).collect::<Vec<_>>();
         let starred = self.library.starred(user_id, "album", &ids).await?;
-        let plays = self.library.plays(user_id, "album", &ids).await?;
+        let plays = self.library.played_values(user_id, "album", &ids).await?;
         let player_ids = self.library.player_ids(&ids, &[]).await?;
         for view in &mut views {
             if let Some(album) = player_ids.albums.get(&view.id) {
@@ -208,9 +213,10 @@ impl JellyfinLibrary {
                 view.release_mbid = album.release_mbid.clone();
             }
             view.starred = starred.contains_key(&view.id);
-            if let Some((count, last)) = plays.get(&view.id) {
-                view.play_count = *count;
-                view.last_played = *last;
+            if let Some(values) = plays.get(&view.id) {
+                view.played = values.played;
+                view.play_count = values.plays;
+                view.last_played = values.last_played;
             }
         }
         Ok(views)
@@ -231,6 +237,52 @@ impl JellyfinLibrary {
             view.track_count = usize::try_from(tracks).unwrap_or(usize::MAX);
         }
         Ok(views)
+    }
+
+    /// Tracks by id in the order asked; unknown ids drop out.
+    async fn read_tracks(
+        &self,
+        user_id: &str,
+        ids: &[String],
+    ) -> Result<Vec<TrackView>, CompatError> {
+        let mut unique = ids.to_vec();
+        unique.sort();
+        unique.dedup();
+        let found = self.library.tracks_by_ids(&unique).await?;
+        let views = found.into_iter().map(track_view).collect();
+        let views = self.overlay_tracks(user_id, views).await?;
+        Ok(in_order(ids, views, |view| view.file_id.as_str()))
+    }
+
+    /// Albums with a streamable track, by id in the order asked.
+    async fn read_albums(
+        &self,
+        user_id: &str,
+        ids: &[String],
+    ) -> Result<Vec<AlbumView>, CompatError> {
+        let found = self
+            .library
+            .albums_in_order(ids)
+            .await?
+            .into_iter()
+            .filter(|album| album.record.track_count > 0)
+            .map(album_view)
+            .collect();
+        self.overlay_albums(user_id, found).await
+    }
+
+    async fn read_artist(
+        &self,
+        user_id: &str,
+        id: &str,
+    ) -> Result<Option<ArtistView>, CompatError> {
+        let Some(artist) = self.library.artist(id).await? else {
+            return Ok(None);
+        };
+        Ok(self
+            .overlay_artists(user_id, vec![artist_view(artist)])
+            .await?
+            .pop())
     }
 
     async fn readable_entries(
@@ -363,17 +415,7 @@ impl LibraryRead for JellyfinLibrary {
     }
 
     async fn tracks_by_ids(&self, user_id: &str, ids: &[String]) -> Vec<TrackView> {
-        let outcome = async {
-            let mut unique = ids.to_vec();
-            unique.sort();
-            unique.dedup();
-            let found = self.library.tracks_by_ids(&unique).await?;
-            let views = found.into_iter().map(track_view).collect();
-            let views = self.overlay_tracks(user_id, views).await?;
-            Ok(in_order(ids, views, |view| view.file_id.as_str()))
-        }
-        .await;
-        logged("tracks_by_ids", outcome)
+        logged("tracks_by_ids", self.read_tracks(user_id, ids).await)
     }
 
     async fn track(&self, user_id: &str, file_id: &str) -> Option<TrackView> {
@@ -395,7 +437,11 @@ impl LibraryRead for JellyfinLibrary {
                 q: filter.search.clone(),
                 album_artist_ids: filter.artists.clone(),
                 appears_on: filter.appears_on.clone(),
-                listener: history_user(sort, user_id),
+                listener: filter
+                    .played
+                    .map(|_| user_id.to_owned())
+                    .or_else(|| history_user(sort, user_id)),
+                played: filter.played,
                 ..AlbumQuery::default()
             };
             let (albums, total) = self
@@ -417,19 +463,7 @@ impl LibraryRead for JellyfinLibrary {
     }
 
     async fn albums_by_ids(&self, user_id: &str, ids: &[String]) -> Vec<AlbumView> {
-        let outcome = async {
-            let found = self
-                .library
-                .albums_in_order(ids)
-                .await?
-                .into_iter()
-                .filter(|album| album.record.track_count > 0)
-                .map(album_view)
-                .collect();
-            self.overlay_albums(user_id, found).await
-        }
-        .await;
-        logged("albums_by_ids", outcome)
+        logged("albums_by_ids", self.read_albums(user_id, ids).await)
     }
 
     async fn album(&self, user_id: &str, rg_mbid: &str) -> Option<AlbumView> {
@@ -463,17 +497,35 @@ impl LibraryRead for JellyfinLibrary {
     }
 
     async fn artist(&self, user_id: &str, mbid: &str) -> Option<ArtistView> {
-        let outcome = async {
-            let Some(artist) = self.library.artist(mbid).await? else {
-                return Ok(None);
-            };
-            Ok(self
-                .overlay_artists(user_id, vec![artist_view(artist)])
-                .await?
-                .pop())
-        }
-        .await;
-        logged("artist", outcome)
+        logged("artist", self.read_artist(user_id, mbid).await)
+    }
+
+    async fn item(
+        &self,
+        user_id: &str,
+        kind: &str,
+        internal: &str,
+    ) -> Result<Option<ItemView>, ReadFailed> {
+        let ids = [internal.to_owned()];
+        let outcome = match kind {
+            "track" => self
+                .read_tracks(user_id, &ids)
+                .await
+                .map(|mut found| found.pop().map(|item| ItemView::Track(Box::new(item)))),
+            "album" => self
+                .read_albums(user_id, &ids)
+                .await
+                .map(|mut found| found.pop().map(|item| ItemView::Album(Box::new(item)))),
+            "artist" => self
+                .read_artist(user_id, internal)
+                .await
+                .map(|found| found.map(|item| ItemView::Artist(Box::new(item)))),
+            _ => Ok(None),
+        };
+        outcome.map_err(|error| {
+            tracing::error!(%error, "jellyfin item read failed");
+            ReadFailed
+        })
     }
 
     async fn genres(&self) -> Vec<GenreView> {
@@ -582,6 +634,24 @@ impl LibraryRead for JellyfinLibrary {
             .library
             .set_favorites(user_id, &[(kind.to_owned(), internal.to_owned())], add)
             .await?)
+    }
+
+    async fn set_played(
+        &self,
+        user_id: &str,
+        kind: &str,
+        internal: &str,
+        played: bool,
+    ) -> Result<(), WriteRefusal> {
+        // An artist marks the tracks Jellyfin 10.10.6 marked when asked:
+        // those on the albums the artist leads (its `AlbumArtistIds`).
+        let scope = match kind {
+            "track" => MarkScope::Track(internal),
+            "album" => MarkScope::Album(internal),
+            "artist" => MarkScope::AlbumArtist(internal),
+            _ => return Err(WriteRefusal::Invalid),
+        };
+        Ok(self.library.mark_played(user_id, scope, played).await?)
     }
 
     async fn cover(&self, rg_mbid: &str, size: &str) -> Option<CoverBytes> {
