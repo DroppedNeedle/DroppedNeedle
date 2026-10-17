@@ -56594,7 +56594,7 @@
                 "description": "How the web UI's content-security policy is sent."
               }
             ],
-            "default": "report_only"
+            "default": "enforce"
           },
           "frame_ancestors": {
             "type": "array",

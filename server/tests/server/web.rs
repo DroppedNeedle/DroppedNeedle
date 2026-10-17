@@ -127,7 +127,9 @@ fn directive<'a>(policy: &'a str, name: &str) -> Vec<&'a str> {
 
 /// The page is the only answer that may run script, and only its own: the
 /// files it ships and the one inline script, by the hash of the text the
-/// browser gets. Every other native answer runs nothing. Compat answers are
+/// browser gets. As installed the browser enforces it, and no directive in
+/// it allows `unsafe-inline` or `unsafe-eval`. Every other native answer
+/// runs nothing. Compat answers are
 /// compared with real servers, so they gain no header at all.
 #[tokio::test]
 async fn the_page_runs_only_its_own_scripts_and_nothing_else_runs_anything() {
@@ -148,17 +150,14 @@ async fn the_page_runs_only_its_own_scripts_and_nothing_else_runs_anything() {
     assert_ne!(served, hash(boot_script(BASE_PATH_PLACEHOLDER)));
 
     let is_the_page = |headers: &HeaderMap, what: &str| {
-        let policy = text(headers, REPORTING).unwrap_or_else(|| panic!("{what}: no policy"));
-        assert_eq!(
-            text(headers, ENFORCED),
-            Some("frame-src 'self' https://www.youtube.com; frame-ancestors 'none'"),
-            "{what}"
-        );
+        let policy = text(headers, ENFORCED).unwrap_or_else(|| panic!("{what}: no policy"));
+        assert_eq!(text(headers, REPORTING), None, "{what}");
         let scripts = directive(policy, "script-src");
         assert!(scripts.contains(&served.as_str()), "{what}: {policy}");
         assert!(scripts.contains(&"'self'"), "{what}: {policy}");
-        for loose in ["'unsafe-inline'", "'unsafe-eval'", "'strict-dynamic'"] {
-            assert!(!scripts.contains(&loose), "{what}: {policy}");
+        assert!(!scripts.contains(&"'strict-dynamic'"), "{what}: {policy}");
+        for loose in ["'unsafe-inline'", "'unsafe-eval'"] {
+            assert!(!policy.contains(loose), "{what}: {policy}");
         }
         assert_eq!(directive(policy, "default-src"), ["'none'"], "{what}");
         assert_eq!(directive(policy, "frame-ancestors"), ["'none'"], "{what}");

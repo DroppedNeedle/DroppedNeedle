@@ -21711,7 +21711,7 @@ export interface components {
         };
         /** @description Security posture settings (no secrets; the HIBP path is a local file). */
         SecuritySettings: {
-            /** @default report_only */
+            /** @default enforce */
             content_security_policy: components["schemas"]["ContentSecurityPolicyMode"];
             /**
              * @description Up to eight origins that may show DroppedNeedle in a frame, such as

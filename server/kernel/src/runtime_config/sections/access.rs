@@ -40,11 +40,11 @@ impl DownloadAccess {
 #[serde(rename_all = "snake_case")]
 pub enum ContentSecurityPolicyMode {
     /// The browser refuses what the policy does not allow.
+    #[default]
     Enforce,
     /// The browser lists in its console what the policy would refuse and
     /// refuses nothing, except that who may frame the web UI and where its
     /// frames may go are still enforced.
-    #[default]
     ReportOnly,
     /// No policy is added to the web UI or to other responses. The plugin
     /// panel page and the remote image relay keep their own policies in

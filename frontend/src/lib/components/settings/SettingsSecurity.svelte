@@ -40,7 +40,7 @@
 		hsts_include_subdomains: false,
 		hsts_preload: false,
 		library_download_access: 'everyone',
-		content_security_policy: 'report_only',
+		content_security_policy: 'enforce',
 		frame_ancestors: []
 	};
 

@@ -701,7 +701,6 @@ async fn the_page_policy_follows_the_saved_mode_and_framing_list() {
     const PAGE: &str = "/library";
     const API: &str = "/api/v3/auth/setup/status";
     const BARE: &str = "default-src 'none'; frame-ancestors 'none'; sandbox";
-    const FRAMING_ONLY: &str = "frame-src 'self' https://www.youtube.com; frame-ancestors 'none'";
     // sha256 of `boot()`.
     const BOOT: &str = "'sha256-MeZS89WlF0u+o0hCvHTBt4q1WHU+U+sJKgbdRUc36mY='";
     let dir = scratch("page-policy");
@@ -725,13 +724,12 @@ async fn the_page_policy_follows_the_saved_mode_and_framing_list() {
         sources.to_owned()
     };
 
-    // As installed: reported, except who may frame the page and where its
-    // frames go, which are enforced: nobody may frame the app.
+    // As installed: enforced, and nobody may frame the app.
     let (enforced, reported) = policies(&router, PAGE).await;
-    let reported = reported.expect("the page reports");
-    assert_eq!(enforced.as_deref(), Some(FRAMING_ONLY));
-    assert!(reported.contains(BOOT), "{reported}");
-    assert_eq!(framing(&reported), "'none'");
+    let enforced = enforced.expect("the page enforces");
+    assert_eq!(reported, None);
+    assert!(enforced.contains(BOOT), "{enforced}");
+    assert_eq!(framing(&enforced), "'none'");
     assert_eq!(policies(&router, API).await, (Some(BARE.to_owned()), None));
     // What a browser that has the page cached asks: the status, and the
     // tag it would cache next.
@@ -746,9 +744,9 @@ async fn the_page_policy_follows_the_saved_mode_and_framing_list() {
         let etag = response.headers()["etag"].to_str().unwrap().to_owned();
         (response.status().as_u16(), etag)
     };
-    let (code, cached_reporting) = revalidate("\"none\"".to_owned()).await;
+    let (code, cached_installed) = revalidate("\"none\"".to_owned()).await;
     assert_eq!(code, 200);
-    assert_eq!(revalidate(cached_reporting.clone()).await.0, 304);
+    assert_eq!(revalidate(cached_installed.clone()).await.0, 304);
 
     let (code, body) = save(serde_json::json!({
         "hibp_check": false,
@@ -771,9 +769,9 @@ async fn the_page_policy_follows_the_saved_mode_and_framing_list() {
     );
     // A browser keeps a cached page's headers that a 304 leaves out, so the
     // page it cached under the old settings is sent again in full.
-    let (code, cached_enforcing) = revalidate(cached_reporting.clone()).await;
+    let (code, cached_enforcing) = revalidate(cached_installed.clone()).await;
     assert_eq!(code, 200);
-    assert_ne!(cached_enforcing, cached_reporting);
+    assert_ne!(cached_enforcing, cached_installed);
     assert_eq!(revalidate(cached_enforcing.clone()).await.0, 304);
     // Only the page can be framed: every other answer still refuses.
     assert_eq!(policies(&router, API).await, (Some(BARE.to_owned()), None));
@@ -827,8 +825,8 @@ async fn the_page_policy_follows_the_saved_mode_and_framing_list() {
     let (code, body) = save(serde_json::json!({"hibp_check": false})).await;
     assert_eq!(code, 200, "{body}");
     let (enforced, reported) = policies(&router, PAGE).await;
-    assert_eq!(enforced.as_deref(), Some(FRAMING_ONLY));
-    assert_eq!(framing(&reported.expect("the page reports")), "'none'");
+    assert_eq!(reported, None);
+    assert_eq!(framing(&enforced.expect("the page enforces")), "'none'");
 
     drop(router);
     running.shut_down().await;
@@ -852,7 +850,7 @@ async fn the_policy_mode_set_from_the_host_is_served_at_the_next_boot() {
     let (router, background) = build(config.clone()).await.unwrap();
     let running = start(router.clone(), background).await;
     let (enforced, reported) = policies(&router, "/").await;
-    assert!(reported.is_some() && !enforced.unwrap().contains("script-src"));
+    assert!(enforced.unwrap().contains("script-src") && reported.is_none());
     // A running server holds the settings in memory: refused, nothing
     // written.
     let before = std::fs::read(&config_file).unwrap();
@@ -864,24 +862,29 @@ async fn the_policy_mode_set_from_the_host_is_served_at_the_next_boot() {
     drop(router);
     running.shut_down().await;
 
-    // Only that field changes.
+    // Only that field changes. Reported, except who may frame the page and
+    // where its frames go, which stay enforced.
     assert_eq!(
-        set_content_security_policy(&dirs, Mode::Enforce).unwrap(),
-        Mode::Enforce
+        set_content_security_policy(&dirs, Mode::ReportOnly).unwrap(),
+        Mode::ReportOnly
     );
     let stored: SecuritySettings = stored_settings(&config).get().unwrap();
     assert_eq!(
         stored,
         SecuritySettings {
             hibp_check: false,
-            content_security_policy: Mode::Enforce,
+            content_security_policy: Mode::ReportOnly,
             ..SecuritySettings::default()
         }
     );
     let (router, background) = build(config.clone()).await.unwrap();
     let running = start(router.clone(), background).await;
     let (enforced, reported) = policies(&router, "/").await;
-    assert!(enforced.is_some() && reported.is_none());
+    assert!(reported.unwrap().contains("script-src"));
+    assert_eq!(
+        enforced.as_deref(),
+        Some("frame-src 'self' https://www.youtube.com; frame-ancestors 'none'")
+    );
     drop(router);
     running.shut_down().await;
 
