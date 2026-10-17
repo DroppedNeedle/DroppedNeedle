@@ -22,6 +22,7 @@ use droppedneedle_kernel::runtime_config::Crypto;
 use serde_json::{Value, json};
 
 use crate::common::ScratchDir;
+use crate::common::auth::AuthRig;
 use crate::common::compat::{CompatApp, rest};
 
 /// One album by Portishead with one track, as a scan writes them.
@@ -431,6 +432,7 @@ struct Rig {
     _dir: ScratchDir,
     runtime: DbRuntime,
     reads: ReadsSetup,
+    _auth: AuthRig,
 }
 
 impl Rig {
@@ -449,11 +451,11 @@ impl Rig {
             })
             .await
             .unwrap();
-        let auth = droppedneedle_auth::wiring::AuthSetup::for_tests().unwrap();
+        let auth = AuthRig::on(&runtime);
         let ids: Arc<dyn droppedneedle_kernel::ids::IdGenerator> = Arc::new(UuidGenerator);
         let reads = ReadsSetup::build(
             runtime.pool(),
-            auth.users.clone(),
+            auth.deps.clone(),
             ids,
             crate::common::reads_inputs(
                 crate::common::config_store(&dir),
@@ -470,6 +472,7 @@ impl Rig {
             _dir: dir,
             runtime,
             reads,
+            _auth: auth,
         }
     }
 }

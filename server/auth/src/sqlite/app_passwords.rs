@@ -2,7 +2,7 @@
 
 use sqlx::Row as _;
 
-use super::{AuthDb, internal, is_write_conflict, op_error, store_error};
+use super::{AuthDb, is_write_conflict, op_error, store_error};
 use crate::times::{parse_iso, to_iso};
 use crate::users::models::AppPasswordRecord;
 use crate::users::stores::{AppPasswordStore, BoxFuture, StoreError};
@@ -51,9 +51,7 @@ impl AppPasswordStore for SqliteAppPasswordStore {
         max_active: u64,
     ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth app-password store is not wired"));
-            };
+            let lane = self.db.lane();
             let cap = i64::try_from(max_active).unwrap_or(i64::MAX);
             let outcome = lane
                 .write(Lane::Foreground, "auth.app_passwords.insert", move |tx| {
@@ -100,9 +98,7 @@ impl AppPasswordStore for SqliteAppPasswordStore {
         id: &'a str,
     ) -> BoxFuture<'a, Result<Option<AppPasswordRecord>, StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth app-password store is not wired"));
-            };
+            let pool = self.db.pool();
             let row = sqlx::query(&format!(
                 "SELECT {APP_PASSWORD_COLUMNS} FROM connect_app_passwords WHERE id = ?"
             ))
@@ -119,9 +115,7 @@ impl AppPasswordStore for SqliteAppPasswordStore {
         secret_sha256: &'a str,
     ) -> BoxFuture<'a, Result<Option<AppPasswordRecord>, StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth app-password store is not wired"));
-            };
+            let pool = self.db.pool();
             let row = sqlx::query(&format!(
                 "SELECT {APP_PASSWORD_COLUMNS} FROM connect_app_passwords \
                  WHERE secret_sha256 = ? AND revoked = 0"
@@ -139,9 +133,7 @@ impl AppPasswordStore for SqliteAppPasswordStore {
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<Vec<AppPasswordRecord>, StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth app-password store is not wired"));
-            };
+            let pool = self.db.pool();
             let rows = sqlx::query(&format!(
                 "SELECT {APP_PASSWORD_COLUMNS} FROM connect_app_passwords \
                  WHERE user_id = ? AND revoked = 0 ORDER BY created_at ASC, id ASC"
@@ -156,9 +148,7 @@ impl AppPasswordStore for SqliteAppPasswordStore {
 
     fn list_all_active<'a>(&'a self) -> BoxFuture<'a, Result<Vec<AppPasswordRecord>, StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth app-password store is not wired"));
-            };
+            let pool = self.db.pool();
             let rows = sqlx::query(&format!(
                 "SELECT {APP_PASSWORD_COLUMNS} FROM connect_app_passwords \
                  WHERE revoked = 0 ORDER BY user_id ASC, created_at ASC, id ASC"
@@ -172,9 +162,7 @@ impl AppPasswordStore for SqliteAppPasswordStore {
 
     fn revoke<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth app-password store is not wired"));
-            };
+            let lane = self.db.lane();
             let id = id.to_owned();
             let changed: usize = lane
                 .write(Lane::Foreground, "auth.app_passwords.revoke", move |tx| {
@@ -198,9 +186,7 @@ impl AppPasswordStore for SqliteAppPasswordStore {
         last_client: Option<&'a str>,
     ) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth app-password store is not wired"));
-            };
+            let lane = self.db.lane();
             let (secret_sha256, last_client) =
                 (secret_sha256.to_owned(), last_client.map(str::to_owned));
             lane.write(Lane::Foreground, "auth.app_passwords.touch", move |tx| {

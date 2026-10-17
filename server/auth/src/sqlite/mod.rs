@@ -40,8 +40,6 @@ mod recovery;
 mod sessions;
 mod users;
 
-use std::sync::Arc;
-
 use rusqlite::OptionalExtension as _;
 use sqlx::SqlitePool;
 
@@ -62,42 +60,29 @@ pub use users::{SqliteCredentialLookup, SqliteUserStore};
 
 /// Shared SQLite handle for every auth adapter: the reader pool plus the
 /// writer lane. `Clone` is cheap; clones share both.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct AuthDb {
-    inner: Option<Arc<AuthDbInner>>,
-}
-
-#[derive(Debug)]
-struct AuthDbInner {
     pool: SqlitePool,
     lane: WriteLane,
 }
 
 impl AuthDb {
-    /// Live handle over the runtime's pool and lane.
+    /// Handle over the runtime's pool and lane.
     pub fn new(pool: &SqlitePool, lane: &WriteLane) -> Self {
         Self {
-            inner: Some(Arc::new(AuthDbInner {
-                pool: pool.clone(),
-                lane: lane.clone(),
-            })),
+            pool: pool.clone(),
+            lane: lane.clone(),
         }
     }
 
-    /// Test handle with no database: every adapter operation fails closed.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn unwired() -> Self {
-        Self::default()
+    /// The reader pool.
+    fn pool(&self) -> &SqlitePool {
+        &self.pool
     }
 
-    fn live(&self) -> Option<(&SqlitePool, &WriteLane)> {
-        self.inner.as_ref().map(|inner| (&inner.pool, &inner.lane))
-    }
-
-    /// The pool and lane, for wiring sibling stores over the same database.
-    /// `None` on the unwired test handle.
-    pub fn handles(&self) -> Option<(SqlitePool, WriteLane)> {
-        self.live().map(|(pool, lane)| (pool.clone(), lane.clone()))
+    /// The writer lane.
+    fn lane(&self) -> &WriteLane {
+        &self.lane
     }
 
     /// Current unix time in whole seconds.

@@ -5,8 +5,8 @@ use rusqlite::OptionalExtension as _;
 use sqlx::Row as _;
 
 use super::{
-    AuthDb, USER_COLUMNS, internal, is_write_conflict, op_error, parse_local_data,
-    render_local_data, row_exists, store_error,
+    AuthDb, USER_COLUMNS, is_write_conflict, op_error, parse_local_data, render_local_data,
+    row_exists, store_error,
 };
 use crate::federated::users::ProviderBinding;
 use crate::session::login::{CredentialLookup, LocalCredential, LoginError};
@@ -61,9 +61,7 @@ impl UserStore for SqliteUserStore {
         id: &'a str,
     ) -> BoxFuture<'a, Result<Option<UserRecord>, StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let pool = self.db.pool();
             let row = sqlx::query(&format!(
                 "SELECT {USER_COLUMNS} FROM auth_users WHERE id = ?"
             ))
@@ -80,9 +78,7 @@ impl UserStore for SqliteUserStore {
         username: &'a str,
     ) -> BoxFuture<'a, Result<Option<UserRecord>, StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let pool = self.db.pool();
             let row = sqlx::query(&format!(
                 "SELECT {USER_COLUMNS} FROM auth_users WHERE username = ?"
             ))
@@ -99,9 +95,7 @@ impl UserStore for SqliteUserStore {
         email: &'a str,
     ) -> BoxFuture<'a, Result<Option<UserRecord>, StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let pool = self.db.pool();
             let row = sqlx::query(&format!(
                 "SELECT {USER_COLUMNS} FROM auth_users WHERE email = ?"
             ))
@@ -121,9 +115,7 @@ impl UserStore for SqliteUserStore {
             if ids.is_empty() {
                 return Ok(Vec::new());
             }
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let pool = self.db.pool();
             let placeholders = vec!["?"; ids.len()].join(", ");
             let sql = format!("SELECT {USER_COLUMNS} FROM auth_users WHERE id IN ({placeholders})");
             let mut query = sqlx::query(&sql);
@@ -140,9 +132,7 @@ impl UserStore for SqliteUserStore {
 
     fn insert<'a>(&'a self, user: UserRecord) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let lane = self.db.lane();
             let outcome = lane
                 .write(Lane::Foreground, "auth.users.insert", move |tx| {
                     insert_user_row(tx, &user)
@@ -158,9 +148,7 @@ impl UserStore for SqliteUserStore {
         credential: UsersLocalCredential,
     ) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let lane = self.db.lane();
             let outcome = lane
                 .write(Lane::Foreground, "auth.users.create", move |tx| {
                     insert_user_row(tx, &user)?;
@@ -177,9 +165,7 @@ impl UserStore for SqliteUserStore {
         credential: UsersLocalCredential,
     ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let lane = self.db.lane();
             let outcome = lane
                 .write(Lane::Foreground, "auth.users.create_first", move |tx| {
                     let any: Option<i64> = tx
@@ -209,9 +195,7 @@ impl UserStore for SqliteUserStore {
         avatar_url: Option<&'a str>,
     ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let lane = self.db.lane();
             let (id, display_name, avatar_url) = (
                 id.to_owned(),
                 display_name.map(str::to_owned),
@@ -238,9 +222,7 @@ impl UserStore for SqliteUserStore {
         username_display: &'a str,
     ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let lane = self.db.lane();
             let (id, username, username_display) = (
                 id.to_owned(),
                 username.to_owned(),
@@ -277,9 +259,7 @@ impl UserStore for SqliteUserStore {
         email: Option<&'a str>,
     ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let lane = self.db.lane();
             let (id, email) = (id.to_owned(), email.map(str::to_owned));
             let outcome: Result<bool, droppedneedle_kernel::db::DbError> = lane
                 .write(Lane::Foreground, "auth.users.email", move |tx| {
@@ -305,9 +285,7 @@ impl UserStore for SqliteUserStore {
         role: Role,
     ) -> BoxFuture<'a, Result<RoleChange, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let lane = self.db.lane();
             let id = id.to_owned();
             lane.write(Lane::Foreground, "auth.users.role", move |tx| {
                 let Some(current) = role_of(tx, &id)? else {
@@ -330,9 +308,7 @@ impl UserStore for SqliteUserStore {
 
     fn touch_login<'a>(&'a self, id: &'a str, at: i64) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let lane = self.db.lane();
             let id = id.to_owned();
             lane.write(Lane::Foreground, "auth.users.touch", move |tx| {
                 tx.execute(
@@ -349,9 +325,7 @@ impl UserStore for SqliteUserStore {
 
     fn delete<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<UserDeletion, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let lane = self.db.lane();
             let id = id.to_owned();
             lane.write(Lane::Foreground, "auth.users.delete", move |tx| {
                 let Some(current) = role_of(tx, &id)? else {
@@ -413,9 +387,7 @@ impl UserStore for SqliteUserStore {
         offset: u64,
     ) -> BoxFuture<'a, Result<(Vec<UserRecord>, u64), StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let pool = self.db.pool();
             let rows = sqlx::query(&format!(
                 "SELECT {USER_COLUMNS} FROM auth_users ORDER BY created_at ASC, id ASC \
                  LIMIT ? OFFSET ?"
@@ -435,9 +407,7 @@ impl UserStore for SqliteUserStore {
 
     fn provider_names<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<Vec<String>, StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let pool = self.db.pool();
             let rows: Vec<String> = sqlx::query_scalar(
                 "SELECT provider FROM auth_providers WHERE user_id = ? \
                  ORDER BY provider ASC",
@@ -455,9 +425,7 @@ impl UserStore for SqliteUserStore {
         id: &'a str,
     ) -> BoxFuture<'a, Result<Option<UsersLocalCredential>, StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let pool = self.db.pool();
             let row = sqlx::query(
                 "SELECT id, provider_data FROM auth_providers \
                  WHERE user_id = ? AND provider = 'local'",
@@ -490,9 +458,7 @@ impl UserStore for SqliteUserStore {
         credential: UsersLocalCredential,
     ) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let lane = self.db.lane();
             let outcome = lane
                 .write(Lane::Foreground, "auth.users.credential", move |tx| {
                     insert_local_row(tx, &credential)
@@ -511,9 +477,7 @@ impl UserStore for SqliteUserStore {
         keep_session_id: &'a str,
     ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let lane = self.db.lane();
             let (id, expected_hash, scheme, new_hash, keep) = (
                 id.to_owned(),
                 expected_hash.to_owned(),
@@ -545,9 +509,7 @@ impl UserStore for SqliteUserStore {
         new_hash: &'a str,
     ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let lane = self.db.lane();
             let (id, expected_hash, scheme, new_hash) = (
                 id.to_owned(),
                 expected_hash.to_owned(),
@@ -584,9 +546,7 @@ impl UserStore for SqliteUserStore {
         now: i64,
     ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let lane = self.db.lane();
             let code_hash = code_hash.to_owned();
             lane.write(
                 Lane::Foreground,
@@ -639,9 +599,7 @@ impl UserStore for SqliteUserStore {
         provider_uid: &'a str,
     ) -> BoxFuture<'a, Result<Option<ProviderBinding>, StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let pool = self.db.pool();
             let row = sqlx::query(
                 "SELECT id, user_id, provider, provider_uid FROM auth_providers \
                  WHERE provider = ? AND provider_uid = ?",
@@ -665,9 +623,7 @@ impl UserStore for SqliteUserStore {
         binding: ProviderBinding,
     ) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
+            let lane = self.db.lane();
             let outcome: Result<(), droppedneedle_kernel::db::DbError> = lane
                 .write(Lane::Foreground, "auth.users.bind", move |tx| {
                     tx.execute(
@@ -863,9 +819,7 @@ impl SqliteCredentialLookup {
 
 impl CredentialLookup for SqliteCredentialLookup {
     async fn local_user(&self, username_lc: &str) -> Result<Option<LocalCredential>, LoginError> {
-        let Some((pool, _)) = self.db.live() else {
-            return Err(LoginError::Unavailable);
-        };
+        let pool = self.db.pool();
         let row = sqlx::query(
             "SELECT u.id AS id, u.display_name AS display_name, \
              p.provider_data AS provider_data FROM auth_users u \

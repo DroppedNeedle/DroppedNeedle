@@ -27,9 +27,7 @@ impl SqliteOidcStateStore {
 
 impl OidcStateStore for SqliteOidcStateStore {
     async fn store_state(&self, state: &str, code_verifier: &str) -> Result<(), FederatedError> {
-        let Some((_, lane)) = self.db.live() else {
-            return Err(store_unavailable("auth OIDC store is not wired"));
-        };
+        let lane = self.db.lane();
         let (state, code_verifier) = (state.to_owned(), code_verifier.to_owned());
         lane.write(Lane::Foreground, "auth.oidc.store", move |tx| {
             let now = AuthDb::now_unix();
@@ -58,9 +56,7 @@ impl OidcStateStore for SqliteOidcStateStore {
     }
 
     async fn consume_state(&self, state: &str) -> Result<Option<String>, FederatedError> {
-        let Some((_, lane)) = self.db.live() else {
-            return Err(store_unavailable("auth OIDC store is not wired"));
-        };
+        let lane = self.db.lane();
         let state = state.to_owned();
         lane.write(Lane::Foreground, "auth.oidc.consume", move |tx| {
             let found: Option<(Option<String>, String)> = tx

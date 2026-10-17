@@ -131,6 +131,8 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
         MUSIC_ROOT_ID, V2_ALBUM_ID, build_v2_fixture, delete_orphan_rows,
     };
 
+    use crate::common::auth::AuthRig;
+
     const PASSPHRASE: &str = "operator-passphrase";
     const PINNED: &str = "rel-blue-jp";
     /// A pinned album that also has an active custom edition.
@@ -291,10 +293,9 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
         )
         .expect("config opens"),
     );
+    let auth = AuthRig::new("import-pinned").await;
     let library = LibrarySetup::for_tests_at(
-        droppedneedle_auth::wiring::AuthSetup::for_tests()
-            .expect("auth builds")
-            .users,
+        auth.deps.clone(),
         Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,
         &db_path,
         config,

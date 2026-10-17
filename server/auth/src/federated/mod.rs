@@ -122,12 +122,6 @@ impl MediaLinks {
     pub fn new(store: Arc<dyn MediaLinkStore>) -> Self {
         Self(store)
     }
-
-    /// Links for test bundles: every write fails.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn unwired() -> Self {
-        Self(Arc::new(UnwiredLinks))
-    }
 }
 
 impl PlexConnectionLink for MediaLinks {
@@ -139,29 +133,6 @@ impl PlexConnectionLink for MediaLinks {
 impl JellyfinConnectionLink for MediaLinks {
     async fn link(&self, user_id: &str, profile: &JellyfinProfile) -> Result<(), String> {
         self.0.link_jellyfin(user_id, profile).await
-    }
-}
-
-/// The store behind [`MediaLinks::unwired`].
-#[cfg(any(test, feature = "test-support"))]
-struct UnwiredLinks;
-
-#[cfg(any(test, feature = "test-support"))]
-impl MediaLinkStore for UnwiredLinks {
-    fn link_plex<'a>(
-        &'a self,
-        _user_id: &'a str,
-        _profile: &'a PlexProfile,
-    ) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async { Err("media links are not wired".to_owned()) })
-    }
-
-    fn link_jellyfin<'a>(
-        &'a self,
-        _user_id: &'a str,
-        _profile: &'a JellyfinProfile,
-    ) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async { Err("media links are not wired".to_owned()) })
     }
 }
 

@@ -7,8 +7,8 @@ use rusqlite::OptionalExtension as _;
 use sqlx::Row as _;
 
 use super::{
-    AuthDb, internal, is_write_conflict, op_error, parse_local_data, render_local_data,
-    store_error, store_unavailable,
+    AuthDb, is_write_conflict, op_error, parse_local_data, render_local_data, store_error,
+    store_unavailable,
 };
 use crate::federated::password_import::HashScheme;
 use crate::federated::{FederatedError, SessionIssuer};
@@ -62,9 +62,7 @@ impl SqliteSessionStore {
 
 impl SessionStore for SqliteSessionStore {
     async fn insert(&self, record: SessionRecord) -> Result<(), SessionStoreError> {
-        let Some((_, lane)) = self.db.live() else {
-            return Err(SessionStoreError::Unavailable);
-        };
+        let lane = self.db.lane();
         let stored_agent = match (&record.kind, &record.label) {
             (SessionKind::Companion, Some(label)) => {
                 Some(format!("{COMPANION_LABEL_PREFIX}{label}"))
@@ -139,9 +137,7 @@ impl SessionStore for SqliteSessionStore {
         token_hash: &str,
         now_unix: i64,
     ) -> Result<Option<SessionRecord>, SessionStoreError> {
-        let Some((pool, lane)) = self.db.live() else {
-            return Err(SessionStoreError::Unavailable);
-        };
+        let (pool, lane) = (self.db.pool(), self.db.lane());
         let row = sqlx::query(
             "SELECT id, user_id, token_hash, session_kind, user_agent, issued_at, expires_at, \
              last_seen_at, revoked FROM auth_tokens WHERE token_hash = ?",
@@ -340,9 +336,7 @@ impl SessionManager for SqliteSessionManager {
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<Vec<ManagedSession>, StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth session store is not wired"));
-            };
+            let pool = self.db.pool();
             let rows = sqlx::query(
                 "SELECT id, user_id, session_kind, user_agent, issued_at, last_seen_at, \
                  expires_at FROM auth_tokens WHERE user_id = ? AND revoked = 0",
@@ -390,9 +384,7 @@ impl SessionManager for SqliteSessionManager {
         session_id: &'a str,
     ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth session store is not wired"));
-            };
+            let lane = self.db.lane();
             let (user_id, session_id) = (user_id.to_owned(), session_id.to_owned());
             let changed: usize = lane
                 .write(Lane::Foreground, "auth.sessions.revoke", move |tx| {
@@ -413,9 +405,7 @@ impl SessionManager for SqliteSessionManager {
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<u64, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth session store is not wired"));
-            };
+            let lane = self.db.lane();
             let user_id = user_id.to_owned();
             let changed: usize = lane
                 .write(Lane::Foreground, "auth.sessions.revoke_all", move |tx| {
@@ -440,9 +430,7 @@ impl SessionManager for SqliteSessionManager {
         expires_at: i64,
     ) -> BoxFuture<'a, Result<ManagedSession, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth session store is not wired"));
-            };
+            let lane = self.db.lane();
             let agent = format!("{COMPANION_LABEL_PREFIX}{label}");
             let (id, user_id, token_hash) =
                 (id.to_owned(), user_id.to_owned(), token_hash.to_owned());
@@ -501,9 +489,7 @@ impl SessionManager for SqliteSessionManager {
         token_hash: &'a str,
     ) -> BoxFuture<'a, Result<Option<SessionOwner>, StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth session store is not wired"));
-            };
+            let pool = self.db.pool();
             let row = sqlx::query(
                 "SELECT id, user_id, session_kind, expires_at FROM auth_tokens \
                  WHERE token_hash = ? AND revoked = 0",
@@ -585,9 +571,7 @@ impl SessionIssuer for SqliteSessionIssuer {
             })
             .await
             .map_err(|error| store_unavailable(format!("cannot store session: {error}")))?;
-        let Some((_, lane)) = self.db.live() else {
-            return Err(store_unavailable("auth session store is not wired"));
-        };
+        let lane = self.db.lane();
         let user_id = user_id.to_owned();
         lane.write(Lane::Foreground, "auth.users.touch", move |tx| {
             tx.execute(

@@ -71,9 +71,7 @@ impl FederatedUserStore for SqliteFederatedStore {
         provider: &str,
         provider_uid: &str,
     ) -> Result<Option<ProviderBinding>, FederatedError> {
-        let Some((pool, _)) = self.db.live() else {
-            return Err(store_unavailable("auth federated store is not wired"));
-        };
+        let pool = self.db.pool();
         let row = sqlx::query(
             "SELECT id, user_id, provider, provider_uid FROM auth_providers \
              WHERE provider = ? AND provider_uid = ?",
@@ -92,9 +90,7 @@ impl FederatedUserStore for SqliteFederatedStore {
     }
 
     async fn get_user_by_id(&self, user_id: &str) -> Result<Option<StoredUser>, FederatedError> {
-        let Some((pool, _)) = self.db.live() else {
-            return Err(store_unavailable("auth federated store is not wired"));
-        };
+        let pool = self.db.pool();
         let row = sqlx::query(&format!(
             "SELECT {USER_COLUMNS} FROM auth_users WHERE id = ?"
         ))
@@ -106,9 +102,7 @@ impl FederatedUserStore for SqliteFederatedStore {
     }
 
     async fn get_user_by_email(&self, email: &str) -> Result<Option<StoredUser>, FederatedError> {
-        let Some((pool, _)) = self.db.live() else {
-            return Err(store_unavailable("auth federated store is not wired"));
-        };
+        let pool = self.db.pool();
         let row = sqlx::query(&format!(
             "SELECT {USER_COLUMNS} FROM auth_users WHERE email = ?"
         ))
@@ -123,9 +117,7 @@ impl FederatedUserStore for SqliteFederatedStore {
         &self,
         username: &str,
     ) -> Result<Option<StoredUser>, FederatedError> {
-        let Some((pool, _)) = self.db.live() else {
-            return Err(store_unavailable("auth federated store is not wired"));
-        };
+        let pool = self.db.pool();
         let row = sqlx::query(&format!(
             "SELECT {USER_COLUMNS} FROM auth_users WHERE username = ?"
         ))
@@ -137,9 +129,7 @@ impl FederatedUserStore for SqliteFederatedStore {
     }
 
     async fn create_user(&self, user: NewFederatedUser) -> Result<StoredUser, FederatedError> {
-        let Some((_, lane)) = self.db.live() else {
-            return Err(store_unavailable("auth federated store is not wired"));
-        };
+        let lane = self.db.lane();
         let id = self.ids.new_id();
         let binding_id = self.ids.new_id();
         let sealed = self
@@ -213,9 +203,7 @@ impl FederatedUserStore for SqliteFederatedStore {
         provider_uid: &str,
         token_json: &str,
     ) -> Result<ProviderBinding, FederatedError> {
-        let Some((_, lane)) = self.db.live() else {
-            return Err(store_unavailable("auth federated store is not wired"));
-        };
+        let lane = self.db.lane();
         let sealed = self
             .crypto
             .encrypt(token_json)
@@ -257,9 +245,7 @@ impl FederatedUserStore for SqliteFederatedStore {
         binding_id: &str,
         token_json: &str,
     ) -> Result<(), FederatedError> {
-        let Some((_, lane)) = self.db.live() else {
-            return Err(store_unavailable("auth federated store is not wired"));
-        };
+        let lane = self.db.lane();
         let sealed = self
             .crypto
             .encrypt(token_json)

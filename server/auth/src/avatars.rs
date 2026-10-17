@@ -15,27 +15,19 @@ fn internal(error: impl std::fmt::Display) -> StoreError {
 /// avatar regardless of type. Reads resolve the stored variant by extension.
 #[derive(Clone, Debug)]
 pub struct FileAvatarStore {
-    dir: Option<PathBuf>,
+    dir: PathBuf,
 }
 
 impl FileAvatarStore {
     /// Store rooted at `dir`; the `avatars` child is created lazily on save.
     pub fn new(dir: &Path) -> Self {
         Self {
-            dir: Some(dir.to_owned()),
+            dir: dir.to_owned(),
         }
     }
 
-    /// Test store with no directory: saves fail, loads read as absent.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn unwired() -> Self {
-        Self { dir: None }
-    }
-
-    fn path_for(&self, user_id: &str, ext: &str) -> Option<PathBuf> {
-        self.dir
-            .as_ref()
-            .map(|dir| dir.join("avatars").join(format!("{user_id}.{ext}")))
+    fn path_for(&self, user_id: &str, ext: &str) -> PathBuf {
+        self.dir.join("avatars").join(format!("{user_id}.{ext}"))
     }
 }
 
@@ -61,9 +53,7 @@ impl AvatarStore for FileAvatarStore {
             let Some((ext, _)) = avatar_variant(content_type) else {
                 return Err(internal("unsupported avatar type"));
             };
-            let Some(target) = self.path_for(user_id, ext) else {
-                return Err(internal("auth avatar store is not wired"));
-            };
+            let target = self.path_for(user_id, ext);
             // Blocking file work leaves the IO loop.
             let owned: Vec<u8> = bytes.to_vec();
             let user_id = user_id.to_owned();
@@ -98,9 +88,7 @@ impl AvatarStore for FileAvatarStore {
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<Option<LoadedAvatar>, StoreError>> {
         Box::pin(async move {
-            let Some(dir) = self.dir.clone() else {
-                return Ok(None);
-            };
+            let dir = self.dir.clone();
             let user_id = user_id.to_owned();
             tokio::task::spawn_blocking(move || {
                 for (ext, content_type) in [

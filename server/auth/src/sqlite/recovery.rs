@@ -2,7 +2,7 @@
 
 use sqlx::Row as _;
 
-use super::{AuthDb, internal, op_error, store_error};
+use super::{AuthDb, op_error, store_error};
 use crate::times::{parse_iso, to_iso};
 use crate::users::models::RecoveryCode;
 use crate::users::stores::{BoxFuture, RecoveryStore, StoreError};
@@ -24,9 +24,7 @@ impl SqliteRecoveryStore {
 impl RecoveryStore for SqliteRecoveryStore {
     fn store<'a>(&'a self, code: RecoveryCode) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth recovery store is not wired"));
-            };
+            let lane = self.db.lane();
             lane.write(Lane::Foreground, "auth.recovery.store", move |tx| {
                 // Cheap sweep in the same tx (v2 parity): expired rows never
                 // accumulate, and no background loop owns this table.
@@ -60,9 +58,7 @@ impl RecoveryStore for SqliteRecoveryStore {
         now: i64,
     ) -> BoxFuture<'a, Result<Option<RecoveryCode>, StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth recovery store is not wired"));
-            };
+            let pool = self.db.pool();
             let row = sqlx::query(
                 "SELECT user_id, code_hash, created_at, expires_at \
                  FROM auth_password_recovery_codes WHERE code_hash = ?",
@@ -93,9 +89,7 @@ impl RecoveryStore for SqliteRecoveryStore {
 
     fn delete_for_user<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth recovery store is not wired"));
-            };
+            let lane = self.db.lane();
             let user_id = user_id.to_owned();
             lane.write(Lane::Foreground, "auth.recovery.delete", move |tx| {
                 tx.execute(

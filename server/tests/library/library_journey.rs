@@ -15,6 +15,7 @@ use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::common::auth::AuthRig;
 use crate::common::library::ScriptedIdentify;
 use crate::common::{ScratchDir, TestApp, closed_outbound};
 use axum::http::StatusCode;
@@ -1540,35 +1541,51 @@ fn control_revision(activity: &Value) -> u64 {
     })
 }
 
-/// A bare library bundle over a migrated scratch database, with its
-/// music folder (not yet a root).
-fn bare_library(tag: &str) -> (ScratchDir, LibrarySetup, PathBuf) {
-    let scratch = ScratchDir::new(tag);
-    let dir = scratch.to_path_buf();
-    let connection =
-        droppedneedle_kernel::db::open_connection(&dir.join("app.db")).expect("scratch db opens");
-    droppedneedle_kernel::schema::apply_migrations_blocking(&connection).expect("migrations apply");
-    drop(connection);
-    let library = open_library(&dir);
-    (scratch, library, dir.join("music"))
+/// A library test's scratch folder, and the auth rig its users read
+/// through. Derefs to the folder.
+struct Scratch {
+    dir: ScratchDir,
+    auth: AuthRig,
 }
 
-/// A library bundle over the database and settings in `dir`, as a
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.dir
+    }
+}
+
+/// A bare library bundle over a migrated scratch database, with its
+/// music folder (not yet a root).
+async fn bare_library(tag: &str) -> (Scratch, LibrarySetup, PathBuf) {
+    let scratch = Scratch {
+        dir: ScratchDir::new(tag),
+        auth: AuthRig::new(tag).await,
+    };
+    let connection = droppedneedle_kernel::db::open_connection(&scratch.join("app.db"))
+        .expect("scratch db opens");
+    droppedneedle_kernel::schema::apply_migrations_blocking(&connection).expect("migrations apply");
+    drop(connection);
+    let library = open_library(&scratch);
+    let music = scratch.join("music");
+    (scratch, library, music)
+}
+
+/// A library bundle over the database and settings in `scratch`, as a
 /// restart would build it.
-fn open_library(dir: &Path) -> LibrarySetup {
+fn open_library(scratch: &Scratch) -> LibrarySetup {
     let config = Arc::new(
         ConfigStore::open(
-            &dir.join("config.json"),
+            &scratch.join("config.json"),
             Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
         )
         .expect("config opens"),
     );
     LibrarySetup::for_tests_at(
-        droppedneedle_auth::wiring::AuthSetup::for_tests()
-            .expect("test auth builds")
-            .users,
+        scratch.auth.deps.clone(),
         Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,
-        &dir.join("app.db"),
+        &scratch.join("app.db"),
         config,
     )
     .expect("bundle builds")
@@ -1866,7 +1883,7 @@ async fn retagged_album_keeps_its_identity() {
 async fn automatic_write_keeps_a_manual_identity() {
     use droppedneedle_library::identify::models::{AlbumIdentity, DecisionSource, TrackIdentity};
 
-    let (_scratch, library, music) = bare_library("lib-manual-identity");
+    let (_scratch, library, music) = bare_library("lib-manual-identity").await;
     plant(&music, "album/01.flac", "flac_full_02.flac");
     add_music_root(&library, &music).await;
     let track = library
@@ -1941,7 +1958,7 @@ async fn automatic_write_keeps_a_manual_identity() {
 async fn failed_approval_leaves_the_review_pending() {
     use droppedneedle_library::service::ServiceError;
 
-    let (_scratch, library, music) = bare_library("lib-approve-fail");
+    let (_scratch, library, music) = bare_library("lib-approve-fail").await;
     plant(&music, "album/01.flac", "flac_full_01.flac");
     add_music_root(&library, &music).await;
     let track = library
@@ -1983,7 +2000,7 @@ async fn failed_approval_leaves_the_review_pending() {
 /// come back), and reports it held.
 #[tokio::test]
 async fn journal_on_a_removed_root_waits() {
-    let (scratch, first, music) = bare_library("lib-journal-gone");
+    let (scratch, first, music) = bare_library("lib-journal-gone").await;
     plant(&music, "album/01.flac", "flac_full_01.flac");
     add_music_root(&first, &music).await;
     first
@@ -2129,7 +2146,7 @@ async fn undo_restores_values_no_new_edit_could_write() {
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    let (_scratch, library, music) = bare_library("lib-undo-raw");
+    let (_scratch, library, music) = bare_library("lib-undo-raw").await;
     let file = plant(&music, "album/01.flac", "management_full.flac");
     save_tags(
         &file,
@@ -2172,7 +2189,7 @@ async fn baseline_restore_removes_fields_added_later() {
     use droppedneedle_library::publish::planner::PlanKind;
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    let (_scratch, library, music) = bare_library("lib-baseline-added");
+    let (_scratch, library, music) = bare_library("lib-baseline-added").await;
     let file = plant(&music, "album/01.flac", "flac_full_02.flac");
     add_music_root(&library, &music).await;
     let track = library
@@ -2217,9 +2234,9 @@ async fn baseline_restore_removes_fields_added_later() {
 /// A release document answers to its merged ids through their own rows,
 /// and a refetch by the canonical id (no redirect, so no merged ids)
 /// replaces every row and still answers to them.
-#[test]
-fn release_documents_answer_to_merged_ids() {
-    let (_scratch, library, _music) = bare_library("lib-merged-release");
+#[tokio::test]
+async fn release_documents_answer_to_merged_ids() {
+    let (_scratch, library, _music) = bare_library("lib-merged-release").await;
     let store = &library.identify_store;
     let mut release = Release {
         id: "rel-new".to_owned(),
@@ -2970,7 +2987,7 @@ async fn artist_duplicate_groups_list_open_and_dismiss() {
 async fn removal_recycles_files_and_rescan_targets_the_album() {
     use droppedneedle_library::mutations::Mutations;
 
-    let (scratch, library, music) = bare_library("lib-remove");
+    let (scratch, library, music) = bare_library("lib-remove").await;
     let first = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
     let second = plant(&music, "Band/LP/02.flac", "flac_full_01.flac");
     add_music_root(&library, &music).await;
@@ -3042,7 +3059,7 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
 async fn put_back_refuses_an_occupied_path() {
     use droppedneedle_library::mutations::{MutationError, Mutations};
 
-    let (scratch, library, music) = bare_library("lib-put-back");
+    let (scratch, library, music) = bare_library("lib-put-back").await;
     let original = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
     let removed_bytes = std::fs::read(&original).expect("removed file reads");
     add_music_root(&library, &music).await;
@@ -4771,7 +4788,7 @@ async fn library_management_preview_apply_undo() {
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    let (_scratch, library, music) = bare_library("lib-management-jobs");
+    let (_scratch, library, music) = bare_library("lib-management-jobs").await;
     let first = plant(
         &music,
         "incoming/management track.flac",
@@ -5434,7 +5451,7 @@ async fn library_management_tools_journey() {
     use droppedneedle_library::management::tag_edit::TagEditRequest;
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    let (scratch, library, music) = bare_library("lib-management-tools");
+    let (scratch, library, music) = bare_library("lib-management-tools").await;
     let file = plant(&music, "incoming/tool track.flac", "management_full.flac");
     add_music_root(&library, &music).await;
     let track = library
@@ -6174,7 +6191,7 @@ async fn library_management_custom_edition_journey() {
     use droppedneedle_library::management::settings as lm;
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    let (scratch, library, music) = bare_library("lib-management-custom");
+    let (scratch, library, music) = bare_library("lib-management-custom").await;
     let file = plant(&music, "custom/sealed track.flac", "management_full.flac");
     add_music_root(&library, &music).await;
     let track = library
@@ -6324,7 +6341,7 @@ async fn library_management_artwork_journey() {
     use droppedneedle_library::tags::save::read_document;
     use droppedneedle_library::tags::{TagEdit, TagField};
 
-    let (scratch, library, music) = bare_library("lib-management-artwork");
+    let (scratch, library, music) = bare_library("lib-management-artwork").await;
     let file = plant(&music, "art/cover track.m4a", "management_full.m4a");
     droppedneedle_library::tags::save_tags(
         &file,
@@ -6578,7 +6595,7 @@ async fn library_management_artwork_journey() {
 /// without asking, once [`ManagedLibrary::activate`] has confirmed a dry
 /// run for it.
 struct ManagedLibrary {
-    scratch: ScratchDir,
+    scratch: Scratch,
     library: LibrarySetup,
     music: PathBuf,
     /// Albums added so far.
@@ -6595,7 +6612,7 @@ impl ManagedLibrary {
         ),
     ) -> Self {
         use droppedneedle_library::management::settings as lm;
-        let (scratch, library, music) = bare_library(tag);
+        let (scratch, library, music) = bare_library(tag).await;
         std::fs::create_dir_all(&music).expect("music folder");
         add_music_root(&library, &music).await;
         library
@@ -8190,7 +8207,7 @@ async fn handing_every_album_back_takes_one_step_each() {
     use droppedneedle_library::management::service::Management;
     use droppedneedle_library::mutations::Mutations;
 
-    let (scratch, library, music) = bare_library("lib-takeover-hand-back-all");
+    let (scratch, library, music) = bare_library("lib-takeover-hand-back-all").await;
     for folder in ["a", "b", "c"] {
         plant(&music, &format!("{folder}/01.flac"), "management_full.flac");
     }
@@ -8386,7 +8403,7 @@ async fn a_hand_back_that_cannot_read_the_files_keeps_the_mark() {
     use droppedneedle_library::management::service::Management;
     use droppedneedle_library::mutations::{MutationError, Mutations};
 
-    let (scratch, library, music) = bare_library("lib-takeover-hand-back-fails");
+    let (scratch, library, music) = bare_library("lib-takeover-hand-back-fails").await;
     let file = plant(&music, "a/01.flac", "management_full.flac");
     add_music_root(&library, &music).await;
     let db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
@@ -10349,8 +10366,8 @@ async fn a_file_that_joins_while_musicbrainz_is_asked_is_placed_next() {
 /// A two-track album scanned into a library with no app around it, and a
 /// `curator` who chose its edition. Returns the scratch folder, the
 /// library, the album and its tracks.
-async fn chosen_album_at_rest(tag: &str) -> (ScratchDir, LibrarySetup, String, Vec<String>) {
-    let (scratch, library, music) = bare_library(tag);
+async fn chosen_album_at_rest(tag: &str) -> (Scratch, LibrarySetup, String, Vec<String>) {
+    let (scratch, library, music) = bare_library(tag).await;
     plant(&music, "album/01.flac", "flac_full_01.flac");
     plant(&music, "album/02.flac", "flac_full_02.flac");
     add_music_root(&library, &music).await;
@@ -10381,7 +10398,7 @@ async fn chosen_album_at_rest(tag: &str) -> (ScratchDir, LibrarySetup, String, V
     (scratch, library, album, tracks)
 }
 
-fn scratch_db(scratch: &ScratchDir) -> rusqlite::Connection {
+fn scratch_db(scratch: &Scratch) -> rusqlite::Connection {
     droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
         .expect("db opens")
 }
@@ -10773,11 +10790,11 @@ async fn an_expired_preview_does_not_hold_a_join_back() {
 async fn album_at_rest(
     tag: &str,
     count: usize,
-) -> (ScratchDir, LibrarySetup, PathBuf, String, Vec<String>) {
+) -> (Scratch, LibrarySetup, PathBuf, String, Vec<String>) {
     use droppedneedle_library::tags::TagField;
     use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
-    let (scratch, library, music) = bare_library(tag);
+    let (scratch, library, music) = bare_library(tag).await;
     plant(&music, "album/01.flac", "flac_full_01.flac");
     plant(&music, "album/02.flac", "flac_full_02.flac");
     for number in 3..=count {
@@ -11404,7 +11421,7 @@ async fn an_automatic_album_retagged_and_renamed_keeps_its_history() {
 async fn retagged_without_ids(
     tag: &str,
 ) -> (
-    ScratchDir,
+    Scratch,
     LibrarySetup,
     String,
     Vec<String>,
@@ -14023,9 +14040,9 @@ async fn automatic_credits_wait_for_musicbrainz_and_respect_a_hand_edit() {
 /// Grafting fetched credits and artist names onto a stored edition keeps
 /// everything else in it, every row it answers to, and when it was
 /// fetched, so an old tracklist never reads as fresh.
-#[test]
-fn grafted_credits_keep_the_stored_edition() {
-    let (_scratch, library, _music) = bare_library("lib-graft-credits");
+#[tokio::test]
+async fn grafted_credits_keep_the_stored_edition() {
+    let (_scratch, library, _music) = bare_library("lib-graft-credits").await;
     let store = &library.identify_store;
     let release = Release {
         id: "rel-new".to_owned(),
@@ -14351,7 +14368,7 @@ async fn a_track_id_from_another_edition_is_corrected() {
 async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
     use droppedneedle_library::repairs::service::Repairs;
 
-    let (scratch, library, music) = bare_library("lib-track-id-relook");
+    let (scratch, library, music) = bare_library("lib-track-id-relook").await;
     let editions: Vec<(Release, Release)> = (1..=4)
         .map(|n| sibling_editions(n, &format!("Relook {n}")))
         .collect();
@@ -15327,7 +15344,7 @@ async fn a_copy_takes_the_place_of_a_deleted_original_on_a_chosen_edition() {
 async fn a_copy_takes_the_place_of_a_deleted_original_on_an_automatic_edition() {
     use droppedneedle_library::tags::save_tags;
 
-    let (scratch, library, music) = bare_library("lib-place-copy-automatic");
+    let (scratch, library, music) = bare_library("lib-place-copy-automatic").await;
     for n in 1..=3 {
         let file = plant(&music, &format!("album/{n:02}.flac"), "flac_full_02.flac");
         save_tags(&file, &chosen_ids(n)).expect("ids written");
@@ -15853,7 +15870,7 @@ async fn a_run_that_adds_ids_and_translates_keeps_the_artist() {
 async fn an_identified_album_links_its_artist() {
     use droppedneedle_library::tags::{TagEdit, TagField, save_tags};
 
-    let (scratch, library, music) = bare_library("lib-identify-links");
+    let (scratch, library, music) = bare_library("lib-identify-links").await;
     let file = plant(&music, "album/01.flac", "management_full.flac");
     save_tags(
         &file,

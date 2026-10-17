@@ -27,6 +27,8 @@ use droppedneedle_library::tags::save::{TagEdit, save_tags};
 use droppedneedle_library::wiring::LibrarySetup;
 use futures_util::future::BoxFuture;
 
+use crate::common::auth::AuthRig;
+
 const GOOD_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000001";
 const GOOD_RELEASE: &str = "6d0b7a1e-0000-4000-8000-000000000002";
 const BAD_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000003";
@@ -166,13 +168,13 @@ fn new_task(id: &str, group: &str) -> NewTask {
 
 #[tokio::test]
 async fn finished_downloads_land_in_the_library_or_wait_for_review() {
-    let auth = droppedneedle_auth::wiring::AuthSetup::for_tests().expect("test auth");
+    let auth = AuthRig::new("landing").await;
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
             .expect("reads bundle");
     let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        auth.users.clone(),
+        auth.deps.clone(),
         ids.clone(),
         &mut reads.collections,
     )
@@ -195,7 +197,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         )
         .expect("config"),
     );
-    let library = LibrarySetup::for_tests_at(auth.users.clone(), ids, acquire.db.path(), config)
+    let library = LibrarySetup::for_tests_at(auth.deps.clone(), ids, acquire.db.path(), config)
         .expect("library bundle");
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
@@ -454,13 +456,13 @@ fn files_under(dir: &Path, extension: &str) -> Vec<PathBuf> {
 // answers 404; a discarded file is deleted and leaves the list.
 #[tokio::test]
 async fn held_files_import_as_upgrades_or_discard() {
-    let auth = droppedneedle_auth::wiring::AuthSetup::for_tests().expect("test auth");
+    let auth = AuthRig::new("landing").await;
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
             .expect("reads bundle");
     let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        auth.users.clone(),
+        auth.deps.clone(),
         ids.clone(),
         &mut reads.collections,
     )
@@ -483,7 +485,7 @@ async fn held_files_import_as_upgrades_or_discard() {
         )
         .expect("config"),
     );
-    let library = LibrarySetup::for_tests_at(auth.users.clone(), ids, acquire.db.path(), config)
+    let library = LibrarySetup::for_tests_at(auth.deps.clone(), ids, acquire.db.path(), config)
         .expect("library bundle");
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
@@ -649,15 +651,16 @@ async fn held_files_import_as_upgrades_or_discard() {
     assert_eq!(left, vec![seeded[3]], "{body}");
 }
 
-/// An acquire bundle with no library attached, and its scratch folder.
-async fn bare_acquire() -> (droppedneedle_acquire::AcquireSetup, PathBuf) {
-    let auth = droppedneedle_auth::wiring::AuthSetup::for_tests().expect("test auth");
+/// An acquire bundle with no library attached, its scratch folder, and
+/// the auth rig its users live on.
+async fn bare_acquire() -> (droppedneedle_acquire::AcquireSetup, PathBuf, AuthRig) {
+    let auth = AuthRig::new("landing-bare").await;
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
             .expect("reads bundle");
     let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        auth.users.clone(),
+        auth.deps.clone(),
         ids,
         &mut reads.collections,
     )
@@ -673,7 +676,7 @@ async fn bare_acquire() -> (droppedneedle_acquire::AcquireSetup, PathBuf) {
         .parent()
         .expect("scratch dir")
         .to_path_buf();
-    (acquire, dir)
+    (acquire, dir, auth)
 }
 
 /// Land `landed` for a fresh task and return the rejection code, if any.
@@ -722,7 +725,7 @@ async fn rejection(
 #[tokio::test]
 async fn a_download_outside_its_clients_folder_is_refused() {
     use std::os::unix::fs::symlink;
-    let (acquire, dir) = bare_acquire().await;
+    let (acquire, dir, _auth) = bare_acquire().await;
     let mount = dir.join("downloads");
     let outside = dir.join("elsewhere");
     let secret = land_file(&outside, "01.flac", "flac_full_01.flac", "Mysterons", 1);
@@ -796,7 +799,7 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
     use droppedneedle_plugins::host::PluginHost;
     use droppedneedle_plugins::protocol::methods;
 
-    let (acquire, dir) = bare_acquire().await;
+    let (acquire, dir, _auth) = bare_acquire().await;
     let plugin_dir = dir.join("plugins/toy");
     std::fs::create_dir_all(&plugin_dir).expect("plugin dir");
     std::fs::write(
@@ -915,13 +918,13 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
 
     const TASK: &str = "0123456789abcdef0123456789abcdef";
 
-    let auth = droppedneedle_auth::wiring::AuthSetup::for_tests().expect("test auth");
+    let auth = AuthRig::new("landing").await;
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
             .expect("reads bundle");
     let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        auth.users.clone(),
+        auth.deps.clone(),
         ids.clone(),
         &mut reads.collections,
     )
@@ -939,7 +942,7 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
         )
         .expect("config"),
     );
-    let library = LibrarySetup::for_tests_at(auth.users.clone(), ids, acquire.db.path(), config)
+    let library = LibrarySetup::for_tests_at(auth.deps.clone(), ids, acquire.db.path(), config)
         .expect("library bundle");
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
@@ -1218,11 +1221,11 @@ struct JoinRig {
     targets: Arc<droppedneedle_acquire::target::Targets>,
     music: PathBuf,
     downloads: PathBuf,
+    _auth: AuthRig,
 }
 
 async fn join_rig(releases: Vec<Release>) -> JoinRig {
-    let (acquire, dir) = bare_acquire().await;
-    let auth = droppedneedle_auth::wiring::AuthSetup::for_tests().expect("test auth");
+    let (acquire, dir, auth) = bare_acquire().await;
     let config = Arc::new(
         ConfigStore::open(
             &dir.join("config.json"),
@@ -1231,7 +1234,7 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
         .expect("config"),
     );
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let library = LibrarySetup::for_tests_at(auth.users.clone(), ids, acquire.db.path(), config)
+    let library = LibrarySetup::for_tests_at(auth.deps.clone(), ids, acquire.db.path(), config)
         .expect("library bundle");
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
@@ -1264,6 +1267,7 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
         targets,
         music,
         downloads: dir.join("downloads"),
+        _auth: auth,
     }
 }
 

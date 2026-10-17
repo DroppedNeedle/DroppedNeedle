@@ -147,23 +147,6 @@ pub trait PlexServerIdentity: Send + Sync {
     fn machine_id(&self) -> BoxFuture<'_, Result<Option<String>, FederatedError>>;
 }
 
-/// A server identity for test bundles: every read fails, as an unreadable
-/// configured server does.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct UnwiredPlexServer;
-
-#[cfg(any(test, feature = "test-support"))]
-impl PlexServerIdentity for UnwiredPlexServer {
-    fn machine_id(&self) -> BoxFuture<'_, Result<Option<String>, FederatedError>> {
-        Box::pin(async {
-            Err(FederatedError::ProviderUnavailable(
-                "Could not reach the configured Plex server".to_owned(),
-            ))
-        })
-    }
-}
-
 /// Stores a user's Plex media link (the per-user connection used for
 /// playback). The login flow treats a failure as a warning; the link flow,
 /// where linking is the whole point, fails the request.

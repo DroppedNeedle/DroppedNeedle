@@ -1,6 +1,6 @@
 //! Per-user Last.fm links over `user_connections`.
 
-use super::{AuthDb, internal, op_error, store_error};
+use super::{AuthDb, op_error, store_error};
 use crate::times::to_iso;
 use crate::users::models::LastFmConnection;
 use crate::users::stores::{BoxFuture, LastFmStore, StoreError};
@@ -67,9 +67,7 @@ impl LastFmStore for SqliteLastFmStore {
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<Option<LastFmConnection>, StoreError>> {
         Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth last.fm store is not wired"));
-            };
+            let pool = self.db.pool();
             let row: Option<String> = sqlx::query_scalar(
                 "SELECT connection_data FROM user_connections WHERE user_id = ? AND service = ?",
             )
@@ -97,9 +95,7 @@ impl LastFmStore for SqliteLastFmStore {
         link: LastFmConnection,
     ) -> BoxFuture<'a, Result<(), StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth last.fm store is not wired"));
-            };
+            let lane = self.db.lane();
             let user_id = user_id.to_owned();
             lane.write(Lane::Foreground, "auth.lastfm.upsert", move |tx| {
                 let now = to_iso(AuthDb::now_unix());
@@ -127,9 +123,7 @@ impl LastFmStore for SqliteLastFmStore {
 
     fn delete<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
-            let Some((_, lane)) = self.db.live() else {
-                return Err(internal("auth last.fm store is not wired"));
-            };
+            let lane = self.db.lane();
             let user_id = user_id.to_owned();
             let changed: usize = lane
                 .write(Lane::Foreground, "auth.lastfm.delete", move |tx| {

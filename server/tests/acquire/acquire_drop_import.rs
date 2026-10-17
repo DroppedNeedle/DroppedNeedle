@@ -28,6 +28,8 @@ use droppedneedle_library::tags::save::{TagEdit, save_tags};
 use droppedneedle_library::wiring::LibrarySetup;
 use futures_util::future::BoxFuture;
 
+use crate::common::auth::AuthRig;
+
 const GROUP: &str = "7d0b7a1e-0000-4000-8000-000000000001";
 const RELEASE: &str = "7d0b7a1e-0000-4000-8000-000000000002";
 
@@ -148,20 +150,22 @@ fn length_ms(bytes: &[u8], scratch: &Path) -> Option<u64> {
 
 /// The acquire and library bundles over one scratch database, with the
 /// curator and asker users and a `music` root, and the scratch folder.
-/// The reads bundle is returned only to live as long as the others.
+/// The reads bundle and the auth rig are returned only to live as long as
+/// the others.
 async fn bundles() -> (
     droppedneedle_acquire::AcquireSetup,
     LibrarySetup,
     PathBuf,
     droppedneedle_catalog::reads::ReadsSetup,
+    AuthRig,
 ) {
-    let auth = droppedneedle_auth::wiring::AuthSetup::for_tests().expect("test auth");
+    let auth = AuthRig::new("drop-import").await;
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
             .expect("reads bundle");
     let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        auth.users.clone(),
+        auth.deps.clone(),
         ids.clone(),
         &mut reads.collections,
     )
@@ -177,7 +181,7 @@ async fn bundles() -> (
         )
         .expect("config"),
     );
-    let library = LibrarySetup::for_tests_at(auth.users.clone(), ids, acquire.db.path(), config)
+    let library = LibrarySetup::for_tests_at(auth.deps.clone(), ids, acquire.db.path(), config)
         .expect("library bundle");
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
@@ -188,12 +192,12 @@ async fn bundles() -> (
             EffectivePolicy::Automatic,
         )
         .expect("root adds");
-    (acquire, library, dir, reads)
+    (acquire, library, dir, reads, auth)
 }
 
 #[tokio::test]
 async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
-    let (acquire, library, dir, _reads) = bundles().await;
+    let (acquire, library, dir, _reads, _auth) = bundles().await;
     let music = dir.join("music");
     let work = dir.join("work");
     std::fs::create_dir_all(&work).expect("work dir");
@@ -433,7 +437,7 @@ async fn a_hand_match_finds_the_edition_in_a_large_group() {
             })
             .collect()
     };
-    let (acquire, library, dir, _reads) = bundles().await;
+    let (acquire, library, dir, _reads, _auth) = bundles().await;
     let mut known = editions(1);
     known.extend(editions(2));
     let pool = acquire.db.pool().clone();
@@ -550,7 +554,7 @@ async fn upload_and_settle(
 /// of it stays in staging and nothing from it reaches the library.
 #[tokio::test]
 async fn an_entry_longer_than_its_header_leaves_nothing_behind() {
-    let (acquire, library, _dir, _reads) = bundles().await;
+    let (acquire, library, _dir, _reads, _auth) = bundles().await;
     let pool = acquire.db.pool().clone();
     let acquire = acquire.with_library(Arc::new(LibraryLanding::new(
         library,
