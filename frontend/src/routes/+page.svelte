@@ -203,7 +203,7 @@
 					>
 						<div class="flex flex-col items-center gap-2 py-6 text-center stagger-fade-in">
 							<Music class="h-16 w-16 mb-4 animate-float text-accent" />
-							<h2 class="card-title text-3xl sm:text-4xl lg:text-5xl font-bold mb-2">
+							<h2 class="card-title block text-2xl sm:text-4xl lg:text-5xl font-bold mb-2">
 								Welcome to <span class="text-primary">DroppedNeedle</span>!
 							</h2>
 							<p class="text-base-content/70 max-w-lg mb-6">
