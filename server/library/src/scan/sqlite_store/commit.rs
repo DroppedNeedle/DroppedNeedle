@@ -23,6 +23,10 @@
 //! row into the new one. Other music at a track's path (a length more than
 //! five seconds off, and a recording id or tagged title that differs) is a
 //! new track: the old row stays on its album, missing, with its history.
+//! A new FLAC copy of the same recording at a track's path (same album,
+//! disc and track, and another sample rate, bit depth, channel count or a
+//! length more than a second off) makes the app forget its record of the
+//! old file, so the copy is managed as a file the app never wrote.
 
 use std::collections::BTreeMap;
 
@@ -321,6 +325,10 @@ const OTHER_MUSIC_SECONDS: f64 = 5.0;
 /// Audit kind of the tracks whose paths other music took.
 const OTHER_MUSIC_KIND: &str = "other_music_at_path";
 
+/// Audit kind of the tracks whose files were replaced by new copies of
+/// the same recordings.
+const NEW_COPY_KIND: &str = "new_copy_at_path";
+
 /// The row at a file's path, as read before the file is written.
 struct AtPath {
     id: String,
@@ -330,6 +338,58 @@ struct AtPath {
     recording_mbid: Option<String>,
     title_folded: String,
     title_provenance: String,
+    disc_number: i64,
+    track_number: i64,
+    sample_rate: Option<i64>,
+    bit_depth: Option<i64>,
+    channels: Option<i64>,
+}
+
+/// A file's length and stream properties, as stored or as read.
+#[derive(Clone, Copy)]
+struct Sound {
+    seconds: Option<f64>,
+    sample_rate: Option<i64>,
+    bit_depth: Option<i64>,
+    channels: Option<i64>,
+}
+
+impl Sound {
+    fn of_row(row: &AtPath) -> Self {
+        Self {
+            seconds: row.duration_seconds,
+            sample_rate: row.sample_rate,
+            bit_depth: row.bit_depth,
+            channels: row.channels,
+        }
+    }
+
+    fn of_file(item: &CommitIndexedItem) -> Self {
+        let header = &item.tags.header;
+        Self {
+            seconds: header.duration_seconds,
+            sample_rate: header.sample_rate.map(i64::from),
+            bit_depth: header.bit_depth.map(i64::from),
+            channels: header.channels.map(i64::from),
+        }
+    }
+
+    fn json(self) -> serde_json::Value {
+        serde_json::json!({
+            "seconds": self.seconds,
+            "sample_rate": self.sample_rate,
+            "bit_depth": self.bit_depth,
+            "channels": self.channels,
+        })
+    }
+}
+
+/// A track whose file was replaced by a new copy of its recording.
+struct NewCopy {
+    track_id: String,
+    album_id: String,
+    before: Sound,
+    after: Sound,
 }
 
 /// A track whose path now holds other music, and the track that took it.
@@ -349,6 +409,9 @@ struct Written {
     moved_from: Option<String>,
     /// The track whose path the file took, when it is other music.
     other_music: Option<OtherMusic>,
+    /// The track whose record the scan forgot, when the file is a new
+    /// copy of its recording.
+    new_copy: Option<NewCopy>,
 }
 
 /// Whether the file now at `row`'s path is other music, not the track the
@@ -386,6 +449,80 @@ fn other_music(row: &AtPath, item: &CommitIndexedItem) -> bool {
                 && row.title_folded != fold_text(title)
         }
     }
+}
+
+/// Whether the file a scan just wrote over `row` is a new copy of the
+/// row's recording, not a hand edit: the row was indexed or missing, the
+/// file is a FLAC, it stayed on the row's album with the row's disc and
+/// track number, it is the same recording, and its audio changed. The same
+/// recording is the same recording id on both sides or, when either has
+/// none, the same title read from both files' tags with lengths within
+/// [`OTHER_MUSIC_SECONDS`] (other music's contradiction turned around).
+/// The audio changed when the sample rate, bit depth or channel count is
+/// known on both sides and differs, or the length moved by more than
+/// [`DURATION_TOLERANCE_SECONDS`].
+///
+/// FLAC only: its length and stream properties come from STREAMINFO,
+/// which every reader reads alike and no tag write touches. Verified
+/// 2026-10-17 on lofty 0.25.4: the scan's reader gave 44100 Hz, 16 bits,
+/// 2 channels and 0.3 s for copies of `management_full.flac` and
+/// `flac_full_01.flac`, and the same four values after `save_tags` wrote a
+/// title and a 783 KB front cover.
+fn new_copy(
+    row: &AtPath,
+    item: &CommitIndexedItem,
+    stored_album: &str,
+    disc_number: i64,
+    track_number: i64,
+) -> bool {
+    if row.availability != "indexed" && row.availability != "missing" {
+        return false;
+    }
+    let flac = matches!(
+        crate::tags::format_for_path(std::path::Path::new(&item.relative_path)),
+        Ok(crate::tags::AudioFormat::Flac)
+    );
+    if !flac
+        || stored_album != row.album_id
+        || disc_number != row.disc_number
+        || track_number != row.track_number
+    {
+        return false;
+    }
+    let (old, new) = (Sound::of_row(row), Sound::of_file(item));
+    let lengths = match (old.seconds, new.seconds) {
+        (Some(old), Some(new)) if old > 0.0 && new > 0.0 => Some((old - new).abs()),
+        _ => None,
+    };
+    let recording = |mbid: Option<&str>| {
+        mbid.map(|mbid| mbid.trim().to_lowercase())
+            .filter(|mbid| !mbid.is_empty())
+    };
+    let tag = &item.tags.tag;
+    let same_recording = match (
+        recording(row.recording_mbid.as_deref()),
+        recording(tag.musicbrainz_recording_id.as_deref()),
+    ) {
+        (Some(old), Some(new)) => old == new,
+        _ => {
+            let title = tag.title.trim();
+            row.title_provenance == "tag"
+                && !title.is_empty()
+                && row.title_folded == fold_text(title)
+                && lengths.is_some_and(|apart| apart <= OTHER_MUSIC_SECONDS)
+        }
+    };
+    if !same_recording {
+        return false;
+    }
+    let differs = |old: Option<i64>, new: Option<i64>| match (old, new) {
+        (Some(old), Some(new)) if old > 0 && new > 0 => old != new,
+        _ => false,
+    };
+    differs(old.sample_rate, new.sample_rate)
+        || differs(old.bit_depth, new.bit_depth)
+        || differs(old.channels, new.channels)
+        || lengths.is_some_and(|apart| apart > DURATION_TOLERANCE_SECONDS)
 }
 
 /// Retire the track whose path now holds other music. It is missing from
@@ -689,7 +826,8 @@ fn write_item(
     let at_path: Option<AtPath> = tx
         .prepare_cached(
             "SELECT id, local_album_id, availability, duration_seconds, \
-             embedded_recording_mbid, title_folded, title_provenance \
+             embedded_recording_mbid, title_folded, title_provenance, disc_number, \
+             track_number, sample_rate, bit_depth, channels \
              FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2",
         )?
         .query_row(params![item.root_id, item.relative_path], |row| {
@@ -701,17 +839,28 @@ fn write_item(
                 recording_mbid: row.get(4)?,
                 title_folded: row.get(5)?,
                 title_provenance: row.get(6)?,
+                disc_number: row.get(7)?,
+                track_number: row.get(8)?,
+                sample_rate: row.get(9)?,
+                bit_depth: row.get(10)?,
+                channels: row.get(11)?,
             })
         })
         .optional()?;
     let mut replaced: Option<AtPath> = None;
+    // The row the file continues at its path.
+    let mut continued: Option<AtPath> = None;
     let mut previous: Option<(String, String)> = match at_path {
         Some(row) if run_id.is_some() && adopted.is_none() && other_music(&row, item) => {
             give_up_path(tx, &row.id, item)?;
             replaced = Some(row);
             None
         }
-        Some(row) => Some((row.id, row.album_id)),
+        Some(row) => {
+            let previous = Some((row.id.clone(), row.album_id.clone()));
+            continued = Some(row);
+            previous
+        }
         None => None,
     };
     if previous.is_none()
@@ -970,6 +1119,33 @@ fn write_item(
         .query_row(params![item.root_id, item.relative_path], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
+    // A new copy of the recording the row describes is a file the app
+    // never wrote: its record goes, unless the app has stepped back from
+    // the album, where only handing it back clears anything.
+    let new_copy = match continued {
+        Some(row)
+            if run_id.is_some()
+                && adopted.is_none()
+                && new_copy(
+                    &row,
+                    item,
+                    &stored_album,
+                    disc_number,
+                    i64::from(track_number),
+                )
+                && crate::publish::record::record(tx, &row.id)?.exists()
+                && !takeover::is_marked(tx, &row.album_id)?
+                && crate::publish::record::forget(tx, &row.id)? =>
+        {
+            Some(NewCopy {
+                before: Sound::of_row(&row),
+                after: Sound::of_file(item),
+                track_id: row.id,
+                album_id: row.album_id,
+            })
+        }
+        _ => None,
+    };
 
     let edition = &tag.edition;
     let blank = |value: &Option<String>| {
@@ -1073,6 +1249,7 @@ fn write_item(
         album_id: stored_album,
         moved_from,
         other_music,
+        new_copy,
     })
 }
 
@@ -2279,6 +2456,46 @@ fn record_other_music(
     Ok(())
 }
 
+/// Record the tracks of one album whose files were replaced by new copies
+/// of the same recordings: one audit action naming each track with its
+/// length and stream before and after, and one log line.
+fn record_new_copies(
+    tx: &rusqlite::Transaction<'_>,
+    album_id: &str,
+    copies: &[NewCopy],
+    now: f64,
+) -> rusqlite::Result<()> {
+    let listed: Vec<serde_json::Value> = copies
+        .iter()
+        .map(|copy| {
+            serde_json::json!({
+                "track_id": copy.track_id,
+                "before": copy.before.json(),
+                "after": copy.after.json(),
+            })
+        })
+        .collect();
+    record_action(
+        tx,
+        CatalogAction {
+            actor: "system",
+            kind: NEW_COPY_KIND,
+            album_id,
+            job_id: None,
+            before: serde_json::json!({}),
+            after: serde_json::json!({ "tracks": listed }),
+            reason: "NEW_COPY_AT_PATH",
+        },
+        now,
+    )?;
+    tracing::info!(
+        album_id,
+        tracks = copies.len(),
+        "new copies of the same recordings replaced files the app wrote; it forgot its record of them"
+    );
+    Ok(())
+}
+
 /// Write items, offer albums, and mark the window. With `isolate`, each
 /// item runs in its own savepoint and a failing one is reported instead of
 /// failing the window.
@@ -2301,6 +2518,7 @@ fn write_window(
     let mut changed: Vec<String> = Vec::new();
     let mut emptied: Vec<String> = Vec::new();
     let mut other_music: BTreeMap<String, Vec<OtherMusic>> = BTreeMap::new();
+    let mut new_copies: BTreeMap<String, Vec<NewCopy>> = BTreeMap::new();
     for item in &window.items {
         let written = if isolate {
             tx.execute("SAVEPOINT item", [])?;
@@ -2324,6 +2542,7 @@ fn write_window(
                 album_id,
                 moved_from,
                 other_music: replaced,
+                new_copy,
             }) => {
                 let changed_on_record = item.verdict_counter == counter_names::CHANGED
                     && takeover::has_record(tx, &track_id)?;
@@ -2343,6 +2562,12 @@ fn write_window(
                         .entry(old.old_album_id.clone())
                         .or_default()
                         .push(old);
+                }
+                if let Some(copy) = new_copy {
+                    new_copies
+                        .entry(copy.album_id.clone())
+                        .or_default()
+                        .push(copy);
                 }
                 indexed.push((item.root_id.clone(), item.relative_path.clone(), track_id));
                 if item.effective_policy == EffectivePolicy::Automatic {
@@ -2370,6 +2595,11 @@ fn write_window(
     // read the same marker (`waits_for_the_rest`).
     for (album_id, pairs) in &other_music {
         record_other_music(tx, album_id, pairs, window.now)?;
+    }
+    // The record that would have queued these albums is gone.
+    for (album_id, copies) in new_copies {
+        record_new_copies(tx, &album_id, &copies, window.now)?;
+        changed.push(album_id);
     }
     emptied.sort();
     emptied.dedup();

@@ -648,8 +648,14 @@ struct RetagReader {
     /// The title tag a file carries instead of its file name; empty for
     /// none.
     titles: std::sync::Mutex<HashMap<String, String>>,
+    /// The sample rate, bit depth and channel count a file reads as, when
+    /// it has them.
+    streams: std::sync::Mutex<HashMap<String, Stream>>,
     root: PathBuf,
 }
+
+/// A file's sample rate, bit depth and channel count.
+type Stream = (u32, u8, u32);
 
 impl RetagReader {
     fn retag(&self, relative: &str, album: &str) {
@@ -695,6 +701,17 @@ impl TagReader for RetagReader {
             .expect("lengths")
             .get(&relative)
             .copied();
+        if let Some((rate, depth, channels)) = self
+            .streams
+            .lock()
+            .expect("streams")
+            .get(&relative)
+            .copied()
+        {
+            read.header.sample_rate = Some(rate);
+            read.header.bit_depth = Some(depth);
+            read.header.channels = Some(channels);
+        }
         if let Some(ids) = self.ids.lock().expect("ids").get(&relative) {
             let some = |value: &str| (!value.is_empty()).then(|| value.to_owned());
             read.tag.musicbrainz_release_id = some(&ids.release);
@@ -737,6 +754,7 @@ impl RegroupRig {
             meanwhile: std::sync::Mutex::default(),
             lengths: std::sync::Mutex::default(),
             titles: std::sync::Mutex::default(),
+            streams: std::sync::Mutex::default(),
             root: root.clone(),
         });
         let registry = RootRegistry::new(
@@ -7492,4 +7510,357 @@ async fn the_old_file_put_back_brings_the_old_track_back() {
         0,
         "the old track no longer counts as replaced by other music"
     );
+}
+
+// ---------------------------------------------------------------------------
+// A new copy of the same recording at a track's path.
+// ---------------------------------------------------------------------------
+
+/// What one file says about itself, for the new-copy briefs.
+#[derive(Clone, Copy)]
+struct Rip {
+    title: &'static str,
+    recording: &'static str,
+    release: &'static str,
+    /// The album title; `None` for the row's own.
+    album: Option<&'static str>,
+    track: u32,
+    length: f64,
+    stream: Stream,
+}
+
+/// Recording X, title `T` from tags, track 1, 200 s at 44.1 kHz, 16-bit,
+/// stereo, no release id.
+const RIP: Rip = Rip {
+    title: "T",
+    recording: "X",
+    release: "",
+    album: None,
+    track: 1,
+    length: 200.0,
+    stream: (44_100, 16, 2),
+};
+
+/// [`RIP`] at 96 kHz.
+const HI_RES: Rip = Rip {
+    stream: (96_000, 16, 2),
+    ..RIP
+};
+
+impl RegroupRig {
+    /// Write the file anew on `album` (or the album the rip names),
+    /// saying what `rip` gives.
+    fn rip(&mut self, file: &str, album: &str, rip: Rip) {
+        let file = file.to_owned();
+        self.reader
+            .titles
+            .lock()
+            .expect("titles")
+            .insert(file.clone(), rip.title.to_owned());
+        self.reader.ids.lock().expect("ids").insert(
+            file.clone(),
+            ids(rip.release, "", rip.recording, 1, rip.track),
+        );
+        self.reader
+            .lengths
+            .lock()
+            .expect("lengths")
+            .insert(file.clone(), rip.length);
+        self.reader
+            .streams
+            .lock()
+            .expect("streams")
+            .insert(file.clone(), rip.stream);
+        self.tag(&[file], rip.album.unwrap_or(album));
+    }
+}
+
+/// Where the line is between a new copy of a track's recording and a hand
+/// edit: a FLAC on the same album, disc and track, the same recording by
+/// id or, when either file has none, by tag title within five seconds,
+/// whose sample rate, bit depth or channels changed or whose length moved
+/// by more than a second, on an album the app has not stepped back from.
+/// A new copy loses the app's record of the old file; anything else keeps
+/// it. One file per folder; each line is a row of the task's table.
+#[tokio::test]
+async fn a_new_copy_at_a_path_needs_the_same_recording_and_new_audio() {
+    use droppedneedle_library::operations::history::{HistoryKind, album_history};
+    use droppedneedle_library::publish::record::record;
+
+    const V3: &str = "INSERT INTO library_track_management_state (local_track_id, \
+                      written_sha256) VALUES ('{track}', 'x');";
+    struct Line {
+        file: &'static str,
+        old: Rip,
+        new: Rip,
+        /// Run after the first scan; `{track}` and `{album}` name the row.
+        setup: &'static str,
+        lose_first: bool,
+        cleared: bool,
+    }
+    let line = |new: Rip, cleared: bool| Line {
+        file: "t.flac",
+        old: RIP,
+        new,
+        setup: V3,
+        lose_first: false,
+        cleared,
+    };
+    let no_ids = Rip {
+        title: "",
+        recording: "",
+        ..RIP
+    };
+    let lines = [
+        line(HI_RES, true),
+        line(
+            Rip {
+                stream: (44_100, 24, 2),
+                ..RIP
+            },
+            true,
+        ),
+        line(
+            Rip {
+                stream: (44_100, 16, 1),
+                ..RIP
+            },
+            true,
+        ),
+        line(
+            Rip {
+                length: 201.5,
+                ..RIP
+            },
+            true,
+        ),
+        line(
+            Rip {
+                length: 200.5,
+                ..RIP
+            },
+            false,
+        ),
+        line(
+            Rip {
+                recording: "Y",
+                ..HI_RES
+            },
+            false,
+        ),
+        line(
+            Rip {
+                recording: "",
+                ..HI_RES
+            },
+            true,
+        ),
+        line(
+            Rip {
+                recording: "",
+                title: "U",
+                ..HI_RES
+            },
+            false,
+        ),
+        Line {
+            old: no_ids,
+            ..line(
+                Rip {
+                    recording: "",
+                    title: "t",
+                    ..HI_RES
+                },
+                false,
+            )
+        },
+        line(
+            Rip {
+                recording: "",
+                length: 208.0,
+                ..HI_RES
+            },
+            false,
+        ),
+        Line {
+            file: "t.mp3",
+            ..line(HI_RES, false)
+        },
+        line(Rip { track: 2, ..HI_RES }, false),
+        line(
+            Rip {
+                album: Some("Copy elsewhere"),
+                ..HI_RES
+            },
+            false,
+        ),
+        Line {
+            setup: "",
+            ..line(HI_RES, false)
+        },
+        Line {
+            setup: "INSERT INTO library_track_management_state (local_track_id, \
+                    managed_path_revision, last_outcome) VALUES ('{track}', 'v2', 'succeeded');",
+            ..line(HI_RES, true)
+        },
+        Line {
+            setup: "INSERT INTO library_track_management_state (local_track_id, \
+                    written_sha256, managed_path_revision, last_outcome) \
+                    VALUES ('{track}', 'x', 'v2', 'succeeded');",
+            ..line(HI_RES, true)
+        },
+        Line {
+            setup: "INSERT INTO library_track_management_state (local_track_id, \
+                    written_sha256) VALUES ('{track}', 'x'); \
+                    INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+                    VALUES ('{album}', 'files_changed', 0);",
+            ..line(HI_RES, false)
+        },
+        Line {
+            setup: "INSERT INTO library_track_management_state (local_track_id, \
+                    written_sha256) VALUES ('{track}', 'x'); \
+                    UPDATE local_tracks SET manual_excluded = 1, availability = 'excluded', \
+                    excluded_at = 1 WHERE id = '{track}';",
+            ..line(HI_RES, false)
+        },
+        Line {
+            setup: "INSERT INTO library_track_management_state (local_track_id, \
+                    written_sha256) VALUES ('{track}', 'x'); \
+                    UPDATE local_tracks SET sample_rate = NULL WHERE id = '{track}';",
+            ..line(HI_RES, false)
+        },
+        Line {
+            lose_first: true,
+            ..line(HI_RES, true)
+        },
+        Line {
+            old: Rip {
+                release: "rel-copy",
+                ..RIP
+            },
+            ..line(
+                Rip {
+                    release: "rel-copy",
+                    album: Some("Copy renamed"),
+                    ..HI_RES
+                },
+                true,
+            )
+        },
+    ];
+    let names = [
+        "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "15b",
+        "16", "17", "18", "19", "20",
+    ];
+    assert_eq!(names.len(), lines.len());
+    let mut rig = RegroupRig::new("scan-new-copy-line");
+    let file = |n: usize| format!("copy{:02}/{}", n + 1, lines[n].file);
+    let album_name = |n: usize| format!("Copy {}", names[n]);
+    for (n, line) in lines.iter().enumerate() {
+        rig.rip(&file(n), &album_name(n), line.old);
+    }
+    rig.scan().await;
+    let tracks: Vec<String> = (0..lines.len()).map(|n| rig.row_at(&file(n))).collect();
+    let albums: Vec<String> = tracks
+        .iter()
+        .map(|track| {
+            rig.text(&format!(
+                "SELECT local_album_id FROM local_tracks WHERE id = '{track}'"
+            ))
+            .expect("an album")
+        })
+        .collect();
+    for (n, line) in lines.iter().enumerate() {
+        rig.run(
+            &line
+                .setup
+                .replace("{track}", &tracks[n])
+                .replace("{album}", &albums[n]),
+        );
+    }
+    for (n, line) in lines.iter().enumerate() {
+        if line.lose_first {
+            rig.lose(&[file(n)]).await;
+        }
+    }
+    let state = |rig: &RegroupRig, track: &str| {
+        rig.text(&format!(
+            "SELECT COALESCE(written_sha256, '-') || ' ' || COALESCE(managed_path_revision, '-') \
+             || ' ' || row_revision FROM library_track_management_state \
+             WHERE local_track_id = '{track}'"
+        ))
+    };
+    let kept: Vec<Option<String>> = tracks.iter().map(|track| state(&rig, track)).collect();
+    rig.run("DELETE FROM library_management_automatic_queue;");
+    for (n, line) in lines.iter().enumerate() {
+        rig.rip(&file(n), &album_name(n), line.new);
+    }
+    rig.scan().await;
+
+    let conn = droppedneedle_kernel::db::open_connection(&rig.db()).expect("opens");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after 1970")
+        .as_secs_f64();
+    for (n, line) in lines.iter().enumerate() {
+        let row = names[n];
+        let (track, album) = (&tracks[n], &albums[n]);
+        assert_eq!(&rig.row_at(&file(n)), track, "row {row}: the same track");
+        let actions = rig.count(&format!(
+            "SELECT COUNT(*) FROM library_catalog_actions a, json_each(a.after_json, '$.tracks') t \
+             WHERE a.action_kind = 'new_copy_at_path' AND a.reason_code = 'NEW_COPY_AT_PATH' \
+             AND a.local_album_id = '{album}' AND json_extract(t.value, '$.track_id') = '{track}'"
+        ));
+        let on_album = rig.count(&format!(
+            "SELECT COUNT(*) FROM library_catalog_actions \
+             WHERE action_kind = 'new_copy_at_path' AND local_album_id = '{album}'"
+        ));
+        if line.cleared {
+            assert!(
+                !record(&conn, track).expect("record reads").exists(),
+                "row {row}: the record is gone"
+            );
+            assert_eq!(
+                rig.count(&format!(
+                    "SELECT COUNT(*) FROM library_track_management_state \
+                     WHERE local_track_id = '{track}' AND managed_path_revision IS NOT NULL"
+                )),
+                0,
+                "row {row}: no v2 record left"
+            );
+            assert_eq!((actions, on_album), (1, 1), "row {row}: one action");
+            assert_eq!(
+                rig.count(&format!(
+                    "SELECT COUNT(*) FROM library_management_automatic_queue \
+                     WHERE local_album_id = '{album}' AND not_before < 1e15"
+                )),
+                1,
+                "row {row}: the album is queued"
+            );
+            let told: Vec<(HistoryKind, usize)> = album_history(&conn, album, "listener", now)
+                .expect("history reads")
+                .expect("album live")
+                .into_iter()
+                .map(|entry| (entry.kind, entry.track_count))
+                .collect();
+            assert_eq!(
+                told,
+                vec![(HistoryKind::TracksNewCopy, 1)],
+                "row {row}: one history entry"
+            );
+        } else {
+            assert_eq!(state(&rig, track), kept[n], "row {row}: the record is kept");
+            assert_eq!(on_album, 0, "row {row}: no action");
+        }
+        if line.lose_first {
+            assert_eq!(
+                rig.text(&format!(
+                    "SELECT availability FROM local_tracks WHERE id = '{track}'"
+                ))
+                .as_deref(),
+                Some("indexed"),
+                "row {row}: indexed again"
+            );
+        }
+    }
 }

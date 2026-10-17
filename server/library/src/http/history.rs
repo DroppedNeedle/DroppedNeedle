@@ -42,6 +42,8 @@ pub enum AlbumHistoryKindView {
     /// Other music took the paths of tracks, which came in as new tracks;
     /// what people made stayed with the old tracks, now missing.
     TracksOtherMusic,
+    /// Tracks' files were replaced by new copies of the same recordings.
+    TracksNewCopy,
 }
 
 /// Who asked for a join.
@@ -87,6 +89,7 @@ impl From<HistoryEntry> for AlbumHistoryEntryView {
                 HistoryKind::RetagHalfLeftAlone => AlbumHistoryKindView::RetagHalfLeftAlone,
                 HistoryKind::LeftoverJoined => AlbumHistoryKindView::LeftoverJoined,
                 HistoryKind::TracksOtherMusic => AlbumHistoryKindView::TracksOtherMusic,
+                HistoryKind::TracksNewCopy => AlbumHistoryKindView::TracksNewCopy,
             },
             at: entry.at,
             by: entry.by.map(|by| match by {

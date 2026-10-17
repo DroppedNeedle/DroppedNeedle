@@ -17027,3 +17027,167 @@ async fn a_match_by_hand_is_refused_with_nothing_changed() {
     assert!(hand_match_row(&db, &h.odd).is_some(), "the record stays");
     rig.stop().await;
 }
+
+/// Rewrite the total-sample count in a FLAC file's STREAMINFO so the file
+/// reads `seconds` longer. The frames stay as they were.
+fn lengthen_flac(path: &Path, seconds: f64) {
+    let mut bytes = std::fs::read(path).expect("file reads");
+    let stream = bytes
+        .windows(4)
+        .position(|window| window == b"fLaC")
+        .expect("a FLAC stream");
+    // After the marker and the block header: block and frame sizes (10
+    // bytes), then sample rate (20 bits), channels (3), bits per sample
+    // (5) and total samples (36).
+    let at = stream + 8 + 10;
+    let packed = u64::from_be_bytes(bytes[at..at + 8].try_into().expect("eight bytes"));
+    let samples_mask = (1u64 << 36) - 1;
+    let rate = packed >> 44;
+    let samples = (packed & samples_mask) + (seconds * rate as f64) as u64;
+    let packed = (packed & !samples_mask) | samples;
+    bytes[at..at + 8].copy_from_slice(&packed.to_be_bytes());
+    std::fs::write(path, bytes).expect("file writes");
+}
+
+/// A track re-ripped over the file the app wrote, with its title edited
+/// by hand: its audio changed, so it is a new copy of the same recording,
+/// not a hand edit. The scan forgets the app's record and says so in the
+/// album's history; automatic management writes the edition into the
+/// copy, and undoing that run gives the copy back as it came.
+#[tokio::test]
+async fn a_re_ripped_track_is_managed_again_and_undo_gives_it_back() {
+    use droppedneedle_library::operations::history::{HistoryKind, album_history};
+    use droppedneedle_library::publish::record::record;
+    use droppedneedle_library::tags::read::read_scan_metadata;
+    use droppedneedle_library::tags::{AudioFormat, TagField, read_fields, save_tags};
+
+    let managed = ManagedLibrary::start("lib-new-copy", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 2).await;
+    managed.activate().await;
+    managed.look(&album).await;
+    let track = &tracks[0];
+    let has_record = |track: &str| record(&managed.db(), track).expect("record reads").exists();
+    assert!(
+        tracks.iter().all(|track| has_record(track)),
+        "the app wrote both files"
+    );
+    // The scan reads the app's write, which named the album anew.
+    rescan(&managed.library).await;
+    assert!(
+        tracks.iter().all(|track| has_record(track)),
+        "the app's own write"
+    );
+    let title = |path: &Path| read_fields(path).expect("tags read")[&TagField::Title].clone();
+
+    let file = managed.path(track);
+    let before = read_scan_metadata(&file, AudioFormat::Flac)
+        .expect("reads")
+        .1
+        .duration_seconds
+        .expect("a length");
+    let rip = managed.scratch.join("rip.flac");
+    std::fs::copy(&file, &rip).expect("copied to scratch");
+    save_tags(&rip, &[title_edit("First 1 (rip)")]).expect("retagged");
+    lengthen_flac(&rip, 2.0);
+    let after = read_scan_metadata(&rip, AudioFormat::Flac)
+        .expect("reads")
+        .1
+        .duration_seconds
+        .expect("a length");
+    assert!((after - before - 2.0).abs() < 0.01, "{before} -> {after}");
+    std::fs::copy(&rip, &file).expect("the copy put at the track's path");
+    managed
+        .db()
+        .execute("DELETE FROM library_management_automatic_queue", [])
+        .expect("queue emptied");
+    rescan(&managed.library).await;
+
+    assert!(!has_record(track), "the record is forgotten");
+    assert!(has_record(&tracks[1]));
+    let actions = "SELECT COUNT(*) FROM library_catalog_actions \
+                   WHERE action_kind = 'new_copy_at_path'";
+    assert_eq!(managed.count(actions), 1);
+    let named: (String, String, f64, f64) = managed
+        .db()
+        .query_row(
+            "SELECT a.local_album_id, json_extract(t.value, '$.track_id'), \
+             json_extract(t.value, '$.before.seconds'), json_extract(t.value, '$.after.seconds') \
+             FROM library_catalog_actions a, json_each(a.after_json, '$.tracks') t \
+             WHERE a.action_kind = 'new_copy_at_path' AND a.reason_code = 'NEW_COPY_AT_PATH'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("one track named");
+    assert_eq!(named, (album.clone(), track.clone(), before, after));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after 1970")
+        .as_secs_f64();
+    let told: Vec<(HistoryKind, usize, Vec<String>)> =
+        album_history(&managed.db(), &album, "admin", now)
+            .expect("history reads")
+            .expect("album live")
+            .into_iter()
+            .map(|entry| (entry.kind, entry.track_count, entry.track_titles))
+            .collect();
+    assert_eq!(
+        told,
+        vec![(
+            HistoryKind::TracksNewCopy,
+            1,
+            vec!["First 1 (rip)".to_owned()]
+        )]
+    );
+    assert_eq!(
+        managed.count(&format!(
+            "SELECT COUNT(*) FROM library_management_automatic_queue \
+             WHERE local_album_id = '{album}' AND not_before < 1e15"
+        )),
+        1,
+        "the album is queued"
+    );
+
+    let runs = managed.automatic_runs().len();
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album), None);
+    let all = managed.automatic_runs();
+    assert_eq!(all.len(), runs + 1, "one new run");
+    assert_eq!(all.last().expect("a run").0, "succeeded");
+    let file = managed.path(track);
+    assert_eq!(title(&file), vec!["first 1".to_owned()]);
+    let written = managed.recorded(track);
+    assert!(written.is_some(), "the app recorded the bytes it placed");
+
+    rescan(&managed.library).await;
+    assert_eq!(
+        managed.count(actions),
+        1,
+        "the app's own write is no new copy"
+    );
+    assert_eq!(managed.recorded(track), written);
+
+    let management = managed.management();
+    let (history, _) = management.history(Default::default()).expect("history");
+    let run = history
+        .iter()
+        .find(|item| item.origin == "scan_discovered")
+        .expect("the run")
+        .job
+        .id
+        .clone();
+    let detail = management.detail(&run).expect("detail");
+    let undo = management
+        .undo_preview(&run, detail.job.row_revision, "undo-new-copy", "admin")
+        .expect("undo preview");
+    assert!(
+        management_step(&managed.library).await,
+        "undo planning runs"
+    );
+    let undone = management_apply(&managed.library, &undo).await;
+    assert_eq!(undone.job.state.as_str(), "succeeded");
+    assert_eq!(
+        title(&managed.path(track)),
+        vec!["First 1 (rip)".to_owned()]
+    );
+    assert_eq!(managed.mark(&album).as_deref(), Some("run_undone"));
+}

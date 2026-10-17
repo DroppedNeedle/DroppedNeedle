@@ -25070,7 +25070,8 @@
           "retag_joined",
           "retag_half_left_alone",
           "leftover_joined",
-          "tracks_other_music"
+          "tracks_other_music",
+          "tracks_new_copy"
         ]
       },
       "AlbumHistoryView": {

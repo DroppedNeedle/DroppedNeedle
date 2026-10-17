@@ -100,6 +100,24 @@ pub fn record(conn: &Connection, track_id: &str) -> rusqlite::Result<Record> {
     )
 }
 
+/// Forget the app's record of a track's file, so the file counts as one
+/// the app never wrote. Clears `written_sha256`, and `managed_path_revision`
+/// where no job wrote it: every v3 writer of that column sets the job, so
+/// such a value is v2's. Writes only when there is a record; returns
+/// whether it wrote.
+pub(crate) fn forget(conn: &Connection, track_id: &str) -> rusqlite::Result<bool> {
+    let written = conn
+        .prepare_cached(&format!(
+            "UPDATE library_track_management_state AS s SET written_sha256 = NULL, \
+             managed_path_revision = CASE WHEN s.last_operation_job_id IS NULL THEN NULL \
+             ELSE s.managed_path_revision END, row_revision = s.row_revision + 1 \
+             WHERE s.local_track_id = ?1 AND {}",
+            record_sql()
+        ))?
+        .execute(params![track_id])?;
+    Ok(written > 0)
+}
+
 /// Whether another track row of the track's album, one whose file went
 /// missing, has a record: a file the app wrote went away, and one it never
 /// wrote may have taken its place. An excluded row does not count, nor a
