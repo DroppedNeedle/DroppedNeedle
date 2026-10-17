@@ -51,6 +51,7 @@ use super::imports::spotify_store::{
 use super::landing::ports::LandingLibrary;
 use super::landing::{LandingService, LandingSettings, LibrarySlot};
 use super::probes::{LiveProbes, ProbeCache, ProbeInputs, refresh_probes, seed_from_config};
+use super::requests::error::RequestsError;
 use super::requests::quota::{QuotaLedger, QuotaPolicy};
 use super::requests::sqlite::{RequestStore, WantedStore};
 use super::requests::state::RequestsState;
@@ -370,6 +371,28 @@ impl CandidateSearch for LiveSearch {
             let search = self.clients.current().search.clone();
             search.search_album(artist, title).await
         })
+    }
+}
+
+/// Why startup recovery stopped.
+#[derive(Debug, thiserror::Error)]
+pub enum RecoveryError {
+    /// The database answered busy. The recovery can run again: see
+    /// [`AcquireSetup::run_recovery`].
+    #[error("request recovery found the database busy during {operation}")]
+    Busy {
+        /// Operation name. Never SQL text or a path.
+        operation: String,
+    },
+    /// Any other failure.
+    #[error("{0}")]
+    Failed(String),
+}
+
+impl RecoveryError {
+    /// True when waiting and running the recovery again can succeed.
+    pub fn is_busy(&self) -> bool {
+        matches!(self, Self::Busy { .. })
     }
 }
 
@@ -1115,15 +1138,22 @@ impl AcquireSetup {
 
     /// Run startup recovery before serving traffic: drop imports a restart
     /// cut off, the download journal classification, and the request
-    /// ledger (interrupted cancels and dispatches). Re-running after a
-    /// clean shutdown is a no-op.
-    pub async fn run_recovery(&self) -> Result<super::worker::RecoveryReport, String> {
+    /// ledger (interrupted cancels and dispatches). It may run again after
+    /// a run that stopped on a busy database: the drop sweep leaves an
+    /// upload it could not read in place, a restarted download keeps its
+    /// keys, and a request's cancel or dispatch reuses its key or relinks.
+    pub async fn run_recovery(&self) -> Result<super::worker::RecoveryReport, RecoveryError> {
         self.drops.sweep_stale().await;
-        let report = run_startup_recovery(&self.journal, &self.staging_root).await?;
+        let report = run_startup_recovery(&self.journal, &self.staging_root)
+            .await
+            .map_err(RecoveryError::Failed)?;
         let requests = super::requests::service::RequestsService::new(&self.requests)
             .recover()
             .await
-            .map_err(|error| format!("request recovery failed: {error:?}"))?;
+            .map_err(|error| match error {
+                RequestsError::Busy { operation } => RecoveryError::Busy { operation },
+                other => RecoveryError::Failed(format!("request recovery failed: {other:?}")),
+            })?;
         if requests.cancelled > 0 || requests.relinked > 0 || requests.redispatched > 0 {
             tracing::info!(
                 cancelled = requests.cancelled,

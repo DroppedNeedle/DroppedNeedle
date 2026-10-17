@@ -6,14 +6,22 @@ use std::{
     convert::Infallible,
     net::SocketAddr,
     path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 use axum::{body::Body, routing::get};
 use droppedneedle::bootstrap;
+use droppedneedle_acquire::{AcquireSetup, db::AcquireDb, wiring::RecoveryError};
+use droppedneedle_catalog::reads::ReadsSetup;
 use droppedneedle_kernel::{
     config::AppConfig,
-    db::{DbConfig, open_runtime},
+    db::{DbConfig, Lane, open_runtime},
+    http_client::HttpClientFactory,
+    ids::{IdGenerator, UuidGenerator},
     runtime_config::{
         ConfigStore, Crypto,
         sections::{PublicAddress, SecuritySettings},
@@ -22,7 +30,7 @@ use droppedneedle_kernel::{
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 use tower::ServiceExt as _;
 
-use crate::common::{ScratchDir, closed_outbound, outbound_at};
+use crate::common::{ScratchDir, auth::AuthRig, closed_outbound, outbound_at};
 
 fn scratch(name: &str) -> ScratchDir {
     ScratchDir::new(&format!("boot-{name}"))
@@ -212,6 +220,80 @@ async fn boot_refuses_a_v2_data_directory_and_leaves_it_alone() {
         !dir.join("config").join("data_enc.key").exists(),
         "a v3 key was written into the v2 config folder"
     );
+}
+
+/// Startup recovery as boot runs it: a busy answer from the reader pool is
+/// waited out and the boot goes on once the reader frees, while a failure
+/// of any other kind stops the boot at once with the stage named.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn acquire_recovery_waits_out_a_busy_reader_and_stops_on_a_real_failure() {
+    let dir = scratch("recovery-busy");
+    let config = config_in(&dir);
+    // One reader and a short checkout limit, so the busy answer comes
+    // without the real five-second wait.
+    let mut db = DbConfig::new(&config.library_db_path).with_read_wait(Duration::from_millis(100));
+    db.readers = 1;
+    let runtime = open_runtime(&db).await.unwrap();
+    let auth = AuthRig::on(&runtime);
+    let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
+    let mut reads = ReadsSetup::for_tests(auth.deps.clone(), ids.clone()).unwrap();
+    let acquire = AcquireSetup::build(
+        AcquireDb::from_runtime(&runtime),
+        &config,
+        auth.deps.clone(),
+        &HttpClientFactory::new().unwrap(),
+        ids,
+        Arc::new(stored_settings(&config)),
+        &mut reads.collections,
+        &closed_outbound().spotify(),
+    )
+    .unwrap();
+    // The test holds the only reader through the first run, as a swapping
+    // host would, and gives it back once that run has answered.
+    let held = Mutex::new(Some(runtime.pool().acquire().await.unwrap()));
+    let runs = AtomicUsize::new(0);
+    let step = || {
+        let (acquire, runs, held) = (&acquire, &runs, &held);
+        async move {
+            let outcome = acquire.run_recovery().await;
+            runs.fetch_add(1, Ordering::SeqCst);
+            held.lock().unwrap().take();
+            outcome
+        }
+    };
+
+    let recovered =
+        bootstrap::wait_out_busy("acquire recovery", RecoveryError::is_busy, step).await;
+    assert!(recovered.is_ok(), "{recovered:?}");
+    assert_eq!(runs.load(Ordering::SeqCst), 2, "the busy run ran again");
+
+    runtime
+        .lane()
+        .write(Lane::Background, "test.break", |tx| {
+            tx.execute_batch("ALTER TABLE request_history RENAME TO request_history_gone")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    runs.store(0, Ordering::SeqCst);
+    let refused = bootstrap::wait_out_busy("acquire recovery", RecoveryError::is_busy, step).await;
+    assert!(
+        matches!(
+            &refused,
+            Err(bootstrap::BootError::Stage {
+                stage: "acquire recovery",
+                ..
+            })
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(
+        runs.load(Ordering::SeqCst),
+        1,
+        "a real failure is not run again"
+    );
+    drop(acquire);
+    runtime.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

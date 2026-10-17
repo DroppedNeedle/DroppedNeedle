@@ -128,7 +128,8 @@ pub async fn reload_overrides(
     let rows: Vec<OverrideRow> =
         sqlx::query_as("SELECT user_id, request_quota_count, request_quota_days, storage_quota_gb FROM user_quotas")
             .fetch_all(pool)
-            .await?;
+            .await
+            .map_err(|error| droppedneedle_kernel::db::map_sqlx_busy("quota-overrides-reload", error))?;
     let mut loaded = 0;
     for (user_id, count, days, storage) in rows {
         let row = QuotaOverride {

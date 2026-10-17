@@ -331,7 +331,9 @@ impl DropImports {
     /// Startup housekeeping: jobs a restart cut off fail (a hand match
     /// cut off goes back to review), review items past the retention age
     /// go with their files, and staging folders with nothing left to
-    /// review are removed, orphans and partial uploads included.
+    /// review are removed, orphans and partial uploads included. When a
+    /// cut-off upload cannot be read or kept, the sweep stops there: its
+    /// job stays processing with its files, for a later sweep to group.
     pub async fn sweep_stale(&self) {
         // A job cut off before its upload became items: unpack and group
         // it now, so its files wait for review instead of being swept.
@@ -364,12 +366,16 @@ impl DropImports {
                             .add_item(&job_id, &unit.folder_name, &paths)
                             .await
                         {
-                            tracing::warn!(%job_id, %error, "cut-off drop upload not kept");
+                            tracing::warn!(%job_id, %error, "cut-off drop upload not kept; staging left as is");
+                            return;
                         }
                     }
                 }
             }
-            Err(error) => tracing::warn!(%error, "cut-off drop jobs unreadable"),
+            Err(error) => {
+                tracing::warn!(%error, "cut-off drop jobs unreadable; staging left as is");
+                return;
+            }
         }
         let reason = reasons::INTERRUPTED;
         match self

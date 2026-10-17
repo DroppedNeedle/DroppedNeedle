@@ -59,9 +59,10 @@ pub const MAX_READERS: u32 = 7;
 pub const MIN_CONNECTIONS: u32 = 1;
 /// Pool checkout horizon, shared with the busy timeout.
 pub const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
-/// How long boot waits to open its migration connection. Boot serves no
+/// How long boot waits to open its migration connection, and how long a
+/// boot step keeps trying while the database answers busy. Boot serves no
 /// request, so a slow or swapping disk is waited out, not refused.
-const BOOT_WAIT: Duration = Duration::from_secs(60);
+pub const BOOT_WAIT: Duration = Duration::from_secs(60);
 /// Lock wait on every connection. The v2 value, unchanged.
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(5000);
 /// Idle connections older than this are reaped. No max lifetime: SQLite

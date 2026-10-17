@@ -81,8 +81,8 @@ pub use checkpoint::{
 pub use durable::{DurableWorkWakeups, JobKind, JobRecord, JobState, WakeupChannel};
 pub use error::{DbError, map_sqlx_busy, rusqlite_is_busy, sqlx_is_busy};
 pub use factory::{
-    ACQUIRE_TIMEOUT, BUSY_TIMEOUT, CACHE_SIZE_KIB, DbConfig, DbRuntime, IDLE_TIMEOUT, MAX_READERS,
-    MIN_CONNECTIONS, MMAP_SIZE, WAL_AUTOCHECKPOINT, open_runtime,
+    ACQUIRE_TIMEOUT, BOOT_WAIT, BUSY_TIMEOUT, CACHE_SIZE_KIB, DbConfig, DbRuntime, IDLE_TIMEOUT,
+    MAX_READERS, MIN_CONNECTIONS, MMAP_SIZE, WAL_AUTOCHECKPOINT, open_runtime,
 };
 pub use fold::{fold_text, register_fold};
 pub use fs::{filesystem_is_local, reject_remote_filesystem, reject_symlink, same_filesystem};

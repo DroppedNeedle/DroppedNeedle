@@ -612,3 +612,76 @@ async fn an_entry_longer_than_its_header_leaves_nothing_behind() {
         .expect("catalog");
     assert_eq!(indexed, 0);
 }
+
+/// An upload a restart cut off before it became items keeps its files when
+/// the startup sweep cannot read the jobs: the job stays processing, and the
+/// next sweep turns its files into items.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cut_off_upload_survives_a_sweep_that_cannot_read_its_jobs() {
+    let dir = crate::common::ScratchDir::new("drop-sweep-busy");
+    let config = droppedneedle_kernel::config::AppConfig::with_root(0, &dir);
+    // One reader and a short checkout limit, so the busy answer comes
+    // without the real five-second wait.
+    let mut db = droppedneedle_kernel::db::DbConfig::new(&config.library_db_path)
+        .with_read_wait(Duration::from_millis(100));
+    db.readers = 1;
+    let runtime = droppedneedle_kernel::db::open_runtime(&db)
+        .await
+        .expect("runtime opens");
+    let auth = AuthRig::on(&runtime);
+    let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
+    let mut reads =
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.deps.clone(), ids.clone())
+            .expect("reads bundle");
+    let acquire = droppedneedle_acquire::AcquireSetup::build(
+        droppedneedle_acquire::db::AcquireDb::from_runtime(&runtime),
+        &config,
+        auth.deps.clone(),
+        &droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http"),
+        ids,
+        crate::common::config_store(&dir),
+        &mut reads.collections,
+        &crate::common::closed_outbound().spotify(),
+    )
+    .expect("acquire bundle");
+    acquire
+        .db
+        .add_user("u-ada", "Ada", "user")
+        .await
+        .expect("user");
+    let staging = config.imports_dir().join("drop").join("job-cut");
+    let track = staging.join("Album").join("01 Track.flac");
+    std::fs::create_dir_all(track.parent().expect("album folder")).expect("staging");
+    std::fs::write(&track, b"audio").expect("track");
+    let store = droppedneedle_acquire::drop_import::store::DropStore::new(acquire.db.clone());
+    store
+        .create_job(
+            "job-cut",
+            "u-ada",
+            "Ada",
+            "album.zip",
+            &staging.to_string_lossy(),
+        )
+        .await
+        .expect("job");
+
+    // The only reader is out, as on a swapping host at boot.
+    let held = runtime.pool().acquire().await.expect("reader");
+    acquire.drops.sweep_stale().await;
+    drop(held);
+    assert!(track.exists(), "the cut-off upload was swept");
+    let job = store.get_job("job-cut").await.expect("read").expect("job");
+    assert_eq!(job.status, "processing", "{:?}", job.error);
+    assert!(job.items.is_empty(), "{:?}", job.items);
+
+    acquire.drops.sweep_stale().await;
+    assert!(track.exists(), "the grouped upload was swept");
+    let job = store.get_job("job-cut").await.expect("read").expect("job");
+    assert_eq!(job.items.len(), 1, "{:?}", job.items);
+    assert_eq!(
+        job.items[0].staging_paths,
+        vec![track.to_string_lossy().into_owned()]
+    );
+    drop(acquire);
+    runtime.shutdown().await;
+}

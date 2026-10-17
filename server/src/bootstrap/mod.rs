@@ -13,7 +13,7 @@ pub mod jobs;
 mod outbound;
 mod serve;
 
-use std::sync::Arc;
+use std::{fmt::Display, future::Future, sync::Arc, time::Duration};
 
 use axum::Router;
 use thiserror::Error;
@@ -58,7 +58,7 @@ use droppedneedle_compat::{
 use droppedneedle_kernel::{
     config::AppConfig,
     db::{
-        BackupService, DbConfig,
+        BOOT_WAIT, BackupService, DbConfig,
         datalock::{DataLock, DataLockError},
         error::DbError,
         open_runtime,
@@ -123,6 +123,53 @@ pub enum BootError {
 
 fn stage(stage: &'static str) -> impl FnOnce(String) -> BootError {
     move |message| BootError::Stage { stage, message }
+}
+
+/// The first pause before a boot step runs again on a busy database. Each
+/// later pause doubles, up to [`LONGEST_BOOT_PAUSE`].
+const FIRST_BOOT_PAUSE: Duration = Duration::from_millis(250);
+/// The longest pause between two runs of a boot step.
+const LONGEST_BOOT_PAUSE: Duration = Duration::from_secs(5);
+
+/// Run one boot step, and run it again while it fails because the database
+/// is busy, for up to [`BOOT_WAIT`]. Boot serves nothing yet, so a slow or
+/// swapping disk is waited out rather than refused, as the migration
+/// connection is. Any other failure, or a busy one past the wait, stops at
+/// once with `stage` named. The step must be safe to run again.
+pub async fn wait_out_busy<T, E, F, Fut>(
+    stage: &'static str,
+    is_busy: fn(&E) -> bool,
+    mut step: F,
+) -> Result<T, BootError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    E: Display,
+{
+    let deadline = tokio::time::Instant::now() + BOOT_WAIT;
+    let mut pause = FIRST_BOOT_PAUSE;
+    loop {
+        let error = match step().await {
+            Ok(value) => return Ok(value),
+            Err(error) => error,
+        };
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if !is_busy(&error) || left.is_zero() {
+            return Err(BootError::Stage {
+                stage,
+                message: error.to_string(),
+            });
+        }
+        let wait = pause.min(left);
+        tracing::warn!(
+            stage,
+            %error,
+            wait_ms = u64::try_from(wait.as_millis()).unwrap_or(u64::MAX),
+            "database busy during boot; trying the step again"
+        );
+        tokio::time::sleep(wait).await;
+        pause = (pause * 2).min(LONGEST_BOOT_PAUSE);
+    }
 }
 
 /// The media links a Plex or Jellyfin sign-in saves, written to the
@@ -436,10 +483,12 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     }
     // Startup recovery before serving traffic. Re-running after a clean
     // shutdown is a no-op: nothing destructive repeats.
-    let recovery = acquire
-        .run_recovery()
-        .await
-        .map_err(stage("acquire recovery"))?;
+    let recovery = wait_out_busy(
+        "acquire recovery",
+        droppedneedle_acquire::wiring::RecoveryError::is_busy,
+        || acquire.run_recovery(),
+    )
+    .await?;
     tracing::info!(
         redispatched = recovery.redispatched,
         resumed = recovery.resumed,
@@ -482,7 +531,13 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .with_checkpoint(runtime.checkpoint().clone());
     // Durable quota overrides back into the live ledger. A failure warns
     // instead of stopping the boot; the admin can re-save.
-    match reload_overrides(runtime.pool(), &acquire.requests.quota).await {
+    match wait_out_busy(
+        "quota overrides",
+        |error: &DbError| matches!(error, DbError::Busy { .. }),
+        || reload_overrides(runtime.pool(), &acquire.requests.quota),
+    )
+    .await
+    {
         Ok(loaded) => tracing::info!(loaded, "quota overrides reloaded"),
         Err(error) => tracing::warn!(%error, "quota overrides failed to reload; defaults apply"),
     }
