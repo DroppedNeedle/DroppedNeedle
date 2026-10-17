@@ -7,6 +7,7 @@
 #![allow(dead_code, unused_imports)]
 
 mod app;
+pub mod app_passwords;
 pub mod auth;
 pub mod auth_fakes;
 pub mod compat;

@@ -2,42 +2,35 @@
 //! with the getAvatar 403-as-text exception, Jellyfin 401s with the login
 //! echo, and account-password rejection on both protocols.
 
-#[allow(dead_code)]
-use droppedneedle_auth::compat_auth::fakes::FakeCompatPasswords;
 use droppedneedle_auth::compat_auth::jellyfin::{
     JellyfinRequest, JellyfinUser, MAX_AUTH_VALUE_LENGTH, PolicyFacts, SessionFacts, UNAUTHORIZED,
     authenticate_by_name, effective_name, extract_client, extract_device, extract_token,
     login_echo_json, resolve_token, server_id,
 };
+use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::compat_auth::subsonic::{
-    API_VERSION, AUTH_CODES, AVATAR_FORBIDDEN_MESSAGE, AppSecret, BINARY_ENDPOINTS,
-    CONFLICTING_AUTH, GENERIC, INVALID_APIKEY, MAX_CLIENT_NAME_LENGTH, MAX_ENCODED_PASSWORD_LENGTH,
-    NAMESPACE, NOT_AUTHORIZED, NOT_FOUND, PARAM_MISSING, PUBLIC_ENDPOINT, SubsonicDenied,
-    SubsonicFormat, SubsonicParams, SubsonicPasswordStore, SubsonicStoreError, WRONG_CREDENTIALS,
-    authenticate, avatar_is_self, callback_is_safe, decode_subsonic_password, default_message,
-    dispatch_uses_envelope, hex_encode, is_binary_endpoint, is_public_endpoint, md5_hex,
-    normalize_endpoint, parse_format, render_binary_error, render_error, sha256_hex,
+    API_VERSION, AUTH_CODES, AVATAR_FORBIDDEN_MESSAGE, BINARY_ENDPOINTS, CONFLICTING_AUTH, GENERIC,
+    INVALID_APIKEY, MAX_CLIENT_NAME_LENGTH, MAX_ENCODED_PASSWORD_LENGTH, NAMESPACE, NOT_AUTHORIZED,
+    NOT_FOUND, PARAM_MISSING, PUBLIC_ENDPOINT, SubsonicDenied, SubsonicFormat, SubsonicParams,
+    WRONG_CREDENTIALS, authenticate, avatar_is_self, callback_is_safe, decode_subsonic_password,
+    default_message, dispatch_uses_envelope, hex_encode, is_binary_endpoint, is_public_endpoint,
+    md5_hex, normalize_endpoint, parse_format, render_binary_error, render_error, sha256_hex,
 };
+use droppedneedle_auth::users::roles::Role;
 
-fn passwords() -> FakeCompatPasswords {
-    let store = FakeCompatPasswords::new();
-    store.add_user(
-        "user-1",
-        "alice",
-        "Alice",
-        "user",
-        "alice-account-password",
-        &["alice-secret"],
-    );
-    store.add_user(
-        "user-2",
-        "bob",
-        "Bob",
-        "admin",
-        "bob-account-password",
-        &["bob-secret"],
-    );
-    store
+use crate::common::auth::{AuthRig, PASSWORD};
+
+/// Alice (user) and Bob (admin), each with the account password
+/// [`PASSWORD`] and one app password.
+async fn passwords(tag: &str) -> (AuthRig, ProdCompatPasswords) {
+    let rig = AuthRig::new(tag).await;
+    for (name, role) in [("alice", Role::User), ("bob", Role::Admin)] {
+        let user = rig.seed_user(name, role).await;
+        rig.seed_app_password(&user.id, &format!("{name}-secret"))
+            .await;
+    }
+    let store = rig.compat_passwords();
+    (rig, store)
 }
 
 #[test]
@@ -206,7 +199,7 @@ fn dispatch_split_keeps_50_enveloped_and_sends_the_rest_to_text() {
 
 #[tokio::test]
 async fn token_scheme_verifies_and_rejects() {
-    let store = passwords();
+    let (rig, store) = passwords("compat-token").await;
     let salt = "pepper";
     let token = md5_hex(&format!("alice-secret{salt}"));
     let params = SubsonicParams::new(vec![
@@ -217,11 +210,11 @@ async fn token_scheme_verifies_and_rejects() {
     ]);
     assert_eq!(
         authenticate(&store, &params).await.unwrap().user_id,
-        "user-1"
+        "user-alice"
     );
-    let touches = store.touches();
-    assert_eq!(touches.len(), 1);
-    assert_eq!(touches[0].1.as_deref(), Some("symfonium"));
+    let stamped = rig.app_password("alice-secret").await;
+    assert!(stamped.last_used_at.is_some());
+    assert_eq!(stamped.last_client.as_deref(), Some("symfonium"));
 
     let params = SubsonicParams::new(vec![("u", "alice"), ("t", &md5_hex("nope")), ("s", salt)]);
     assert_eq!(
@@ -229,7 +222,7 @@ async fn token_scheme_verifies_and_rejects() {
         Err(SubsonicDenied::new(WRONG_CREDENTIALS))
     );
 
-    let impostor = md5_hex(&format!("alice-account-password{salt}"));
+    let impostor = md5_hex(&format!("{PASSWORD}{salt}"));
     let params = SubsonicParams::new(vec![("u", "alice"), ("t", &impostor), ("s", salt)]);
     assert_eq!(
         authenticate(&store, &params).await,
@@ -239,18 +232,18 @@ async fn token_scheme_verifies_and_rejects() {
 
 #[tokio::test]
 async fn password_scheme_handles_plain_hex_and_rejection() {
-    let store = passwords();
+    let (_rig, store) = passwords("compat-password").await;
     let params = SubsonicParams::new(vec![("u", "ALICE"), ("p", "alice-secret")]);
     assert_eq!(
         authenticate(&store, &params).await.unwrap().user_id,
-        "user-1"
+        "user-alice"
     );
 
     let hexed = format!("enc:{}", hex_encode(b"alice-secret"));
     let params = SubsonicParams::new(vec![("u", "alice"), ("p", &hexed)]);
     assert_eq!(
         authenticate(&store, &params).await.unwrap().user_id,
-        "user-1"
+        "user-alice"
     );
 
     assert_eq!(
@@ -270,7 +263,7 @@ async fn password_scheme_handles_plain_hex_and_rejection() {
     );
 
     let unknown = SubsonicParams::new(vec![("u", "nobody"), ("p", "whatever")]);
-    let account = SubsonicParams::new(vec![("u", "alice"), ("p", "alice-account-password")]);
+    let account = SubsonicParams::new(vec![("u", "alice"), ("p", PASSWORD)]);
     assert_eq!(
         authenticate(&store, &unknown).await,
         authenticate(&store, &account).await
@@ -283,11 +276,11 @@ async fn password_scheme_handles_plain_hex_and_rejection() {
 
 #[tokio::test]
 async fn subsonic_username_is_stripped_before_lookup() {
-    let store = passwords();
+    let (_rig, store) = passwords("compat-strip").await;
     let params = SubsonicParams::new(vec![("u", " alice "), ("p", "alice-secret")]);
     assert_eq!(
         authenticate(&store, &params).await.unwrap().user_id,
-        "user-1"
+        "user-alice"
     );
 }
 
@@ -301,13 +294,15 @@ fn jsonp_callback_allows_unicode_word_chars_and_counts_chars() {
 
 #[tokio::test]
 async fn apikey_scheme_is_lone_and_rejects_account_passwords() {
-    let store = passwords();
+    let (rig, store) = passwords("compat-apikey").await;
     let params = SubsonicParams::new(vec![("apiKey", "bob-secret")]);
     assert_eq!(
         authenticate(&store, &params).await.unwrap().user_id,
-        "user-2"
+        "user-bob"
     );
-    assert_eq!(store.touches()[0].1, None);
+    let stamped = rig.app_password("bob-secret").await;
+    assert!(stamped.last_used_at.is_some());
+    assert_eq!(stamped.last_client, None);
 
     let params = SubsonicParams::new(vec![("apiKey", "nope")]);
     assert_eq!(
@@ -315,7 +310,7 @@ async fn apikey_scheme_is_lone_and_rejects_account_passwords() {
         Err(SubsonicDenied::new(INVALID_APIKEY))
     );
 
-    let params = SubsonicParams::new(vec![("apiKey", "bob-account-password")]);
+    let params = SubsonicParams::new(vec![("apiKey", PASSWORD)]);
     assert_eq!(
         authenticate(&store, &params).await,
         Err(SubsonicDenied::new(INVALID_APIKEY))
@@ -330,7 +325,7 @@ async fn apikey_scheme_is_lone_and_rejects_account_passwords() {
 
 #[tokio::test]
 async fn conflicts_duplicates_and_missing_params_are_code_10() {
-    let store = passwords();
+    let (_rig, store) = passwords("compat-conflicts").await;
     for entries in [
         vec![("t", "a"), ("s", "b")],
         vec![("u", "alice"), ("u", "bob")],
@@ -360,26 +355,11 @@ async fn conflicts_duplicates_and_missing_params_are_code_10() {
 
 #[tokio::test]
 async fn store_failure_is_generic_never_an_auth_code() {
-    #[derive(Debug, Clone, Default)]
-    struct Broken;
-    impl SubsonicPasswordStore for Broken {
-        async fn user_id_for_username(
-            &self,
-            _: &str,
-        ) -> Result<Option<String>, SubsonicStoreError> {
-            Err(SubsonicStoreError)
-        }
-        async fn active_secrets(&self, _: &str) -> Result<Vec<AppSecret>, SubsonicStoreError> {
-            Err(SubsonicStoreError)
-        }
-        async fn owner_of_secret(&self, _: &str) -> Result<Option<String>, SubsonicStoreError> {
-            Err(SubsonicStoreError)
-        }
-        async fn note_use(&self, _: &str, _: Option<&str>) {}
-    }
+    let (rig, store) = passwords("compat-broken").await;
+    rig.runtime().pool().close().await;
     let params = SubsonicParams::new(vec![("u", "alice"), ("p", "alice-secret")]);
     assert_eq!(
-        authenticate(&Broken, &params).await,
+        authenticate(&store, &params).await,
         Err(SubsonicDenied::new(GENERIC))
     );
 }
@@ -473,7 +453,7 @@ fn empty_authorization_falls_through_to_legacy_header() {
 #[test]
 fn jellyfin_effective_name_treats_empty_as_absent() {
     let blank_display = JellyfinUser {
-        id: "user-1".to_owned(),
+        id: "user-alice".to_owned(),
         username: Some("alice".to_owned()),
         username_display: Some(String::new()),
         display_name: "Alice Liddell".to_owned(),
@@ -491,16 +471,15 @@ fn jellyfin_effective_name_treats_empty_as_absent() {
 
 #[tokio::test]
 async fn jellyfin_login_accepts_app_passwords_and_rejects_everything_else_identically() {
-    let store = passwords();
+    let (_rig, store) = passwords("compat-jf-login").await;
     let user = authenticate_by_name(&store, " Alice ", "alice-secret", Some("finamp"))
         .await
         .unwrap();
-    assert_eq!(user.id, "user-1");
+    assert_eq!(user.id, "user-alice");
 
     let bad_password = authenticate_by_name(&store, "alice", "wrong", None).await;
     let unknown_user = authenticate_by_name(&store, "nobody", "whatever", None).await;
-    let account_password =
-        authenticate_by_name(&store, "alice", "alice-account-password", None).await;
+    let account_password = authenticate_by_name(&store, "alice", PASSWORD, None).await;
     let empty_password = authenticate_by_name(&store, "alice", "", None).await;
     for denied in [
         &bad_password,
@@ -518,14 +497,14 @@ async fn jellyfin_login_accepts_app_passwords_and_rejects_everything_else_identi
 
 #[tokio::test]
 async fn jellyfin_token_resolution_never_distinguishes_misses() {
-    let store = passwords();
+    let (_rig, store) = passwords("compat-jf-token").await;
     let user = resolve_token(&store, Some("bob-secret")).await.unwrap();
-    assert_eq!(user.id, "user-2");
+    assert_eq!(user.id, "user-bob");
 
     let missing = resolve_token(&store, None).await;
     let empty = resolve_token(&store, Some("")).await;
     let unknown = resolve_token(&store, Some("nope")).await;
-    let account = resolve_token(&store, Some("bob-account-password")).await;
+    let account = resolve_token(&store, Some(PASSWORD)).await;
     let overlong = resolve_token(&store, Some(&"x".repeat(2048))).await;
     for denied in [&missing, &empty, &unknown, &account, &overlong] {
         let denied = denied.as_ref().unwrap_err();

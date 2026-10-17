@@ -12,7 +12,6 @@ use axum::{Form, Json, Router, extract::Path, extract::Query, extract::State};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use droppedneedle_auth::federated::SessionIssuer;
-use droppedneedle_auth::federated::fakes::{FakeHasher, FakeSessionIssuer, FakeUserStore};
 use droppedneedle_auth::federated::jellyfin_login::emby_auth_header;
 use droppedneedle_auth::federated::oidc::{
     AuthorizeParams, OidcConfig, RawClaims, authorize_url, form_encode, normalise_claims,
@@ -25,6 +24,10 @@ use droppedneedle_auth::federated::plex::plex_auth_url;
 use droppedneedle_auth::federated::users::{
     FederatedProfile, derive_username, find_or_create_federated_user, username_base,
 };
+use droppedneedle_auth::session::store::{SessionStore as _, now_unix};
+use droppedneedle_auth::session::tokens;
+use droppedneedle_auth::users::roles::Role;
+use droppedneedle_auth::users::stores::SessionManager as _;
 use droppedneedle_auth::wiring::Upstreams;
 use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::{
@@ -40,6 +43,7 @@ use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair, RsaPublicKeyComponents};
 use serde_json::{Value, json};
 
 use crate::auth_e2e::{E2e, call};
+use crate::common::auth::AuthRig;
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -1123,18 +1127,23 @@ async fn federated_username_derivation_prefers_email_local_part() {
         username_base(Some("jane.doe@example.com"), "Jane Q. Elsewhere"),
         "jane.doe"
     );
-    let users = FakeUserStore::new();
+    let rig = AuthRig::new("federated-username").await;
     assert_eq!(
-        derive_username(&users, Some("jane.doe@example.com"), "Jane Q. Elsewhere")
-            .await
-            .unwrap(),
+        derive_username(
+            &rig.auth.federated,
+            Some("jane.doe@example.com"),
+            "Jane Q. Elsewhere"
+        )
+        .await
+        .unwrap(),
         ("jane.doe".to_owned(), "jane.doe".to_owned())
     );
 }
 
 #[tokio::test]
 async fn unverified_email_never_claims_an_existing_account() {
-    let users = FakeUserStore::new();
+    let rig = AuthRig::new("federated-email").await;
+    let users = &rig.auth.federated;
     let profile = |uid: &str, verified: bool| FederatedProfile {
         provider_uid: uid.to_owned(),
         display_name: "Sam".to_owned(),
@@ -1143,10 +1152,10 @@ async fn unverified_email_never_claims_an_existing_account() {
         avatar_url: None,
         token_json: "{}".to_owned(),
     };
-    let owner = find_or_create_federated_user(&users, "oidc", &profile("u1", true))
+    let owner = find_or_create_federated_user(users, "oidc", &profile("u1", true))
         .await
         .unwrap();
-    let intruder = find_or_create_federated_user(&users, "plex", &profile("u2", false))
+    let intruder = find_or_create_federated_user(users, "plex", &profile("u2", false))
         .await
         .unwrap();
     assert_ne!(owner.id, intruder.id);
@@ -1156,7 +1165,7 @@ async fn unverified_email_never_claims_an_existing_account() {
         ("sam", "sam-2")
     );
     assert_eq!(intruder.role, "user");
-    let linked = find_or_create_federated_user(&users, "jellyfin", &profile("u3", true))
+    let linked = find_or_create_federated_user(users, "jellyfin", &profile("u3", true))
         .await
         .unwrap();
     assert_eq!(linked.id, owner.id, "a verified address links");
@@ -1166,38 +1175,50 @@ const _: () = assert!(!SESSIONS_SURVIVE_IMPORT);
 
 #[tokio::test]
 async fn old_sessions_die_on_import_while_new_logins_work() {
-    let sessions = FakeSessionIssuer::new();
-    let live = sessions.issue_session("user-1", None).await.unwrap();
-    assert!(sessions.is_live(&live));
+    let rig = AuthRig::new("federated-import").await;
+    let user = rig.seed_user("imma", Role::User).await;
+    let is_live = |token: String| {
+        let sessions = rig.auth.sessions.clone();
+        async move {
+            sessions
+                .lookup_valid(&tokens::hash_token(&token), now_unix())
+                .await
+                .expect("session lookup")
+                .is_some()
+        }
+    };
+    let issuer = &rig.auth.issuer;
+    let live = issuer.issue_session(&user.id, None).await.unwrap();
+    assert!(is_live(live.clone()).await);
 
-    sessions.revoke_all();
-    assert!(!sessions.is_live(&live));
+    rig.auth
+        .session_manager
+        .revoke_all_for_user(&user.id)
+        .await
+        .expect("sessions revoke");
+    assert!(!is_live(live).await);
 
-    let hasher = FakeHasher::new();
-    let stored = LocalCredential::imported_bcrypt(FakeHasher::bcrypt_fixture("pw"));
+    // A bcrypt hash of "pw" (cost 4), as a v2 export carries it.
+    let stored = LocalCredential::imported_bcrypt(
+        "$2b$04$jasNbzyCrlGnpLmSJ93S8e3y4R4XBRilquRHOhpR6sUbBsNGR4Bku".to_owned(),
+    );
     assert!(matches!(
-        verify_and_maybe_rehash(&hasher, "pw", Some(&stored)),
+        verify_and_maybe_rehash(&rig.auth.hasher, "pw", Some(&stored)),
         PasswordCheck::Valid { .. }
     ));
-    let relogin = sessions.issue_session("user-1", None).await.unwrap();
-    assert!(sessions.is_live(&relogin));
+    let relogin = issuer.issue_session(&user.id, None).await.unwrap();
+    assert!(is_live(relogin).await);
 }
 
 #[tokio::test]
 async fn imported_app_passwords_verify_on_both_compat_paths() {
-    use droppedneedle_auth::compat_auth::fakes::FakeCompatPasswords;
     use droppedneedle_auth::compat_auth::jellyfin;
     use droppedneedle_auth::compat_auth::subsonic;
 
-    let passwords = FakeCompatPasswords::new();
-    passwords.add_user(
-        "user-9",
-        "imma",
-        "Imma",
-        "user",
-        "account-password",
-        &["imported-secret-1"],
-    );
+    let rig = AuthRig::new("federated-app-passwords").await;
+    let user = rig.seed_user("imma", Role::User).await;
+    rig.seed_app_password(&user.id, "imported-secret-1").await;
+    let passwords = rig.compat_passwords();
 
     let salt = "salty";
     let token = subsonic::md5_hex(&format!("imported-secret-1{salt}"));
@@ -1208,15 +1229,15 @@ async fn imported_app_passwords_verify_on_both_compat_paths() {
         ("c", "symfonium"),
     ]);
     let principal = subsonic::authenticate(&passwords, &params).await.unwrap();
-    assert_eq!(principal.user_id, "user-9");
+    assert_eq!(principal.user_id, "user-imma");
 
     let hexed = format!("enc:{}", subsonic::hex_encode(b"imported-secret-1"));
     let params = subsonic::SubsonicParams::new(vec![("u", "Imma"), ("p", &hexed)]);
     let principal = subsonic::authenticate(&passwords, &params).await.unwrap();
-    assert_eq!(principal.user_id, "user-9");
+    assert_eq!(principal.user_id, "user-imma");
 
     let user = jellyfin::resolve_token(&passwords, Some("imported-secret-1"))
         .await
         .unwrap();
-    assert_eq!(user.id, "user-9");
+    assert_eq!(user.id, "user-imma");
 }

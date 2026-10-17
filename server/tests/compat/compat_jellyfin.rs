@@ -9,8 +9,9 @@
 use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
-use droppedneedle_auth::compat_auth::fakes::FakeCompatPasswords;
 use droppedneedle_auth::compat_auth::jellyfin::server_id;
+use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
+use droppedneedle_auth::users::roles::Role;
 use droppedneedle_compat::jellyfin::fake::{FakeLibrary, MemoryEngine, MemoryIds, MemorySessions};
 use droppedneedle_compat::jellyfin::seams::{
     AlbumView, ArtistView, GenreView, IdMap, JellyfinSettings, TrackView,
@@ -21,11 +22,14 @@ use droppedneedle_kernel::config::TrustedProxies;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
+use crate::common::auth::{AuthRig, PASSWORD};
+
 const ALICE: &str = "alice-app-secret";
 const BOB: &str = "bob-app-secret";
 
 struct Fx {
-    passwords: FakeCompatPasswords,
+    _rig: AuthRig,
+    passwords: ProdCompatPasswords,
     library: FakeLibrary,
     engine: MemoryEngine,
     sessions: MemorySessions,
@@ -35,16 +39,12 @@ struct Fx {
 }
 
 async fn fixture() -> Fx {
-    let passwords = FakeCompatPasswords::new();
-    passwords.add_user(
-        "user-alice",
-        "alice",
-        "Alice",
-        "user",
-        "alice-account-pw",
-        &[ALICE],
-    );
-    passwords.add_user("user-bob", "bob", "Bob", "admin", "bob-account-pw", &[BOB]);
+    let rig = AuthRig::new("compat-jellyfin").await;
+    for (name, role, secret) in [("alice", Role::User, ALICE), ("bob", Role::Admin, BOB)] {
+        let user = rig.seed_user(name, role).await;
+        rig.seed_app_password(&user.id, secret).await;
+    }
+    let passwords = rig.compat_passwords();
     let library = FakeLibrary::new();
     let engine = MemoryEngine::new();
     seed_jellyfin(&library, &engine);
@@ -52,6 +52,7 @@ async fn fixture() -> Fx {
     Fx {
         track1: ids.to_jf("track", "f1").await,
         album1: ids.to_jf("album", "rg-1").await,
+        _rig: rig,
         passwords,
         library,
         engine,
@@ -467,7 +468,7 @@ async fn login_echoes_the_app_password_and_users_me_matches() {
     );
 
     // Wrong app password and the account password both fail; no body is 400.
-    for pw in ["nope", "alice-account-pw"] {
+    for pw in ["nope", PASSWORD] {
         let body = json!({"Username": "alice", "Pw": pw}).to_string();
         let reply = fx.send("POST", login, None, body.as_bytes()).await;
         assert_eq!((reply.status, reply.body.len()), (401, 0), "{pw}");
