@@ -83,7 +83,6 @@ const OPENS: &[Place] = &[
     place("library/src/manage.rs", LIBRARY_UNTIL_DB),
     place("library/src/publish/publisher.rs", LIBRARY_UNTIL_DB),
     place("library/src/publish/recovery.rs", LIBRARY_UNTIL_DB),
-    place("library/src/scan/sqlite_store/mod.rs", LIBRARY_UNTIL_DB),
     place(
         "media/src/playback/sqlite.rs",
         "playback's own connection, until playback moves onto Db",
@@ -101,16 +100,7 @@ const OPENS: &[Place] = &[
 const TRANSACTIONS: &[Place] = &[
     DB,
     TOOL,
-    place("library/src/activity/store.rs", LIBRARY_UNTIL_DB),
     place("library/src/contrib/sqlite.rs", LIBRARY_UNTIL_DB),
-    place(
-        "library/src/corrections/artist_convergence.rs",
-        LIBRARY_UNTIL_DB,
-    ),
-    place("library/src/corrections/continuation.rs", LIBRARY_UNTIL_DB),
-    place("library/src/corrections/placement.rs", LIBRARY_UNTIL_DB),
-    place("library/src/corrections/release_join.rs", LIBRARY_UNTIL_DB),
-    place("library/src/corrections/retag_merge.rs", LIBRARY_UNTIL_DB),
     place("library/src/corrections/service.rs", LIBRARY_UNTIL_DB),
     place("library/src/identify/sqlite.rs", LIBRARY_UNTIL_DB),
     place("library/src/management/service.rs", LIBRARY_UNTIL_DB),
@@ -122,23 +112,6 @@ const TRANSACTIONS: &[Place] = &[
     place("library/src/publish/recovery.rs", LIBRARY_UNTIL_DB),
     place("library/src/reconcile/service.rs", LIBRARY_UNTIL_DB),
     place("library/src/repairs/service.rs", LIBRARY_UNTIL_DB),
-    place("library/src/scan/sqlite_store/artwork.rs", LIBRARY_UNTIL_DB),
-    place("library/src/scan/sqlite_store/catalog.rs", LIBRARY_UNTIL_DB),
-    place("library/src/scan/sqlite_store/commit.rs", LIBRARY_UNTIL_DB),
-    place(
-        "library/src/scan/sqlite_store/hands_off.rs",
-        LIBRARY_UNTIL_DB,
-    ),
-    place(
-        "library/src/scan/sqlite_store/held_scopes.rs",
-        LIBRARY_UNTIL_DB,
-    ),
-    place(
-        "library/src/scan/sqlite_store/inventory.rs",
-        LIBRARY_UNTIL_DB,
-    ),
-    place("library/src/scan/sqlite_store/lyrics.rs", LIBRARY_UNTIL_DB),
-    place("library/src/scan/sqlite_store/runs.rs", LIBRARY_UNTIL_DB),
 ];
 
 const RULES: &[Rule] = &[
@@ -199,11 +172,10 @@ const RULES: &[Rule] = &[
         patterns: &[r"\bLane::Bulk\b"],
         allowed: &[
             DB,
-            Place {
-                path: "library/src/scan/",
-                why: "the scan's chunked writes, once the scan writes through Db",
-                reserved: true,
-            },
+            place(
+                "library/src/scan/",
+                "the scan's window commits, inventory pages and failure rows",
+            ),
         ],
     },
 ];

@@ -24,7 +24,7 @@ use rusqlite::params;
 use super::artwork::{
     MIN_PER_SLICE, SWEEP_SLICE, TrackFile, WRITE_BATCH, album_dirs, album_signature, album_tracks,
 };
-use super::{SqliteScanStore, retry_on_busy};
+use super::{Lane, RunStop, ScanStoreError, SqliteScanStore};
 use crate::tags::lyrics::{LyricsSource, read_file_lyrics};
 
 /// What one sweep did.
@@ -52,19 +52,14 @@ impl SqliteScanStore {
     /// Record which tracks carry lyrics, for every album whose files
     /// changed since the last sweep. File reads happen outside the store
     /// lock; writes go in small transactions. `stop` is polled between
-    /// albums.
-    pub fn refresh_track_lyrics(&self, stop: &dyn Fn() -> bool) -> LyricsSweep {
+    /// albums. A catalog that cannot be read is an error; a batch that
+    /// cannot be written is logged and looked at again next sweep.
+    pub fn refresh_track_lyrics(
+        &self,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<LyricsSweep, ScanStoreError> {
         let mut started: Option<std::time::Instant> = None;
-        let (albums, checks) = match self.lyrics_snapshot() {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                tracing::warn!(%error, "lyrics sweep could not read the catalog; skipped");
-                return LyricsSweep {
-                    complete: true,
-                    ..LyricsSweep::default()
-                };
-            }
-        };
+        let (albums, checks) = self.lyrics_snapshot()?;
         let mut sweep = LyricsSweep {
             complete: true,
             ..LyricsSweep::default()
@@ -107,22 +102,22 @@ impl SqliteScanStore {
                 "lyrics sweep finished"
             );
         }
-        sweep
+        Ok(sweep)
     }
 
     /// The albums with their tracks, and each album's last signature.
-    fn lyrics_snapshot(&self) -> rusqlite::Result<(Albums, HashMap<String, String>)> {
-        let inner = self.lock();
-        let albums = album_tracks(&inner.conn)?;
-        let mut checks = HashMap::new();
-        let mut statement = inner
-            .conn
-            .prepare("SELECT local_album_id, signature FROM local_album_lyrics_checks")?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            checks.insert(row.get(0)?, row.get(1)?);
-        }
-        Ok((albums, checks))
+    fn lyrics_snapshot(&self) -> Result<(Albums, HashMap<String, String>), ScanStoreError> {
+        self.read_long(&RunStop::never(), "scan_lyrics_snapshot", |conn| {
+            let albums = album_tracks(conn)?;
+            let mut checks = HashMap::new();
+            let mut statement =
+                conn.prepare("SELECT local_album_id, signature FROM local_album_lyrics_checks")?;
+            let mut rows = statement.query([])?;
+            while let Some(row) = rows.next()? {
+                checks.insert(row.get(0)?, row.get(1)?);
+            }
+            Ok((albums, checks))
+        })
     }
 
     /// Write one batch of results and clear it. A failed batch is logged
@@ -136,9 +131,7 @@ impl SqliteScanStore {
             .duration_since(UNIX_EPOCH)
             .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX))
             .unwrap_or(0);
-        let mut inner = self.lock();
-        let written = retry_on_busy("lyrics", || {
-            let tx = inner.conn.transaction()?;
+        let written = self.write_once(Lane::Background, "scan_lyrics", |tx| {
             let mut marked = 0;
             for checked in pending.iter() {
                 tx.execute(
@@ -162,7 +155,6 @@ impl SqliteScanStore {
                     params![checked.album_id, checked.signature, now],
                 )?;
             }
-            tx.commit()?;
             Ok(marked)
         });
         match written {

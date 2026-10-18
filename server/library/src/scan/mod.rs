@@ -44,7 +44,9 @@ pub mod roots;
 pub mod scheduler;
 pub mod seams;
 pub mod selection;
+pub(crate) mod sql;
 pub mod sqlite_store;
+pub mod stop;
 pub mod store;
 pub mod supervisor;
 pub mod walk;
@@ -73,9 +75,10 @@ pub use scheduler::{InclusionRule, ScheduleSettings, scheduled_scopes, seconds_u
 pub use seams::{ArmableDeferTagReader, NullTagReader};
 pub use seams::{Checkpoint, ScannedTags, TagReadError, TagReader};
 pub use sqlite_store::SqliteScanStore;
+pub use stop::RunStop;
 pub use store::{
     CatalogEntry, ClassifyInput, CommitIndexedItem, IndexWindow, InventoryPage, RevisionKind,
-    ScanStoreError, WindowOutcome,
+    RowCounter, ScanStoreError, WindowOutcome,
 };
 pub use supervisor::SupervisorInputs;
 pub use walk::{InventoryScanner, inventory_key, is_audio_file, relativize, text_safe_posix};

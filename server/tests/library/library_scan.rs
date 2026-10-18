@@ -9,14 +9,19 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
+use crate::common::library::TestSql as _;
 use crate::common::library::library_at;
 use crate::common::{ScratchDir, config_store, migrated_db};
+use droppedneedle_kernel::db::{Budget, Db, LaneLimits};
 use droppedneedle_library::identify::models::RecallResult;
 use droppedneedle_library::identify::providers::FakeProviders;
 use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService};
 use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle_library::repairs::hygiene;
+use droppedneedle_library::scan::RunStop;
+use droppedneedle_library::scan::ScanFailureRecord;
 use droppedneedle_library::scan::{
     BlockingPool, EffectivePolicy, LibraryRoot, LibraryScanCoordinator, NullTagReader,
     RootRegistry, RootSeamError, ScanControl, ScanKind, ScanRequest, ScanRun, ScanScope, ScanState,
@@ -119,7 +124,8 @@ async fn scan(library: &LibrarySetup) -> ScanRun {
 fn query(library: &LibrarySetup, sql: &str) -> i64 {
     library
         .scan_store
-        .query_i64_for_tests(sql)
+        .db()
+        .query_i64(sql)
         .unwrap_or_else(|error| panic!("{sql}: {error}"))
 }
 
@@ -244,6 +250,7 @@ async fn vanished_files_are_marked_missing_and_mass_loss_is_held_back() {
         library
             .scan_store
             .failures(&run.id)
+            .unwrap()
             .iter()
             .any(|failure| failure.failure_code == failure_codes::MASS_MISSING_GUARD)
     );
@@ -347,13 +354,21 @@ async fn a_held_back_folder_is_held_until_a_scan_finds_it_again() {
     let album_of = |path: &str| {
         library
             .scan_store
-            .album_for_track(&library.scan_store.track_at("music", path).expect("track"))
+            .album_for_track(
+                &library
+                    .scan_store
+                    .track_at("music", path)
+                    .unwrap()
+                    .expect("track"),
+            )
+            .unwrap()
             .expect("album")
     };
     let (parked, taken) = (album_of("Album/00.flac"), album_of("Other/01.flac"));
     library
         .scan_store
-        .execute_batch_for_tests(&format!(
+        .db()
+        .run_sql(&format!(
             "INSERT INTO library_management_automatic_queue (local_album_id, queued_at, \
              not_before, attempts, last_reason_code) VALUES \
              ('{parked}', 1, 1e15, 3, 'SCAN_HELD_BACK'), ('{taken}', 1, 1e15, 0, 'TAKEN_OVER');"
@@ -380,7 +395,8 @@ async fn a_held_back_folder_is_held_until_a_scan_finds_it_again() {
 
     library
         .scan_store
-        .execute_batch_for_tests(&format!(
+        .db()
+        .run_sql(&format!(
             "UPDATE library_management_automatic_queue SET not_before = 1e15 \
              WHERE local_album_id = '{parked}'"
         ))
@@ -414,6 +430,19 @@ fn coordinator<T: TagReader + 'static>(
     root: &Path,
     tags: Arc<T>,
 ) -> (LibraryScanCoordinator<T>, HashMap<String, PathBuf>) {
+    // The database sits beside the music, in the test's scratch folder.
+    let db = root.with_file_name("scan.db");
+    migrated_db(&db);
+    let db = Db::open_for_tests(&db).expect("database opens");
+    coordinator_on(db, root, tags)
+}
+
+/// A coordinator over `db` with `root` as its one root.
+fn coordinator_on<T: TagReader + 'static>(
+    db: Db,
+    root: &Path,
+    tags: Arc<T>,
+) -> (LibraryScanCoordinator<T>, HashMap<String, PathBuf>) {
     let registry = RootRegistry::new(
         vec![LibraryRoot::new(
             "music",
@@ -424,7 +453,7 @@ fn coordinator<T: TagReader + 'static>(
         "rev-1",
     );
     let coordinator = LibraryScanCoordinator::new(
-        Arc::new(SqliteScanStore::scratch().expect("scan store opens")),
+        Arc::new(SqliteScanStore::new(db)),
         BlockingPool::new(4),
         tags,
         Arc::new(StaticResolver::new(registry)),
@@ -483,9 +512,91 @@ async fn shutdown_mid_index_resumes_without_double_counting() {
     assert_eq!(
         coordinator
             .store()
-            .query_i64_for_tests("SELECT COUNT(*) FROM local_tracks")
+            .db()
+            .query_i64("SELECT COUNT(*) FROM local_tracks")
             .expect("count"),
         600
+    );
+}
+
+/// A run that has ended but still owes its end passes counts as a scan
+/// in progress for the work that must never run beside one, until a drive
+/// settles it.
+#[tokio::test]
+async fn a_run_owing_its_end_passes_still_counts_as_scanning() {
+    let scratch = ScratchDir::new("scan-end-owed");
+    let root = scratch.join("music");
+    std::fs::create_dir_all(&root).expect("root");
+    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+    let requested = coordinator.request_run(&request(&root)).expect("requested");
+    let (run, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
+    coordinator
+        .store()
+        .transition(
+            &RunStop::never(),
+            &run.id,
+            run.state,
+            run.row_revision,
+            ScanState::Cancelled,
+            1.0,
+            None,
+        )
+        .expect("ended without its passes");
+    let current = coordinator.current();
+    assert_eq!(current.len(), 1, "the run owing passes counts");
+    assert_eq!(current[0].id, run.id);
+    assert!(coordinator.run_once(&paths).await.is_none());
+    assert!(
+        coordinator.current().is_empty(),
+        "settled, it no longer counts"
+    );
+}
+
+/// A run whose end passes fail still ends. Every file vanishes, so the
+/// mass-missing guard holds the scope back, and recording the held folder
+/// is refused at the run's end; the run completes all the same and leaves
+/// nothing for the next drive.
+#[tokio::test]
+async fn a_run_whose_end_passes_fail_still_ends() {
+    let scratch = ScratchDir::new("scan-end-fails");
+    let root = scratch.join("music");
+    std::fs::create_dir_all(&root).expect("root");
+    for n in 0..25 {
+        std::fs::write(root.join(format!("t{n:04}.flac")), b"junk").expect("plant");
+    }
+    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+    coordinator.request_run(&request(&root)).expect("requested");
+    let first = coordinator.run_once(&paths).await.expect("driven");
+    assert_eq!(first.state, ScanState::Completed);
+    for n in 0..25 {
+        std::fs::remove_file(root.join(format!("t{n:04}.flac"))).expect("remove");
+    }
+    coordinator
+        .store()
+        .db()
+        .run_sql(
+            "CREATE TRIGGER refuse_hold BEFORE INSERT ON library_scan_held_scopes \
+             BEGIN SELECT RAISE(ABORT, 'refused for the test'); END;",
+        )
+        .expect("trigger");
+    let requested = coordinator.request_run(&request(&root)).expect("requested");
+    let ended = coordinator.run_once(&paths).await.expect("driven");
+    assert_eq!(ended.state, ScanState::Completed);
+    let (stored, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
+    assert_eq!(stored.state, ScanState::Completed);
+    let failures = coordinator
+        .store()
+        .failures(&requested.run_id)
+        .expect("failures");
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.failure_code == failure_codes::MASS_MISSING_GUARD),
+        "the guard held the scope back"
+    );
+    assert!(
+        coordinator.run_once(&paths).await.is_none(),
+        "nothing is left to drive"
     );
 }
 
@@ -503,7 +614,8 @@ async fn a_refused_inventory_row_costs_that_file_only() {
     let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
     coordinator
         .store()
-        .execute_batch_for_tests(
+        .db()
+        .run_sql(
             "CREATE TRIGGER refuse_one BEFORE INSERT ON library_scan_inventory \
              WHEN NEW.relative_path = 't0003.flac' \
              BEGIN SELECT RAISE(ABORT, 'refused for the test'); END;",
@@ -513,12 +625,159 @@ async fn a_refused_inventory_row_costs_that_file_only() {
     let run = coordinator.run_once(&paths).await.expect("driven");
     assert_eq!(run.state, ScanState::Completed);
     assert_eq!(count(&run, counter_names::INDEXED), 9);
-    let failures = coordinator.store().failures(&run.id);
+    let failures = coordinator.store().failures(&run.id).unwrap();
     assert!(failures.iter().any(|failure| {
         failure.failure_code == failure_codes::WALK_ERROR
             && failure.relative_path == "t0003.flac"
             && failure.failure_detail.contains("refused for the test")
     }));
+}
+
+/// Scan `files` junk files in one index window. With `bad`, the catalog
+/// refuses `t0002.flac` and the catalog write of `t0005.flac` runs past
+/// the write budget, which is short here. Returns the run, its failure
+/// list and the catalog rows.
+async fn window_with_bad_files(
+    tag: &str,
+    files: usize,
+    bad: bool,
+) -> (ScanRun, Vec<ScanFailureRecord>, i64) {
+    let scratch = ScratchDir::new(tag);
+    let root = scratch.join("music");
+    std::fs::create_dir_all(&root).expect("root");
+    for n in 0..files {
+        std::fs::write(root.join(format!("t{n:04}.flac")), b"junk").expect("plant");
+    }
+    let path = scratch.join("scan.db");
+    migrated_db(&path);
+    let limits = LaneLimits {
+        background: Budget {
+            warn: Duration::from_millis(250),
+            abort: Duration::from_secs(1),
+        },
+        ..LaneLimits::default()
+    };
+    let db = Db::open_for_tests_with(&path, limits).expect("database opens");
+    let (coordinator, paths) = coordinator_on(db, &root, Arc::new(NullTagReader::new()));
+    if bad {
+        // A count over a three-way cross join of 1,000 rows outlasts the
+        // budget many times over; the lane aborts it.
+        coordinator
+            .store()
+            .db()
+            .run_sql(
+                "CREATE TABLE spin (v INTEGER); \
+                 INSERT INTO spin WITH RECURSIVE n(i) AS \
+                 (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1000) SELECT i FROM n; \
+                 CREATE TRIGGER refuse_one BEFORE INSERT ON local_tracks \
+                 WHEN NEW.relative_path = 't0002.flac' \
+                 BEGIN SELECT RAISE(ABORT, 'refused for the test'); END; \
+                 CREATE TRIGGER slow_one BEFORE INSERT ON local_tracks \
+                 WHEN NEW.relative_path = 't0005.flac' \
+                 BEGIN SELECT (SELECT COUNT(*) FROM spin a, spin b, spin c); END;",
+            )
+            .expect("triggers");
+    }
+    coordinator.request_run(&request(&root)).expect("requested");
+    let run = coordinator.run_once(&paths).await.expect("driven");
+    let failures = coordinator.store().failures(&run.id).expect("failures");
+    let tracks = coordinator
+        .store()
+        .db()
+        .query_i64("SELECT COUNT(*) FROM local_tracks")
+        .expect("count");
+    (run, failures, tracks)
+}
+
+/// One index window holds a file the catalog refuses and a file whose
+/// catalog write runs past the write budget. Each costs that file only:
+/// the window is committed again row by row, and split by path down to
+/// the slow file, which is given up. Every other file lands, the run
+/// completes, both files are on the failure list, and the counts equal a
+/// clean scan's but for those two files, moved from indexed to errored.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_and_a_slow_file_cost_those_files_only() {
+    let (clean, _, clean_tracks) = window_with_bad_files("scan-window-clean", 8, false).await;
+    let (run, failures, tracks) = window_with_bad_files("scan-window-bad", 8, true).await;
+    assert_eq!(run.state, ScanState::Completed);
+    assert_eq!((clean_tracks, tracks), (8, 6));
+    let mut refused: Vec<&str> = failures
+        .iter()
+        .filter(|failure| failure.failure_code == failure_codes::CATALOG_COMMIT_FAILED)
+        .map(|failure| failure.relative_path.as_str())
+        .collect();
+    refused.sort_unstable();
+    assert_eq!(refused, ["t0002.flac", "t0005.flac"]);
+    // Untagged, each file is an album of its own, so the two files that
+    // did not land take their identification offers with them.
+    let moved = |name: &str| match name {
+        name if name == counter_names::INDEXED
+            || name == counter_names::NEW
+            || name == counter_names::IDENTIFICATION_ENQUEUED =>
+        {
+            -2
+        }
+        name if name == counter_names::ERRORED => 2,
+        _ => 0,
+    };
+    let mut names: Vec<&String> = clean.counters.keys().chain(run.counters.keys()).collect();
+    names.sort_unstable();
+    names.dedup();
+    for name in names {
+        assert_eq!(
+            count(&run, name),
+            count(&clean, name) + moved(name),
+            "counter {name}"
+        );
+    }
+}
+
+/// A foreground write made while a scan indexes waits at most for one
+/// bulk turn: it is answered, never refused busy, well inside a second.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_write_during_indexing_is_answered_quickly() {
+    let scratch = ScratchDir::new("scan-foreground");
+    let root = scratch.join("music");
+    std::fs::create_dir_all(&root).expect("root");
+    for n in 0..4096 {
+        std::fs::write(root.join(format!("t{n:04}.flac")), b"junk").expect("plant");
+    }
+    let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
+    let coordinator = Arc::new(coordinator);
+    let requested = coordinator.request_run(&request(&root)).expect("requested");
+    let driver = {
+        let coordinator = Arc::clone(&coordinator);
+        tokio::spawn(async move { coordinator.run_once(&paths).await })
+    };
+    loop {
+        let (run, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
+        assert!(
+            run.terminal_at.is_none(),
+            "the scan ended before it was probed"
+        );
+        if count(&run, counter_names::INDEXED) > 0 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let db = coordinator.store().db().clone();
+    let probe = tokio::task::spawn_blocking(move || {
+        let started = std::time::Instant::now();
+        let answer = db.run_sql(
+            "UPDATE library_event_stream_revisions SET value = value WHERE stream_kind = 'scan'",
+        );
+        (answer, started.elapsed())
+    });
+    let (answer, waited) = probe.await.expect("probe runs");
+    let (run, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
+    assert!(
+        run.terminal_at.is_none(),
+        "the probe ran while the scan indexed"
+    );
+    answer.expect("a foreground write is answered");
+    assert!(waited < Duration::from_secs(1), "it waited {waited:?}");
+    let ended = driver.await.expect("drive").expect("driven");
+    assert_eq!(ended.state, ScanState::Completed);
 }
 
 /// Symlinks never lead out of a root: the walk audits them and the stream
@@ -543,6 +802,7 @@ async fn symlinks_never_escape_a_root() {
     let escapes: Vec<String> = coordinator
         .store()
         .failures(&run.id)
+        .unwrap()
         .into_iter()
         .filter(|failure| failure.failure_code == failure_codes::SYMLINK_ESCAPE_OUT)
         .map(|failure| failure.relative_path)
@@ -599,7 +859,13 @@ async fn lyrics_sweep_marks_what_files_carry_and_only_reads() {
     let marks = |library: &LibrarySetup| query(library, "SELECT COUNT(*) FROM local_track_lyrics");
 
     scan(&library).await;
-    assert!(library.scan_store.refresh_track_lyrics(&|| false).complete);
+    assert!(
+        library
+            .scan_store
+            .refresh_track_lyrics(&|| false)
+            .unwrap()
+            .complete
+    );
     assert_eq!(mark(&library, "Tagged/01 Words.flac", "tag"), 1);
     assert_eq!(mark(&library, "Album/01 Airbag.flac", "sidecar"), 1);
     assert_eq!(marks(&library), 2, "no plain file and no linked .lrc");
@@ -613,7 +879,13 @@ async fn lyrics_sweep_marks_what_files_carry_and_only_reads() {
         })
         .expect("folder time sets");
     scan(&library).await;
-    assert!(library.scan_store.refresh_track_lyrics(&|| false).complete);
+    assert!(
+        library
+            .scan_store
+            .refresh_track_lyrics(&|| false)
+            .unwrap()
+            .complete
+    );
     assert_eq!(mark(&library, "Tagged/01 Words.flac", "tag"), 1);
     assert_eq!(marks(&library), 1, "the deleted .lrc took its mark");
     let mut kept = before;
@@ -750,7 +1022,9 @@ impl RegroupRig {
         std::fs::create_dir_all(&root).expect("root");
         let db = scratch.join("app.db");
         migrated_db(&db);
-        let store = Arc::new(SqliteScanStore::open(&db).expect("scan store opens"));
+        let store = Arc::new(SqliteScanStore::new(
+            droppedneedle_kernel::db::Db::open_for_tests(&db).expect("database opens"),
+        ));
         let reader = Arc::new(RetagReader {
             albums: std::sync::Mutex::default(),
             ids: std::sync::Mutex::default(),
@@ -812,9 +1086,7 @@ impl RegroupRig {
     fn meanwhile_sql(&self, sql: String) {
         let store = Arc::clone(self.coordinator.store());
         self.meanwhile(LAST_FILE, move || {
-            store
-                .execute_batch_for_tests(&sql)
-                .expect("mid-scan statement runs");
+            store.db().run_sql(&sql).expect("mid-scan statement runs");
         });
     }
 
@@ -832,8 +1104,11 @@ impl RegroupRig {
 
     fn album_of(&self, relative: &str) -> String {
         let store = self.coordinator.store();
-        let track = store.track_at("music", relative).expect("track indexed");
-        store.album_for_track(&track).expect("album")
+        let track = store
+            .track_at("music", relative)
+            .unwrap()
+            .expect("track indexed");
+        store.album_for_track(&track).unwrap().expect("album")
     }
 
     fn accept_match(&self, album: &str) {
@@ -847,14 +1122,16 @@ impl RegroupRig {
     fn run(&self, sql: &str) {
         self.coordinator
             .store()
-            .execute_batch_for_tests(sql)
+            .db()
+            .run_sql(sql)
             .expect("statement runs");
     }
 
     fn count(&self, sql: &str) -> i64 {
         self.coordinator
             .store()
-            .query_i64_for_tests(sql)
+            .db()
+            .query_i64(sql)
             .unwrap_or_else(|error| panic!("{sql}: {error}"))
     }
 
@@ -1195,7 +1472,7 @@ fn count_new_row_jobs_at(
     let sql = queued_jobs_sql(&new_row(album));
     let cell = Arc::clone(&seen);
     rig.meanwhile(at, move || {
-        *cell.lock().expect("cell") = Some(store.query_i64_for_tests(&sql).expect("count"));
+        *cell.lock().expect("cell") = Some(store.db().query_i64(&sql).expect("count"));
         then();
     });
     seen
@@ -1214,6 +1491,7 @@ async fn stopped_scan_offers_the_half_retagged_album() {
         let run = coordinator
             .store()
             .list_current()
+            .unwrap()
             .pop()
             .expect("the scan is running");
         coordinator
@@ -1738,6 +2016,7 @@ async fn run_cancelled_while_queued_is_not_ended_again_at_startup() {
         .coordinator
         .store()
         .list_current()
+        .unwrap()
         .pop()
         .expect("the run is waiting");
     rig.coordinator
@@ -1748,7 +2027,10 @@ async fn run_cancelled_while_queued_is_not_ended_again_at_startup() {
     let ended = rig.count(stamp);
 
     let later = rig.count("SELECT CAST(terminal_at AS INTEGER) FROM library_scan_runs") + 3600;
-    rig.coordinator.store().recover(later as f64);
+    rig.coordinator
+        .store()
+        .recover(&droppedneedle_library::scan::RunStop::never(), later as f64)
+        .unwrap();
     assert_eq!(
         rig.count(stamp),
         ended,
@@ -1878,6 +2160,7 @@ async fn returned_file_keeps_its_track_and_is_filed_by_its_tags() {
         .coordinator
         .store()
         .track_at("music", "a/t011.flac")
+        .unwrap()
         .expect("track indexed");
     rig.lose(&files[9..]).await;
     let (before, after) = (rig.before.clone(), rig.after.clone());
@@ -1889,7 +2172,10 @@ async fn returned_file_keeps_its_track_and_is_filed_by_its_tags() {
     rig.scan().await;
 
     assert_eq!(
-        rig.coordinator.store().track_at("music", "a/t011.flac"),
+        rig.coordinator
+            .store()
+            .track_at("music", "a/t011.flac")
+            .unwrap(),
         Some(track),
         "the same track"
     );
@@ -2247,6 +2533,7 @@ impl RegroupRig {
             let run = coordinator
                 .store()
                 .list_current()
+                .unwrap()
                 .pop()
                 .expect("the scan is running");
             coordinator
@@ -3542,13 +3829,15 @@ async fn hand_merge_removes_an_open_pair() {
     let library = bundle(&scratch);
     scan(&library).await;
     let store = &library.scan_store;
-    let track = store.track_at("music", "a/01.flac").expect("a/01");
-    let source = store.album_for_track(&track).expect("album a");
+    let track = store.track_at("music", "a/01.flac").unwrap().expect("a/01");
+    let source = store.album_for_track(&track).unwrap().expect("album a");
     let target = store
-        .album_for_track(&store.track_at("music", "b/01.flac").expect("b/01"))
+        .album_for_track(&store.track_at("music", "b/01.flac").unwrap().expect("b/01"))
+        .unwrap()
         .expect("album b");
     store
-        .execute_batch_for_tests(&format!(
+        .db()
+        .run_sql(&format!(
             "INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
              recorded_at, updated_at) VALUES ('{source}', '{target}', 'tracks_elsewhere', \
              'open', 0, 0);"
@@ -3611,7 +3900,12 @@ async fn continuation_album(name: &str, count: usize) -> (RegroupRig, String, Ve
     let store = rig.coordinator.store();
     let tracks = files
         .iter()
-        .map(|file| store.track_at("music", file).expect("track indexed"))
+        .map(|file| {
+            store
+                .track_at("music", file)
+                .unwrap()
+                .expect("track indexed")
+        })
         .collect();
     (rig, album, tracks)
 }
@@ -3813,8 +4107,14 @@ async fn a_missing_track_does_not_continue_without_proof() {
     rig.tag(&["b/t001.flac".to_owned()], &second);
     rig.scan().await;
     let store = rig.coordinator.store();
-    let old = store.track_at("music", "a/t000.flac").expect("indexed");
-    let new = store.track_at("music", "b/t001.flac").expect("indexed");
+    let old = store
+        .track_at("music", "a/t000.flac")
+        .unwrap()
+        .expect("indexed");
+    let new = store
+        .track_at("music", "b/t001.flac")
+        .unwrap()
+        .expect("indexed");
     for album in [rig.album_of("a/t000.flac"), rig.album_of("b/t001.flac")] {
         rig.run(&format!(
             "INSERT INTO local_album_external_identities (local_album_id, provider, \
@@ -3904,7 +4204,10 @@ async fn continued_tracks_follow_their_files_back_and_forth() {
     rig.tag(&first, &before);
     rig.scan().await;
     assert_eq!(
-        rig.coordinator.store().track_at("music", "a/t000.flac"),
+        rig.coordinator
+            .store()
+            .track_at("music", "a/t000.flac")
+            .unwrap(),
         Some(old.clone()),
         "the old row has its file again"
     );
@@ -4131,6 +4434,7 @@ impl RegroupRig {
                 self.coordinator
                     .store()
                     .track_at("music", file)
+                    .unwrap()
                     .expect("indexed")
             })
             .collect()
@@ -4606,6 +4910,7 @@ impl RegroupRig {
                 self.coordinator
                     .store()
                     .track_at("music", &format!("a/t{n:03}.flac"))
+                    .unwrap()
                     .as_ref(),
                 Some(row),
                 "{case}: the old row stays indexed at its path"
@@ -5511,7 +5816,9 @@ impl ArtistRig {
         std::fs::create_dir_all(&root).expect("root");
         let db = scratch.join("app.db");
         migrated_db(&db);
-        let store = Arc::new(SqliteScanStore::open(&db).expect("scan store opens"));
+        let store = Arc::new(SqliteScanStore::new(
+            droppedneedle_kernel::db::Db::open_for_tests(&db).expect("database opens"),
+        ));
         let registry = RootRegistry::new(
             vec![LibraryRoot::new(
                 "music",
@@ -5616,14 +5923,16 @@ impl ArtistRig {
     fn run(&self, sql: &str) {
         self.coordinator
             .store()
-            .execute_batch_for_tests(sql)
+            .db()
+            .run_sql(sql)
             .unwrap_or_else(|error| panic!("{sql}: {error}"));
     }
 
     fn count(&self, sql: &str) -> i64 {
         self.coordinator
             .store()
-            .query_i64_for_tests(sql)
+            .db()
+            .query_i64(sql)
             .unwrap_or_else(|error| panic!("{sql}: {error}"))
     }
 

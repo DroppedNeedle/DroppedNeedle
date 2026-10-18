@@ -19,16 +19,72 @@ const IN_SCOPE_T: &str = "(?2 = '.' OR t.relative_path = ?2 \
 impl SqliteScanStore {
     /// Commit one index window atomically: catalog rows, inventory
     /// marks, counters, and identify offers land together or not at all.
-    /// A row the catalog refuses fails alone and is reported back.
-    pub fn commit_window(&self, window: &IndexWindow) -> Result<WindowOutcome, ScanStoreError> {
-        let mut guard = self.lock();
-        let outcome = super::commit::commit_window(&mut guard.conn, window).map_err(internal)?;
+    /// A row the catalog refuses fails alone and is reported back. A
+    /// window that runs out of time is split in two by path and each half
+    /// committed as its own window, down to one file; a file that still
+    /// runs out of time is reported back as refused, and its inventory row
+    /// is marked failed so a resumed run does not try it again.
+    pub fn commit_window(
+        &self,
+        stop: &RunStop,
+        window: &IndexWindow,
+    ) -> Result<WindowOutcome, ScanStoreError> {
+        let mut outcome = WindowOutcome::default();
+        self.commit_part(stop, window, &mut outcome)?;
+        Ok(outcome)
+    }
+
+    fn commit_part(
+        &self,
+        stop: &RunStop,
+        window: &IndexWindow,
+        total: &mut WindowOutcome,
+    ) -> Result<(), ScanStoreError> {
+        match super::commit::commit_window(&self.db, stop, window) {
+            Ok(outcome) => {
+                self.landed(window, &outcome);
+                total.committed += outcome.committed;
+                total.enqueued += outcome.enqueued;
+                total.failed.extend(outcome.failed);
+                Ok(())
+            }
+            Err(ScanStoreError::TxTimeout { operation }) => {
+                if let Some((first, second)) = super::commit::split_window(window) {
+                    tracing::warn!(
+                        operation,
+                        files = window.items.len(),
+                        "index window ran out of time; committing it in two halves"
+                    );
+                    self.commit_part(stop, &first, total)?;
+                    return self.commit_part(stop, &second, total);
+                }
+                let Some(given_up) = super::commit::give_up_window(window) else {
+                    return Err(ScanStoreError::TxTimeout { operation });
+                };
+                tracing::warn!(
+                    operation,
+                    path = window.through.1,
+                    "one file's catalog write ran out of time; recorded as failed"
+                );
+                let outcome = super::commit::commit_window(&self.db, stop, &given_up)?;
+                total.enqueued += outcome.enqueued;
+                total.failed.extend(outcome.failed);
+                Ok(())
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// What a committed window changes in memory: a committed read clears
+    /// the deferred re-offer shortcut, and a catalog write moves the
+    /// classify snapshot's version.
+    fn landed(&self, window: &IndexWindow, outcome: &WindowOutcome) {
         let failed: HashSet<(&str, &str)> = outcome
             .failed
             .iter()
             .map(|(root, path, _)| (root.as_str(), path.as_str()))
             .collect();
-        // A committed read clears the deferred re-offer shortcut.
+        let mut guard = self.lock();
         for item in &window.items {
             if !failed.contains(&(item.root_id.as_str(), item.relative_path.as_str())) {
                 guard
@@ -40,7 +96,6 @@ impl SqliteScanStore {
             guard.catalog_dirty = true;
             guard.catalog_version += 1;
         }
-        Ok(outcome)
     }
 
     pub fn mark_deferred(&self, root_id: &str, relative_path: &str, deferred: bool) {
@@ -54,46 +109,44 @@ impl SqliteScanStore {
     }
 
     /// Catalog album of one indexed track: the track-to-album join.
-    pub fn album_for_track(&self, track_id: &str) -> Option<String> {
-        let guard = self.lock();
-        guard
-            .conn
-            .query_row(
-                "SELECT local_album_id FROM local_tracks \
-                 WHERE id = ?1 AND availability = 'indexed'",
-                params![track_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .unwrap_or_else(|error| {
-                tracing::error!(%error, "scan album_for_track failed");
-                None
-            })
+    pub fn album_for_track(&self, track_id: &str) -> Result<Option<String>, ScanStoreError> {
+        self.read("scan_track_album", |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT local_album_id FROM local_tracks \
+                     WHERE id = ?1 AND availability = 'indexed'",
+                    params![track_id],
+                    |row| row.get(0),
+                )
+                .optional()?)
+        })
     }
 
     /// Indexed track at one path.
-    pub fn track_at(&self, root_id: &str, relative_path: &str) -> Option<String> {
-        let guard = self.lock();
-        guard
-            .conn
-            .query_row(
-                "SELECT id FROM local_tracks \
-                 WHERE root_id = ?1 AND relative_path = ?2 AND availability = 'indexed'",
-                params![root_id, relative_path],
-                |row| row.get(0),
-            )
-            .optional()
-            .unwrap_or_else(|error| {
-                tracing::error!(%error, "scan track_at failed");
-                None
-            })
+    pub fn track_at(
+        &self,
+        root_id: &str,
+        relative_path: &str,
+    ) -> Result<Option<String>, ScanStoreError> {
+        self.read("scan_track_at", |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT id FROM local_tracks \
+                     WHERE root_id = ?1 AND relative_path = ?2 AND availability = 'indexed'",
+                    params![root_id, relative_path],
+                    |row| row.get(0),
+                )
+                .optional()?)
+        })
     }
 
     /// Mark catalog rows missing (never delete: plays, playlists, and
-    /// identities keep pointing at them) and count them on the run.
+    /// identities keep pointing at them) and count them on the run, in
+    /// chunks: each chunk marks its rows and counts them in one turn.
     /// Returns rows marked.
     pub fn mark_missing(
         &self,
+        stop: &RunStop,
         run_id: &str,
         root_id: &str,
         relative_paths: &[String],
@@ -102,18 +155,14 @@ impl SqliteScanStore {
         if relative_paths.is_empty() {
             return Ok(0);
         }
-        let mut guard = self.lock();
-        let marked = retry_on_busy("mark_missing", || {
-            let tx = guard
-                .conn
-                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let marked = self.write_chunked(stop, "scan_mark_missing", relative_paths, |chunk, tx| {
             let mut marked = 0usize;
             {
                 let mut stmt = tx.prepare_cached(
                     "UPDATE local_tracks SET availability = 'missing', missing_since = ?3 \
                      WHERE root_id = ?1 AND relative_path = ?2 AND availability = 'indexed'",
                 )?;
-                for path in relative_paths {
+                for path in chunk {
                     marked += stmt.execute(params![root_id, path, now])?;
                 }
             }
@@ -121,11 +170,12 @@ impl SqliteScanStore {
                 "UPDATE library_scan_runs SET missing_count = missing_count + ?1 WHERE id = ?2",
                 params![marked as i64, run_id],
             )?;
-            tx.commit()?;
             Ok(marked)
-        })
-        .map_err(internal)?;
-        if marked > 0 {
+        });
+        let mut guard = self.lock();
+        // Chunks that committed before a stop stay marked: drop what the
+        // snapshot knows of the paths either way.
+        if marked.as_ref().map_or(true, |marked| *marked > 0) {
             guard.catalog_dirty = true;
             guard.catalog_version += 1;
             if let Some(cached) = guard.catalog_cache.get_mut(root_id) {
@@ -134,28 +184,28 @@ impl SqliteScanStore {
                 }
             }
         }
-        Ok(marked)
+        marked
     }
 
     /// Indexed catalog rows under one scope.
     pub fn indexed_count(
         &self,
+        stop: &RunStop,
         root_id: &str,
         scope_relative_path: &str,
     ) -> Result<usize, ScanStoreError> {
-        let guard = self.lock();
-        guard
-            .conn
-            .query_row(
-                &format!(
-                    "SELECT COUNT(*) FROM local_tracks WHERE root_id = ?1 \
-                     AND availability = 'indexed' AND {IN_SCOPE}"
-                ),
-                params![root_id, scope_relative_path],
-                |row| row.get::<_, i64>(0),
-            )
-            .map(|count| count.max(0) as usize)
-            .map_err(internal)
+        self.read_long(stop, "scan_indexed_count", |conn| {
+            Ok(conn
+                .query_row(
+                    &format!(
+                        "SELECT COUNT(*) FROM local_tracks WHERE root_id = ?1 \
+                         AND availability = 'indexed' AND {IN_SCOPE}"
+                    ),
+                    params![root_id, scope_relative_path],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|count| count.max(0) as usize)?)
+        })
     }
 
     /// For one walked scope before indexing: indexed rows the walk did
@@ -163,44 +213,48 @@ impl SqliteScanStore {
     /// Feeds the mass-missing guard.
     pub fn vanish_counts(
         &self,
+        stop: &RunStop,
         run_id: &str,
         root_id: &str,
         scope_relative_path: &str,
     ) -> Result<(usize, usize), ScanStoreError> {
-        let guard = self.lock();
-        guard
-            .conn
-            .query_row(
-                &format!(
-                    "SELECT \
-                     (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
-                      AND t.availability = 'indexed' AND {IN_SCOPE_T} AND NOT EXISTS ( \
-                      SELECT 1 FROM library_scan_inventory i \
-                      JOIN library_scan_run_scopes s ON s.run_id = i.run_id \
-                      AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
-                      WHERE i.run_id = ?3 AND i.root_id = ?1 AND i.relative_path = t.relative_path \
-                      AND s.discovery_generation = i.discovery_generation)), \
-                     (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
-                      AND t.availability = 'indexed' AND {IN_SCOPE_T}) \
-                     + (SELECT COUNT(*) FROM library_scan_inventory i WHERE i.run_id = ?3 \
-                      AND i.root_id = ?1 AND i.scope_relative_path = ?2 \
-                      AND i.comparison_result = 'new')"
-                ),
-                params![root_id, scope_relative_path, run_id],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-            )
-            .map(|(missing, total)| (missing.max(0) as usize, total.max(0) as usize))
-            .map_err(internal)
+        self.read_long(stop, "scan_vanish_counts", |conn| {
+            Ok(conn
+                .query_row(
+                    &format!(
+                        "SELECT \
+                         (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
+                          AND t.availability = 'indexed' AND {IN_SCOPE_T} AND NOT EXISTS ( \
+                          SELECT 1 FROM library_scan_inventory i \
+                          JOIN library_scan_run_scopes s ON s.run_id = i.run_id \
+                          AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
+                          WHERE i.run_id = ?3 AND i.root_id = ?1 AND i.relative_path = t.relative_path \
+                          AND s.discovery_generation = i.discovery_generation)), \
+                         (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
+                          AND t.availability = 'indexed' AND {IN_SCOPE_T}) \
+                         + (SELECT COUNT(*) FROM library_scan_inventory i WHERE i.run_id = ?3 \
+                          AND i.root_id = ?1 AND i.scope_relative_path = ?2 \
+                          AND i.comparison_result = 'new')"
+                    ),
+                    params![root_id, scope_relative_path, run_id],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .map(|(missing, total)| (missing.max(0) as usize, total.max(0) as usize))?)
+        })
     }
 
     /// True when the run held missing detection back for this scope (the
     /// mass-missing guard). Such a scope counts as not walked: nothing in
     /// it is missing, moved, or taken over.
-    pub fn scope_guarded(&self, run_id: &str, root_id: &str, scope_relative_path: &str) -> bool {
-        let guard = self.lock();
-        guard
-            .conn
-            .query_row(
+    pub fn scope_guarded(
+        &self,
+        stop: &RunStop,
+        run_id: &str,
+        root_id: &str,
+        scope_relative_path: &str,
+    ) -> Result<bool, ScanStoreError> {
+        self.read_long(stop, "scan_scope_guarded", |conn| {
+            Ok(conn.query_row(
                 "SELECT EXISTS(SELECT 1 FROM library_scan_failures WHERE run_id = ?1 \
                  AND root_id = ?2 AND relative_path = ?3 AND failure_code = ?4)",
                 params![
@@ -210,12 +264,8 @@ impl SqliteScanStore {
                     failure_codes::MASS_MISSING_GUARD
                 ],
                 |row| row.get(0),
-            )
-            .unwrap_or_else(|error| {
-                tracing::error!(%error, "scan scope_guarded failed");
-                // Unknown reads as guarded: holding back is the safe side.
-                true
-            })
+            )?)
+        })
     }
 
     /// Catalog paths under `scope_relative_path` that the run's current
@@ -226,11 +276,11 @@ impl SqliteScanStore {
     /// rule, answered in one query.
     pub fn missing_catalog_paths(
         &self,
+        stop: &RunStop,
         run_id: &str,
         root_id: &str,
         scope_relative_path: &str,
-    ) -> Vec<(String, bool)> {
-        let guard = self.lock();
+    ) -> Result<Vec<(String, bool)>, ScanStoreError> {
         let sql = format!(
             "SELECT t.relative_path, {} FROM local_tracks t \
              WHERE t.root_id = ?1 AND t.availability = 'indexed' AND {IN_SCOPE} \
@@ -243,72 +293,67 @@ impl SqliteScanStore {
              ORDER BY t.relative_path",
             super::held_scopes::held_back!("?3", "t"),
         );
-        let mut stmt = match guard.conn.prepare(&sql) {
-            Ok(stmt) => stmt,
-            Err(error) => {
-                tracing::error!(%error, "scan missing_catalog_paths failed");
-                return Vec::new();
-            }
-        };
-        stmt.query_map(params![root_id, scope_relative_path, run_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
-        })
-        .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-        .unwrap_or_else(|error| {
-            tracing::error!(%error, "scan missing_catalog_paths failed");
-            Vec::new()
+        self.read_long(stop, "scan_missing_paths", |conn| {
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map(params![root_id, scope_relative_path, run_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
         })
     }
 
+    /// Verdicts for one discovery batch against the root's catalog. Rows
+    /// whose legacy revision holds are promoted to exact, and legacy clock
+    /// skew is recorded as evidence, in one write beside the batch.
     pub fn classify(
         &self,
+        stop: &RunStop,
         root_id: &str,
         paths: &[ClassifyInput],
         run_id: Option<&str>,
-    ) -> HashMap<String, (Verdict, Option<String>)> {
+    ) -> Result<HashMap<String, (Verdict, Option<String>)>, ScanStoreError> {
         if paths.is_empty() {
-            return HashMap::new();
+            return Ok(HashMap::new());
         }
-        let mut guard = self.lock();
         // One bulk load per catalog version: discovery classifies hundreds
         // of batches against an unchanging catalog, and every commit or
-        // removal bumps the version, so the snapshot is never stale.
-        let version = guard.catalog_version;
-        let shared_revision = match shared_catalog_revision(&guard.conn) {
-            Ok(revision) => revision,
-            Err(error) => {
-                tracing::error!(%error, "scan classify failed");
-                return HashMap::new();
-            }
-        };
-        let fresh = guard.catalog_cache.get(root_id).is_some_and(|cached| {
-            cached.version == version && cached.shared_revision == shared_revision
-        });
+        // removal bumps the version, so the snapshot is never stale. The
+        // load runs with the store's mutex released.
+        let version = self.lock().catalog_version;
+        let shared_revision = self.read_long(stop, "scan_catalog_revision", |conn| {
+            Ok(shared_catalog_revision(conn)?)
+        })?;
+        let fresh = self
+            .lock()
+            .catalog_cache
+            .get(root_id)
+            .is_some_and(|cached| {
+                cached.version == version && cached.shared_revision == shared_revision
+            });
         if !fresh {
-            match load_catalog_map(&guard.conn, root_id) {
-                Ok(entries) => {
-                    guard.catalog_cache.insert(
-                        root_id.to_owned(),
-                        CachedCatalog {
-                            version,
-                            shared_revision,
-                            entries,
-                        },
-                    );
-                }
-                Err(error) => {
-                    tracing::error!(%error, "scan classify failed");
-                    return HashMap::new();
-                }
-            }
+            let entries = self.read_long(stop, "scan_classify_snapshot", |conn| {
+                Ok(load_catalog_map(conn, root_id)?)
+            })?;
+            self.lock().catalog_cache.insert(
+                root_id.to_owned(),
+                CachedCatalog {
+                    version,
+                    shared_revision,
+                    entries,
+                },
+            );
         }
         let mut verdicts = HashMap::with_capacity(paths.len());
         let mut promotions: Vec<(String, ClassifyInput)> = Vec::new();
         let mut skew: Vec<String> = Vec::new();
         {
+            let guard = self.lock();
             let Some(cached) = guard.catalog_cache.get(root_id) else {
-                tracing::error!("scan classify lost its snapshot");
-                return HashMap::new();
+                return Err(ScanStoreError::Internal {
+                    message: "scan classify lost its snapshot".to_owned(),
+                });
             };
             for input in paths {
                 let key = normalize_key(&input.0);
@@ -351,55 +396,53 @@ impl SqliteScanStore {
                 );
             }
         }
-        // Promotions mutate the row the verdict just read: write through to
-        // the snapshot so later batches in this scan see exact revisions.
-        for (key, input) in &promotions {
-            let outcome = retry_on_busy("classify promotion", || {
-                guard.conn.execute(
-                    "UPDATE local_tracks SET stat_revision = ?1, file_size_bytes = ?2, \
-                     file_mtime_ns = ?3, stat_revision_kind = 'exact' \
-                     WHERE root_id = ?4 AND relative_path = ?5",
-                    params![input.4, input.1 as i64, input.2, root_id, key],
-                )
-            });
-            if let Err(error) = outcome {
-                tracing::error!(%error, "scan classify promotion failed");
-                continue;
-            }
-            if let Some(entry) = guard
-                .catalog_cache
-                .get_mut(root_id)
-                .and_then(|cached| cached.entries.get_mut(key))
-            {
-                entry.revision.clone_from(&input.4);
-                entry.size_bytes = input.1;
-                entry.mtime_ns = input.2;
-                entry.revision_kind = RevisionKind::Exact;
-            }
+        let skew = if run_id.is_some() { skew } else { Vec::new() };
+        if promotions.is_empty() && skew.is_empty() {
+            return Ok(verdicts);
         }
-        if let Some(run_id) = run_id {
-            for relative_path in &skew {
-                let outcome = retry_on_busy("classify skew evidence", || {
-                    guard.conn.execute(
-                        "INSERT OR IGNORE INTO library_scan_failures \
-                         (run_id, root_id, relative_path, failure_code, failure_detail, phase, \
-                         recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, 'discovering', 0.0)",
-                        params![
-                            run_id,
-                            root_id,
-                            relative_path,
-                            failure_codes::MTIME_SKEW,
-                            "Legacy mtime drift beyond tolerance; the file clock and the read clock disagree.",
-                        ],
-                    )
-                });
-                if let Err(error) = outcome {
-                    tracing::error!(%error, "scan classify skew evidence failed");
+        self.write(stop, Lane::Bulk, "scan_classify_evidence", |tx| {
+            let mut promote = tx.prepare_cached(
+                "UPDATE local_tracks SET stat_revision = ?1, file_size_bytes = ?2, \
+                 file_mtime_ns = ?3, stat_revision_kind = 'exact' \
+                 WHERE root_id = ?4 AND relative_path = ?5",
+            )?;
+            for (key, input) in &promotions {
+                promote.execute(params![input.4, input.1 as i64, input.2, root_id, key])?;
+            }
+            if let Some(run_id) = run_id {
+                let mut evidence = tx.prepare_cached(
+                    "INSERT OR IGNORE INTO library_scan_failures \
+                     (run_id, root_id, relative_path, failure_code, failure_detail, phase, \
+                     recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, 'discovering', 0.0)",
+                )?;
+                for relative_path in &skew {
+                    evidence.execute(params![
+                        run_id,
+                        root_id,
+                        relative_path,
+                        failure_codes::MTIME_SKEW,
+                        "Legacy mtime drift beyond tolerance; the file clock and the read clock disagree.",
+                    ])?;
+                }
+            }
+            Ok(())
+        })?;
+        // Promotions changed the rows the verdicts just read: write through
+        // to the snapshot so later batches in this scan see exact revisions.
+        let mut guard = self.lock();
+        if let Some(cached) = guard.catalog_cache.get_mut(root_id) {
+            for (key, input) in &promotions {
+                if let Some(entry) = cached.entries.get_mut(key) {
+                    entry.revision.clone_from(&input.4);
+                    entry.size_bytes = input.1;
+                    entry.mtime_ns = input.2;
+                    entry.revision_kind = RevisionKind::Exact;
                 }
             }
         }
-        verdicts
+        Ok(verdicts)
     }
+
     /// Catalog tracks under any of the scopes, each counted once, missing
     /// rows included (v2 `estimate_scan_scope`). An approximate size for
     /// the scan a caller is about to request.
@@ -427,11 +470,9 @@ impl SqliteScanStore {
             .iter()
             .flat_map(|scope| [scope.root_id.as_str(), scope.relative_path.as_str()])
             .collect();
-        let guard = self.lock();
-        let count: i64 = guard
-            .conn
-            .query_row(&sql, params_from_iter(values), |row| row.get(0))
-            .map_err(internal)?;
+        let count: i64 = self.read("scan_estimate", |conn| {
+            Ok(conn.query_row(&sql, params_from_iter(values), |row| row.get(0))?)
+        })?;
         Ok(count.max(0) as u64)
     }
 }

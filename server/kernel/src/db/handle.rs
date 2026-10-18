@@ -15,6 +15,8 @@ use std::{path::Path, sync::Arc};
 use rusqlite::{Connection, Transaction};
 use sqlx::SqlitePool;
 
+#[cfg(any(test, feature = "test-support"))]
+use super::writer::LaneLimits;
 use super::{
     error::{ChunkedError, DbError},
     read_pool::ReadPools,
@@ -50,7 +52,19 @@ impl Db {
     /// write is not logged, and nothing holds bulk writes for the WAL.
     #[cfg(any(test, feature = "test-support"))]
     pub fn open_for_tests(path: &Path) -> Result<Self, DbError> {
-        let lane = WriteLane::open(path)?;
+        Self::on_test_lane(path, WriteLane::open(path)?)
+    }
+
+    /// [`Db::open_for_tests`] with other lane time limits, so a test can
+    /// run a write past its budget without waiting out the real one.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_for_tests_with(path: &Path, limits: LaneLimits) -> Result<Self, DbError> {
+        Self::on_test_lane(path, WriteLane::open_limited(path, limits)?)
+    }
+
+    /// A test handle over `lane`: both read pools and a lazy sqlx pool.
+    #[cfg(any(test, feature = "test-support"))]
+    fn on_test_lane(path: &Path, lane: WriteLane) -> Result<Self, DbError> {
         let reads = ReadPools::open(
             path,
             lane.database(),

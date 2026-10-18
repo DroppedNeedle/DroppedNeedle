@@ -58,6 +58,7 @@ use crate::publish::HIDDEN_PREFIX;
 use crate::scan::models::scope_covers_path;
 use crate::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPairState};
 use crate::scan::sqlite_store::{RetagPair, holds, tried, waits_for_the_rest};
+use droppedneedle_kernel::db::savepoint;
 
 /// The scan run that started last, as a SQL expression.
 const LATEST_RUN: &str = "(SELECT id FROM library_scan_runs WHERE started_at IS NOT NULL \
@@ -104,12 +105,10 @@ pub(crate) fn join_replaced(
     scope: Scope<'_>,
     now: f64,
 ) -> rusqlite::Result<()> {
-    tx.execute_batch("SAVEPOINT join_replaced")?;
     let mut at: (Option<String>, Option<String>) = (None, None);
-    match pass(tx, scope, now, &mut at) {
-        Ok(()) => tx.execute_batch("RELEASE join_replaced"),
+    match savepoint(tx, "join_replaced", || pass(tx, scope, now, &mut at))? {
+        Ok(()) => Ok(()),
         Err(error) => {
-            tx.execute_batch("ROLLBACK TO join_replaced; RELEASE join_replaced")?;
             tracing::warn!(
                 %error,
                 album_id = at.0.as_deref().unwrap_or(""),

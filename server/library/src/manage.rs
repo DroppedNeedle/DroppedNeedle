@@ -654,6 +654,7 @@ impl LibrarySetup {
     fn track_album(&self, track_id: &str) -> Result<String, ServiceError> {
         self.scan_store
             .album_for_track(track_id)
+            .map_err(crate::scans::store_error)?
             .ok_or_else(|| ServiceError::Conflict {
                 message: format!("Track {track_id} is not in the catalog"),
             })
@@ -774,6 +775,7 @@ impl LibrarySetup {
     fn scan_track(&self, root_id: &str, rel_path: &str) -> Result<String, ServiceError> {
         self.scan_store
             .track_at(root_id, rel_path)
+            .map_err(crate::scans::store_error)?
             .ok_or_else(|| ServiceError::Conflict {
                 message: format!("{root_id}/{rel_path} is not indexed; scan the root first"),
             })

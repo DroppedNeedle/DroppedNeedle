@@ -14,6 +14,7 @@ use crate::identify::sqlite::{
 use crate::management::{automatic, takeover};
 use crate::operations::decisions::{CatalogAction, bump_catalog, record_action};
 use crate::scan::sqlite_store::retag_pairs::RetagPairReason;
+use droppedneedle_kernel::db::savepoint;
 
 /// Why two rows are joined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,8 +116,7 @@ pub(crate) fn merge_retagged(
     }
     let chosen_release = release_chosen(tx, old)?;
     let new_chosen = match_chosen(tx, new)?;
-    tx.execute("SAVEPOINT merge_album", [])?;
-    let merged = (|| {
+    let merged = savepoint(tx, "merge_album", || {
         settle_merged_match(tx, old, new, now)?;
         drop_edition(tx, old)?;
         tx.execute(
@@ -173,20 +173,13 @@ pub(crate) fn merge_retagged(
         )?;
         let offered = automatic && offer_album(tx, new, (now * 1000.0) as i64)?;
         Ok(MergeOutcome::Merged { offered })
-    })();
+    })?;
     match merged {
-        Ok(outcome) => {
-            tx.execute("RELEASE merge_album", [])?;
-            Ok(outcome)
-        }
-        Err(error) => {
-            tx.execute("ROLLBACK TO merge_album", [])?;
-            tx.execute("RELEASE merge_album", [])?;
-            Ok(MergeOutcome::Refused {
-                reason: RetagPairReason::StoreError,
-                error: Some(error),
-            })
-        }
+        Ok(outcome) => Ok(outcome),
+        Err(error) => Ok(MergeOutcome::Refused {
+            reason: RetagPairReason::StoreError,
+            error: Some(error),
+        }),
     }
 }
 

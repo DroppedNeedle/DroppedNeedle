@@ -1,6 +1,8 @@
 //! Scan runs: requests, claims, transitions, control, counters, recovery.
 
 use super::*;
+use crate::scan::sql;
+use droppedneedle_kernel::db::statement::Statement;
 
 /// Scan runs: requests, claims, state transitions, control, failures,
 /// counters, and boot recovery.
@@ -13,135 +15,115 @@ impl SqliteScanStore {
         run_id: &str,
         requested_at: f64,
     ) -> Result<ScanRequestResult, ScanStoreError> {
-        let mut guard = self.lock();
-        let tx = guard
-            .conn
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(internal)?;
-        let result = request_run_inner(&tx, request, run_id, requested_at).map_err(internal)?;
-        tx.commit().map_err(internal)?;
-        Ok(result)
+        self.write_once(Lane::Foreground, "scan_request_run", |tx| {
+            Ok(request_run_inner(tx, request, run_id, requested_at)?)
+        })
     }
 
+    /// One run with its scopes, for the request path.
     pub fn get_run(
         &self,
         run_id: &str,
     ) -> Result<(ScanRun, Vec<ScanScope>, Counters), ScanStoreError> {
-        let guard = self.lock();
-        let run = load_run(&guard.conn, run_id)
-            .map_err(internal)?
-            .ok_or_else(|| ScanStoreError::NotFound {
-                run_id: run_id.to_owned(),
-            })?;
-        let scopes = load_scopes(&guard.conn, run_id).map_err(internal)?;
-        Ok((run.clone(), scopes, run.counters.clone()))
+        self.read("scan_run", |conn| run_with_scopes(conn, run_id))
     }
 
-    pub fn list_current(&self) -> Vec<ScanRun> {
-        let guard = self.lock();
-        let mut stmt = match guard.conn.prepare(&format!(
-            "SELECT {RUN_COLUMNS} FROM library_scan_runs \
-             WHERE state NOT IN ('completed','cancelled','superseded_policy_changed','failed') \
-             ORDER BY CASE WHEN state = 'queued' THEN 1 ELSE 0 END, queued_at, id"
-        )) {
-            Ok(stmt) => stmt,
-            Err(error) => {
-                tracing::error!(%error, "scan list_current failed");
-                return Vec::new();
-            }
-        };
-        stmt.query_map([], map_run)
-            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-            .unwrap_or_else(|error| {
-                tracing::error!(%error, "scan list_current failed");
-                Vec::new()
-            })
+    /// [`Self::get_run`] for the scan worker, on the long pool.
+    pub fn reread_run(
+        &self,
+        stop: &RunStop,
+        run_id: &str,
+    ) -> Result<(ScanRun, Vec<ScanScope>, Counters), ScanStoreError> {
+        self.read_long(stop, "scan_run", |conn| run_with_scopes(conn, run_id))
+    }
+
+    pub fn list_current(&self) -> Result<Vec<ScanRun>, ScanStoreError> {
+        self.read("scan_current_runs", current_runs)
+    }
+
+    /// The runs work that must never run beside a scan waits for: the
+    /// active and queued runs, then the ended runs that still owe their end
+    /// passes, whose passes may yet merge or move albums. On the long pool,
+    /// which waits for a connection instead of answering busy.
+    pub fn list_current_waiting(&self, stop: &RunStop) -> Result<Vec<ScanRun>, ScanStoreError> {
+        self.read_long(stop, "scan_current_runs", |conn| {
+            let mut runs = current_runs(conn)?;
+            let owing = conn
+                .prepare(sql::RUNS_OWING_END_PASSES.text())?
+                .query_map(params![failure_codes::RUN_END_PENDING], map_run)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            runs.extend(owing);
+            Ok(runs)
+        })
     }
 
     /// Terminal runs, newest first. `before` is a `(terminal_at, run id)`
     /// keyset cursor: only runs strictly older are listed.
-    pub fn list_history(&self, limit: usize, before: Option<(f64, &str)>) -> Vec<ScanRun> {
-        let guard = self.lock();
+    pub fn list_history(
+        &self,
+        limit: usize,
+        before: Option<(f64, &str)>,
+    ) -> Result<Vec<ScanRun>, ScanStoreError> {
         let (before_at, before_id) = match before {
             Some((terminal_at, run_id)) => (Some(terminal_at), Some(run_id)),
             None => (None, None),
         };
-        let mut stmt = match guard.conn.prepare(&format!(
-            "SELECT {RUN_COLUMNS} FROM library_scan_runs WHERE terminal_at IS NOT NULL \
-             AND (?2 IS NULL OR terminal_at < ?2 OR (terminal_at = ?2 AND id < ?3)) \
-             ORDER BY terminal_at DESC, id DESC LIMIT ?1"
-        )) {
-            Ok(stmt) => stmt,
-            Err(error) => {
-                tracing::error!(%error, "scan list_history failed");
-                return Vec::new();
-            }
-        };
-        stmt.query_map(params![limit.max(1) as i64, before_at, before_id], map_run)
-            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-            .unwrap_or_else(|error| {
-                tracing::error!(%error, "scan list_history failed");
-                Vec::new()
-            })
-    }
-
-    pub fn latest_filesystem_terminal(&self) -> Option<ScanRun> {
-        let guard = self.lock();
-        let mut stmt = guard
-            .conn
-            .prepare(&format!(
+        self.read("scan_history", |conn| {
+            let mut stmt = conn.prepare(&format!(
                 "SELECT {RUN_COLUMNS} FROM library_scan_runs WHERE terminal_at IS NOT NULL \
-             ORDER BY terminal_at DESC, id DESC"
-            ))
-            .ok()?;
-        let rows: Vec<ScanRun> = stmt
-            .query_map([], map_run)
-            .ok()?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .ok()?;
-        rows.into_iter()
-            .find(|run| run.kind != ScanKind::PolicyReconcile || run.aggregate_scope == "all")
-    }
-
-    pub fn claim_next(&self, now: f64) -> Option<ScanRun> {
-        let mut guard = self.lock();
-        (|| -> rusqlite::Result<Option<ScanRun>> {
-            let tx = guard
-                .conn
-                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            let run = claim_next_inner(&tx, now)?;
-            tx.commit()?;
-            Ok(run)
-        })()
-        .unwrap_or_else(|error| {
-            tracing::error!(%error, "scan claim_next failed");
-            None
+                 AND (?2 IS NULL OR terminal_at < ?2 OR (terminal_at = ?2 AND id < ?3)) \
+                 ORDER BY terminal_at DESC, id DESC LIMIT ?1"
+            ))?;
+            let runs = stmt
+                .query_map(params![limit.max(1) as i64, before_at, before_id], map_run)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(runs)
         })
     }
 
-    pub fn resumable(&self) -> Option<ScanRun> {
-        let guard = self.lock();
-        guard
-            .conn
-            .query_row(
-                &format!(
-                    "SELECT {RUN_COLUMNS} FROM library_scan_runs \
-                     WHERE state IN ('discovering','indexing','reconciling') \
-                     AND requested_control = 'none' \
-                     ORDER BY started_at, id LIMIT 1"
-                ),
-                [],
-                map_run,
-            )
-            .optional()
-            .unwrap_or_else(|error| {
-                tracing::error!(%error, "scan resumable failed");
-                None
-            })
+    pub fn latest_filesystem_terminal(&self) -> Result<Option<ScanRun>, ScanStoreError> {
+        let rows = self.read("scan_latest_terminal", |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {RUN_COLUMNS} FROM library_scan_runs WHERE terminal_at IS NOT NULL \
+                 ORDER BY terminal_at DESC, id DESC"
+            ))?;
+            let runs = stmt
+                .query_map([], map_run)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(runs)
+        })?;
+        Ok(rows
+            .into_iter()
+            .find(|run| run.kind != ScanKind::PolicyReconcile || run.aggregate_scope == "all"))
     }
 
+    pub fn claim_next(&self, stop: &RunStop, now: f64) -> Result<Option<ScanRun>, ScanStoreError> {
+        self.write(stop, Lane::Background, "scan_claim_next", |tx| {
+            Ok(claim_next_inner(tx, now)?)
+        })
+    }
+
+    pub fn resumable(&self, stop: &RunStop) -> Result<Option<ScanRun>, ScanStoreError> {
+        self.read_long(stop, "scan_resumable", |conn| {
+            Ok(conn
+                .query_row(
+                    &format!(
+                        "SELECT {RUN_COLUMNS} FROM library_scan_runs \
+                         WHERE state IN ('discovering','indexing','reconciling') \
+                         AND requested_control = 'none' \
+                         ORDER BY started_at, id LIMIT 1"
+                    ),
+                    [],
+                    map_run,
+                )
+                .optional()?)
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn transition(
         &self,
+        stop: &RunStop,
         run_id: &str,
         expected_state: ScanState,
         expected_revision: u64,
@@ -149,22 +131,17 @@ impl SqliteScanStore {
         now: f64,
         terminal_code: Option<&str>,
     ) -> Result<ScanRun, ScanStoreError> {
-        let mut guard = self.lock();
-        let tx = guard
-            .conn
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(internal)?;
-        let run = transition_inner(
-            &tx,
-            run_id,
-            expected_state,
-            expected_revision,
-            new_state,
-            now,
-            terminal_code,
-        )?;
-        tx.commit().map_err(internal)?;
-        Ok(run)
+        self.write(stop, Lane::Background, "scan_transition", |tx| {
+            transition_inner(
+                tx,
+                run_id,
+                expected_state,
+                expected_revision,
+                new_state,
+                now,
+                terminal_code,
+            )
+        })
     }
 
     pub fn request_control(
@@ -175,68 +152,49 @@ impl SqliteScanStore {
         expected_revision: u64,
         now: f64,
     ) -> Result<(ScanRun, u64), ScanStoreError> {
-        let mut guard = self.lock();
-        let tx = guard
-            .conn
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(internal)?;
-        let outcome = request_control_inner(&tx, run_id, control, resume, expected_revision, now)?;
-        tx.commit().map_err(internal)?;
-        Ok(outcome)
+        self.write_once(Lane::Foreground, "scan_control", |tx| {
+            request_control_inner(tx, run_id, control, resume, expected_revision, now)
+        })
     }
 
-    pub fn record_failures(&self, run_id: &str, failures: Vec<ScanFailureRecord>) {
+    /// Record failure rows: those of an index window or an inventory page,
+    /// and the walk's and the guard's own.
+    pub fn record_failures(
+        &self,
+        stop: &RunStop,
+        run_id: &str,
+        failures: &[ScanFailureRecord],
+    ) -> Result<(), ScanStoreError> {
         if failures.is_empty() {
-            return;
+            return Ok(());
         }
-        let mut guard = self.lock();
-        let outcome = (|| -> rusqlite::Result<()> {
-            let tx = guard
-                .conn
-                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            for failure in &failures {
-                tx.execute(
-                    "INSERT OR IGNORE INTO library_scan_failures \
-                     (run_id, root_id, relative_path, failure_code, failure_detail, phase, \
-                     recorded_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    params![
-                        run_id,
-                        failure.root_id,
-                        failure.relative_path,
-                        failure.failure_code,
-                        failure.failure_detail,
-                        phase_to_str(failure.phase),
-                        failure.recorded_at,
-                    ],
-                )?;
-            }
-            tx.commit()
-        })();
         // Failure rows are run bookkeeping, not catalog content: they
         // leave the catalog revision (and every read cache) alone.
-        if let Err(error) = outcome {
-            tracing::error!(%error, "scan record_failures failed");
-        }
+        self.write(stop, Lane::Bulk, "scan_failures", |tx| {
+            let mut insert = tx.prepare_cached(sql::RECORD_FAILURE.text())?;
+            for failure in failures {
+                insert.execute(params![
+                    run_id,
+                    failure.root_id,
+                    failure.relative_path,
+                    failure.failure_code,
+                    failure.failure_detail,
+                    phase_to_str(failure.phase),
+                    failure.recorded_at,
+                ])?;
+            }
+            Ok(())
+        })
     }
 
-    pub fn failures(&self, run_id: &str) -> Vec<ScanFailureRecord> {
-        let guard = self.lock();
-        let mut stmt = match guard.conn.prepare(
-            "SELECT root_id, relative_path, failure_code, recorded_at, failure_detail, phase \
-             FROM library_scan_failures WHERE run_id = ?1 ORDER BY rowid",
-        ) {
-            Ok(stmt) => stmt,
-            Err(error) => {
-                tracing::error!(%error, "scan failures failed");
-                return Vec::new();
-            }
-        };
-        stmt.query_map(params![run_id], map_failure)
-            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-            .unwrap_or_else(|error| {
-                tracing::error!(%error, "scan failures failed");
-                Vec::new()
-            })
+    pub fn failures(&self, run_id: &str) -> Result<Vec<ScanFailureRecord>, ScanStoreError> {
+        self.read("scan_failures", |conn| {
+            let mut stmt = conn.prepare(sql::RUN_FAILURES.text())?;
+            let rows = stmt
+                .query_map(params![run_id, failure_codes::RUN_END_PENDING], map_failure)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
     }
 
     /// One keyset page of a run's recorded failures, oldest first.
@@ -250,21 +208,21 @@ impl SqliteScanStore {
         after: Option<i64>,
     ) -> Result<(Vec<ScanFailureRecord>, Option<i64>), ScanStoreError> {
         let limit = limit.max(1);
-        let guard = self.lock();
-        let mut stmt = guard
-            .conn
-            .prepare(
-                "SELECT rowid, root_id, relative_path, failure_code, recorded_at, \
-                 failure_detail, phase FROM library_scan_failures \
-                 WHERE run_id = ?1 AND (?2 IS NULL OR rowid > ?2) ORDER BY rowid LIMIT ?3",
-            )
-            .map_err(internal)?;
-        let mut rows = stmt
-            .query_map(params![run_id, after, (limit + 1) as i64], |row| {
-                Ok((row.get::<_, i64>("rowid")?, map_failure(row)?))
-            })
-            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-            .map_err(internal)?;
+        let mut rows = self.read("scan_failures_page", |conn| {
+            let mut stmt = conn.prepare(sql::RUN_FAILURES_PAGE.text())?;
+            let rows = stmt
+                .query_map(
+                    params![
+                        run_id,
+                        after,
+                        (limit + 1) as i64,
+                        failure_codes::RUN_END_PENDING
+                    ],
+                    |row| Ok((row.get::<_, i64>("rowid")?, map_failure(row)?)),
+                )?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })?;
         let more = rows.len() > limit;
         rows.truncate(limit);
         let next = if more {
@@ -275,167 +233,54 @@ impl SqliteScanStore {
         Ok((rows.into_iter().map(|(_, failure)| failure).collect(), next))
     }
 
-    pub fn add_counter(&self, run_id: &str, name: &str, delta: i64) {
-        let Some(column) = counter_column(name) else {
-            return;
-        };
-        let guard = self.lock();
-        if let Err(error) = guard.conn.execute(
-            &format!("UPDATE library_scan_runs SET {column} = {column} + ?1 WHERE id = ?2"),
-            params![delta, run_id],
-        ) {
-            tracing::error!(%error, "scan add_counter failed");
-        }
+    pub fn stream_revision(&self, kind: &str) -> Result<u64, ScanStoreError> {
+        self.read("scan_stream_revision", |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT value FROM library_event_stream_revisions WHERE stream_kind = ?1",
+                    params![kind],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?
+                .map(|value| value.max(0) as u64)
+                .unwrap_or(0))
+        })
     }
 
-    /// Add several counter deltas at once. Same per-name semantics as
-    /// [`Self::add_counter`], in one statement.
-    pub fn add_counters(&self, run_id: &str, deltas: &[(&str, i64)]) {
-        // Collapse to one UPDATE: duplicate names sum, unknown names drop
-        // exactly like repeated add_counter calls.
-        let mut summed: HashMap<&'static str, i64> = HashMap::new();
-        for (name, delta) in deltas {
-            if let Some(column) = counter_column(name) {
-                *summed.entry(column).or_insert(0) += *delta;
+    /// Drop the classify snapshot at a terminal flush, and bump the shared
+    /// catalog revision when the run changed the catalog. A bump that fails
+    /// keeps the catalog dirty, so the next terminal flush bumps it.
+    pub fn flush_invalidation(&self, stop: &RunStop, terminal: bool) -> Result<(), ScanStoreError> {
+        {
+            let mut guard = self.lock();
+            if terminal {
+                // The classify snapshot is a within-scan accelerator: drop it
+                // at every terminal flush so idle scans hold no catalog memory.
+                guard.catalog_cache.clear();
+            }
+            if !terminal || !guard.catalog_dirty {
+                return Ok(());
             }
         }
-        if summed.is_empty() {
-            return;
-        }
-        let mut pairs: Vec<(&'static str, i64)> = summed.into_iter().collect();
-        pairs.sort_by_key(|pair| pair.0);
-        let assignments = pairs
-            .iter()
-            .map(|(column, _)| format!("{column} = {column} + ?"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let mut values: Vec<rusqlite::types::Value> = Vec::with_capacity(pairs.len() + 1);
-        for (_, delta) in &pairs {
-            values.push(rusqlite::types::Value::Integer(*delta));
-        }
-        values.push(rusqlite::types::Value::Text(run_id.to_owned()));
-        let guard = self.lock();
-        if let Err(error) = guard.conn.execute(
-            &format!("UPDATE library_scan_runs SET {assignments} WHERE id = ?"),
-            params_from_iter(values),
-        ) {
-            tracing::error!(%error, "scan add_counters failed");
-        }
-    }
-
-    pub fn set_counter(&self, run_id: &str, name: &str, value: i64) {
-        let Some(column) = counter_column(name) else {
-            return;
-        };
-        let guard = self.lock();
-        if let Err(error) = guard.conn.execute(
-            &format!("UPDATE library_scan_runs SET {column} = ?1 WHERE id = ?2"),
-            params![value, run_id],
-        ) {
-            tracing::error!(%error, "scan set_counter failed");
-        }
-    }
-
-    pub fn stream_revision(&self, kind: &str) -> u64 {
-        let guard = self.lock();
-        guard
-            .conn
-            .query_row(
-                "SELECT value FROM library_event_stream_revisions WHERE stream_kind = ?1",
-                params![kind],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()
-            .unwrap_or_else(|error| {
-                tracing::error!(%error, "scan stream_revision failed");
-                None
-            })
-            .map(|value| value.max(0) as u64)
-            .unwrap_or(0)
-    }
-
-    pub fn checkpoint_terminal(&self) {
-        // The bounded inline autocheckpoint wraps the log mid-scan; fold
-        // what remains back now, off the batch path and off the observed
-        // scan wall. TRUNCATE also resets the log so the file never
-        // accumulates folded frames across scans (RESTART will not reset
-        // while the pool holds the WAL open). A lost race with the
-        // checkpoint service (or an in-flight pool read) sleeps and
-        // retries; whatever remains after attempts run out stays in the
-        // WAL for the service, and the next scan's terminal fold retries.
-        let guard = self.lock();
-        for attempt in 0..TERMINAL_CHECKPOINT_ATTEMPTS {
-            let checkpointed = guard
-                .conn
-                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
-                    Ok((
-                        row.get::<_, i32>(0)?,
-                        row.get::<_, i32>(1)?,
-                        row.get::<_, i32>(2)?,
-                    ))
-                });
-            match checkpointed {
-                Ok((_, 0, folded)) => {
-                    tracing::debug!(
-                        folded,
-                        attempts = attempt + 1,
-                        "scan terminal checkpoint drained its log"
-                    );
-                    break;
-                }
-                Ok((busy, log, folded)) => {
-                    tracing::debug!(
-                        busy,
-                        log,
-                        folded,
-                        attempt = attempt + 1,
-                        "scan terminal checkpoint retrying"
-                    );
-                    std::thread::sleep(TERMINAL_CHECKPOINT_RETRY);
-                }
-                Err(error) => {
-                    tracing::debug!(%error, "scan terminal checkpoint failed");
-                    break;
-                }
-            }
-        }
-    }
-
-    pub fn flush_invalidation(&self, terminal: bool) {
-        let mut guard = self.lock();
-        if terminal {
-            // The classify snapshot is a within-scan accelerator: drop it
-            // at every terminal flush so idle scans hold no catalog memory.
-            guard.catalog_cache.clear();
-        }
-        if !terminal || !guard.catalog_dirty {
-            return;
-        }
-        let outcome = (|| -> rusqlite::Result<()> {
-            guard.conn.execute(
+        self.write(stop, Lane::Background, "scan_catalog_revision", |tx| {
+            tx.execute(
                 "INSERT INTO library_catalog_revision (singleton, value) VALUES (1, 0) \
                  ON CONFLICT (singleton) DO NOTHING",
                 [],
             )?;
-            guard.conn.execute(
+            tx.execute(
                 "UPDATE library_catalog_revision SET value = value + 1 WHERE singleton = 1",
                 [],
             )?;
             Ok(())
-        })();
-        match outcome {
-            Ok(()) => guard.catalog_dirty = false,
-            Err(error) => tracing::error!(%error, "scan flush_invalidation failed"),
-        }
+        })?;
+        self.lock().catalog_dirty = false;
+        Ok(())
     }
 
-    pub fn recover(&self, now: f64) -> Vec<ScanRun> {
-        let mut guard = self.lock();
-        (|| -> rusqlite::Result<Vec<ScanRun>> {
-            let tx = guard
-                .conn
-                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            cancel_stopping(&tx, now)?;
+    pub fn recover(&self, stop: &RunStop, now: f64) -> Result<Vec<ScanRun>, ScanStoreError> {
+        self.write(stop, Lane::Background, "scan_recover", |tx| {
+            cancel_stopping(tx, now)?;
             tx.execute(
                 "UPDATE library_scan_runs SET state = 'paused', requested_control = 'none', \
                  updated_at = ?1, row_revision = row_revision + 1, \
@@ -453,108 +298,248 @@ impl SqliteScanStore {
                     .collect::<rusqlite::Result<Vec<_>>>()?
             };
             if !runs.is_empty() {
-                bump_scan_stream(&tx)?;
+                bump_scan_stream(tx)?;
             }
-            tx.commit()?;
             Ok(runs)
-        })()
-        .unwrap_or_else(|error| {
-            tracing::error!(%error, "scan recover failed");
-            Vec::new()
         })
     }
 
-    pub fn recover_stopping(&self, now: f64) -> Vec<ScanRun> {
-        let mut guard = self.lock();
-        (|| -> rusqlite::Result<Vec<ScanRun>> {
-            let tx = guard
-                .conn
-                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            cancel_stopping(&tx, now)?;
-            let runs: Vec<ScanRun> = {
-                let mut stmt = tx.prepare(&format!(
-                    "SELECT {RUN_COLUMNS} FROM library_scan_runs \
-                     WHERE state = 'cancelled' AND terminal_at = ?1 ORDER BY id"
-                ))?;
-                stmt.query_map(params![now], map_run)?
-                    .collect::<rusqlite::Result<Vec<_>>>()?
-            };
-            tx.commit()?;
+    pub fn recover_stopping(
+        &self,
+        stop: &RunStop,
+        now: f64,
+    ) -> Result<Vec<ScanRun>, ScanStoreError> {
+        self.write(stop, Lane::Background, "scan_recover_stopping", |tx| {
+            cancel_stopping(tx, now)?;
+            let mut stmt = tx.prepare(&format!(
+                "SELECT {RUN_COLUMNS} FROM library_scan_runs \
+                 WHERE state = 'cancelled' AND terminal_at = ?1 ORDER BY id"
+            ))?;
+            let runs = stmt
+                .query_map(params![now], map_run)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(runs)
-        })()
-        .unwrap_or_else(|error| {
-            tracing::error!(%error, "scan recover_stopping failed");
-            Vec::new()
         })
     }
 
-    /// Delete one page (at most `limit` rows) of a finished run's
-    /// inventory, or prune old history when none is left. A run's failure
-    /// rows stay until the run itself is pruned, so its history can list
-    /// them. Returns true while more cleanup is pending.
-    pub fn cleanup_terminal_inventory(&self, limit: usize) -> bool {
-        let guard = self.lock();
-        let pending = (|| -> rusqlite::Result<bool> {
-            let target: Option<String> = guard
-                .conn
-                .query_row(
-                    "SELECT id FROM library_scan_runs \
-                     WHERE terminal_at IS NOT NULL AND inventory_cleanup_pending = 1 \
-                     ORDER BY terminal_at, id LIMIT 1",
-                    [],
-                    |row| row.get(0),
-                )
-                .optional()?;
+    /// Run the end passes every ended run still owes, in order, each in its
+    /// own background turn after the run's state changed, so no pass keeps
+    /// a run from ending. Each turn moves the run's note on to the next
+    /// pass, so a stop or a crash resumes where it left off and no pass
+    /// runs twice. A pass that fails or runs out of time is logged and
+    /// passed over: the library-wide passes (`join_replaced`,
+    /// `place_scanned`, `continue_tracks`, `converge_artists`) run again at
+    /// the end of every later run, and the run-keyed ones keep their own
+    /// "next scan tries again" records where they have them.
+    pub fn settle_ended_runs(&self, stop: &RunStop) -> Result<(), ScanStoreError> {
+        use super::commit::{END_PASSES, EndWork};
+        let owed: Vec<(String, String, f64)> = self.read_long(stop, "scan_end_owed", |conn| {
+            let rows = conn
+                .prepare(sql::OWED_END_PASSES.text())?
+                .query_map(params![failure_codes::RUN_END_PENDING], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })?;
+        for (run_id, next, ended_at) in owed {
+            let start = END_PASSES
+                .iter()
+                .position(|pass| pass.name == next)
+                .unwrap_or(0);
+            for (at, pass) in END_PASSES.iter().enumerate().skip(start) {
+                let following = END_PASSES.get(at + 1).map(|pass| pass.name);
+                let advance = |tx: &Transaction<'_>| -> Result<(), ScanStoreError> {
+                    match following {
+                        Some(name) => tx.execute(
+                            sql::NEXT_END_PASS.text(),
+                            params![run_id, name, failure_codes::RUN_END_PENDING],
+                        )?,
+                        None => tx.execute(
+                            sql::END_PASSES_DONE.text(),
+                            params![run_id, failure_codes::RUN_END_PENDING],
+                        )?,
+                    };
+                    Ok(())
+                };
+                let ran = match &pass.work {
+                    EndWork::Whole(run) => self.write(stop, Lane::Background, pass.name, |tx| {
+                        let enqueued = run(tx, &run_id, ended_at)?;
+                        if enqueued > 0
+                            && let Some(column) =
+                                counter_column(counter_names::IDENTIFICATION_ENQUEUED)
+                        {
+                            tx.execute(
+                                &format!(
+                                    "UPDATE library_scan_runs SET {column} = {column} + ?1 \
+                                     WHERE id = ?2"
+                                ),
+                                params![enqueued, run_id],
+                            )?;
+                        }
+                        advance(tx)
+                    }),
+                    EndWork::ByAlbum { each, tidy } => self
+                        .read_long(stop, pass.name, |conn| {
+                            Ok(super::commit::albums_left(conn, &run_id)?)
+                        })
+                        .and_then(|albums| {
+                            self.write_chunked_by(
+                                stop,
+                                pass.name,
+                                &albums,
+                                END_PASS_ALBUMS,
+                                |chunk, tx| {
+                                    for album_id in chunk {
+                                        each(tx, &run_id, album_id, ended_at)?;
+                                    }
+                                    Ok(chunk.len())
+                                },
+                            )
+                        })
+                        .and_then(|_| {
+                            self.write(stop, Lane::Background, pass.name, |tx| {
+                                tidy(tx, &run_id, ended_at)?;
+                                advance(tx)
+                            })
+                        }),
+                };
+                match ran {
+                    Ok(()) => {}
+                    Err(
+                        error @ (ScanStoreError::Stopped
+                        | ScanStoreError::ReadCancelled { .. }
+                        | ScanStoreError::LaneClosed),
+                    ) => return Err(error),
+                    Err(error) => {
+                        tracing::error!(
+                            run_id,
+                            pass = pass.name,
+                            %error,
+                            "a scan's end pass failed and was passed over"
+                        );
+                        self.write(stop, Lane::Background, "scan_end_pass_over", |tx| {
+                            advance(tx)
+                        })?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Clear finished runs' inventory and album moves, then prune history
+    /// past the last [`HISTORY_KEPT`] runs. A run's failure rows stay until
+    /// the run itself is pruned, so its history can list them. Every chunk
+    /// is a complete change, so a stop or a crash leaves a valid prefix
+    /// and the next call carries on from the rows still there.
+    pub fn cleanup_terminal_inventory(&self, stop: &RunStop) -> Result<(), ScanStoreError> {
+        loop {
+            let target: Option<String> = self.read_long(stop, "scan_cleanup_target", |conn| {
+                Ok(conn
+                    .query_row(
+                        sql::CLEANUP_TARGET.text(),
+                        params![failure_codes::RUN_END_PENDING],
+                        |row| row.get(0),
+                    )
+                    .optional()?)
+            })?;
             let Some(target) = target else {
-                guard.conn.execute(
-                    "DELETE FROM library_scan_runs WHERE id IN ( \
-                     SELECT id FROM library_scan_runs \
-                     WHERE terminal_at IS NOT NULL AND inventory_cleanup_pending = 0 \
-                     ORDER BY terminal_at DESC, id DESC LIMIT -1 OFFSET ?1)",
-                    params![HISTORY_KEPT as i64],
-                )?;
-                prune_compat_orphans(&guard.conn)?;
-                return Ok(false);
+                break;
             };
-            let page = limit.max(1) as i64;
-            guard.conn.execute(
-                "DELETE FROM library_scan_album_moves WHERE rowid IN ( \
-                 SELECT rowid FROM library_scan_album_moves WHERE run_id = ?1 LIMIT ?2)",
-                params![target, page],
-            )?;
-            if guard.conn.changes() > 0 {
-                return Ok(true);
+            let (moves, rows) = self.read_long(stop, "scan_cleanup_rows", |conn| {
+                let rowids = |statement: Statement| -> rusqlite::Result<Vec<i64>> {
+                    conn.prepare(statement.text())?
+                        .query_map(params![target], |row| row.get(0))?
+                        .collect()
+                };
+                Ok((
+                    rowids(sql::ALBUM_MOVE_ROWIDS)?,
+                    rowids(sql::INVENTORY_ROWIDS)?,
+                ))
+            })?;
+            self.write_chunked(stop, "scan_cleanup_moves", &moves, |chunk, tx| {
+                delete_rowids(tx, sql::DELETE_ALBUM_MOVE, &target, chunk)
+            })?;
+            self.write_chunked(stop, "scan_cleanup_inventory", &rows, |chunk, tx| {
+                delete_rowids(tx, sql::DELETE_INVENTORY_ROW, &target, chunk)
+            })?;
+            self.write(stop, Lane::Background, "scan_cleanup_done", |tx| {
+                tx.execute(sql::CLEANUP_DONE.text(), params![target])?;
+                Ok(())
+            })?;
+        }
+        let pruned: Vec<String> = self.read_long(stop, "scan_history_prune", |conn| {
+            let ids = conn
+                .prepare(sql::PRUNED_RUNS.text())?
+                .query_map(params![HISTORY_KEPT as i64], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()?;
+            Ok(ids)
+        })?;
+        self.write_chunked(stop, "scan_history_prune", &pruned, |chunk, tx| {
+            let mut delete = tx.prepare_cached(sql::DELETE_RUN.text())?;
+            let mut deleted = 0;
+            for run_id in chunk {
+                deleted += delete.execute(params![run_id])?;
             }
-            guard.conn.execute(
-                "DELETE FROM library_scan_inventory WHERE rowid IN ( \
-                 SELECT rowid FROM library_scan_inventory WHERE run_id = ?1 LIMIT ?2)",
-                params![target, page],
-            )?;
-            let remaining: i64 = guard.conn.query_row(
-                "SELECT COUNT(*) FROM library_scan_inventory WHERE run_id = ?1",
-                params![target],
-                |row| row.get(0),
-            )?;
-            if remaining == 0 {
-                guard.conn.execute(
-                    "UPDATE library_scan_runs SET inventory_cleanup_pending = 0 WHERE id = ?1",
-                    params![target],
-                )?;
-            }
-            Ok(true)
-        })();
-        pending.unwrap_or_else(|error| {
-            tracing::error!(%error, "scan cleanup_terminal_inventory failed");
-            false
+            Ok(deleted)
+        })?;
+        self.write(stop, Lane::Background, "scan_compat_orphans", |tx| {
+            Ok(prune_compat_orphans(tx)?)
         })
     }
+}
+
+/// Albums an end pass works through in one turn. One album's work reads
+/// every move of the run, so a turn holds far fewer albums than rows.
+const END_PASS_ALBUMS: usize = 50;
+
+/// Delete one chunk of a run's rows by rowid.
+pub(super) fn delete_rowids(
+    tx: &Transaction<'_>,
+    statement: Statement,
+    run_id: &str,
+    rowids: &[i64],
+) -> Result<usize, ScanStoreError> {
+    let mut delete = tx.prepare_cached(statement.text())?;
+    let mut deleted = 0;
+    for rowid in rowids {
+        deleted += delete.execute(params![rowid, run_id])?;
+    }
+    Ok(deleted)
+}
+
+/// The active and queued runs, the active one first.
+fn current_runs(conn: &Connection) -> Result<Vec<ScanRun>, ScanStoreError> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {RUN_COLUMNS} FROM library_scan_runs \
+         WHERE state NOT IN ('completed','cancelled','superseded_policy_changed','failed') \
+         ORDER BY CASE WHEN state = 'queued' THEN 1 ELSE 0 END, queued_at, id"
+    ))?;
+    let runs = stmt
+        .query_map([], map_run)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(runs)
+}
+
+/// One run and its scopes.
+fn run_with_scopes(
+    conn: &Connection,
+    run_id: &str,
+) -> Result<(ScanRun, Vec<ScanScope>, Counters), ScanStoreError> {
+    let run = load_run(conn, run_id)?.ok_or_else(|| ScanStoreError::NotFound {
+        run_id: run_id.to_owned(),
+    })?;
+    let scopes = load_scopes(conn, run_id)?;
+    let counters = run.counters.clone();
+    Ok((run, scopes, counters))
 }
 
 /// Drop saved compat play queue entries and bookmarks whose track row is
 /// gone, so clients never resume onto an id that can't play. A track that
 /// is only missing keeps its rows: an unmounted share may come back. A
 /// queue keeps its order, and its current entry moves to the next track
-/// still there.
+/// still there. Runs inside the caller's write.
 fn prune_compat_orphans(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     let gone = |table: &str| {
         format!("NOT EXISTS (SELECT 1 FROM local_tracks t WHERE t.id = {table}.file_id)")
@@ -574,8 +559,7 @@ fn prune_compat_orphans(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     for user in &users {
-        let tx = conn.unchecked_transaction()?;
-        let current: Option<i64> = tx
+        let current: Option<i64> = conn
             .query_row(
                 "SELECT current_index FROM compat_play_queues WHERE user_id = ?1",
                 params![user],
@@ -583,7 +567,7 @@ fn prune_compat_orphans(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
             )
             .optional()?
             .flatten();
-        let items: Vec<(i64, String, bool)> = tx
+        let items: Vec<(i64, String, bool)> = conn
             .prepare(&format!(
                 "SELECT item_index, file_id, {queue_gone} FROM compat_play_queue_items \
                  WHERE user_id = ?1 ORDER BY item_index"
@@ -600,22 +584,21 @@ fn prune_compat_orphans(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         let new_current = current
             .and_then(|old| kept.iter().position(|(index, _)| *index >= old))
             .and_then(|position| i64::try_from(position).ok());
-        tx.execute(
+        conn.execute(
             "DELETE FROM compat_play_queue_items WHERE user_id = ?1",
             params![user],
         )?;
         for (position, (_, file_id)) in (0_i64..).zip(&kept) {
-            tx.execute(
+            conn.execute(
                 "INSERT INTO compat_play_queue_items (user_id, item_index, file_id) \
                  VALUES (?1, ?2, ?3)",
                 params![user, position, file_id],
             )?;
         }
-        tx.execute(
+        conn.execute(
             "UPDATE compat_play_queues SET current_index = ?2 WHERE user_id = ?1",
             params![user, new_current],
         )?;
-        tx.commit()?;
     }
     if bookmarks > 0 || !users.is_empty() {
         tracing::info!(
@@ -649,7 +632,7 @@ fn cancel_stopping(tx: &rusqlite::Transaction<'_>, now: f64) -> rusqlite::Result
         params![now],
     )?;
     for run_id in &stopping {
-        super::commit::settle_ended_run(tx, run_id, now)?;
+        super::commit::owe_end_passes(tx, run_id, now)?;
     }
     Ok(())
 }
@@ -663,12 +646,9 @@ fn transition_inner(
     now: f64,
     terminal_code: Option<&str>,
 ) -> Result<ScanRun, ScanStoreError> {
-    let current =
-        load_run(conn, run_id)
-            .map_err(internal)?
-            .ok_or_else(|| ScanStoreError::NotFound {
-                run_id: run_id.to_owned(),
-            })?;
+    let current = load_run(conn, run_id)?.ok_or_else(|| ScanStoreError::NotFound {
+        run_id: run_id.to_owned(),
+    })?;
     if current.state != expected_state || current.row_revision != expected_revision {
         return Err(ScanStoreError::StaleRevision {
             message: "The scan run changed before the transition was applied.".to_owned(),
@@ -686,30 +666,25 @@ fn transition_inner(
              updated_at = ?2, row_revision = row_revision + 1, \
              event_revision = event_revision + 1 WHERE id = ?4",
             params![state_to_str(new_state), now, terminal_code, run_id],
-        )
-        .map_err(internal)?;
-        super::commit::settle_ended_run(conn, run_id, now).map_err(internal)?;
+        )?;
+        super::commit::owe_end_passes(conn, run_id, now)?;
     } else {
         conn.execute(
             "UPDATE library_scan_runs SET state = ?1, updated_at = ?2, \
              row_revision = row_revision + 1, event_revision = event_revision + 1 WHERE id = ?3",
             params![state_to_str(new_state), now, run_id],
-        )
-        .map_err(internal)?;
+        )?;
     }
     if let Some(phase) = phase {
         conn.execute(
             "UPDATE library_scan_runs SET phase = ?1 WHERE id = ?2",
             params![phase_to_str(phase), run_id],
-        )
-        .map_err(internal)?;
+        )?;
     }
-    bump_scan_stream(conn).map_err(internal)?;
-    load_run(conn, run_id)
-        .map_err(internal)?
-        .ok_or_else(|| ScanStoreError::NotFound {
-            run_id: run_id.to_owned(),
-        })
+    bump_scan_stream(conn)?;
+    load_run(conn, run_id)?.ok_or_else(|| ScanStoreError::NotFound {
+        run_id: run_id.to_owned(),
+    })
 }
 
 fn request_control_inner(
@@ -720,14 +695,11 @@ fn request_control_inner(
     expected_revision: u64,
     now: f64,
 ) -> Result<(ScanRun, u64), ScanStoreError> {
-    let snapshot =
-        load_run(conn, run_id)
-            .map_err(internal)?
-            .ok_or_else(|| ScanStoreError::NotFound {
-                run_id: run_id.to_owned(),
-            })?;
+    let snapshot = load_run(conn, run_id)?.ok_or_else(|| ScanStoreError::NotFound {
+        run_id: run_id.to_owned(),
+    })?;
     let run_state = snapshot.state;
-    let current_stream = read_scan_stream(conn);
+    let current_stream = read_scan_stream(conn)?;
     if !resume
         && control == ScanControl::Pause
         && matches!(run_state, ScanState::Pausing | ScanState::Paused)
@@ -776,8 +748,7 @@ fn request_control_inner(
              resume_phase = NULL, updated_at = ?2, row_revision = row_revision + 1, \
              event_revision = event_revision + 1 WHERE id = ?3",
             params![state_to_str(state), now, run_id],
-        )
-        .map_err(internal)?;
+        )?;
     } else if control == ScanControl::Pause {
         if !matches!(
             run_state,
@@ -792,17 +763,15 @@ fn request_control_inner(
              resume_phase = phase, updated_at = ?1, row_revision = row_revision + 1, \
              event_revision = event_revision + 1 WHERE id = ?2",
             params![now, run_id],
-        )
-        .map_err(internal)?;
+        )?;
     } else if run_state == ScanState::Paused {
         conn.execute(
             "UPDATE library_scan_runs SET state = 'cancelled', requested_control = 'none', \
              terminal_at = ?1, updated_at = ?1, row_revision = row_revision + 1, \
              event_revision = event_revision + 1 WHERE id = ?2",
             params![now, run_id],
-        )
-        .map_err(internal)?;
-        super::commit::settle_ended_run(conn, run_id, now).map_err(internal)?;
+        )?;
+        super::commit::owe_end_passes(conn, run_id, now)?;
     } else if matches!(
         run_state,
         ScanState::Queued
@@ -817,31 +786,26 @@ fn request_control_inner(
                  terminal_at = ?1, updated_at = ?1, row_revision = row_revision + 1, \
                  event_revision = event_revision + 1 WHERE id = ?2",
                 params![now, run_id],
-            )
-            .map_err(internal)?;
-            super::commit::settle_ended_run(conn, run_id, now).map_err(internal)?;
+            )?;
+            super::commit::owe_end_passes(conn, run_id, now)?;
         } else {
             conn.execute(
                 "UPDATE library_scan_runs SET state = 'stopping', requested_control = 'stop', \
                  updated_at = ?1, row_revision = row_revision + 1, \
                  event_revision = event_revision + 1 WHERE id = ?2",
                 params![now, run_id],
-            )
-            .map_err(internal)?;
+            )?;
         }
     } else {
         return Err(ScanStoreError::InvalidControl {
             message: "This scan cannot be stopped in its current state.".to_owned(),
         });
     }
-    bump_scan_stream(conn).map_err(internal)?;
-    let stream_revision = read_scan_stream(conn);
-    let run =
-        load_run(conn, run_id)
-            .map_err(internal)?
-            .ok_or_else(|| ScanStoreError::NotFound {
-                run_id: run_id.to_owned(),
-            })?;
+    bump_scan_stream(conn)?;
+    let stream_revision = read_scan_stream(conn)?;
+    let run = load_run(conn, run_id)?.ok_or_else(|| ScanStoreError::NotFound {
+        run_id: run_id.to_owned(),
+    })?;
     Ok((run, stream_revision))
 }
 
@@ -1126,11 +1090,10 @@ mod tests {
 
     #[test]
     fn compat_orphans_go_and_the_queue_keeps_its_place() {
-        let store = SqliteScanStore::scratch().unwrap();
-        let guard = store.lock();
-        let conn = &guard.conn;
-        conn.execute_batch(
-            "INSERT INTO auth_users (id, display_name, created_at) VALUES
+        let (_dir, store) = scratch_store();
+        let check = |conn: &Connection| -> Result<(), ScanStoreError> {
+            conn.execute_batch(
+                "INSERT INTO auth_users (id, display_name, created_at) VALUES
                  ('u', 'U', '2026-01-01'), ('v', 'V', '2026-01-01');
              INSERT INTO local_artists (id, display_name, folded_name, kind, created_at,
                  updated_at) VALUES ('ar', 'Artist', 'artist', 'person', 1000, 1000);
@@ -1156,26 +1119,31 @@ mod tests {
              INSERT INTO compat_play_queue_items (user_id, item_index, file_id) VALUES
                  ('u', 0, 'a'), ('u', 1, 'gone'), ('u', 2, 'c'), ('u', 3, 'd'),
                  ('v', 0, 'a');",
-        )
-        .unwrap();
-        prune_compat_orphans(conn).unwrap();
-        let bookmarks: Vec<String> = column(conn, "SELECT file_id FROM compat_bookmarks");
-        assert_eq!(bookmarks, ["a"]);
-        let queue: Vec<String> = column(
-            conn,
-            "SELECT file_id FROM compat_play_queue_items WHERE user_id = 'u' ORDER BY item_index",
-        );
-        assert_eq!(queue, ["a", "c", "d"]);
-        let indexes: Vec<i64> = column(
-            conn,
-            "SELECT item_index FROM compat_play_queue_items WHERE user_id = 'u' ORDER BY item_index",
-        );
-        assert_eq!(indexes, [0, 1, 2]);
-        let current: Vec<Option<i64>> = column(
-            conn,
-            "SELECT current_index FROM compat_play_queues ORDER BY user_id",
-        );
-        // The next surviving track becomes current; other queues are untouched.
-        assert_eq!(current, [Some(1), Some(0)]);
+            )
+            .unwrap();
+            prune_compat_orphans(conn).unwrap();
+            let bookmarks: Vec<String> = column(conn, "SELECT file_id FROM compat_bookmarks");
+            assert_eq!(bookmarks, ["a"]);
+            let queue: Vec<String> = column(
+                conn,
+                "SELECT file_id FROM compat_play_queue_items WHERE user_id = 'u' ORDER BY item_index",
+            );
+            assert_eq!(queue, ["a", "c", "d"]);
+            let indexes: Vec<i64> = column(
+                conn,
+                "SELECT item_index FROM compat_play_queue_items WHERE user_id = 'u' ORDER BY item_index",
+            );
+            assert_eq!(indexes, [0, 1, 2]);
+            let current: Vec<Option<i64>> = column(
+                conn,
+                "SELECT current_index FROM compat_play_queues ORDER BY user_id",
+            );
+            // The next surviving track becomes current; other queues are untouched.
+            assert_eq!(current, [Some(1), Some(0)]);
+            Ok(())
+        };
+        store
+            .write_once(Lane::Foreground, "test", |tx| check(tx))
+            .unwrap();
     }
 }

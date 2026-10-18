@@ -15,6 +15,7 @@ use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::common::library::TestSql as _;
 use crate::common::library::{ScriptedContrib, ScriptedIdentify, library_asking};
 use crate::common::{ScratchDir, TestApp, closed_outbound};
 use axum::http::StatusCode;
@@ -58,7 +59,9 @@ impl Rig {
         let app = TestApp::start_with(tag, outbound).await;
         let db = &app.config.library_db_path;
         Self {
-            scan_store: SqliteScanStore::open(db).expect("scan rows open"),
+            scan_store: SqliteScanStore::new(
+                droppedneedle_kernel::db::Db::open_for_tests(db).expect("database opens"),
+            ),
             identify_store: SqliteIdentifyStore::open(db).expect("identify rows open"),
             app,
             identify,
@@ -392,6 +395,7 @@ async fn library_journey_scan_identify_review_organize_undo() {
         let track = |path| {
             rig.scan_store
                 .track_at("music", path)
+                .unwrap()
                 .expect("track indexed")
         };
         (track("album-a/01.flac"), track("album-a/02.flac"))
@@ -543,7 +547,7 @@ async fn library_journey_scan_identify_review_organize_undo() {
     {
         for track in [&track_a, &track_b] {
             assert_eq!(
-                rig.scan_store.album_for_track(track).as_deref(),
+                rig.scan_store.album_for_track(track).unwrap().as_deref(),
                 Some(album_key),
                 "an organized track stays on its album"
             );
@@ -593,6 +597,7 @@ async fn library_journey_retag_apply_baseline_restore() {
     let track_id = {
         rig.scan_store
             .track_at("music", "album-b/01.flac")
+            .unwrap()
             .expect("track indexed")
     };
 
@@ -823,8 +828,13 @@ async fn retag_preview_lists_the_tags_that_change() {
     let track = rig
         .scan_store
         .track_at("music", "album/01.flac")
+        .unwrap()
         .expect("track indexed");
-    let album = rig.scan_store.album_for_track(&track).expect("album");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     rig.identified(1).await;
     rig.choose_first_edition(&album).await;
     rig.edition_settled(&album).await;
@@ -945,8 +955,13 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
     let track = rig
         .scan_store
         .track_at("music", "album/01.flac")
+        .unwrap()
         .expect("track indexed");
-    let album = rig.scan_store.album_for_track(&track).expect("album");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     rig.identified(1).await;
     rig.choose_first_edition(&album).await;
     rig.edition_settled(&album).await;
@@ -1113,8 +1128,13 @@ async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
     let track = rig
         .scan_store
         .track_at("music", "album/01.flac")
+        .unwrap()
         .expect("track indexed");
-    let album = rig.scan_store.album_for_track(&track).expect("album");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     rig.identified(1).await;
     rig.choose_first_edition(&album).await;
     let fields_before = read_fields(&file).expect("fields read");
@@ -1126,8 +1146,13 @@ async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
     let other_track = rig
         .scan_store
         .track_at("music", "other/01.flac")
+        .unwrap()
         .expect("track indexed");
-    let other_album = rig.scan_store.album_for_track(&other_track).expect("album");
+    let other_album = rig
+        .scan_store
+        .album_for_track(&other_track)
+        .unwrap()
+        .expect("album");
     assert_ne!(other_album, album);
     rig.identified(1).await;
     rig.choose_first_edition(&other_album).await;
@@ -1625,9 +1650,11 @@ async fn moved_file_keeps_its_track() {
     let track = rig
         .scan_store
         .track_at("music", "before/01.flac")
+        .unwrap()
         .expect("track indexed");
     rig.scan_store
-        .execute_batch_for_tests(&format!(
+        .db()
+        .run_sql(&format!(
             "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
              VALUES ('listener', 'track', '{track}', 0); \
              INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
@@ -1642,13 +1669,14 @@ async fn moved_file_keeps_its_track() {
     rig.app.scan_library().await;
 
     assert_eq!(
-        rig.scan_store.track_at("music", "after/01.flac"),
+        rig.scan_store.track_at("music", "after/01.flac").unwrap(),
         Some(track.clone()),
         "the moved file continues its track"
     );
     let following = rig
         .scan_store
-        .query_i64_for_tests(&format!(
+        .db()
+        .query_i64(&format!(
             "SELECT (SELECT COUNT(*) FROM library_user_favorites f JOIN local_tracks t \
              ON t.id = f.item_id WHERE t.id = '{track}' AND t.availability = 'indexed') \
              + (SELECT COUNT(*) FROM library_play_history h JOIN local_tracks t \
@@ -1659,7 +1687,8 @@ async fn moved_file_keeps_its_track() {
     assert_eq!(following, 2, "favorite and history follow the file");
     assert_eq!(
         rig.scan_store
-            .query_i64_for_tests("SELECT COUNT(*) FROM local_tracks")
+            .db()
+            .query_i64("SELECT COUNT(*) FROM local_tracks")
             .expect("count reads"),
         1,
         "no second row for the moved file"
@@ -1679,13 +1708,23 @@ async fn copies_stay_apart_and_keep_ids_when_moved() {
     let track_a = rig
         .scan_store
         .track_at("music", "flac/01.flac")
+        .unwrap()
         .expect("copy a indexed");
     let track_b = rig
         .scan_store
         .track_at("music", "lossy/01.flac")
+        .unwrap()
         .expect("copy b indexed");
-    let album_a = rig.scan_store.album_for_track(&track_a).expect("album a");
-    let album_b = rig.scan_store.album_for_track(&track_b).expect("album b");
+    let album_a = rig
+        .scan_store
+        .album_for_track(&track_a)
+        .unwrap()
+        .expect("album a");
+    let album_b = rig
+        .scan_store
+        .album_for_track(&track_b)
+        .unwrap()
+        .expect("album b");
     assert_ne!(album_a, album_b, "copies are separate albums");
 
     let moved = music.join("archive/01.flac");
@@ -1694,12 +1733,18 @@ async fn copies_stay_apart_and_keep_ids_when_moved() {
     rig.app.scan_library().await;
 
     assert_eq!(
-        rig.scan_store.track_at("music", "archive/01.flac"),
+        rig.scan_store.track_at("music", "archive/01.flac").unwrap(),
         Some(track_b.clone()),
         "the moved copy keeps its track"
     );
-    assert_eq!(rig.scan_store.album_for_track(&track_b), Some(album_b));
-    assert_eq!(rig.scan_store.album_for_track(&track_a), Some(album_a));
+    assert_eq!(
+        rig.scan_store.album_for_track(&track_b).unwrap(),
+        Some(album_b)
+    );
+    assert_eq!(
+        rig.scan_store.album_for_track(&track_a).unwrap(),
+        Some(album_a)
+    );
     assert!(copy_a.is_file());
     rig.stop().await;
 }
@@ -1721,11 +1766,19 @@ async fn long_missing_album_is_not_taken_over() {
     let old_track = rig
         .scan_store
         .track_at("music", "green/01.flac")
+        .unwrap()
         .expect("track indexed");
-    let old_album = rig.scan_store.album_for_track(&old_track).expect("album");
+    let old_album = rig
+        .scan_store
+        .album_for_track(&old_track)
+        .unwrap()
+        .expect("album");
     std::fs::remove_file(&green).expect("delete");
     rig.app.scan_library().await;
-    assert_eq!(rig.scan_store.track_at("music", "green/01.flac"), None);
+    assert_eq!(
+        rig.scan_store.track_at("music", "green/01.flac").unwrap(),
+        None
+    );
 
     // Another release under the same names: other songs, no shared ids.
     let red = plant(&music, "red/01.flac", "flac_compilation_01.flac");
@@ -1742,9 +1795,14 @@ async fn long_missing_album_is_not_taken_over() {
     let new_track = rig
         .scan_store
         .track_at("music", "red/01.flac")
+        .unwrap()
         .expect("new track indexed");
     assert_ne!(new_track, old_track);
-    let new_album = rig.scan_store.album_for_track(&new_track).expect("album");
+    let new_album = rig
+        .scan_store
+        .album_for_track(&new_track)
+        .unwrap()
+        .expect("album");
     assert_ne!(new_album, old_album, "a long-gone album is not reused");
     rig.stop().await;
 }
@@ -1775,6 +1833,7 @@ async fn unmounted_share_keeps_its_tracks() {
     let track = rig
         .scan_store
         .track_at("share", "album/01.flac")
+        .unwrap()
         .expect("share track indexed");
 
     // The share goes dark; a copy of one of its files lands locally.
@@ -1787,22 +1846,27 @@ async fn unmounted_share_keeps_its_tracks() {
     rig.app.scan_library().await;
 
     assert_eq!(
-        rig.scan_store.track_at("share", "album/01.flac"),
+        rig.scan_store.track_at("share", "album/01.flac").unwrap(),
         Some(track.clone()),
         "the share's track keeps its id and stays available"
     );
     let copy = rig
         .scan_store
         .track_at("local", "album/01.flac")
+        .unwrap()
         .expect("copy indexed");
     assert_ne!(copy, track, "the copy gets its own row");
     assert!(
-        rig.scan_store.track_at("small", "01.flac").is_some(),
+        rig.scan_store
+            .track_at("small", "01.flac")
+            .unwrap()
+            .is_some(),
         "an emptied small root keeps its tracks"
     );
     assert_eq!(
         rig.scan_store
-            .query_i64_for_tests("SELECT COUNT(*) FROM local_tracks WHERE availability = 'missing'")
+            .db()
+            .query_i64("SELECT COUNT(*) FROM local_tracks WHERE availability = 'missing'")
             .expect("count reads"),
         0,
         "nothing is marked missing"
@@ -1828,10 +1892,16 @@ async fn retagged_album_keeps_its_identity() {
     let track = rig
         .scan_store
         .track_at("music", "album/01.flac")
+        .unwrap()
         .expect("track indexed");
-    let album = rig.scan_store.album_for_track(&track).expect("album");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     rig.scan_store
-        .execute_batch_for_tests(&format!(
+        .db()
+        .run_sql(&format!(
             "INSERT INTO local_album_external_identities (local_album_id, provider, \
              release_group_mbid, decision_source, selected_at) \
              VALUES ('{album}', 'musicbrainz', 'rg-1', 'manual', 0);"
@@ -1848,13 +1918,14 @@ async fn retagged_album_keeps_its_identity() {
     rig.app.scan_library().await;
 
     assert_eq!(
-        rig.scan_store.album_for_track(&track).as_deref(),
+        rig.scan_store.album_for_track(&track).unwrap().as_deref(),
         Some(album.as_str()),
         "the retagged album keeps its row"
     );
     assert_eq!(
         rig.scan_store
-            .query_i64_for_tests(&format!(
+            .db()
+            .query_i64(&format!(
                 "SELECT COUNT(*) FROM local_albums WHERE id = '{album}' AND title = 'Renamed'"
             ))
             .expect("count reads"),
@@ -1863,7 +1934,8 @@ async fn retagged_album_keeps_its_identity() {
     );
     assert_eq!(
         rig.scan_store
-            .query_i64_for_tests("SELECT COUNT(*) FROM local_albums")
+            .db()
+            .query_i64("SELECT COUNT(*) FROM local_albums")
             .expect("count reads"),
         1,
         "no second album"
@@ -1883,11 +1955,17 @@ async fn automatic_write_keeps_a_manual_identity() {
     let track = library
         .scan_store
         .track_at("music", "album/01.flac")
+        .unwrap()
         .expect("track indexed");
-    let album = library.scan_store.album_for_track(&track).expect("album");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     library
         .scan_store
-        .execute_batch_for_tests(&format!(
+        .db()
+        .run_sql(&format!(
             "DELETE FROM local_album_external_identities; \
              DELETE FROM local_track_external_identities; \
              INSERT INTO local_album_external_identities (local_album_id, provider, \
@@ -1930,9 +2008,8 @@ async fn automatic_write_keeps_a_manual_identity() {
     // A row no person decided stays revisable.
     library
         .scan_store
-        .execute_batch_for_tests(
-            "UPDATE local_track_external_identities SET decision_source = 'embedded';",
-        )
+        .db()
+        .run_sql("UPDATE local_track_external_identities SET decision_source = 'embedded';")
         .expect("source flipped");
     store.save_track_identity(TrackIdentity {
         local_track_id: track.clone(),
@@ -1958,8 +2035,13 @@ async fn failed_approval_leaves_the_review_pending() {
     let track = library
         .scan_store
         .track_at("music", "album/01.flac")
+        .unwrap()
         .expect("track indexed");
-    let album = library.scan_store.album_for_track(&track).expect("album");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     scratch
         .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
@@ -1969,7 +2051,8 @@ async fn failed_approval_leaves_the_review_pending() {
     assert_eq!(review.len(), 1);
     library
         .scan_store
-        .execute_batch_for_tests(
+        .db()
+        .run_sql(
             "CREATE TRIGGER refuse_identity BEFORE INSERT \
              ON local_album_external_identities BEGIN SELECT RAISE(ABORT, 'refused'); END;",
         )
@@ -1997,7 +2080,8 @@ async fn journal_on_a_removed_root_waits() {
     add_music_root(&first, &music).await;
     first
         .scan_store
-        .execute_batch_for_tests(
+        .db()
+        .run_sql(
             "INSERT INTO library_publish_journal (id, bundle_id, kind, source_root, \
              source_rel, dest_root, dest_rel, staged, staged_sha256, state) \
              VALUES ('j-1', 'bundle-1', 'audio', 'removed', 'a/01.flac', 'removed', \
@@ -2018,7 +2102,8 @@ async fn journal_on_a_removed_root_waits() {
     assert_eq!(
         library
             .scan_store
-            .query_i64_for_tests(
+            .db()
+            .query_i64(
                 "SELECT COUNT(*) FROM library_publish_journal \
                  WHERE id = 'j-1' AND state = 'cleanup_pending'"
             )
@@ -2050,8 +2135,13 @@ async fn identification_survives_restarts() {
     let track = rig
         .scan_store
         .track_at("music", "album/01.flac")
+        .unwrap()
         .expect("track indexed");
-    let album = rig.scan_store.album_for_track(&track).expect("album");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
 
     // The scan-queued job is still there after a restart.
     let rig = rig.restart().await;
@@ -2148,8 +2238,13 @@ async fn undo_restores_values_no_new_edit_could_write() {
     let track = library
         .scan_store
         .track_at("music", "album/01.flac")
+        .unwrap()
         .expect("track indexed");
-    let album = library.scan_store.album_for_track(&track).expect("album");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     approve_first_candidate(&library, &scratch.identify, &album).await;
     let before = read_fields(&file).expect("fields read");
 
@@ -2183,8 +2278,13 @@ async fn baseline_restore_removes_fields_added_later() {
     let track = library
         .scan_store
         .track_at("music", "album/01.flac")
+        .unwrap()
         .expect("track indexed");
-    let album = library.scan_store.album_for_track(&track).expect("album");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     approve_first_candidate(&library, &scratch.identify, &album).await;
     let before = read_fields(&file).expect("fields read");
     assert!(!before.contains_key(&TagField::MusicBrainzReleaseId));
@@ -2627,6 +2727,7 @@ async fn library_journey_undo_automatic_edition() {
     let track_id = {
         rig.scan_store
             .track_at("music", "album-r/01.flac")
+            .unwrap()
             .expect("track indexed")
     };
     let (_, body) = app
@@ -2982,6 +3083,7 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
     let track = library
         .scan_store
         .track_at("music", "Band/LP/01.flac")
+        .unwrap()
         .expect("track indexed");
     let album: String =
         droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
@@ -2994,7 +3096,8 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
             .expect("album id");
     library
         .scan_store
-        .execute_batch_for_tests(
+        .db()
+        .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
              VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
         )
@@ -3027,7 +3130,8 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
     assert_eq!(
         library
             .scan_store
-            .query_i64_for_tests("SELECT COUNT(*) FROM local_tracks WHERE availability = 'missing'")
+            .db()
+            .query_i64("SELECT COUNT(*) FROM local_tracks WHERE availability = 'missing'")
             .expect("count"),
         2,
         "rows stay, marked missing"
@@ -3054,6 +3158,7 @@ async fn put_back_refuses_an_occupied_path() {
     let track = library
         .scan_store
         .track_at("music", "Band/LP/01.flac")
+        .unwrap()
         .expect("track indexed");
     let album: String =
         droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
@@ -3066,7 +3171,8 @@ async fn put_back_refuses_an_occupied_path() {
             .expect("album id");
     library
         .scan_store
-        .execute_batch_for_tests(
+        .db()
+        .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
              VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
         )
@@ -3138,6 +3244,7 @@ async fn library_journey_choose_edition() {
     let track_id = {
         rig.scan_store
             .track_at("music", "album-e/01.flac")
+            .unwrap()
             .expect("track indexed")
     };
     let (_, body) = app
@@ -3475,6 +3582,7 @@ async fn leave_unmanaged_on_the_album_and_undo() {
     let track = rig
         .scan_store
         .track_at("music", "album-l/01.flac")
+        .unwrap()
         .expect("track indexed");
     let edition = format!("/api/v3/library/albums/{album}/edition");
     let leave = format!("{edition}/leave-unmanaged");
@@ -3617,8 +3725,13 @@ async fn identified_album(rig: &Rig, music: &Path, folder: &str) -> (String, Rel
     let track_id = rig
         .scan_store
         .track_at("music", &format!("{folder}/01.flac"))
+        .unwrap()
         .expect("track indexed");
-    let album = rig.scan_store.album_for_track(&track_id).expect("album");
+    let album = rig
+        .scan_store
+        .album_for_track(&track_id)
+        .unwrap()
+        .expect("album");
     let fit = tagged_release(&rig.identify_store, &album);
     rig.identify.set_recall(RecallResult {
         releases: vec![fit.clone()],
@@ -4126,7 +4239,8 @@ async fn an_unmatched_album_in_a_keep_tags_folder_says_why() {
             let album = rig
                 .scan_store
                 .track_at("music", "album-k/01.flac")
-                .and_then(|track| rig.scan_store.album_for_track(&track));
+                .unwrap()
+                .and_then(|track| rig.scan_store.album_for_track(&track).unwrap());
             async move { album }
         })
         .await;
@@ -4146,12 +4260,12 @@ async fn an_unmatched_album_in_a_keep_tags_folder_says_why() {
 
     let second = app
         .until("the second file is indexed", || {
-            let track = rig.scan_store.track_at("music", "album-k/02.flac");
+            let track = rig.scan_store.track_at("music", "album-k/02.flac").unwrap();
             async move { track }
         })
         .await;
     assert_eq!(
-        rig.scan_store.album_for_track(&second).as_ref(),
+        rig.scan_store.album_for_track(&second).unwrap().as_ref(),
         Some(&album)
     );
     app.db()
@@ -4330,12 +4444,20 @@ async fn edition_plan_pairs_another_version_one_to_one() {
         .map(|name| {
             rig.scan_store
                 .track_at("music", &format!("album-v/{name}.flac"))
+                .unwrap()
                 .expect("track indexed")
         })
         .collect();
-    let album = rig.scan_store.album_for_track(&tracks[0]).expect("album");
+    let album = rig
+        .scan_store
+        .album_for_track(&tracks[0])
+        .unwrap()
+        .expect("album");
     for track in &tracks {
-        assert_eq!(rig.scan_store.album_for_track(track).as_ref(), Some(&album));
+        assert_eq!(
+            rig.scan_store.album_for_track(track).unwrap().as_ref(),
+            Some(&album)
+        );
     }
     let mut other = tagged_release(&rig.identify_store, &album);
     let mut seen = std::collections::HashSet::new();
@@ -4403,11 +4525,11 @@ async fn library_journey_catalog_corrections() {
     };
     scan().await;
     let store = &rig.scan_store;
-    let a1 = store.track_at("music", "a/01.flac").expect("a/01");
-    let a2 = store.track_at("music", "a/02.flac").expect("a/02");
-    let b1 = store.track_at("music", "b/01.flac").expect("b/01");
-    let album_a = store.album_for_track(&a1).expect("album a");
-    let album_b = store.album_for_track(&b1).expect("album b");
+    let a1 = store.track_at("music", "a/01.flac").unwrap().expect("a/01");
+    let a2 = store.track_at("music", "a/02.flac").unwrap().expect("a/02");
+    let b1 = store.track_at("music", "b/01.flac").unwrap().expect("b/01");
+    let album_a = store.album_for_track(&a1).unwrap().expect("album a");
+    let album_b = store.album_for_track(&b1).unwrap().expect("album b");
     assert_ne!(album_a, album_b, "copies in two folders are two albums");
 
     // Split track 2 off album A.
@@ -4424,7 +4546,7 @@ async fn library_journey_catalog_corrections() {
     assert_eq!(preview["automatic_groups"][0]["created"], json!(true));
     assert_eq!(preview["automatic_groups"][0]["title"], json!("Bonus"));
     assert_eq!(
-        store.album_for_track(&a2).as_deref(),
+        store.album_for_track(&a2).unwrap().as_deref(),
         Some(album_a.as_str()),
         "a preview changes nothing"
     );
@@ -4447,7 +4569,7 @@ async fn library_journey_catalog_corrections() {
         .expect("new album")
         .to_owned();
     assert_eq!(
-        store.album_for_track(&a2).as_deref(),
+        store.album_for_track(&a2).unwrap().as_deref(),
         Some(album_new.as_str())
     );
     let (status, replay) = app.call("POST", &split, &headers, Some(apply)).await;
@@ -4457,7 +4579,7 @@ async fn library_journey_catalog_corrections() {
     // A rescan keeps the manual grouping.
     scan().await;
     assert_eq!(
-        store.album_for_track(&a2).as_deref(),
+        store.album_for_track(&a2).unwrap().as_deref(),
         Some(album_new.as_str())
     );
 
@@ -4489,7 +4611,7 @@ async fn library_journey_catalog_corrections() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
-        store.album_for_track(&a2).as_deref(),
+        store.album_for_track(&a2).unwrap().as_deref(),
         Some(album_a.as_str())
     );
     let db = rusqlite::Connection::open(&app.config.library_db_path).expect("db opens");
@@ -4575,7 +4697,7 @@ async fn library_journey_catalog_corrections() {
         (album_a.as_str(), album_a.as_str())
     );
     assert_eq!(
-        store.album_for_track(&b1).as_deref(),
+        store.album_for_track(&b1).unwrap().as_deref(),
         Some(album_a.as_str())
     );
     assert_eq!(retired_into(&album_b).as_deref(), Some(album_a.as_str()));
@@ -4799,15 +4921,21 @@ async fn library_management_preview_apply_undo() {
     let track = library
         .scan_store
         .track_at("music", "incoming/management track.flac")
+        .unwrap()
         .expect("track indexed");
-    let album = library.scan_store.album_for_track(&track).expect("album");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     scratch
         .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
     library
         .scan_store
-        .execute_batch_for_tests(
+        .db()
+        .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
              VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
         )
@@ -5042,6 +5170,7 @@ async fn library_journey_identity_repair_and_preparation() {
     let track_id = {
         rig.scan_store
             .track_at("music", "album-r/01.flac")
+            .unwrap()
             .expect("track indexed")
     };
     let track_path = format!("/api/v3/library/tracks/{track_id}");
@@ -5443,15 +5572,21 @@ async fn library_management_tools_journey() {
     let track = library
         .scan_store
         .track_at("music", "incoming/tool track.flac")
+        .unwrap()
         .expect("track indexed");
-    let album = library.scan_store.album_for_track(&track).expect("album");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     scratch
         .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
     library
         .scan_store
-        .execute_batch_for_tests(
+        .db()
+        .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
              VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
         )
@@ -5941,10 +6076,12 @@ async fn library_management_tools_journey() {
     let second_track = library
         .scan_store
         .track_at("music", "second/tool track.flac")
+        .unwrap()
         .expect("second copy indexed");
     let second_album = library
         .scan_store
         .album_for_track(&second_track)
+        .unwrap()
         .expect("second album");
     scratch
         .identify
@@ -6170,15 +6307,21 @@ async fn library_management_custom_edition_journey() {
     let track = library
         .scan_store
         .track_at("music", "custom/sealed track.flac")
+        .unwrap()
         .expect("track indexed");
-    let album = library.scan_store.album_for_track(&track).expect("album");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     scratch
         .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
     library
         .scan_store
-        .execute_batch_for_tests(
+        .db()
+        .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
              VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
         )
@@ -6272,6 +6415,7 @@ async fn library_management_custom_edition_journey() {
     let extra = library
         .scan_store
         .track_at("music", "custom/added track.flac")
+        .unwrap()
         .expect("added track indexed");
     db().execute(
         "UPDATE local_tracks SET local_album_id = ?1 WHERE id = ?2",
@@ -6327,15 +6471,21 @@ async fn library_management_artwork_journey() {
     let track = library
         .scan_store
         .track_at("music", "art/cover track.m4a")
+        .unwrap()
         .expect("track indexed");
-    let album = library.scan_store.album_for_track(&track).expect("album");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     scratch
         .identify
         .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
     library
         .scan_store
-        .execute_batch_for_tests(
+        .db()
+        .run_sql(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
              VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
         )
@@ -6578,7 +6728,8 @@ impl ManagedLibrary {
         add_music_root(&library, &music).await;
         library
             .scan_store
-            .execute_batch_for_tests(
+            .db()
+            .run_sql(
                 "INSERT INTO auth_users (id, display_name, role, created_at) \
                  VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
             )
@@ -6706,6 +6857,7 @@ impl ManagedLibrary {
                 self.library
                     .scan_store
                     .track_at("music", rel)
+                    .unwrap()
                     .expect("track indexed")
             })
             .collect();
@@ -6713,6 +6865,7 @@ impl ManagedLibrary {
             .library
             .scan_store
             .album_for_track(&ids[0])
+            .unwrap()
             .expect("album");
         // The first album gets `REL_1` and `REL_2`. Every later one gets
         // editions of its own, or all would be named from one release.
@@ -8051,10 +8204,10 @@ async fn a_merge_and_a_split_carry_the_step_back() {
     app.add_library_folder("music", &music).await;
     app.scan_library().await;
     let store = &rig.scan_store;
-    let a2 = store.track_at("music", "a/02.flac").expect("a/02");
-    let b1 = store.track_at("music", "b/01.flac").expect("b/01");
-    let album_a = store.album_for_track(&a2).expect("album a");
-    let album_b = store.album_for_track(&b1).expect("album b");
+    let a2 = store.track_at("music", "a/02.flac").unwrap().expect("a/02");
+    let b1 = store.track_at("music", "b/01.flac").unwrap().expect("b/01");
+    let album_a = store.album_for_track(&a2).unwrap().expect("album a");
+    let album_b = store.album_for_track(&b1).unwrap().expect("album b");
     let db = app.db();
     db.execute(
         "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
@@ -8359,8 +8512,13 @@ async fn left_unmanaged_albums_read_back_and_hand_back() {
     let track = rig
         .scan_store
         .track_at("music", "a/01.flac")
+        .unwrap()
         .expect("track");
-    let album = rig.scan_store.album_for_track(&track).expect("album");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     let db = app.db();
     let mark = || {
         db.execute(
@@ -9153,6 +9311,7 @@ async fn a_file_retagged_and_renamed_together_is_still_the_users() {
             .library
             .scan_store
             .track_at("music", &relative)
+            .unwrap()
             .expect("track indexed")
     };
     let db = managed.db();
@@ -9716,8 +9875,13 @@ async fn library_journey_review_exclude_restore_dismiss() {
     let track = rig
         .scan_store
         .track_at("music", "album-v/01.flac")
+        .unwrap()
         .expect("track indexed");
-    let album = rig.scan_store.album_for_track(&track).expect("album");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     let conn =
         droppedneedle_kernel::db::open_connection(&app.config.library_db_path).expect("db opens");
     conn.execute(
@@ -9900,6 +10064,7 @@ async fn manage_preview_waits_while_the_chosen_edition_is_placed() {
     let track_id = rig
         .scan_store
         .track_at("music", "album-w/01.flac")
+        .unwrap()
         .expect("track indexed");
     let (status, body) = app
         .call(
@@ -10229,18 +10394,23 @@ async fn a_merge_places_files_on_the_edition_the_album_has() {
         app.add_library_folder("music", &music).await;
         app.scan_library().await;
         let store = &rig.scan_store;
-        let track = |rel: &str| store.track_at("music", rel).expect("track indexed");
+        let track = |rel: &str| {
+            store
+                .track_at("music", rel)
+                .unwrap()
+                .expect("track indexed")
+        };
         let (a1, a2, b1, b3) = (
             track("a/01.flac"),
             track("a/02.flac"),
             track("b/01.flac"),
             track("b/03.flac"),
         );
-        let album_a = store.album_for_track(&a1).expect("album a");
-        let album_b = store.album_for_track(&b1).expect("album b");
+        let album_a = store.album_for_track(&a1).unwrap().expect("album a");
+        let album_b = store.album_for_track(&b1).unwrap().expect("album b");
         assert_ne!(album_a, album_b, "{source}");
         assert_eq!(
-            store.album_for_track(&b3).as_deref(),
+            store.album_for_track(&b3).unwrap().as_deref(),
             Some(album_b.as_str())
         );
 
@@ -10369,9 +10539,14 @@ async fn a_file_that_joins_while_musicbrainz_is_asked_is_placed_next() {
     app.add_library_folder("music", &music).await;
     app.scan_library().await;
     let store = &rig.scan_store;
-    let track = |rel: &str| store.track_at("music", rel).expect("track indexed");
+    let track = |rel: &str| {
+        store
+            .track_at("music", rel)
+            .unwrap()
+            .expect("track indexed")
+    };
     let (a1, a2, b3) = (track("a/01.flac"), track("a/02.flac"), track("b/03.flac"));
-    let album = store.album_for_track(&a1).expect("album");
+    let album = store.album_for_track(&a1).unwrap().expect("album");
     let db = app.db();
     db.execute_batch(&format!(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
@@ -10438,16 +10613,19 @@ async fn chosen_album_at_rest(tag: &str) -> (Scratch, LibrarySetup, String, Vec<
             library
                 .scan_store
                 .track_at("music", rel)
+                .unwrap()
                 .expect("track indexed")
         })
         .collect();
     let album = library
         .scan_store
         .album_for_track(&tracks[0])
+        .unwrap()
         .expect("album");
     library
         .scan_store
-        .execute_batch_for_tests(&format!(
+        .db()
+        .run_sql(&format!(
             "INSERT INTO auth_users (id, display_name, role, created_at) \
              VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
              INSERT INTO local_album_external_identities (local_album_id, provider, \
@@ -10468,7 +10646,8 @@ fn scratch_db(scratch: &Scratch) -> rusqlite::Connection {
 fn queue_remap_row(library: &LibrarySetup, album: &str, origin: &str) {
     library
         .scan_store
-        .execute_batch_for_tests(&format!(
+        .db()
+        .run_sql(&format!(
             "INSERT INTO library_edition_remap_queue (local_album_id, release_mbid, \
              queued_at, origin) VALUES ('{album}', '{REL_1}', 1, '{origin}');"
         ))
@@ -10878,12 +11057,14 @@ async fn album_at_rest(
             library
                 .scan_store
                 .track_at("music", &format!("album/{number:02}.flac"))
+                .unwrap()
                 .expect("track indexed")
         })
         .collect();
     let album = library
         .scan_store
         .album_for_track(&tracks[0])
+        .unwrap()
         .expect("album");
     (scratch, library, music, album, tracks)
 }
@@ -10931,6 +11112,7 @@ fn indexed_at(library: &LibrarySetup, relative: &str) -> String {
     library
         .scan_store
         .track_at("music", relative)
+        .unwrap()
         .expect("track indexed")
 }
 
@@ -11474,7 +11656,7 @@ async fn an_automatic_album_retagged_and_renamed_keeps_its_history() {
     rescan(&library).await;
     let new = indexed_at(&library, &renamed[0]);
     assert_eq!(
-        library.scan_store.album_for_track(&new).as_deref(),
+        library.scan_store.album_for_track(&new).unwrap().as_deref(),
         Some(album.as_str())
     );
     assert_eq!(
@@ -11525,7 +11707,11 @@ async fn retagged_without_ids(
         .iter()
         .map(|path| indexed_at(&library, path))
         .collect();
-    let own_row = library.scan_store.album_for_track(&new[0]).expect("album");
+    let own_row = library
+        .scan_store
+        .album_for_track(&new[0])
+        .unwrap()
+        .expect("album");
     assert_ne!(own_row, album, "an album row of its own");
     (scratch, library, album, old, own_row, new)
 }
@@ -12858,7 +13044,11 @@ async fn a_deleted_copy_leaves_its_history_with_the_copy_that_stays() {
     rescan(&library).await;
     let copy = indexed_at(&library, "album/02 copy.flac");
     assert_eq!(
-        library.scan_store.album_for_track(&copy).as_deref(),
+        library
+            .scan_store
+            .album_for_track(&copy)
+            .unwrap()
+            .as_deref(),
         Some(album.as_str())
     );
     db.execute_batch(&format!(
@@ -13131,6 +13321,7 @@ async fn retag_pairs_list_join_and_dismiss() {
     let track = |folder: &str| {
         rig.scan_store
             .track_at("music", &format!("{folder}/01.flac"))
+            .unwrap()
             .expect("track indexed")
     };
     let ids: std::collections::BTreeMap<&str, String> = folders
@@ -13139,6 +13330,7 @@ async fn retag_pairs_list_join_and_dismiss() {
             let album = rig
                 .scan_store
                 .album_for_track(&track(folder))
+                .unwrap()
                 .expect("album");
             (*folder, album)
         })
@@ -14312,12 +14504,14 @@ async fn a_track_id_from_another_edition_is_corrected() {
             library
                 .scan_store
                 .track_at("music", &format!("stray/{n:02}.flac"))
+                .unwrap()
                 .expect("track indexed")
         })
         .collect();
     let album = library
         .scan_store
         .album_for_track(&tracks[0])
+        .unwrap()
         .expect("album");
     let scripted = &managed.scratch.identify;
     scripted.set_recall(RecallResult {
@@ -14398,8 +14592,13 @@ async fn a_track_id_from_another_edition_is_corrected() {
     let track = library
         .scan_store
         .track_at("music", "lone/01.flac")
+        .unwrap()
         .expect("track indexed");
-    let lone_album = library.scan_store.album_for_track(&track).expect("album");
+    let lone_album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     scripted.set_recall(RecallResult {
         releases: vec![r.clone()],
         ..RecallResult::default()
@@ -14444,8 +14643,13 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
         let track = library
             .scan_store
             .track_at("music", &format!("album-{index}/01.flac"))
+            .unwrap()
             .expect("track indexed");
-        library.scan_store.album_for_track(&track).expect("album")
+        library
+            .scan_store
+            .album_for_track(&track)
+            .unwrap()
+            .expect("album")
     };
     let (a, b, c, d) = (album(0), album(1), album(2), album(3));
     // C's editions are never offered, so it ends unmatched.
@@ -15143,6 +15347,7 @@ impl ManagedLibrary {
             .library
             .scan_store
             .album_for_track(&tracks[0])
+            .unwrap()
             .expect("album");
         let mut sql = format!(
             "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) \
@@ -15407,7 +15612,11 @@ async fn a_copy_takes_the_place_of_a_deleted_original_on_an_automatic_edition() 
     let old: Vec<String> = (1..=3)
         .map(|n| indexed_at(&library, &format!("album/{n:02}.flac")))
         .collect();
-    let album = library.scan_store.album_for_track(&old[0]).expect("album");
+    let album = library
+        .scan_store
+        .album_for_track(&old[0])
+        .unwrap()
+        .expect("album");
     let db = scratch_db(&scratch);
     let mut recall = fitting_release(&library, &album);
     recall.releases[0].id = CHOSEN_REL.to_owned();
@@ -15422,7 +15631,11 @@ async fn a_copy_takes_the_place_of_a_deleted_original_on_an_automatic_edition() 
     rescan(&library).await;
     let copy = indexed_at(&library, "album/02 copy.flac");
     assert_eq!(
-        library.scan_store.album_for_track(&copy).as_deref(),
+        library
+            .scan_store
+            .album_for_track(&copy)
+            .unwrap()
+            .as_deref(),
         Some(album.as_str())
     );
     db.execute_batch(&format!(
@@ -15676,6 +15889,7 @@ async fn a_translating_profile_writes_english_artist_names() {
             .library
             .scan_store
             .album_for_track(&tracks[0])
+            .unwrap()
             .as_deref(),
         Some(album.as_str())
     );
@@ -15932,7 +16146,11 @@ async fn an_identified_album_links_its_artist() {
     .expect("no artist ids");
     add_music_root(&library, &music).await;
     let track = indexed_at(&library, "album/01.flac");
-    let album = library.scan_store.album_for_track(&track).expect("album");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     let release = tagged_release(&library.identify_store, &album);
     scratch.identify.set_recall(RecallResult {
         releases: vec![release.clone()],
@@ -16024,8 +16242,13 @@ async fn an_artist_whose_files_carry_a_merged_id_is_linked_and_kept() {
     let track = rig
         .scan_store
         .track_at("music", "first/01.flac")
+        .unwrap()
         .expect("track indexed");
-    let album = rig.scan_store.album_for_track(&track).expect("album");
+    let album = rig
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
     let db = app.db();
     let text = |sql: &str| texts(&db, sql);
     let artist = text(&format!(
@@ -16053,6 +16276,7 @@ async fn an_artist_whose_files_carry_a_merged_id_is_linked_and_kept() {
     let later = rig
         .scan_store
         .track_at("music", "later/01.flac")
+        .unwrap()
         .expect("later indexed");
     let later_rows = format!(
         "SELECT local_artist_id FROM local_track_artists WHERE local_track_id = '{later}' \
@@ -16789,12 +17013,20 @@ async fn hand_match_album(rig: &Rig, folder: &str) -> HandMatchAlbum {
         .map(|number| {
             rig.scan_store
                 .track_at("music", &format!("{folder}/{number:02}.flac"))
+                .unwrap()
                 .expect("track indexed")
         })
         .collect();
-    let album = rig.scan_store.album_for_track(&tracks[0]).expect("album");
+    let album = rig
+        .scan_store
+        .album_for_track(&tracks[0])
+        .unwrap()
+        .expect("album");
     for track in &tracks {
-        assert_eq!(rig.scan_store.album_for_track(track).as_ref(), Some(&album));
+        assert_eq!(
+            rig.scan_store.album_for_track(track).unwrap().as_ref(),
+            Some(&album)
+        );
     }
     let fit = tagged_release(&rig.identify_store, &album);
     assert_eq!(fit.tracks.len(), 3);
@@ -16843,8 +17075,12 @@ async fn hand_match_album(rig: &Rig, folder: &str) -> HandMatchAlbum {
     let odd = rig
         .scan_store
         .track_at("music", &format!("{folder}/odd.flac"))
+        .unwrap()
         .expect("odd file indexed");
-    assert_eq!(rig.scan_store.album_for_track(&odd).as_ref(), Some(&album));
+    assert_eq!(
+        rig.scan_store.album_for_track(&odd).unwrap().as_ref(),
+        Some(&album)
+    );
     let db = app.db();
     app.until("the album settles after the scan", || {
         let busy: i64 = db
@@ -17345,9 +17581,10 @@ async fn a_match_by_hand_is_refused_with_nothing_changed() {
     let elsewhere = rig
         .scan_store
         .track_at("music", "elsewhere/01.flac")
+        .unwrap()
         .expect("another album's file");
     assert_ne!(
-        rig.scan_store.album_for_track(&elsewhere).as_ref(),
+        rig.scan_store.album_for_track(&elsewhere).unwrap().as_ref(),
         Some(&h.album)
     );
     let db = app.db();

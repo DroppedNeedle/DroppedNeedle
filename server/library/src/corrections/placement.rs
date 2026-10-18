@@ -48,6 +48,7 @@ use crate::management::{automatic, takeover};
 use crate::matching::Release;
 use crate::operations::decisions::{TrackRow, bump_catalog, upsert_track_identity};
 use crate::publish::record::record_sql;
+use droppedneedle_kernel::db::savepoint;
 
 /// Indexed rows with an embedded release-track or recording id and no
 /// identity naming a release track, on albums whose match names a release
@@ -192,14 +193,11 @@ pub(crate) fn place_scanned(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<
     }
     let mut placed_any = false;
     for (album, candidates) in &albums {
-        tx.execute_batch("SAVEPOINT place_scanned")?;
-        match place_album(tx, album, candidates, now) {
-            Ok(placed) => {
-                tx.execute_batch("RELEASE place_scanned")?;
-                placed_any |= placed;
-            }
+        match savepoint(tx, "place_scanned", || {
+            place_album(tx, album, candidates, now)
+        })? {
+            Ok(placed) => placed_any |= placed,
             Err(error) => {
-                tx.execute_batch("ROLLBACK TO place_scanned; RELEASE place_scanned")?;
                 tracing::warn!(
                     %error,
                     album_id = album.as_str(),

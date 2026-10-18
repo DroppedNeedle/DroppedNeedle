@@ -5,9 +5,14 @@
 //! 100,000 files:
 //!
 //! ```text
-//! DN_SCAN_FILES=100000 cargo test --release --test it \
+//! DN_SCAN_FILES=100000 cargo test --release --test library \
 //!     full_scan_throughput -- --ignored --nocapture
 //! ```
+//!
+//! The database is opened the way boot opens it: the factory's runtime,
+//! with its watch thread, and the checkpoint loop spawned on a registry
+//! over the durable job rows, so the WAL hold and its relief act as they
+//! do in production.
 //!
 //! Every file lists its artist and album artist (`ARTISTS`,
 //! `ALBUMARTISTS`) with their MusicBrainz ids, so each credit is placed by
@@ -20,10 +25,14 @@
 //! catalog writes, not cold disk reads, and not identification.
 
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use crate::common::library::TestSql as _;
 use crate::common::library::library_at;
 use crate::common::{ScratchDir, config_store, migrated_db};
+use droppedneedle_kernel::db::{DbConfig, open_runtime};
+use droppedneedle_kernel::jobs::checkpoint;
+use droppedneedle_kernel::jobs::registry::{DurableRegistryStore, JobRegistry};
 use droppedneedle_library::scan::{
     EffectivePolicy, ScanKind, ScanRequest, ScanState, ScanTrigger, counter_names,
 };
@@ -104,7 +113,7 @@ fn generate(root: &Path, files: usize, one_artist: bool) -> u64 {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "scan throughput measurement; run explicitly with --release: cargo test --release --test it full_scan_throughput -- --ignored --nocapture"]
+#[ignore = "scan throughput measurement; run explicitly with --release: cargo test --release --test library full_scan_throughput -- --ignored --nocapture"]
 async fn full_scan_throughput() {
     let files = match std::env::var(FILES_ENV) {
         Ok(value) => value.parse().expect("DN_SCAN_FILES is a file count"),
@@ -116,11 +125,21 @@ async fn full_scan_throughput() {
     let tree_bytes = generate(&music, files, one_artist);
 
     migrated_db(&scratch.join("app.db"));
-    let (library, _) = library_at(
-        &droppedneedle_kernel::db::Db::open_for_tests(&scratch.join("app.db"))
-            .expect("database opens"),
-        config_store(&scratch),
-    );
+    let runtime = open_runtime(&DbConfig::new(&scratch.join("app.db")))
+        .await
+        .expect("database runtime opens");
+    let registry = JobRegistry::new(DurableRegistryStore::new(
+        runtime.job_rows().clone(),
+        runtime.db().clone(),
+    ));
+    checkpoint::spawn_on(
+        &registry,
+        runtime.checkpoint().clone(),
+        checkpoint::default_schedule(),
+    )
+    .await
+    .expect("checkpoint loop starts");
+    let (library, _) = library_at(runtime.db(), config_store(&scratch));
     library
         .add_root(
             Some("music".to_owned()),
@@ -128,7 +147,7 @@ async fn full_scan_throughput() {
             EffectivePolicy::Automatic,
         )
         .expect("root adds");
-    let registry = library.live_registry();
+    let roots = library.live_registry();
 
     let started = Instant::now();
     let requested = library
@@ -136,13 +155,14 @@ async fn full_scan_throughput() {
         .request_run(&ScanRequest {
             kind: ScanKind::Incremental,
             trigger: ScanTrigger::Manual,
-            scopes: registry.scheduled_root_scopes(),
+            scopes: roots.scheduled_root_scopes(),
             requested_by_user_id: None,
-            policy_revision: registry.policy_revision().to_owned(),
+            policy_revision: roots.policy_revision().to_owned(),
         })
         .expect("scan requested");
     while library.supervisor_tick().await && !library.coordinator.current().is_empty() {}
     let elapsed = started.elapsed().as_secs_f64();
+    let wal_at_end = std::fs::metadata(scratch.join("app.db-wal")).map_or(0, |meta| meta.len());
 
     let run = library
         .coordinator
@@ -152,7 +172,8 @@ async fn full_scan_throughput() {
     let query = |sql: &str| {
         library
             .scan_store
-            .query_i64_for_tests(sql)
+            .db()
+            .query_i64(sql)
             .unwrap_or_else(|error| panic!("{sql}: {error}"))
     };
     let indexed = query("SELECT COUNT(*) FROM local_tracks WHERE availability = 'indexed'");
@@ -174,6 +195,10 @@ async fn full_scan_throughput() {
         tree_bytes as f64 / 1e6,
         database_bytes as f64 / 1e6
     );
+    println!(
+        "  WAL file      {:.1} MB at the end",
+        wal_at_end as f64 / 1e6
+    );
 
     assert_eq!(run.state, ScanState::Completed);
     assert_eq!(
@@ -181,4 +206,8 @@ async fn full_scan_throughput() {
         Some(files as i64)
     );
     assert_eq!(indexed, files as i64);
+
+    registry.cancel_all(Duration::from_secs(5)).await;
+    drop(library);
+    runtime.shutdown().await;
 }

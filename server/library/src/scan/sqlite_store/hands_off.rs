@@ -48,6 +48,7 @@ use crate::identify::sqlite::match_chosen;
 use crate::management::takeover::{self, Cause};
 use crate::publish::HIDDEN_PREFIX;
 use crate::scan::naming::grouping_directory;
+use droppedneedle_kernel::db::savepoint;
 
 /// Albums a person keeps their hands on: left unmanaged, kept as a custom
 /// edition, or stepped back from and not handed back.
@@ -73,11 +74,9 @@ pub(super) fn hold_replacements(
     run_id: &str,
     now: f64,
 ) -> rusqlite::Result<()> {
-    tx.execute_batch("SAVEPOINT hold_replacements")?;
-    match pass(tx, run_id, now) {
-        Ok(()) => tx.execute_batch("RELEASE hold_replacements"),
+    match savepoint(tx, "hold_replacements", || pass(tx, run_id, now))? {
+        Ok(()) => Ok(()),
         Err(error) => {
-            tx.execute_batch("ROLLBACK TO hold_replacements; RELEASE hold_replacements")?;
             tracing::warn!(
                 %error,
                 run_id,

@@ -519,6 +519,7 @@ impl LibrarySetup {
         let album_id = self
             .scan_store
             .album_for_track(first)
+            .map_err(|error| fault(format!("the catalog could not be read: {error}")))?
             .ok_or_else(|| fault("imported track is not in the catalog".to_owned()))?;
         let joined = joined.is_some_and(|joined| joined.album_id == album_id);
         self.seal_import_identity(&album_id, import, &bundle, joined);

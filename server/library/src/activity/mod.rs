@@ -10,10 +10,15 @@
 pub mod feed;
 pub mod store;
 
+use droppedneedle_kernel::db::DbError;
+use droppedneedle_kernel::db::writer::Lane;
+
 use self::feed::{FeedInputs, LibraryActivity};
 use self::store::{ControlError, IdentificationControl};
 use super::clock::now_unix;
 use super::scan::models::{Counters, ScanRun};
+use super::scan::store::ScanStoreError;
+use super::scans::store_error;
 use super::service::ServiceError;
 use super::wiring::LibrarySetup;
 
@@ -24,10 +29,6 @@ pub struct IdentificationControlAnswer {
     /// `paused`.
     pub state: &'static str,
     pub row_revision: u64,
-}
-
-fn store_error(error: rusqlite::Error) -> ServiceError {
-    ServiceError::internal(&error)
 }
 
 impl LibrarySetup {
@@ -45,21 +46,25 @@ impl LibrarySetup {
         };
         let runs: Vec<(ScanRun, Counters)> = self
             .coordinator
-            .current()
+            .current_runs()
+            .map_err(store_error)?
             .into_iter()
             .map(with_counters)
             .collect();
         let latest = self
             .coordinator
             .history(1)
+            .map_err(store_error)?
             .into_iter()
             .next()
             .map(with_counters);
         let now = now_unix();
+        // One snapshot, so the counts and the revisions agree.
         let (identification, revisions, operations) = self
             .scan_store
-            .with_connection(|conn| {
-                Ok::<_, rusqlite::Error>((
+            .db()
+            .read_blocking("library_activity", |conn| {
+                Ok::<_, ScanStoreError>((
                     store::identification_snapshot(conn, now)?,
                     store::library_revisions(conn)?,
                     if admin {
@@ -96,11 +101,12 @@ impl LibrarySetup {
         let now = now_unix();
         let (revision, snapshot) = self
             .scan_store
-            .with_connection(|conn| {
+            .db()
+            .write_blocking(Lane::Foreground, "identification_pause", |tx| {
                 let requested_by = paused.then_some(user_id);
                 let revision =
-                    store::set_identification_paused(conn, paused, requested_by, now, expected)?;
-                let snapshot = store::identification_snapshot(conn, now)?;
+                    store::set_identification_paused(tx, paused, requested_by, now, expected)?;
+                let snapshot = store::identification_snapshot(tx, now)?;
                 Ok::<_, ControlError>((revision, snapshot))
             })
             .map_err(|error| match error {
@@ -111,7 +117,7 @@ impl LibrarySetup {
                         "Identification controls changed before Resume was requested.".to_owned()
                     },
                 },
-                ControlError::Store(error) => store_error(error),
+                ControlError::Store(error) => store_error(error.into()),
             })?;
         if !paused {
             self.wakeups.notify("identification");
@@ -134,8 +140,10 @@ impl LibrarySetup {
     pub fn identification_paused(&self) -> bool {
         match self
             .scan_store
-            .with_connection(|conn| store::identification_control(conn))
-        {
+            .db()
+            .read_blocking("identification_switch", |conn| {
+                Ok::<_, DbError>(store::identification_control(conn)?)
+            }) {
             Ok(IdentificationControl { paused, .. }) => paused,
             Err(error) => {
                 tracing::warn!(%error, "cannot read the identification pause switch");

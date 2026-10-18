@@ -8,7 +8,8 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use droppedneedle::bootstrap::Port;
-use droppedneedle_kernel::db::Db;
+use droppedneedle_kernel::db::writer::Lane;
+use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
@@ -189,4 +190,28 @@ pub fn library_asking(
         outbound.library(),
     )
     .expect("library bundle builds")
+}
+
+/// Raw SQL on a test library's database: seeds no store method writes
+/// (legacy revisions, bare catalog albums) and assertions on stored rows.
+pub trait TestSql {
+    /// Run `sql` (any number of statements) in one write.
+    fn run_sql(&self, sql: &str) -> Result<(), DbError>;
+    /// One integer from `sql`.
+    fn query_i64(&self, sql: &str) -> Result<i64, DbError>;
+}
+
+impl TestSql for Db {
+    fn run_sql(&self, sql: &str) -> Result<(), DbError> {
+        self.write_blocking(Lane::Foreground, "test_sql", |tx| {
+            tx.execute_batch(sql).map_err(DbError::from)
+        })
+    }
+
+    fn query_i64(&self, sql: &str) -> Result<i64, DbError> {
+        self.read_blocking("test_sql", |conn| {
+            conn.query_row(sql, [], |row| row.get(0))
+                .map_err(DbError::from)
+        })
+    }
 }

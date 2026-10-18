@@ -271,8 +271,12 @@ pub async fn list_runs(
     State(state): State<LibrarySetup>,
     User(caller): User,
 ) -> Result<Json<ScanRunsResponse>, ApiError> {
-    let (current, history) =
-        blocking(move || (state.coordinator.current(), state.coordinator.history(20))).await?;
+    let (current, history) = blocking(move || {
+        let current = state.coordinator.current_runs()?;
+        Ok::<_, crate::scan::ScanStoreError>((current, state.coordinator.history(20)?))
+    })
+    .await?
+    .map_err(|error| LibraryError::from(crate::scans::store_error(error)))?;
     let view = |run: &ScanRun| caller_run_view(&caller, run);
     Ok(Json(ScanRunsResponse {
         current: current.iter().map(view).collect(),

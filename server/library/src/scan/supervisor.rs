@@ -88,12 +88,18 @@ where
     } else {
         coordinator.recover_stopping()
     };
+    // Unread state requests nothing: the loop below drives what is there.
+    let idle = match (recovered, coordinator.current_runs()) {
+        (Ok(recovered), Ok(current)) => recovered.is_empty() && current.is_empty(),
+        (recovered, current) => {
+            for error in [recovered.err(), current.err()].into_iter().flatten() {
+                tracing::error!(%error, "scan startup recovery could not read the runs");
+            }
+            false
+        }
+    };
     let schedule = (inputs.schedule)();
-    if enabled
-        && schedule.frequency != "manual"
-        && recovered.is_empty()
-        && coordinator.current().is_empty()
-    {
+    if enabled && schedule.frequency != "manual" && idle {
         let scopes = scheduled_scopes(&registry, &(inputs.inclusion_rules)());
         if !scopes.is_empty() {
             let result = coordinator.request_run(&ScanRequest {
@@ -176,11 +182,17 @@ where
             }
         }
     }
-    if enabled {
+    // A last scan that cannot be read schedules nothing this pass.
+    let latest = if enabled {
+        coordinator.latest_filesystem_terminal().map_err(|error| {
+            tracing::error!(%error, "scan schedule could not read the last scan");
+        })
+    } else {
+        Err(())
+    };
+    if let Ok(latest) = latest {
         let schedule = (inputs.schedule)();
-        let terminal_at = coordinator
-            .latest_filesystem_terminal()
-            .and_then(|run| run.terminal_at);
+        let terminal_at = latest.and_then(|run| run.terminal_at);
         let now = (inputs.now_unix)();
         let rules = (inputs.inclusion_rules)();
         let tick_scheduled = tick(
@@ -218,11 +230,14 @@ mod tests {
     use super::super::pool::BlockingPool;
     use super::super::roots::LibraryRoot;
     use super::super::seams::NullTagReader;
-    use super::super::sqlite_store::SqliteScanStore;
+    use super::super::sqlite_store::scratch_store;
     use super::*;
     use std::sync::atomic::Ordering;
 
-    fn coordinator() -> LibraryScanCoordinator<NullTagReader> {
+    fn coordinator() -> (
+        droppedneedle_kernel::db::scratch::ScratchDir,
+        LibraryScanCoordinator<NullTagReader>,
+    ) {
         let registry = RootRegistry::new(
             vec![LibraryRoot::new(
                 "r1",
@@ -232,12 +247,14 @@ mod tests {
             true,
             "rev-1",
         );
-        LibraryScanCoordinator::new(
-            Arc::new(SqliteScanStore::scratch().expect("scan store opens")),
+        let (dir, store) = scratch_store();
+        let coordinator = LibraryScanCoordinator::new(
+            Arc::new(store),
             BlockingPool::new(2),
             Arc::new(NullTagReader::new()),
             Arc::new(StaticResolver::new(registry)),
-        )
+        );
+        (dir, coordinator)
     }
 
     fn inputs(dirty: DirtyScopes) -> SupervisorInputs {
@@ -253,7 +270,8 @@ mod tests {
 
     #[tokio::test]
     async fn dirty_marks_request_a_policy_apply_scan() {
-        let coordinator = coordinator().with_wakeups(WorkWakeups::new());
+        let (_dir, coordinator) = coordinator();
+        let coordinator = coordinator.with_wakeups(WorkWakeups::new());
         let dirty = DirtyScopes::new();
         dirty.mark("r1");
         let inputs = inputs(dirty.clone());
@@ -261,14 +279,15 @@ mod tests {
         let processed = supervise_once(&coordinator, &inputs).await;
         assert!(processed, "dirty mark should request and drive a run");
         assert!(dirty.is_empty(), "marks clear on non-conflict request");
-        let history = coordinator.history(10);
+        let history = coordinator.history(10).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].trigger, ScanTrigger::PolicyApply);
     }
 
     #[tokio::test]
     async fn pre_signalled_shutdown_claims_no_new_work() {
-        let coordinator = coordinator().with_wakeups(WorkWakeups::new());
+        let (_dir, coordinator) = coordinator();
+        let coordinator = coordinator.with_wakeups(WorkWakeups::new());
         let dirty = DirtyScopes::new();
         dirty.mark("r1");
         let inputs = inputs(dirty.clone());
@@ -276,7 +295,7 @@ mod tests {
         shutdown_tx.send(true).expect("shutdown sends");
         let processed = supervise_once_with_shutdown(&coordinator, &inputs, &shutdown_rx).await;
         assert!(!processed, "pre-signalled shutdown drives no run");
-        let current = coordinator.current();
+        let current = coordinator.current_runs().unwrap();
         assert!(
             current
                 .iter()
@@ -287,24 +306,24 @@ mod tests {
 
     #[tokio::test]
     async fn unresolvable_dirty_marks_clear_as_hints() {
-        let coordinator = coordinator();
+        let (_dir, coordinator) = coordinator();
         let dirty = DirtyScopes::new();
         dirty.mark("removed-root");
         let inputs = inputs(dirty.clone());
         supervise_once(&coordinator, &inputs).await;
         assert!(dirty.is_empty(), "unresolvable marks clear without a scan");
-        assert!(coordinator.current().is_empty());
+        assert!(coordinator.current_runs().unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn startup_recovery_requests_a_resume_scan() {
-        let coordinator = coordinator();
+        let (_dir, coordinator) = coordinator();
         let inputs = SupervisorInputs {
             schedule: Arc::new(|| ScheduleSettings::new("1hr", "03:00", "UTC")),
             ..inputs(DirtyScopes::new())
         };
         startup_recovery(&coordinator, &inputs).await;
-        let current = coordinator.current();
+        let current = coordinator.current_runs().unwrap();
         assert_eq!(current.len(), 1);
         assert_eq!(current[0].trigger, ScanTrigger::StartupResume);
         let _ = Ordering::Relaxed;

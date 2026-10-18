@@ -34,6 +34,7 @@ use serde_json::{Value, json};
 
 use crate::identify::sqlite::retarget_references;
 use crate::operations::decisions::{CatalogAction, bump_catalog, record_action};
+use droppedneedle_kernel::db::savepoint;
 
 /// The track a local id names now: the track itself while its file is
 /// indexed, else the track its alias names (a missing track that
@@ -131,12 +132,12 @@ fn run(
     replaced: &[(String, String)],
     now: f64,
 ) -> rusqlite::Result<()> {
-    tx.execute_batch("SAVEPOINT continue_tracks")?;
     let mut at = Context::default();
-    match pass(tx, scope, replaced, now, &mut at) {
-        Ok(()) => tx.execute_batch("RELEASE continue_tracks"),
+    match savepoint(tx, "continue_tracks", || {
+        pass(tx, scope, replaced, now, &mut at)
+    })? {
+        Ok(()) => Ok(()),
         Err(error) => {
-            tx.execute_batch("ROLLBACK TO continue_tracks; RELEASE continue_tracks")?;
             tracing::warn!(
                 %error,
                 album = at.album.as_deref().unwrap_or(""),

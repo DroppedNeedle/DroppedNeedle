@@ -12,7 +12,7 @@
 //! and the publish journal live in the application database.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
@@ -264,7 +264,7 @@ impl LibrarySetup {
                 ))
             }),
         };
-        let mut setup = Self::assemble(ids, make, contrib, db.path(), config)?;
+        let mut setup = Self::assemble(ids, make, contrib, db, config)?;
         setup.releases = Some(imports);
         setup.http = Some(http.shared().clone());
         let registry = setup.registry.clone();
@@ -284,12 +284,11 @@ impl LibrarySetup {
         ids: Arc<dyn IdGenerator>,
         make_providers: ProviderFactory,
         contrib_providers: ContribProviders,
-        db_path: &Path,
+        db: &droppedneedle_kernel::db::Db,
         config: Arc<ConfigStore>,
     ) -> Result<Self, String> {
-        let scan_store = Arc::new(
-            SqliteScanStore::open(db_path).map_err(|error| format!("scan store: {error}"))?,
-        );
+        let db_path = db.path();
+        let scan_store = Arc::new(SqliteScanStore::new(db.clone()));
         // The roots load before anything can scan or stream: a restart
         // comes back with exactly the roots the settings hold.
         let registry: Arc<SharedResolver> = Arc::new(SharedResolver::new(

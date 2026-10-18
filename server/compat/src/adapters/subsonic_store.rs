@@ -1031,6 +1031,7 @@ impl Store for SubsonicStore {
         let last = tokio::task::spawn_blocking(move || store.list_history(1, None))
             .await
             .map_err(|error| CompatError::Internal(format!("scan history task: {error}")))?
+            .map_err(|error| CompatError::Internal(format!("scan history: {error}")))?
             .into_iter()
             .next()
             .and_then(|run| {

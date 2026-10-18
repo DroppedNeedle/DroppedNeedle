@@ -26,6 +26,7 @@ use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_providers::musicbrainz::Criticality;
 use tokio::sync::{oneshot, watch};
 
+use crate::common::library::TestSql as _;
 use crate::common::library::library_asking;
 use crate::common::{ScratchDir, config_store, migrated_db};
 
@@ -137,7 +138,8 @@ impl Lib {
 fn seed_jobs(library: &LibrarySetup, count: usize) {
     library
         .scan_store
-        .execute_batch_for_tests(
+        .db()
+        .run_sql(
             "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
              updated_at) VALUES ('artist', 'Artist', 'artist', 'unknown', 0, 0);",
         )
@@ -146,7 +148,8 @@ fn seed_jobs(library: &LibrarySetup, count: usize) {
         let album = format!("album-{n}");
         library
             .scan_store
-            .execute_batch_for_tests(&format!(
+            .db()
+            .run_sql(&format!(
                 "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
                  album_artist_id, grouping_source, created_at, updated_at) \
                  VALUES ('{album}', 'r', '{album}', 'Album {n}', 'album {n}', 'artist', \

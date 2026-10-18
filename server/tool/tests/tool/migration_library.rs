@@ -325,15 +325,24 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     // and both stay on v2's album.
     let store = &library.scan_store;
     assert_eq!(
-        store.track_at(MUSIC_ROOT_ID, V2_TRACK_REL).as_deref(),
+        store
+            .track_at(MUSIC_ROOT_ID, V2_TRACK_REL)
+            .unwrap()
+            .as_deref(),
         Some(V2_TRACK_ID)
     );
     assert_eq!(
-        store.track_at(MUSIC_ROOT_ID, SECOND_TRACK_REL).as_deref(),
+        store
+            .track_at(MUSIC_ROOT_ID, SECOND_TRACK_REL)
+            .unwrap()
+            .as_deref(),
         Some(SECOND_TRACK_ID)
     );
     for track in [V2_TRACK_ID, SECOND_TRACK_ID] {
-        assert_eq!(store.album_for_track(track).as_deref(), Some(V2_ALBUM_ID));
+        assert_eq!(
+            store.album_for_track(track).unwrap().as_deref(),
+            Some(V2_ALBUM_ID)
+        );
     }
     // The curator's match is still the curator's.
     let identity = library

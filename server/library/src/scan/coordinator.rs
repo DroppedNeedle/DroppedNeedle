@@ -15,7 +15,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use tokio::sync::watch;
 
@@ -29,7 +29,8 @@ use super::pool::BlockingPool;
 use super::roots::{PolicyResolver, RootRegistry};
 use super::seams::{Checkpoint, TagReadError, TagReader};
 use super::sqlite_store::SqliteScanStore;
-use super::store::{CommitIndexedItem, IndexWindow, InventoryPage, ScanStoreError};
+use super::stop::RunStop;
+use super::store::{CommitIndexedItem, IndexWindow, ScanStoreError};
 use super::walk::InventoryScanner;
 use super::watcher::WorkWakeups;
 
@@ -59,13 +60,6 @@ pub const INDEX_PAGE_SIZE: usize = 5_000;
 /// [`INDEX_CHECKPOINT_EVERY`] rows; only the SQLite flush is coarser, so
 /// a crash re-offers at most one window next run.
 pub const INDEX_FLUSH_EVERY: usize = 256;
-/// Inventory page read attempts before the run fails. Each
-/// attempt already rides the store's 5 s busy timeout; the retries only
-/// cover flakes between attempts, with the store lock released.
-pub const INDEX_PAGE_READ_ATTEMPTS: u32 = 3;
-/// Pause between page-read attempts; linear, no jitter needed for a
-/// single scan worker.
-pub const INDEX_PAGE_READ_RETRY: Duration = Duration::from_millis(25);
 /// Bound on stale retries when settling control (v2
 /// `SETTLE_STALE_MAX_RETRIES`).
 pub const SETTLE_STALE_MAX_RETRIES: u32 = 10;
@@ -273,6 +267,30 @@ pub struct LibraryScanCoordinator<T: TagReader> {
     idgen: Arc<dyn Fn() -> String + Send + Sync>,
     pending_control: Mutex<HashSet<String>>,
     last_progress_log: Mutex<HashMap<String, f64>>,
+    /// The stop flag of the run being driven, by run id. A pause or stop
+    /// request for that run trips it.
+    drives: Mutex<HashMap<String, RunStop>>,
+}
+
+/// Why a phase of a drive ended early.
+enum Halt {
+    /// The run was asked to pause or stop: settle as asked.
+    Stop,
+    /// The database is closing: leave the run as it is, so the next start
+    /// resumes it.
+    Closed,
+    /// Anything else: the run fails.
+    Fail(ScanStoreError),
+}
+
+impl From<ScanStoreError> for Halt {
+    fn from(error: ScanStoreError) -> Self {
+        match error {
+            ScanStoreError::Stopped | ScanStoreError::ReadCancelled { .. } => Halt::Stop,
+            ScanStoreError::LaneClosed => Halt::Closed,
+            other => Halt::Fail(other),
+        }
+    }
 }
 
 impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
@@ -297,6 +315,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             idgen: Arc::new(default_id),
             pending_control: Mutex::new(HashSet::new()),
             last_progress_log: Mutex::new(HashMap::new()),
+            drives: Mutex::new(HashMap::new()),
         }
     }
 
@@ -335,9 +354,20 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         (self.clock)()
     }
 
+    fn drives(&self) -> std::sync::MutexGuard<'_, HashMap<String, RunStop>> {
+        self.drives
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn publish(&self, run: &ScanRun, event: &str, counter: bool) {
         if let Some(events) = &self.events {
-            events.publish(run, self.store.stream_revision("scan"), event, counter);
+            match self.store.stream_revision("scan") {
+                Ok(revision) => {
+                    events.publish(run, revision, event, counter);
+                }
+                Err(error) => tracing::warn!(%error, event, "scan event not published"),
+            }
         }
     }
 
@@ -430,8 +460,9 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             if let Some(wakeups) = &self.wakeups {
                 wakeups.notify("scan");
             }
-            if let Ok((run, _, _)) = self.store.get_run(&result.run_id) {
-                self.publish(&run, "scan.requested", false);
+            match self.store.get_run(&result.run_id) {
+                Ok((run, _, _)) => self.publish(&run, "scan.requested", false),
+                Err(error) => tracing::warn!(%error, "scan request event not published"),
             }
         }
         Ok(result)
@@ -444,15 +475,30 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         self.store.get_run(run_id)
     }
 
-    pub fn current(&self) -> Vec<ScanRun> {
+    /// The active run and the queued one.
+    pub fn current_runs(&self) -> Result<Vec<ScanRun>, ScanStoreError> {
         self.store.list_current()
     }
 
-    pub fn history(&self, limit: usize) -> Vec<ScanRun> {
+    /// The active and queued runs, for the callers that must never work
+    /// while a scan runs (management, operations, repairs). It waits for
+    /// the long pool rather than answering busy, and a run list it cannot
+    /// read answers as if a scan were active, with an error logged: those
+    /// callers then wait, and none moves a file under the walker.
+    pub fn current(&self) -> Vec<ScanRun> {
+        self.store
+            .list_current_waiting(&RunStop::never())
+            .unwrap_or_else(|error| {
+                tracing::error!(%error, "scan runs unreadable; answering as if a scan is active");
+                vec![self.missing_run("unreadable", failure_codes::UNEXPECTED_WORKER_FAILURE)]
+            })
+    }
+
+    pub fn history(&self, limit: usize) -> Result<Vec<ScanRun>, ScanStoreError> {
         self.store.list_history(limit, None)
     }
 
-    pub fn latest_filesystem_terminal(&self) -> Option<ScanRun> {
+    pub fn latest_filesystem_terminal(&self) -> Result<Option<ScanRun>, ScanStoreError> {
         self.store.latest_filesystem_terminal()
     }
 
@@ -468,10 +514,13 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             let terminal_at: f64 = terminal.parse().map_err(|_| ScanRequestError::BadCursor)?;
             before = Some((terminal_at, id.to_owned()));
         }
-        let mut items = self.store.list_history(
-            limit + 1,
-            before.as_ref().map(|(at, id)| (*at, id.as_str())),
-        );
+        let mut items = self
+            .store
+            .list_history(
+                limit + 1,
+                before.as_ref().map(|(at, id)| (*at, id.as_str())),
+            )
+            .map_err(ScanRequestError::Store)?;
         let mut next_cursor = None;
         if items.len() > limit {
             items.truncate(limit);
@@ -502,7 +551,9 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         Ok((self.store.estimate_scopes(scopes)?, self.now()))
     }
 
-    /// Pause, resume, or stop a run (v2 `control`).
+    /// Pause, resume, or stop a run (v2 `control`). A pause or stop of the
+    /// run being driven trips its stop flag, so a long read, a chunked
+    /// write or a wait on a busy database ends early.
     pub fn control(
         &self,
         run_id: &str,
@@ -524,6 +575,12 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 pending.remove(&run.id);
             }
         }
+        if (matches!(run.state, ScanState::Pausing | ScanState::Stopping)
+            || run.terminal_at.is_some())
+            && let Some(stop) = self.drives().get(&run.id)
+        {
+            stop.trip();
+        }
         let event = if resume {
             "control_resume"
         } else if control == ScanControl::Pause {
@@ -533,7 +590,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         };
         self.publish(&run, "scan.transition", false);
         if run.terminal_at.is_some() {
-            self.store.flush_invalidation(true);
+            self.flush_terminal();
             if let Some(fs) = &self.fs {
                 fs.forget_scan(&run.id);
             }
@@ -550,12 +607,21 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         Ok((run, stream_revision))
     }
 
+    /// The terminal flush: drop the classify snapshot and bump the catalog
+    /// revision if the run changed the catalog. One that fails keeps the
+    /// catalog dirty for the next terminal flush, and is logged.
+    fn flush_terminal(&self) {
+        if let Err(error) = self.store.flush_invalidation(&RunStop::never(), true) {
+            tracing::error!(%error, "scan catalog revision not bumped; the next run end tries again");
+        }
+    }
+
     /// Boot recovery (v2 `recover` / `recover_stopping`).
-    pub fn recover(&self) -> Vec<ScanRun> {
+    pub fn recover(&self) -> Result<Vec<ScanRun>, ScanStoreError> {
         if !self.resolvers.resolver().enabled() {
             return self.recover_stopping();
         }
-        let runs = self.store.recover(self.now());
+        let runs = self.store.recover(&RunStop::never(), self.now())?;
         {
             let mut pending = self
                 .pending_control
@@ -566,11 +632,11 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 self.log_progress(run, "recovery", true);
             }
         }
-        runs
+        Ok(runs)
     }
 
-    pub fn recover_stopping(&self) -> Vec<ScanRun> {
-        let runs = self.store.recover_stopping(self.now());
+    pub fn recover_stopping(&self) -> Result<Vec<ScanRun>, ScanStoreError> {
+        let runs = self.store.recover_stopping(&RunStop::never(), self.now())?;
         let mut pending = self
             .pending_control
             .lock()
@@ -578,24 +644,26 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         for run in &runs {
             pending.remove(&run.id);
             self.publish(run, "scan.transition", false);
-            self.store.flush_invalidation(true);
+            self.flush_terminal();
             self.log_progress(run, "recovery", true);
             if let Some(fs) = &self.fs {
                 fs.forget_scan(&run.id);
             }
         }
-        runs
+        Ok(runs)
     }
 
-    /// Settle a pausing/stopping run (v2 `_settle_pending_control`).
+    /// Settle a pausing/stopping run (v2 `_settle_pending_control`). Its
+    /// writes wait out a busy database: they are the answer to the stop.
     fn settle_pending_control(&self, run_id: &str) -> ScanRun {
         let mut stale_retries = 0u32;
         loop {
-            let (run, _, _) = match self.store.get_run(run_id) {
+            let (run, _, _) = match self.store.reread_run(&RunStop::never(), run_id) {
                 Ok(found) => found,
-                Err(_) => {
-                    // Defensive: the run vanished mid-settle (impossible
-                    // with the memory store). Answer failed, never panic.
+                Err(error) => {
+                    // The run vanished or cannot be read mid-settle.
+                    // Answer failed, never panic.
+                    tracing::error!(run_id, %error, "scan run unreadable while settling");
                     self.pending_control
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -628,6 +696,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 ScanState::Cancelled
             };
             match self.store.transition(
+                &RunStop::never(),
                 &run.id,
                 run.state,
                 run.row_revision,
@@ -637,8 +706,9 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             ) {
                 Ok(settled) => {
                     self.publish(&settled, "scan.transition", false);
-                    self.store
-                        .flush_invalidation(settled.state == ScanState::Cancelled);
+                    if settled.state == ScanState::Cancelled {
+                        self.flush_terminal();
+                    }
                     self.log_progress(
                         &settled,
                         if settled.state == ScanState::Paused {
@@ -659,7 +729,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                     }
                     return settled;
                 }
-                Err(_) => {
+                Err(ScanStoreError::StaleRevision { .. }) => {
                     // A racing writer keeps moving the revision.
                     // Bounded retries, then the stop-signal path: return
                     // unsettled without discarding the pending entry, so
@@ -674,16 +744,24 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                         return run;
                     }
                 }
+                Err(error) => {
+                    // Left unsettled: the pending entry stays, and the next
+                    // drive or boot recovery settles it.
+                    tracing::error!(run_id, %error, "scan control not settled");
+                    return run;
+                }
             }
         }
     }
 
     /// Drive one run like [`run_once`](Self::run_once), but a signalled
-    /// shutdown abandons the drive instead of waiting it out. The run keeps
-    /// its active state, exactly as after a crash: every committed window
-    /// is durable, the rest is still pending, and the next start resumes
-    /// it. A pre-signalled shutdown claims no new work. Returns the run
-    /// when it reached a stopping point, `None` otherwise.
+    /// shutdown abandons the drive instead of waiting it out, and trips the
+    /// drive's stop flag so a long read or a chunked write on a blocking
+    /// thread ends too. The run keeps its active state, exactly as after a
+    /// crash: every committed window is durable, the rest is still
+    /// pending, and the next start resumes it. A pre-signalled shutdown
+    /// claims no new work. Returns the run when it reached a stopping
+    /// point, `None` otherwise.
     pub async fn run_once_with_shutdown(
         &self,
         root_paths: &HashMap<String, PathBuf>,
@@ -693,61 +771,112 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             return None;
         }
         let mut shutdown = shutdown.clone();
+        let stop = RunStop::default();
         tokio::select! {
             biased;
             _ = shutdown.changed() => {
+                stop.trip();
                 tracing::info!("shutdown: the active scan resumes on the next start");
                 None
             }
-            outcome = self.run_once(root_paths) => outcome,
+            outcome = self.drive(root_paths, &stop) => outcome,
         }
     }
 
     /// Drive one run to the next stopping point (v2 `run_once`). Returns
     /// the run, or `None` when no work was available.
     pub async fn run_once(&self, root_paths: &HashMap<String, PathBuf>) -> Option<ScanRun> {
+        self.drive(root_paths, &RunStop::default()).await
+    }
+
+    async fn drive(
+        &self,
+        root_paths: &HashMap<String, PathBuf>,
+        stop: &RunStop,
+    ) -> Option<ScanRun> {
+        // Runs that ended without their end passes (a stop request, boot
+        // recovery, a crash) settle first; their inventory waits for it.
         // Finished runs' inventory goes even while the library is off.
-        self.cleanup_terminal_inventory().await;
+        self.settle_ended_runs(stop).await;
+        self.cleanup_terminal_inventory(stop).await;
         if !self.resolvers.resolver().enabled() {
             return None;
         }
-        let mut run = self.store.resumable();
-        let newly_claimed = run.is_none();
-        if run.is_none() {
-            run = self.store.claim_next(self.now());
-        }
-        let run = run?;
+        let claimed = match self.store.resumable(stop) {
+            Ok(Some(run)) => Ok(Some((run, false))),
+            Ok(None) => self
+                .store
+                .claim_next(stop, self.now())
+                .map(|run| run.map(|run| (run, true))),
+            Err(error) => Err(error),
+        };
+        let (run, newly_claimed) = match claimed {
+            Ok(Some(found)) => found,
+            Ok(None) => return None,
+            Err(error) => {
+                tracing::error!(%error, "no scan run could be claimed");
+                return None;
+            }
+        };
         if newly_claimed {
             self.publish(&run, "scan.transition", false);
         }
         self.log_progress(&run, "start", true);
-        let outcome = self.continue_run(&run, root_paths).await;
+        self.drives().insert(run.id.clone(), stop.clone());
+        let mut outcome = self.continue_run(&run, root_paths, stop).await;
+        if outcome.terminal_at.is_some() {
+            // The stop that ended the run must not end its settling too.
+            let settling = RunStop::never();
+            self.settle_ended_runs(&settling).await;
+            match self.store.reread_run(&settling, &outcome.id) {
+                Ok((settled, _, _)) => outcome = settled,
+                Err(error) => tracing::warn!(%error, "ended scan run not read again"),
+            }
+        }
+        self.drives().remove(&run.id);
         self.pending_control
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(&run.id);
         if outcome.state.is_terminal() {
-            // Post-terminal housekeeping, off the observed scan wall: fold
-            // the WAL, then release the heap the scan churned.
-            let folded = self
-                .on_store(|store| {
-                    store.checkpoint_terminal();
-                    Ok(())
-                })
-                .await;
-            if let Err(error) = folded {
-                tracing::warn!(%error, "scan terminal checkpoint did not run");
-            }
+            // Release the heap the scan churned. The WAL it grew is
+            // reclaimed by the checkpoint service once the database is idle.
             release_scan_memory();
         }
         Some(outcome)
     }
 
-    async fn continue_run(&self, run: &ScanRun, root_paths: &HashMap<String, PathBuf>) -> ScanRun {
-        let (mut run, scopes, _) = match self.store.get_run(&run.id) {
-            Ok(found) => found,
-            Err(_) => return run.clone(),
-        };
+    /// End a drive that a phase cut short, by the scan's failure rule.
+    async fn after_halt(&self, run: &ScanRun, halt: Halt) -> ScanRun {
+        match halt {
+            Halt::Stop => self.settle_pending_control(&run.id),
+            Halt::Closed => {
+                tracing::info!(run_id = %run.id, "the database is closing; the scan resumes on the next start");
+                run.clone()
+            }
+            Halt::Fail(error) => {
+                tracing::error!(run_id = %run.id, %error, "scan worker failed");
+                self.fail_active(run, failure_codes::UNEXPECTED_WORKER_FAILURE)
+                    .await
+            }
+        }
+    }
+
+    async fn continue_run(
+        &self,
+        run: &ScanRun,
+        root_paths: &HashMap<String, PathBuf>,
+        stop: &RunStop,
+    ) -> ScanRun {
+        macro_rules! or_halt {
+            ($call:expr) => {
+                match $call {
+                    Ok(value) => value,
+                    Err(error) => return self.after_halt(run, Halt::from(error)).await,
+                }
+            };
+        }
+        let (mut run, scopes, _) = or_halt!(self.store.reread_run(stop, &run.id));
         if scopes.is_empty() {
             // v2 indexes scopes[0] and the IndexError becomes
             // UNEXPECTED_WORKER_FAILURE; fail the same way directly.
@@ -758,150 +887,112 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         let frozen_policy_revision = scopes[0].policy_revision.clone();
         if run.state == ScanState::Discovering {
             self.log_progress(&run, "phase_discovery_start", true);
-            self.store.prepare_discovery_resume(&run.id);
-            self.store.cleanup_stale_inventory(&run.id);
-            (run, _, _) = match self.store.get_run(&run.id) {
-                Ok(found) => (found.0, found.1, found.2),
-                Err(_) => return run,
-            };
-            let scopes = self
-                .store
-                .get_run(&run.id)
-                .map(|(_, scopes, _)| scopes)
-                .unwrap_or_default();
-            run = self
-                .inventory
-                .discover(&run, &scopes, root_paths, &self.resolvers.resolver(), self)
-                .await;
+            or_halt!(self.store.prepare_discovery_resume(stop, &run.id));
+            let run_id = run.id.clone();
+            or_halt!(
+                self.on_store(stop, move |store, stop| {
+                    store.cleanup_stale_inventory(stop, &run_id)
+                })
+                .await
+            );
+            let (fresh, scopes, _) = or_halt!(self.store.reread_run(stop, &run.id));
+            run = fresh;
+            run = or_halt!(
+                self.inventory
+                    .discover(
+                        &run,
+                        &scopes,
+                        root_paths,
+                        &self.resolvers.resolver(),
+                        self,
+                        stop
+                    )
+                    .await
+            );
             self.publish(&run, "scan.progress", true);
-            (run, _, _) = match self.store.get_run(&run.id) {
-                Ok(found) => (found.0, found.1, found.2),
-                Err(_) => return run,
-            };
+            run = or_halt!(self.store.reread_run(stop, &run.id)).0;
             if run.state != ScanState::Discovering {
                 return self.settle_pending_control(&run.id);
             }
-            run = match self.store.finalize_discovery(&run.id, self.now()) {
-                Ok(run) => run,
-                Err(_) => {
-                    return self
-                        .fail_active(&run, failure_codes::UNEXPECTED_WORKER_FAILURE)
-                        .await;
-                }
-            };
+            run = or_halt!(self.store.finalize_discovery(stop, &run.id, self.now()));
             self.log_progress(&run, "phase_discovery_end", true);
-            self.guard_vanished_scopes(&run.id).await;
-            run = match self.store.transition(
+            if let Err(halt) = self.guard_vanished_scopes(&run.id, stop).await {
+                return self.after_halt(&run, halt).await;
+            }
+            run = or_halt!(self.store.transition(
+                stop,
                 &run.id,
                 ScanState::Discovering,
                 run.row_revision,
                 ScanState::Indexing,
                 self.now(),
                 None,
-            ) {
-                Ok(run) => run,
-                Err(_) => {
-                    return self
-                        .fail_active(&run, failure_codes::UNEXPECTED_WORKER_FAILURE)
-                        .await;
-                }
-            };
+            ));
             self.publish(&run, "scan.transition", false);
         }
         if run.state == ScanState::Indexing {
             self.log_progress(&run, "phase_indexing_start", true);
             if !self.check(&run.id, &frozen_policy_revision) {
-                return self
-                    .store
-                    .get_run(&run.id)
-                    .map(|(run, _, _)| run)
-                    .unwrap_or(run);
+                return or_halt!(self.store.reread_run(stop, &run.id)).0;
             }
-            let counts = self.index(&run, &frozen_policy_revision).await;
-            if counts.identification_enqueued > 0
-                && let Ok((fresh, _, _)) = self.store.get_run(&run.id)
-            {
-                self.publish(&fresh, "scan.progress", true);
-            }
-            (run, _, _) = match self.store.get_run(&run.id) {
-                Ok(found) => (found.0, found.1, found.2),
-                Err(_) => return run,
+            let counts = match self.index(&run, &frozen_policy_revision, stop).await {
+                Ok(counts) => counts,
+                Err(halt) => return self.after_halt(&run, halt).await,
             };
+            run = or_halt!(self.store.reread_run(stop, &run.id)).0;
+            if counts.identification_enqueued > 0 {
+                self.publish(&run, "scan.progress", true);
+            }
             if run.state != ScanState::Indexing {
                 return self.settle_pending_control(&run.id);
             }
             if !self.check(&run.id, &frozen_policy_revision) {
-                return self
-                    .store
-                    .get_run(&run.id)
-                    .map(|(run, _, _)| run)
-                    .unwrap_or(run);
+                return or_halt!(self.store.reread_run(stop, &run.id)).0;
             }
-            self.store.flush_invalidation(false);
+            or_halt!(self.store.flush_invalidation(stop, false));
             self.log_progress(&run, "phase_indexing_end", true);
-            run = match self.store.transition(
+            run = or_halt!(self.store.transition(
+                stop,
                 &run.id,
                 ScanState::Indexing,
                 run.row_revision,
                 ScanState::Reconciling,
                 self.now(),
                 None,
-            ) {
-                Ok(run) => run,
-                Err(_) => {
-                    return self
-                        .fail_active(&run, failure_codes::UNEXPECTED_WORKER_FAILURE)
-                        .await;
-                }
-            };
+            ));
             self.publish(&run, "scan.transition", false);
         }
         self.log_progress(&run, "phase_reconciliation_start", true);
-        let scopes = self
-            .store
-            .get_run(&run.id)
-            .map(|(_, scopes, _)| scopes)
-            .unwrap_or_default();
-        let missing = self
-            .reconcile(&run.id, &scopes, &frozen_policy_revision)
-            .await;
-        if missing > 0
-            && let Ok((fresh, _, _)) = self.store.get_run(&run.id)
+        let scopes = or_halt!(self.store.reread_run(stop, &run.id)).1;
+        let missing = match self
+            .reconcile(&run.id, &scopes, &frozen_policy_revision, stop)
+            .await
         {
-            self.publish(&fresh, "scan.progress", true);
-        }
-        (run, _, _) = match self.store.get_run(&run.id) {
-            Ok(found) => (found.0, found.1, found.2),
-            Err(_) => return run,
+            Ok(missing) => missing,
+            Err(halt) => return self.after_halt(&run, halt).await,
         };
+        run = or_halt!(self.store.reread_run(stop, &run.id)).0;
+        if missing > 0 {
+            self.publish(&run, "scan.progress", true);
+        }
         if run.state != ScanState::Reconciling {
             return self.settle_pending_control(&run.id);
         }
         if !self.check(&run.id, &frozen_policy_revision) {
-            return self
-                .store
-                .get_run(&run.id)
-                .map(|(run, _, _)| run)
-                .unwrap_or(run);
+            return or_halt!(self.store.reread_run(stop, &run.id)).0;
         }
         self.log_progress(&run, "phase_reconciliation_end", true);
-        run = match self.store.transition(
+        run = or_halt!(self.store.transition(
+            stop,
             &run.id,
             ScanState::Reconciling,
             run.row_revision,
             ScanState::Completed,
             self.now(),
             None,
-        ) {
-            Ok(run) => run,
-            Err(_) => {
-                return self
-                    .fail_active(&run, failure_codes::UNEXPECTED_WORKER_FAILURE)
-                    .await;
-            }
-        };
+        ));
         self.publish(&run, "scan.transition", false);
-        self.store.flush_invalidation(true);
+        self.flush_terminal();
         self.log_progress(&run, "completion", true);
         self.last_progress_log
             .lock()
@@ -961,7 +1052,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         }
     }
 
-    /// Synthetic failed run for the impossible missing-run path.
+    /// Synthetic failed run for a run that cannot be read while settling.
     fn missing_run(&self, run_id: &str, code: &str) -> ScanRun {
         ScanRun {
             id: run_id.to_owned(),
@@ -986,11 +1077,15 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         }
     }
 
-    /// Fail an active run (v2 `run_once` crash path).
+    /// Fail an active run (v2 `run_once` crash path). Its writes wait out
+    /// a busy database.
     async fn fail_active(&self, run: &ScanRun, code: &str) -> ScanRun {
-        let (current, _, _) = match self.store.get_run(&run.id) {
+        let (current, _, _) = match self.store.reread_run(&RunStop::never(), &run.id) {
             Ok(found) => found,
-            Err(_) => return run.clone(),
+            Err(error) => {
+                tracing::error!(run_id = %run.id, %error, "scan run unreadable; not failed");
+                return run.clone();
+            }
         };
         if matches!(current.state, ScanState::Pausing | ScanState::Stopping) {
             return self.settle_pending_control(&current.id);
@@ -1002,6 +1097,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             return current;
         }
         match self.store.transition(
+            &RunStop::never(),
             &current.id,
             current.state,
             current.row_revision,
@@ -1011,52 +1107,41 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         ) {
             Ok(failed) => {
                 self.publish(&failed, "scan.transition", false);
-                self.store.flush_invalidation(true);
+                self.flush_terminal();
                 if let Some(fs) = &self.fs {
                     fs.forget_scan(&failed.id);
                 }
                 failed
             }
-            Err(_) => current,
-        }
-    }
-
-    /// One inventory page with bounded read retries. The store lock is
-    /// released between attempts; only a persistent read error returns
-    /// `Err`, and the caller fails the run on it.
-    async fn read_inventory_page(
-        &self,
-        run_id: &str,
-        after: Option<(&str, &str)>,
-    ) -> Result<InventoryPage, ScanStoreError> {
-        let mut attempt = 0u32;
-        loop {
-            match self.store.inventory_page(run_id, after, INDEX_PAGE_SIZE) {
-                Ok(page) => return Ok(page),
-                Err(_) if attempt + 1 < INDEX_PAGE_READ_ATTEMPTS => {
-                    attempt += 1;
-                    tokio::time::sleep(INDEX_PAGE_READ_RETRY * attempt).await;
-                }
-                Err(error) => return Err(error),
+            Err(error) => {
+                tracing::error!(run_id = %current.id, %error, "scan run not failed");
+                current
             }
         }
     }
 
-    /// Clear finished runs' inventory, a bounded number of pages per
-    /// call, on a blocking thread.
-    async fn cleanup_terminal_inventory(&self) {
-        let cleaned = self
-            .on_store(|store| {
-                for _ in 0..CLEANUP_PAGES_PER_CALL {
-                    if !store.cleanup_terminal_inventory(CLEANUP_PAGE_ROWS) {
-                        break;
-                    }
-                }
-                Ok(())
-            })
+    /// Run the end passes ended runs still owe, on a blocking thread. A
+    /// failure is logged; the next drive resumes where it stopped.
+    async fn settle_ended_runs(&self, stop: &RunStop) {
+        let settled = self
+            .on_store(stop, |store, stop| store.settle_ended_runs(stop))
             .await;
-        if let Err(error) = cleaned {
-            tracing::warn!(%error, "scan inventory cleanup did not run");
+        match settled {
+            Ok(()) | Err(ScanStoreError::Stopped | ScanStoreError::ReadCancelled { .. }) => {}
+            Err(error) => tracing::warn!(%error, "scan end passes did not finish"),
+        }
+    }
+
+    /// Clear finished runs' inventory and prune history, on a blocking
+    /// thread. A failure is logged; the next drive carries on from the
+    /// rows still there.
+    async fn cleanup_terminal_inventory(&self, stop: &RunStop) {
+        let cleaned = self
+            .on_store(stop, |store, stop| store.cleanup_terminal_inventory(stop))
+            .await;
+        match cleaned {
+            Ok(()) | Err(ScanStoreError::Stopped | ScanStoreError::ReadCancelled { .. }) => {}
+            Err(error) => tracing::warn!(%error, "scan inventory cleanup did not finish"),
         }
     }
 
@@ -1064,10 +1149,12 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     /// async worker.
     async fn on_store<R: Send + 'static>(
         &self,
-        op: impl FnOnce(&SqliteScanStore) -> Result<R, ScanStoreError> + Send + 'static,
+        stop: &RunStop,
+        op: impl FnOnce(&SqliteScanStore, &RunStop) -> Result<R, ScanStoreError> + Send + 'static,
     ) -> Result<R, ScanStoreError> {
         let store = Arc::clone(&self.store);
-        tokio::task::spawn_blocking(move || op(&store))
+        let stop = stop.clone();
+        tokio::task::spawn_blocking(move || op(&store, &stop))
             .await
             .map_err(|error| ScanStoreError::Internal {
                 message: format!("scan store task failed: {error}"),
@@ -1080,25 +1167,27 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     /// A pause, stop, or shutdown between windows loses nothing: the rows
     /// not yet committed are still pending and the next drive resumes
     /// there.
-    async fn index(&self, run: &ScanRun, frozen_policy_revision: &str) -> IndexCounts {
+    async fn index(
+        &self,
+        run: &ScanRun,
+        frozen_policy_revision: &str,
+        stop: &RunStop,
+    ) -> Result<IndexCounts, Halt> {
         let mut counts = IndexCounts::default();
         let mut after: Option<(String, String)> = None;
         loop {
-            let after_ref = after
-                .as_ref()
-                .map(|(root, path)| (root.as_str(), path.as_str()));
-            let (page, _) = match self.read_inventory_page(&run.id, after_ref).await {
-                Ok(page) => page,
-                // A page that will not read is a persistent store error,
-                // not end-of-run: fail the run instead of completing it
-                // short.
-                Err(error) => {
-                    tracing::error!(%error, "scan inventory page read failed");
-                    self.fail_active(run, failure_codes::UNEXPECTED_WORKER_FAILURE)
-                        .await;
-                    return counts;
-                }
-            };
+            let cursor = after.clone();
+            let run_id = run.id.clone();
+            // A page that will not read is a store error, not end-of-run:
+            // the run fails instead of completing short.
+            let (page, _) = self
+                .on_store(stop, move |store, stop| {
+                    let after = cursor
+                        .as_ref()
+                        .map(|(root, path)| (root.as_str(), path.as_str()));
+                    store.inventory_page(stop, &run_id, after, INDEX_PAGE_SIZE)
+                })
+                .await?;
             if page.is_empty() {
                 break;
             }
@@ -1114,75 +1203,35 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                     )
                     .await
                 else {
-                    return counts;
+                    return Ok(counts);
                 };
                 let through = window.through.clone();
                 let failures = window_failures(&window, self.now());
                 if !failures.is_empty() {
                     let run_id = run.id.clone();
-                    if let Err(error) = self
-                        .on_store(move |store| {
-                            store.record_failures(&run_id, failures);
-                            Ok(())
-                        })
-                        .await
-                    {
-                        tracing::error!(%error, "scan failure rows not recorded");
-                    }
+                    self.on_store(stop, move |store, stop| {
+                        store.record_failures(stop, &run_id, &failures)
+                    })
+                    .await?;
                 }
-                let outcome = match self
-                    .on_store(move |store| store.commit_window(&window))
-                    .await
-                {
-                    Ok(outcome) => outcome,
-                    Err(error) => {
-                        tracing::error!(%error, "scan index window failed to commit");
-                        self.fail_active(run, failure_codes::UNEXPECTED_WORKER_FAILURE)
-                            .await;
-                        return counts;
-                    }
-                };
+                let outcome = self
+                    .on_store(stop, move |store, stop| store.commit_window(stop, &window))
+                    .await?;
+                // Files the catalog refused are already on the run's
+                // failure list, written with the window.
                 counts.identification_enqueued += outcome.enqueued;
-                if !outcome.failed.is_empty() {
-                    counts.indexed = counts.indexed.saturating_sub(outcome.failed.len());
-                    counts.errored += outcome.failed.len();
-                    let now = self.now();
-                    let records = outcome
-                        .failed
-                        .into_iter()
-                        .map(|(root_id, relative_path, error)| ScanFailureRecord {
-                            root_id,
-                            relative_path,
-                            failure_code: failure_codes::CATALOG_COMMIT_FAILED.to_owned(),
-                            recorded_at: now,
-                            failure_detail: format!(
-                                "The catalog could not store this file: {error}"
-                            ),
-                            phase: ScanPhase::Indexing,
-                        })
-                        .collect::<Vec<_>>();
-                    let run_id = run.id.clone();
-                    if let Err(error) = self
-                        .on_store(move |store| {
-                            store.record_failures(&run_id, records);
-                            Ok(())
-                        })
-                        .await
-                    {
-                        tracing::error!(%error, "scan failure rows not recorded");
-                    }
-                }
+                counts.indexed = counts.indexed.saturating_sub(outcome.failed.len());
+                counts.errored += outcome.failed.len();
                 after = Some(through);
-                if let Ok((fresh, _, _)) = self.store.get_run(&run.id) {
-                    self.publish(&fresh, "scan.progress", true);
-                    self.log_progress(&fresh, "progress", false);
-                }
+                let (fresh, _, _) = self.store.reread_run(stop, &run.id)?;
+                self.publish(&fresh, "scan.progress", true);
+                self.log_progress(&fresh, "progress", false);
             }
             if short_page {
                 break;
             }
         }
-        counts
+        Ok(counts)
     }
 
     /// Classify one window of inventory rows and read the tags the
@@ -1206,17 +1255,20 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         let force = run.kind == ScanKind::RescanFiles;
         let mut to_read: Vec<&ScanInventoryItem> = Vec::new();
         for item in rows {
-            window.counters.push((counter_names::INSPECTED, 1));
+            let row = (item.root_id.clone(), item.relative_path.clone());
+            window
+                .counters
+                .push((row.clone(), counter_names::INSPECTED, 1));
             if item.effective_policy == super::models::EffectivePolicy::Excluded
                 || item.comparison_result == Verdict::Excluded
             {
-                window.counters.push((counter_names::EXCLUDED, 1));
+                window.counters.push((row, counter_names::EXCLUDED, 1));
                 counts.excluded += 1;
             } else if run.kind == ScanKind::PolicyReconcile
                 || (!force && item.comparison_result == Verdict::Unchanged)
             {
                 // Reconcile-only runs refresh inventory, never tags.
-                window.counters.push((counter_names::UNCHANGED, 1));
+                window.counters.push((row, counter_names::UNCHANGED, 1));
                 counts.unchanged += 1;
             } else if item.comparison_result != Verdict::CandidateMissing {
                 to_read.push(item);
@@ -1239,19 +1291,21 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             });
             let outcomes = futures_util::future::join_all(reads).await;
             for (item, outcome) in chunk.iter().zip(outcomes) {
-                let key = (item.root_id.clone(), item.relative_path.clone());
+                let row = (item.root_id.clone(), item.relative_path.clone());
                 match outcome {
                     Err(TagReadError::Deferred) => {
                         // The deferred marker re-offers the file next run.
                         self.store
                             .mark_deferred(&item.root_id, &item.relative_path, true);
-                        window.failed.push((key.0, key.1, "deferred"));
-                        window.counters.push((counter_names::ERRORED, 1));
+                        window
+                            .failed
+                            .push((row.0.clone(), row.1.clone(), "deferred"));
+                        window.counters.push((row, counter_names::ERRORED, 1));
                         counts.errored += 1;
                     }
                     Err(TagReadError::Fatal) => {
-                        window.failed.push((key.0, key.1, "failed"));
-                        window.counters.push((counter_names::ERRORED, 1));
+                        window.failed.push((row.0.clone(), row.1.clone(), "failed"));
+                        window.counters.push((row, counter_names::ERRORED, 1));
                         counts.errored += 1;
                     }
                     Ok(tags) => {
@@ -1271,8 +1325,10 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                                 counter_names::UNCHANGED
                             }
                         };
-                        window.counters.push((counter_names::INDEXED, 1));
-                        window.counters.push((verdict_counter, 1));
+                        window
+                            .counters
+                            .push((row.clone(), counter_names::INDEXED, 1));
+                        window.counters.push((row, verdict_counter, 1));
                         counts.indexed += 1;
                         window.items.push(CommitIndexedItem {
                             root_id: item.root_id.clone(),
@@ -1303,19 +1359,22 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         run_id: &str,
         scopes: &[ScanScope],
         frozen_policy_revision: &str,
-    ) -> usize {
+        stop: &RunStop,
+    ) -> Result<usize, Halt> {
         let mut missing = 0usize;
         for scope in scopes {
             if !self.check(run_id, frozen_policy_revision) {
-                return missing;
+                return Ok(missing);
             }
-            if self
-                .store
-                .scope_discovery_state(run_id, &scope.root_id, &scope.relative_path)
-                != ScopeDiscoveryState::Completed
+            if self.store.scope_discovery_state(
+                stop,
+                run_id,
+                &scope.root_id,
+                &scope.relative_path,
+            )? != ScopeDiscoveryState::Completed
                 || self
                     .store
-                    .scope_guarded(run_id, &scope.root_id, &scope.relative_path)
+                    .scope_guarded(stop, run_id, &scope.root_id, &scope.relative_path)?
             {
                 continue;
             }
@@ -1324,25 +1383,26 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 scope.root_id.clone(),
                 scope.relative_path.clone(),
             );
-            let paths = match self
-                .on_store(move |store| Ok(store.missing_catalog_paths(&id, &root, &rel)))
-                .await
-            {
-                Ok(paths) => paths,
-                Err(error) => {
-                    tracing::error!(%error, "scan missing detection failed");
-                    continue;
-                }
-            };
+            let paths = self
+                .on_store(stop, move |store, stop| {
+                    store.missing_catalog_paths(stop, &id, &root, &rel)
+                })
+                .await?;
             if paths.is_empty() {
                 continue;
             }
             let indexed = self
                 .store
-                .indexed_count(&scope.root_id, &scope.relative_path)
-                .unwrap_or(paths.len());
+                .indexed_count(stop, &scope.root_id, &scope.relative_path)?;
             if mass_missing(paths.len(), indexed) {
-                self.hold_back_scope(run_id, scope, paths.len(), indexed, ScanPhase::Reconciling);
+                self.hold_back_scope(
+                    run_id,
+                    scope,
+                    paths.len(),
+                    indexed,
+                    ScanPhase::Reconciling,
+                    stop,
+                )?;
                 continue;
             }
             // Nothing under a folder this run held back is marked.
@@ -1352,7 +1412,7 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 .collect();
             for chunk in paths.chunks(RECONCILE_CHUNK) {
                 if !self.check(run_id, frozen_policy_revision) {
-                    return missing;
+                    return Ok(missing);
                 }
                 let (id, root, chunk, now) = (
                     run_id.to_owned(),
@@ -1360,16 +1420,14 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                     chunk.to_vec(),
                     self.now(),
                 );
-                match self
-                    .on_store(move |store| store.mark_missing(&id, &root, &chunk, now))
-                    .await
-                {
-                    Ok(marked) => missing += marked,
-                    Err(error) => tracing::error!(%error, "scan could not mark files missing"),
-                }
+                missing += self
+                    .on_store(stop, move |store, stop| {
+                        store.mark_missing(stop, &id, &root, &chunk, now)
+                    })
+                    .await?;
             }
         }
-        missing
+        Ok(missing)
     }
 }
 
@@ -1380,17 +1438,15 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     /// tracks. A held-back folder counts as not walked for the whole run,
     /// so an unmounted share neither marks its tracks missing nor hands
     /// their ids and albums to copies found elsewhere.
-    async fn guard_vanished_scopes(&self, run_id: &str) {
-        let scopes = self
-            .store
-            .get_run(run_id)
-            .map(|(_, scopes, _)| scopes)
-            .unwrap_or_default();
+    async fn guard_vanished_scopes(&self, run_id: &str, stop: &RunStop) -> Result<(), Halt> {
+        let scopes = self.store.reread_run(stop, run_id)?.1;
         for scope in &scopes {
-            if self
-                .store
-                .scope_discovery_state(run_id, &scope.root_id, &scope.relative_path)
-                != ScopeDiscoveryState::Completed
+            if self.store.scope_discovery_state(
+                stop,
+                run_id,
+                &scope.root_id,
+                &scope.relative_path,
+            )? != ScopeDiscoveryState::Completed
             {
                 continue;
             }
@@ -1399,51 +1455,48 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 scope.root_id.clone(),
                 scope.relative_path.clone(),
             );
-            match self
-                .on_store(move |store| store.vanish_counts(&id, &root, &rel))
-                .await
-            {
-                Ok((missing, total)) if mass_missing(missing, total) => {
-                    self.hold_back_scope(run_id, scope, missing, total, ScanPhase::Discovering);
-                    continue;
-                }
-                Ok(_) => {}
-                Err(error) => tracing::error!(%error, "scan mass-missing check failed"),
+            let (missing, total) = self
+                .on_store(stop, move |store, stop| {
+                    store.vanish_counts(stop, &id, &root, &rel)
+                })
+                .await?;
+            if mass_missing(missing, total) {
+                self.hold_back_scope(run_id, scope, missing, total, ScanPhase::Discovering, stop)?;
+                continue;
             }
             let (id, root, rel) = (
                 run_id.to_owned(),
                 scope.root_id.clone(),
                 scope.relative_path.clone(),
             );
-            match self
-                .on_store(move |store| store.empty_mounts(&id, &root, &rel))
-                .await
-            {
-                Ok(mounts) => {
-                    for (folder, indexed) in mounts {
-                        tracing::warn!(
-                            root_id = scope.root_id,
-                            folder,
-                            indexed,
-                            "a drive or share inside a library folder was found empty; \
-                             missing detection held back"
-                        );
-                        self.hold_back(
-                            run_id,
-                            &scope.root_id,
-                            &folder,
-                            ScanPhase::Discovering,
-                            format!(
-                                "None of the {indexed} indexed files on the drive or share \
-                                 mounted at this folder were found. Check that it is mounted; \
-                                 nothing under it was marked missing."
-                            ),
-                        );
-                    }
-                }
-                Err(error) => tracing::error!(%error, "scan empty-mount check failed"),
+            let mounts = self
+                .on_store(stop, move |store, stop| {
+                    store.empty_mounts(stop, &id, &root, &rel)
+                })
+                .await?;
+            for (folder, indexed) in mounts {
+                tracing::warn!(
+                    root_id = scope.root_id,
+                    folder,
+                    indexed,
+                    "a drive or share inside a library folder was found empty; \
+                     missing detection held back"
+                );
+                self.hold_back(
+                    run_id,
+                    &scope.root_id,
+                    &folder,
+                    ScanPhase::Discovering,
+                    format!(
+                        "None of the {indexed} indexed files on the drive or share \
+                         mounted at this folder were found. Check that it is mounted; \
+                         nothing under it was marked missing."
+                    ),
+                    stop,
+                )?;
             }
         }
+        Ok(())
     }
 
     /// Record that missing detection is held back for one scope.
@@ -1454,7 +1507,8 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         missing: usize,
         indexed: usize,
         phase: ScanPhase,
-    ) {
+        stop: &RunStop,
+    ) -> Result<(), ScanStoreError> {
         tracing::warn!(
             root_id = scope.root_id,
             scope = scope.relative_path,
@@ -1471,7 +1525,8 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 "{missing} of {indexed} indexed files under this scope were not found. \
                  Check that the library is mounted; nothing was marked missing."
             ),
-        );
+            stop,
+        )
     }
 
     /// Record that missing detection is held back for one folder: a scope,
@@ -1483,10 +1538,12 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         folder: &str,
         phase: ScanPhase,
         failure_detail: String,
-    ) {
+        stop: &RunStop,
+    ) -> Result<(), ScanStoreError> {
         self.store.record_failures(
+            stop,
             run_id,
-            vec![ScanFailureRecord {
+            &[ScanFailureRecord {
                 root_id: root_id.to_owned(),
                 relative_path: folder.to_owned(),
                 failure_code: failure_codes::MASS_MISSING_GUARD.to_owned(),
@@ -1494,15 +1551,9 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
                 failure_detail,
                 phase,
             }],
-        );
+        )
     }
 }
-
-/// Inventory rows deleted per cleanup page.
-const CLEANUP_PAGE_ROWS: usize = 5_000;
-
-/// Cleanup pages per drive: a 100k-row run clears in one call.
-const CLEANUP_PAGES_PER_CALL: usize = 25;
 
 /// Missing rows marked per transaction during reconcile.
 const RECONCILE_CHUNK: usize = 500;
@@ -1551,7 +1602,9 @@ fn window_failures(window: &IndexWindow, now: f64) -> Vec<ScanFailureRecord> {
 
 impl<T: TagReader + 'static> Checkpoint for LibraryScanCoordinator<T> {
     /// v2 `checkpoint`: fast true while policy matches and no control is
-    /// pending, otherwise settle or supersede through the store.
+    /// pending, otherwise settle or supersede through the store. A run
+    /// that cannot be read answers false, logged: the drive ends and the
+    /// run keeps its state.
     fn check(&self, run_id: &str, frozen_policy_revision: &str) -> bool {
         let current_policy_revision = self.resolvers.resolver().policy_revision().to_owned();
         if current_policy_revision == frozen_policy_revision
@@ -1563,9 +1616,12 @@ impl<T: TagReader + 'static> Checkpoint for LibraryScanCoordinator<T> {
         {
             return true;
         }
-        let (run, _, _) = match self.store.get_run(run_id) {
+        let (run, _, _) = match self.store.reread_run(&RunStop::never(), run_id) {
             Ok(found) => found,
-            Err(_) => return false,
+            Err(error) => {
+                tracing::error!(run_id, %error, "scan run unreadable at a checkpoint");
+                return false;
+            }
         };
         if current_policy_revision != frozen_policy_revision {
             if run.state == ScanState::Stopping || run.requested_control == RequestedControl::Stop {
@@ -1581,6 +1637,7 @@ impl<T: TagReader + 'static> Checkpoint for LibraryScanCoordinator<T> {
                     | ScanState::Pausing
             ) {
                 match self.store.transition(
+                    &RunStop::never(),
                     &run.id,
                     run.state,
                     run.row_revision,
@@ -1594,7 +1651,7 @@ impl<T: TagReader + 'static> Checkpoint for LibraryScanCoordinator<T> {
                     }
                 }
             }
-            self.store.flush_invalidation(true);
+            self.flush_terminal();
             self.pending_control
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1636,11 +1693,14 @@ mod tests {
     use super::super::models::ScanTrigger;
     use super::super::roots::LibraryRoot;
     use super::super::seams::NullTagReader;
-    use super::super::sqlite_store::SqliteScanStore;
+    use super::super::sqlite_store::scratch_store;
     use super::*;
     use std::path::PathBuf;
 
-    fn coordinator() -> LibraryScanCoordinator<NullTagReader> {
+    fn coordinator() -> (
+        droppedneedle_kernel::db::scratch::ScratchDir,
+        LibraryScanCoordinator<NullTagReader>,
+    ) {
         let registry = RootRegistry::new(
             vec![LibraryRoot::new(
                 "r1",
@@ -1650,12 +1710,14 @@ mod tests {
             true,
             "rev-1",
         );
-        LibraryScanCoordinator::new(
-            Arc::new(SqliteScanStore::scratch().expect("scan store opens")),
+        let (dir, store) = scratch_store();
+        let coordinator = LibraryScanCoordinator::new(
+            Arc::new(store),
             BlockingPool::new(2),
             Arc::new(NullTagReader::new()),
             Arc::new(StaticResolver::new(registry)),
-        )
+        );
+        (dir, coordinator)
     }
 
     fn request() -> ScanRequest {
@@ -1670,7 +1732,7 @@ mod tests {
 
     #[test]
     fn request_validations_match_v2() {
-        let coordinator = coordinator();
+        let (_dir, coordinator) = coordinator();
         assert!(coordinator.request_run(&request()).is_ok());
 
         let mut empty = request();
@@ -1697,12 +1759,13 @@ mod tests {
 
     #[test]
     fn history_cursor_pages() {
-        let coordinator = coordinator();
+        let (_dir, coordinator) = coordinator();
         let result = coordinator.request_run(&request()).expect("requested");
         let (run, _, _) = coordinator.store().get_run(&result.run_id).expect("run");
         coordinator
             .store()
             .transition(
+                &RunStop::never(),
                 &run.id,
                 run.state,
                 run.row_revision,

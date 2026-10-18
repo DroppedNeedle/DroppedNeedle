@@ -1,7 +1,7 @@
 //! Cover art over a scratch catalog: the scan's art sweep, the local-first
 //! order, and the disk cache in front of the Cover Art Archive.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use axum::{
@@ -69,7 +69,6 @@ impl CaaTransport for FakeArchive {
 struct Rig {
     runtime: DbRuntime,
     archive: FakeArchive,
-    db_path: PathBuf,
     /// Declared last so the database closes before the directory goes.
     dir: ScratchDir,
 }
@@ -110,7 +109,6 @@ async fn rig(seed_track: Option<&Path>) -> Rig {
     Rig {
         runtime,
         archive: FakeArchive::default(),
-        db_path,
         dir,
     }
 }
@@ -185,10 +183,10 @@ async fn embedded_art_from_the_scan_beats_the_archive_when_preferred() {
         .expect("fixture carries art");
     let rig = rig(Some(&track)).await;
 
-    let store = SqliteScanStore::open(&rig.db_path).unwrap();
-    let first = store.refresh_album_artwork(&|| false);
+    let store = SqliteScanStore::new(rig.runtime.db().clone());
+    let first = store.refresh_album_artwork(&|| false).unwrap();
     assert_eq!((first.checked, first.changed), (1, 1));
-    let again = store.refresh_album_artwork(&|| false);
+    let again = store.refresh_album_artwork(&|| false).unwrap();
     assert_eq!(again.checked, 0, "unchanged files are not read again");
 
     let uri = format!("/covers/release-group/{RG}?size=500");
@@ -234,29 +232,29 @@ async fn art_version(rig: &Rig) -> Option<i64> {
 async fn art_that_comes_back_gets_a_new_version() {
     let files = ScratchDir::new("reads-artwork-version");
     let rig = rig(Some(&files.join("01.flac"))).await;
-    let store = SqliteScanStore::open(&rig.db_path).unwrap();
+    let store = SqliteScanStore::new(rig.runtime.db().clone());
 
     std::fs::write(files.join("cover.png"), PNG_BYTES).unwrap();
     touch_dir(&files, 1_000);
-    assert!(store.refresh_album_artwork(&|| false).complete);
+    assert!(store.refresh_album_artwork(&|| false).unwrap().complete);
     assert_eq!(art_version(&rig).await, Some(1));
 
     std::fs::remove_file(files.join("cover.png")).unwrap();
     touch_dir(&files, 2_000);
-    store.refresh_album_artwork(&|| false);
+    store.refresh_album_artwork(&|| false).unwrap();
     assert_eq!(art_version(&rig).await, None, "removed art is cleared");
 
     let mut other = PNG_BYTES.to_vec();
     other.push(0);
     std::fs::write(files.join("Folder.PNG"), &other).unwrap();
     touch_dir(&files, 3_000);
-    store.refresh_album_artwork(&|| false);
+    store.refresh_album_artwork(&|| false).unwrap();
     assert_eq!(
         art_version(&rig).await,
         Some(2),
         "a cleared version is never reused"
     );
 
-    let stopped = store.refresh_album_artwork(&|| true);
+    let stopped = store.refresh_album_artwork(&|| true).unwrap();
     assert!(!stopped.complete, "a stop request ends the sweep early");
 }

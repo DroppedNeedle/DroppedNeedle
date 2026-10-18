@@ -39,7 +39,7 @@ use std::time::UNIX_EPOCH;
 use rusqlite::params;
 use sha2::{Digest as _, Sha256};
 
-use super::{SqliteScanStore, retry_on_busy};
+use super::{Lane, RunStop, ScanStoreError, SqliteScanStore};
 use droppedneedle_providers::coverart::sniff_image_content_type;
 
 /// Folder image names, most deliberate first, matched case-insensitively
@@ -111,21 +111,17 @@ impl SqliteScanStore {
     /// Record local album art for every album whose files changed since the
     /// last sweep. File reads happen outside the store lock; writes go in
     /// small transactions. `stop` is polled between albums so neither
-    /// shutdown nor a requested scan waits for a large first sweep.
-    pub fn refresh_album_artwork(&self, stop: &dyn Fn() -> bool) -> ArtworkSweep {
+    /// shutdown nor a requested scan waits for a large first sweep. A
+    /// catalog that cannot be read is an error; a batch that cannot be
+    /// written is logged and its albums are looked at again next sweep.
+    pub fn refresh_album_artwork(
+        &self,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<ArtworkSweep, ScanStoreError> {
         // The slice clock starts at the first album that needs reading, so
         // the signature pass over unchanged albums never uses it up.
         let mut started: Option<std::time::Instant> = None;
-        let snapshot = match self.artwork_snapshot() {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                tracing::warn!(%error, "album art sweep could not read the catalog; skipped");
-                return ArtworkSweep {
-                    complete: true,
-                    ..ArtworkSweep::default()
-                };
-            }
-        };
+        let snapshot = self.artwork_snapshot()?;
         let mut sweep = ArtworkSweep {
             complete: true,
             ..ArtworkSweep::default()
@@ -176,37 +172,13 @@ impl SqliteScanStore {
                 "album art sweep finished"
             );
         }
-        sweep
+        Ok(sweep)
     }
 
-    fn artwork_snapshot(&self) -> rusqlite::Result<Snapshot> {
-        let inner = self.lock();
-        let mut snapshot = Snapshot {
-            albums: album_tracks(&inner.conn)?,
-            ..Snapshot::default()
-        };
-        let mut current = inner.conn.prepare(
-            "SELECT local_album_id, source, source_locator, content_hash FROM local_album_artwork",
-        )?;
-        let mut rows = current.query([])?;
-        while let Some(row) = rows.next()? {
-            snapshot.current.insert(
-                row.get(0)?,
-                CurrentArt {
-                    source: row.get(1)?,
-                    locator: row.get(2)?,
-                    content_hash: row.get(3)?,
-                },
-            );
-        }
-        let mut checks = inner
-            .conn
-            .prepare("SELECT local_album_id, signature FROM local_album_artwork_checks")?;
-        let mut rows = checks.query([])?;
-        while let Some(row) = rows.next()? {
-            snapshot.checks.insert(row.get(0)?, row.get(1)?);
-        }
-        Ok(snapshot)
+    fn artwork_snapshot(&self) -> Result<Snapshot, ScanStoreError> {
+        self.read_long(&RunStop::never(), "scan_artwork_snapshot", |conn| {
+            Ok(artwork_snapshot(conn)?)
+        })
     }
 
     /// Write one batch of results and clear it. A failed batch is logged
@@ -225,9 +197,7 @@ impl SqliteScanStore {
             .duration_since(UNIX_EPOCH)
             .map(|elapsed| elapsed.as_secs_f64())
             .unwrap_or(0.0);
-        let mut inner = self.lock();
-        let written = retry_on_busy("album art", || {
-            let tx = inner.conn.transaction()?;
+        let written = self.write_once(Lane::Background, "scan_album_art", |tx| {
             let mut changed = 0;
             let mut cleared = 0;
             for checked in pending.iter() {
@@ -287,7 +257,6 @@ impl SqliteScanStore {
                     params![checked.album_id, checked.signature, now],
                 )?;
             }
-            tx.commit()?;
             Ok((changed, cleared))
         });
         match written {
@@ -481,4 +450,33 @@ fn hex(digest: &[u8]) -> String {
         let _ = write!(out, "{byte:02x}");
     }
     out
+}
+
+/// What the sweep reads up front, in one read.
+fn artwork_snapshot(conn: &rusqlite::Connection) -> rusqlite::Result<Snapshot> {
+    let mut snapshot = Snapshot {
+        albums: album_tracks(conn)?,
+        ..Snapshot::default()
+    };
+    let mut current = conn.prepare(
+        "SELECT local_album_id, source, source_locator, content_hash FROM local_album_artwork",
+    )?;
+    let mut rows = current.query([])?;
+    while let Some(row) = rows.next()? {
+        snapshot.current.insert(
+            row.get(0)?,
+            CurrentArt {
+                source: row.get(1)?,
+                locator: row.get(2)?,
+                content_hash: row.get(3)?,
+            },
+        );
+    }
+    let mut checks =
+        conn.prepare("SELECT local_album_id, signature FROM local_album_artwork_checks")?;
+    let mut rows = checks.query([])?;
+    while let Some(row) = rows.next()? {
+        snapshot.checks.insert(row.get(0)?, row.get(1)?);
+    }
+    Ok(snapshot)
 }

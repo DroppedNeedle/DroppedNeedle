@@ -6,7 +6,7 @@
 //! its cause goes to the log once, at the request boundary.
 
 use axum::http::StatusCode;
-use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use serde_json::json;
 
 use crate::operations::reasons::Reason;
@@ -22,6 +22,12 @@ pub enum LibraryError {
     InvalidInput { message: String },
     /// Valid input against the wrong state.
     Conflict { message: String },
+    /// The database was too busy to answer: the server-busy 503 with
+    /// `Retry-After`.
+    Busy {
+        /// What was busy, for the log only.
+        cause: String,
+    },
     /// Server fault.
     Internal {
         /// What went wrong, for the log only.
@@ -45,6 +51,7 @@ impl From<LibraryError> for ApiError {
             LibraryError::NotFound => ApiError::not_found(),
             LibraryError::InvalidInput { message } => ApiError::invalid_input(message),
             LibraryError::Conflict { message } => ApiError::conflict(message),
+            LibraryError::Busy { cause } => ApiError::unavailable(Unavailable::ServerBusy, cause),
             LibraryError::Internal { cause } => ApiError::internal(cause),
         }
     }
@@ -57,6 +64,7 @@ impl From<crate::service::ServiceError> for LibraryError {
             ServiceError::NotFound => Self::NotFound,
             ServiceError::InvalidInput { message } => Self::InvalidInput { message },
             ServiceError::Conflict { message } => Self::Conflict { message },
+            ServiceError::Busy { cause } => Self::Busy { cause },
             ServiceError::Internal { cause } => Self::internal(&cause),
         }
     }

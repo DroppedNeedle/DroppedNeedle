@@ -29,6 +29,7 @@ use super::artists::retire_artist;
 use crate::identify::artist_links::{CURRENT_PROOF, settle};
 use crate::operations::decisions::{ArtistAction, bump_catalog, record_artist_action};
 use crate::scan::sqlite_store::artists::{SENTINEL_ARTIST_IDS, proven_rows};
+use droppedneedle_kernel::db::savepoint;
 
 /// The reason the duplicate artists list explains an automatic merge by.
 const REASON: &str = "AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE";
@@ -104,8 +105,7 @@ fn settle_automatic(tx: &Transaction<'_>, ids: &[String], now: f64) -> rusqlite:
         return Ok(());
     }
     let wanted = serde_json::to_string(ids).unwrap_or_default();
-    tx.execute("SAVEPOINT artist_links", [])?;
-    let settled = (|| {
+    let settled = savepoint(tx, "artist_links", || {
         let rows: Vec<String> = tx
             .prepare_cached(
                 "SELECT local_artist_id FROM local_artist_external_identities \
@@ -115,16 +115,9 @@ fn settle_automatic(tx: &Transaction<'_>, ids: &[String], now: f64) -> rusqlite:
             .query_map(params![wanted], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         settle(tx, &rows, (now * 1000.0) as i64)
-    })();
-    match settled {
-        Ok(_) => {
-            tx.execute("RELEASE artist_links", [])?;
-        }
-        Err(error) => {
-            tx.execute("ROLLBACK TO artist_links", [])?;
-            tx.execute("RELEASE artist_links", [])?;
-            tracing::warn!(%error, "the app's artist links could not be settled; next scan tries again");
-        }
+    })?;
+    if let Err(error) = settled {
+        tracing::warn!(%error, "the app's artist links could not be settled; next scan tries again");
     }
     Ok(())
 }
@@ -181,10 +174,10 @@ pub(crate) fn converge_ids(tx: &Transaction<'_>, ids: &[String], now: f64) -> ru
             );
             continue;
         }
-        tx.execute("SAVEPOINT artist_convergence", [])?;
-        match merge_group(tx, &survivor.id, &retire, mbid, now) {
+        match savepoint(tx, "artist_convergence", || {
+            merge_group(tx, &survivor.id, &retire, mbid, now)
+        })? {
             Ok(()) => {
-                tx.execute("RELEASE artist_convergence", [])?;
                 merged += 1;
                 tracing::info!(
                     artist_mbid = mbid,
@@ -194,8 +187,6 @@ pub(crate) fn converge_ids(tx: &Transaction<'_>, ids: &[String], now: f64) -> ru
                 );
             }
             Err(error) => {
-                tx.execute("ROLLBACK TO artist_convergence", [])?;
-                tx.execute("RELEASE artist_convergence", [])?;
                 tracing::warn!(
                     %error,
                     artist_mbid = mbid,

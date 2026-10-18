@@ -61,8 +61,9 @@
 //! the online backup API, [`durable`] reads and writes the job registry's
 //! rows, [`analyze`] keeps the planner statistics fresh, [`fs`]
 //! enforces the local-filesystem rule, [`fold`] folds text for
-//! accent-insensitive search, `scope` records which write and read closures
-//! a thread is inside, [`datalock`] is the file lock the server holds and the offline
+//! accent-insensitive search, `savepoint` runs a part of a write that may
+//! fail alone, `scope` records which write and read closures a thread is
+//! inside, [`datalock`] is the file lock the server holds and the offline
 //! tool takes exclusively, `scratch` is the self-removing directory tests
 //! write under, [`statement`] declares the SQL every area keeps in its
 //! `sql.rs`, `sql` is this module's own, and [`error`] holds the typed
@@ -81,6 +82,7 @@ pub mod handle;
 #[cfg(test)]
 mod lane_tests;
 pub mod read_pool;
+mod savepoint;
 mod scope;
 #[cfg(any(test, feature = "test-support"))]
 pub mod scratch;
@@ -108,6 +110,7 @@ pub use fold::fold_text;
 pub use fs::{filesystem_is_local, reject_remote_filesystem, reject_symlink, same_filesystem};
 pub use handle::Db;
 pub use read_pool::{LONG_READERS, OldestRead, ReadActivity};
+pub use savepoint::savepoint;
 pub use scope::block_on;
 pub use writer::{
     BACKGROUND_CHUNK_ROWS, BACKGROUND_HARD_BUDGET, BACKGROUND_QUEUE_CAPACITY,

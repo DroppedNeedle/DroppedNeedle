@@ -30,6 +30,7 @@ use super::revision::{exact_stat_revision, mtime_ns_from_metadata};
 use super::roots::PolicyResolver;
 use super::seams::Checkpoint;
 use super::sqlite_store::SqliteScanStore;
+use super::stop::RunStop;
 use super::store::{ClassifyInput, ScanStoreError};
 
 /// Bounded discovery queue (v2 `INVENTORY_QUEUE_SIZE`).
@@ -377,15 +378,17 @@ impl InventoryScanner {
 
     fn record_failure(
         &self,
+        stop: &RunStop,
         run_id: &str,
         scope: &ScanScope,
         relative_path: String,
         failure_code: &str,
         failure_detail: String,
-    ) {
+    ) -> Result<(), ScanStoreError> {
         self.store.record_failures(
+            stop,
             run_id,
-            vec![ScanFailureRecord {
+            &[ScanFailureRecord {
                 root_id: scope.root_id.clone(),
                 relative_path,
                 failure_code: failure_code.to_owned(),
@@ -393,51 +396,30 @@ impl InventoryScanner {
                 failure_detail,
                 phase: ScanPhase::Discovering,
             }],
-        );
+        )
     }
 
+    /// End the run as failed. A run that moved meanwhile (a control or a
+    /// supersede landed first) is answered as it is now.
     fn fail_run(
         &self,
         run_id: &str,
         expected_state: ScanState,
         expected_revision: u64,
         code: &str,
-    ) -> ScanRun {
-        self.store
-            .transition(
-                run_id,
-                expected_state,
-                expected_revision,
-                ScanState::Failed,
-                (self.clock)(),
-                Some(code),
-            )
-            .unwrap_or_else(|_| {
-                self.store
-                    .get_run(run_id)
-                    .map(|(run, _, _)| run)
-                    .unwrap_or_else(|_| ScanRun {
-                        id: run_id.to_owned(),
-                        kind: super::models::ScanKind::Incremental,
-                        trigger: super::models::ScanTrigger::Manual,
-                        state: ScanState::Failed,
-                        phase: ScanPhase::Discovering,
-                        requested_by_user_id: None,
-                        aggregate_scope: "all".to_owned(),
-                        queued_at: 0.0,
-                        started_at: None,
-                        updated_at: (self.clock)(),
-                        terminal_at: Some((self.clock)()),
-                        resume_phase: None,
-                        requested_control: super::models::RequestedControl::None,
-                        terminal_code: Some(code.to_owned()),
-                        coalesced_request_count: 0,
-                        row_revision: expected_revision,
-                        event_revision: 0,
-                        counters: HashMap::new(),
-                        phase_timings: HashMap::new(),
-                    })
-            })
+    ) -> Result<ScanRun, ScanStoreError> {
+        match self.store.transition(
+            &RunStop::never(),
+            run_id,
+            expected_state,
+            expected_revision,
+            ScanState::Failed,
+            (self.clock)(),
+            Some(code),
+        ) {
+            Err(ScanStoreError::StaleRevision { .. }) => Ok(self.store.get_run(run_id)?.0),
+            other => other,
+        }
     }
 
     /// Probe one scope path on the pool with the walk deadline. Returns
@@ -504,26 +486,25 @@ impl InventoryScanner {
         root_paths: &HashMap<String, PathBuf>,
         resolver: &PolicyResolver,
         checkpoint: &C,
-    ) -> ScanRun {
+        stop: &RunStop,
+    ) -> Result<ScanRun, ScanStoreError> {
         // GH-296 skip-and-report: a scope whose root cannot be resolved or
         // probed is recorded while remaining scopes keep walking.
         // The run fails wholesale only when nothing was discoverable.
         let mut current = run.clone();
         let mut unavailable_scopes = 0usize;
         for scope in scopes {
-            if self
-                .store
-                .scope_discovery_state(&run.id, &scope.root_id, &scope.relative_path)
-                == ScopeDiscoveryState::Completed
+            if self.store.scope_discovery_state(
+                stop,
+                &run.id,
+                &scope.root_id,
+                &scope.relative_path,
+            )? == ScopeDiscoveryState::Completed
             {
                 continue;
             }
             if !checkpoint.check(&run.id, &scope.policy_revision) {
-                return self
-                    .store
-                    .get_run(&run.id)
-                    .map(|(run, _, _)| run)
-                    .unwrap_or(current);
+                return Ok(self.store.reread_run(stop, &run.id)?.0);
             }
             let root = root_paths
                 .get(&scope.root_id)
@@ -531,19 +512,21 @@ impl InventoryScanner {
                 .or_else(|| scope.root_path.as_ref().map(PathBuf::from));
             let Some(root) = root else {
                 self.record_failure(
+                    stop,
                     &run.id,
                     scope,
                     scope.relative_path.clone(),
                     failure_codes::ROOT_UNAVAILABLE,
                     "The library root has no configured path.".to_owned(),
-                );
+                )?;
                 self.store.complete_scope_discovery(
+                    stop,
                     &run.id,
                     &scope.root_id,
                     &scope.relative_path,
                     ScopeDiscoveryState::Unavailable,
                     Some(failure_codes::ROOT_UNAVAILABLE),
-                );
+                )?;
                 unavailable_scopes += 1;
                 continue;
             };
@@ -555,19 +538,21 @@ impl InventoryScanner {
             match self.probe_selected(&selected).await {
                 Err(ProbeOutcome::Unavailable) => {
                     self.record_failure(
+                        stop,
                         &run.id,
                         scope,
                         scope.relative_path.clone(),
                         failure_codes::PROBE_UNAVAILABLE,
                         "A previous root probe never completed; scanning is paused until the filesystem responds or the service restarts.".to_owned(),
-                    );
+                    )?;
                     self.store.complete_scope_discovery(
+                        stop,
                         &run.id,
                         &scope.root_id,
                         &scope.relative_path,
                         ScopeDiscoveryState::Unavailable,
                         Some(failure_codes::PROBE_UNAVAILABLE),
-                    );
+                    )?;
                     return self.fail_run(
                         &run.id,
                         current.state,
@@ -578,6 +563,7 @@ impl InventoryScanner {
                 Err(ProbeOutcome::Wedged) => {
                     tracing::warn!(run_id = %run.id, root_id = %scope.root_id, "library_scan event=walk_timeout");
                     self.record_failure(
+                        stop,
                         &run.id,
                         scope,
                         scope.relative_path.clone(),
@@ -586,14 +572,15 @@ impl InventoryScanner {
                             "The library root probe exceeded {:.1}s.",
                             self.walk_deadline.as_secs_f64()
                         ),
-                    );
+                    )?;
                     self.store.complete_scope_discovery(
+                        stop,
                         &run.id,
                         &scope.root_id,
                         &scope.relative_path,
                         ScopeDiscoveryState::Unavailable,
                         Some(failure_codes::WALK_TIMEOUT),
-                    );
+                    )?;
                     return self.fail_run(
                         &run.id,
                         current.state,
@@ -603,19 +590,21 @@ impl InventoryScanner {
                 }
                 Ok(false) => {
                     self.record_failure(
+                        stop,
                         &run.id,
                         scope,
                         scope.relative_path.clone(),
                         failure_codes::ROOT_UNAVAILABLE,
                         format!("The library root path is missing: {}", scope.relative_path),
-                    );
+                    )?;
                     self.store.complete_scope_discovery(
+                        stop,
                         &run.id,
                         &scope.root_id,
                         &scope.relative_path,
                         ScopeDiscoveryState::Unavailable,
                         Some(failure_codes::ROOT_UNAVAILABLE),
-                    );
+                    )?;
                     unavailable_scopes += 1;
                     continue;
                 }
@@ -625,37 +614,30 @@ impl InventoryScanner {
             let mut superseded_scope = false;
             let (completed, walk_failure_code) = loop {
                 let generation = self.store.scope_discovery_generation(
+                    stop,
                     &run.id,
                     &scope.root_id,
                     &scope.relative_path,
-                );
+                )?;
                 let filesystem_revision = self.fs.as_ref().map(|fs| fs.revision(&scope.root_id));
                 let (next, completed, code) = self
                     .walk_scope(
-                        &current, scope, &root, &selected, resolver, checkpoint, generation,
+                        &current, scope, &root, &selected, resolver, checkpoint, generation, stop,
                     )
-                    .await;
+                    .await?;
                 current = next;
                 // GH-444: a transient mid-walk stall must not fail the whole
                 // run. Re-walk boundedly (worst case 3 walks + 2 sleeps);
                 // only the exact WALK_TIMEOUT code retries.
                 if !completed && code.as_deref() == Some(failure_codes::WALK_TIMEOUT) {
-                    current = self
-                        .store
-                        .get_run(&run.id)
-                        .map(|(run, _, _)| run)
-                        .unwrap_or(current);
+                    current = self.store.reread_run(stop, &run.id)?.0;
                     if restarts < 2
                         && current.state == ScanState::Discovering
                         && checkpoint.check(&run.id, &scope.policy_revision)
                     {
                         restarts += 1;
                         tokio::time::sleep(self.walk_deadline).await;
-                        current = self
-                            .store
-                            .get_run(&run.id)
-                            .map(|(run, _, _)| run)
-                            .unwrap_or(current);
+                        current = self.store.reread_run(stop, &run.id)?.0;
                         if current.state != ScanState::Discovering
                             || !checkpoint.check(&run.id, &scope.policy_revision)
                         {
@@ -663,16 +645,13 @@ impl InventoryScanner {
                         }
                         tracing::warn!(run_id = %run.id, attempt = restarts, "library_scan event=walk_timeout_retry");
                         self.store.restart_scope_discovery(
+                            stop,
                             &run.id,
                             &scope.root_id,
                             &scope.relative_path,
-                        );
-                        current = self
-                            .store
-                            .get_run(&run.id)
-                            .map(|(run, _, _)| run)
-                            .unwrap_or(current);
-                        self.store.cleanup_stale_inventory(&run.id);
+                        )?;
+                        current = self.store.reread_run(stop, &run.id)?.0;
+                        self.store.cleanup_stale_inventory(stop, &run.id)?;
                         continue;
                     }
                 }
@@ -701,53 +680,52 @@ impl InventoryScanner {
                     break (true, code);
                 }
                 drop(_lease);
-                self.store
-                    .restart_scope_discovery(&run.id, &scope.root_id, &scope.relative_path);
-                current = self
-                    .store
-                    .get_run(&run.id)
-                    .map(|(run, _, _)| run)
-                    .unwrap_or(current);
-                self.store.cleanup_stale_inventory(&run.id);
+                self.store.restart_scope_discovery(
+                    stop,
+                    &run.id,
+                    &scope.root_id,
+                    &scope.relative_path,
+                )?;
+                current = self.store.reread_run(stop, &run.id)?.0;
+                self.store.cleanup_stale_inventory(stop, &run.id)?;
             };
             if !completed {
-                current = self
-                    .store
-                    .get_run(&run.id)
-                    .map(|(run, _, _)| run)
-                    .unwrap_or(current);
+                current = self.store.reread_run(stop, &run.id)?.0;
                 if current.state == ScanState::Discovering {
                     let code = walk_failure_code
                         .clone()
                         .unwrap_or_else(|| failure_codes::ROOT_PERMISSION_DENIED.to_owned());
-                    current = self.fail_run(&run.id, current.state, current.row_revision, &code);
+                    current = self.fail_run(&run.id, current.state, current.row_revision, &code)?;
                 }
-                return current;
+                return Ok(current);
             }
             if superseded_scope {
                 self.store.complete_scope_discovery(
+                    stop,
                     &run.id,
                     &scope.root_id,
                     &scope.relative_path,
                     ScopeDiscoveryState::PartiallyRead,
                     Some(failure_codes::WALK_SUPERSEDED),
-                );
+                )?;
             } else if let Some(code) = &walk_failure_code {
                 self.store.complete_scope_discovery(
+                    stop,
                     &run.id,
                     &scope.root_id,
                     &scope.relative_path,
                     ScopeDiscoveryState::PartiallyRead,
                     Some(code),
-                );
+                )?;
             } else {
                 self.store.complete_scope_discovery(
+                    stop,
                     &run.id,
                     &scope.root_id,
                     &scope.relative_path,
                     ScopeDiscoveryState::Completed,
                     None,
-                );
+                )?;
             }
         }
         if unavailable_scopes > 0 && unavailable_scopes == scopes.len() {
@@ -761,7 +739,7 @@ impl InventoryScanner {
                 failure_codes::ROOT_UNAVAILABLE,
             );
         }
-        current
+        Ok(current)
     }
 
     /// Walk one scope and persist its inventory (v2 `_walk_scope`).
@@ -775,7 +753,8 @@ impl InventoryScanner {
         resolver: &PolicyResolver,
         checkpoint: &C,
         generation: u64,
-    ) -> (ScanRun, bool, Option<String>) {
+        stop: &RunStop,
+    ) -> Result<(ScanRun, bool, Option<String>), ScanStoreError> {
         let (sender, mut receiver) = mpsc::channel::<WalkMessage>(INVENTORY_QUEUE_SIZE);
         let stopped = Arc::new(AtomicBool::new(false));
         let _stop_guard = StopGuard(Arc::clone(&stopped));
@@ -833,12 +812,13 @@ impl InventoryScanner {
                     completed = false;
                     walk_failure_code = Some(failure_codes::WALK_ERROR.to_owned());
                     self.record_failure(
+                        stop,
                         &run.id,
                         scope,
                         scope.relative_path.clone(),
                         failure_codes::WALK_ERROR,
                         "The directory walk stopped unexpectedly.".to_owned(),
-                    );
+                    )?;
                     break;
                 }
                 Err(_) => {
@@ -851,6 +831,7 @@ impl InventoryScanner {
                         let last = heartbeat.last_directory();
                         tracing::warn!(run_id = %run.id, "library_scan event=walk_timeout");
                         self.record_failure(
+                            stop,
                             &run.id,
                             scope,
                             if last.is_empty() {
@@ -863,7 +844,7 @@ impl InventoryScanner {
                                 "The directory walk made no delivered progress for {:.1}s.",
                                 self.walk_deadline.as_secs_f64()
                             ),
-                        );
+                        )?;
                         // The producer is wedged in a syscall; awaiting it
                         // would wedge the scan worker, so it is detached
                         // instead (never awaited either way). This
@@ -875,12 +856,13 @@ impl InventoryScanner {
                         {
                             walk_failure_code = Some(failure_codes::WALKER_UNAVAILABLE.to_owned());
                             self.record_failure(
+                                stop,
                                 &run.id,
                                 scope,
                                 scope.relative_path.clone(),
                                 failure_codes::WALKER_UNAVAILABLE,
                                 "Too many wedged directory walks are still in flight; the walk was not started.".to_owned(),
-                            );
+                            )?;
                         }
                         detached = true;
                         break;
@@ -900,7 +882,8 @@ impl InventoryScanner {
                 WalkMessage::Done => break,
                 // Recorded however the run ends.
                 WalkMessage::Mount(relative_path) => {
-                    self.store.record_mount(&scope.root_id, &relative_path);
+                    self.store
+                        .record_mount(stop, &scope.root_id, &relative_path)?;
                 }
                 _ if discard_remaining => continue,
                 WalkMessage::Skips(skips) => {
@@ -916,12 +899,13 @@ impl InventoryScanner {
                         }
                         .to_owned();
                         self.record_failure(
+                            stop,
                             &run.id,
                             scope,
                             relative_path,
                             &failure_code,
                             failure_detail,
-                        );
+                        )?;
                     }
                 }
                 WalkMessage::WalkError(error) => {
@@ -931,12 +915,13 @@ impl InventoryScanner {
                     }
                     tracing::warn!(run_id = %run.id, path = %relativize(&error.path, root), "library_scan event=walk_error");
                     self.record_failure(
+                        stop,
                         &run.id,
                         scope,
                         relativize(&error.path, root),
                         &error.code,
                         error.detail,
-                    );
+                    )?;
                 }
                 WalkMessage::File(file) => {
                     // An in-root alias resolves onto its target's
@@ -948,6 +933,7 @@ impl InventoryScanner {
                         // loser gets an inventory-phase failure row naming
                         // its own on-disk form, and the run stays green.
                         self.record_failure(
+                            stop,
                             &run.id,
                             scope,
                             text_safe_posix(
@@ -955,19 +941,20 @@ impl InventoryScanner {
                             ),
                             failure_codes::NFC_TWIN_COLLISION,
                             "Two on-disk names normalize to the same inventory key; the first file won and this twin was skipped.".to_owned(),
-                        );
+                        )?;
                         continue;
                     }
                     batch.push((file.resolved.clone(), file, key));
                     if batch.len() >= INVENTORY_BATCH_SIZE {
                         let (revision, persisted) = self.persist_batch(
+                            stop,
                             &run.id,
                             row_revision,
                             scope,
                             &batch,
                             resolver,
                             generation,
-                        );
+                        )?;
                         row_revision = revision;
                         // A skipped batch degrades the scope: its files are
                         // absent from inventory, so the scope must not read
@@ -980,7 +967,8 @@ impl InventoryScanner {
                         }
                         batch.clear();
                         if stale_cleanup_pending {
-                            stale_cleanup_pending = self.store.cleanup_stale_inventory(&run.id) > 0;
+                            self.store.cleanup_stale_inventory(stop, &run.id)?;
+                            stale_cleanup_pending = false;
                         }
                         if !checkpoint.check(&run.id, &scope.policy_revision) {
                             completed = false;
@@ -1009,14 +997,21 @@ impl InventoryScanner {
             }
         }
         if !batch.is_empty() && completed {
-            let (revision, persisted) =
-                self.persist_batch(&run.id, row_revision, scope, &batch, resolver, generation);
+            let (revision, persisted) = self.persist_batch(
+                stop,
+                &run.id,
+                row_revision,
+                scope,
+                &batch,
+                resolver,
+                generation,
+            )?;
             row_revision = revision;
             if !persisted && degraded_code.is_none() {
                 degraded_code = Some(failure_codes::WALK_ERROR.to_owned());
             }
             if stale_cleanup_pending {
-                self.store.cleanup_stale_inventory(&run.id);
+                self.store.cleanup_stale_inventory(stop, &run.id)?;
             }
         }
         if !detached && let Some(handle) = producer.take() {
@@ -1034,26 +1029,28 @@ impl InventoryScanner {
                 )
             };
             self.store.complete_scope_discovery(
+                stop,
                 &run.id,
                 &scope.root_id,
                 &scope.relative_path,
                 ScopeDiscoveryState::PartiallyRead,
                 scope_error.as_deref(),
-            );
+            )?;
         } else if let Some(code) = &degraded_code {
             // The walk finished, but some paths were unreadable.
             self.store.complete_scope_discovery(
+                stop,
                 &run.id,
                 &scope.root_id,
                 &scope.relative_path,
                 ScopeDiscoveryState::PartiallyRead,
                 Some(code),
-            );
+            )?;
         }
         if degraded_code.is_none() {
-            (current, completed, walk_failure_code)
+            Ok((current, completed, walk_failure_code))
         } else {
-            (current, completed, degraded_code)
+            Ok((current, completed, degraded_code))
         }
     }
 
@@ -1064,18 +1061,19 @@ impl InventoryScanner {
     #[allow(clippy::too_many_arguments)]
     fn persist_batch(
         &self,
+        stop: &RunStop,
         run_id: &str,
         row_revision: u64,
         scope: &ScanScope,
         batch: &[(PathBuf, DiscoveredFile, String)],
         resolver: &PolicyResolver,
         generation: u64,
-    ) -> (u64, bool) {
+    ) -> Result<(u64, bool), ScanStoreError> {
         // Items build on demand: the first attempt moves its batch, and
         // only the rare stale retry rebuilds (reclassifying is cheap
         // against the store's snapshot). Cloning every batch doubled
         // discovery's string churn for a path that never fires.
-        let build_items = || {
+        let build_items = || -> Result<Vec<ScanInventoryItem>, ScanStoreError> {
             let inputs: Vec<ClassifyInput> = batch
                 .iter()
                 .map(|(_, file, key)| {
@@ -1088,7 +1086,9 @@ impl InventoryScanner {
                     )
                 })
                 .collect();
-            let verdicts = self.store.classify(&scope.root_id, &inputs, Some(run_id));
+            let verdicts = self
+                .store
+                .classify(stop, &scope.root_id, &inputs, Some(run_id))?;
             let mut items = Vec::with_capacity(batch.len());
             for ((path, file, key), _) in batch.iter().zip(inputs.iter()) {
                 let policy = resolver.resolve(path).unwrap_or(scope.effective_policy);
@@ -1111,61 +1111,51 @@ impl InventoryScanner {
                     scope_relative_path: scope.relative_path.clone(),
                 });
             }
-            items
+            Ok(items)
         };
         // Single-worker stores never go stale here; retry once with a
         // fresh revision so a racing writer costs one retry instead of a
-        // failed run. A second stale is recorded and the batch
-        // is skipped: losing one page with a failure row beats failing
-        // the whole run. Any other store error (the SQLite store already
-        // retried its lock races) is recorded the same way: a
-        // skipped page must never vanish silently.
+        // failed run. A second stale is recorded and the batch is
+        // skipped: losing one page with a failure row beats failing the
+        // whole run. A row the store refuses costs that row only (the
+        // store stores the page row by row); any other store error ends
+        // the drive by the scan's failure rule.
         match self.store.add_inventory_batch(
+            stop,
             run_id,
-            build_items(),
+            build_items()?,
             row_revision,
             (self.clock)(),
             generation,
         ) {
-            Ok((revision, refused)) => (revision, refused == 0),
+            Ok((revision, refused)) => Ok((revision, refused == 0)),
             Err(ScanStoreError::StaleRevision { .. }) => {
-                let fresh = self
-                    .store
-                    .get_run(run_id)
-                    .map(|(run, _, _)| run.row_revision)
-                    .unwrap_or(row_revision);
+                let fresh = self.store.reread_run(stop, run_id)?.0.row_revision;
                 match self.store.add_inventory_batch(
+                    stop,
                     run_id,
-                    build_items(),
+                    build_items()?,
                     fresh,
                     (self.clock)(),
                     generation,
                 ) {
-                    Ok((revision, refused)) => (revision, refused == 0),
-                    Err(error) => {
+                    Ok((revision, refused)) => Ok((revision, refused == 0)),
+                    Err(error @ ScanStoreError::StaleRevision { .. }) => {
                         tracing::error!(%error, "scan inventory batch lost its retry");
                         self.record_failure(
+                            stop,
                             run_id,
                             scope,
                             scope.relative_path.clone(),
                             failure_codes::WALK_ERROR,
                             format!("The inventory page failed to persist: {error}"),
-                        );
-                        (fresh, false)
+                        )?;
+                        Ok((fresh, false))
                     }
+                    Err(error) => Err(error),
                 }
             }
-            Err(error) => {
-                tracing::error!(%error, "scan inventory batch failed");
-                self.record_failure(
-                    run_id,
-                    scope,
-                    scope.relative_path.clone(),
-                    failure_codes::WALK_ERROR,
-                    format!("The inventory page failed to persist: {error}"),
-                );
-                (row_revision, false)
-            }
+            Err(error) => Err(error),
         }
     }
 }

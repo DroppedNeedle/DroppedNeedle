@@ -22,6 +22,9 @@ pub enum ServiceError {
     InvalidInput { message: String },
     /// Valid input against the wrong state; the message is safe to show.
     Conflict { message: String },
+    /// The database was too busy to answer in time, or is shutting down.
+    /// Answered as the server-busy 503; the cause goes to the log.
+    Busy { cause: String },
     /// A store or I/O fault. The cause goes to the log, never the caller.
     Internal { cause: String },
 }
@@ -40,7 +43,7 @@ impl std::fmt::Display for ServiceError {
         match self {
             Self::NotFound => write!(f, "not found"),
             Self::InvalidInput { message } | Self::Conflict { message } => write!(f, "{message}"),
-            Self::Internal { cause } => write!(f, "{cause}"),
+            Self::Busy { cause } | Self::Internal { cause } => write!(f, "{cause}"),
         }
     }
 }
@@ -157,16 +160,23 @@ impl LibrarySetup {
         &self,
         run_id: &str,
     ) -> Result<(ScanRun, Vec<ScanScope>, Vec<ScanInventoryItem>), ServiceError> {
+        use super::scan::store::ScanStoreError;
         let (run, scopes, _) = self
             .coordinator
             .snapshot(run_id)
             .map_err(|error| match error {
-                super::scan::store::ScanStoreError::NotFound { .. } => ServiceError::NotFound,
+                ScanStoreError::NotFound { .. } => ServiceError::NotFound,
+                busy @ (ScanStoreError::Busy { .. } | ScanStoreError::LaneClosed) => {
+                    super::scans::store_error(busy)
+                }
                 other => ServiceError::Conflict {
                     message: other.to_string(),
                 },
             })?;
-        let files = self.scan_store.inventory_for_run(run_id, RUN_DETAIL_FILES);
+        let files = self
+            .scan_store
+            .inventory_for_run(run_id, RUN_DETAIL_FILES)
+            .map_err(super::scans::store_error)?;
         Ok((run, scopes, files))
     }
 

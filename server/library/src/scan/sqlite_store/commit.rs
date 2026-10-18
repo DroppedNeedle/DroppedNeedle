@@ -51,6 +51,7 @@ use crate::scan::naming::{
     album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
 };
 use crate::scan::store::{IndexWindow, WindowOutcome};
+use droppedneedle_kernel::db::savepoint;
 
 /// The catalog's "Unknown Artist" sentinel (seeded by the baseline).
 pub(super) const UNKNOWN_ARTIST_ID: &str = "00000000-0000-4000-8000-000000000002";
@@ -1395,8 +1396,7 @@ fn follow_regrouped(
         pair.leave_apart(tx, RetagPairReason::ChosenMatchesDiffer, None)?;
         return Ok(None);
     }
-    tx.execute("SAVEPOINT follow_album", [])?;
-    let followed = (|| {
+    let followed = savepoint(tx, "follow_album", || {
         tx.execute(
             "UPDATE local_albums SET (root_id, grouping_key, title, title_folded, \
              album_artist_name, album_artist_name_folded, tag_album_title, \
@@ -1449,15 +1449,10 @@ fn follow_regrouped(
         )?;
         tx.execute("DELETE FROM local_albums WHERE id = ?1", params![target])?;
         stamp_if_retagged_by_hand(tx, album_id, album_id, now)
-    })();
+    })?;
     match followed {
-        Ok(_) => {
-            tx.execute("RELEASE follow_album", [])?;
-            Ok(Some(target.clone()))
-        }
+        Ok(_) => Ok(Some(target.clone())),
         Err(error) => {
-            tx.execute("ROLLBACK TO follow_album", [])?;
-            tx.execute("RELEASE follow_album", [])?;
             let reason = if foreign_key_refused(&error) {
                 RetagPairReason::WorkOnNewRow
             } else {
@@ -1646,8 +1641,7 @@ fn drop_if_empty(tx: &Connection, album_id: &str) -> rusqlite::Result<()> {
     if kept {
         return Ok(());
     }
-    tx.execute("SAVEPOINT drop_album", [])?;
-    let dropped = (|| {
+    let dropped = savepoint(tx, "drop_album", || {
         tx.execute(
             "DELETE FROM local_album_artists WHERE local_album_id = ?1",
             params![album_id],
@@ -1657,15 +1651,11 @@ fn drop_if_empty(tx: &Connection, album_id: &str) -> rusqlite::Result<()> {
             params![album_id],
         )?;
         tx.execute("DELETE FROM local_albums WHERE id = ?1", params![album_id])
-    })();
-    match dropped {
-        Ok(_) => tx.execute("RELEASE drop_album", []).map(|_| ()),
-        Err(error) => {
-            tracing::debug!(%error, album_id, "emptied album still referenced; kept");
-            tx.execute("ROLLBACK TO drop_album", [])?;
-            tx.execute("RELEASE drop_album", []).map(|_| ())
-        }
+    })?;
+    if let Err(error) = dropped {
+        tracing::debug!(%error, album_id, "emptied album still referenced; kept");
     }
+    Ok(())
 }
 
 /// An album that received tracks in this run from an album a track still
@@ -1731,8 +1721,44 @@ fn released_by(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Resul
     .collect()
 }
 
-/// What a run settles in the transaction that marks it ended, however it
-/// ended, while its move rows are still there. In order:
+/// One pass of what a run settles once it has ended: its name, which is
+/// also its lane turns' name, and the work.
+pub(super) struct EndPass {
+    pub(super) name: &'static str,
+    pub(super) work: EndWork,
+}
+
+/// How a pass's work is cut into lane turns. Each takes the run and the
+/// time it ended.
+pub(super) enum EndWork {
+    /// One turn, answering how many albums it offered for identification.
+    Whole(fn(&rusqlite::Transaction<'_>, &str, f64) -> rusqlite::Result<i64>),
+    /// One album the run moved tracks off at a time, a chunk of albums a
+    /// turn, then `tidy` in a turn of its own. Each album is a complete
+    /// change and safe to run twice, so a stop resumes by running the pass
+    /// again.
+    ByAlbum {
+        each: fn(&Connection, &str, &str, f64) -> rusqlite::Result<()>,
+        tidy: fn(&Connection, &str, f64) -> rusqlite::Result<()>,
+    },
+}
+
+/// Albums the run moved tracks off that are still live.
+pub(super) fn albums_left(conn: &Connection, run_id: &str) -> rusqlite::Result<Vec<String>> {
+    conn.prepare_cached(
+        "SELECT DISTINCT m.previous_album_id FROM library_scan_album_moves m \
+         JOIN local_albums a ON a.id = m.previous_album_id \
+         WHERE m.run_id = ?1 AND a.retired_into_album_id IS NULL ORDER BY 1",
+    )?
+    .query_map(params![run_id], |row| row.get(0))?
+    .collect()
+}
+
+/// What a run settles once it has ended, however it ended, while its move
+/// and inventory rows are still there. Each pass is its own write after
+/// the run's state has changed, so a slow or failing pass never keeps the
+/// run from ending; `SqliteScanStore::settle_ended_runs` runs them. In
+/// order:
 ///
 /// 1. albums retagged across scans ([`join_across_scans`]);
 /// 2. the half of an album retagged in a first sitting takes the old
@@ -1741,7 +1767,7 @@ fn released_by(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Resul
 /// 3. albums whose files were replaced by another album's on the same
 ///    edition are joined to it ([`join_replaced`]);
 /// 4. the tracks that left an album are kept on record past the run
-///    ([`keep_departures`]);
+///    ([`keep_departures_of`], [`tidy_departures`]);
 /// 5. files filed onto an album with an edition are placed on its tracks
 ///    by their own ids ([`place_scanned`]);
 /// 6. missing tracks continue into the tracks that took their place
@@ -1753,29 +1779,62 @@ fn released_by(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Resul
 /// 9. the albums the run held back are offered ([`offer_held_back`]);
 /// 10. the folders the mass-missing guard held back are recorded, and
 ///     those the run walked as expected are let go ([`held_scopes::settle`]).
-pub(super) fn settle_ended_run(
-    tx: &rusqlite::Transaction<'_>,
-    run_id: &str,
-    now: f64,
-) -> rusqlite::Result<()> {
-    let mut enqueued = join_across_scans(tx, run_id, now)?;
-    carry_to_first_half(tx, run_id, now)?;
-    join_replaced(tx, Scope::Library, now)?;
-    keep_departures(tx, run_id, now)?;
-    place_scanned(tx, now)?;
-    continue_tracks(tx, Scope::Library, now)?;
-    converge_artists(tx, now)?;
-    hold_replacements(tx, run_id, now)?;
-    enqueued += offer_held_back(tx, run_id, now)?;
-    held_scopes::settle(tx, run_id, now)?;
-    if enqueued > 0
-        && let Some(column) = counter_column(counter_names::IDENTIFICATION_ENQUEUED)
-    {
-        tx.execute(
-            &format!("UPDATE library_scan_runs SET {column} = {column} + ?1 WHERE id = ?2"),
-            params![enqueued, run_id],
-        )?;
-    }
+pub(super) const END_PASSES: [EndPass; 10] = [
+    EndPass {
+        name: "scan_end_join_across_scans",
+        work: EndWork::Whole(join_across_scans),
+    },
+    EndPass {
+        name: "scan_end_carry_to_first_half",
+        work: EndWork::Whole(|tx, run_id, now| carry_to_first_half(tx, run_id, now).map(|()| 0)),
+    },
+    EndPass {
+        name: "scan_end_join_replaced",
+        work: EndWork::Whole(|tx, _, now| join_replaced(tx, Scope::Library, now).map(|()| 0)),
+    },
+    EndPass {
+        name: "scan_end_keep_departures",
+        work: EndWork::ByAlbum {
+            each: keep_departures_of,
+            tidy: tidy_departures,
+        },
+    },
+    EndPass {
+        name: "scan_end_place_scanned",
+        work: EndWork::Whole(|tx, _, now| place_scanned(tx, now).map(|()| 0)),
+    },
+    EndPass {
+        name: "scan_end_continue_tracks",
+        work: EndWork::Whole(|tx, _, now| continue_tracks(tx, Scope::Library, now).map(|()| 0)),
+    },
+    EndPass {
+        name: "scan_end_converge_artists",
+        work: EndWork::Whole(|tx, _, now| converge_artists(tx, now).map(|()| 0)),
+    },
+    EndPass {
+        name: "scan_end_hold_replacements",
+        work: EndWork::Whole(|tx, run_id, now| hold_replacements(tx, run_id, now).map(|()| 0)),
+    },
+    EndPass {
+        name: "scan_end_offer_held_back",
+        work: EndWork::Whole(|tx, run_id, now| offer_held_back(tx, run_id, now)),
+    },
+    EndPass {
+        name: "scan_end_held_scopes",
+        work: EndWork::Whole(|tx, run_id, now| held_scopes::settle(tx, run_id, now).map(|()| 0)),
+    },
+];
+
+/// Mark a run that just ended as owing its end passes, starting with the
+/// first. Written in the same transaction as the run's terminal state.
+pub(super) fn owe_end_passes(tx: &Connection, run_id: &str, now: f64) -> rusqlite::Result<()> {
+    tx.prepare_cached(crate::scan::sql::OWE_END_PASSES.text())?
+        .execute(params![
+            run_id,
+            END_PASSES[0].name,
+            failure_codes::RUN_END_PENDING,
+            now
+        ])?;
     Ok(())
 }
 
@@ -2222,18 +2281,7 @@ fn carry_in_savepoint(
     new: &str,
     now: f64,
 ) -> rusqlite::Result<Option<rusqlite::Error>> {
-    tx.execute("SAVEPOINT first_half", [])?;
-    match carry_one(tx, old, new, now) {
-        Ok(()) => {
-            tx.execute("RELEASE first_half", [])?;
-            Ok(None)
-        }
-        Err(error) => {
-            tx.execute("ROLLBACK TO first_half", [])?;
-            tx.execute("RELEASE first_half", [])?;
-            Ok(Some(error))
-        }
-    }
+    Ok(savepoint(tx, "first_half", || carry_one(tx, old, new, now))?.err())
 }
 
 /// Give `new` what [`carry_to_first_half`] says, with one audit action for
@@ -2279,39 +2327,39 @@ fn carry_one(
     Ok(())
 }
 
-/// Keep on record, past the run, each track this run moved off an album
-/// that is still there, when it sits on a piece of that album
-/// ([`pieces`]); a row already on record keeps the time it left. Whether
-/// the row a track arrived on is a piece can only be told now: a track
-/// that went into an album with tracks of its own has changed albums and
-/// never counts for the album it left again, and once it moves on, the
-/// next scan can no longer see that it did. Every row of a track this run
-/// moved takes this run as the time it arrived where it is. Then, in one
-/// statement, drop the rows whose track is back on the album it left, and
-/// those of an album merged into another.
-fn keep_departures(tx: &Connection, run_id: &str, now: f64) -> rusqlite::Result<()> {
-    let left: Vec<String> = tx
-        .prepare_cached(
-            "SELECT DISTINCT m.previous_album_id FROM library_scan_album_moves m \
-             JOIN local_albums a ON a.id = m.previous_album_id \
-             WHERE m.run_id = ?1 AND a.retired_into_album_id IS NULL ORDER BY 1",
-        )?
-        .query_map(params![run_id], |row| row.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    for album_id in &left {
-        for track in pieces(tx, run_id, album_id, now)?.values().flatten() {
-            if track.this_run {
-                tx.prepare_cached(
-                    "INSERT OR IGNORE INTO library_album_departures (local_track_id, \
-                     previous_album_id, departed_at, arrived_at) SELECT ?2, ?3, \
-                     CAST(COALESCE(started_at, ?4) * 1000 AS INTEGER), \
-                     CAST(COALESCE(started_at, ?4) * 1000 AS INTEGER) \
-                     FROM library_scan_runs WHERE id = ?1",
-                )?
-                .execute(params![run_id, track.track_id, album_id, now])?;
-            }
+/// Keep on record, past the run, each track this run moved off
+/// `album_id` (an album still there, [`albums_left`]), when it sits on a
+/// piece of that album ([`pieces`]); a row already on record keeps the
+/// time it left. Whether the row a track arrived on is a piece can only be
+/// told now: a track that went into an album with tracks of its own has
+/// changed albums and never counts for the album it left again, and once
+/// it moves on, the next scan can no longer see that it did.
+fn keep_departures_of(
+    tx: &Connection,
+    run_id: &str,
+    album_id: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    for track in pieces(tx, run_id, album_id, now)?.values().flatten() {
+        if track.this_run {
+            tx.prepare_cached(
+                "INSERT OR IGNORE INTO library_album_departures (local_track_id, \
+                 previous_album_id, departed_at, arrived_at) SELECT ?2, ?3, \
+                 CAST(COALESCE(started_at, ?4) * 1000 AS INTEGER), \
+                 CAST(COALESCE(started_at, ?4) * 1000 AS INTEGER) \
+                 FROM library_scan_runs WHERE id = ?1",
+            )?
+            .execute(params![run_id, track.track_id, album_id, now])?;
         }
     }
+    Ok(())
+}
+
+/// After [`keep_departures_of`] for every album: every row of a track this
+/// run moved takes this run as the time it arrived where it is. Then, in
+/// one statement, drop the rows whose track is back on the album it left,
+/// and those of an album merged into another.
+fn tidy_departures(tx: &Connection, run_id: &str, now: f64) -> rusqlite::Result<()> {
     tx.prepare_cached(
         "UPDATE library_album_departures SET arrived_at = ( \
            SELECT CAST(COALESCE(started_at, ?2) * 1000 AS INTEGER) FROM library_scan_runs \
@@ -2401,7 +2449,10 @@ fn mark_window(
         window.through.1
     ])?;
     let mut summed: HashMap<&'static str, i64> = HashMap::new();
-    for (name, delta) in window.counters.iter().chain(extra_counters) {
+    let window_counters = window.counters.iter().map(|(_, name, delta)| (name, delta));
+    for (name, delta) in
+        window_counters.chain(extra_counters.iter().map(|(name, delta)| (name, delta)))
+    {
         if let Some(column) = counter_column(name) {
             *summed.entry(column).or_insert(0) += delta;
         }
@@ -2523,18 +2574,9 @@ fn write_window(
     let mut new_copies: BTreeMap<String, Vec<NewCopy>> = BTreeMap::new();
     for item in &window.items {
         let written = if isolate {
-            tx.execute("SAVEPOINT item", [])?;
-            match write_item(tx, Some(&window.run_id), item, None) {
-                Ok(written) => {
-                    tx.execute("RELEASE item", [])?;
-                    Ok(written)
-                }
-                Err(error) => {
-                    tx.execute("ROLLBACK TO item", [])?;
-                    tx.execute("RELEASE item", [])?;
-                    Err(error)
-                }
-            }
+            savepoint(tx, "item", || {
+                write_item(tx, Some(&window.run_id), item, None)
+            })?
         } else {
             write_item(tx, Some(&window.run_id), item, None)
         };
@@ -2634,6 +2676,21 @@ fn write_window(
         counter_names::IDENTIFICATION_ENQUEUED,
         outcome.enqueued as i64,
     ));
+    // Every file the catalog did not take is on the run's failure list
+    // with the window that gave it up, so a stop cannot lose the row.
+    outcome.failed.extend(window.refused.iter().cloned());
+    let mut record = tx.prepare_cached(crate::scan::sql::RECORD_FAILURE.text())?;
+    for (root, path, error) in &outcome.failed {
+        record.execute(params![
+            window.run_id,
+            root,
+            path,
+            failure_codes::CATALOG_COMMIT_FAILED,
+            format!("The catalog could not store this file: {error}"),
+            phase_to_str(ScanPhase::Indexing),
+            window.now,
+        ])?;
+    }
     changed.sort();
     changed.dedup();
     for album_id in &changed {
@@ -2643,32 +2700,112 @@ fn write_window(
     Ok(outcome)
 }
 
-/// Commit one window: all rows in one transaction, or, when that fails
-/// on a row, row by row so one bad file costs that file only.
+/// Commit one window: all rows in one bulk turn, or, when that fails on
+/// a row, row by row so one bad file costs that file only. A turn the
+/// database was too busy for is tried again until the run is asked to
+/// stop.
 pub(super) fn commit_window(
-    conn: &mut Connection,
+    db: &Db,
+    stop: &RunStop,
     window: &IndexWindow,
-) -> rusqlite::Result<WindowOutcome> {
-    let whole = retry_on_busy("commit_window", || {
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let outcome = write_window(&tx, window, false)?;
-        tx.commit()?;
-        Ok(outcome)
-    });
-    match whole {
-        Ok(outcome) => Ok(outcome),
-        Err(error) if is_transient(&error) => Err(error),
-        Err(error) => {
-            tracing::warn!(%error, "index window failed whole; committing row by row");
-            retry_on_busy("commit_window_rows", || {
-                let tx =
-                    conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-                let outcome = write_window(&tx, window, true)?;
-                tx.commit()?;
-                Ok(outcome)
+) -> Result<WindowOutcome, ScanStoreError> {
+    let write = |isolate: bool, name: &'static str| {
+        retry_busy(stop, name, || {
+            db.write_blocking(Lane::Bulk, name, |tx| {
+                Ok::<_, ScanStoreError>(write_window(tx, window, isolate)?)
             })
+        })
+    };
+    match write(false, "scan_index_window") {
+        Err(ScanStoreError::Internal { message }) => {
+            tracing::warn!(
+                error = message,
+                "index window failed whole; committing row by row"
+            );
+            write(true, "scan_index_window_rows")
         }
+        other => other,
     }
+}
+
+/// The two halves of a window, split by path: each carries only its own
+/// rows, their items, failed marks and counters, and its own range. `None`
+/// for a window of one row.
+pub(super) fn split_window(window: &IndexWindow) -> Option<(IndexWindow, IndexWindow)> {
+    let mut rows: Vec<&(String, String)> = window.counters.iter().map(|(row, _, _)| row).collect();
+    rows.sort_unstable();
+    rows.dedup();
+    if rows.len() < 2 {
+        return None;
+    }
+    let middle = rows[rows.len() / 2 - 1].clone();
+    let first_half = |root: &String, path: &String| (root, path) <= (&middle.0, &middle.1);
+    let half = |first: bool| IndexWindow {
+        run_id: window.run_id.clone(),
+        after: if first {
+            window.after.clone()
+        } else {
+            Some(middle.clone())
+        },
+        through: if first {
+            middle.clone()
+        } else {
+            window.through.clone()
+        },
+        items: window
+            .items
+            .iter()
+            .filter(|item| first_half(&item.root_id, &item.relative_path) == first)
+            .cloned()
+            .collect(),
+        failed: window
+            .failed
+            .iter()
+            .filter(|(root, path, _)| first_half(root, path) == first)
+            .cloned()
+            .collect(),
+        refused: window
+            .refused
+            .iter()
+            .filter(|(root, path, _)| first_half(root, path) == first)
+            .cloned()
+            .collect(),
+        counters: window
+            .counters
+            .iter()
+            .filter(|((root, path), _, _)| first_half(root, path) == first)
+            .cloned()
+            .collect(),
+        now: window.now,
+    };
+    Some((half(true), half(false)))
+}
+
+/// A window of one file whose catalog write ran out of time, given up:
+/// it writes no catalog row, marks the file's inventory row failed and
+/// moves its counts from indexed to errored, as a refused row does.
+/// `None` when the window holds no file to give up.
+pub(super) fn give_up_window(window: &IndexWindow) -> Option<IndexWindow> {
+    let item = window.items.first()?;
+    let row = (item.root_id.clone(), item.relative_path.clone());
+    let mut given_up = IndexWindow {
+        items: Vec::new(),
+        ..window.clone()
+    };
+    given_up
+        .failed
+        .push((row.0.clone(), row.1.clone(), "failed"));
+    given_up.refused.push((
+        row.0.clone(),
+        row.1.clone(),
+        "the catalog write ran past its time budget".to_owned(),
+    ));
+    given_up.counters.extend([
+        (row.clone(), counter_names::INDEXED, -1),
+        (row.clone(), item.verdict_counter, -1),
+        (row, counter_names::ERRORED, 1),
+    ]);
+    Some(given_up)
 }
 
 /// Where a scan would file a stored track if no manual grouping held it,

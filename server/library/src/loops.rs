@@ -340,9 +340,19 @@ pub(crate) async fn scan_loop(setup: LibrarySetup, mut shutdown: watch::Receiver
                         || wakeups.revision("scan") != revision
                         || (polls.get() % 32 == 0 && !coordinator.current().is_empty())
                 };
+                // A catalog that cannot be read is logged and leaves the
+                // sweep due, so a later pass runs it again.
                 let artwork = sweep_setup.scan_store.refresh_album_artwork(&stop);
                 let lyrics = sweep_setup.scan_store.refresh_track_lyrics(&stop);
-                artwork.complete && lyrics.complete
+                match (artwork, lyrics) {
+                    (Ok(artwork), Ok(lyrics)) => artwork.complete && lyrics.complete,
+                    (artwork, lyrics) => {
+                        for error in [artwork.err(), lyrics.err()].into_iter().flatten() {
+                            tracing::warn!(%error, "library sweep could not read the catalog");
+                        }
+                        false
+                    }
+                }
             })
             .await;
             // A panicked sweep (already logged) waits for the next scan.

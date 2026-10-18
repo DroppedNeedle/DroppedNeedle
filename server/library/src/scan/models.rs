@@ -256,6 +256,9 @@ pub mod failure_codes {
     pub const MASS_MISSING_GUARD: &str = "MASS_MISSING_GUARD";
     /// The catalog refused one file's rows; the file is skipped this run.
     pub const CATALOG_COMMIT_FAILED: &str = "CATALOG_COMMIT_FAILED";
+    /// Internal: the run has ended and still owes the end passes named by
+    /// the row's path. Never listed among the run's failures.
+    pub const RUN_END_PENDING: &str = "RUN_END_PENDING";
 }
 
 /// Counter names shared by the coordinator and the store.

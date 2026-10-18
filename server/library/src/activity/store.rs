@@ -1,13 +1,15 @@
 //! SQL for the activity read model and the identification pause switch.
 //!
 //! Everything here reads or writes the application database through a
-//! borrowed connection. The pause switch is the `library_work_control`
+//! borrowed connection: a pooled read, or the pause switch's foreground
+//! write. The pause switch is the `library_work_control`
 //! row v2 used; the queue counts read the identification jobs and
 //! reviews tables; the change revisions read the library event streams.
 
 use std::collections::BTreeMap;
 
-use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
+use droppedneedle_kernel::db::DbError;
+use rusqlite::{Connection, OptionalExtension as _, params};
 
 /// Deferred jobs the activity card lists by name (v2 limit).
 const DEFERRED_JOB_LIMIT: i64 = 20;
@@ -30,13 +32,28 @@ pub struct IdentificationControl {
 pub enum ControlError {
     /// The switch moved since the caller read it.
     Stale,
-    /// The database refused the change.
-    Store(rusqlite::Error),
+    /// The database refused the change, was busy, or is closing.
+    Store(DbError),
+}
+
+impl From<DbError> for ControlError {
+    fn from(error: DbError) -> Self {
+        Self::Store(error)
+    }
 }
 
 impl From<rusqlite::Error> for ControlError {
     fn from(error: rusqlite::Error) -> Self {
-        Self::Store(error)
+        Self::Store(error.into())
+    }
+}
+
+impl std::fmt::Display for ControlError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stale => f.write_str("the identification switch moved"),
+            Self::Store(error) => write!(f, "{error}"),
+        }
     }
 }
 
@@ -133,15 +150,15 @@ pub fn identification_control(conn: &Connection) -> rusqlite::Result<Identificat
 
 /// Pause or resume identification (v2 `pause_identification_queue` and
 /// `resume_identification_queue`). With `expected` set, the switch must
-/// still be at that revision. Returns the new revision.
+/// still be at that revision. Returns the new revision. Runs inside the
+/// caller's write.
 pub fn set_identification_paused(
-    conn: &mut Connection,
+    tx: &Connection,
     paused: bool,
     requested_by_user_id: Option<&str>,
     now: f64,
     expected: Option<u64>,
 ) -> Result<u64, ControlError> {
-    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     tx.execute(
         "INSERT OR IGNORE INTO library_work_control (queue_kind, state) \
          VALUES ('identification', 'running')",
@@ -178,7 +195,6 @@ pub fn set_identification_paused(
          WHERE stream_kind = 'identification'",
         [],
     )?;
-    tx.commit()?;
     Ok(revision.max(0) as u64)
 }
 

@@ -325,7 +325,7 @@ pub async fn current_scan_runs(
     State(state): State<LibrarySetup>,
     _caller: Admin,
 ) -> Result<Json<ScanRunCurrentResponse>, ApiError> {
-    let (active, queued) = blocking(move || state.current_scan_runs()).await?;
+    let (active, queued) = blocking(move || state.current_scan_runs()).await??;
     Ok(Json(ScanRunCurrentResponse {
         active: active.as_ref().map(run_view),
         queued: queued.as_ref().map(run_view),

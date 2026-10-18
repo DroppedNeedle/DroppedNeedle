@@ -11,15 +11,20 @@ use super::*;
 impl SqliteScanStore {
     /// Remember that `relative_path` (an inventory key, never `.`) is a
     /// mount in the root. Kept for good.
-    pub fn record_mount(&self, root_id: &str, relative_path: &str) {
-        let guard = self.lock();
-        if let Err(error) = guard.conn.execute(
-            "INSERT INTO library_scan_mounts (root_id, relative_path) VALUES (?1, ?2) \
-             ON CONFLICT (root_id, relative_path) DO NOTHING",
-            params![root_id, relative_path],
-        ) {
-            tracing::error!(%error, "scan record_mount failed");
-        }
+    pub fn record_mount(
+        &self,
+        stop: &RunStop,
+        root_id: &str,
+        relative_path: &str,
+    ) -> Result<(), ScanStoreError> {
+        self.write(stop, Lane::Background, "scan_record_mount", |tx| {
+            tx.execute(
+                "INSERT INTO library_scan_mounts (root_id, relative_path) VALUES (?1, ?2) \
+                 ON CONFLICT (root_id, relative_path) DO NOTHING",
+                params![root_id, relative_path],
+            )?;
+            Ok(())
+        })
     }
 
     /// The remembered mounts of the root at or under `scope_relative_path`
@@ -27,11 +32,11 @@ impl SqliteScanStore {
     /// the run's current inventory, with their indexed track counts.
     pub fn empty_mounts(
         &self,
+        stop: &RunStop,
         run_id: &str,
         root_id: &str,
         scope_relative_path: &str,
     ) -> Result<Vec<(String, usize)>, ScanStoreError> {
-        let guard = self.lock();
         let sql = format!(
             "SELECT relative_path, indexed FROM (SELECT m.relative_path, \
                (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = m.root_id \
@@ -50,16 +55,18 @@ impl SqliteScanStore {
              WHERE indexed > 0 ORDER BY relative_path",
             super::held_scopes::covers("?2", "m.relative_path"),
         );
-        let mut stmt = guard.conn.prepare(&sql).map_err(internal)?;
-        stmt.query_map(params![root_id, scope_relative_path, run_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })
-        .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-        .map(|rows| {
-            rows.into_iter()
-                .map(|(path, indexed)| (path, indexed.max(0) as usize))
-                .collect()
-        })
-        .map_err(internal)
+        let rows = self.read_long(stop, "scan_empty_mounts", |conn| {
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map(params![root_id, scope_relative_path, run_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })?;
+        Ok(rows
+            .into_iter()
+            .map(|(path, indexed)| (path, indexed.max(0) as usize))
+            .collect())
     }
 }

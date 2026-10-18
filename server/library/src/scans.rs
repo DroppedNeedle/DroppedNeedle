@@ -38,13 +38,21 @@ pub struct ControlledRun {
     pub stream_revision: u64,
 }
 
-fn store_error(error: ScanStoreError) -> ServiceError {
+pub(crate) fn store_error(error: ScanStoreError) -> ServiceError {
     match error {
         ScanStoreError::NotFound { .. } => ServiceError::NotFound,
         ScanStoreError::StaleRevision { message } | ScanStoreError::InvalidControl { message } => {
             ServiceError::Conflict { message }
         }
-        ScanStoreError::Internal { message } => ServiceError::Internal { cause: message },
+        ScanStoreError::Busy { .. } | ScanStoreError::LaneClosed => ServiceError::Busy {
+            cause: error.to_string(),
+        },
+        ScanStoreError::TxTimeout { .. }
+        | ScanStoreError::ReadCancelled { .. }
+        | ScanStoreError::Stopped
+        | ScanStoreError::Internal { .. } => ServiceError::Internal {
+            cause: error.to_string(),
+        },
     }
 }
 
@@ -153,14 +161,14 @@ impl LibrarySetup {
     }
 
     /// The run holding the worker and the next queued one. Blocking.
-    pub fn current_scan_runs(&self) -> (Option<ScanRun>, Option<ScanRun>) {
-        let runs = self.coordinator.current();
+    pub fn current_scan_runs(&self) -> Result<(Option<ScanRun>, Option<ScanRun>), ServiceError> {
+        let runs = self.coordinator.current_runs().map_err(store_error)?;
         let active = runs
             .iter()
             .find(|run| run.state != ScanState::Queued)
             .cloned();
         let queued = runs.into_iter().find(|run| run.state == ScanState::Queued);
-        (active, queued)
+        Ok((active, queued))
     }
 
     /// One page of finished runs, newest first, and the cursor for the

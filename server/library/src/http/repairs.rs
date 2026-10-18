@@ -11,7 +11,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::db::DbError;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -877,10 +878,22 @@ pub async fn scan_diagnostics(
     Path(run_id): Path<String>,
 ) -> Result<Response, ApiError> {
     let store = state.scan_store.clone();
-    let (filename, bytes) = blocking(move || {
-        store.with_connection(|conn| crate::repairs::diagnostics::export(conn, &run_id))
+    // One pooled read; a database too busy to hand out a connection
+    // answers the server-busy 503.
+    let exported = tokio::task::spawn_blocking(move || {
+        store.db().read_blocking("scan_diagnostics", |conn| {
+            Ok::<_, DbError>(crate::repairs::diagnostics::export(conn, &run_id))
+        })
     })
-    .await?;
+    .await
+    .map_err(ApiError::internal)?;
+    let (filename, bytes) = match exported {
+        Ok(report) => report.map_err(ApiError::from)?,
+        Err(error @ (DbError::Busy { .. } | DbError::LaneClosed)) => {
+            return Err(ApiError::unavailable(Unavailable::ServerBusy, error));
+        }
+        Err(error) => return Err(ApiError::internal(error)),
+    };
     let disposition = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
         .unwrap_or_else(|_| HeaderValue::from_static("attachment"));
     Ok((

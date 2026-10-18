@@ -30,6 +30,7 @@ use droppedneedle_library::wiring::LibrarySetup;
 use futures_util::future::BoxFuture;
 
 use crate::common::auth::{AuthRig, test_principal, with_test_principal};
+use crate::common::library::TestSql as _;
 use crate::common::library::library_at;
 
 const GOOD_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000001";
@@ -1253,7 +1254,8 @@ impl JoinRig {
     fn sql(&self, sql: &str) {
         self.library
             .scan_store
-            .execute_batch_for_tests(sql)
+            .db()
+            .run_sql(sql)
             .expect("test sql runs");
     }
 
@@ -1321,6 +1323,7 @@ impl JoinRig {
         self.library
             .scan_store
             .track_at("music", rel)
+            .unwrap()
             .expect("track indexed")
     }
 
@@ -1328,6 +1331,7 @@ impl JoinRig {
         self.library
             .scan_store
             .album_for_track(track)
+            .unwrap()
             .expect("track has an album")
     }
 

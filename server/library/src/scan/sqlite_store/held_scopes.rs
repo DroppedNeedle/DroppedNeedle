@@ -46,6 +46,7 @@ use crate::corrections::retag_merge::album_has_record;
 use crate::identify::sqlite::{match_chosen, release_chosen};
 use crate::management::automatic;
 use crate::management::takeover::{self, Cause};
+use droppedneedle_kernel::db::savepoint;
 
 /// Whether the folder at the SQL expression `ancestor` covers the path at
 /// `descendant`: `.` covers everything, otherwise the path itself or
@@ -190,14 +191,11 @@ pub(super) fn settle(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::
 /// replaced several albums. Nothing is joined, marked missing or written,
 /// and no hold is lifted here.
 fn mark_replacements(tx: &Transaction<'_>, run_id: &str, now: f64) -> rusqlite::Result<bool> {
-    tx.execute_batch("SAVEPOINT mark_replacements")?;
-    match judge(tx, run_id, now).and_then(|()| remember(tx, run_id, now)) {
-        Ok(()) => {
-            tx.execute_batch("RELEASE mark_replacements")?;
-            Ok(true)
-        }
+    match savepoint(tx, "mark_replacements", || {
+        judge(tx, run_id, now).and_then(|()| remember(tx, run_id, now))
+    })? {
+        Ok(()) => Ok(true),
         Err(error) => {
-            tx.execute_batch("ROLLBACK TO mark_replacements; RELEASE mark_replacements")?;
             tracing::warn!(
                 %error,
                 run_id,
