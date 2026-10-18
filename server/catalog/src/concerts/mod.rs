@@ -23,6 +23,7 @@ pub mod matching;
 pub mod models;
 pub mod service;
 pub mod sources;
+pub(crate) mod sql;
 pub mod store;
 pub mod sweep;
 

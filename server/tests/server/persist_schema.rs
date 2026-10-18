@@ -3527,7 +3527,10 @@ type StatementFiles = fn() -> Vec<StatementFile>;
 
 /// Every crate that holds a `sql.rs`, by its folder under `server/` (`.`
 /// for the server crate), with the function that lists its files.
-const REGISTRIES: &[(&str, StatementFiles)] = &[("kernel", droppedneedle_kernel::statement_files)];
+const REGISTRIES: &[(&str, StatementFiles)] = &[
+    ("kernel", droppedneedle_kernel::statement_files),
+    ("catalog", droppedneedle_catalog::statement_files),
+];
 
 /// The crate name of a folder under `server/`.
 fn crate_of(folder: &str) -> String {

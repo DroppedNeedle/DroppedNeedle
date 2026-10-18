@@ -3,7 +3,6 @@
 # its statements into sql.rs deletes its line.
 acquire/src/
 auth/src/
-catalog/src/concerts/
 catalog/src/reads/
 compat/src/
 kernel/src/events/
