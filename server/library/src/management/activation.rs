@@ -14,7 +14,7 @@ use super::service::{JobSpec, Management, stale};
 use super::store;
 use crate::clock::now_unix;
 use crate::management::settings::service::{ActivationProofPins, LibraryManagementService};
-use crate::management::settings::{StructuralCompiler, settings_revision};
+use crate::management::settings::settings_revision;
 use crate::publish::snapshots::sha256_hex;
 use crate::settings_models::LibraryManagementSettingsResponse;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
@@ -71,12 +71,7 @@ impl Management {
             .management_settings
             .get()
             .cloned()
-            .unwrap_or_else(|| {
-                Arc::new(LibraryManagementService::new(
-                    self.setup.config.clone(),
-                    Arc::new(StructuralCompiler),
-                ))
-            })
+            .unwrap_or_else(|| Arc::new(LibraryManagementService::new(self.setup.config.clone())))
     }
 
     /// Start a dry run of one folder under proposed settings. Blocking.

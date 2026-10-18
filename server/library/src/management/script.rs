@@ -8,8 +8,8 @@
 //! fixed set of safe functions. Evaluation is bounded (steps, value
 //! sizes, total output) so a script can never run away.
 //!
-//! The language matches the one the settings pages validate, so a script
-//! that saves also renders.
+//! This is the only implementation of the language: settings validation
+//! compiles scripts here too, so a script that saves also compiles.
 
 use std::collections::BTreeMap;
 
@@ -145,7 +145,11 @@ struct Positioned {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Literal(Value),
-    Variable(String),
+    Variable {
+        name: String,
+        line: usize,
+        column: usize,
+    },
     List(Vec<Expr>, usize, usize),
     Call {
         name: String,
@@ -342,7 +346,11 @@ impl Parser {
                     _ => {}
                 }
                 if self.current().token != Token::Open {
-                    return Ok(Expr::Variable(name));
+                    return Ok(Expr::Variable {
+                        name,
+                        line: token.line,
+                        column: token.column,
+                    });
                 }
                 self.at += 1;
                 let args = self.arguments(&Token::Close, depth)?;
@@ -403,6 +411,26 @@ impl Parser {
             }
             self.at += 1;
         }
+    }
+}
+
+impl Expr {
+    /// Every variable the expression reads, with where it is written.
+    pub fn variables(&self) -> Vec<(&str, usize, usize)> {
+        let mut found = Vec::new();
+        let mut pending = vec![self];
+        while let Some(expr) = pending.pop() {
+            match expr {
+                Self::Literal(_) => {}
+                Self::Variable { name, line, column } => {
+                    found.push((name.as_str(), *line, *column));
+                }
+                Self::List(items, ..) | Self::Call { args: items, .. } => {
+                    pending.extend(items.iter().rev());
+                }
+            }
+        }
+        found
     }
 }
 
@@ -667,7 +695,7 @@ pub fn evaluate(
             budget.step(1, 1)?;
             budget.account(value.clone(), 1, 1)
         }
-        Expr::Variable(name) => {
+        Expr::Variable { name, .. } => {
             budget.step(1, 1)?;
             budget.account(variables.get(name).cloned().unwrap_or_default(), 1, 1)
         }
@@ -700,7 +728,9 @@ pub fn evaluate(
 // Naming templates.
 // ---------------------------------------------------------------------------
 
-enum Segment {
+/// One part of a compiled naming script.
+#[derive(Debug, Clone)]
+pub enum Segment {
     Literal(String),
     Variable {
         name: String,
@@ -711,7 +741,8 @@ enum Segment {
     Expression(Expr),
 }
 
-fn compile_naming(source: &str) -> Result<Vec<Segment>, ScriptFault> {
+/// Parse a naming script into its parts.
+pub fn compile_naming(source: &str) -> Result<Vec<Segment>, ScriptFault> {
     if source.chars().count() > MAX_SOURCE_CHARACTERS {
         return fault("Naming script source is too long.", 1, 1);
     }
@@ -785,8 +816,13 @@ fn compile_naming(source: &str) -> Result<Vec<Segment>, ScriptFault> {
     Ok(segments)
 }
 
-/// Format an integer with a Python-style spec: `d`, `3d`, `02d`.
-fn format_number(value: i64, spec: &str) -> Option<String> {
+/// Widest numeric format a naming script may ask for. `format!` panics on
+/// a width past `u16::MAX`, and no file name needs more than this.
+const MAX_NUMBER_WIDTH: usize = 64;
+
+/// Format an integer with a Python-style spec: `d`, `3d`, `02d`. `None`
+/// when the spec is malformed or wider than [`MAX_NUMBER_WIDTH`].
+pub(crate) fn format_number(value: i64, spec: &str) -> Option<String> {
     let digits = spec.strip_suffix('d').unwrap_or(spec);
     let (zero, width) = match digits.strip_prefix('0') {
         Some(rest) if !rest.is_empty() => (true, rest),
@@ -797,9 +833,16 @@ fn format_number(value: i64, spec: &str) -> Option<String> {
     } else {
         width.parse().ok()?
     };
+    if width > MAX_NUMBER_WIDTH {
+        return None;
+    }
     Some(if zero {
         if value < 0 {
-            format!("-{:0>width$}", -value, width = width.saturating_sub(1))
+            format!(
+                "-{:0>width$}",
+                value.unsigned_abs(),
+                width = width.saturating_sub(1)
+            )
         } else {
             format!("{value:0>width$}")
         }
@@ -1008,10 +1051,18 @@ pub fn render_path(
 /// One tagging statement.
 #[derive(Debug, Clone)]
 pub enum Statement {
-    Set(String, Expr),
-    Append(String, Expr),
-    Delete(String),
+    Set(Target, Expr),
+    Append(Target, Expr),
+    Delete(Target),
     If(Expr, Vec<Statement>, Vec<Statement>),
+}
+
+/// The field a statement writes, and where the statement starts.
+#[derive(Debug, Clone)]
+pub struct Target {
+    pub name: String,
+    pub line: usize,
+    pub column: usize,
 }
 
 fn valid_target(target: &str) -> bool {
@@ -1074,7 +1125,11 @@ fn parse_block(
             if !valid_target(target) {
                 return fault("Delete target is invalid.", line, column);
             }
-            statements.push(Statement::Delete(target.to_owned()));
+            statements.push(Statement::Delete(Target {
+                name: target.to_owned(),
+                line,
+                column,
+            }));
             at += 1;
             continue;
         }
@@ -1102,10 +1157,15 @@ fn parse_block(
         }
         let expr_column = raw.find('=').map_or(column, |index| index + 2);
         let expr = compile_expression(source.trim(), line, expr_column)?;
+        let target = Target {
+            name: target.to_owned(),
+            line,
+            column,
+        };
         statements.push(if append {
-            Statement::Append(target.to_owned(), expr)
+            Statement::Append(target, expr)
         } else {
-            Statement::Set(target.to_owned(), expr)
+            Statement::Set(target, expr)
         });
         at += 1;
     }
@@ -1157,12 +1217,13 @@ pub fn run_tagging(
                 };
                 run_tagging(branch, fields, protected, refresh, budget)?;
             }
-            Statement::Delete(target) => {
+            Statement::Delete(Target { name: target, .. }) => {
                 if !protected.contains(target) && !target.starts_with("custom.") {
                     fields.insert(target.clone(), Vec::new());
                 }
             }
-            Statement::Set(target, expr) | Statement::Append(target, expr) => {
+            Statement::Set(Target { name: target, .. }, expr)
+            | Statement::Append(Target { name: target, .. }, expr) => {
                 let value = evaluate(expr, &variables, budget)?;
                 if protected.contains(target) || target.starts_with("custom.") {
                     continue;

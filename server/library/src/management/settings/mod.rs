@@ -9,10 +9,11 @@
 //! keep working. Golden vectors minted from v2 pin this in the settings
 //! tests.
 //!
-//! Script validation rides behind the [`ScriptCompiler`] port: the
-//! shipped structural compiler checks the documented rules (naming
-//! shape, known variables/targets, append gates); the full expression
-//! compiler is library-engine follow-up work behind the same port.
+//! Scripts are validated by compiling them with `management::script`, the
+//! compiler management runs them with, then checking the settings rules
+//! (path shape, known variables and targets, append gates) over the
+//! result. Imports compile every script and saves compile new and edited
+//! ones; a stored script the compiler refuses is kept and fails per item.
 
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
@@ -55,10 +56,6 @@ pub use presets::{
 pub use revision::{
     naming_policy_revision, naming_script_revision, profile_revision, settings_revision,
     tagging_script_revision,
-};
-pub use script::{
-    ExprVariable, NamingSegment, ScriptCompiler, ScriptError, StructuralCompiler, TaggingStatement,
-    naming_variables,
 };
 
 /// A caller fault with a v2 message (400).

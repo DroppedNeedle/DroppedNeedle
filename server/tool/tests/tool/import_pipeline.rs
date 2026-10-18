@@ -1089,7 +1089,7 @@ async fn v2_management_fields_carry_over_as_they_were() {
     use droppedneedle_kernel::runtime_config::sections::FieldMode;
     use droppedneedle_library::management::settings::service::LibraryManagementService;
     use droppedneedle_library::management::settings::{
-        PICARD_ORGANIZER_PROFILE_ID, StructuralCompiler, initial_settings,
+        PICARD_ORGANIZER_PROFILE_ID, initial_settings,
     };
     use std::sync::Arc;
 
@@ -1138,7 +1138,7 @@ async fn v2_management_fields_carry_over_as_they_were() {
     );
 
     let store = Arc::new(ConfigStore::open(&config_path, test_crypto()).unwrap());
-    let service = LibraryManagementService::new(store, Arc::new(StructuralCompiler));
+    let service = LibraryManagementService::new(store);
     let settings = service.get_settings().expect("the section reads").settings;
     let picard = settings
         .profiles
@@ -1185,8 +1185,7 @@ async fn v2_profile_that_ticked_other_gets_the_role_fields() {
     use droppedneedle_kernel::runtime_config::sections::FieldMode;
     use droppedneedle_library::management::settings::service::LibraryManagementService;
     use droppedneedle_library::management::settings::{
-        COMPLETE_LIBRARY_ORGANIZER_PROFILE_ID, PICARD_ORGANIZER_PROFILE_ID, StructuralCompiler,
-        initial_settings,
+        COMPLETE_LIBRARY_ORGANIZER_PROFILE_ID, PICARD_ORGANIZER_PROFILE_ID, initial_settings,
     };
     use std::sync::Arc;
 
@@ -1225,7 +1224,7 @@ async fn v2_profile_that_ticked_other_gets_the_role_fields() {
     assert_eq!(report.exit.code, ExitCode::Ok, "{}", report.to_json());
 
     let store = Arc::new(ConfigStore::open(&config_path, test_crypto()).unwrap());
-    let service = LibraryManagementService::new(store, Arc::new(StructuralCompiler));
+    let service = LibraryManagementService::new(store);
     let settings = service.get_settings().expect("the section reads").settings;
     let state = |profile_id: &str, field: &str| {
         let profile = settings

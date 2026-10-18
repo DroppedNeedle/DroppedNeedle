@@ -19,7 +19,6 @@ use uuid::Uuid;
 
 use super::invalid;
 use super::normalize::normalize;
-use super::script::ScriptCompiler;
 use droppedneedle_kernel::runtime_config::sections::{
     ArtistStandardization, ArtworkProvider, FieldMode, LibraryManagement, LibraryManagementProfile,
     Mp3ApePolicy, NamingScript, RawAacTagPolicy, ReplayGainMode, SourceCleanupMode, TaggingScript,
@@ -838,7 +837,6 @@ pub fn materialize_profile_bundle(
     profile_id: &str,
     naming_ids: &BTreeMap<String, String>,
     tagging_ids: &BTreeMap<String, String>,
-    compiler: &dyn ScriptCompiler,
 ) -> Result<MaterializedProfileBundle, SettingsError> {
     let value = materialized_profile_value(parsed, profile_id, naming_ids, tagging_ids)?;
     let profile: LibraryManagementProfile = serde_json::from_value(value)
@@ -911,7 +909,7 @@ pub fn materialize_profile_bundle(
         .first()
         .map(|profile| profile.id.clone())
         .unwrap_or_default();
-    normalize(&mut detached, compiler)?;
+    normalize(&mut detached)?;
     let mut materialized = detached.profiles.into_iter();
     Ok(MaterializedProfileBundle {
         profile: materialized
@@ -940,7 +938,6 @@ fn uuid_v5(namespace: &Uuid, name: &[u8]) -> String {
 /// same bundle twice shows the same shape.
 pub fn preview_materialized_profile(
     parsed: &ParsedProfileBundle,
-    compiler: &dyn ScriptCompiler,
 ) -> Result<MaterializedProfileBundle, SettingsError> {
     let namespace = Uuid::parse_str(PROFILE_PREVIEW_NAMESPACE).unwrap_or(Uuid::NAMESPACE_URL);
     let stable_id = |kind: &str, key: &str| {
@@ -966,7 +963,6 @@ pub fn preview_materialized_profile(
         &stable_id("profile", "profile"),
         &naming_ids,
         &tagging_ids,
-        compiler,
     )
 }
 
@@ -999,7 +995,6 @@ pub fn unique_import_name(base: &str, used_names: &BTreeSet<String>) -> String {
 pub fn resolve_import_names(
     materialized: &MaterializedProfileBundle,
     settings: &LibraryManagement,
-    compiler: &dyn ScriptCompiler,
 ) -> Result<MaterializedProfileBundle, SettingsError> {
     let mut renamed = materialized.clone();
     let used_profiles: BTreeSet<String> = settings
@@ -1037,7 +1032,7 @@ pub fn resolve_import_names(
         .first()
         .map(|profile| profile.id.clone())
         .unwrap_or_default();
-    normalize(&mut detached, compiler)?;
+    normalize(&mut detached)?;
     let mut profiles = detached.profiles.into_iter();
     Ok(MaterializedProfileBundle {
         profile: profiles

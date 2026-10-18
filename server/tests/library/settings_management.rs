@@ -12,7 +12,7 @@ use droppedneedle_kernel::runtime_config::sections::{
     LibraryManagement, LibraryManagementProfile, NamingScript, TaggingScript,
 };
 use droppedneedle_library::management::settings::{
-    StructuralCompiler, export_profile_bundle, materialize_profile_bundle, parse_profile_bundle,
+    export_profile_bundle, materialize_profile_bundle, parse_profile_bundle,
     preview_materialized_profile, profile_aspects, profile_import_warnings, resolve_import_names,
 };
 
@@ -121,12 +121,10 @@ fn v2_share_code_parses_with_same_hash() {
 
 #[test]
 fn preview_is_deterministic_and_names_aspects_and_warnings() {
-    let compiler = StructuralCompiler;
     let parsed = parse_profile_bundle(&fixture("management_bundle_golden.document.txt"))
         .expect("golden parses");
-    let first = preview_materialized_profile(&parsed, &compiler).expect("preview materializes");
-    let second =
-        preview_materialized_profile(&parsed, &compiler).expect("preview materializes again");
+    let first = preview_materialized_profile(&parsed).expect("preview materializes");
+    let second = preview_materialized_profile(&parsed).expect("preview materializes again");
     // Deterministic preview ids, byte-equal to v2's UUIDv5 values.
     assert_eq!(first.profile.id, "7bc82f44-e135-5c2f-879e-9c407d49248f");
     assert_eq!(first.profile.id, second.profile.id);
@@ -166,10 +164,9 @@ fn preview_is_deterministic_and_names_aspects_and_warnings() {
 
 #[test]
 fn import_renames_collisions_and_resolves() {
-    let compiler = StructuralCompiler;
     let parsed = parse_profile_bundle(&fixture("management_bundle_golden.document.txt"))
         .expect("golden parses");
-    let preview = preview_materialized_profile(&parsed, &compiler).expect("preview materializes");
+    let preview = preview_materialized_profile(&parsed).expect("preview materializes");
     let mut settings = LibraryManagement::default();
     settings.profiles.push(preview.profile.clone());
     settings
@@ -178,7 +175,7 @@ fn import_renames_collisions_and_resolves() {
     settings
         .tagging_scripts
         .extend(preview.tagging_scripts.clone());
-    let resolved = resolve_import_names(&preview, &settings, &compiler).expect("names resolve");
+    let resolved = resolve_import_names(&preview, &settings).expect("names resolve");
     assert_eq!(resolved.profile.name, "Golden Export (imported)");
     assert_eq!(resolved.naming_scripts[0].name, "Standard (imported)");
     assert_eq!(resolved.tagging_scripts[0].name, "Tag (imported)");
@@ -219,7 +216,6 @@ fn bad_bundles_are_refused() {
 
 #[test]
 fn materialize_refuses_legacy_settings() {
-    let compiler = StructuralCompiler;
     let parsed = parse_profile_bundle(&fixture("management_bundle_golden.document.txt"))
         .expect("golden parses");
     // A PortablePayload with a Preserve field trips the legacy refusal
@@ -236,7 +232,7 @@ fn materialize_refuses_legacy_settings() {
             .into_iter()
             .collect();
     let profile_id = uuid::Uuid::new_v4().to_string();
-    let error = materialize_profile_bundle(&legacy, &profile_id, &naming, &tagging, &compiler)
+    let error = materialize_profile_bundle(&legacy, &profile_id, &naming, &tagging)
         .expect_err("legacy Preserve refused");
     assert!(format!("{error:?}").contains("Legacy Preserve"));
 }
@@ -276,7 +272,7 @@ fn stored_unknown_field_is_dropped_on_read() {
         ConfigStore::open(&path, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("store opens"),
     );
-    let service = LibraryManagementService::new(store, Arc::new(StructuralCompiler));
+    let service = LibraryManagementService::new(store);
     let read = service.get_settings().expect("the section reads");
     assert!(
         !std::fs::read_to_string(&path)
@@ -294,6 +290,95 @@ fn stored_unknown_field_is_dropped_on_read() {
         .flat_map(|profile| &profile.metadata.fields)
         .any(|field| field.field == "album_mood");
     assert!(!has_unknown);
+}
+
+/// Scripts are checked by the compiler management runs them with. A
+/// stored script it refuses neither fails the read nor blocks a save that
+/// leaves it untouched; a new or edited script it refuses is refused with
+/// its line and column, without breaking later saves; a tagging script
+/// using `else:` saves.
+#[test]
+fn scripts_validate_with_the_running_compiler() {
+    use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
+    use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+    use droppedneedle_library::management::settings::initial_settings;
+    use droppedneedle_library::management::settings::service::LibraryManagementService;
+    use std::sync::Arc;
+
+    let naming = |id: &str, name: &str, source: &str| -> NamingScript {
+        serde_json::from_value(serde_json::json!({"id": id, "name": name, "source": source}))
+            .expect("script")
+    };
+    let mut management = initial_settings("");
+    management.naming_scripts.push(naming(
+        "66666666-6666-4666-8666-666666666666",
+        "Shouting",
+        "{albumartist}/{shout(title)}",
+    ));
+    let dir = common::ScratchDir::new("management-script-compile");
+    let path = dir.join("config.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({ "library_management": management }).to_string(),
+    )
+    .expect("config writes");
+    let store = Arc::new(
+        ConfigStore::open(&path, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("store opens"),
+    );
+    let service = LibraryManagementService::new(store);
+
+    let read = service
+        .get_settings()
+        .expect("a stored bad script still reads");
+    let mut proposed = read.settings;
+    proposed.tagging_scripts.push(
+        serde_json::from_value(serde_json::json!({
+            "id": "77777777-7777-4777-8777-777777777777",
+            "name": "Branches",
+            "source": "if is_empty(genre):\n  set genre = \"Unknown\"\nelse:\n  set genre = upper(genre)\nend"
+        }))
+        .expect("script"),
+    );
+    let saved = service
+        .save_settings(proposed, &read.settings_revision)
+        .expect("else: saves beside an untouched refused script");
+
+    let refused = |settings: LibraryManagement| {
+        let error = service
+            .save_settings(settings, &saved.settings_revision)
+            .expect_err("the script is refused");
+        let SettingsError::InvalidInput { message } = error else {
+            panic!("expected a caller fault, got {error:?}");
+        };
+        message
+    };
+    let mut edited = saved.settings.clone();
+    if let Some(script) = edited
+        .naming_scripts
+        .iter_mut()
+        .find(|script| script.name == "Shouting")
+    {
+        script.source = "{albumartist}/{album}/{shout(title)}".to_owned();
+    }
+    assert_eq!(
+        refused(edited),
+        "Shouting line 1, column 24: Unknown function: shout."
+    );
+    let mut wide = saved.settings.clone();
+    wide.naming_scripts.push(naming(
+        "88888888-8888-4888-8888-888888888888",
+        "Wide",
+        "{track:070000d}",
+    ));
+    assert_eq!(
+        refused(wide),
+        "Wide line 1, column 1: Numeric format 070000d is not valid."
+    );
+
+    service
+        .save_settings(saved.settings.clone(), &saved.settings_revision)
+        .expect("a later save still works");
 }
 
 /// One admin creates a profile, exports it, previews the share code, and
@@ -440,9 +525,7 @@ mod fields {
     use droppedneedle_library::management::enrich::{AlbumExtras, LyricsAnswer};
     use droppedneedle_library::management::planner::Overrides;
     use droppedneedle_library::management::profile::{self, CompiledScripts, FileInput};
-    use droppedneedle_library::management::settings::{
-        self as lm, PICARD_ORGANIZER_PROFILE_ID, StructuralCompiler,
-    };
+    use droppedneedle_library::management::settings::{self as lm, PICARD_ORGANIZER_PROFILE_ID};
     use droppedneedle_library::matching::model::{
         RELATIONS_VERSION, RecordingRelations, ReleaseMedium, ReleaseRelations, RoleCredit,
     };
@@ -701,7 +784,7 @@ mod fields {
         for field in &mut settings.profiles[0].metadata.fields {
             field.clear_when_canonical_missing |= field.field == "comment";
         }
-        lm::normalize(&mut settings, &StructuralCompiler).expect("valid");
+        lm::normalize(&mut settings).expect("valid");
         let mut expected = modes(&lm::initial_settings(""));
         for name in [
             "title_sort",
@@ -740,7 +823,7 @@ mod fields {
             ],
             &[],
         );
-        lm::normalize(&mut settings, &StructuralCompiler).expect("valid");
+        lm::normalize(&mut settings).expect("valid");
         assert_eq!(
             modes(&settings).get("album_artist"),
             Some(&(FieldMode::Replace, false))
@@ -754,7 +837,7 @@ mod fields {
     #[test]
     fn a_preserved_parent_keeps_what_it_covered() {
         let mut settings = stored_v4(&["artist", "year"]);
-        lm::normalize(&mut settings, &StructuralCompiler).expect("valid");
+        lm::normalize(&mut settings).expect("valid");
         let desired = plan(&settings);
         assert_eq!(desired["artist_sort"], vec!["Old Sort".to_owned()]);
         assert_eq!(desired["original_date"], vec!["1980".to_owned()]);
@@ -770,7 +853,7 @@ mod fields {
         for profile in &mut settings.profiles {
             profile.metadata.preserve_fields.clone_from(&named);
         }
-        lm::normalize(&mut settings, &StructuralCompiler).expect("valid");
+        lm::normalize(&mut settings).expect("valid");
         for profile in &settings.profiles {
             assert_eq!(profile.metadata.preserve_fields, named, "{}", profile.name);
         }
@@ -786,7 +869,7 @@ mod fields {
             ],
             &[],
         );
-        lm::normalize(&mut settings, &StructuralCompiler).expect("merge validates");
+        lm::normalize(&mut settings).expect("merge validates");
         assert_eq!(
             modes(&settings).get("release_type"),
             Some(&(FieldMode::Merge, false))
@@ -798,7 +881,7 @@ mod fields {
                 field.mode = FieldMode::Merge;
             }
         }
-        assert!(lm::normalize(&mut settings, &StructuralCompiler).is_err());
+        assert!(lm::normalize(&mut settings).is_err());
     }
 
     /// A folder activated under the stored profile stays activated once
@@ -842,13 +925,13 @@ mod fields {
         assert!(current(&stored));
 
         let mut read = stored.clone();
-        lm::normalize(&mut read, &StructuralCompiler).expect("valid");
+        lm::normalize(&mut read).expect("valid");
         assert!(current(&read), "current after a read");
 
         let mut saved = stored.clone();
         let invalidated =
             lm::migration_carry(&read, &mut saved, PICARD_ORGANIZER_PROFILE_ID).expect("carried");
-        lm::normalize(&mut saved, &StructuralCompiler).expect("valid");
+        lm::normalize(&mut saved).expect("valid");
         assert!(invalidated.is_empty(), "{invalidated:?}");
         assert!(current(&saved), "current after a save");
     }
@@ -895,7 +978,7 @@ mod fields {
                 }
             }
         }
-        lm::normalize(&mut settings, &StructuralCompiler).expect("valid");
+        lm::normalize(&mut settings).expect("valid");
         assert_eq!(
             modes(&settings).get("comment"),
             Some(&(FieldMode::Replace, true))
@@ -908,7 +991,7 @@ mod fields {
     fn without_other_the_new_fields_read_as_off() {
         let stored = without_other_role_fields(false);
         let mut read = stored.clone();
-        lm::normalize(&mut read, &StructuralCompiler).expect("valid");
+        lm::normalize(&mut read).expect("valid");
         let modes = modes(&read);
         for name in OTHER_ROLE_FIELDS {
             assert_eq!(
@@ -931,7 +1014,7 @@ mod fields {
         activate(&mut stored);
         assert!(current(&stored));
         let mut read = stored.clone();
-        lm::normalize(&mut read, &StructuralCompiler).expect("valid");
+        lm::normalize(&mut read).expect("valid");
         let modes = modes(&read);
         for name in OTHER_ROLE_FIELDS {
             assert_eq!(
@@ -959,6 +1042,6 @@ mod fields {
             }))
             .expect("script"),
         );
-        lm::normalize(&mut settings, &StructuralCompiler).expect("the script validates");
+        lm::normalize(&mut settings).expect("the script validates");
     }
 }

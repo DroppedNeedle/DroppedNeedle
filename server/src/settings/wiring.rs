@@ -30,7 +30,6 @@ use crate::settings::verify::{LiveProbes, VerifyProbes};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
-use droppedneedle_library::management::settings::StructuralCompiler;
 use droppedneedle_library::management::settings::service::LibraryManagementService;
 use droppedneedle_library::policy::LibraryPolicyCatalog;
 
@@ -100,10 +99,7 @@ impl SettingsSetup {
             policy: Arc::new(LibraryPolicyService::new(service.clone(), None)),
             service,
             lifecycle: Arc::new(MusicBrainzLifecycle::new(store.clone(), effects, outbound)),
-            management: Arc::new(LibraryManagementService::new(
-                store,
-                Arc::new(StructuralCompiler),
-            )),
+            management: Arc::new(LibraryManagementService::new(store)),
             prefs: None,
             buckets: None,
             #[cfg(any(test, feature = "test-support"))]

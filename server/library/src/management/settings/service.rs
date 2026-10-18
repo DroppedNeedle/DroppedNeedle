@@ -29,10 +29,11 @@ use super::bundle::{
 };
 use super::impact::{ChangeImpact, active_automatic, classify};
 use super::invalid;
-use super::normalize::{is_field_name, migration_carry, normalize, validate_preset_provenance};
+use super::normalize::{
+    is_field_name, migration_carry, normalize_changes, normalize_stored, validate_preset_provenance,
+};
 use super::presets::{MANAGED_FIELDS, PresetDiff, initial_settings, migrate_presets, preset_diff};
 use super::revision::settings_revision;
-use super::script::ScriptCompiler;
 use crate::settings_models::{
     LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
     LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,
@@ -64,18 +65,16 @@ const STALE_SETTINGS: &str =
 /// Library Management operations over the config store.
 pub struct LibraryManagementService {
     store: Arc<ConfigStore>,
-    compiler: Arc<dyn ScriptCompiler>,
     /// Serializes read-compare-write so two saves with the same expected
     /// revision cannot both land.
     write: Mutex<()>,
 }
 
 impl LibraryManagementService {
-    /// Build over the shared store and a script compiler.
-    pub fn new(store: Arc<ConfigStore>, compiler: Arc<dyn ScriptCompiler>) -> Self {
+    /// Build over the shared store.
+    pub fn new(store: Arc<ConfigStore>) -> Self {
         Self {
             store,
-            compiler,
             write: Mutex::new(()),
         }
     }
@@ -111,7 +110,7 @@ impl LibraryManagementService {
             drop_unknown_fields(&mut migrated);
             migrated
         };
-        normalize(&mut settings, self.compiler.as_ref()).map_err(|error| {
+        normalize_stored(&mut settings).map_err(|error| {
             tracing::error!(?error, "stored library management settings are invalid");
             SettingsError::InvalidInput {
                 message: "Library Management settings are invalid.".to_owned(),
@@ -158,7 +157,7 @@ impl LibraryManagementService {
         let mut candidate = proposed;
         candidate.preset_catalog_version = current.preset_catalog_version;
         migration_carry(current, &mut candidate, &current.default_profile_id)?;
-        normalize(&mut candidate, self.compiler.as_ref())?;
+        normalize_changes(&mut candidate, current)?;
         validate_preset_provenance(current, &candidate)?;
         Ok(candidate)
     }
@@ -472,8 +471,8 @@ impl LibraryManagementService {
         let settings = self.load()?;
         let settings_revision = self.require_current(&settings, expected_settings_revision)?;
         let parsed = parse_profile_bundle(content)?;
-        let preview = preview_materialized_profile(&parsed, self.compiler.as_ref())?;
-        let resolved = resolve_import_names(&preview, &settings, self.compiler.as_ref())?;
+        let preview = preview_materialized_profile(&parsed)?;
+        let resolved = resolve_import_names(&preview, &settings)?;
         Ok(LibraryManagementProfileImportPreviewResponse {
             aspects: profile_aspects(&resolved.profile),
             warnings: profile_import_warnings(&resolved.profile),
@@ -514,14 +513,9 @@ impl LibraryManagementService {
         let naming_ids = fresh_ids(&parsed.payload.naming_scripts);
         let tagging_ids = fresh_ids(&parsed.payload.tagging_scripts);
         let profile_id = Uuid::new_v4().to_string();
-        let materialized = materialize_profile_bundle(
-            &parsed,
-            &profile_id,
-            &naming_ids,
-            &tagging_ids,
-            self.compiler.as_ref(),
-        )?;
-        let mut resolved = resolve_import_names(&materialized, &settings, self.compiler.as_ref())?;
+        let materialized =
+            materialize_profile_bundle(&parsed, &profile_id, &naming_ids, &tagging_ids)?;
+        let mut resolved = resolve_import_names(&materialized, &settings)?;
         resolved.profile.name = name.to_owned();
         let naming_added: BTreeSet<String> = resolved
             .naming_scripts

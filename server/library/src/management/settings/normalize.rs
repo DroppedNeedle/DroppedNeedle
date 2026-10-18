@@ -10,12 +10,12 @@ use super::presets::{
     PRESET_CATALOG_VERSION, managed_field,
 };
 use super::revision::{naming_script_revision, profile_revision, tagging_script_revision};
-use super::script::{ScriptCompiler, validate_naming_language, validate_tagging_language};
+use super::script::{validate_naming_language, validate_tagging_language};
 use droppedneedle_kernel::runtime_config::sections::{
     ArtistStandardization, ArtworkProvider, FieldMode, Id3TextEncoding, Id3Version,
     LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment,
-    LibraryManagementRootOverrides, ManagedField, MultiDiscNamingMode,
-    OrganizationManagementSettings,
+    LibraryManagementRootOverrides, ManagedField, MultiDiscNamingMode, NamingScript,
+    OrganizationManagementSettings, TaggingScript,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
@@ -412,12 +412,65 @@ fn complete_profile(profile: &mut LibraryManagementProfile) -> bool {
     (profile.metadata.fields != before.0) || (profile.metadata.preserve_fields != before.1)
 }
 
-/// Normalize, validate, and populate deterministic derived revisions.
-/// Script sources compile through the injected compiler. Errors are
-/// caller faults (400) with the v2 messages.
-pub fn normalize(
+/// Which scripts a normalize compiles.
+enum Compile<'a> {
+    All,
+    None,
+    /// Only scripts that are new or whose source differs from these.
+    ChangedFrom(&'a LibraryManagement),
+}
+
+impl Compile<'_> {
+    fn naming(&self, script: &NamingScript) -> bool {
+        match self {
+            Self::All => true,
+            Self::None => false,
+            Self::ChangedFrom(current) => !current
+                .naming_scripts
+                .iter()
+                .any(|stored| stored.id == script.id && stored.source == script.source),
+        }
+    }
+
+    fn tagging(&self, script: &TaggingScript) -> bool {
+        match self {
+            Self::All => true,
+            Self::None => false,
+            Self::ChangedFrom(current) => !current
+                .tagging_scripts
+                .iter()
+                .any(|stored| stored.id == script.id && stored.source == script.source),
+        }
+    }
+}
+
+/// Normalize, validate, and populate deterministic derived revisions, for
+/// an import: every script is compiled. Errors are caller faults (400)
+/// with the v2 messages.
+pub fn normalize(settings: &mut LibraryManagement) -> Result<(), SettingsError> {
+    normalize_with(settings, Compile::All)
+}
+
+/// Normalize settings read back from the store. Scripts are not compiled:
+/// a stored script the compiler refuses is kept, and fails per item at
+/// preview rather than failing the whole read.
+pub(super) fn normalize_stored(settings: &mut LibraryManagement) -> Result<(), SettingsError> {
+    normalize_with(settings, Compile::None)
+}
+
+/// Normalize a save against the current settings. Only new and edited
+/// scripts are compiled: one stored earlier that the compiler refuses
+/// does not block an unrelated save, and keeps failing per item.
+pub(super) fn normalize_changes(
     settings: &mut LibraryManagement,
-    compiler: &dyn ScriptCompiler,
+    current: &LibraryManagement,
+) -> Result<(), SettingsError> {
+    normalize_with(settings, Compile::ChangedFrom(current))
+}
+
+fn normalize_with(
+    settings: &mut LibraryManagement,
+    compile: Compile<'_>,
 ) -> Result<(), SettingsError> {
     complete_fields(settings);
     if settings.schema_version != MANAGEMENT_SCHEMA_VERSION {
@@ -472,7 +525,9 @@ pub fn normalize(
             return Err(invalid("Every naming script needs a unique name."));
         }
         script.source = validate_script_source(&script.source, &script.name)?;
-        validate_naming_language(&script.source, &script.name, compiler)?;
+        if compile.naming(script) {
+            validate_naming_language(&script.source, &script.name)?;
+        }
         script.revision = naming_script_revision(script);
     }
     let mut tagging_ids: BTreeSet<String> = BTreeSet::new();
@@ -487,7 +542,9 @@ pub fn normalize(
             return Err(invalid("Every tagging script needs a unique name."));
         }
         script.source = validate_script_source(&script.source, &script.name)?;
-        validate_tagging_language(&script.source, &script.name, compiler)?;
+        if compile.tagging(script) {
+            validate_tagging_language(&script.source, &script.name)?;
+        }
         script.revision = tagging_script_revision(script);
     }
 

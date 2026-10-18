@@ -5473,12 +5473,9 @@ async fn library_management_tools_journey() {
     }
     library.config.save(settings).expect("settings saved");
     // The settings page reads them first, which stores them normalized.
-    lm::service::LibraryManagementService::new(
-        library.config.clone(),
-        Arc::new(lm::StructuralCompiler),
-    )
-    .get_settings()
-    .expect("settings normalized");
+    lm::service::LibraryManagementService::new(library.config.clone())
+        .get_settings()
+        .expect("settings normalized");
     let original = read_fields(&file).expect("original tags");
     let title =
         |path: &std::path::Path| read_fields(path).expect("tags read")[&TagField::Title].clone();
@@ -5570,12 +5567,9 @@ async fn library_management_tools_journey() {
         }
         library.config.save(enriched).expect("profile saved");
         let normalize = || {
-            lm::service::LibraryManagementService::new(
-                library.config.clone(),
-                Arc::new(lm::StructuralCompiler),
-            )
-            .get_settings()
-            .expect("settings normalized");
+            lm::service::LibraryManagementService::new(library.config.clone())
+                .get_settings()
+                .expect("settings normalized");
         };
         normalize();
         let run = management
@@ -6196,12 +6190,9 @@ async fn library_management_custom_edition_journey() {
         .config
         .save(lm::initial_settings(""))
         .expect("settings saved");
-    lm::service::LibraryManagementService::new(
-        library.config.clone(),
-        Arc::new(lm::StructuralCompiler),
-    )
-    .get_settings()
-    .expect("settings normalized");
+    lm::service::LibraryManagementService::new(library.config.clone())
+        .get_settings()
+        .expect("settings normalized");
     // Seal the album as a custom edition: its release is let go, and the
     // manifest records the files as they are.
     let db = || {
@@ -6364,12 +6355,9 @@ async fn library_management_artwork_journey() {
     }
     library.config.save(settings).expect("settings saved");
     let original = read_document(&file).expect("original tags");
-    lm::service::LibraryManagementService::new(
-        library.config.clone(),
-        Arc::new(lm::StructuralCompiler),
-    )
-    .get_settings()
-    .expect("settings normalized");
+    lm::service::LibraryManagementService::new(library.config.clone())
+        .get_settings()
+        .expect("settings normalized");
     let cover = {
         let mut bytes = Vec::new();
         image::RgbImage::from_pixel(8, 8, image::Rgb([30, 30, 200]))
@@ -6604,12 +6592,9 @@ impl ManagedLibrary {
             configure(profile);
         }
         library.config.save(settings).expect("settings saved");
-        lm::service::LibraryManagementService::new(
-            library.config.clone(),
-            Arc::new(lm::StructuralCompiler),
-        )
-        .get_settings()
-        .expect("settings normalized");
+        lm::service::LibraryManagementService::new(library.config.clone())
+            .get_settings()
+            .expect("settings normalized");
         Self {
             scratch,
             library,
