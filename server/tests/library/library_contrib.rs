@@ -1684,10 +1684,18 @@ async fn brief_worker_spawn_loop_links_then_shuts_down() {
         "worker loop should link the contribution"
     );
     shutdown_tx.send(true).unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(5), handle)
-        .await
-        .expect("worker loop should shut down")
-        .unwrap();
+    // A pass already running finishes its store calls on blocking threads
+    // first. The paused clock jumps ahead while they run, so the bound is
+    // wall-clock time, not virtual time.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !handle.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "worker loop should shut down"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    handle.await.unwrap();
 }
 
 // ---------------------------------------------------------------------------
