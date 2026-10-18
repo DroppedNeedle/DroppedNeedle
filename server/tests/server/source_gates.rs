@@ -75,10 +75,6 @@ const OPENS: &[Place] = &[
         "the read-only stamp probe of an existing database before the runtime opens it, and its tests",
     ),
     place(
-        "media/src/playback/sqlite.rs",
-        "playback's own connection, until playback moves onto Db",
-    ),
-    place(
         "catalog/src/reads/mod.rs",
         "an in-memory pool for the reads' test bundle, until the catalog reads have tests on real stores",
     ),

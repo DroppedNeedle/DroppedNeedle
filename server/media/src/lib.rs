@@ -168,7 +168,7 @@ impl MediaSetup {
         let stream = StreamState {
             engine: Arc::new(engine),
         };
-        let playback_db = Arc::new(PlaybackDb::open(db.path(), ids.clone())?);
+        let playback_db = Arc::new(PlaybackDb::new(db.clone(), ids.clone()));
         let (queue, rx) = ReportQueue::channel();
         let (forwarder, forwards) =
             ScrobbleForwarder::channel(playback_db.clone(), users.lastfm_switch.clone());

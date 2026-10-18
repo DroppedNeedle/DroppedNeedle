@@ -802,25 +802,30 @@ async fn chunked_write_commits_and_cancels() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// A play reported while another writer holds the database past the busy
-/// timeout is retried and recorded, never dropped.
+/// A play reported while another write holds the lane past the wait a
+/// request write is given still waits its turn and is recorded, never
+/// dropped.
 #[tokio::test]
-async fn a_play_outlasting_the_busy_timeout_is_still_recorded() {
+async fn a_play_outlasting_the_request_wait_is_still_recorded() {
+    use droppedneedle_kernel::db::{FOREGROUND_WAIT_LIMIT, WATCH_TICK};
     use droppedneedle_media::playback::ports::{PlayHistory as _, PlayRecord};
     use droppedneedle_media::playback::sqlite::PlaybackDb;
 
-    let (runtime, dir) = open_scratch("play-busy").await;
-    let db_path = dir.join("library.db");
-    let history =
-        PlaybackDb::open(&db_path, Arc::new(droppedneedle_kernel::ids::UuidGenerator)).unwrap();
+    let (runtime, _dir) = open_scratch("play-busy").await;
+    let history = PlaybackDb::new(
+        runtime.db().clone(),
+        Arc::new(droppedneedle_kernel::ids::UuidGenerator),
+    );
     let (held_tx, held_rx) = std::sync::mpsc::channel();
-    let holder_path = db_path.clone();
+    let holder_db = runtime.db().clone();
     let holder = std::thread::spawn(move || {
-        let connection = rusqlite::Connection::open(holder_path).unwrap();
-        connection.execute_batch("BEGIN IMMEDIATE").unwrap();
-        held_tx.send(()).unwrap();
-        std::thread::sleep(Duration::from_millis(5_500));
-        connection.execute_batch("COMMIT").unwrap();
+        holder_db.write_blocking(Lane::Background, "brief-hold", |_tx| {
+            held_tx.send(()).unwrap();
+            // Past the wait plus one watch tick, so a play written as a
+            // request write would be refused every run.
+            std::thread::sleep(FOREGROUND_WAIT_LIMIT + WATCH_TICK + Duration::from_millis(500));
+            Ok::<_, DbError>(())
+        })
     });
     held_rx.recv().unwrap();
     history.record(
@@ -837,7 +842,7 @@ async fn a_play_outlasting_the_busy_timeout_is_still_recorded() {
             played_at: 1_700_000_000,
         },
     );
-    holder.join().unwrap();
+    holder.join().unwrap().unwrap();
     let plays: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_play_history")
         .fetch_one(runtime.db().sqlx())
         .await
