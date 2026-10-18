@@ -68,6 +68,12 @@ quick-xml = { version = "0.42", default-features = false }
 # when translating artist names. Already in the tree under tracing's
 # env-filter (regex-automata, regex-syntax).
 regex = "1.13.1"
+# Joins the parts of a declared SQL statement at compile time, so a
+# statement built from a column list is still one `&'static str` the schema
+# test can prepare. Zlib. It brings three small crates of the same author
+# (const_format_proc_macros, konst, konst_macro_rules; Zlib) and
+# unicode-xid (MIT or Apache-2.0); none has a build script.
+const_format = "0.2.36"
 
 [package]
 name = "droppedneedle"

@@ -75,6 +75,34 @@ The mock slskd and MusicBrainz the journeys point the app at run as their own pr
 
 If you change a route or a request or response type, run `make contract-write` and commit the regenerated `server/openapi/openapi.json` and `frontend/src/lib/api/v3/openapi.d.ts` with your change. Both targets read the document from the integration-test build, so they reuse what `cargo test` already compiled; CI runs `server/openapi/check.sh` against the server binary itself.
 
+### SQL statements
+
+SQL lives in a file named `sql.rs` beside the code that runs it, so a test can check every statement against the schema. A `sql.rs` holds one `sql!` block and the functions that build statement families, nothing else:
+
+```rust
+droppedneedle_kernel::sql! {
+    /// Fixed text other statements are built from.
+    fragment FEED_COLUMNS = "f.source, f.source_event_id, f.city";
+    /// One user's cities.
+    pub(super) CITIES = "SELECT city_name FROM user_event_cities WHERE user_id = ?";
+    /// A statement joined from constant parts at compile time.
+    pub(super) FEED = "SELECT " + FEED_COLUMNS + " FROM live_event_feed f";
+    /// One statement per combination of the builder's choices.
+    family FEED_PAGE = feed_page;
+}
+
+pub(super) fn feed_page(for_user: bool, newest_first: bool) -> String { ... }
+```
+
+- A statement is a `Statement` constant; pass `CITIES.text()` to rusqlite or sqlx. `+` joins literals, fragments and other `&str` constants at compile time.
+- A statement that varies by a closed set of choices (a sort order, which optional filters are present, how many values an `IN` list holds) is a family: a function in `sql.rs` whose parameters are all choice types (`bool`, `ListLen`, an enum or struct declared with `sql_choice!`, or a tuple of those) and which returns the text. Nothing from a request is ever joined into SQL. A family over more than 4,096 combinations is split.
+- A table name read from the database goes through `db::statement::quoted_identifier`.
+- Each `sql!` block lists its own declarations. A crate that holds a `sql.rs` lists every one of them, one line each, in `statement_files()` at its crate root (compiled only for tests), and has a row in `REGISTRIES` in `server/tests/server/persist_schema.rs`.
+
+`every_registered_statement_prepares` fails when a `sql.rs` is missing from its crate's list or declares something outside its `sql!` block, then prepares every statement, and every family over every combination, against the migrated schema. It catches a renamed column, a dropped table and a second statement after a `;`. It does not check how many values a call site binds, that a column list matches its row mapper, or the query plan.
+
+`raw_sql_stays_in_sql_files` fails on SQL text anywhere else, and on `PRAGMA` or transaction control outside `server/kernel/src/db/`. Test files are exempt. Areas that have not moved their SQL yet are listed in `server/sql-outside-registry.txt`; moving an area deletes its line.
+
 ## Pull requests
 
 1. Fork the repo and create a branch from the default branch.

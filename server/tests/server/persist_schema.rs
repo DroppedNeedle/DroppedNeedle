@@ -3,10 +3,17 @@
 //! scratch databases live only in memory, except the baseline upgrade,
 //! which runs through the production runtime on a file.
 
+use std::collections::BTreeMap;
+use std::time::Instant;
+
+use droppedneedle_kernel::db::statement::{Declared, StatementFile};
 use droppedneedle_kernel::db::{DbConfig, open_runtime};
 use droppedneedle_kernel::schema::{MIGRATOR, apply_migrations, assert_migrated, latest_version};
+use regex::Regex;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
+
+use crate::common::sources::workspace_sources;
 
 /// One-connection in-memory pool. A single connection keeps `:memory:`
 /// on one database; the pool exists so the briefs exercise the same
@@ -3508,4 +3515,378 @@ async fn migrations_upgrade_from_baseline() {
         .expect("version reads");
     assert_eq!(version, latest_version());
     runtime.shutdown().await;
+}
+
+// ---------------------------------------------------------------------------
+// Declared statements prepare against the schema, and raw SQL stays out of
+// the areas that have moved theirs into `sql.rs`.
+// ---------------------------------------------------------------------------
+
+/// A crate's list of its `sql.rs` files.
+type StatementFiles = fn() -> Vec<StatementFile>;
+
+/// Every crate that holds a `sql.rs`, by its folder under `server/` (`.`
+/// for the server crate), with the function that lists its files.
+const REGISTRIES: &[(&str, StatementFiles)] = &[];
+
+/// The crate name of a folder under `server/`.
+fn crate_of(folder: &str) -> String {
+    if folder == "." {
+        "droppedneedle".to_owned()
+    } else {
+        format!("droppedneedle_{folder}")
+    }
+}
+
+/// The crate folder of a `sql.rs` on disk and the module it must register
+/// as: `catalog/src/a/sql.rs` is `droppedneedle_catalog::a::sql`, and
+/// `src/a/sql.rs` is `droppedneedle::a::sql`.
+fn module_of(path: &str) -> (&str, String) {
+    let (folder, rest) = match path.strip_prefix("src/") {
+        Some(rest) => (".", rest),
+        None => path.split_once("/src/").expect("a source path"),
+    };
+    let module = rest.trim_end_matches(".rs").replace('/', "::");
+    (folder, format!("{}::{module}", crate_of(folder)))
+}
+
+fn is_sql_file(path: &str) -> bool {
+    path.ends_with("/sql.rs") || path == "src/sql.rs"
+}
+
+/// Declarations written in a `sql.rs`: every `NAME = ...` line, inside the
+/// `sql!` block or a constant beside it.
+fn declarations_in(text: &str) -> usize {
+    let (code, _) = split_literals(text);
+    Regex::new(
+        r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:const|static|fragment|family)\s+)?[A-Z][A-Z0-9_]*\s*(?::[^=\n]*)?=[^=>]",
+    )
+    .unwrap()
+    .find_iter(&code)
+    .count()
+}
+
+/// Prepare one statement, and refuse a text holding more than one:
+/// `prepare` alone compiles the first and ignores the rest.
+fn prepare_one(connection: &rusqlite::Connection, name: &str, text: &str) -> Option<String> {
+    let mut batch = rusqlite::Batch::new(connection, text);
+    match batch.next() {
+        Err(error) => Some(format!("{name}: {error}")),
+        Ok(None) => Some(format!("{name}: holds no statement")),
+        Ok(Some(_)) => match batch.next() {
+            Ok(None) => None,
+            Ok(Some(_)) => Some(format!("{name}: holds more than one statement")),
+            Err(error) => Some(format!("{name}: holds more than one statement ({error})")),
+        },
+    }
+}
+
+/// Decision 5: every declared statement, and every statement a family can
+/// make, prepares against the migrated schema, so a renamed column or a
+/// dropped table fails here. Every `sql.rs` on disk is registered under the
+/// module its path names, with as many declarations as its text holds.
+/// Preparing does not check how many values a call site binds, that a
+/// column list matches its row mapper, or the query plan.
+#[test]
+fn every_registered_statement_prepares() {
+    let started = Instant::now();
+    let mut wrong = Vec::new();
+
+    let mut on_disk = BTreeMap::new();
+    for source in workspace_sources() {
+        if !is_sql_file(&source.path) {
+            continue;
+        }
+        let (folder, module) = module_of(&source.path);
+        if !REGISTRIES.iter().any(|(row, _)| *row == folder) {
+            wrong.push(format!(
+                "{}: crate folder `{folder}` holds a sql.rs and has no row here",
+                source.path
+            ));
+        }
+        on_disk.insert(module, (source.path.clone(), declarations_in(&source.text)));
+    }
+
+    let mut registered = BTreeMap::new();
+    for (folder, list) in REGISTRIES {
+        let files = list();
+        if files.is_empty() {
+            wrong.push(format!("`{folder}` has a row but lists no sql.rs"));
+        }
+        for file in files {
+            if !file.module.starts_with(&format!("{}::", crate_of(folder))) {
+                wrong.push(format!(
+                    "{}: listed by `{folder}`, another crate",
+                    file.module
+                ));
+            }
+            if registered.insert(file.module, file.declared).is_some() {
+                wrong.push(format!("{}: listed twice", file.module));
+            }
+        }
+    }
+
+    for (module, (path, written)) in &on_disk {
+        match registered.get(module.as_str()) {
+            None => wrong.push(format!("{path}: missing from its crate's list of sql.rs files")),
+            Some(declared) if declared.len() != *written => wrong.push(format!(
+                "{path}: {written} declarations written, {} registered; declare SQL only inside its sql! block",
+                declared.len()
+            )),
+            Some(_) => {}
+        }
+    }
+    for module in registered.keys() {
+        if !on_disk.contains_key(*module) {
+            wrong.push(format!(
+                "{module}: registered, but no sql.rs is at its path (a sql.rs is never reached through #[path])"
+            ));
+        }
+    }
+
+    let dir = crate::common::ScratchDir::new("statements");
+    let path = dir.join("app.db");
+    crate::common::migrated_db(&path);
+    let connection = rusqlite::Connection::open(&path).expect("template copy opens");
+    let (mut statements, mut families, mut made) = (0, 0, 0);
+    for declared in registered.values().flatten() {
+        match declared {
+            Declared::Statement(statement) => {
+                statements += 1;
+                wrong.extend(prepare_one(&connection, statement.name(), statement.text()));
+            }
+            Declared::Family(family) => {
+                families += 1;
+                match family.texts() {
+                    Err(combinations) => wrong.push(format!(
+                        "{}: {combinations} combinations, over the limit; split the family",
+                        family.name()
+                    )),
+                    Ok(texts) => {
+                        for (at, text) in texts.iter().enumerate() {
+                            made += 1;
+                            let name = format!("{} (combination {at})", family.name());
+                            wrong.extend(prepare_one(&connection, &name, text));
+                        }
+                    }
+                }
+            }
+            Declared::Fragment(_) => {}
+        }
+    }
+    eprintln!(
+        "prepared {statements} statements and {families} families ({made} statements) from {} files in {:?}",
+        registered.len(),
+        started.elapsed()
+    );
+    assert!(wrong.is_empty(), "declared SQL:\n{}", wrong.join("\n"));
+}
+
+/// The code of a file with every string literal emptied, and each literal's
+/// line and value. Comments are skipped, and `\` line continuations are
+/// joined as the compiler joins them. It reads text and does not parse
+/// Rust.
+fn split_literals(text: &str) -> (String, Vec<(usize, String)>) {
+    let chars: Vec<char> = text.chars().collect();
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let (mut code, mut literals) = (String::new(), Vec::new());
+    let (mut at, mut line) = (0, 1);
+    while at < chars.len() {
+        let c = chars[at];
+        if c == '/' && chars.get(at + 1) == Some(&'/') {
+            while at < chars.len() && chars[at] != '\n' {
+                at += 1;
+            }
+            continue;
+        }
+        if c == '/' && chars.get(at + 1) == Some(&'*') {
+            at += 2;
+            while at + 1 < chars.len() && !(chars[at] == '*' && chars[at + 1] == '/') {
+                if chars[at] == '\n' {
+                    line += 1;
+                    code.push('\n');
+                }
+                at += 1;
+            }
+            at += 2;
+            continue;
+        }
+        if c == '\'' {
+            if chars.get(at + 1) == Some(&'\\') {
+                at += 2;
+                while at < chars.len() && chars[at] != '\'' {
+                    at += 1;
+                }
+                at += 1;
+                code.push_str("' '");
+                continue;
+            }
+            if chars.get(at + 2) == Some(&'\'') {
+                at += 3;
+                code.push_str("' '");
+                continue;
+            }
+        }
+        let raw = (c == 'r' || (c == 'b' && chars.get(at + 1) == Some(&'r')))
+            && (at == 0 || !ident(chars[at - 1]));
+        if raw {
+            let mut quote = at + if c == 'b' { 2 } else { 1 };
+            let mut hashes = 0;
+            while chars.get(quote) == Some(&'#') {
+                hashes += 1;
+                quote += 1;
+            }
+            if chars.get(quote) == Some(&'"') {
+                let start = quote + 1;
+                let mut end = start;
+                while end < chars.len()
+                    && !(chars[end] == '"'
+                        && (1..=hashes).all(|k| chars.get(end + k) == Some(&'#')))
+                {
+                    end += 1;
+                }
+                let value: String = chars[start..end.min(chars.len())].iter().collect();
+                let newlines = value.matches('\n').count();
+                literals.push((line, value));
+                line += newlines;
+                code.push_str("\"\"");
+                code.push_str(&"\n".repeat(newlines));
+                at = end + 1 + hashes;
+                continue;
+            }
+        }
+        if c == '"' {
+            let (start_line, mut value) = (line, String::new());
+            at += 1;
+            while at < chars.len() && chars[at] != '"' {
+                if chars[at] == '\\' {
+                    match chars.get(at + 1) {
+                        Some('\n') => {
+                            at += 1;
+                            while at < chars.len() && chars[at].is_whitespace() {
+                                if chars[at] == '\n' {
+                                    line += 1;
+                                    code.push('\n');
+                                }
+                                at += 1;
+                            }
+                            continue;
+                        }
+                        Some('n') => value.push('\n'),
+                        Some('t') => value.push('\t'),
+                        Some(other) => value.push(*other),
+                        None => {}
+                    }
+                    at += 2;
+                    continue;
+                }
+                if chars[at] == '\n' {
+                    line += 1;
+                    code.push('\n');
+                }
+                value.push(chars[at]);
+                at += 1;
+            }
+            literals.push((start_line, value));
+            code.push_str("\"\"");
+            at += 1;
+            continue;
+        }
+        if c == '\n' {
+            line += 1;
+        }
+        code.push(c);
+        at += 1;
+    }
+    (code, literals)
+}
+
+/// The folders still allowed to hold raw SQL, from
+/// `server/sql-outside-registry.txt`.
+fn outside_registry() -> Vec<String> {
+    let list = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sql-outside-registry.txt"),
+    )
+    .expect("sql-outside-registry.txt reads");
+    list.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Source that may hold raw SQL for good: unit test files and test folders
+/// (a unit test that needs raw SQL lives in one), and the builder of the v2
+/// fixture database, which writes the v2 schema. `server/tests/`,
+/// `server/testkit/` and `server/migrations/` are never walked.
+fn exempt(path: &str) -> bool {
+    path.ends_with("/tests.rs")
+        || path.ends_with("_tests.rs")
+        || path.contains("/tests/")
+        || path == "tool/src/tooling/fixture.rs"
+}
+
+/// Raw SQL lives only in `sql.rs` files. A string literal that starts with
+/// a statement verb, or holds ` FROM `, ` JOIN `, ` WHERE `, ` VALUES ` or
+/// ` ORDER BY ` in capitals, fails anywhere else. One that starts with
+/// `PRAGMA`, `ANALYZE`, `VACUUM` or transaction control fails outside
+/// `kernel/src/db/`, which owns connection set-up and transactions. A table
+/// name read from the database is quoted by
+/// `db::statement::quoted_identifier`. The folders listed in
+/// `server/sql-outside-registry.txt` have not moved yet; an area that moves
+/// deletes its line.
+#[test]
+fn raw_sql_stays_in_sql_files() {
+    let verb = Regex::new(r"^\s*(?:SELECT|INSERT|UPDATE|DELETE|REPLACE|WITH|CREATE|DROP|ALTER)\b")
+        .unwrap();
+    let fragment = Regex::new(r"(?:^|\s)(?:FROM|JOIN|WHERE|VALUES|ORDER\s+BY)(?:\s|$)").unwrap();
+    let control =
+        Regex::new(r"^\s*(?:PRAGMA|ANALYZE|VACUUM|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)\b")
+            .unwrap();
+    let outside = outside_registry();
+    let sources = workspace_sources();
+    let mut used = vec![false; outside.len()];
+    let mut wrong = Vec::new();
+    for source in &sources {
+        if exempt(&source.path) {
+            continue;
+        }
+        let listed = outside
+            .iter()
+            .position(|prefix| source.path.starts_with(prefix.as_str()));
+        for (line, value) in split_literals(&source.text).1 {
+            let raw = if control.is_match(&value) {
+                !source.path.starts_with("kernel/src/db/")
+            } else {
+                !is_sql_file(&source.path) && (verb.is_match(&value) || fragment.is_match(&value))
+            };
+            if !raw {
+                continue;
+            }
+            if let Some(at) = listed {
+                used[at] = true;
+                continue;
+            }
+            let first: String = value.trim().chars().take(60).collect();
+            wrong.push(format!(
+                "{}:{line}: raw SQL outside sql.rs: {first}",
+                source.path
+            ));
+        }
+    }
+    for (prefix, used) in outside.iter().zip(used) {
+        if !sources
+            .iter()
+            .any(|source| source.path.starts_with(prefix.as_str()))
+        {
+            wrong.push(format!(
+                "{prefix}: listed in sql-outside-registry.txt, but no longer exists"
+            ));
+        } else if !used {
+            wrong.push(format!(
+                "{prefix}: listed in sql-outside-registry.txt, but holds no raw SQL; delete the line"
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "raw SQL:\n{}", wrong.join("\n"));
 }
