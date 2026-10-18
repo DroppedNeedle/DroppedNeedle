@@ -3527,7 +3527,7 @@ type StatementFiles = fn() -> Vec<StatementFile>;
 
 /// Every crate that holds a `sql.rs`, by its folder under `server/` (`.`
 /// for the server crate), with the function that lists its files.
-const REGISTRIES: &[(&str, StatementFiles)] = &[];
+const REGISTRIES: &[(&str, StatementFiles)] = &[("kernel", droppedneedle_kernel::statement_files)];
 
 /// The crate name of a folder under `server/`.
 fn crate_of(folder: &str) -> String {
@@ -3815,6 +3815,20 @@ fn outside_registry() -> Vec<String> {
         .collect()
 }
 
+/// A literal allowed outside `sql.rs` for good, and why.
+struct AllowedLiteral {
+    path: &'static str,
+    starts_with: &'static str,
+    why: &'static str,
+}
+
+const ALLOWED_LITERALS: &[AllowedLiteral] = &[AllowedLiteral {
+    path: "kernel/src/db/analyze.rs",
+    starts_with: "CREATE TABLE db_planner_stats_reload (x); DROP TABLE",
+    why: "bumps the schema cookie so readers reload the planner statistics; the marker \
+          table is never in the schema, so there is nothing to prepare it against",
+}];
+
 /// Source that may hold raw SQL for good: unit test files and test folders
 /// (a unit test that needs raw SQL lives in one), and the builder of the v2
 /// fixture database, which writes the v2 schema. `server/tests/`,
@@ -3846,6 +3860,7 @@ fn raw_sql_stays_in_sql_files() {
     let outside = outside_registry();
     let sources = workspace_sources();
     let mut used = vec![false; outside.len()];
+    let mut allowed_used = vec![false; ALLOWED_LITERALS.len()];
     let mut wrong = Vec::new();
     for source in &sources {
         if exempt(&source.path) {
@@ -3867,6 +3882,12 @@ fn raw_sql_stays_in_sql_files() {
                 used[at] = true;
                 continue;
             }
+            if let Some(at) = ALLOWED_LITERALS.iter().position(|allowed| {
+                allowed.path == source.path && value.starts_with(allowed.starts_with)
+            }) {
+                allowed_used[at] = true;
+                continue;
+            }
             let first: String = value.trim().chars().take(60).collect();
             wrong.push(format!(
                 "{}:{line}: raw SQL outside sql.rs: {first}",
@@ -3885,6 +3906,14 @@ fn raw_sql_stays_in_sql_files() {
         } else if !used {
             wrong.push(format!(
                 "{prefix}: listed in sql-outside-registry.txt, but holds no raw SQL; delete the line"
+            ));
+        }
+    }
+    for (allowed, used) in ALLOWED_LITERALS.iter().zip(allowed_used) {
+        if !used {
+            wrong.push(format!(
+                "{}: allowed literal no longer there; remove the entry ({})",
+                allowed.path, allowed.why
             ));
         }
     }

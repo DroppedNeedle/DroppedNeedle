@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use sqlx::SqlitePool;
 
-use super::{error::DbError, handle::Db, writer::Lane};
+use super::{error::DbError, handle::Db, sql, writer::Lane};
 
 /// What kind of background job a registry row names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,11 +109,7 @@ impl JobRegistryRows {
         let kind_text = kind.as_str().to_owned();
         db.write(Lane::Background, "durable-job-register", move |tx| {
             tx.execute(
-                "INSERT INTO durable_job_registry (name, kind, state, updated_at)
-                 VALUES (?1, ?2, 'idle', ?3)
-                 ON CONFLICT (name) DO UPDATE SET
-                     kind = excluded.kind,
-                     updated_at = excluded.updated_at",
+                sql::REGISTER_JOB.text(),
                 rusqlite::params![name, kind_text, now_unix()],
             )?;
             Ok(())
@@ -127,8 +123,7 @@ impl JobRegistryRows {
         let state_text = state.as_str().to_owned();
         db.write(Lane::Background, "durable-job-state", move |tx| {
             let changed = tx.execute(
-                "UPDATE durable_job_registry
-                 SET state = ?1, updated_at = ?2 WHERE name = ?3",
+                sql::SET_JOB_STATE.text(),
                 rusqlite::params![state_text, now_unix(), name],
             )?;
             if changed == 0 {
@@ -146,11 +141,7 @@ impl JobRegistryRows {
     pub async fn heartbeat(&self, db: &Db, name: &str) -> Result<(), DbError> {
         let name = name.to_owned();
         db.write(Lane::Background, "durable-job-heartbeat", move |tx| {
-            let changed = tx.execute(
-                "UPDATE durable_job_registry
-                 SET last_heartbeat_at = ?1, updated_at = ?1 WHERE name = ?2",
-                rusqlite::params![now_unix(), name],
-            )?;
+            let changed = tx.execute(sql::BEAT_JOB.text(), rusqlite::params![now_unix(), name])?;
             if changed == 0 {
                 return Err(DbError::WriteFailed {
                     operation: "durable-job-heartbeat".to_owned(),
@@ -164,24 +155,18 @@ impl JobRegistryRows {
 
     /// Read one registry row, or `None` when the name is unregistered.
     pub async fn get_job(&self, name: &str) -> Result<Option<JobRecord>, DbError> {
-        let row: Option<JobRow> = sqlx::query_as(
-            "SELECT name, kind, state, last_heartbeat_at, updated_at
-                 FROM durable_job_registry WHERE name = ?1",
-        )
-        .bind(name)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<JobRow> = sqlx::query_as(sql::JOB_BY_NAME.text())
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(row.and_then(decode_job))
     }
 
     /// Read the whole registry in name order.
     pub async fn list_jobs(&self) -> Result<Vec<JobRecord>, DbError> {
-        let rows: Vec<JobRow> = sqlx::query_as(
-            "SELECT name, kind, state, last_heartbeat_at, updated_at
-                 FROM durable_job_registry ORDER BY name",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows: Vec<JobRow> = sqlx::query_as(sql::ALL_JOBS.text())
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows.into_iter().filter_map(decode_job).collect())
     }
 }

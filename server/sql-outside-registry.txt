@@ -6,7 +6,6 @@ auth/src/
 catalog/src/concerts/
 catalog/src/reads/
 compat/src/
-kernel/src/db/
 kernel/src/events/
 kernel/src/jobs/
 kernel/src/schema/

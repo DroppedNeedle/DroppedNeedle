@@ -23,6 +23,8 @@ use std::time::{Duration, Instant};
 
 use super::error::DbError;
 use super::handle::Db;
+use super::sql;
+use super::statement::quoted_identifier;
 use super::writer::Lane;
 
 /// Statistics older than this are refreshed.
@@ -112,16 +114,12 @@ impl AnalyzeService {
     }
 
     async fn due(&self) -> Result<bool, DbError> {
-        let last: Option<(i64, i64)> = sqlx::query_as(
-            "SELECT analyzed_at, indexed_tracks FROM db_planner_stats WHERE singleton = 1",
-        )
-        .fetch_optional(self.db.sqlx())
-        .await?;
-        let stats_present: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'sqlite_stat1')",
-        )
-        .fetch_one(self.db.sqlx())
-        .await?;
+        let last: Option<(i64, i64)> = sqlx::query_as(sql::LAST_ANALYZE.text())
+            .fetch_optional(self.db.sqlx())
+            .await?;
+        let stats_present: bool = sqlx::query_scalar(sql::STATS_PRESENT.text())
+            .fetch_one(self.db.sqlx())
+            .await?;
         let indexed_tracks = self.indexed_tracks().await?;
         Ok(stale(
             last.map(|(at_unix, indexed_tracks)| LastRun {
@@ -135,30 +133,24 @@ impl AnalyzeService {
     }
 
     async fn indexed_tracks(&self) -> Result<i64, DbError> {
-        Ok(sqlx::query_scalar(
-            "SELECT COALESCE(SUM(indexed_tracks), 0) FROM library_track_format_stats",
-        )
-        .fetch_one(self.db.sqlx())
-        .await?)
+        Ok(sqlx::query_scalar(sql::INDEXED_TRACKS.text())
+            .fetch_one(self.db.sqlx())
+            .await?)
     }
 
     /// `ANALYZE` every table, one writer-lane step per table, then record
     /// the run and make reader connections reload the statistics.
     pub async fn run(&self) -> Result<(), DbError> {
         let started = Instant::now();
-        let tables: Vec<String> = sqlx::query_scalar(
-            "SELECT name FROM sqlite_schema WHERE type = 'table' \
-             AND name NOT LIKE 'sqlite_%' AND sql NOT LIKE 'CREATE VIRTUAL TABLE%' \
-             AND name NOT LIKE '%\\_fts\\_%' ESCAPE '\\' ORDER BY name",
-        )
-        .fetch_all(self.db.sqlx())
-        .await?;
+        let tables: Vec<String> = sqlx::query_scalar(sql::ANALYZED_TABLES.text())
+            .fetch_all(self.db.sqlx())
+            .await?;
         for table in tables {
             // A bounded sample per index keeps each step short on a large
             // catalog; the estimates stay good enough for plan choice.
             let statement = format!(
-                "PRAGMA analysis_limit={ANALYSIS_LIMIT}; ANALYZE \"{}\"",
-                table.replace('"', "\"\"")
+                "PRAGMA analysis_limit={ANALYSIS_LIMIT}; ANALYZE {}",
+                quoted_identifier(&table)
             );
             self.db
                 .write(Lane::Background, "db.analyze", move |tx| {
@@ -171,9 +163,7 @@ impl AnalyzeService {
         self.db
             .write(Lane::Background, "db.analyze.record", move |tx| {
                 tx.execute(
-                    "INSERT INTO db_planner_stats (singleton, analyzed_at, indexed_tracks) \
-                     VALUES (1, ?1, ?2) ON CONFLICT(singleton) DO UPDATE SET \
-                     analyzed_at = excluded.analyzed_at, indexed_tracks = excluded.indexed_tracks",
+                    sql::RECORD_ANALYZE.text(),
                     rusqlite::params![at, indexed_tracks],
                 )?;
                 // Bump the schema cookie so pooled readers reload the

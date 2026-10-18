@@ -29,7 +29,7 @@ use rusqlite::{Connection, OpenFlags, backup::Backup};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use super::{error::DbError, fs::same_filesystem, writer::CancelFlag};
+use super::{error::DbError, fs::same_filesystem, sql, writer::CancelFlag};
 
 /// Pages copied per backup step. The v2 `pages=256` value, unchanged.
 pub const BACKUP_STEP_PAGES: i32 = 256;
@@ -411,9 +411,7 @@ fn check_clean(connection: &Connection) -> Result<(), DbError> {
         return Err(DbError::IntegrityFailed);
     }
     let violations: i64 = connection
-        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
-            row.get(0)
-        })
+        .query_row(sql::FOREIGN_KEY_VIOLATIONS.text(), [], |row| row.get(0))
         .map_err(|_| DbError::IntegrityFailed)?;
     if violations != 0 {
         return Err(DbError::IntegrityFailed);

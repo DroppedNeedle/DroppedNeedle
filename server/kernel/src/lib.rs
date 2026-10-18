@@ -21,3 +21,9 @@ pub mod observability;
 pub mod provider_policy;
 pub mod runtime_config;
 pub mod schema;
+
+/// Every `sql.rs` of this crate, one line each, for the schema test.
+#[cfg(any(test, feature = "test-support"))]
+pub fn statement_files() -> Vec<db::statement::StatementFile> {
+    vec![db::sql::registered()]
+}

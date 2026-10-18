@@ -65,7 +65,8 @@
 //! a thread is inside, [`datalock`] is the file lock the server holds and the offline
 //! tool takes exclusively, `scratch` is the self-removing directory tests
 //! write under, [`statement`] declares the SQL every area keeps in its
-//! `sql.rs`, and [`error`] holds the typed errors.
+//! `sql.rs`, `sql` is this module's own, and [`error`] holds the typed
+//! errors.
 
 pub mod analyze;
 pub mod backup;
@@ -83,6 +84,7 @@ pub mod read_pool;
 mod scope;
 #[cfg(any(test, feature = "test-support"))]
 pub mod scratch;
+pub(crate) mod sql;
 pub mod statement;
 pub mod writer;
 

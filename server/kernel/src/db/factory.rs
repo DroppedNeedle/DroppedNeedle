@@ -46,6 +46,7 @@ use super::{
     fs::{reject_remote_filesystem, reject_symlink},
     handle::Db,
     read_pool::{ReadActivity, ReadPools},
+    sql,
     writer::{CancelFlag, LaneLimits, LaneWatch, ReliefPass, Ticker, WriteLane},
 };
 
@@ -291,11 +292,7 @@ fn schema_stamp(path: &Path) -> Result<(i64, i64), DbError> {
     let connection =
         rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let found = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    let tables = connection.query_row(
-        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-        [],
-        |row| row.get(0),
-    )?;
+    let tables = connection.query_row(sql::USER_TABLE_COUNT.text(), [], |row| row.get(0))?;
     Ok((found, tables))
 }
 
