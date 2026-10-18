@@ -15,7 +15,7 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
-use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -75,6 +75,7 @@ impl From<CorrectionError> for ApiError {
             CorrectionError::Invalid(reason) => refused(StatusCode::BAD_REQUEST, reason),
             CorrectionError::Conflict(reason) => refused(StatusCode::CONFLICT, reason),
             CorrectionError::Store(cause) => ApiError::internal(cause),
+            CorrectionError::Busy(cause) => ApiError::unavailable(Unavailable::ServerBusy, cause),
         }
     }
 }

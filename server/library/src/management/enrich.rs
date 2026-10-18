@@ -354,7 +354,16 @@ pub type EnrichmentSlot = Arc<std::sync::OnceLock<Arc<dyn EnrichmentPort>>>;
 pub fn wait<T>(call: BoxFuture<'_, Result<T, String>>) -> Option<T> {
     let handle = tokio::runtime::Handle::try_current().ok()?;
     // Planning runs on a blocking thread, outside any async context.
-    let outcome = handle.block_on(async { tokio::time::timeout(CALL_LIMIT, call).await });
+    let outcome =
+        match droppedneedle_kernel::db::block_on(&handle, "management_enrichment", async {
+            tokio::time::timeout(CALL_LIMIT, call).await
+        }) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                tracing::error!(%error, "library management enrichment not asked");
+                return None;
+            }
+        };
     match outcome {
         Ok(Ok(value)) => Some(value),
         Ok(Err(error)) => {

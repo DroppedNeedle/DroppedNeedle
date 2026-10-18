@@ -195,7 +195,7 @@ type SavedOverrides = BTreeMap<(String, String), (String, String, i64)>;
 
 impl Management {
     fn subject(&self, track_id: &str) -> Result<Subject, ManagementError> {
-        self.read(|conn| {
+        self.setup.db.read_blocking("management.subject", |conn| {
             conn.query_row(
                 "SELECT t.id, t.local_album_id, t.root_id, t.relative_path, t.row_revision, \
                  a.row_revision FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
@@ -220,25 +220,28 @@ impl Management {
     }
 
     fn saved_overrides(&self, subject: &Subject) -> Result<SavedOverrides, ManagementError> {
-        self.read(|conn| {
-            let mut statement = conn.prepare(
-                "SELECT subject_kind, field_name, id, mode, row_revision \
+        self.setup
+            .db
+            .read_blocking("management.saved_overrides", |conn| {
+                let mut statement = conn.prepare(
+                    "SELECT subject_kind, field_name, id, mode, row_revision \
                  FROM library_management_overrides \
                  WHERE (subject_kind = 'album' AND local_album_id = ?1) \
                  OR (subject_kind = 'track' AND local_track_id = ?2)",
-            )?;
-            let rows = statement.query_map(params![subject.album_id, subject.track_id], |row| {
-                Ok((
-                    (row.get::<_, String>(0)?, row.get::<_, String>(1)?),
-                    (
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, i64>(4)?,
-                    ),
-                ))
-            })?;
-            Ok(rows.collect::<rusqlite::Result<_>>()?)
-        })
+                )?;
+                let rows =
+                    statement.query_map(params![subject.album_id, subject.track_id], |row| {
+                        Ok((
+                            (row.get::<_, String>(0)?, row.get::<_, String>(1)?),
+                            (
+                                row.get::<_, String>(2)?,
+                                row.get::<_, String>(3)?,
+                                row.get::<_, i64>(4)?,
+                            ),
+                        ))
+                    })?;
+                Ok(rows.collect::<rusqlite::Result<_>>()?)
+            })
     }
 
     /// One file's tags, saved overrides and match, for the tag editor.
@@ -371,8 +374,11 @@ impl Management {
                 override_id: existing.map(|(id, _, _)| id.clone()),
                 expected_override_row_revision: existing.map(|(_, _, revision)| *revision),
                 previous: match existing {
-                    Some((id, mode, _)) => self.read(|conn| {
-                        Ok(conn
+                    Some((id, mode, _)) => {
+                        self.setup
+                            .db
+                            .read_blocking("management.create_tag_edit", |conn| {
+                                Ok::<_, ManagementError>(conn
                             .query_row(
                                 "SELECT value_json FROM library_management_overrides WHERE id = ?1",
                                 params![id],
@@ -380,7 +386,8 @@ impl Management {
                             )
                             .optional()?
                             .map(|value| (value, mode.clone())))
-                    })?,
+                            })?
+                    }
                     None => None,
                 },
             });

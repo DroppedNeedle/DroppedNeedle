@@ -114,7 +114,7 @@ async fn remap_tick(setup: &LibrarySetup, ops: &Operations) -> bool {
         if !setup.coordinator.current().is_empty() {
             return Ok(false);
         }
-        handle.block_on(ops.remap_next())
+        droppedneedle_kernel::db::block_on(&handle, "operations_remap", ops.remap_next())?
     })
     .await;
     match outcome {

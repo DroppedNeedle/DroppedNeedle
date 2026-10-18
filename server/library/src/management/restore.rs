@@ -4,6 +4,7 @@
 //! purge drops every saved original for good, after showing what it
 //! would remove and asking for a typed confirmation.
 
+use droppedneedle_kernel::db::Lane;
 use rusqlite::{OptionalExtension as _, params};
 
 use super::models::{
@@ -139,7 +140,12 @@ impl Management {
         worker: &str,
     ) -> Result<Option<Summary>, ManagementError> {
         let selection: Selection = serde_json::from_str(&snapshot.selection_json)?;
-        let mut albums = self.read(|conn| selection::albums(conn, &selection))?;
+        let mut albums = self
+            .setup
+            .db
+            .read_blocking("management.restore_albums", |conn| {
+                selection::albums(conn, &selection)
+            })?;
         for scope in &mut albums {
             scope.track_ids = None;
         }
@@ -152,7 +158,12 @@ impl Management {
         let mut summary = Summary::default();
         let mut ordinal = 0;
         for (bundle_ordinal, scope) in albums.iter().enumerate() {
-            let tracks = self.read(|conn| selection::tracks(conn, scope))?;
+            let tracks = self
+                .setup
+                .db
+                .read_blocking("management.restore_tracks", |conn| {
+                    selection::tracks(conn, scope)
+                })?;
             if tracks.is_empty() {
                 continue;
             }
@@ -241,23 +252,26 @@ impl Management {
                 // A restore of more than one album never writes over a
                 // file changed outside since the app wrote it: restore the
                 // album by itself for that.
-                let changed = self.read(|conn| {
-                    let mut changed = Vec::new();
-                    for item in items.iter().filter(|item| item.desired.plan.is_some()) {
-                        if let Some(track_id) = &item.track_id
-                            && changed_since_written(
-                                conn,
-                                track_id,
-                                &item.source_root,
-                                &item.source_rel,
-                                &item.fingerprint,
-                            )?
-                        {
-                            changed.push(track_id.clone());
-                        }
-                    }
-                    Ok(changed)
-                })?;
+                let changed =
+                    self.setup
+                        .db
+                        .read_blocking("management.restore_changed", |conn| {
+                            let mut changed = Vec::new();
+                            for item in items.iter().filter(|item| item.desired.plan.is_some()) {
+                                if let Some(track_id) = &item.track_id
+                                    && changed_since_written(
+                                        conn,
+                                        track_id,
+                                        &item.source_root,
+                                        &item.source_rel,
+                                        &item.fingerprint,
+                                    )?
+                                {
+                                    changed.push(track_id.clone());
+                                }
+                            }
+                            Ok::<_, ManagementError>(changed)
+                        })?;
                 for item in items.iter_mut().filter(|item| {
                     item.track_id
                         .as_ref()
@@ -269,16 +283,20 @@ impl Management {
                 // automatically, the album is left unmanaged too.
                 if !changed.is_empty() && self.managed_automatically(&scope.album_id)? {
                     let now = now_unix();
-                    self.write(|tx| {
-                        Ok(super::takeover::mark(
-                            tx,
-                            &scope.album_id,
-                            super::takeover::Cause::FilesChanged,
-                            &changed,
-                            Some(&snapshot.job.id),
-                            now,
-                        )?)
-                    })?;
+                    self.setup.db.write_blocking(
+                        Lane::Background,
+                        "management.restore_mark_changed",
+                        |tx| {
+                            Ok::<_, ManagementError>(super::takeover::mark(
+                                tx,
+                                &scope.album_id,
+                                super::takeover::Cause::FilesChanged,
+                                &changed,
+                                Some(&snapshot.job.id),
+                                now,
+                            )?)
+                        },
+                    )?;
                 }
             }
             if items
@@ -308,7 +326,9 @@ impl Management {
 
     /// What purging every saved original would remove. Blocking.
     pub fn purge_impact(&self) -> Result<PurgeImpact, ManagementError> {
-        self.read(|conn| Ok(purge_impact(conn)?))
+        self.setup
+            .db
+            .read_blocking("management.purge_impact", |conn| Ok(purge_impact(conn)?))
     }
 
     /// Drop every saved original for good, once the typed confirmation
@@ -337,7 +357,7 @@ impl Management {
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let outcome = self.write(|tx| {
+        let outcome = self.setup.db.write_blocking(Lane::Foreground, "management.purge", |tx| {
             let earlier = tx
                 .query_row(
                     "SELECT impact_token, purged_baseline_count, detached_reference_count \
@@ -410,11 +430,15 @@ impl Management {
                 existing: false,
             })
         })?;
-        let cleaned = self.read(|conn| {
-            BlobStore::new(conn)
-                .sweep_unreferenced()
-                .map_err(|error| ManagementError::Store(error.to_string()))
-        })?;
+        let cleaned = self.setup.db.write_blocking(
+            Lane::Foreground,
+            "management.sweep_unreferenced",
+            |conn| {
+                BlobStore::new(conn)
+                    .sweep_unreferenced()
+                    .map_err(|error| ManagementError::Store(error.to_string()))
+            },
+        )?;
         tracing::info!(
             purged = outcome.purged_baseline_count,
             cleaned,

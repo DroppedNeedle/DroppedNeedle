@@ -12,7 +12,7 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
-use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -66,6 +66,7 @@ impl From<OperationError> for ApiError {
                 format!("MusicBrainz release search failed: {cause}"),
             ),
             OperationError::Store(cause) => ApiError::internal(cause),
+            OperationError::Busy(cause) => ApiError::unavailable(Unavailable::ServerBusy, cause),
         }
     }
 }
@@ -460,9 +461,11 @@ pub async fn get_operation(
     let ops = Operations::new(&state);
     let (detail, summary) = blocking(move || {
         let detail = ops.get(&job_id)?;
-        let summary = (detail.job.kind == "repair")
-            .then(|| crate::repairs::service::repair_summary(&state, &job_id))
-            .flatten();
+        let summary = if detail.job.kind == "repair" {
+            crate::repairs::service::repair_summary(&state, &job_id)?
+        } else {
+            None
+        };
         Ok((detail, summary))
     })
     .await?;

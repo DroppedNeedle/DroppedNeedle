@@ -10,7 +10,7 @@ use axum::{
     http::StatusCode,
     routing::{delete, post},
 };
-use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -125,6 +125,7 @@ impl From<MutationError> for ApiError {
             MutationError::Conflict(reason) => refused(StatusCode::CONFLICT, reason),
             MutationError::Files(reason) => refused(StatusCode::UNPROCESSABLE_ENTITY, reason),
             MutationError::Store(cause) => ApiError::internal(cause),
+            MutationError::Busy(cause) => ApiError::unavailable(Unavailable::ServerBusy, cause),
         }
     }
 }

@@ -1,14 +1,13 @@
 //! The operations service: what the HTTP handlers and the worker loop call.
 //!
-//! Every store call runs a short transaction on the identify store's
-//! connection, so it must run off the async workers (handlers use
-//! `spawn_blocking`; the loop drives its tick on a blocking thread). The
-//! identify store's own methods lock the same connection, so they are
-//! never called from inside a transaction here.
+//! Reads and writes go through the shared database's blocking calls, so
+//! every method runs off the async workers (handlers use `spawn_blocking`;
+//! the loop drives its tick on a blocking thread). Requests write on the
+//! foreground lane, the worker on the background lane.
 
 use std::sync::Arc;
 
-use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior};
+use rusqlite::OptionalExtension as _;
 
 use super::decisions::indexed_track_ids;
 use super::models::{
@@ -29,6 +28,7 @@ use crate::identify::sqlite::SqliteIdentifyStore;
 use crate::identify::sqlite::{album_identity_row, queue_retry};
 use crate::matching::model::Release;
 use crate::wiring::LibrarySetup;
+use droppedneedle_kernel::db::{Db, Lane, savepoint};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 
@@ -41,6 +41,7 @@ pub const RELEASE_PAGE_MAX: u32 = 12;
 /// Operation jobs over the library's identify store and service.
 #[derive(Clone)]
 pub struct Operations {
+    db: Db,
     store: Arc<SqliteIdentifyStore>,
     identify: Arc<IdentifyService>,
     ids: Arc<dyn IdGenerator>,
@@ -50,6 +51,7 @@ pub struct Operations {
 impl Operations {
     pub fn new(setup: &LibrarySetup) -> Self {
         Self {
+            db: setup.db.clone(),
             store: setup.identify_store.clone(),
             identify: setup.identify.clone(),
             ids: setup.ids.clone(),
@@ -57,37 +59,34 @@ impl Operations {
         }
     }
 
-    fn read<T>(
+    /// Where the album's edition stands. Blocking.
+    pub fn edition_status(
         &self,
-        op: impl FnOnce(&Connection) -> Result<T, OperationError>,
-    ) -> Result<T, OperationError> {
-        self.store.with_connection(|conn| op(conn))
+        album_id: &str,
+    ) -> Result<Option<super::status::EditionStatus>, OperationError> {
+        self.db.read_blocking("operations.edition_status", |conn| {
+            Ok::<_, OperationError>(super::status::edition_status(conn, album_id)?)
+        })
     }
 
-    /// Run a read on the store's connection. Blocking.
-    pub fn read_with<T>(
+    /// One page of the albums whose match waits for a person. Blocking.
+    pub fn waiting_albums(
         &self,
-        op: impl FnOnce(&Connection) -> rusqlite::Result<T>,
-    ) -> Result<T, OperationError> {
-        self.read(|conn| Ok(op(conn)?))
-    }
-
-    fn write<T>(
-        &self,
-        op: impl FnOnce(&Transaction<'_>) -> Result<T, OperationError>,
-    ) -> Result<T, OperationError> {
-        self.store.with_connection(|conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let value = op(&tx)?;
-            tx.commit()?;
-            Ok(value)
+        unmatched: bool,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<super::status::WaitingAlbum>, u64), OperationError> {
+        self.db.read_blocking("operations.waiting_albums", |conn| {
+            Ok::<_, OperationError>(super::status::waiting_albums(
+                conn, unmatched, limit, offset,
+            )?)
         })
     }
 
     /// One job with its results and, for a re-identification, its
     /// candidates. Blocking.
     pub fn get(&self, job_id: &str) -> Result<OperationDetail, OperationError> {
-        self.read(|conn| {
+        self.db.read_blocking("operations.get", |conn| {
             let job = store::job(conn, job_id)?
                 .ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))?;
             let (results, results_truncated) = store::work_results(conn, job_id)?;
@@ -120,16 +119,17 @@ impl Operations {
         expected_row_revision: i64,
         idempotency_key: Option<&str>,
     ) -> Result<OperationJob, OperationError> {
-        self.write(|tx| {
-            store::request_control(
-                tx,
-                job_id,
-                control,
-                expected_row_revision,
-                idempotency_key,
-                now_unix(),
-            )
-        })
+        self.db
+            .write_blocking(Lane::Foreground, "operations.control", |tx| {
+                store::request_control(
+                    tx,
+                    job_id,
+                    control,
+                    expected_row_revision,
+                    idempotency_key,
+                    now_unix(),
+                )
+            })
     }
 
     /// A re-identification of one album.
@@ -154,12 +154,17 @@ impl Operations {
         &self,
         filter: &reviews::ReviewFilter,
     ) -> Result<(Vec<reviews::ReviewRow>, u64, reviews::ReasonCounts), OperationError> {
-        self.read_with(|conn| reviews::list(conn, filter))
+        self.db.read_blocking("operations.reviews", |conn| {
+            Ok::<_, OperationError>(reviews::list(conn, filter)?)
+        })
     }
 
     /// One identification review. Blocking.
     pub fn review(&self, review_id: &str) -> Result<reviews::ReviewRow, OperationError> {
-        self.read_with(|conn| reviews::get(conn, review_id))?
+        self.db
+            .read_blocking("operations.review", |conn| {
+                Ok::<_, OperationError>(reviews::get(conn, review_id)?)
+            })?
             .ok_or(OperationError::NotFound(reasons::REVIEW_NOT_FOUND))
     }
 
@@ -171,7 +176,10 @@ impl Operations {
         action: reviews::ReviewAction,
         actor: &str,
     ) -> Result<reviews::ReviewRow, OperationError> {
-        self.write(|tx| reviews::settle(tx, review_id, action, actor, now_unix()))?;
+        self.db
+            .write_blocking(Lane::Foreground, "operations.settle_review", |tx| {
+                reviews::settle(tx, review_id, action, actor, now_unix())
+            })?;
         self.review(review_id)
     }
 
@@ -194,18 +202,19 @@ impl Operations {
             idempotency_key,
             one_off_local_metadata,
         );
-        self.write(|tx| {
-            if !reviews::mark(
-                tx,
-                review_id,
-                "pending",
-                crate::identify::models::ReviewState::Dismissed,
-                actor,
-            )? {
-                return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
-            }
-            store::create_reidentification(tx, &self.config, &new, now_unix())
-        })
+        self.db
+            .write_blocking(Lane::Foreground, "operations.retry_review", |tx| {
+                if !reviews::mark(
+                    tx,
+                    review_id,
+                    "pending",
+                    crate::identify::models::ReviewState::Dismissed,
+                    actor,
+                )? {
+                    return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
+                }
+                store::create_reidentification(tx, &self.config, &new, now_unix())
+            })
     }
 
     /// Start identification again for every pending review `filter`
@@ -238,13 +247,21 @@ impl Operations {
                     None,
                     one_off_local_metadata,
                 );
-                self.store.with_connection(|conn| {
-                    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                    let tried = store::create_reidentification(&tx, &self.config, &new, now_unix())
-                        .map(|_| ());
-                    tx.rollback()?;
-                    Ok::<_, OperationError>(tried)
-                })?
+                // Tried inside a savepoint that is always rolled back, so
+                // nothing commits.
+                self.db.write_blocking(
+                    Lane::Foreground,
+                    "operations.retry_pending_reviews_preview",
+                    |tx| {
+                        let tried = savepoint(tx, "preview", || {
+                            Err::<(), _>(
+                                store::create_reidentification(tx, &self.config, &new, now_unix())
+                                    .map(|_| ()),
+                            )
+                        })?;
+                        Ok::<_, OperationError>(tried.err().unwrap_or(Ok(())))
+                    },
+                )?
             } else {
                 self.retry_review(&row.review.id, actor, None, one_off_local_metadata)
                     .map(|_| ())
@@ -309,15 +326,19 @@ impl Operations {
                     .map_err(|error| error.to_string()),
                 (reviews::BulkAction::Accept, None) => Ok(false),
                 (reviews::BulkAction::Exclude, _) => {
-                    match self.write(|tx| {
-                        reviews::settle(
-                            tx,
-                            &item.review_id,
-                            reviews::ReviewAction::Exclude,
-                            actor,
-                            now_unix(),
-                        )
-                    }) {
+                    match self.db.write_blocking(
+                        Lane::Foreground,
+                        "operations.apply_bulk_reviews",
+                        |tx| {
+                            reviews::settle(
+                                tx,
+                                &item.review_id,
+                                reviews::ReviewAction::Exclude,
+                                actor,
+                                now_unix(),
+                            )
+                        },
+                    ) {
                         Ok(()) => Ok(true),
                         Err(
                             OperationError::NotFound(reason)
@@ -357,7 +378,10 @@ impl Operations {
         let candidate = self.candidate_for(album_id, &release).await?;
         let (ops, album, actor) = (self.clone(), album_id.to_owned(), actor.map(str::to_owned));
         tokio::task::spawn_blocking(move || {
-            ops.write(|tx| choice::choose(tx, &album, &candidate, actor.as_deref(), now_unix()))
+            ops.db
+                .write_blocking(Lane::Foreground, "operations.choose_edition", |tx| {
+                    choice::choose(tx, &album, &candidate, actor.as_deref(), now_unix())
+                })
         })
         .await
         .map_err(|error| OperationError::Store(error.to_string()))?
@@ -380,10 +404,10 @@ impl Operations {
             let ops = self.clone();
             let album = album_id.to_owned();
             tokio::task::spawn_blocking(move || {
-                ops.read(|conn| {
+                ops.db.read_blocking("operations.album_revisions", |conn| {
                     let known = store::album_revisions(conn, &album)?
                         .ok_or(OperationError::NotFound(reasons::ALBUM_NOT_FOUND))?;
-                    Ok(decisions::SealGuard {
+                    Ok::<_, OperationError>(decisions::SealGuard {
                         identity_revision: choice::identity_revision(conn, &album)?,
                         album_revision: known.album_revision,
                         input_revision: known.input_revision,
@@ -399,9 +423,10 @@ impl Operations {
         let candidate = self.candidate_for(album_id, &release).await?;
         let (ops, album, actor) = (self.clone(), album_id.to_owned(), actor.to_owned());
         tokio::task::spawn_blocking(move || {
-            ops.write(|tx| {
-                decisions::custom_edition(tx, &album, &candidate, &guard, &actor, now_unix())
-            })
+            ops.db
+                .write_blocking(Lane::Foreground, "operations.custom_edition", |tx| {
+                    decisions::custom_edition(tx, &album, &candidate, &guard, &actor, now_unix())
+                })
         })
         .await
         .map_err(|error| OperationError::Store(error.to_string()))?
@@ -414,15 +439,16 @@ impl Operations {
         expected_identity_revision: i64,
         actor: &str,
     ) -> Result<(), OperationError> {
-        self.write(|tx| {
-            decisions::leave_album_unmanaged(
-                tx,
-                album_id,
-                expected_identity_revision,
-                actor,
-                now_unix(),
-            )
-        })
+        self.db
+            .write_blocking(Lane::Foreground, "operations.leave_unmanaged", |tx| {
+                decisions::leave_album_unmanaged(
+                    tx,
+                    album_id,
+                    expected_identity_revision,
+                    actor,
+                    now_unix(),
+                )
+            })
     }
 
     /// The release scored against the album's files, as a candidate.
@@ -488,7 +514,7 @@ impl Operations {
     ) -> Result<Option<String>, OperationError> {
         let (ops, group) = (self.clone(), release_group_mbid.trim().to_ascii_lowercase());
         tokio::task::spawn_blocking(move || {
-            ops.read_with(|conn| {
+            ops.db.read_blocking("operations.album_for_group", |conn| {
                 conn.query_row(
                     "SELECT e.local_album_id FROM local_album_external_identities e \
                      JOIN local_albums b ON b.id = e.local_album_id \
@@ -499,6 +525,7 @@ impl Operations {
                     |row| row.get(0),
                 )
                 .optional()
+                .map_err(OperationError::from)
             })
         })
         .await
@@ -530,25 +557,26 @@ impl Operations {
             let ops = self.clone();
             let album = album_id.to_owned();
             tokio::task::spawn_blocking(move || {
-                ops.read(|conn| {
-                    let identity = album_identity_row(conn, &album)?;
-                    let stored = hand_match::stored_placements(conn, &album)?;
-                    let mut written = Vec::new();
-                    for row in &stored {
-                        if let Some(matched_at) = row.matched_at
-                            && hand_match::written_since(conn, &row.local_track_id, matched_at)?
-                        {
-                            written.push(row.local_track_id.clone());
+                ops.db
+                    .read_blocking("operations.read_edition_plan", |conn| {
+                        let identity = album_identity_row(conn, &album)?;
+                        let stored = hand_match::stored_placements(conn, &album)?;
+                        let mut written = Vec::new();
+                        for row in &stored {
+                            if let Some(matched_at) = row.matched_at
+                                && hand_match::written_since(conn, &row.local_track_id, matched_at)?
+                            {
+                                written.push(row.local_track_id.clone());
+                            }
                         }
-                    }
-                    Ok((
-                        identity.map(|row| (row.release_mbid, row.release_group_mbid)),
-                        choice::identity_revision(conn, &album)?,
-                        indexed_track_ids(conn, &album)?,
-                        stored,
-                        written,
-                    ))
-                })
+                        Ok::<_, OperationError>((
+                            identity.map(|row| (row.release_mbid, row.release_group_mbid)),
+                            choice::identity_revision(conn, &album)?,
+                            indexed_track_ids(conn, &album)?,
+                            stored,
+                            written,
+                        ))
+                    })
             })
             .await
             .map_err(|error| OperationError::Store(error.to_string()))??
@@ -605,7 +633,9 @@ impl Operations {
             let ops = self.clone();
             let album = album_id.to_owned();
             tokio::task::spawn_blocking(move || {
-                ops.read(|conn| hand_match::guard(conn, &album, expected_identity_revision))
+                ops.db.read_blocking("operations.guard", |conn| {
+                    hand_match::guard(conn, &album, expected_identity_revision)
+                })
             })
             .await
             .map_err(|error| OperationError::Store(error.to_string()))??
@@ -626,16 +656,17 @@ impl Operations {
                 expected_identity_revision,
                 actor: &actor,
             };
-            ops.write(|tx| {
-                hand_match::match_file(
-                    tx,
-                    &asked,
-                    &release,
-                    &candidate,
-                    now_unix(),
-                    crate::clock::now_ms() as i64,
-                )
-            })
+            ops.db
+                .write_blocking(Lane::Foreground, "operations.match_file", |tx| {
+                    hand_match::match_file(
+                        tx,
+                        &asked,
+                        &release,
+                        &candidate,
+                        now_unix(),
+                        crate::clock::now_ms() as i64,
+                    )
+                })
         })
         .await
         .map_err(|error| OperationError::Store(error.to_string()))?
@@ -648,17 +679,27 @@ impl Operations {
         track_id: &str,
         actor: &str,
     ) -> Result<(), OperationError> {
-        self.write(|tx| hand_match::unmatch_file(tx, album_id, track_id, actor, now_unix()))
+        self.db
+            .write_blocking(Lane::Foreground, "operations.unmatch_file", |tx| {
+                hand_match::unmatch_file(tx, album_id, track_id, actor, now_unix())
+            })
     }
 
     /// "Let DroppedNeedle choose": hand the album's edition back to
     /// automatic best fit and queue an identification. Blocking.
     pub fn hand_back_edition(&self, album_id: &str, actor: &str) -> Result<(), OperationError> {
-        let known = self.read(|conn| Ok(store::album_revisions(conn, album_id)?))?;
+        let known = self
+            .db
+            .read_blocking("operations.hand_back_edition_album_revisions", |conn| {
+                Ok::<_, OperationError>(store::album_revisions(conn, album_id)?)
+            })?;
         if known.is_none() {
             return Err(OperationError::NotFound(reasons::ALBUM_NOT_FOUND));
         }
-        self.write(|tx| choice::hand_back(tx, album_id, actor, now_unix()))?;
+        self.db
+            .write_blocking(Lane::Foreground, "operations.hand_back", |tx| {
+                choice::hand_back(tx, album_id, actor, now_unix())
+            })?;
         let revision = self
             .store
             .input_revision(album_id)
@@ -687,7 +728,7 @@ impl Operations {
         album_id: &str,
         caller_user_id: &str,
     ) -> Result<Vec<history::HistoryEntry>, OperationError> {
-        self.read(|conn| {
+        self.db.read_blocking("operations.album_history", |conn| {
             history::album_history(conn, album_id, caller_user_id, now_unix())?
                 .ok_or(OperationError::NotFound(reasons::ALBUM_NOT_FOUND))
         })
@@ -695,12 +736,18 @@ impl Operations {
 
     /// "Looks right": confirm the album's unconfirmed match. Blocking.
     pub fn confirm_match(&self, album_id: &str, actor: &str) -> Result<(), OperationError> {
-        self.write(|tx| choice::confirm(tx, album_id, actor, now_unix()))
+        self.db
+            .write_blocking(Lane::Foreground, "operations.confirm_match", |tx| {
+                choice::confirm(tx, album_id, actor, now_unix())
+            })
     }
 
     /// Take back the album's last edition change. Blocking.
     pub fn undo_edition_choice(&self, album_id: &str, actor: &str) -> Result<(), OperationError> {
-        self.write(|tx| choice::undo(tx, album_id, actor, now_unix()))
+        self.db
+            .write_blocking(Lane::Foreground, "operations.undo_edition_choice", |tx| {
+                choice::undo(tx, album_id, actor, now_unix())
+            })
     }
 
     /// Place the files of the next album whose edition still waits for
@@ -711,7 +758,10 @@ impl Operations {
         use choice::RemapOrigin;
 
         let now = now_unix();
-        let Some(pending) = self.read(|conn| Ok(choice::next_remap(conn, now)?))? else {
+        let Some(pending) = self.db.read_blocking("operations.next_remap", |conn| {
+            Ok::<_, OperationError>(choice::next_remap(conn, now)?)
+        })?
+        else {
             return Ok(false);
         };
         let outcome = self
@@ -719,82 +769,88 @@ impl Operations {
             .await;
         let actor = pending.chosen_by_user_id.as_deref();
         let place_only = pending.origin == RemapOrigin::PlaceOnly;
-        self.write(|tx| {
-            let now = now_unix();
-            // A person may have chosen again, or handed the album back,
-            // while MusicBrainz was asked: then this remap is stale.
-            if !choice::remap_still_wanted(tx, &pending)? {
-                return Ok(true);
-            }
-            // A person's later word on the album ("leave unmanaged", a
-            // custom edition, another edition) stands over the queued one.
-            if !choice::remap_still_holds(tx, &pending)? {
-                choice::drop_remap(tx, &pending)?;
-                return Ok(true);
-            }
-            let placed = match outcome {
-                Ok(candidate) if place_only => {
-                    choice::place_files(tx, &pending, &candidate, now).map(|_| ())
+        self.db
+            .write_blocking(Lane::Background, "operations.remap", |tx| {
+                let now = now_unix();
+                // A person may have chosen again, or handed the album back,
+                // while MusicBrainz was asked: then this remap is stale.
+                if !choice::remap_still_wanted(tx, &pending)? {
+                    return Ok(true);
                 }
-                Ok(candidate) => {
-                    choice::apply_choice(tx, &pending.local_album_id, &candidate, actor, None, now)
-                        .map(|_| ())
+                // A person's later word on the album ("leave unmanaged", a
+                // custom edition, another edition) stands over the queued one.
+                if !choice::remap_still_holds(tx, &pending)? {
+                    choice::drop_remap(tx, &pending)?;
+                    return Ok(true);
                 }
-                Err(error) => Err(error),
-            };
-            match placed {
-                Ok(()) => decisions::bump_catalog(tx)?,
-                Err(OperationError::Unavailable(_)) => {
-                    choice::retry_remap(tx, &pending, reasons::MUSICBRAINZ_UNAVAILABLE, now)?
-                }
-                // The album's files are out of reach for now (a scan may
-                // be moving them): never a reason to drop the choice.
-                Err(OperationError::NotFound(reason))
-                    if reason.code == reasons::ALBUM_NOT_FOUND.code =>
-                {
-                    choice::retry_remap(tx, &pending, reason.code, now)?
-                }
-                // An edition the album already has is never given up: it
-                // stays, and the album shows why its files are not on it.
-                Err(OperationError::NotFound(reason))
-                    if reason.code == reasons::EDITION_NOT_FOUND.code && place_only =>
-                {
-                    choice::keep_unplaceable_choice(
+                let placed = match outcome {
+                    Ok(candidate) if place_only => {
+                        choice::place_files(tx, &pending, &candidate, now).map(|_| ())
+                    }
+                    Ok(candidate) => choice::apply_choice(
                         tx,
-                        &pending,
-                        reason.code,
-                        choice::CHOSEN_NOT_LISTED,
+                        &pending.local_album_id,
+                        &candidate,
+                        actor,
+                        None,
                         now,
-                    )?;
-                    decisions::bump_catalog(tx)?;
+                    )
+                    .map(|_| ()),
+                    Err(error) => Err(error),
+                };
+                match placed {
+                    Ok(()) => decisions::bump_catalog(tx)?,
+                    Err(OperationError::Unavailable(_)) => {
+                        choice::retry_remap(tx, &pending, reasons::MUSICBRAINZ_UNAVAILABLE, now)?
+                    }
+                    // The album's files are out of reach for now (a scan may
+                    // be moving them): never a reason to drop the choice.
+                    Err(OperationError::NotFound(reason))
+                        if reason.code == reasons::ALBUM_NOT_FOUND.code =>
+                    {
+                        choice::retry_remap(tx, &pending, reason.code, now)?
+                    }
+                    // An edition the album already has is never given up: it
+                    // stays, and the album shows why its files are not on it.
+                    Err(OperationError::NotFound(reason))
+                        if reason.code == reasons::EDITION_NOT_FOUND.code && place_only =>
+                    {
+                        choice::keep_unplaceable_choice(
+                            tx,
+                            &pending,
+                            reason.code,
+                            choice::CHOSEN_NOT_LISTED,
+                            now,
+                        )?;
+                        decisions::bump_catalog(tx)?;
+                    }
+                    Err(OperationError::NotFound(reason))
+                        if reason.code == reasons::EDITION_NOT_FOUND.code =>
+                    {
+                        choice::give_up_remap(tx, &pending, reason.code, now)?;
+                        decisions::bump_catalog(tx)?;
+                    }
+                    Err(OperationError::Invalid(reason))
+                        if reason.code == reasons::EDITION_FITS_NO_FILE.code
+                            && pending.origin == RemapOrigin::GroupPin =>
+                    {
+                        choice::give_up_remap(tx, &pending, reason.code, now)?;
+                        decisions::bump_catalog(tx)?;
+                    }
+                    Err(OperationError::Invalid(reason) | OperationError::NotFound(reason)) => {
+                        choice::keep_unplaceable_choice(
+                            tx,
+                            &pending,
+                            reason.code,
+                            choice::CHOSEN_FITS_NO_FILE,
+                            now,
+                        )?;
+                        decisions::bump_catalog(tx)?;
+                    }
+                    Err(other) => return Err(other),
                 }
-                Err(OperationError::NotFound(reason))
-                    if reason.code == reasons::EDITION_NOT_FOUND.code =>
-                {
-                    choice::give_up_remap(tx, &pending, reason.code, now)?;
-                    decisions::bump_catalog(tx)?;
-                }
-                Err(OperationError::Invalid(reason))
-                    if reason.code == reasons::EDITION_FITS_NO_FILE.code
-                        && pending.origin == RemapOrigin::GroupPin =>
-                {
-                    choice::give_up_remap(tx, &pending, reason.code, now)?;
-                    decisions::bump_catalog(tx)?;
-                }
-                Err(OperationError::Invalid(reason) | OperationError::NotFound(reason)) => {
-                    choice::keep_unplaceable_choice(
-                        tx,
-                        &pending,
-                        reason.code,
-                        choice::CHOSEN_FITS_NO_FILE,
-                        now,
-                    )?;
-                    decisions::bump_catalog(tx)?;
-                }
-                Err(other) => return Err(other),
-            }
-            Ok(true)
-        })
+                Ok(true)
+            })
     }
 
     /// Undo the album's last automatic edition. Blocking.
@@ -805,16 +861,20 @@ impl Operations {
         expected_identity_revision: i64,
         user_id: &str,
     ) -> Result<UndoOutcome, OperationError> {
-        self.write(|tx| {
-            decisions::undo_automatic_edition(
-                tx,
-                album_id,
-                expected_album_revision,
-                expected_identity_revision,
-                user_id,
-                now_unix(),
-            )
-        })
+        self.db.write_blocking(
+            Lane::Foreground,
+            "operations.undo_automatic_edition",
+            |tx| {
+                decisions::undo_automatic_edition(
+                    tx,
+                    album_id,
+                    expected_album_revision,
+                    expected_identity_revision,
+                    user_id,
+                    now_unix(),
+                )
+            },
+        )
     }
 
     /// One page of MusicBrainz releases for the album's edition finder,
@@ -848,7 +908,9 @@ impl Operations {
             let ops = self.clone();
             let album_id = album_id.to_owned();
             tokio::task::spawn_blocking(move || {
-                let known = ops.read(|conn| Ok(store::album_revisions(conn, &album_id)?))?;
+                let known = ops.db.read_blocking("operations.search_releases", |conn| {
+                    Ok::<_, OperationError>(store::album_revisions(conn, &album_id)?)
+                })?;
                 if known.is_none() {
                     return Err(OperationError::NotFound(reasons::ALBUM_NOT_FOUND));
                 }
@@ -886,45 +948,46 @@ impl Operations {
     /// all in one write. Returns the job as it was left, or `None` when
     /// nothing was due. Blocking.
     pub fn run_next(&self, worker: &str) -> Result<Option<OperationJob>, OperationError> {
-        self.write(|tx| {
-            let now = now_unix();
-            store::recover_expired(tx, now)?;
-            let Some(job) = store::claim_reidentification(tx, worker, now)? else {
-                return Ok(None);
-            };
-            if store::claim_work(tx, &job.id, now)?.is_none() {
-                return Ok(store::fail(tx, &job.id, worker, "MISSING_WORK", now)?);
-            }
-            // A pause or stop asked for while the job was queued wins.
-            if let Some(halted) = store::checkpoint(tx, &job.id, worker, now)? {
-                return Ok(Some(halted));
-            }
-            let Some(snap) = store::snapshot(tx, &job.id)? else {
-                return Ok(store::fail(tx, &job.id, worker, "MISSING_SNAPSHOT", now)?);
-            };
-            let gate = store::retry_gate(
-                tx,
-                &self.config,
-                &snap.local_album_id,
-                snap.one_off_local_metadata,
-            );
-            match gate {
-                Ok(_) => {}
-                Err(
-                    OperationError::NotFound(reason)
-                    | OperationError::Invalid(reason)
-                    | OperationError::Conflict(reason),
-                ) => return Ok(store::fail(tx, &job.id, worker, reason.code, now)?),
-                Err(other) => return Err(other),
-            }
-            queue_retry(
-                tx,
-                &snap.local_album_id,
-                job.requested_by_user_id.as_deref(),
-                crate::clock::now_ms() as i64,
-            )?;
-            Ok(store::hand_over(tx, &job.id, worker, now)?)
-        })
+        self.db
+            .write_blocking(Lane::Background, "operations.run_next", |tx| {
+                let now = now_unix();
+                store::recover_expired(tx, now)?;
+                let Some(job) = store::claim_reidentification(tx, worker, now)? else {
+                    return Ok(None);
+                };
+                if store::claim_work(tx, &job.id, now)?.is_none() {
+                    return Ok(store::fail(tx, &job.id, worker, "MISSING_WORK", now)?);
+                }
+                // A pause or stop asked for while the job was queued wins.
+                if let Some(halted) = store::checkpoint(tx, &job.id, worker, now)? {
+                    return Ok(Some(halted));
+                }
+                let Some(snap) = store::snapshot(tx, &job.id)? else {
+                    return Ok(store::fail(tx, &job.id, worker, "MISSING_SNAPSHOT", now)?);
+                };
+                let gate = store::retry_gate(
+                    tx,
+                    &self.config,
+                    &snap.local_album_id,
+                    snap.one_off_local_metadata,
+                );
+                match gate {
+                    Ok(_) => {}
+                    Err(
+                        OperationError::NotFound(reason)
+                        | OperationError::Invalid(reason)
+                        | OperationError::Conflict(reason),
+                    ) => return Ok(store::fail(tx, &job.id, worker, reason.code, now)?),
+                    Err(other) => return Err(other),
+                }
+                queue_retry(
+                    tx,
+                    &snap.local_album_id,
+                    job.requested_by_user_id.as_deref(),
+                    crate::clock::now_ms() as i64,
+                )?;
+                Ok(store::hand_over(tx, &job.id, worker, now)?)
+            })
     }
 }
 
@@ -941,5 +1004,9 @@ pub fn automatic_edition_undo(
     setup: &LibrarySetup,
     album_id: &str,
 ) -> Result<Option<(i64, i64)>, OperationError> {
-    Operations::new(setup).read(|conn| Ok(decisions::live_automatic_edition_undo(conn, album_id)?))
+    setup
+        .db
+        .read_blocking("operations.automatic_edition_undo", |conn| {
+            Ok::<_, OperationError>(decisions::live_automatic_edition_undo(conn, album_id)?)
+        })
 }

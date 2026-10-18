@@ -6,6 +6,7 @@
 //! write put them. Closing changes no file and keeps the journal's
 //! evidence; it records that someone looked and everything was in place.
 
+use droppedneedle_kernel::db::Lane;
 use std::collections::BTreeMap;
 
 use rusqlite::{OptionalExtension as _, params};
@@ -117,24 +118,26 @@ impl Management {
     /// yes. Blocking.
     pub fn download_publish_settled(&self, task_id: &str) -> Result<bool, ManagementError> {
         let folder = format!("{}/", crate::import::staging_rel(task_id));
-        self.read(|conn| {
-            let unsettled: bool = conn.query_row(
-                "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
+        self.setup
+            .db
+            .read_blocking("management.download_publish_settled", |conn| {
+                let unsettled: bool = conn.query_row(
+                    "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
                  WHERE bundle_id IN (SELECT bundle_id FROM library_publish_journal \
                  WHERE substr(source_rel, 1, length(?1)) = ?1) \
                  AND state NOT IN ('cleaned', 'compensated', 'cleanup_pending') \
                  AND NOT (state = 'needs_attention' AND bundle_id IN \
                  (SELECT bundle_id FROM library_publish_resolutions)))",
-                params![folder],
-                |row| row.get(0),
-            )?;
-            Ok(!unsettled)
-        })
+                    params![folder],
+                    |row| row.get(0),
+                )?;
+                Ok(!unsettled)
+            })
     }
 
     /// What the publish journal holds. Blocking.
     pub fn recovery_diagnostics(&self) -> Result<Diagnostics, ManagementError> {
-        self.read(|conn| {
+        self.setup.db.read_blocking("management.recovery_diagnostics", |conn| {
             let count = |sql: &str| conn.query_row(sql, [], |row| row.get::<_, i64>(0));
             let open = "state NOT IN ('cleaned', 'compensated', 'needs_attention')";
             let attention = "state = 'needs_attention' AND bundle_id NOT IN \
@@ -199,7 +202,7 @@ impl Management {
         bundle_id: &str,
         actor: &str,
     ) -> Result<Resolved, ManagementError> {
-        let journals: Vec<(String, String, String, String, String)> = self.read(|conn| {
+        let journals: Vec<(String, String, String, String, String)> = self.setup.db.read_blocking("management.bundle_journals", |conn| {
             let mut statement = conn.prepare(
                 "SELECT state, kind, dest_root, dest_rel, staged_sha256 FROM library_publish_journal \
                  WHERE bundle_id = ?1 ORDER BY id",
@@ -207,22 +210,25 @@ impl Management {
             let rows = statement.query_map(params![bundle_id], |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
             })?;
-            Ok(rows.collect::<rusqlite::Result<_>>()?)
+            Ok::<_, ManagementError>(rows.collect::<rusqlite::Result<_>>()?)
         })?;
         if journals.is_empty() {
             return Err(ManagementError::NotFound(
                 "This write is not in the journal.",
             ));
         }
-        let earlier: Option<i64> = self.read(|conn| {
-            Ok(conn
+        let earlier: Option<i64> =
+            self.setup
+                .db
+                .read_blocking("management.resolution", |conn| {
+                    Ok::<_, ManagementError>(conn
                 .query_row(
                     "SELECT verified_files FROM library_publish_resolutions WHERE bundle_id = ?1",
                     params![bundle_id],
                     |row| row.get(0),
                 )
                 .optional()?)
-        })?;
+                })?;
         if let Some(verified) = earlier {
             return Ok(Resolved {
                 bundle_id: bundle_id.to_owned(),
@@ -273,13 +279,13 @@ impl Management {
             )));
         }
         let verified = pending.len() as i64;
-        self.read(|conn| {
+        self.setup.db.write_blocking(Lane::Foreground, "management.resolve_bundle", |conn| {
             conn.execute(
                 "INSERT OR IGNORE INTO library_publish_resolutions (bundle_id, resolved_by_user_id, \
                  verified_files, resolved_at) VALUES (?1, ?2, ?3, ?4)",
                 params![bundle_id, actor, verified, now_unix()],
             )?;
-            Ok(())
+            Ok::<_, ManagementError>(())
         })?;
         tracing::info!(
             bundle_id,

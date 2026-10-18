@@ -11,7 +11,7 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
-use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -52,6 +52,7 @@ impl From<ReconcileError> for ApiError {
             ReconcileError::Invalid(reason) => refused(StatusCode::BAD_REQUEST, reason),
             ReconcileError::Conflict(reason) => refused(StatusCode::CONFLICT, reason),
             ReconcileError::Store(cause) => ApiError::internal(cause),
+            ReconcileError::Busy(cause) => ApiError::unavailable(Unavailable::ServerBusy, cause),
         }
     }
 }

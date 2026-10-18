@@ -4,6 +4,7 @@
 //! dry run's pins. Automatic runs only go ahead while those pins still
 //! match, so a changed profile or folder needs a new dry run.
 
+use droppedneedle_kernel::db::Lane;
 use std::sync::Arc;
 
 use super::models::{
@@ -189,17 +190,27 @@ impl Management {
         // A dry run is never applied: once it has proved the settings it
         // is done, and no longer holds its albums as planned work.
         let now = now_unix();
-        if let Err(error) = self.write(|tx| {
-            for proof in &request.proofs {
-                store::complete_without_work(tx, &proof.job_id, ACTIVATION_CONFIRMED, now)?;
-            }
-            Ok(())
-        }) {
+        if let Err(error) = self.setup.db.write_blocking(
+            Lane::Foreground,
+            "management.complete_without_work",
+            |tx| {
+                for proof in &request.proofs {
+                    store::complete_without_work(tx, &proof.job_id, ACTIVATION_CONFIRMED, now)?;
+                }
+                Ok::<_, ManagementError>(())
+            },
+        ) {
             tracing::warn!(%error, "confirmed dry runs left ready until they expire");
         }
         // Albums skipped while the folder was off or out of date get
         // another look.
-        if let Err(error) = self.read(|conn| Ok(super::automatic::wake(conn, None, now_unix())?)) {
+        if let Err(error) =
+            self.setup
+                .db
+                .write_blocking(Lane::Foreground, "management.wake", |conn| {
+                    Ok::<_, ManagementError>(super::automatic::wake(conn, None, now_unix())?)
+                })
+        {
             tracing::warn!(%error, "skipped albums not woken after activation");
         }
         Ok(saved)

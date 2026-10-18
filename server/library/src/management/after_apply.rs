@@ -3,6 +3,7 @@
 //! edit asked to keep, and the media servers told to rescan when the job
 //! ends.
 
+use droppedneedle_kernel::db::Lane;
 use rusqlite::OptionalExtension as _;
 
 use super::models::{JobMode, ManagementError};
@@ -45,21 +46,28 @@ impl Management {
         ordinal: i64,
     ) -> Result<Option<serde_json::Value>, ManagementError> {
         let job_id = snapshot.job.id.as_str();
-        let items = self.read(|conn| Ok(store::bundle_items(conn, job_id, ordinal)?))?;
+        let items = self
+            .setup
+            .db
+            .read_blocking("management.record_bundle_items", |conn| {
+                Ok::<_, ManagementError>(store::bundle_items(conn, job_id, ordinal)?)
+            })?;
         let intent = snapshot.intent();
         let mode = snapshot.job_mode();
         let now = now_unix();
         let mut extra = None;
         if let Some(edit) = &intent.tag_edit {
-            self.write(|tx| {
-                Ok(store::save_tag_edit(
-                    tx,
-                    edit,
-                    job_id,
-                    snapshot.job.requested_by_user_id.as_deref(),
-                    now,
-                )?)
-            })?;
+            self.setup
+                .db
+                .write_blocking(Lane::Background, "management.save_tag_edit", |tx| {
+                    Ok::<_, ManagementError>(store::save_tag_edit(
+                        tx,
+                        edit,
+                        job_id,
+                        snapshot.job.requested_by_user_id.as_deref(),
+                        now,
+                    )?)
+                })?;
             let revisions: serde_json::Map<String, serde_json::Value> = items
                 .iter()
                 .filter_map(|item| {
@@ -75,25 +83,35 @@ impl Management {
         }
         if mode == Some(JobMode::Undo)
             && let Some(source) = snapshot.linked_job_id.as_deref()
-            && let Some(source) = self.read(|conn| Ok(store::snapshot(conn, source)?))?
+            && let Some(source) = self.setup.db.read_blocking("management.snapshot", |conn| {
+                Ok::<_, ManagementError>(store::snapshot(conn, source)?)
+            })?
         {
             if let Some(edit) = source.intent().tag_edit {
                 // Undoing a tag edit also puts its kept values back.
-                self.write(|tx| Ok(store::revert_tag_edit(tx, &edit, job_id, now)?))?;
+                self.setup.db.write_blocking(
+                    Lane::Background,
+                    "management.revert_tag_edit",
+                    |tx| Ok::<_, ManagementError>(store::revert_tag_edit(tx, &edit, job_id, now)?),
+                )?;
             } else if let Some(album_id) = items.first().map(|item| item.album_id.as_str()) {
                 self.run_undone(&source, album_id, Some(job_id), now)?;
             }
         }
         let written = items.iter().filter(|item| item.eligibility.writes());
         match mode {
-            Some(JobMode::BaselineRestore) => self.write(|tx| {
-                for item in written {
-                    if let Some(track_id) = &item.track_id {
-                        store::mark_restored(tx, track_id, job_id, now)?;
-                    }
-                }
-                Ok(())
-            }),
+            Some(JobMode::BaselineRestore) => {
+                self.setup
+                    .db
+                    .write_blocking(Lane::Background, "management.mark_restored", |tx| {
+                        for item in written {
+                            if let Some(track_id) = &item.track_id {
+                                store::mark_restored(tx, track_id, job_id, now)?;
+                            }
+                        }
+                        Ok::<_, ManagementError>(())
+                    })
+            }
             // A profile run: remember what it applied. Tag edits and
             // duplicate resolutions apply no whole profile, and an undo
             // puts the old state back.
@@ -135,28 +153,30 @@ impl Management {
                         })
                     })
                     .collect();
-                self.write(|tx| {
-                    for mark in &marks {
-                        store::mark_managed(
-                            tx,
-                            &ManagedMark {
-                                track_id: &mark.track_id,
-                                root_id: &mark.root,
-                                profile_id: &profile_id,
-                                profile_revision: &snapshot.profile_revision,
-                                naming_revision: &snapshot.naming_revision,
-                                override_revision: mark.override_revision,
-                                job_id,
-                                album_identity_revision: mark.album_identity,
-                                track_identity_revision: mark.track_identity,
-                                path_revision: mark.path.clone(),
-                                found_sha256: mark.found.as_deref(),
-                            },
-                            now,
-                        )?;
-                    }
-                    Ok(())
-                })
+                self.setup
+                    .db
+                    .write_blocking(Lane::Background, "management.mark_managed", |tx| {
+                        for mark in &marks {
+                            store::mark_managed(
+                                tx,
+                                &ManagedMark {
+                                    track_id: &mark.track_id,
+                                    root_id: &mark.root,
+                                    profile_id: &profile_id,
+                                    profile_revision: &snapshot.profile_revision,
+                                    naming_revision: &snapshot.naming_revision,
+                                    override_revision: mark.override_revision,
+                                    job_id,
+                                    album_identity_revision: mark.album_identity,
+                                    track_identity_revision: mark.track_identity,
+                                    path_revision: mark.path.clone(),
+                                    found_sha256: mark.found.as_deref(),
+                                },
+                                now,
+                            )?;
+                        }
+                        Ok(())
+                    })
             }
             _ => Ok(()),
         }?;
@@ -179,16 +199,18 @@ impl Management {
             Some(JobMode::Apply | JobMode::AutomaticApply)
         ) && source.intent().tag_edit.is_none();
         if profile_run && self.managed_automatically(album_id)? {
-            self.write(|tx| {
-                Ok(takeover::mark(
-                    tx,
-                    album_id,
-                    takeover::Cause::RunUndone,
-                    &[],
-                    job_id,
-                    now,
-                )?)
-            })?;
+            self.setup
+                .db
+                .write_blocking(Lane::Background, "management.run_undone", |tx| {
+                    Ok::<_, ManagementError>(takeover::mark(
+                        tx,
+                        album_id,
+                        takeover::Cause::RunUndone,
+                        &[],
+                        job_id,
+                        now,
+                    )?)
+                })?;
         }
         Ok(())
     }
@@ -196,23 +218,38 @@ impl Management {
     /// The same for one bundle undone on its own, outside a job (the
     /// route that undoes a single bundle). Blocking.
     pub fn bundle_undone(&self, bundle_id: &str) -> Result<(), ManagementError> {
-        let found: Option<(String, i64)> = self.read(|conn| {
-            Ok(conn
-                .query_row(
-                    "SELECT job_id, ordinal FROM library_operation_work \
+        let found: Option<(String, i64)> =
+            self.setup
+                .db
+                .read_blocking("management.undone_bundle", |conn| {
+                    Ok::<_, ManagementError>(
+                        conn.query_row(
+                            "SELECT job_id, ordinal FROM library_operation_work \
                      WHERE json_extract(result_json, '$.bundle_id') = ?1",
-                    [bundle_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()?)
-        })?;
+                            [bundle_id],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )
+                        .optional()?,
+                    )
+                })?;
         let Some((source_id, ordinal)) = found else {
             return Ok(());
         };
-        let Some(source) = self.read(|conn| Ok(store::snapshot(conn, &source_id)?))? else {
+        let Some(source) = self
+            .setup
+            .db
+            .read_blocking("management.bundle_undone_snapshot", |conn| {
+                Ok::<_, ManagementError>(store::snapshot(conn, &source_id)?)
+            })?
+        else {
             return Ok(());
         };
-        let items = self.read(|conn| Ok(store::bundle_items(conn, &source_id, ordinal)?))?;
+        let items = self
+            .setup
+            .db
+            .read_blocking("management.bundle_undone_bundle_items", |conn| {
+                Ok::<_, ManagementError>(store::bundle_items(conn, &source_id, ordinal)?)
+            })?;
         match items.first() {
             Some(item) => self.run_undone(&source, &item.album_id, None, now_unix()),
             None => Ok(()),
@@ -252,16 +289,20 @@ impl Management {
             return;
         }
         let job_id = snapshot.job.id.as_str();
-        let queued = self.write(|tx| {
-            Ok(store::queue_refreshes(
-                tx,
-                job_id,
-                &targets,
-                settings.retry_attempts.saturating_add(1),
-                settings.retry_delay_seconds,
-                now_unix(),
-            )?)
-        });
+        let queued = self.setup.db.write_blocking(
+            Lane::Background,
+            "management.queue_external_refreshes",
+            |tx| {
+                Ok::<_, ManagementError>(store::queue_refreshes(
+                    tx,
+                    job_id,
+                    &targets,
+                    settings.retry_attempts.saturating_add(1),
+                    settings.retry_delay_seconds,
+                    now_unix(),
+                )?)
+            },
+        );
         if let Err(error) = queued {
             tracing::warn!(%error, job_id, "media server refresh not queued");
         }
@@ -270,7 +311,13 @@ impl Management {
     /// Send the next media-server refresh that is due. True when one was
     /// sent (or settled). Blocking: it waits on the HTTP call.
     pub fn deliver_refresh(&self, worker: &str) -> Result<bool, ManagementError> {
-        let Some(due) = self.write(|tx| Ok(store::claim_refresh(tx, worker, now_unix())?))? else {
+        let Some(due) =
+            self.setup
+                .db
+                .write_blocking(Lane::Background, "management.claim_refresh", |tx| {
+                    Ok::<_, ManagementError>(store::claim_refresh(tx, worker, now_unix())?)
+                })?
+        else {
             return Ok(false);
         };
         let outcome = match due.target.as_str() {
@@ -285,7 +332,11 @@ impl Management {
                 "media server refresh did not go through"
             );
         }
-        self.write(|tx| Ok(store::finish_refresh(tx, &due, outcome, now_unix())?))?;
+        self.setup
+            .db
+            .write_blocking(Lane::Background, "management.finish_refresh", |tx| {
+                Ok::<_, ManagementError>(store::finish_refresh(tx, &due, outcome, now_unix())?)
+            })?;
         Ok(true)
     }
 
@@ -305,13 +356,15 @@ impl Management {
         let base = connection.jellyfin_url.trim().trim_end_matches('/');
         let url = format!("{base}/Library/Refresh");
         let handle = tokio::runtime::Handle::try_current().map_err(|_| "UNAVAILABLE")?;
-        let response = handle.block_on(async move {
-            http.post(url)
-                .header("X-Emby-Token", key)
-                .timeout(std::time::Duration::from_secs(15))
-                .send()
-                .await
-        });
+        let response =
+            droppedneedle_kernel::db::block_on(&handle, "jellyfin_refresh", async move {
+                http.post(url)
+                    .header("X-Emby-Token", key)
+                    .timeout(std::time::Duration::from_secs(15))
+                    .send()
+                    .await
+            })
+            .map_err(|_| "UNAVAILABLE")?;
         match response {
             Ok(response) if response.status().is_success() => Ok(()),
             Ok(response) if matches!(response.status().as_u16(), 401 | 403) => Err("AUTH_FAILED"),

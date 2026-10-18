@@ -38,13 +38,14 @@ use super::models::PenaltyView;
 use super::operations::{ReasonView, blocking};
 use crate::identify::models::CandidateEvidence;
 use crate::management::automatic::AutomaticWrites;
+use crate::management::models::ManagementError;
 use crate::management::service::Management;
 use crate::mutations::Mutations;
 use crate::operations::models::{EditionChoice, OperationError};
 use crate::operations::plan::{FileFate, PlanReading};
 use crate::operations::reasons;
 use crate::operations::service::Operations;
-use crate::operations::status::{self, EditionStatus, WaitingAlbum};
+use crate::operations::status::{EditionStatus, WaitingAlbum};
 use crate::wiring::LibrarySetup;
 use droppedneedle_auth::{Admin, Curator, User};
 
@@ -470,11 +471,14 @@ fn read_status(
     album_id: &str,
 ) -> Result<EditionStatusView, OperationError> {
     let status = ops
-        .read_with(|conn| status::edition_status(conn, album_id))?
+        .edition_status(album_id)?
         .ok_or(OperationError::NotFound(reasons::ALBUM_NOT_FOUND))?;
     let writes = management
         .writes_by_itself(album_id)
-        .map_err(|error| OperationError::Store(error.to_string()))?;
+        .map_err(|error| match error {
+            ManagementError::Busy(cause) => OperationError::Busy(cause),
+            other => OperationError::Store(other.to_string()),
+        })?;
     Ok(EditionStatusView::of(status, writes))
 }
 
@@ -970,10 +974,7 @@ pub async fn list_unconfirmed(
     let limit = query.limit.unwrap_or(50).clamp(1, PAGE_MAX);
     let offset = query.offset.unwrap_or(0);
     let ops = Operations::new(&state);
-    let (items, total) = blocking(move || {
-        ops.read_with(|conn| status::waiting_albums(conn, unmatched, limit, offset))
-    })
-    .await?;
+    let (items, total) = blocking(move || ops.waiting_albums(unmatched, limit, offset)).await?;
     Ok(Json(WaitingAlbumsResponse {
         items: items.into_iter().map(Into::into).collect(),
         total,

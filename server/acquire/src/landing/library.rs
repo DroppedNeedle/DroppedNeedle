@@ -349,7 +349,7 @@ impl LandingLibrary for LibraryLanding {
                                 MutationError::NotFound(reason)
                                 | MutationError::Conflict(reason)
                                 | MutationError::Files(reason) => reason.message.to_owned(),
-                                MutationError::Store(cause) => {
+                                MutationError::Store(cause) | MutationError::Busy(cause) => {
                                     tracing::error!(%cause, "recycle for an upgrade failed");
                                     "The library database could not be updated.".to_owned()
                                 }

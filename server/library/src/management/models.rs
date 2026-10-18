@@ -665,6 +665,19 @@ pub enum ManagementError {
     Forbidden(&'static str),
     #[error("store: {0}")]
     Store(String),
+    /// The database was too busy to answer, or is shutting down.
+    #[error("busy: {0}")]
+    Busy(String),
+}
+
+impl From<droppedneedle_kernel::db::DbError> for ManagementError {
+    fn from(error: droppedneedle_kernel::db::DbError) -> Self {
+        use droppedneedle_kernel::db::DbError;
+        match error {
+            DbError::Busy { .. } | DbError::LaneClosed => Self::Busy(error.to_string()),
+            other => Self::Store(other.to_string()),
+        }
+    }
 }
 
 impl From<rusqlite::Error> for ManagementError {

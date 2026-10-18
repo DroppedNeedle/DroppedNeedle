@@ -20,6 +20,7 @@ use super::scan::models::EffectivePolicy;
 use super::scan::roots::RootRegistry;
 use super::service::ServiceError;
 use super::wiring::{LibrarySetup, RootDirs};
+use droppedneedle_kernel::db::DbError;
 
 /// Preview seals live until the next unix day.
 const PREVIEW_TTL_DAYS: i64 = 1;
@@ -666,11 +667,15 @@ impl LibrarySetup {
     fn unconfirmed_gate(&self, album_id: &str) -> Result<(), ServiceError> {
         let allowed = super::management::planner::manage_unconfirmed(self);
         let reason = self
-            .identify_store
-            .with_connection(|conn| super::management::planner::match_gate(conn, album_id, allowed))
+            .db
+            .read_blocking("management.match_gate", |conn| {
+                Ok::<_, DbError>(super::management::planner::match_gate(
+                    conn, album_id, allowed,
+                )?)
+            })
             .map_err(|error| {
                 tracing::error!(%error, album = album_id, "match state unreadable; management refused");
-                ServiceError::internal(&error)
+                gate_error(error)
             })?;
         match reason {
             Some(reason) => Err(ServiceError::Conflict {
@@ -684,11 +689,13 @@ impl LibrarySetup {
     /// are about to move, so no preview of them is made until that is done.
     fn remap_gate(&self, album_id: &str) -> Result<(), ServiceError> {
         let reason = self
-            .identify_store
-            .with_connection(|conn| super::management::planner::remap_gate(conn, album_id))
+            .db
+            .read_blocking("management.remap_gate", |conn| {
+                Ok::<_, DbError>(super::management::planner::remap_gate(conn, album_id)?)
+            })
             .map_err(|error| {
                 tracing::error!(%error, album = album_id, "edition remap state unreadable; management refused");
-                ServiceError::internal(&error)
+                gate_error(error)
             })?;
         match reason {
             Some(reason) => Err(ServiceError::Conflict {
@@ -719,9 +726,11 @@ impl LibrarySetup {
         {
             // A custom edition: the identity Library Management planned with.
             let custom = self
-                .identify_store
-                .with_connection(|conn| super::management::custom::active(conn, album_id))
-                .map_err(|error| ServiceError::internal(&error.to_string()))?
+                .db
+                .read_blocking("management.custom_edition", |conn| {
+                    Ok::<_, DbError>(super::management::custom::active(conn, album_id)?)
+                })
+                .map_err(gate_error)?
                 .ok_or_else(|| {
                     missing(format!(
                         "Album {album_id} has no accepted exact release; approve an exact edition"
@@ -2042,6 +2051,17 @@ fn undo_block_label(block: &super::publish::undo::UndoBlock) -> &'static str {
         super::publish::undo::UndoBlock::OverrideChanged => "override_changed",
         super::publish::undo::UndoBlock::SnapshotExpired => "snapshot_expired",
         super::publish::undo::UndoBlock::RestoreOccupied => "restore_occupied",
+    }
+}
+
+/// A management gate read that failed: a busy database answers busy, the
+/// rest is a fault.
+fn gate_error(error: DbError) -> ServiceError {
+    match error {
+        DbError::Busy { .. } | DbError::LaneClosed => ServiceError::Busy {
+            cause: error.to_string(),
+        },
+        other => ServiceError::internal(&other),
     }
 }
 

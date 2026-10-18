@@ -221,6 +221,9 @@ pub enum ReconcileError {
     Conflict(Reason),
     /// A store fault; the cause is for the log.
     Store(String),
+    /// The database was too busy to answer, or is shutting down; the
+    /// cause is for the log.
+    Busy(String),
 }
 
 impl std::fmt::Display for ReconcileError {
@@ -229,12 +232,22 @@ impl std::fmt::Display for ReconcileError {
             Self::NotFound(reason) | Self::Invalid(reason) | Self::Conflict(reason) => {
                 write!(f, "{}: {}", reason.code, reason.message)
             }
-            Self::Store(cause) => write!(f, "{cause}"),
+            Self::Store(cause) | Self::Busy(cause) => write!(f, "{cause}"),
         }
     }
 }
 
 impl std::error::Error for ReconcileError {}
+
+impl From<droppedneedle_kernel::db::DbError> for ReconcileError {
+    fn from(error: droppedneedle_kernel::db::DbError) -> Self {
+        use droppedneedle_kernel::db::DbError;
+        match error {
+            DbError::Busy { .. } | DbError::LaneClosed => Self::Busy(error.to_string()),
+            other => Self::Store(other.to_string()),
+        }
+    }
+}
 
 impl From<rusqlite::Error> for ReconcileError {
     fn from(error: rusqlite::Error) -> Self {

@@ -397,15 +397,6 @@ impl SqliteIdentifyStore {
             album_input_revision(conn, local_album_id)
         })
     }
-
-    /// Run `op` on the store's connection. Library operation jobs live in
-    /// the same database and change the same identity rows, so they take
-    /// turns with identification on this connection. `op` must not call
-    /// back into this store (the lock is not reentrant) or block on
-    /// anything but SQLite.
-    pub(crate) fn with_connection<T>(&self, op: impl FnOnce(&mut Connection) -> T) -> T {
-        op(&mut self.lock())
-    }
 }
 
 /// Durable identity rows plus the facts the matcher reads.

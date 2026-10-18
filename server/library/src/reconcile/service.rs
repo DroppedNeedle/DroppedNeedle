@@ -1,32 +1,29 @@
 //! The reconciliation service: what the HTTP handlers call. Every method
-//! blocks on SQLite, so callers run it off the async workers.
+//! blocks on the shared database, so callers run it off the async workers.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
-
-use rusqlite::TransactionBehavior;
 
 use super::groups::{self, build};
 use super::models::{Group, GroupDetail, GroupPage, GroupState, Progress, ReconcileError};
 use super::{reasons, store};
 use crate::clock::now_unix;
-use crate::identify::sqlite::SqliteIdentifyStore;
 use crate::wiring::LibrarySetup;
+use droppedneedle_kernel::db::{Db, Lane};
 
 #[derive(Clone)]
 pub struct Reconcile {
-    store: Arc<SqliteIdentifyStore>,
+    db: Db,
 }
 
 impl Reconcile {
     pub fn new(setup: &LibrarySetup) -> Self {
         Self {
-            store: setup.identify_store.clone(),
+            db: setup.db.clone(),
         }
     }
 
     fn groups(&self) -> Result<Vec<Group>, ReconcileError> {
-        let inputs = self.store.with_connection(|conn| store::inputs(conn))?;
+        let inputs = self.db.read_blocking("reconcile.inputs", store::inputs)?;
         Ok(build(&inputs))
     }
 
@@ -39,7 +36,9 @@ impl Reconcile {
 
     /// Where the reconciliation pass stands, with open groups by state.
     pub fn progress(&self) -> Result<Progress, ReconcileError> {
-        let (job, merged) = self.store.with_connection(|conn| store::progress(conn))?;
+        let (job, merged) = self
+            .db
+            .read_blocking("reconcile.progress", store::progress)?;
         let groups = self.groups()?;
         let count = |state: GroupState| groups.iter().filter(|g| g.state == state).count();
         Ok(Progress {
@@ -72,8 +71,8 @@ impl Reconcile {
         let group = self.group(group_id)?;
         let ids: Vec<String> = group.members.iter().map(|m| m.id.clone()).collect();
         let references = self
-            .store
-            .with_connection(|conn| store::references(conn, &ids))?;
+            .db
+            .read_blocking("reconcile.references", |conn| store::references(conn, &ids))?;
         Ok(GroupDetail { group, references })
     }
 
@@ -94,11 +93,9 @@ impl Reconcile {
             return Err(ReconcileError::Conflict(reasons::GROUP_STALE));
         }
         let now = now_unix();
-        self.store.with_connection(|conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let pairs = store::dismiss(&tx, &ids, expected, actor_user_id, now)?;
-            tx.commit()?;
-            Ok(pairs)
-        })
+        self.db
+            .write_blocking(Lane::Foreground, "reconcile.dismiss", |tx| {
+                store::dismiss(tx, &ids, expected, actor_user_id, now)
+            })
     }
 }

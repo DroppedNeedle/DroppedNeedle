@@ -12,7 +12,7 @@ use axum::{
     extract::{Path, State},
     routing::{get, post},
 };
-use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -86,6 +86,7 @@ impl From<ManagementError> for ApiError {
             ManagementError::Conflict(message) => ApiError::conflict(message),
             ManagementError::Forbidden(message) => ApiError::forbidden(message),
             ManagementError::Store(cause) => ApiError::internal(cause),
+            ManagementError::Busy(cause) => ApiError::unavailable(Unavailable::ServerBusy, cause),
         }
     }
 }

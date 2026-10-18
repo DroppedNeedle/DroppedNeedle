@@ -1,14 +1,14 @@
-//! Entry points the HTTP handlers call. All of them block (SQLite on the
-//! identify store's connection); handlers run them on `spawn_blocking`.
+//! Entry points the HTTP handlers call. All of them block on the shared
+//! database; handlers run them on `spawn_blocking`.
 //!
-//! A preview runs the very change in a transaction and rolls it back, so
-//! what it shows is what an apply does. Its token covers the request, the
-//! state read and the result; an apply runs the change again and commits
-//! only when the token still matches.
+//! A preview runs the very change in a write and rolls it back, so what it
+//! shows is what an apply does. Its token covers the request, the state
+//! read and the result; an apply runs the change again and commits only
+//! when the token still matches.
 
 use std::sync::Arc;
 
-use rusqlite::{OptionalExtension as _, Transaction, TransactionBehavior, params};
+use rusqlite::{OptionalExtension as _, Transaction, params};
 
 use super::artists;
 use super::membership::{self, Run};
@@ -20,40 +20,24 @@ use super::reset;
 use super::retag_pairs;
 use super::token::{self, TokenFault};
 use crate::clock::{now_ms, now_unix};
-use crate::identify::sqlite::SqliteIdentifyStore;
 use crate::wiring::LibrarySetup;
+use droppedneedle_kernel::db::{Db, Lane, savepoint};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 
 /// Catalog corrections over the library's store. Preview tokens are signed
 /// with the server's data key, held by the settings store.
 #[derive(Clone)]
 pub struct Corrections {
-    store: Arc<SqliteIdentifyStore>,
+    db: Db,
     signer: Arc<ConfigStore>,
 }
 
 impl Corrections {
     pub fn new(setup: &LibrarySetup) -> Self {
         Self {
-            store: setup.identify_store.clone(),
+            db: setup.db.clone(),
             signer: setup.config.clone(),
         }
-    }
-
-    /// Run `op` in one write transaction; commit only when asked.
-    fn in_tx<T>(
-        &self,
-        commit: bool,
-        op: impl FnOnce(&Transaction<'_>) -> Result<T, CorrectionError>,
-    ) -> Result<T, CorrectionError> {
-        self.store.with_connection(|conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let value = op(&tx)?;
-            if commit {
-                tx.commit()?;
-            }
-            Ok(value)
-        })
     }
 
     /// What a split, merge, move or reset would do, and its token.
@@ -63,13 +47,16 @@ impl Corrections {
         actor: &str,
     ) -> Result<Previewed<MembershipOutcome>, CorrectionError> {
         let now = now_unix();
-        self.in_tx(false, |tx| {
-            let run = run_membership(tx, request, now)?;
-            Ok(Previewed {
-                token: token::issue(&self.signer, actor, &run.material, now as i64),
-                outcome: run.outcome,
+        self.db
+            .write_blocking(Lane::Foreground, "corrections.preview_membership", |tx| {
+                rolled_back(tx, || {
+                    let run = run_membership(tx, request, now)?;
+                    Ok(Previewed {
+                        token: token::issue(&self.signer, actor, &run.material, now as i64),
+                        outcome: run.outcome,
+                    })
+                })
             })
-        })
     }
 
     /// Apply a previewed split, merge, move or reset.
@@ -79,51 +66,52 @@ impl Corrections {
         meta: &ApplyMeta,
     ) -> Result<Applied, CorrectionError> {
         let now = now_unix();
-        self.in_tx(true, |tx| {
-            if let Some(done) = replay(tx, meta.idempotency_key.as_deref())? {
-                return Ok(done);
-            }
-            let run = run_membership(tx, request, now)?;
-            self.check_token(meta, &run.material, now)?;
-            let outcome = run.outcome;
-            let mut applied = Applied {
-                kind: request.kind.as_str().to_owned(),
-                track_ids: outcome.track_ids.clone(),
-                source_album_ids: outcome.source_album_ids.clone(),
-                target_album_id: match request.kind {
-                    MembershipKind::Reset => None,
-                    _ => outcome.groups.first().map(|group| group.album_id.clone()),
-                },
-                ..Applied::default()
-            };
-            applied.catalog_revision = bump_catalog(tx)?;
-            let album = applied
-                .target_album_id
-                .clone()
-                .or_else(|| outcome.source_album_ids.first().cloned())
-                .unwrap_or_default();
-            record(
-                tx,
-                &Audit {
-                    kind: request.kind.as_str(),
-                    album_id: Some(&album),
-                    artist_id: None,
-                    before: serde_json::json!({
-                        "source_album_ids": outcome.source_album_ids,
-                        "track_ids": outcome.track_ids,
-                        "dropped_editions": dropped_editions(&outcome),
-                    }),
-                    reason: match request.kind {
-                        MembershipKind::Reset => "AUTOMATIC_GROUPING_RESET",
-                        _ => "MANUAL_GROUPING",
+        self.db
+            .write_blocking(Lane::Foreground, "corrections.apply_membership", |tx| {
+                if let Some(done) = replay(tx, meta.idempotency_key.as_deref())? {
+                    return Ok(done);
+                }
+                let run = run_membership(tx, request, now)?;
+                self.check_token(meta, &run.material, now)?;
+                let outcome = run.outcome;
+                let mut applied = Applied {
+                    kind: request.kind.as_str().to_owned(),
+                    track_ids: outcome.track_ids.clone(),
+                    source_album_ids: outcome.source_album_ids.clone(),
+                    target_album_id: match request.kind {
+                        MembershipKind::Reset => None,
+                        _ => outcome.groups.first().map(|group| group.album_id.clone()),
                     },
-                    meta,
-                    now,
-                },
-                &applied,
-            )?;
-            Ok(applied)
-        })
+                    ..Applied::default()
+                };
+                applied.catalog_revision = bump_catalog(tx)?;
+                let album = applied
+                    .target_album_id
+                    .clone()
+                    .or_else(|| outcome.source_album_ids.first().cloned())
+                    .unwrap_or_default();
+                record(
+                    tx,
+                    &Audit {
+                        kind: request.kind.as_str(),
+                        album_id: Some(&album),
+                        artist_id: None,
+                        before: serde_json::json!({
+                            "source_album_ids": outcome.source_album_ids,
+                            "track_ids": outcome.track_ids,
+                            "dropped_editions": dropped_editions(&outcome),
+                        }),
+                        reason: match request.kind {
+                            MembershipKind::Reset => "AUTOMATIC_GROUPING_RESET",
+                            _ => "MANUAL_GROUPING",
+                        },
+                        meta,
+                        now,
+                    },
+                    &applied,
+                )?;
+                Ok(applied)
+            })
     }
 
     /// What an artist merge would do, and its token.
@@ -133,13 +121,16 @@ impl Corrections {
         actor: &str,
     ) -> Result<Previewed<ArtistMergeOutcome>, CorrectionError> {
         let now = now_unix();
-        self.in_tx(false, |tx| {
-            let run = artists::merge(tx, request, now)?;
-            Ok(Previewed {
-                token: token::issue(&self.signer, actor, &run.material, now as i64),
-                outcome: run.outcome,
+        self.db
+            .write_blocking(Lane::Foreground, "corrections.preview_artist_merge", |tx| {
+                rolled_back(tx, || {
+                    let run = artists::merge(tx, request, now)?;
+                    Ok(Previewed {
+                        token: token::issue(&self.signer, actor, &run.material, now as i64),
+                        outcome: run.outcome,
+                    })
+                })
             })
-        })
     }
 
     /// Apply a previewed artist merge.
@@ -149,36 +140,37 @@ impl Corrections {
         meta: &ApplyMeta,
     ) -> Result<Applied, CorrectionError> {
         let now = now_unix();
-        self.in_tx(true, |tx| {
-            if let Some(done) = replay(tx, meta.idempotency_key.as_deref())? {
-                return Ok(done);
-            }
-            let run = artists::merge(tx, request, now)?;
-            self.check_token(meta, &run.material, now)?;
-            let mut applied = Applied {
-                kind: "merge_artist".to_owned(),
-                surviving_artist_id: Some(run.outcome.surviving_artist_id.clone()),
-                retired_artist_ids: run.outcome.retired_artist_ids.clone(),
-                ..Applied::default()
-            };
-            applied.catalog_revision = bump_catalog(tx)?;
-            let mut all = vec![run.outcome.surviving_artist_id.clone()];
-            all.extend(run.outcome.retired_artist_ids.iter().cloned());
-            record(
-                tx,
-                &Audit {
-                    kind: "merge_artist",
-                    album_id: None,
-                    artist_id: Some(&run.outcome.surviving_artist_id),
-                    before: serde_json::json!({ "artist_ids": all }),
-                    reason: "MANUAL_ARTIST_MERGE",
-                    meta,
-                    now,
-                },
-                &applied,
-            )?;
-            Ok(applied)
-        })
+        self.db
+            .write_blocking(Lane::Foreground, "corrections.apply_artist_merge", |tx| {
+                if let Some(done) = replay(tx, meta.idempotency_key.as_deref())? {
+                    return Ok(done);
+                }
+                let run = artists::merge(tx, request, now)?;
+                self.check_token(meta, &run.material, now)?;
+                let mut applied = Applied {
+                    kind: "merge_artist".to_owned(),
+                    surviving_artist_id: Some(run.outcome.surviving_artist_id.clone()),
+                    retired_artist_ids: run.outcome.retired_artist_ids.clone(),
+                    ..Applied::default()
+                };
+                applied.catalog_revision = bump_catalog(tx)?;
+                let mut all = vec![run.outcome.surviving_artist_id.clone()];
+                all.extend(run.outcome.retired_artist_ids.iter().cloned());
+                record(
+                    tx,
+                    &Audit {
+                        kind: "merge_artist",
+                        album_id: None,
+                        artist_id: Some(&run.outcome.surviving_artist_id),
+                        before: serde_json::json!({ "artist_ids": all }),
+                        reason: "MANUAL_ARTIST_MERGE",
+                        meta,
+                        now,
+                    },
+                    &applied,
+                )?;
+                Ok(applied)
+            })
     }
 }
 
@@ -186,19 +178,38 @@ impl Corrections {
 impl Corrections {
     /// The open pairs a person decides on, newest first.
     pub fn retag_pairs(&self) -> Result<RetagPairList, CorrectionError> {
-        self.store.with_connection(|conn| retag_pairs::list(conn))
+        self.db
+            .read_blocking("corrections.retag_pairs", retag_pairs::list)
     }
 
     /// Join a pair; returns the album that stays.
     pub fn join_retag_pair(&self, request: &PairJoinRequest) -> Result<String, CorrectionError> {
         let now = now_unix();
-        self.in_tx(true, |tx| retag_pairs::join(tx, request, now))
+        self.db
+            .write_blocking(Lane::Foreground, "corrections.join_retag_pair", |tx| {
+                retag_pairs::join(tx, request, now)
+            })
     }
 
     /// Mark a pair as two albums. False when it was already.
     pub fn dismiss_retag_pair(&self, old: &str, new: &str) -> Result<bool, CorrectionError> {
         let now_ms = now_ms() as i64;
-        self.in_tx(true, |tx| retag_pairs::dismiss(tx, old, new, now_ms))
+        self.db
+            .write_blocking(Lane::Foreground, "corrections.dismiss_retag_pair", |tx| {
+                retag_pairs::dismiss(tx, old, new, now_ms)
+            })
+    }
+}
+
+/// Run `op` inside a savepoint that is always rolled back, so a preview
+/// sees the change it describes and nothing of it is kept.
+fn rolled_back<T>(
+    tx: &Transaction<'_>,
+    op: impl FnOnce() -> Result<T, CorrectionError>,
+) -> Result<T, CorrectionError> {
+    match savepoint(tx, "correction_preview", || Err::<(), _>(op()))? {
+        Err(outcome) => outcome,
+        Ok(()) => Err(CorrectionError::Store("a preview kept its work".to_owned())),
     }
 }
 

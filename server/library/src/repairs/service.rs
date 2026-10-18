@@ -1,16 +1,15 @@
 //! The repairs service: what the HTTP handlers and the worker loop call.
 //!
-//! Store calls run short transactions on the identify store's connection,
-//! so they must run off the async workers (handlers use `spawn_blocking`;
-//! the loop drives its tick on a blocking thread). The identify store's
-//! own reads lock the same connection, so they are never called from
-//! inside a transaction here.
+//! Reads and writes go through the shared database's blocking calls, so
+//! they run off the async workers (handlers use `spawn_blocking`; the loop
+//! drives its tick on a blocking thread). Requests write on the foreground
+//! lane, the worker on the background lane.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use rusqlite::{Connection, Transaction, TransactionBehavior};
+use rusqlite::Transaction;
 
 use super::apply::apply_album;
 use super::classify;
@@ -34,6 +33,7 @@ use crate::operations::reidentify::evaluation;
 use crate::operations::service::Operations;
 use crate::operations::store as jobs;
 use crate::wiring::{LibrarySetup, ScanCoordinator};
+use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
@@ -65,6 +65,7 @@ enum Checked {
 /// Identity repairs, identity preparations and catalog cleanup.
 #[derive(Clone)]
 pub struct Repairs {
+    db: Db,
     ops: Operations,
     store: Arc<SqliteIdentifyStore>,
     identify: Arc<IdentifyService>,
@@ -89,6 +90,7 @@ pub struct Repairs {
 impl Repairs {
     pub fn new(setup: &LibrarySetup) -> Self {
         Self {
+            db: setup.db.clone(),
             ops: Operations::new(setup),
             store: setup.identify_store.clone(),
             identify: setup.identify.clone(),
@@ -111,7 +113,9 @@ impl Repairs {
             .lock()
             .map_err(|_| OperationError::Store("hygiene marker poisoned".to_owned()))?;
         let after = *seen;
-        let (albums, newest) = self.read(|conn| Ok(store::identified_since(conn, after)?))?;
+        let (albums, newest) = self.db.read_blocking("repairs.identified_since", |conn| {
+            Ok::<_, OperationError>(store::identified_since(conn, after)?)
+        })?;
         let Some(newest) = newest else {
             return Ok(());
         };
@@ -120,39 +124,23 @@ impl Repairs {
         if albums.is_empty() {
             return Ok(());
         }
-        self.write(|tx| {
-            let new = NewRepair {
-                job_id: self.ids.new_id(),
-                purpose: Purpose::CatalogIdentityHygiene,
-                requested_by_user_id: None,
-                idempotency_key: format!("catalog-identity-hygiene:v1:identified:{after}:{newest}"),
-                root_ids: Vec::new(),
-                album_ids: albums,
-                scan_run_id: None,
-                source_matcher_version: None,
-                target_matcher_version: HYGIENE_VERSION.to_owned(),
-            };
-            store::create(tx, &new, now_unix()).map(|_| ())
-        })
-    }
-
-    fn read<T>(
-        &self,
-        op: impl FnOnce(&Connection) -> Result<T, OperationError>,
-    ) -> Result<T, OperationError> {
-        self.store.with_connection(|conn| op(conn))
-    }
-
-    fn write<T>(
-        &self,
-        op: impl FnOnce(&Transaction<'_>) -> Result<T, OperationError>,
-    ) -> Result<T, OperationError> {
-        self.store.with_connection(|conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let value = op(&tx)?;
-            tx.commit()?;
-            Ok(value)
-        })
+        self.db
+            .write_blocking(Lane::Background, "repairs.queue_hygiene_identified", |tx| {
+                let new = NewRepair {
+                    job_id: self.ids.new_id(),
+                    purpose: Purpose::CatalogIdentityHygiene,
+                    requested_by_user_id: None,
+                    idempotency_key: format!(
+                        "catalog-identity-hygiene:v1:identified:{after}:{newest}"
+                    ),
+                    root_ids: Vec::new(),
+                    album_ids: albums,
+                    scan_run_id: None,
+                    source_matcher_version: None,
+                    target_matcher_version: HYGIENE_VERSION.to_owned(),
+                };
+                store::create(tx, &new, now_unix()).map(|_| ())
+            })
     }
 
     // -----------------------------------------------------------------------
@@ -181,12 +169,17 @@ impl Repairs {
             source_matcher_version,
             target_matcher_version,
         };
-        self.write(|tx| store::create(tx, &new, now_unix()))
+        self.db
+            .write_blocking(Lane::Foreground, "repairs.create", |tx| {
+                store::create(tx, &new, now_unix())
+            })
     }
 
     pub fn estimate_repair(&self, root_ids: Vec<String>) -> Result<RepairEstimate, OperationError> {
         let roots = dedupe(root_ids);
-        self.read(|conn| Ok(store::estimate_repair(conn, &roots)?))
+        self.db.read_blocking("repairs.estimate_repair", |conn| {
+            Ok(store::estimate_repair(conn, &roots)?)
+        })
     }
 
     pub fn estimate_preparation(
@@ -194,13 +187,18 @@ impl Repairs {
         root_ids: Vec<String>,
     ) -> Result<PreparationEstimate, OperationError> {
         let roots = dedupe(root_ids);
-        self.read(|conn| Ok(store::estimate_preparation(conn, &roots)?))
+        self.db
+            .read_blocking("repairs.estimate_preparation", |conn| {
+                Ok(store::estimate_preparation(conn, &roots)?)
+            })
     }
 
     /// One repair job with its summary; not found when it is not a job of
     /// `purpose`.
     pub fn get(&self, job_id: &str, purpose: Purpose) -> Result<RepairDetail, OperationError> {
-        let (_, snap) = self.read(|conn| store::repair_job(conn, job_id, purpose))?;
+        let (_, snap) = self.db.read_blocking("repairs.get", |conn| {
+            store::repair_job(conn, job_id, purpose)
+        })?;
         Ok(RepairDetail {
             detail: self.ops.get(job_id)?,
             summary: snap.summary,
@@ -218,7 +216,9 @@ impl Repairs {
             return Err(OperationError::Invalid(reasons::PAGE_SIZE_INVALID));
         }
         let before = cursor.map(parse_cursor).transpose()?;
-        let ids = self.read(|conn| Ok(store::history(conn, purpose, limit + 1, before)?))?;
+        let ids = self.db.read_blocking("repairs.history", |conn| {
+            Ok::<_, OperationError>(store::history(conn, purpose, limit + 1, before)?)
+        })?;
         let mut items = Vec::with_capacity(limit);
         for id in ids.iter().take(limit) {
             items.push(self.get(id, purpose)?);
@@ -249,7 +249,7 @@ impl Repairs {
             })
             .transpose()?;
         let cursor = cursor.map(parse_cursor).transpose()?;
-        self.read(|conn| {
+        self.db.read_blocking("repairs.findings", |conn| {
             let (_, snap) = store::repair_job(conn, job_id, purpose)?;
             let mut page = store::findings_page(conn, job_id, purpose, codes, cursor, limit)?;
             page.refresh_required = purpose == Purpose::ManagementReadiness
@@ -269,7 +269,10 @@ impl Repairs {
         if !confirmation {
             return Err(OperationError::Invalid(reasons::CONFIRMATION_REQUIRED));
         }
-        self.write(|tx| store::begin_apply(tx, job_id, purpose, expected_row_revision, now_unix()))
+        self.db
+            .write_blocking(Lane::Foreground, "repairs.begin_apply", |tx| {
+                store::begin_apply(tx, job_id, purpose, expected_row_revision, now_unix())
+            })
     }
 
     /// Dismiss a ready preparation report.
@@ -278,7 +281,10 @@ impl Repairs {
         job_id: &str,
         expected_row_revision: i64,
     ) -> Result<OperationJob, OperationError> {
-        self.write(|tx| store::discard(tx, job_id, expected_row_revision, now_unix()))
+        self.db
+            .write_blocking(Lane::Foreground, "repairs.discard", |tx| {
+                store::discard(tx, job_id, expected_row_revision, now_unix())
+            })
     }
 
     /// Pause, resume, or stop a repair job.
@@ -290,7 +296,9 @@ impl Repairs {
         expected_row_revision: i64,
         idempotency_key: Option<&str>,
     ) -> Result<OperationJob, OperationError> {
-        self.read(|conn| store::repair_job(conn, job_id, purpose).map(|_| ()))?;
+        self.db.read_blocking("repairs.control", |conn| {
+            store::repair_job(conn, job_id, purpose).map(|_| ())
+        })?;
         self.ops
             .control(job_id, control, expected_row_revision, idempotency_key)
     }
@@ -305,23 +313,24 @@ impl Repairs {
         if self.hygiene_checked.swap(true, Ordering::Relaxed) {
             return Ok(());
         }
-        self.write(|tx| {
-            if store::hygiene_backfill_queued(tx)? || !store::hygiene_candidates_exist(tx)? {
-                return Ok(());
-            }
-            let new = NewRepair {
-                job_id: self.ids.new_id(),
-                purpose: Purpose::CatalogIdentityHygiene,
-                requested_by_user_id: None,
-                idempotency_key: store::HYGIENE_BACKFILL_KEY.to_owned(),
-                root_ids: Vec::new(),
-                album_ids: Vec::new(),
-                scan_run_id: None,
-                source_matcher_version: None,
-                target_matcher_version: HYGIENE_VERSION.to_owned(),
-            };
-            store::create(tx, &new, now_unix()).map(|_| ())
-        })
+        self.db
+            .write_blocking(Lane::Background, "repairs.queue_hygiene_once", |tx| {
+                if store::hygiene_backfill_queued(tx)? || !store::hygiene_candidates_exist(tx)? {
+                    return Ok(());
+                }
+                let new = NewRepair {
+                    job_id: self.ids.new_id(),
+                    purpose: Purpose::CatalogIdentityHygiene,
+                    requested_by_user_id: None,
+                    idempotency_key: store::HYGIENE_BACKFILL_KEY.to_owned(),
+                    root_ids: Vec::new(),
+                    album_ids: Vec::new(),
+                    scan_run_id: None,
+                    source_matcher_version: None,
+                    target_matcher_version: HYGIENE_VERSION.to_owned(),
+                };
+                store::create(tx, &new, now_unix()).map(|_| ())
+            })
     }
 
     /// Identify once more, at background priority, every album an older
@@ -332,7 +341,9 @@ impl Repairs {
     /// library that arrives later (a v2 import, a first scan) still gets
     /// it; then never again.
     fn queue_track_id_backfill_once(&self) -> Result<(), OperationError> {
-        let run = self.read(|conn| Ok(store::latest_ended_scan(conn)?))?;
+        let run = self.db.read_blocking("repairs.latest_ended_scan", |conn| {
+            Ok::<_, OperationError>(store::latest_ended_scan(conn)?)
+        })?;
         {
             let mut seen = self
                 .track_id_scan
@@ -343,17 +354,19 @@ impl Repairs {
             }
             *seen = Some(run);
         }
-        let albums = self.read(|conn| {
-            if store::track_id_backfill_done(conn)? {
-                return Ok(Vec::new());
-            }
-            let mut albums = Vec::new();
-            for album in store::track_id_backfill_albums(conn)? {
-                let revision = album_input_revision(conn, &album)?;
-                albums.push((album, revision));
-            }
-            Ok(albums)
-        })?;
+        let albums = self
+            .db
+            .read_blocking("repairs.track_id_backfill_done", |conn| {
+                if store::track_id_backfill_done(conn)? {
+                    return Ok::<_, OperationError>(Vec::new());
+                }
+                let mut albums = Vec::new();
+                for album in store::track_id_backfill_albums(conn)? {
+                    let revision = album_input_revision(conn, &album)?;
+                    albums.push((album, revision));
+                }
+                Ok(albums)
+            })?;
         if albums.is_empty() {
             return Ok(());
         }
@@ -377,20 +390,25 @@ impl Repairs {
             albums = albums.len(),
             "queued albums for re-identification after the track id rule changed"
         );
-        self.write(|tx| {
-            Ok(store::mark_track_id_backfill(
-                tx,
-                &self.ids.new_id(),
-                now_unix(),
-            )?)
-        })
+        self.db
+            .write_blocking(Lane::Background, "repairs.mark_track_id_backfill", |tx| {
+                Ok(store::mark_track_id_backfill(
+                    tx,
+                    &self.ids.new_id(),
+                    now_unix(),
+                )?)
+            })
     }
 
     /// After each finished scan, queue a cleanup of the albums that scan
     /// changed and of empty album shells (v2's per-album hygiene). Checked
     /// once per run; nothing is queued when no album qualifies.
     fn queue_hygiene_after_scan(&self) -> Result<(), OperationError> {
-        let Some(run) = self.read(|conn| Ok(store::latest_ended_scan(conn)?))? else {
+        let Some(run) = self.db.read_blocking(
+            "repairs.queue_hygiene_after_scan_latest_ended_scan",
+            |conn| Ok::<_, OperationError>(store::latest_ended_scan(conn)?),
+        )?
+        else {
             return Ok(());
         };
         {
@@ -403,23 +421,24 @@ impl Repairs {
             }
             *seen = Some(run.clone());
         }
-        self.write(|tx| {
-            if store::hygiene_count_after_scan(tx, &run)? == 0 {
-                return Ok(());
-            }
-            let new = NewRepair {
-                job_id: self.ids.new_id(),
-                purpose: Purpose::CatalogIdentityHygiene,
-                requested_by_user_id: None,
-                idempotency_key: store::hygiene_scan_key(&run),
-                root_ids: Vec::new(),
-                album_ids: Vec::new(),
-                scan_run_id: Some(run.clone()),
-                source_matcher_version: None,
-                target_matcher_version: HYGIENE_VERSION.to_owned(),
-            };
-            store::create(tx, &new, now_unix()).map(|_| ())
-        })
+        self.db
+            .write_blocking(Lane::Background, "repairs.queue_hygiene_after_scan", |tx| {
+                if store::hygiene_count_after_scan(tx, &run)? == 0 {
+                    return Ok(());
+                }
+                let new = NewRepair {
+                    job_id: self.ids.new_id(),
+                    purpose: Purpose::CatalogIdentityHygiene,
+                    requested_by_user_id: None,
+                    idempotency_key: store::hygiene_scan_key(&run),
+                    root_ids: Vec::new(),
+                    album_ids: Vec::new(),
+                    scan_run_id: Some(run.clone()),
+                    source_matcher_version: None,
+                    target_matcher_version: HYGIENE_VERSION.to_owned(),
+                };
+                store::create(tx, &new, now_unix()).map(|_| ())
+            })
     }
 
     /// Queue a filing of the plays that name no track: once at a server
@@ -427,7 +446,11 @@ impl Repairs {
     /// the tracks older plays can be matched to. Nothing is queued when
     /// every play is filed.
     fn queue_play_filing(&self) -> Result<(), OperationError> {
-        let run = self.read(|conn| Ok(store::latest_ended_scan(conn)?))?;
+        let run = self
+            .db
+            .read_blocking("repairs.queue_play_filing_latest_ended_scan", |conn| {
+                Ok::<_, OperationError>(store::latest_ended_scan(conn)?)
+            })?;
         let after_scan = {
             let mut seen = self
                 .plays_scan
@@ -440,10 +463,11 @@ impl Repairs {
             *seen = Some(run.clone());
             run.filter(|_| !first)
         };
-        self.write(|tx| {
-            plays::queue(tx, &self.ids.new_id(), after_scan.as_deref(), now_unix())?;
-            Ok(())
-        })
+        self.db
+            .write_blocking(Lane::Background, "repairs.queue_play_filing", |tx| {
+                plays::queue(tx, &self.ids.new_id(), after_scan.as_deref(), now_unix())?;
+                Ok(())
+            })
     }
 
     /// One turn of a play filing job: batch after batch until no row is
@@ -459,32 +483,36 @@ impl Repairs {
     ) -> Result<Option<OperationJob>, OperationError> {
         loop {
             let scanning = !self.coordinator.current().is_empty();
-            let halted = self.write(|tx| {
-                let now = now_unix();
-                if scanning {
-                    return Ok(Some(jobs::requeue_for_scan(tx, job_id, worker, now)?));
-                }
-                if let Some(left) = jobs::checkpoint(tx, job_id, worker, now)? {
-                    return Ok(Some(Some(left)));
-                }
-                if started.elapsed() >= TURN {
-                    return Ok(Some(store::yield_job(tx, job_id, worker, None, None, now)?));
-                }
-                if !jobs::extend_lease(tx, job_id, worker, now)? {
-                    return Ok(Some(jobs::job(tx, job_id)?));
-                }
-                if !plays::step(tx, job_id, plays::BATCH, now)? {
-                    return Ok(None);
-                }
-                Ok(Some(store::end(
-                    tx,
-                    job_id,
-                    worker,
-                    "succeeded",
-                    plays::FILED,
-                    now,
-                )?))
-            })?;
+            let halted = self
+                .db
+                .write_blocking(Lane::Background, "repairs.file_plays", |tx| {
+                    let now = now_unix();
+                    if scanning {
+                        return Ok::<_, OperationError>(Some(jobs::requeue_for_scan(
+                            tx, job_id, worker, now,
+                        )?));
+                    }
+                    if let Some(left) = jobs::checkpoint(tx, job_id, worker, now)? {
+                        return Ok(Some(Some(left)));
+                    }
+                    if started.elapsed() >= TURN {
+                        return Ok(Some(store::yield_job(tx, job_id, worker, None, None, now)?));
+                    }
+                    if !jobs::extend_lease(tx, job_id, worker, now)? {
+                        return Ok(Some(jobs::job(tx, job_id)?));
+                    }
+                    if !plays::step(tx, job_id, plays::BATCH, now)? {
+                        return Ok(None);
+                    }
+                    Ok(Some(store::end(
+                        tx,
+                        job_id,
+                        worker,
+                        "succeeded",
+                        plays::FILED,
+                        now,
+                    )?))
+                })?;
             let Some(left) = halted else {
                 continue;
             };
@@ -493,7 +521,10 @@ impl Repairs {
                 .is_some_and(|job| job.terminal_code.as_deref() == Some(plays::FILED));
             if filed
                 && let Some(summary) = self
-                    .read(|conn| Ok(store::snapshot(conn, job_id)?))?
+                    .db
+                    .read_blocking("repairs.play_filing_summary", |conn| {
+                        Ok::<_, OperationError>(store::snapshot(conn, job_id)?)
+                    })?
                     .and_then(|snap| snap.summary)
             {
                 tracing::info!(
@@ -546,24 +577,38 @@ impl Repairs {
         self.queue_hygiene_after_identification()?;
         self.queue_play_filing()?;
         let now = now_unix();
-        let claimed = self.write(|tx| {
-            jobs::recover_expired(tx, now)?;
-            Ok(jobs::claim_kind(tx, OperationKind::Repair, worker, now)?)
-        })?;
+        let claimed =
+            self.db
+                .write_blocking(Lane::Background, "repairs.recover_expired", |tx| {
+                    jobs::recover_expired(tx, now)?;
+                    Ok::<_, OperationError>(jobs::claim_kind(
+                        tx,
+                        OperationKind::Repair,
+                        worker,
+                        now,
+                    )?)
+                })?;
         let Some(job) = claimed else {
             return Ok(None);
         };
-        let Some(snap) = self.read(|conn| Ok(store::snapshot(conn, &job.id)?))? else {
-            return self.write(|tx| {
-                Ok(store::end(
-                    tx,
-                    &job.id,
-                    worker,
-                    "failed",
-                    "MISSING_SNAPSHOT",
-                    now_unix(),
-                )?)
-            });
+        let Some(snap) = self.db.read_blocking("repairs.job_snapshot", |conn| {
+            Ok::<_, OperationError>(store::snapshot(conn, &job.id)?)
+        })?
+        else {
+            return self.db.write_blocking(
+                Lane::Background,
+                "repairs.end_missing_snapshot",
+                |tx| {
+                    Ok(store::end(
+                        tx,
+                        &job.id,
+                        worker,
+                        "failed",
+                        "MISSING_SNAPSHOT",
+                        now_unix(),
+                    )?)
+                },
+            );
         };
         let actor = job.requested_by_user_id.clone();
         let started = Instant::now();
@@ -572,98 +617,118 @@ impl Repairs {
         }
         loop {
             let scanning = !self.coordinator.current().is_empty();
-            let halted = self.write(|tx| {
-                let now = now_unix();
-                if scanning {
-                    return Ok(jobs::requeue_for_scan(tx, &job.id, worker, now)?);
-                }
-                if let Some(left) = jobs::checkpoint(tx, &job.id, worker, now)? {
-                    return Ok(Some(left));
-                }
-                if started.elapsed() >= TURN {
-                    return Ok(store::yield_job(tx, &job.id, worker, None, None, now)?);
-                }
-                Ok(None)
-            })?;
+            let halted =
+                self.db
+                    .write_blocking(Lane::Background, "repairs.requeue_for_scan", |tx| {
+                        let now = now_unix();
+                        if scanning {
+                            return Ok::<_, OperationError>(jobs::requeue_for_scan(
+                                tx, &job.id, worker, now,
+                            )?);
+                        }
+                        if let Some(left) = jobs::checkpoint(tx, &job.id, worker, now)? {
+                            return Ok(Some(left));
+                        }
+                        if started.elapsed() >= TURN {
+                            return Ok(store::yield_job(tx, &job.id, worker, None, None, now)?);
+                        }
+                        Ok(None)
+                    })?;
             if let Some(left) = halted {
                 return Ok(Some(left));
             }
-            let next = self.write(|tx| {
-                let now = now_unix();
-                match store::claim_album(tx, &job.id, now)? {
-                    Some(work) => {
-                        jobs::extend_lease(tx, &job.id, worker, now)?;
-                        Ok(Ok(work))
+            let next = self
+                .db
+                .write_blocking(Lane::Background, "repairs.claim_album", |tx| {
+                    let now = now_unix();
+                    match store::claim_album(tx, &job.id, now)? {
+                        Some(work) => {
+                            jobs::extend_lease(tx, &job.id, worker, now)?;
+                            Ok::<_, OperationError>(Ok(work))
+                        }
+                        None => Ok(Err(self.finish(tx, &job.id, worker, &snap, now)?)),
                     }
-                    None => Ok(Err(self.finish(tx, &job.id, worker, &snap, now)?)),
-                }
-            })?;
+                })?;
             let (ordinal, album_id) = match next {
                 Ok(work) => work,
                 Err(left) => return Ok(left),
             };
             match (snap.purpose, snap.phase) {
-                (Purpose::CatalogIdentityHygiene, _) => self.write(|tx| {
-                    let now = now_unix();
-                    let changed = hygiene::clean_album(tx, &album_id, &job.id, now)?;
-                    let state = if changed.is_some() {
-                        "succeeded"
-                    } else {
-                        "skipped"
-                    };
-                    store::finish_work(
-                        tx,
-                        &job.id,
-                        worker,
-                        ordinal,
-                        state,
-                        None,
-                        changed.as_ref(),
-                        now,
-                    )?;
-                    Ok(())
-                })?,
-                (_, Phase::Apply) => self.write(|tx| {
-                    apply_album(
-                        tx,
-                        &job.id,
-                        worker,
-                        ordinal,
-                        &album_id,
-                        actor.as_deref(),
-                        now_unix(),
-                    )
-                })?,
-                (purpose, Phase::DryRun) => match self.check(purpose, &album_id).await? {
-                    Checked::Found(verdict, identity_revision) => self.write(|tx| {
-                        if !jobs::holds(tx, &job.id, worker)? {
-                            return Ok(());
-                        }
-                        let now = now_unix();
-                        store::save_finding(
-                            tx,
-                            &job.id,
-                            worker,
-                            ordinal,
-                            &album_id,
-                            &verdict,
-                            identity_revision,
-                            now,
-                        )?;
-                        store::auto_accept(tx, &job.id, &album_id, &verdict, now).map(|_| ())
-                    })?,
-                    Checked::Deferred => {
-                        return self.write(|tx| {
+                (Purpose::CatalogIdentityHygiene, _) => {
+                    self.db
+                        .write_blocking(Lane::Background, "repairs.clean_album", |tx| {
                             let now = now_unix();
-                            Ok(store::yield_job(
+                            let changed = hygiene::clean_album(tx, &album_id, &job.id, now)?;
+                            let state = if changed.is_some() {
+                                "succeeded"
+                            } else {
+                                "skipped"
+                            };
+                            store::finish_work(
                                 tx,
                                 &job.id,
                                 worker,
-                                Some("PROVIDER_DEFERRED"),
-                                Some(now + PROVIDER_RETRY_SECS),
+                                ordinal,
+                                state,
+                                None,
+                                changed.as_ref(),
                                 now,
-                            )?)
-                        });
+                            )?;
+                            Ok::<_, OperationError>(())
+                        })?
+                }
+                (_, Phase::Apply) => {
+                    self.db
+                        .write_blocking(Lane::Background, "repairs.apply_album", |tx| {
+                            apply_album(
+                                tx,
+                                &job.id,
+                                worker,
+                                ordinal,
+                                &album_id,
+                                actor.as_deref(),
+                                now_unix(),
+                            )
+                        })?
+                }
+                (purpose, Phase::DryRun) => match self.check(purpose, &album_id).await? {
+                    Checked::Found(verdict, identity_revision) => {
+                        self.db
+                            .write_blocking(Lane::Background, "repairs.save_finding", |tx| {
+                                if !jobs::holds(tx, &job.id, worker)? {
+                                    return Ok(());
+                                }
+                                let now = now_unix();
+                                store::save_finding(
+                                    tx,
+                                    &job.id,
+                                    worker,
+                                    ordinal,
+                                    &album_id,
+                                    &verdict,
+                                    identity_revision,
+                                    now,
+                                )?;
+                                store::auto_accept(tx, &job.id, &album_id, &verdict, now)
+                                    .map(|_| ())
+                            })?
+                    }
+                    Checked::Deferred => {
+                        return self.db.write_blocking(
+                            Lane::Background,
+                            "repairs.yield_job",
+                            |tx| {
+                                let now = now_unix();
+                                Ok(store::yield_job(
+                                    tx,
+                                    &job.id,
+                                    worker,
+                                    Some("PROVIDER_DEFERRED"),
+                                    Some(now + PROVIDER_RETRY_SECS),
+                                    now,
+                                )?)
+                            },
+                        );
                     }
                 },
             }
@@ -703,7 +768,9 @@ impl Repairs {
 
     /// Check one album against MusicBrainz.
     async fn check(&self, purpose: Purpose, album_id: &str) -> Result<Checked, OperationError> {
-        let subject = self.read(|conn| Ok(store::subject(conn, album_id)?))?;
+        let subject = self.db.read_blocking("repairs.check", |conn| {
+            Ok::<_, OperationError>(store::subject(conn, album_id)?)
+        })?;
         let Some(subject) = subject else {
             return Ok(Checked::Found(
                 Box::new(Verdict::new("stale", "IDENTITY_CHANGED")),
@@ -840,13 +907,11 @@ fn parse_cursor(raw: &str) -> Result<(f64, String), OperationError> {
 }
 
 /// A repair job's report summary, for the generic operation view. Blocking.
-pub fn repair_summary(setup: &LibrarySetup, job_id: &str) -> Option<Summary> {
-    let store = setup.identify_store.clone();
-    store.with_connection(|conn| match store::snapshot(conn, job_id) {
-        Ok(snap) => snap.and_then(|snap| snap.summary),
-        Err(error) => {
-            tracing::warn!(%error, job_id, "repair summary unreadable");
-            None
-        }
+pub fn repair_summary(
+    setup: &LibrarySetup,
+    job_id: &str,
+) -> Result<Option<Summary>, OperationError> {
+    setup.db.read_blocking("repairs.summary", |conn| {
+        Ok::<_, OperationError>(store::snapshot(conn, job_id)?.and_then(|snap| snap.summary))
     })
 }

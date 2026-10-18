@@ -33,6 +33,7 @@ use crate::scan::roots::RootRegistry;
 use crate::scan::sqlite_store::holds_new_files;
 use crate::tags::{self, TagField};
 use crate::wiring::LibrarySetup;
+use droppedneedle_kernel::db::Lane;
 
 /// Staged-bytes headroom over the source size for disk preflight.
 const STAGED_HEADROOM_BYTES: u64 = 65_536;
@@ -236,27 +237,30 @@ fn album_state(
     person: bool,
 ) -> Result<AlbumState, ManagementError> {
     let store = &ctx.setup.identify_store;
+    let db = &ctx.setup.db;
     if person
-        && let Some(reason) = store
-            .with_connection(|conn| remap_gate(conn, album_id))
+        && let Some(reason) = db
+            .read_blocking("management.remap_gate", |conn| {
+                Ok::<_, ManagementError>(remap_gate(conn, album_id)?)
+            })
             .map_err(|error| {
                 tracing::error!(%error, album = album_id, "edition remap state unreadable; management refused");
-                ManagementError::from(error)
+                error
             })?
     {
         return Ok(AlbumState::Blocked(reason));
     }
     if ctx.wide
-        && store
-            .with_connection(|conn| takeover::is_marked(conn, album_id))
-            .map_err(ManagementError::from)?
+        && db.read_blocking("management.is_marked", |conn| {
+            Ok::<_, ManagementError>(takeover::is_marked(conn, album_id)?)
+        })?
     {
         return Ok(AlbumState::Blocked(reasons::taken_over()));
     }
     if ctx.wide
-        && store
-            .with_connection(|conn| holds_new_files(conn, album_id))
-            .map_err(ManagementError::from)?
+        && db.read_blocking("management.holds_new_files", |conn| {
+            Ok::<_, ManagementError>(holds_new_files(conn, album_id)?)
+        })?
     {
         return Ok(AlbumState::Blocked(automatic::skip_reason(
             automatic::SCAN_HELD_BACK,
@@ -265,11 +269,13 @@ fn album_state(
     let Some(identity) = store.album_identity(album_id) else {
         return Ok(AlbumState::Blocked(reasons::identity_not_accepted()));
     };
-    let gate = store
-        .with_connection(|conn| match_gate(conn, album_id, ctx.manage_unconfirmed))
+    let gate = db
+        .read_blocking("management.match_gate", |conn| {
+            Ok::<_, ManagementError>(match_gate(conn, album_id, ctx.manage_unconfirmed)?)
+        })
         .map_err(|error| {
             tracing::error!(%error, album = album_id, "match state unreadable; management refused");
-            ManagementError::from(error)
+            error
         })?;
     if let Some(reason) = gate {
         return Ok(AlbumState::Blocked(reason));
@@ -278,9 +284,9 @@ fn album_state(
         && let Some(release_group_mbid) = identity.release_group_mbid.clone()
     {
         // A custom edition plans from its sealed manifest.
-        let custom = store
-            .with_connection(|conn| super::custom::active(conn, album_id))
-            .map_err(ManagementError::from)?;
+        let custom = db.read_blocking("management.custom_edition", |conn| {
+            Ok::<_, ManagementError>(super::custom::active(conn, album_id)?)
+        })?;
         return Ok(match custom {
             Some(release) => AlbumState::Ready {
                 release_mbid: release.id.clone(),
@@ -733,13 +739,7 @@ fn generated_output(
     kind: &str,
     bytes: &[u8],
 ) -> Result<crate::publish::GeneratedOutput, ItemReason> {
-    use crate::publish::snapshots::{BlobStore, SnapshotStore};
-    let stored = ctx.setup.identify_store.with_connection(|conn| {
-        let sha = BlobStore::new(conn).put(bytes)?;
-        SnapshotStore::new(conn).add_ref(&sha, "preview", ctx.job_id)?;
-        Ok::<_, crate::publish::PublishError>(sha)
-    });
-    let sha256 = stored.map_err(|error| {
+    let sha256 = keep_bytes(ctx, "management.generated_output", bytes).map_err(|error| {
         tracing::error!(%error, "generated file not stored");
         reasons::write_failed()
     })?;
@@ -754,18 +754,28 @@ fn generated_output(
 
 /// Keep bytes in the blob store under the planning job.
 fn keep_blob(ctx: &PlanContext<'_>, bytes: &[u8]) -> Result<String, ItemReason> {
+    keep_bytes(ctx, "management.keep_blob", bytes).map_err(|error| {
+        tracing::error!(%error, "planned artwork not stored");
+        reasons::write_failed()
+    })
+}
+
+/// Store `bytes` in the blob store with a reference held by the planning
+/// job, in one write.
+fn keep_bytes(
+    ctx: &PlanContext<'_>,
+    name: &'static str,
+    bytes: &[u8],
+) -> Result<String, ManagementError> {
     use crate::publish::snapshots::{BlobStore, SnapshotStore};
-    ctx.setup
-        .identify_store
-        .with_connection(|conn| {
-            let sha = BlobStore::new(conn).put(bytes)?;
-            SnapshotStore::new(conn).add_ref(&sha, "preview", ctx.job_id)?;
-            Ok::<_, crate::publish::PublishError>(sha)
-        })
-        .map_err(|error| {
-            tracing::error!(%error, "planned artwork not stored");
-            reasons::write_failed()
-        })
+    ctx.setup.db.write_blocking(Lane::Background, name, |tx| {
+        let stored = BlobStore::new(tx).put(bytes).and_then(|sha| {
+            SnapshotStore::new(tx)
+                .add_ref(&sha, "preview", ctx.job_id)
+                .map(|()| sha)
+        });
+        stored.map_err(|error| ManagementError::Store(error.to_string()))
+    })
 }
 
 fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
@@ -1822,10 +1832,9 @@ pub fn plan_album(
     measure_replaygain(ctx, tracks, scope.track_ids.is_none(), &mut extras);
     let mut saved = Vec::with_capacity(tracks.len());
     for track in tracks {
-        let mut overrides = ctx
-            .setup
-            .identify_store
-            .with_connection(|conn| overrides(conn, &scope.album_id, &track.id))?;
+        let mut overrides = ctx.setup.db.read_blocking("management.overrides", |conn| {
+            Ok::<_, ManagementError>(overrides(conn, &scope.album_id, &track.id)?)
+        })?;
         if let Some(edit) = ctx.tag_edit {
             overrides = with_tag_edit(overrides, edit, &track.id);
         }
@@ -1871,10 +1880,9 @@ pub fn plan_album(
     // A person's preview of the album itself still plans, and says what
     // applying it does.
     if ctx.tag_edit.is_none()
-        && ctx
-            .setup
-            .identify_store
-            .with_connection(|conn| takeover::is_marked(conn, &scope.album_id))?
+        && ctx.setup.db.read_blocking("management.is_marked", |conn| {
+            Ok::<_, ManagementError>(takeover::is_marked(conn, &scope.album_id)?)
+        })?
     {
         for item in &mut items {
             item.facts
@@ -1938,10 +1946,9 @@ pub fn plan_one(
             release_group_mbid,
             album_identity_revision,
         } => {
-            let overrides = ctx
-                .setup
-                .identify_store
-                .with_connection(|conn| overrides(conn, &scope.album_id, &track.id))?;
+            let overrides = ctx.setup.db.read_blocking("management.overrides", |conn| {
+                Ok::<_, ManagementError>(overrides(conn, &scope.album_id, &track.id)?)
+            })?;
             let mut extras = super::enrich::gather(
                 &ctx.setup.enrichment,
                 &ctx.setup.identify_store,

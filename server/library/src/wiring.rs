@@ -106,6 +106,9 @@ pub struct LibrarySetup {
     /// Root registry the scan checkpoints and the stream gateway read;
     /// refreshed from the settings on every tick.
     pub registry: Arc<SharedResolver>,
+    /// The application database: the library's services read and write
+    /// through it.
+    pub db: droppedneedle_kernel::db::Db,
     /// Scan store.
     pub scan_store: Arc<SqliteScanStore>,
     /// Scan coordinator over the wired seams.
@@ -372,6 +375,7 @@ impl LibrarySetup {
             ids,
             config,
             registry,
+            db: db.clone(),
             scan_store,
             coordinator,
             fs,

@@ -280,6 +280,30 @@ pub enum CorrectionError {
     Conflict(Reason),
     /// A store fault; the cause is for the log.
     Store(String),
+    /// The database was too busy to answer, or is shutting down; the
+    /// cause is for the log.
+    Busy(String),
+}
+
+impl std::fmt::Display for CorrectionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(reason) | Self::Invalid(reason) | Self::Conflict(reason) => {
+                write!(f, "{}: {}", reason.code, reason.message)
+            }
+            Self::Store(cause) | Self::Busy(cause) => write!(f, "{cause}"),
+        }
+    }
+}
+
+impl From<droppedneedle_kernel::db::DbError> for CorrectionError {
+    fn from(error: droppedneedle_kernel::db::DbError) -> Self {
+        use droppedneedle_kernel::db::DbError;
+        match error {
+            DbError::Busy { .. } | DbError::LaneClosed => Self::Busy(error.to_string()),
+            other => Self::Store(other.to_string()),
+        }
+    }
 }
 
 impl From<rusqlite::Error> for CorrectionError {

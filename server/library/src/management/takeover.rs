@@ -23,6 +23,7 @@ use crate::publish::record::changed_since_written;
 pub use crate::publish::record::record_sql;
 use crate::publish::snapshots::sha256_hex;
 use crate::wiring::LibrarySetup;
+use droppedneedle_kernel::db::Lane;
 
 /// Skip and block code of an album the app stepped back from.
 pub const TAKEN_OVER: &str = "TAKEN_OVER";
@@ -524,22 +525,23 @@ pub(crate) fn hand_back(
     album_id: &str,
     actor: Option<&str>,
 ) -> Result<bool, ManagementError> {
-    let store = &setup.identify_store;
-    let files = store.with_connection(|conn| -> Result<_, ManagementError> {
-        if !is_marked(conn, album_id)? {
-            return Ok(None);
-        }
-        let mut statement = conn.prepare(
-            "SELECT id, root_id, relative_path FROM local_tracks \
+    let files = setup
+        .db
+        .read_blocking("management.hand_back_files", |conn| {
+            if !is_marked(conn, album_id)? {
+                return Ok(None);
+            }
+            let mut statement = conn.prepare(
+                "SELECT id, root_id, relative_path FROM local_tracks \
              WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY id",
-        )?;
-        let rows = statement.query_map(params![album_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            )?;
+            let rows = statement.query_map(params![album_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?;
+            Ok::<_, ManagementError>(Some(
+                rows.collect::<rusqlite::Result<Vec<(String, String, String)>>>()?,
+            ))
         })?;
-        Ok(Some(
-            rows.collect::<rusqlite::Result<Vec<(String, String, String)>>>()?,
-        ))
-    })?;
     let Some(files) = files else {
         return Ok(false);
     };
@@ -573,8 +575,14 @@ pub(crate) fn hand_back(
         return Err(unreadable());
     }
     let now = now_unix();
-    store.with_connection(|conn| -> Result<bool, ManagementError> {
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    // A person's request writes on the foreground lane, the worker's turn
+    // through a hand-back of every album on the background lane.
+    let lane = if actor.is_some() {
+        Lane::Foreground
+    } else {
+        Lane::Background
+    };
+    setup.db.write_blocking(lane, "management.hand_back", |tx| {
         let lifted = tx.execute(
             "DELETE FROM library_album_takeovers WHERE local_album_id = ?1",
             params![album_id],
@@ -618,12 +626,11 @@ pub(crate) fn hand_back(
             params![album_id],
         )?;
         if let Some(actor) = actor {
-            record_action(&tx, handed_back_action(actor, album_id), now)?;
+            record_action(tx, handed_back_action(actor, album_id), now)?;
         }
-        bump_catalog(&tx)?;
-        super::automatic::queue(&tx, album_id, now)?;
-        tx.commit()?;
-        Ok(true)
+        bump_catalog(tx)?;
+        super::automatic::queue(tx, album_id, now)?;
+        Ok::<_, ManagementError>(true)
     })
 }
 
@@ -653,7 +660,9 @@ pub struct Waiting {
 impl super::service::Management {
     /// The albums the app stepped back from, newest first. Blocking.
     pub fn takeovers(&self, limit: i64) -> Result<Waiting, ManagementError> {
-        self.read(|conn| Ok(waiting(conn, limit.clamp(1, 200))?))
+        self.setup.db.read_blocking("management.takeovers", |conn| {
+            Ok(waiting(conn, limit.clamp(1, 200))?)
+        })
     }
 }
 

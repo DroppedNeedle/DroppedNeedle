@@ -101,17 +101,10 @@ const TRANSACTIONS: &[Place] = &[
     DB,
     TOOL,
     place("library/src/contrib/sqlite.rs", LIBRARY_UNTIL_DB),
-    place("library/src/corrections/service.rs", LIBRARY_UNTIL_DB),
     place("library/src/identify/sqlite.rs", LIBRARY_UNTIL_DB),
-    place("library/src/management/service.rs", LIBRARY_UNTIL_DB),
-    place("library/src/management/takeover.rs", LIBRARY_UNTIL_DB),
-    place("library/src/mutations.rs", LIBRARY_UNTIL_DB),
-    place("library/src/operations/service.rs", LIBRARY_UNTIL_DB),
     place("library/src/publish/journal.rs", LIBRARY_UNTIL_DB),
     place("library/src/publish/publisher.rs", LIBRARY_UNTIL_DB),
     place("library/src/publish/recovery.rs", LIBRARY_UNTIL_DB),
-    place("library/src/reconcile/service.rs", LIBRARY_UNTIL_DB),
-    place("library/src/repairs/service.rs", LIBRARY_UNTIL_DB),
 ];
 
 const RULES: &[Rule] = &[
@@ -253,6 +246,30 @@ fn the_database_is_reached_one_way() {
     assert!(
         wrong.is_empty(),
         "outside the one way to the database:\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// Synchronous library code waits on a future only through
+/// `droppedneedle_kernel::db::block_on`, which refuses inside a read or
+/// write closure, so no closure holds the database across a network wait.
+#[test]
+fn the_library_waits_through_the_database_runtime() {
+    let pattern = Regex::new(r"\.block_on\(").unwrap();
+    let mut wrong = Vec::new();
+    for source in workspace_sources() {
+        if !source.path.starts_with("library/src/") {
+            continue;
+        }
+        let code = code_of(&source);
+        for found in pattern.find_iter(&code) {
+            let line = code[..found.start()].matches('\n').count() + 1;
+            wrong.push(format!("{}:{line}", source.path));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "library code waits on a future without droppedneedle_kernel::db::block_on:\n{}",
         wrong.join("\n")
     );
 }

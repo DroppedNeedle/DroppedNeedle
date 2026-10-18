@@ -13,6 +13,7 @@
 //! and while no scan runs. An album it skips for a reason the person can
 //! act on stays listed with that reason until it is queued again.
 
+use droppedneedle_kernel::db::Lane;
 use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::models::{JobIntent, JobMode, ManagementError, Origin, Selection, SelectionKind};
@@ -284,8 +285,10 @@ impl crate::wiring::LibrarySetup {
     /// the album is then managed by hand, never left half done. Blocking.
     pub fn queue_automatic_management(&self, album_id: &str) {
         let queued = self
-            .identify_store
-            .with_connection(|conn| queue(conn, album_id, now_unix()));
+            .db
+            .write_blocking(Lane::Background, "management.queue_automatic", |tx| {
+                Ok::<_, droppedneedle_kernel::db::DbError>(queue(tx, album_id, now_unix())?)
+            });
         if let Err(error) = queued {
             tracing::warn!(%error, album_id, "album not queued for automatic management");
         }
@@ -354,7 +357,12 @@ impl Management {
     /// Whether the album sits in one folder that manages it without
     /// asking: the test automatic management makes before it looks.
     pub(super) fn managed_automatically(&self, album_id: &str) -> Result<bool, ManagementError> {
-        let files = self.read(|conn| Ok(album_files(conn, album_id)?))?;
+        let files = self
+            .setup
+            .db
+            .read_blocking("management.managed_automatically", |conn| {
+                Ok::<_, ManagementError>(album_files(conn, album_id)?)
+            })?;
         let Some(first) = files.first() else {
             return Ok(false);
         };
@@ -377,18 +385,27 @@ impl Management {
             // are placed and matched (a file the chosen edition has no track
             // for), and the look parks: only a placing or a matching still
             // to come can map it.
-            Gate::NotYet(Verdict::Wait("TRACK_NOT_MAPPED")) => self.read(|conn| {
-                Ok(status::placing_attempts(conn, album_id)?.is_some()
-                    || status::identifying(conn, album_id)?)
-            })?,
+            Gate::NotYet(Verdict::Wait("TRACK_NOT_MAPPED")) => {
+                self.setup
+                    .db
+                    .read_blocking("management.placing_attempts", |conn| {
+                        Ok::<_, ManagementError>(
+                            status::placing_attempts(conn, album_id)?.is_some()
+                                || status::identifying(conn, album_id)?,
+                        )
+                    })?
+            }
             Gate::NotYet(_) | Gate::Judge { writes: true } | Gate::Open(_) => true,
         };
         if !open {
             return Ok(AutomaticWrites::default());
         }
-        let pending = self.read(|conn| {
-            Ok(conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM library_management_automatic_queue \
+        let pending = self
+            .setup
+            .db
+            .read_blocking("management.pending_writes", |conn| {
+                Ok::<_, ManagementError>(conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM library_management_automatic_queue \
                  WHERE local_album_id = ?1 AND not_before < ?2 \
                  AND last_reason_code IS NOT 'PREVIEW_BLOCKED') \
                  OR EXISTS(SELECT 1 FROM library_operation_jobs j \
@@ -397,10 +414,10 @@ impl Management {
                  AND j.idempotency_key LIKE 'automatic:%' \
                  AND EXISTS(SELECT 1 FROM json_each(s.selection_json, '$.ids') \
                  WHERE value = ?1))",
-                params![album_id, PARKED, store::KIND],
-                |row| row.get(0),
-            )?)
-        })?;
+                    params![album_id, PARKED, store::KIND],
+                    |row| row.get(0),
+                )?)
+            })?;
         Ok(AutomaticWrites {
             by_itself: true,
             pending,
@@ -414,13 +431,27 @@ impl Management {
         // That writes no music file, so it waits for neither a scan nor a
         // settled catalog.
         let now = now_unix();
-        if let Some(album_id) = self.read(|conn| Ok(takeover::next_stamped(conn, now)?))? {
+        if let Some(album_id) = self
+            .setup
+            .db
+            .read_blocking("management.next_stamped", |conn| {
+                Ok::<_, ManagementError>(takeover::next_stamped(conn, now)?)
+            })?
+        {
             return match takeover::hand_back(&self.setup, &album_id, None) {
                 Ok(_) => Ok(true),
                 Err(error) => {
                     // It waits before its next try; the loop pauses too.
                     tracing::warn!(%error, album_id, "album not handed back; tried again later");
-                    self.write(|tx| Ok(takeover::hand_back_failed(tx, &album_id, now)?))?;
+                    self.setup.db.write_blocking(
+                        Lane::Background,
+                        "management.hand_back_failed",
+                        |tx| {
+                            Ok::<_, ManagementError>(takeover::hand_back_failed(
+                                tx, &album_id, now,
+                            )?)
+                        },
+                    )?;
                     Ok(false)
                 }
             };
@@ -428,7 +459,12 @@ impl Management {
         if !self.setup.coordinator.current().is_empty() {
             return Ok(false);
         }
-        let revision = self.read(|conn| Ok(catalog_revision(conn)?))?;
+        let revision = self
+            .setup
+            .db
+            .read_blocking("management.catalog_revision", |conn| {
+                Ok::<_, ManagementError>(catalog_revision(conn)?)
+            })?;
         // A start counts as a change: the first look waits the settle
         // window too, so a boot-time scan or import can begin first.
         if settle.revision != Some(revision) {
@@ -443,7 +479,11 @@ impl Management {
             return Ok(false);
         }
         if planner::manage_unconfirmed(&self.setup) {
-            self.read(|conn| Ok(wake(conn, Some("UNCONFIRMED_MATCH"), now)?))?;
+            self.setup
+                .db
+                .write_blocking(Lane::Background, "management.wake", |conn| {
+                    Ok::<_, ManagementError>(wake(conn, Some("UNCONFIRMED_MATCH"), now)?)
+                })?;
         }
         self.automatic_next()
     }
@@ -451,8 +491,11 @@ impl Management {
     /// Look at the next waiting album that is due. Blocking.
     pub fn automatic_next(&self) -> Result<bool, ManagementError> {
         let now = now_unix();
-        let due: Option<(String, i64)> = self.read(|conn| {
-            Ok(conn
+        let due: Option<(String, i64)> =
+            self.setup
+                .db
+                .read_blocking("management.automatic_due", |conn| {
+                    Ok::<_, ManagementError>(conn
                 .query_row(
                     "SELECT local_album_id, attempts FROM library_management_automatic_queue \
                      WHERE not_before <= ?1 ORDER BY not_before, local_album_id LIMIT 1",
@@ -460,7 +503,7 @@ impl Management {
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .optional()?)
-        })?;
+                })?;
         let Some((album_id, attempts)) = due else {
             return Ok(false);
         };
@@ -501,26 +544,28 @@ impl Management {
             }
             Verdict::RetryAt(code, at) => Some((at.max(now + FIRST_RETRY_SECONDS), 0, code)),
         };
-        self.read(|conn| {
-            match next {
-                None => conn.execute(
-                    "DELETE FROM library_management_automatic_queue WHERE local_album_id = ?1",
-                    params![album_id],
-                )?,
-                Some((at, added, code)) => conn.execute(
-                    "UPDATE library_management_automatic_queue SET attempts = attempts + ?2, \
+        self.setup
+            .db
+            .write_blocking(Lane::Background, "management.automatic_settle", |conn| {
+                match next {
+                    None => conn.execute(
+                        "DELETE FROM library_management_automatic_queue WHERE local_album_id = ?1",
+                        params![album_id],
+                    )?,
+                    Some((at, added, code)) => conn.execute(
+                        "UPDATE library_management_automatic_queue SET attempts = attempts + ?2, \
                      not_before = ?3, last_reason_code = ?4 WHERE local_album_id = ?1",
-                    params![album_id, added, at, code],
-                )?,
-            };
-            Ok(())
-        })?;
+                        params![album_id, added, at, code],
+                    )?,
+                };
+                Ok::<_, ManagementError>(())
+            })?;
         Ok(true)
     }
 
     /// Albums automatic management skipped, newest first. Blocking.
     pub fn automatic_skipped(&self, limit: i64) -> Result<Vec<SkippedAlbum>, ManagementError> {
-        self.read(|conn| {
+        self.setup.db.read_blocking("management.automatic_skipped", |conn| {
             let mut statement = conn.prepare(
                 "SELECT q.local_album_id, a.title, a.album_artist_name, q.last_reason_code, q.attempts, \
                  q.queued_at FROM library_management_automatic_queue q \
@@ -549,7 +594,12 @@ impl Management {
         album_id: &str,
         passing_hand_back: bool,
     ) -> Result<Gate, ManagementError> {
-        let files = self.read(|conn| Ok(album_files(conn, album_id)?))?;
+        let files = self
+            .setup
+            .db
+            .read_blocking("management.album_files", |conn| {
+                Ok::<_, ManagementError>(album_files(conn, album_id)?)
+            })?;
         let Some(first) = files.first() else {
             return Ok(Gate::Closed(Verdict::Done("ALBUM_GONE")));
         };
@@ -566,7 +616,14 @@ impl Management {
                 && (assignment.automatic_acquisitions
                     || assignment.automatic_drop_imports
                     || assignment.automatic_scan_discovered);
-            if writes_some && self.read(|conn| Ok(retag_followed(conn, album_id)?))? {
+            if writes_some
+                && self
+                    .setup
+                    .db
+                    .read_blocking("management.retag_followed", |conn| {
+                        Ok::<_, ManagementError>(retag_followed(conn, album_id)?)
+                    })?
+            {
                 return Ok(Gate::Follow);
             }
             // A held album let go before it was judged is judged here too,
@@ -587,7 +644,13 @@ impl Management {
         let activated_at = assignment.activation_confirmed_at.unwrap_or(0.0);
         let mut states = Vec::new();
         for file in &files {
-            states.push(self.read(|conn| Ok(store::track_state(conn, &file.id)?))?);
+            states.push(
+                self.setup
+                    .db
+                    .read_blocking("management.track_state", |conn| {
+                        Ok::<_, ManagementError>(store::track_state(conn, &file.id)?)
+                    })?,
+            );
         }
         let restored = states.iter().flatten().any(|state| {
             state.outcome.as_deref() == Some("restored")
@@ -596,32 +659,44 @@ impl Management {
         if restored {
             return Ok(Gate::Closed(Verdict::Park("RESTORED")));
         }
-        let excluded = self.read(|conn| {
-            Ok(conn
-                .query_row(
+        let excluded = self.setup.db.read_blocking("management.excluded", |conn| {
+            Ok::<_, ManagementError>(
+                conn.query_row(
                     "SELECT 1 FROM library_management_exclusions WHERE local_album_id = ?1",
                     params![album_id],
                     |_| Ok(()),
                 )
                 .optional()?
-                .is_some())
+                .is_some(),
+            )
         })?;
         if excluded {
             return Ok(Gate::Closed(Verdict::Park("EXCLUDED")));
         }
         // The only place an automatic file write starts: an album the app
         // stepped back from waits here until a person hands it back.
-        let held = self.read(|conn| {
-            Ok(takeover::is_marked(conn, album_id)?
-                && !(passing_hand_back && hand_back_stamped(conn, album_id)?))
-        })?;
+        let held = self
+            .setup
+            .db
+            .read_blocking("management.is_marked", |conn| {
+                Ok::<_, ManagementError>(
+                    takeover::is_marked(conn, album_id)?
+                        && !(passing_hand_back && hand_back_stamped(conn, album_id)?),
+                )
+            })?;
         if held {
             return Ok(Gate::Closed(Verdict::Park(takeover::TAKEN_OVER)));
         }
         // A scan followed the album across a retag made outside the app,
         // over an edition someone chose. A record the app wrote since does
         // not cancel it: that write took the retagged bytes as they were.
-        if self.read(|conn| Ok(retag_followed(conn, album_id)?))? {
+        if self
+            .setup
+            .db
+            .read_blocking("management.automatic_gate_retag_followed", |conn| {
+                Ok::<_, ManagementError>(retag_followed(conn, album_id)?)
+            })?
+        {
             return Ok(Gate::Follow);
         }
         let Some(identity) = self.setup.identify_store.album_identity(album_id) else {
@@ -632,7 +707,11 @@ impl Management {
         let custom = identity.release_mbid.is_none()
             && identity.release_group_mbid.is_some()
             && self
-                .read(|conn| Ok(super::custom::active(conn, album_id)?))?
+                .setup
+                .db
+                .read_blocking("management.custom_edition", |conn| {
+                    Ok::<_, ManagementError>(super::custom::active(conn, album_id)?)
+                })?
                 .is_some();
         if custom && !assignment.automatic_custom_editions {
             return Ok(Gate::Closed(Verdict::Park("CUSTOM_EDITION")));
@@ -657,8 +736,12 @@ impl Management {
             }
         }
         let manage_unconfirmed = planner::manage_unconfirmed(&self.setup);
-        let gate =
-            self.read(|conn| Ok(planner::match_gate(conn, album_id, manage_unconfirmed)?))?;
+        let gate = self
+            .setup
+            .db
+            .read_blocking("management.match_gate", |conn| {
+                Ok::<_, ManagementError>(planner::match_gate(conn, album_id, manage_unconfirmed)?)
+            })?;
         if gate.is_some() {
             // Confirming the match, or turning on "Also manage unconfirmed
             // matches", looks at the album again.
@@ -668,12 +751,24 @@ impl Management {
         // folder the scan holds back may be a person's retag the takeover
         // checks cannot see yet. The album goes ahead once a scan settles
         // the folder.
-        if self.read(|conn| Ok(holds_new_files(conn, album_id)?))? {
+        if self
+            .setup
+            .db
+            .read_blocking("management.holds_new_files", |conn| {
+                Ok::<_, ManagementError>(holds_new_files(conn, album_id)?)
+            })?
+        {
             return Ok(Gate::NotYet(Verdict::Park(SCAN_HELD_BACK)));
         }
         // A held album let go before it could be judged as a retag is
         // judged on the edition about to be written, before the first write.
-        if self.read(|conn| Ok(remembered(conn, album_id)?))? {
+        if self
+            .setup
+            .db
+            .read_blocking("management.remembered", |conn| {
+                Ok::<_, ManagementError>(remembered(conn, album_id)?)
+            })?
+        {
             return Ok(Gate::Judge { writes: true });
         }
         Ok(Gate::Open(Box::new(Opened {
@@ -693,7 +788,13 @@ impl Management {
     /// go unjudged, and its match names a release the match gate lets
     /// through.
     fn judged_by_hand(&self, album_id: &str) -> Result<bool, ManagementError> {
-        if !self.read(|conn| Ok(remembered(conn, album_id)?))? {
+        if !self
+            .setup
+            .db
+            .read_blocking("management.judged_by_hand_remembered", |conn| {
+                Ok::<_, ManagementError>(remembered(conn, album_id)?)
+            })?
+        {
             return Ok(false);
         }
         let names_release = self
@@ -706,14 +807,22 @@ impl Management {
         }
         let manage_unconfirmed = planner::manage_unconfirmed(&self.setup);
         Ok(self
-            .read(|conn| Ok(planner::match_gate(conn, album_id, manage_unconfirmed)?))?
+            .setup
+            .db
+            .read_blocking("management.judged_by_hand_match_gate", |conn| {
+                Ok::<_, ManagementError>(planner::match_gate(conn, album_id, manage_unconfirmed)?)
+            })?
             .is_none())
     }
 
     fn automatic_verdict(&self, album_id: &str) -> Result<Verdict, ManagementError> {
         let mut gate = self.automatic_gate(album_id, false)?;
         if let Gate::Judge { .. } = gate {
-            if self.write(|tx| Ok(judge_remembered(tx, album_id, now_unix())?))? {
+            if self.setup.db.write_blocking(
+                Lane::Background,
+                "management.judge_remembered",
+                |tx| Ok::<_, ManagementError>(judge_remembered(tx, album_id, now_unix())?),
+            )? {
                 return Ok(Verdict::Park(takeover::TAKEN_OVER));
             }
             // The album's remembered rows are gone, so the gate does not
@@ -723,7 +832,13 @@ impl Management {
         let opened = match gate {
             Gate::Closed(verdict) | Gate::NotYet(verdict) => return Ok(verdict),
             Gate::Follow => {
-                self.write(|tx| Ok(takeover::mark_followed(tx, album_id, now_unix())?))?;
+                self.setup.db.write_blocking(
+                    Lane::Background,
+                    "management.mark_followed",
+                    |tx| {
+                        Ok::<_, ManagementError>(takeover::mark_followed(tx, album_id, now_unix())?)
+                    },
+                )?;
                 return Ok(Verdict::Park(takeover::TAKEN_OVER));
             }
             // Only a scan's end in between remembers rows again: looked at
@@ -796,7 +911,11 @@ impl Management {
         if let Some(sandbox) = sandbox.as_ref() {
             let saved = files
                 .iter()
-                .map(|file| self.read(|conn| Ok(planner::overrides(conn, album_id, &file.id)?)))
+                .map(|file| {
+                    self.setup.db.read_blocking("management.overrides", |conn| {
+                        Ok(planner::overrides(conn, album_id, &file.id)?)
+                    })
+                })
                 .collect::<Result<Vec<_>, ManagementError>>()?;
             let subjects: Vec<planner::AcoustIdSubject<'_>> = files
                 .iter()
@@ -840,12 +959,23 @@ impl Management {
         );
         // A hand-back asks for a fresh look: no run made before it, done,
         // stepped back or waiting, answers for the album.
-        let key_material = match self.read(|conn| Ok(takeover::hand_backs(conn, album_id)?))? {
+        let key_material = match self
+            .setup
+            .db
+            .read_blocking("management.hand_backs", |conn| {
+                Ok::<_, ManagementError>(takeover::hand_backs(conn, album_id)?)
+            })? {
             0 => key_material,
             count => format!("{key_material}\u{0}handed-back:{count}"),
         };
         let mut key = format!("automatic:{}", sha256_hex(key_material.as_bytes()));
-        if let Some(existing) = self.read(|conn| Ok(store::job_for_key(conn, &key)?))? {
+        if let Some(existing) = self
+            .setup
+            .db
+            .read_blocking("management.job_for_key", |conn| {
+                Ok::<_, ManagementError>(store::job_for_key(conn, &key)?)
+            })?
+        {
             let snapshot = self.snapshot(&existing)?;
             let now = now_unix();
             let expires = snapshot.preview_expires_at.unwrap_or(0.0);

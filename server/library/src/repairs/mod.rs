@@ -53,7 +53,7 @@ pub async fn tick(setup: &LibrarySetup, repairs: &Repairs, worker: &str) -> bool
         if !setup.coordinator.current().is_empty() {
             return Ok(None);
         }
-        handle.block_on(repairs.run_next(&worker))
+        droppedneedle_kernel::db::block_on(&handle, "repairs_turn", repairs.run_next(&worker))?
     })
     .await;
     match outcome {

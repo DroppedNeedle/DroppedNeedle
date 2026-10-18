@@ -79,6 +79,7 @@ fn recycle_refused(error: MutationError) -> ManagementError {
             duplicate_changed().action
         )),
         MutationError::Store(cause) => ManagementError::Store(cause),
+        MutationError::Busy(cause) => ManagementError::Busy(cause),
     }
 }
 
@@ -272,15 +273,18 @@ impl Management {
         source: &Snapshot,
         ordinal: i64,
     ) -> Result<super::models::PlannedItem, ManagementError> {
-        let page = self.read(|conn| {
-            Ok(store::items_page(
-                conn,
-                &source.job.id,
-                ordinal - 1,
-                1,
-                &ItemFilter::default(),
-            )?)
-        })?;
+        let page = self
+            .setup
+            .db
+            .read_blocking("management.source_item", |conn| {
+                Ok::<_, ManagementError>(store::items_page(
+                    conn,
+                    &source.job.id,
+                    ordinal - 1,
+                    1,
+                    &ItemFilter::default(),
+                )?)
+            })?;
         page.items
             .into_iter()
             .find(|item| item.ordinal == ordinal)
@@ -320,11 +324,21 @@ impl Management {
             analysis_until: std::time::Instant::now() + planner::RUN_ANALYSIS_BUDGET,
             wide: false,
         };
-        let albums = self.read(|conn| selection::albums(conn, &selection))?;
+        let albums = self
+            .setup
+            .db
+            .read_blocking("management.duplicate_albums", |conn| {
+                selection::albums(conn, &selection)
+            })?;
         let Some(scope) = albums.first() else {
             return Ok(Some(Summary::default()));
         };
-        let tracks = self.read(|conn| selection::tracks(conn, scope))?;
+        let tracks = self
+            .setup
+            .db
+            .read_blocking("management.duplicate_tracks", |conn| {
+                selection::tracks(conn, scope)
+            })?;
         let Some(track) = tracks.first() else {
             return Ok(Some(Summary::default()));
         };
@@ -353,13 +367,16 @@ impl Management {
         if item.eligibility.writes() && places_incoming {
             let source = self.snapshot(&intent.source_job_id)?;
             let blocked_one = self.source_item(&source, intent.source_plan_item_ordinal)?;
-            let siblings = self.read(|conn| {
-                Ok(store::bundle_items(
-                    conn,
-                    &intent.source_job_id,
-                    blocked_one.bundle_ordinal,
-                )?)
-            })?;
+            let siblings =
+                self.setup
+                    .db
+                    .read_blocking("management.duplicate_siblings", |conn| {
+                        Ok::<_, ManagementError>(store::bundle_items(
+                            conn,
+                            &intent.source_job_id,
+                            blocked_one.bundle_ordinal,
+                        )?)
+                    })?;
             let album_moves = siblings.iter().any(|sibling| {
                 sibling.ordinal != blocked_one.ordinal
                     && (sibling.diff.path_changed
@@ -438,19 +455,23 @@ impl Management {
                         .ok()
                         .and_then(|path| crate::publish::paths::read_regular_file(&path).ok())
                         .map(|bytes| crate::publish::snapshots::sha256_hex(&bytes));
-                    let tracked: Option<String> = self.read(|conn| {
-                        Ok(conn
-                            .query_row(
-                                "SELECT id FROM local_tracks WHERE root_id = ?1 \
+                    let tracked: Option<String> =
+                        self.setup
+                            .db
+                            .read_blocking("management.duplicate_tracked", |conn| {
+                                Ok::<_, ManagementError>(
+                                    conn.query_row(
+                                        "SELECT id FROM local_tracks WHERE root_id = ?1 \
                                  AND relative_path = ?2 AND availability = 'indexed'",
-                                rusqlite::params![
-                                    intent.existing_root_id,
-                                    intent.existing_relative_path
-                                ],
-                                |row| row.get(0),
-                            )
-                            .optional()?)
-                    })?;
+                                        rusqlite::params![
+                                            intent.existing_root_id,
+                                            intent.existing_relative_path
+                                        ],
+                                        |row| row.get(0),
+                                    )
+                                    .optional()?,
+                                )
+                            })?;
                     let named_other = intent
                         .existing_local_track_id
                         .as_ref()

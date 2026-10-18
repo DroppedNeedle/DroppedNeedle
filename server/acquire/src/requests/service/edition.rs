@@ -398,6 +398,9 @@ impl RequestsService {
                 return Ok(None);
             }
             Err(OperationError::Store(cause)) => return Err(RequestsError::internal(&cause)),
+            Err(OperationError::Busy(operation)) => {
+                return Err(RequestsError::Busy { operation });
+            }
             Err(OperationError::Invalid(reason) | OperationError::Conflict(reason)) => {
                 return Err(RequestsError::InvalidInput {
                     message: format!("{} {}", reason.message, reason.action),

@@ -429,8 +429,15 @@ where
     Fut::Output: Send + 'static,
 {
     let handle = tokio::runtime::Handle::current();
-    match tokio::task::spawn_blocking(move || handle.block_on(tick())).await {
-        Ok(output) => Some(output),
+    let driven = tokio::task::spawn_blocking(move || {
+        droppedneedle_kernel::db::block_on(&handle, "library_loop_tick", tick())
+    });
+    match driven.await {
+        Ok(Ok(output)) => Some(output),
+        Ok(Err(error)) => {
+            tracing::error!(%error, "library loop tick refused");
+            None
+        }
         Err(error) => {
             tracing::error!(%error, "library loop tick panicked");
             None
