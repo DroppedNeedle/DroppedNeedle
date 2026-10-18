@@ -12,8 +12,8 @@ use std::{
 };
 
 use super::{
-    BACKGROUND_QUEUE_CAPACITY, CancelFlag, ChunkedError, DbConfig, DbError, DbRuntime, DurableLane,
-    Lane, LaneLimits, block_on, open_runtime,
+    AnalyzeService, BACKGROUND_QUEUE_CAPACITY, CancelFlag, ChunkedError, DbConfig, DbError,
+    DbRuntime, DurableLane, Lane, LaneLimits, block_on, open_runtime,
     scratch::ScratchDir,
     writer::{Budget, WriteLane},
 };
@@ -1340,6 +1340,44 @@ async fn cancelled_chunked_write_does_not_wait_out_the_hold() {
     runtime.shutdown().await;
 }
 
+/// Count `tracks` streamable tracks in the catalog's per-format totals,
+/// which the planner statistics measure the catalog by.
+async fn seed_streamable_tracks(runtime: &DbRuntime, tracks: i64) {
+    runtime
+        .db()
+        .write(Lane::Foreground, "brief-tracks", move |tx| {
+            tx.execute(
+                "INSERT INTO library_track_format_stats (file_format, indexed_tracks, indexed_bytes) \
+                 VALUES ('flac', ?1, 0)",
+                [tracks],
+            )?;
+            Ok::<_, DbError>(())
+        })
+        .await
+        .unwrap();
+}
+
+/// No planner statistics are taken from a nearly empty catalog, so a first
+/// scan is not planned for empty tables. Once the catalog holds a hundred
+/// tracks, the next check takes them.
+#[tokio::test]
+async fn planner_statistics_wait_for_a_real_catalog() {
+    let (runtime, _dir) = open_scratch("analyze-min-tracks").await;
+    let empty = AnalyzeService::new(runtime.db().clone());
+    assert!(
+        !empty.run_if_due().await.unwrap(),
+        "no tracks, no statistics"
+    );
+
+    seed_streamable_tracks(&runtime, 100).await;
+    let next_check = AnalyzeService::new(runtime.db().clone());
+    assert!(
+        next_check.run_if_due().await.unwrap(),
+        "a real catalog is analyzed"
+    );
+    runtime.shutdown().await;
+}
+
 /// Planner statistics do not run while the WAL hold is on, and the skipped
 /// run does not use up the ten-minute check interval.
 #[tokio::test]
@@ -1347,6 +1385,7 @@ async fn planner_statistics_wait_out_the_wal_hold() {
     let (runtime, _dir) = open_scratch("analyze-held").await;
     let analyze = runtime.checkpoint().analyze().unwrap().clone();
     let hold = runtime.db().lane().wal_hold();
+    seed_streamable_tracks(&runtime, 1000).await;
 
     hold.force(true);
     assert!(!analyze.run_if_due().await.unwrap());
@@ -1356,6 +1395,37 @@ async fn planner_statistics_wait_out_the_wal_hold() {
         "the first check after the hold runs the refresh"
     );
     runtime.shutdown().await;
+}
+
+/// The write connection keeps far more than rusqlite's default 16 prepared
+/// statements, so a write running a few dozen of them per file does not
+/// prepare them again each time.
+#[test]
+fn write_connection_keeps_its_prepared_statements() {
+    let (lane, _dir) = scratch_lane("statement-cache");
+    let statements: Vec<String> = (0..64).map(|n| format!("SELECT {n}")).collect();
+    let run = statements.clone();
+    lane.write_blocking(Lane::Foreground, "brief-prepare", move |tx| {
+        for sql in &run {
+            tx.prepare_cached(sql)?.query_row([], |_| Ok(()))?;
+        }
+        Ok::<_, DbError>(())
+    })
+    .unwrap();
+    let evicted = lane
+        .write_blocking(Lane::Foreground, "brief-reuse", move |tx| {
+            let mut evicted = Vec::new();
+            for sql in statements {
+                let statement = tx.prepare_cached(&sql)?;
+                if statement.get_status(rusqlite::StatementStatus::Run) == 0 {
+                    evicted.push(sql);
+                }
+            }
+            Ok::<_, DbError>(evicted)
+        })
+        .unwrap();
+    assert!(evicted.is_empty(), "prepared again: {evicted:?}");
+    current_thread_runtime().block_on(lane.shutdown(DRAIN));
 }
 
 /// Refusing a waiter drops its closure, which runs the caller's code. When

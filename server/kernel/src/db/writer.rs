@@ -1639,6 +1639,11 @@ pub fn apply_connection_pragmas(connection: &Connection) -> Result<(), DbError> 
     Ok(())
 }
 
+/// Prepared statements the write connection keeps. A scan window runs a few
+/// dozen distinct statements per file; rusqlite's default of 16 would
+/// prepare most of them again for every file.
+const STATEMENT_CACHE: usize = 128;
+
 /// The write connection, the abort clock its progress handler reads and
 /// the watch its commit and rollback hooks report to.
 struct WriterConnection {
@@ -1652,6 +1657,7 @@ struct WriterConnection {
 impl WriterConnection {
     fn open(path: &Path, lane: LaneId) -> Result<Self, DbError> {
         let connection = open_connection(path)?;
+        connection.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
         let clock = Arc::new(AbortClock::new());
         let handler_clock = Arc::clone(&clock);
         connection.progress_handler(PROGRESS_OPS, Some(move || handler_clock.check()));

@@ -11,6 +11,9 @@
 //! It runs when statistics are missing (first boot, and after migrations on
 //! an upgraded database), when the streamable track count moved by a tenth
 //! since the last run (a scan landed), or when the last run is a day old.
+//! It never runs while the catalog holds fewer than [`MIN_TRACKS`]: stats
+//! taken from a nearly empty catalog would steer a whole first scan onto
+//! plans chosen for empty tables, until the next check ten minutes later.
 //! The checkpoint loop asks [`AnalyzeService::run_if_due`] on every pass;
 //! the check itself runs at most every [`CHECK_INTERVAL`].
 //!
@@ -35,6 +38,8 @@ pub const CHECK_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const CHURN_SHARE: f64 = 0.1;
 /// Rows sampled per index by each ANALYZE step (`PRAGMA analysis_limit`).
 const ANALYSIS_LIMIT: u32 = 1000;
+/// Fewest streamable tracks before statistics are worth taking.
+const MIN_TRACKS: i64 = 100;
 /// Fewest changed tracks that count as churn (small libraries move a lot
 /// in relative terms without the plans changing).
 const CHURN_MIN_TRACKS: i64 = 100;
@@ -63,6 +68,9 @@ fn now_unix() -> i64 {
 
 /// Whether statistics recorded at `last` are stale now.
 fn stale(last: Option<LastRun>, stats_present: bool, indexed_tracks: i64, now_unix: i64) -> bool {
+    if indexed_tracks < MIN_TRACKS {
+        return false;
+    }
     let Some(last) = last else {
         return true;
     };
@@ -194,7 +202,7 @@ mod tests {
             at_unix: 1_000,
             indexed_tracks: 10_000,
         });
-        assert!(stale(None, true, 0, 1_000), "never ran");
+        assert!(stale(None, true, MIN_TRACKS, 1_000), "never ran");
         assert!(stale(last, false, 10_000, 1_000), "stats table gone");
         assert!(!stale(last, true, 10_500, 1_000 + day - 1), "fresh");
         assert!(stale(last, true, 10_000, 1_000 + day), "a day old");
@@ -203,6 +211,6 @@ mod tests {
             at_unix: 1_000,
             indexed_tracks: 10,
         });
-        assert!(!stale(small, true, 60, 1_000), "small moves are noise");
+        assert!(!stale(small, true, 109, 1_000), "small moves are noise");
     }
 }
