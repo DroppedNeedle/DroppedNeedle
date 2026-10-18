@@ -35,12 +35,16 @@ use crate::operations::store as jobs;
 use crate::wiring::{LibrarySetup, ScanCoordinator};
 use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::jobs::schedule::SplitMix64;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 
 /// How long one worker turn may run before the job goes back to the
 /// queue, so other operations get their turn.
 const TURN: Duration = Duration::from_secs(2);
+/// Wait before a job the database was too busy for goes on, plus up to
+/// as much again.
+const BUSY_RETRY: Duration = Duration::from_secs(5);
 /// Wait before an album MusicBrainz could not answer for is tried again.
 const PROVIDER_RETRY_SECS: f64 = 120.0;
 /// Largest history page.
@@ -119,28 +123,34 @@ impl Repairs {
         let Some(newest) = newest else {
             return Ok(());
         };
-        *seen = newest;
-        drop(seen);
         if albums.is_empty() {
+            *seen = newest;
             return Ok(());
         }
-        self.db
-            .write_blocking(Lane::Background, "repairs.queue_hygiene_identified", |tx| {
-                let new = NewRepair {
-                    job_id: self.ids.new_id(),
-                    purpose: Purpose::CatalogIdentityHygiene,
-                    requested_by_user_id: None,
-                    idempotency_key: format!(
-                        "catalog-identity-hygiene:v1:identified:{after}:{newest}"
-                    ),
-                    root_ids: Vec::new(),
-                    album_ids: albums,
-                    scan_run_id: None,
-                    source_matcher_version: None,
-                    target_matcher_version: HYGIENE_VERSION.to_owned(),
-                };
-                store::create(tx, &new, now_unix()).map(|_| ())
-            })
+        // A busy database leaves the marker where it was, so the next turn
+        // queues the cleanup again.
+        let queued =
+            self.db
+                .write_blocking(Lane::Background, "repairs.queue_hygiene_identified", |tx| {
+                    let new = NewRepair {
+                        job_id: self.ids.new_id(),
+                        purpose: Purpose::CatalogIdentityHygiene,
+                        requested_by_user_id: None,
+                        idempotency_key: format!(
+                            "catalog-identity-hygiene:v1:identified:{after}:{newest}"
+                        ),
+                        root_ids: Vec::new(),
+                        album_ids: albums,
+                        scan_run_id: None,
+                        source_matcher_version: None,
+                        target_matcher_version: HYGIENE_VERSION.to_owned(),
+                    };
+                    store::create(tx, &new, now_unix()).map(|_| ())
+                });
+        if settled(&queued) {
+            *seen = newest;
+        }
+        queued
     }
 
     // -----------------------------------------------------------------------
@@ -310,10 +320,11 @@ impl Repairs {
     /// Queue the one-time catalog cleanup when this database has albums
     /// it could apply to (imported groupings, empty shells).
     fn queue_hygiene_once(&self) -> Result<(), OperationError> {
-        if self.hygiene_checked.swap(true, Ordering::Relaxed) {
+        if self.hygiene_checked.load(Ordering::Relaxed) {
             return Ok(());
         }
-        self.db
+        let queued = self
+            .db
             .write_blocking(Lane::Background, "repairs.queue_hygiene_once", |tx| {
                 if store::hygiene_backfill_queued(tx)? || !store::hygiene_candidates_exist(tx)? {
                     return Ok(());
@@ -330,7 +341,11 @@ impl Repairs {
                     target_matcher_version: HYGIENE_VERSION.to_owned(),
                 };
                 store::create(tx, &new, now_unix()).map(|_| ())
-            })
+            });
+        if settled(&queued) {
+            self.hygiene_checked.store(true, Ordering::Relaxed);
+        }
+        queued
     }
 
     /// Identify once more, at background priority, every album an older
@@ -344,16 +359,23 @@ impl Repairs {
         let run = self.db.read_blocking("repairs.latest_ended_scan", |conn| {
             Ok::<_, OperationError>(store::latest_ended_scan(conn)?)
         })?;
-        {
-            let mut seen = self
-                .track_id_scan
-                .lock()
-                .map_err(|_| OperationError::Store("track id marker poisoned".to_owned()))?;
-            if seen.as_ref() == Some(&run) {
-                return Ok(());
-            }
+        // A busy database leaves the run unseen, so the next turn queues
+        // its albums again.
+        let mut seen = self
+            .track_id_scan
+            .lock()
+            .map_err(|_| OperationError::Store("track id marker poisoned".to_owned()))?;
+        if seen.as_ref() == Some(&run) {
+            return Ok(());
+        }
+        let queued = self.queue_track_id_backfill();
+        if settled(&queued) {
             *seen = Some(run);
         }
+        queued
+    }
+
+    fn queue_track_id_backfill(&self) -> Result<(), OperationError> {
         let albums = self
             .db
             .read_blocking("repairs.track_id_backfill_done", |conn| {
@@ -409,34 +431,37 @@ impl Repairs {
         else {
             return Ok(());
         };
-        {
-            let mut seen = self
-                .hygiene_scan
-                .lock()
-                .map_err(|_| OperationError::Store("hygiene marker poisoned".to_owned()))?;
-            if seen.as_deref() == Some(run.as_str()) {
-                return Ok(());
-            }
-            *seen = Some(run.clone());
+        // A busy database leaves the run unseen.
+        let mut seen = self
+            .hygiene_scan
+            .lock()
+            .map_err(|_| OperationError::Store("hygiene marker poisoned".to_owned()))?;
+        if seen.as_deref() == Some(run.as_str()) {
+            return Ok(());
         }
-        self.db
-            .write_blocking(Lane::Background, "repairs.queue_hygiene_after_scan", |tx| {
-                if store::hygiene_count_after_scan(tx, &run)? == 0 {
-                    return Ok(());
-                }
-                let new = NewRepair {
-                    job_id: self.ids.new_id(),
-                    purpose: Purpose::CatalogIdentityHygiene,
-                    requested_by_user_id: None,
-                    idempotency_key: store::hygiene_scan_key(&run),
-                    root_ids: Vec::new(),
-                    album_ids: Vec::new(),
-                    scan_run_id: Some(run.clone()),
-                    source_matcher_version: None,
-                    target_matcher_version: HYGIENE_VERSION.to_owned(),
-                };
-                store::create(tx, &new, now_unix()).map(|_| ())
-            })
+        let queued =
+            self.db
+                .write_blocking(Lane::Background, "repairs.queue_hygiene_after_scan", |tx| {
+                    if store::hygiene_count_after_scan(tx, &run)? == 0 {
+                        return Ok(());
+                    }
+                    let new = NewRepair {
+                        job_id: self.ids.new_id(),
+                        purpose: Purpose::CatalogIdentityHygiene,
+                        requested_by_user_id: None,
+                        idempotency_key: store::hygiene_scan_key(&run),
+                        root_ids: Vec::new(),
+                        album_ids: Vec::new(),
+                        scan_run_id: Some(run.clone()),
+                        source_matcher_version: None,
+                        target_matcher_version: HYGIENE_VERSION.to_owned(),
+                    };
+                    store::create(tx, &new, now_unix()).map(|_| ())
+                });
+        if settled(&queued) {
+            *seen = Some(run);
+        }
+        queued
     }
 
     /// Queue a filing of the plays that name no track: once at a server
@@ -449,23 +474,25 @@ impl Repairs {
             .read_blocking("repairs.queue_play_filing_latest_ended_scan", |conn| {
                 Ok::<_, OperationError>(store::latest_ended_scan(conn)?)
             })?;
-        let after_scan = {
-            let mut seen = self
-                .plays_scan
-                .lock()
-                .map_err(|_| OperationError::Store("play filing marker poisoned".to_owned()))?;
-            let first = seen.is_none();
-            if seen.as_ref() == Some(&run) {
-                return Ok(());
-            }
-            *seen = Some(run.clone());
-            run.filter(|_| !first)
-        };
-        self.db
+        // A busy database leaves the run unseen.
+        let mut seen = self
+            .plays_scan
+            .lock()
+            .map_err(|_| OperationError::Store("play filing marker poisoned".to_owned()))?;
+        if seen.as_ref() == Some(&run) {
+            return Ok(());
+        }
+        let after_scan = run.as_deref().filter(|_| seen.is_some());
+        let queued = self
+            .db
             .write_blocking(Lane::Background, "repairs.queue_play_filing", |tx| {
-                plays::queue(tx, &self.ids.new_id(), after_scan.as_deref(), now_unix())?;
-                Ok(())
-            })
+                plays::queue(tx, &self.ids.new_id(), after_scan, now_unix())?;
+                Ok::<_, OperationError>(())
+            });
+        if settled(&queued) {
+            *seen = Some(run);
+        }
+        queued
     }
 
     /// One turn of a play filing job: batch after batch until no row is
@@ -589,6 +616,48 @@ impl Repairs {
         let Some(job) = claimed else {
             return Ok(None);
         };
+        match self.turn(&job, worker).await {
+            Err(OperationError::Busy(cause)) => self.wait_busy(&job.id, worker, cause),
+            left => left,
+        }
+    }
+
+    /// A turn the database was too busy for: the job goes back to the
+    /// queue as it stood and waits a few seconds, plus up to as much again.
+    /// A put-back that fails leaves it to its lease.
+    fn wait_busy(
+        &self,
+        job_id: &str,
+        worker: &str,
+        cause: String,
+    ) -> Result<Option<OperationJob>, OperationError> {
+        tracing::warn!(cause, job_id, "repair job waits: the database is busy");
+        let now = now_unix();
+        let jitter = SplitMix64::new(SplitMix64::seed_from_time()).below_duration(BUSY_RETRY);
+        let retry_at = now + (BUSY_RETRY + jitter).as_secs_f64();
+        self.db
+            .write_blocking(Lane::Background, "repairs.yield_job", |tx| {
+                Ok::<_, OperationError>(store::yield_job(
+                    tx,
+                    job_id,
+                    worker,
+                    None,
+                    Some(retry_at),
+                    now,
+                )?)
+            })
+            .map_err(|error| {
+                tracing::warn!(%error, job_id, "repair job not put back; its lease brings it back");
+                OperationError::Busy(cause)
+            })
+    }
+
+    /// Work on a claimed repair job for one turn.
+    async fn turn(
+        &self,
+        job: &OperationJob,
+        worker: &str,
+    ) -> Result<Option<OperationJob>, OperationError> {
         let Some(snap) = self.db.read_blocking("repairs.job_snapshot", |conn| {
             Ok::<_, OperationError>(store::snapshot(conn, &job.id)?)
         })?
@@ -890,6 +959,13 @@ fn summary_for(recall: &RecallResult, candidate: &ReidentificationCandidate) -> 
         competing_count: 1,
         auto_gate: None,
     }
+}
+
+/// Whether a queueing step is over for its marker: anything but a busy
+/// database, which the next turn tries again. Another error is returned
+/// as before, but never holds every later repair back.
+fn settled(result: &Result<(), OperationError>) -> bool {
+    !matches!(result, Err(OperationError::Busy(_)))
 }
 
 fn dedupe(ids: Vec<String>) -> Vec<String> {

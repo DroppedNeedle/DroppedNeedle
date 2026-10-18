@@ -4929,6 +4929,112 @@ async fn management_run(
     handle.job_id
 }
 
+/// A management step whose read finds the database busy puts its job
+/// back in the queue as it stood, not failed, and the next step plans it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_busy_database_leaves_a_management_job_runnable() {
+    use droppedneedle_kernel::db::{DbConfig, DbError, open_runtime};
+    use droppedneedle_library::management::models::{ManagementError, Selection, SelectionKind};
+    use droppedneedle_library::management::service::{Management, PreviewRequest};
+    use droppedneedle_library::management::settings as lm;
+
+    let scratch = Scratch {
+        dir: ScratchDir::new("lib-management-busy"),
+        identify: Arc::new(FakeProviders::default()),
+    };
+    crate::common::migrated_db(&scratch.join("app.db"));
+    // One request reader and a short wait for it: while a read holds it,
+    // the worker's reads answer busy at once.
+    let mut config = DbConfig::new(&scratch.join("app.db"))
+        .with_read_wait(std::time::Duration::from_millis(100));
+    config.readers = 1;
+    let runtime = open_runtime(&config).await.expect("database opens");
+    let settings_store = Arc::new(
+        ConfigStore::open(
+            &scratch.join("config.json"),
+            Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
+        )
+        .expect("config opens"),
+    );
+    let library = library_asking(runtime.db(), settings_store, scratch.identify.clone());
+    let music = scratch.join("music");
+    plant(&music, "incoming/busy.flac", "management_full.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "incoming/busy.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    runtime
+        .db()
+        .run_sql(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+        )
+        .expect("admin row");
+    let settings = library
+        .config
+        .save(lm::initial_settings(""))
+        .expect("settings saved");
+    let management = Management::new(&library);
+    let handle = management
+        .create_preview(
+            PreviewRequest {
+                selection: Selection {
+                    kind: SelectionKind::Albums,
+                    ids: vec![album],
+                    catalog_filter: None,
+                },
+                profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
+                expected_settings_revision: lm::settings_revision(&settings),
+                expected_policy_revision: library.policy_revision().expect("policy revision"),
+                idempotency_key: Some("preview-busy".to_owned()),
+                target_root_id: None,
+                overrides: None,
+            },
+            "admin",
+        )
+        .expect("preview queued");
+
+    // The reader is held: the step claims the job, a write, and its first
+    // read is busy.
+    let (entered, inside) = std::sync::mpsc::channel();
+    let (let_go, release) = std::sync::mpsc::channel::<()>();
+    let held = {
+        let db = runtime.db().clone();
+        std::thread::spawn(move || {
+            db.read_blocking("test.held", |_| {
+                entered.send(()).expect("test waits");
+                release.recv().expect("test lets go");
+                Ok::<_, DbError>(())
+            })
+        })
+    };
+    inside.recv().expect("reader held");
+    let step = Management::new(&library);
+    let outcome = tokio::task::spawn_blocking(move || step.run_next("test-worker"))
+        .await
+        .expect("worker joins");
+    let_go.send(()).expect("reader lets go");
+    held.join().expect("reader joins").expect("held read");
+
+    let job = management.detail(&handle.job_id).expect("detail").job;
+    assert_eq!(job.state.as_str(), "queued", "{outcome:?}");
+    assert!(
+        matches!(outcome, Err(ManagementError::Busy(_))),
+        "{outcome:?}"
+    );
+    assert!(management_step(&library).await, "planning runs");
+    let job = management.detail(&handle.job_id).expect("detail").job;
+    assert_eq!(job.state.as_str(), "ready");
+    runtime.shutdown().await;
+}
+
 /// A Library Management job end to end:
 /// - an album whose edition is a best guess is left alone with its reason;
 /// - once confirmed, picking one file still plans (and moves) the whole

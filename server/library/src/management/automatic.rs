@@ -440,6 +440,8 @@ impl Management {
         {
             return match takeover::hand_back(&self.setup, &album_id, None) {
                 Ok(_) => Ok(true),
+                // Not a try that failed: the loop waits and it goes again.
+                Err(error @ ManagementError::Busy(_)) => Err(error),
                 Err(error) => {
                     // It waits before its next try; the loop pauses too.
                     tracing::warn!(%error, album_id, "album not handed back; tried again later");
@@ -507,10 +509,16 @@ impl Management {
         let Some((album_id, attempts)) = due else {
             return Ok(false);
         };
-        let verdict = self.automatic_verdict(&album_id).unwrap_or_else(|error| {
-            tracing::warn!(%error, album_id, "automatic management could not look at an album");
-            Verdict::Wait("MANAGEMENT_FAILED")
-        });
+        let verdict = match self.automatic_verdict(&album_id) {
+            Ok(verdict) => verdict,
+            // A busy database says nothing about the album: it stays due,
+            // the try is not counted, and the loop waits before the next.
+            Err(error @ ManagementError::Busy(_)) => return Err(error),
+            Err(error) => {
+                tracing::warn!(%error, album_id, "automatic management could not look at an album");
+                Verdict::Wait("MANAGEMENT_FAILED")
+            }
+        };
         // (next look, attempts added, reason shown); `None` drops the row.
         let next: Option<(f64, i64, &str)> = match verdict {
             Verdict::Started(job_id) => {
@@ -982,8 +990,13 @@ impl Management {
             match (snapshot.job.state.as_str(), snapshot.phase.as_str()) {
                 // A run for exactly this is waiting or working.
                 ("queued" | "running" | "paused", _) => return Ok(Verdict::Done("ALREADY_QUEUED")),
-                // A blocked preview waits for review until it expires.
+                // A preview nothing blocks is still here only when the
+                // database was too busy to start it: it starts now. A
+                // blocked one waits for review until it expires.
                 ("ready", "ready") if expires > now => {
+                    if self.apply_automatic(&existing, &snapshot.summary())? {
+                        return Ok(Verdict::Done("ALREADY_QUEUED"));
+                    }
                     return Ok(Verdict::RetryAt("PREVIEW_BLOCKED", expires));
                 }
                 ("succeeded", _) => return Ok(Verdict::Done("ALREADY_QUEUED")),

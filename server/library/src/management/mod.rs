@@ -44,13 +44,28 @@ pub mod takeover;
 
 use std::time::Duration;
 
+use droppedneedle_kernel::jobs::schedule::SplitMix64;
 use tokio::sync::watch;
 
 use crate::wiring::LibrarySetup;
+use models::ManagementError;
 use service::Management;
 
 /// How often the management worker looks for work when idle.
 const POLL: Duration = Duration::from_secs(2);
+
+/// After a step the database was too busy for, the worker waits this
+/// long, plus up to as much again.
+const BUSY_RETRY: Duration = Duration::from_secs(5);
+
+/// What one worker step did.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Step {
+    Worked,
+    Idle,
+    /// The database was too busy: what the step held went back.
+    Busy,
+}
 
 /// Spawn the management worker: plans and applies jobs, starts automatic
 /// management, and tells media servers to rescan. It has its own loop so
@@ -69,27 +84,34 @@ pub fn spawn_loop(
 async fn run_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
     let worker = uuid::Uuid::new_v4().to_string();
     let mut settle = automatic::Settle::default();
+    let mut rng = SplitMix64::new(SplitMix64::seed_from_time());
     loop {
         if *shutdown.borrow() {
             break;
         }
-        let busy = tick(&setup, &worker, &shutdown).await
-            || automatic_tick(&setup, &mut settle).await
-            || refresh_tick(&setup, &worker).await;
-        if busy {
-            continue;
+        let mut step = tick(&setup, &worker, &shutdown).await;
+        if step == Step::Idle {
+            step = automatic_tick(&setup, &mut settle).await;
         }
+        if step == Step::Idle {
+            step = refresh_tick(&setup, &worker).await;
+        }
+        let wait = match step {
+            Step::Worked => continue,
+            Step::Idle => POLL,
+            Step::Busy => BUSY_RETRY + rng.below_duration(BUSY_RETRY),
+        };
         tokio::select! {
             _ = shutdown.changed() => break,
-            _ = tokio::time::sleep(POLL) => {}
+            _ = tokio::time::sleep(wait) => {}
         }
     }
 }
 
 /// One worker step on a blocking thread: plan or apply the next queued
 /// management job. A shutdown hands the job back to the queue between
-/// albums, so the next start picks it up. True when a job was worked on.
-pub async fn tick(setup: &LibrarySetup, worker: &str, shutdown: &watch::Receiver<bool>) -> bool {
+/// albums, so the next start picks it up.
+async fn tick(setup: &LibrarySetup, worker: &str, shutdown: &watch::Receiver<bool>) -> Step {
     let management = Management::new(setup).stopping_with(shutdown.clone());
     let worker = worker.to_owned();
     blocking("library management step", move || {
@@ -99,8 +121,8 @@ pub async fn tick(setup: &LibrarySetup, worker: &str, shutdown: &watch::Receiver
 }
 
 /// Start automatic management for the next album that waits for it, once
-/// the catalog has settled. True when one was looked at.
-pub async fn automatic_tick(setup: &LibrarySetup, settle: &mut automatic::Settle) -> bool {
+/// the catalog has settled.
+async fn automatic_tick(setup: &LibrarySetup, settle: &mut automatic::Settle) -> Step {
     let management = Management::new(setup);
     let mut state = std::mem::take(settle);
     let outcome = tokio::task::spawn_blocking(move || {
@@ -111,20 +133,17 @@ pub async fn automatic_tick(setup: &LibrarySetup, settle: &mut automatic::Settle
     match outcome {
         Ok((state, result)) => {
             *settle = state;
-            result.unwrap_or_else(|error| {
-                tracing::warn!(%error, "automatic management step failed");
-                false
-            })
+            settled("automatic management step", result)
         }
         Err(error) => {
             tracing::error!(%error, "automatic management step panicked");
-            false
+            Step::Idle
         }
     }
 }
 
-/// Send one due media-server refresh. True when one was handled.
-async fn refresh_tick(setup: &LibrarySetup, worker: &str) -> bool {
+/// Send one due media-server refresh.
+async fn refresh_tick(setup: &LibrarySetup, worker: &str) -> Step {
     let management = Management::new(setup);
     let worker = worker.to_owned();
     blocking("media server refresh", move || {
@@ -135,17 +154,29 @@ async fn refresh_tick(setup: &LibrarySetup, worker: &str) -> bool {
 
 async fn blocking(
     what: &'static str,
-    work: impl FnOnce() -> Result<bool, models::ManagementError> + Send + 'static,
-) -> bool {
+    work: impl FnOnce() -> Result<bool, ManagementError> + Send + 'static,
+) -> Step {
     match tokio::task::spawn_blocking(work).await {
-        Ok(Ok(worked)) => worked,
-        Ok(Err(error)) => {
-            tracing::warn!(%error, "{what} failed");
-            false
-        }
+        Ok(result) => settled(what, result),
         Err(error) => {
             tracing::error!(%error, "{what} panicked");
-            false
+            Step::Idle
+        }
+    }
+}
+
+/// What a step's answer means for the loop.
+fn settled(what: &'static str, result: Result<bool, ManagementError>) -> Step {
+    match result {
+        Ok(true) => Step::Worked,
+        Ok(false) => Step::Idle,
+        Err(error @ ManagementError::Busy(_)) => {
+            tracing::warn!(%error, "{what} waits: the database is busy");
+            Step::Busy
+        }
+        Err(error) => {
+            tracing::warn!(%error, "{what} failed");
+            Step::Idle
         }
     }
 }

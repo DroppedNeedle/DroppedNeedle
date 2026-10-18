@@ -917,21 +917,46 @@ impl Management {
             "planning" => self.plan(&job_id, worker),
             _ => self.apply_work(&job_id, worker),
         };
-        if let Err(error) = outcome {
-            tracing::error!(%error, job_id, "management job failed");
-            self.setup
-                .db
-                .write_blocking(Lane::Background, "management.fail_job", |tx| {
-                    Ok::<_, ManagementError>(store::fail_job(
-                        tx,
-                        &job_id,
-                        worker,
-                        "MANAGEMENT_FAILED",
-                        now_unix(),
-                    )?)
-                })?;
+        match outcome {
+            Ok(()) => Ok(true),
+            // A busy database is not the job's fault: it goes back to the
+            // queue as it stood, as at a shutdown, and the worker waits
+            // before it takes it again. A put-back that fails leaves it to
+            // its lease.
+            Err(error @ ManagementError::Busy(_)) => {
+                tracing::warn!(%error, job_id, "management job waits: the database is busy");
+                let released =
+                    self.setup
+                        .db
+                        .write_blocking(Lane::Background, "management.release", |tx| {
+                            Ok::<_, ManagementError>(store::release(
+                                tx,
+                                &job_id,
+                                worker,
+                                now_unix(),
+                            )?)
+                        });
+                if let Err(error) = released {
+                    tracing::warn!(%error, job_id, "management job not put back; its lease brings it back");
+                }
+                Err(error)
+            }
+            Err(error) => {
+                tracing::error!(%error, job_id, "management job failed");
+                self.setup
+                    .db
+                    .write_blocking(Lane::Background, "management.fail_job", |tx| {
+                        Ok::<_, ManagementError>(store::fail_job(
+                            tx,
+                            &job_id,
+                            worker,
+                            "MANAGEMENT_FAILED",
+                            now_unix(),
+                        )?)
+                    })?;
+                Ok(true)
+            }
         }
-        Ok(true)
     }
 
     /// Honour a pause, a stop, or a server shutdown. True when the job
@@ -1072,8 +1097,16 @@ impl Management {
                 files = changed.len(),
                 "automatic management stepped back from the album"
             );
-        } else if finished && automatic {
-            self.apply_automatic(job_id, &summary);
+        } else if finished
+            && automatic
+            && let Err(error) = self.apply_automatic(job_id, &summary)
+        {
+            // The automatic worker looks at the albums again and applies
+            // the preview then.
+            tracing::warn!(%error, job_id, "automatic management apply waits: the database is busy");
+            for album in &albums {
+                self.setup.queue_automatic_management(album);
+            }
         }
         Ok(())
     }
@@ -1107,14 +1140,20 @@ impl Management {
     /// Apply a preview automatic management made, when nothing in it is
     /// blocked (as v2 did). A preview with a blocked file waits on the
     /// operations page with each file's reason, for an administrator.
-    fn apply_automatic(&self, job_id: &str, summary: &Summary) {
+    /// True when the run applies or had nothing to apply; `Busy` when the
+    /// database was too busy to start it, and the preview waits.
+    pub(super) fn apply_automatic(
+        &self,
+        job_id: &str,
+        summary: &Summary,
+    ) -> Result<bool, ManagementError> {
         if summary.blocked_count > 0 || summary.stale_count > 0 {
             tracing::info!(
                 job_id,
                 blocked = summary.blocked_count,
                 "automatic management preview has blocked files; it waits for review"
             );
-            return;
+            return Ok(false);
         }
         let outcome = self
             .setup
@@ -1134,16 +1173,28 @@ impl Management {
                 )
             });
         match outcome {
-            Ok(_) => tracing::info!(job_id, "automatic management applies"),
+            Ok(_) => {
+                tracing::info!(job_id, "automatic management applies");
+                Ok(true)
+            }
             // Nothing to write: the files already look the way the
             // profile wants them.
             Err(ManagementError::Conflict(reason)) => {
                 tracing::info!(job_id, reason, "automatic management had nothing to apply");
-                if let Err(error) = self.finish_unchanged(job_id) {
-                    tracing::warn!(%error, job_id, "unchanged automatic run not recorded");
+                match self.finish_unchanged(job_id) {
+                    Err(error @ ManagementError::Busy(_)) => return Err(error),
+                    Err(error) => {
+                        tracing::warn!(%error, job_id, "unchanged automatic run not recorded");
+                    }
+                    Ok(()) => {}
                 }
+                Ok(true)
             }
-            Err(error) => tracing::warn!(%error, job_id, "automatic management apply refused"),
+            Err(error @ ManagementError::Busy(_)) => Err(error),
+            Err(error) => {
+                tracing::warn!(%error, job_id, "automatic management apply refused");
+                Ok(false)
+            }
         }
     }
 
@@ -1819,6 +1870,9 @@ impl Management {
         Ok(Some(
             match self.publish_album(snapshot, &items, undo, organizes, &bundle_id) {
                 Ok(applied) => (None, written(&applied.bundle_id, &applied.outcome)),
+                // Nothing was published: the job goes back to the queue, and
+                // the next pass finds this bundle empty and starts afresh.
+                Err(Refused::Busy(error)) => return Err(error),
                 Err(_) if self.committed(&bundle_id) => (None, written(&bundle_id, "committed")),
                 // A publish that stopped part way (the journal still holds
                 // it) is settled by recovery, which finishes or unwinds it;
@@ -1836,7 +1890,7 @@ impl Management {
                     );
                     return Ok(None);
                 }
-                Err(reason) => {
+                Err(Refused::Reason(reason)) => {
                     let result = serde_json::json!({ "bundle_id": bundle_id, "reason": reason });
                     (Some(reason), result)
                 }
@@ -1851,17 +1905,17 @@ impl Management {
         snapshot: &Snapshot,
         items: &[PlannedItem],
         organizes: bool,
-    ) -> Result<(), ItemReason> {
+    ) -> Result<(), Refused> {
         if !self.stale_reasons(snapshot).is_empty() {
-            return Err(ItemReason {
+            return Err(Refused::Reason(ItemReason {
                 code: "PROFILE_CHANGED".to_owned(),
                 message: "Library Management settings or the library folders changed while this run was applying."
                     .to_owned(),
                 action: "Make a new preview for the albums that were not written yet.".to_owned(),
-            });
+            }));
         }
         let Some(first) = items.first() else {
-            return Err(reasons::not_scheduled());
+            return Err(reasons::not_scheduled().into());
         };
         let manage_unconfirmed = planner::manage_unconfirmed(&self.setup);
         let state = self
@@ -1873,12 +1927,10 @@ impl Management {
                     store::album_state(conn, &first.album_id)?,
                 ))
             });
-        let (gate, (revision, tracks)) = state.map_err(|error| {
-            tracing::error!(%error, album = first.album_id, "album state unreadable; album left alone");
-            reasons::write_failed()
-        })?;
+        let (gate, (revision, tracks)) =
+            state.map_err(|error| Refused::unread(error, &first.album_id, "album state"))?;
         if let Some(reason) = gate {
-            return Err(reason);
+            return Err(reason.into());
         }
         let planned: std::collections::BTreeSet<&str> = items
             .iter()
@@ -1891,7 +1943,7 @@ impl Management {
             planned.is_subset(&current)
         };
         if revision != Some(first.album_revision) || !membership_holds {
-            return Err(reasons::album_changed());
+            return Err(reasons::album_changed().into());
         }
         Ok(())
     }
@@ -1904,13 +1956,13 @@ impl Management {
         undo: bool,
         organizes: bool,
         bundle_id: &str,
-    ) -> Result<crate::manage::AppliedBundle, ItemReason> {
+    ) -> Result<crate::manage::AppliedBundle, Refused> {
         if !undo {
             self.album_gate(snapshot, items, organizes)?;
         }
         let mut plans = planner::bundle_plans(items);
         if plans.is_empty() {
-            return Err(reasons::not_scheduled());
+            return Err(reasons::not_scheduled().into());
         }
         if !undo {
             self.plan_replacements(items, &mut plans)?;
@@ -1925,10 +1977,9 @@ impl Management {
             }
             _ => None,
         };
-        let override_of = self.override_lookup(&album_id, undoes).map_err(|error| {
-            tracing::error!(%error, album = album_id, "tag edit override record unreadable; album left alone");
-            reasons::write_failed()
-        })?;
+        let override_of = self
+            .override_lookup(&album_id, undoes)
+            .map_err(|error| Refused::unread(error, &album_id, "tag edit override record"))?;
         let pins = SealPins {
             profile: profile::seal_revision(&snapshot.profile_revision),
             naming: profile::seal_revision(&snapshot.naming_revision),
@@ -1943,8 +1994,35 @@ impl Management {
                 } else {
                     tracing::info!(%error, job_id = snapshot.job.id, "management publish refused");
                 }
-                reason
+                Refused::Reason(reason)
             })
+    }
+}
+
+/// Why one album was not published.
+enum Refused {
+    /// The reason every file in the album shares.
+    Reason(ItemReason),
+    /// The database was too busy to read what the album needs; the job
+    /// goes back to the queue instead of failing the album.
+    Busy(ManagementError),
+}
+
+impl From<ItemReason> for Refused {
+    fn from(reason: ItemReason) -> Self {
+        Self::Reason(reason)
+    }
+}
+
+impl Refused {
+    /// A read the album needs failed: busy waits, anything else leaves
+    /// the album alone.
+    fn unread(error: ManagementError, album_id: &str, what: &str) -> Self {
+        if let ManagementError::Busy(_) = error {
+            return Self::Busy(error);
+        }
+        tracing::error!(%error, album = album_id, "{what} unreadable; album left alone");
+        Self::Reason(reasons::write_failed())
     }
 }
 
@@ -1967,4 +2045,24 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
             .zip(right)
             .fold(0u8, |acc, (a, b)| acc | (a ^ b))
             == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A read an album needs during apply that finds the database busy
+    /// sends the job back to the queue; only another failure leaves the
+    /// album alone as failed.
+    #[test]
+    fn a_busy_read_during_apply_never_fails_the_album() {
+        let busy = Refused::unread(ManagementError::Busy("busy".to_owned()), "a", "album state");
+        assert!(matches!(busy, Refused::Busy(ManagementError::Busy(_))));
+        let broken = Refused::unread(
+            ManagementError::Store("gone".to_owned()),
+            "a",
+            "album state",
+        );
+        assert!(matches!(broken, Refused::Reason(reason) if reason.code == "WRITE_FAILED"));
+    }
 }

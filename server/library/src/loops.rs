@@ -9,7 +9,8 @@ use tokio::sync::watch;
 use super::clock::{now_ms, now_unix, today_day};
 use super::publish::PublishError;
 use super::publish::snapshots::SnapshotStore;
-use super::scan::coordinator::ResolverSource as _;
+use super::scan::ScanStoreError;
+use super::scan::coordinator::{ResolverSource as _, ScanRequestError};
 use super::scan::supervisor::SupervisorInputs;
 use super::scan::supervisor::{startup_recovery, supervise_once, supervise_once_with_shutdown};
 use super::scan::watcher::{
@@ -134,8 +135,11 @@ impl LibrarySetup {
         .await;
         if matches!(action, WatcherAction::Due) {
             let rules = super::settings::inclusion_rules(&registry);
-            match watcher_request(&registry, &rules, state.changed_roots()) {
-                None => tracing::debug!("filesystem watcher dropping pending scan: no scopes"),
+            let asked = match watcher_request(&registry, &rules, state.changed_roots()) {
+                None => {
+                    tracing::debug!("filesystem watcher dropping pending scan: no scopes");
+                    true
+                }
                 Some(request) => match self.coordinator.request_run(&request) {
                     Ok(result) => {
                         tracing::info!(
@@ -143,11 +147,27 @@ impl LibrarySetup {
                             "filesystem watcher requested incremental scan"
                         );
                         self.wakeups.notify("scan");
+                        true
                     }
-                    Err(error) => tracing::warn!(%error, "watcher scan request failed"),
+                    // A busy database: the changes stay pending and the
+                    // next poll asks again.
+                    Err(
+                        error @ ScanRequestError::Store(
+                            ScanStoreError::Busy { .. } | ScanStoreError::LaneClosed,
+                        ),
+                    ) => {
+                        tracing::warn!(%error, "watcher scan request waits: the database is busy");
+                        false
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "watcher scan request failed");
+                        true
+                    }
                 },
+            };
+            if asked {
+                clear_pending(&mut state);
             }
-            clear_pending(&mut state);
         }
         {
             let mut guard = self
