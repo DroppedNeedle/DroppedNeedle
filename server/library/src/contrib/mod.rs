@@ -29,11 +29,13 @@ pub mod rules;
 pub mod scripted;
 pub mod seams;
 pub mod service;
+pub(crate) mod sql;
 pub mod sqlite;
 pub mod worker;
 
-use std::path::Path;
 use std::sync::Arc;
+
+use droppedneedle_kernel::db::Db;
 
 /// The provider reads contributions run against: live clients in
 /// production, scripted ones in test bundles.
@@ -46,24 +48,17 @@ pub struct ContribProviders {
 /// Build the contribution service and its verification worker over the
 /// application database.
 pub fn assemble(
-    db_path: &Path,
+    db: &Db,
     providers: ContribProviders,
     catalog: Arc<dyn seams::ContributionCatalog>,
-) -> Result<
-    (
-        Arc<service::ContributionService>,
-        Arc<worker::VerificationWorker>,
-    ),
-    String,
-> {
-    let store = Arc::new(
-        sqlite::SqliteContributions::open(db_path)
-            .map_err(|error| format!("contribution store: {error}"))?,
-    );
+) -> (
+    Arc<service::ContributionService>,
+    Arc<worker::VerificationWorker>,
+) {
+    let store = Arc::new(sqlite::SqliteContributions::new(db.clone()));
     let service = Arc::new(
         service::ContributionService::new(
-            store.clone(),
-            store.clone(),
+            store,
             Arc::new(super::adapters::MatchingAttachmentEvidence),
             Arc::new(seams::SystemClock),
         )
@@ -74,8 +69,7 @@ pub fn assemble(
     let worker = Arc::new(worker::VerificationWorker::new(
         service.clone(),
         providers.musicbrainz,
-        store,
         worker::VerificationWorkerConfig::default(),
     ));
-    Ok((service, worker))
+    (service, worker)
 }

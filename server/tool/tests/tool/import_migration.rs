@@ -298,6 +298,7 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
     let facts = library
         .identify_store
         .album_facts(V2_ALBUM_ID)
+        .unwrap()
         .expect("album facts");
     scripted.set_recall(RecallResult {
         releases: vec![Release {

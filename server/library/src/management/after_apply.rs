@@ -118,13 +118,11 @@ impl Management {
             Some(JobMode::Apply | JobMode::AutomaticApply) if intent.tag_edit.is_none() => {
                 let (profile_id, _) = snapshot.profile_label();
                 let sandbox = self.setup.publish_sandbox().ok();
-                let identities = &self.setup.identify_store;
                 struct Mark {
                     track_id: String,
+                    album_id: String,
                     root: String,
                     override_revision: u64,
-                    album_identity: Option<u64>,
-                    track_identity: Option<u64>,
                     path: Option<String>,
                     found: Option<String>,
                 }
@@ -135,12 +133,7 @@ impl Management {
                         let rel = item.dest_rel.clone().unwrap_or(item.source_rel.clone());
                         Some(Mark {
                             override_revision: self.override_revision(&item.album_id, &track_id),
-                            album_identity: identities
-                                .album_identity(&item.album_id)
-                                .map(|identity| identity.row_revision),
-                            track_identity: identities
-                                .track_identity(&track_id)
-                                .map(|identity| identity.row_revision),
+                            album_id: item.album_id.clone(),
                             path: sandbox.as_ref().and_then(|sandbox| {
                                 super::automatic::path_revision(sandbox, &root, &rel)
                             }),
@@ -156,7 +149,14 @@ impl Management {
                 self.setup
                     .db
                     .write_blocking(Lane::Background, "management.mark_managed", |tx| {
+                        use crate::identify::sqlite::{read_album_identity, read_track_identity};
                         for mark in &marks {
+                            // The match each file was written for, read on
+                            // this transaction.
+                            let album_identity = read_album_identity(tx, &mark.album_id)?
+                                .map(|identity| identity.row_revision);
+                            let track_identity = read_track_identity(tx, &mark.track_id)?
+                                .map(|identity| identity.row_revision);
                             store::mark_managed(
                                 tx,
                                 &ManagedMark {
@@ -167,8 +167,8 @@ impl Management {
                                     naming_revision: &snapshot.naming_revision,
                                     override_revision: mark.override_revision,
                                     job_id,
-                                    album_identity_revision: mark.album_identity,
-                                    track_identity_revision: mark.track_identity,
+                                    album_identity_revision: album_identity,
+                                    track_identity_revision: track_identity,
                                     path_revision: mark.path.clone(),
                                     found_sha256: mark.found.as_deref(),
                                 },

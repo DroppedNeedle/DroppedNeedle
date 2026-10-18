@@ -2,6 +2,7 @@
 
 use super::models::{CandidateEvidence, ReviewItem, ReviewState};
 use super::sqlite::SqliteIdentifyStore;
+use super::stores::StoreError;
 
 /// File one review for an ambiguous album. Returns the stored item.
 pub fn file_review(
@@ -10,7 +11,7 @@ pub fn file_review(
     local_album_id: &str,
     reason_code: &str,
     candidates: Vec<CandidateEvidence>,
-) -> ReviewItem {
+) -> Result<ReviewItem, StoreError> {
     let review = ReviewItem {
         id: id.to_owned(),
         local_album_id: local_album_id.to_owned(),
@@ -20,18 +21,22 @@ pub fn file_review(
         resolved_by_user_id: None,
         selected_candidate_key: None,
     };
-    store.file(review.clone());
-    review
+    store.file(review.clone())?;
+    Ok(review)
 }
 
 /// Reject a pending review: the candidates are wrong, keep the album
 /// tagged as-is. Rejecting a settled review is a no-op returning false.
-pub fn reject_review(store: &SqliteIdentifyStore, review_id: &str, by_user_id: &str) -> bool {
-    let Some(review) = store.get(review_id) else {
-        return false;
+pub fn reject_review(
+    store: &SqliteIdentifyStore,
+    review_id: &str,
+    by_user_id: &str,
+) -> Result<bool, StoreError> {
+    let Some(review) = store.get(review_id)? else {
+        return Ok(false);
     };
     if review.state != ReviewState::Pending {
-        return false;
+        return Ok(false);
     }
     store.set_state(review_id, ReviewState::Rejected, Some(by_user_id), None)
 }

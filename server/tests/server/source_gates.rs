@@ -78,8 +78,6 @@ const OPENS: &[Place] = &[
         "src/bootstrap/data_dirs.rs",
         "the read-only stamp probe of an existing database before the runtime opens it, and its tests",
     ),
-    place("library/src/contrib/sqlite.rs", LIBRARY_UNTIL_DB),
-    place("library/src/identify/sqlite.rs", LIBRARY_UNTIL_DB),
     place("library/src/manage.rs", LIBRARY_UNTIL_DB),
     place("library/src/publish/publisher.rs", LIBRARY_UNTIL_DB),
     place("library/src/publish/recovery.rs", LIBRARY_UNTIL_DB),
@@ -100,8 +98,6 @@ const OPENS: &[Place] = &[
 const TRANSACTIONS: &[Place] = &[
     DB,
     TOOL,
-    place("library/src/contrib/sqlite.rs", LIBRARY_UNTIL_DB),
-    place("library/src/identify/sqlite.rs", LIBRARY_UNTIL_DB),
     place("library/src/publish/journal.rs", LIBRARY_UNTIL_DB),
     place("library/src/publish/publisher.rs", LIBRARY_UNTIL_DB),
     place("library/src/publish/recovery.rs", LIBRARY_UNTIL_DB),

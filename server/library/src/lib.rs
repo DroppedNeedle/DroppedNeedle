@@ -51,5 +51,9 @@ pub mod wiring;
 /// Every `sql.rs` of this crate, one line each, for the schema test.
 #[cfg(any(test, feature = "test-support"))]
 pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFile> {
-    vec![scan::sql::registered()]
+    vec![
+        scan::sql::registered(),
+        identify::sql::registered(),
+        contrib::sql::registered(),
+    ]
 }

@@ -277,12 +277,12 @@ impl Management {
         )?;
         let saved = self.saved_overrides(&subject)?;
         let store = &self.setup.identify_store;
-        let identity_reason = match store.album_identity(&subject.album_id) {
+        let identity_reason = match store.album_identity(&subject.album_id)? {
             None => Some(reasons::identity_not_accepted().code),
             Some(album) if album.release_mbid.is_none() || album.release_group_mbid.is_none() => {
                 Some(reasons::release_not_selected().code)
             }
-            Some(_) => match store.track_identity(&subject.track_id) {
+            Some(_) => match store.track_identity(&subject.track_id)? {
                 Some(track)
                     if track.recording_mbid.is_some() && track.release_track_mbid.is_some() =>
                 {

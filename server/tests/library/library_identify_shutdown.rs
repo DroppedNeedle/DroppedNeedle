@@ -156,14 +156,18 @@ fn seed_jobs(library: &LibrarySetup, count: usize) {
                  'automatic', 0, 0);"
             ))
             .expect("album seeds");
-        library.identify.enqueue_album(
-            &format!("job-{n}"),
-            &album,
-            IdentifyKind::Automatic,
-            "rev-1",
-            None,
-            0,
-        );
+        library
+            .identify
+            .enqueue_album(
+                &format!("job-{n}"),
+                &album,
+                IdentifyKind::Automatic,
+                "rev-1",
+                None,
+                0,
+                droppedneedle_kernel::db::Lane::Background,
+            )
+            .unwrap();
     }
 }
 
@@ -171,6 +175,7 @@ fn job_state(library: &LibrarySetup, job_id: &str) -> JobState {
     library
         .identify_store
         .job(job_id)
+        .unwrap()
         .unwrap_or_else(|| panic!("{job_id} present"))
         .state
 }
@@ -207,6 +212,7 @@ async fn identify_tick_abandons_drain_after_mid_attempt_shutdown() {
             .library
             .identify_store
             .job(&format!("job-{n}"))
+            .unwrap()
             .unwrap_or_else(|| panic!("job-{n} present"));
         assert_eq!(job.state, JobState::Queued);
         assert_eq!(job.attempts, 0, "unclaimed jobs stay untouched");

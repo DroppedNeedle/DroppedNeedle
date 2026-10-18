@@ -10,15 +10,16 @@
 //! distinct payload); expired ones no identity names are pruned on each
 //! save.
 //!
-//! Every call is a short synchronous transaction on one connection behind
-//! a mutex. A store failure logs and reads as absence (or `false`), never
-//! a panic; the queue keeps its failures visible through `Option`.
+//! Every call is one short synchronous read or write on the shared
+//! database, run on the calling (blocking) thread. Every call answers a
+//! `Result`: a read that fails is an error, never an absent row.
 
-use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
+use droppedneedle_kernel::db::{Db, Lane};
+use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use sha2::{Digest as _, Sha256};
 
 use super::artist_links;
@@ -30,6 +31,9 @@ use super::models::{
 };
 use super::queue::{PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY};
 use super::sources::ArtistAnswer;
+use super::sql::{
+    ALBUM_IDENTITY, REVISABLE, SAVE_ALBUM_IDENTITY, SAVE_TRACK_IDENTITY, TRACK_IDENTITY,
+};
 use super::stores::{Approval, RELEASE_FRESH_SECS, StoreError};
 use crate::corrections::artist_convergence::converge_ids;
 use crate::corrections::continuation::{DRAIN_BOUND, Scope, continue_tracks, drain_continuations};
@@ -300,15 +304,18 @@ pub(crate) fn bump_identification_stream(conn: &Connection) -> rusqlite::Result<
 
 /// SQLite identify store.
 pub struct SqliteIdentifyStore {
-    conn: Mutex<Connection>,
+    db: Db,
     /// Where the sweep of the app's artist links goes on from.
     link_cursor: Mutex<String>,
-    /// When an album sweep last found nothing to do, and the database's
-    /// version then.
+    /// When an album sweep last found nothing to do, and this store's
+    /// write count then.
     swept: Mutex<Option<Swept>>,
     /// When the sweep last worked off continued tracks, and whether some
     /// were left.
     drained: Mutex<Option<Drained>>,
+    /// Writes through this store that changed a row. A match changed
+    /// through this store wakes the album sweep at once.
+    writes: AtomicU64,
 }
 
 /// The last drain of continued tracks.
@@ -323,7 +330,7 @@ struct Drained {
 const DRAIN_TURNS: usize = 10;
 
 /// After an album sweep finds nothing stale, the next one waits this long
-/// while only other connections write. Plays, sessions and scans write
+/// unless this store changed something. Plays, sessions and scans write
 /// all the time and seldom change a match; a match changed through this
 /// store wakes the sweep at once.
 const SWEEP_FLOOR: Duration = Duration::from_secs(60);
@@ -331,280 +338,317 @@ const SWEEP_FLOOR: Duration = Duration::from_secs(60);
 /// An album sweep that found nothing stale.
 #[derive(Clone, Copy)]
 struct Swept {
-    /// `PRAGMA data_version`: moves when another connection commits.
-    data_version: i64,
-    /// This connection's own changes so far.
-    own_changes: u64,
+    /// This store's write count when the sweep read the stale albums.
+    writes: u64,
     at: Instant,
 }
 
+/// Run `op` on `tx` and say whether it changed a row, so the album
+/// sweep's quiet check counts only writes that did.
+fn changing<T>(
+    tx: &Transaction<'_>,
+    op: impl FnOnce(&Transaction<'_>) -> Result<T, StoreError>,
+) -> Result<(T, bool), StoreError> {
+    let before = tx.total_changes();
+    let value = op(tx)?;
+    Ok((value, tx.total_changes() != before))
+}
+
 impl SqliteIdentifyStore {
-    /// Open against the migrated application database through the
-    /// database factory.
-    pub fn open(path: &Path) -> Result<Self, String> {
-        let conn =
-            droppedneedle_kernel::db::open_connection(path).map_err(|error| error.to_string())?;
-        Ok(Self {
-            conn: Mutex::new(conn),
+    pub fn new(db: Db) -> Self {
+        Self {
+            db,
             link_cursor: Mutex::new(String::new()),
             swept: Mutex::new(None),
             drained: Mutex::new(None),
-        })
-    }
-
-    fn lock(&self) -> MutexGuard<'_, Connection> {
-        self.conn
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    /// Run one read; a failure logs and reads as `None`.
-    fn read<T>(
-        &self,
-        what: &str,
-        op: impl FnOnce(&Connection) -> rusqlite::Result<T>,
-    ) -> Option<T> {
-        match op(&self.lock()) {
-            Ok(value) => Some(value),
-            Err(error) => {
-                tracing::error!(%error, what, "identify store read failed");
-                None
-            }
+            writes: AtomicU64::new(0),
         }
     }
 
-    /// Run one write in an immediate transaction; a failure logs and
-    /// reads as `None`.
-    fn write<T>(
-        &self,
-        what: &str,
-        op: impl FnOnce(&rusqlite::Transaction<'_>) -> rusqlite::Result<T>,
-    ) -> Option<T> {
-        let mut conn = self.lock();
-        let outcome = (|| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let value = op(&tx)?;
-            tx.commit()?;
-            Ok(value)
-        })();
-        match outcome {
-            Ok(value) => Some(value),
-            Err(error) => {
-                let error: rusqlite::Error = error;
-                tracing::error!(%error, what, "identify store write failed");
-                None
-            }
+    /// A committed write's value; one that changed a row is counted.
+    fn landed<T>(&self, (value, changed): (T, bool)) -> T {
+        if changed {
+            self.writes.fetch_add(1, Ordering::Relaxed);
         }
+        value
     }
 
     /// Queue an identification for one album the catalog holds, reusing a
-    /// live job on the same revision. `None` when the album is unknown or
-    /// the store failed.
-    pub fn offer(&self, local_album_id: &str) -> Option<bool> {
-        self.write("offer album", |tx| {
-            offer_album(tx, local_album_id, now_ms())
-        })
+    /// live job on the same revision. `true` when a job was queued.
+    pub fn offer(&self, local_album_id: &str) -> Result<bool, StoreError> {
+        self.db
+            .write_blocking(Lane::Background, "identify.offer", |tx| {
+                changing(tx, |tx| Ok(offer_album(tx, local_album_id, now_ms())?))
+            })
+            .map(|written| self.landed(written))
     }
 
     /// Current input revision of one album.
-    pub fn input_revision(&self, local_album_id: &str) -> Option<String> {
-        self.read("album revision", |conn| {
-            album_input_revision(conn, local_album_id)
+    pub fn input_revision(&self, local_album_id: &str) -> Result<String, StoreError> {
+        self.db.read_blocking("identify.input_revision", |conn| {
+            Ok(album_input_revision(conn, local_album_id)?)
         })
     }
+}
+
+/// One album's match, on `conn`.
+pub(crate) fn read_album_identity(
+    conn: &Connection,
+    local_album_id: &str,
+) -> rusqlite::Result<Option<AlbumIdentity>> {
+    conn.prepare_cached(ALBUM_IDENTITY.text())?
+        .query_row(params![local_album_id, PROVIDER], |row| {
+            Ok(AlbumIdentity {
+                local_album_id: local_album_id.to_owned(),
+                provider: PROVIDER.to_owned(),
+                release_group_mbid: Some(row.get(0)?),
+                release_mbid: row.get(1)?,
+                decision_source: decision_from(&row.get::<_, String>(2)?),
+                row_revision: row.get::<_, i64>(3)? as u64,
+            })
+        })
+        .optional()
+}
+
+/// One track's match, on `conn`.
+pub(crate) fn read_track_identity(
+    conn: &Connection,
+    local_track_id: &str,
+) -> rusqlite::Result<Option<TrackIdentity>> {
+    conn.prepare_cached(TRACK_IDENTITY.text())?
+        .query_row(params![local_track_id, PROVIDER], |row| {
+            Ok(TrackIdentity {
+                local_track_id: local_track_id.to_owned(),
+                provider: PROVIDER.to_owned(),
+                recording_mbid: Some(row.get(0)?),
+                release_track_mbid: row.get(1)?,
+                decision_source: decision_from(&row.get::<_, String>(2)?),
+                row_revision: row.get::<_, i64>(3)? as u64,
+            })
+        })
+        .optional()
+}
+
+/// Save an album's match, never over a person's (the statement's own
+/// guard). Rows written: 0 when a person's row holds the album.
+fn save_album_row(tx: &Transaction<'_>, identity: &AlbumIdentity) -> rusqlite::Result<usize> {
+    let Some(group) = identity.release_group_mbid.as_deref() else {
+        tracing::warn!(
+            album = identity.local_album_id,
+            "album identity without a release group not stored"
+        );
+        return Ok(0);
+    };
+    let written = tx
+        .prepare_cached(SAVE_ALBUM_IDENTITY.text())?
+        .execute(params![
+            identity.local_album_id,
+            PROVIDER,
+            group,
+            identity.release_mbid,
+            identity.decision_source.as_str(),
+            now_secs(),
+            identity.row_revision.max(1) as i64,
+        ])?;
+    if written == 0 {
+        tracing::warn!(
+            album = identity.local_album_id,
+            "automatic identity not written over a person's album identity"
+        );
+    }
+    Ok(written)
+}
+
+/// Save a track's match, guarded like the album's.
+fn save_track_row(tx: &Transaction<'_>, identity: &TrackIdentity) -> rusqlite::Result<usize> {
+    let Some(recording) = identity.recording_mbid.as_deref() else {
+        tracing::warn!(
+            track = identity.local_track_id,
+            "track identity without a recording not stored"
+        );
+        return Ok(0);
+    };
+    let written = tx
+        .prepare_cached(SAVE_TRACK_IDENTITY.text())?
+        .execute(params![
+            identity.local_track_id,
+            PROVIDER,
+            recording,
+            identity.release_track_mbid,
+            identity.decision_source.as_str(),
+            now_secs(),
+            identity.row_revision.max(1) as i64,
+        ])?;
+    if written == 0 {
+        tracing::warn!(
+            track = identity.local_track_id,
+            "automatic identity not written over a person's track identity"
+        );
+    }
+    Ok(written)
+}
+
+/// What one import's download names, for [`SqliteIdentifyStore::seal_import`].
+pub struct ImportSeal<'a> {
+    pub local_album_id: &'a str,
+    pub release: &'a Release,
+    /// The files joined the album they were fetched for: a few fetched
+    /// tracks never confirm the album's match, so only they seal.
+    pub joined: bool,
+    /// The imported tracks that carry a recording.
+    pub tracks: Vec<ImportTrack>,
+}
+
+/// One imported track's ids.
+pub struct ImportTrack {
+    pub local_track_id: String,
+    pub recording_mbid: String,
+    pub release_track_mbid: String,
+}
+
+/// How an import's seal ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportSealed {
+    /// The match was written where nothing a person chose holds it.
+    Sealed,
+    /// A person's album match holds the album: only the release document
+    /// was kept.
+    ChosenKept,
+    /// The album's or the tracks' match could not be read: nothing of it
+    /// was written and the album was offered to identification.
+    Offered,
 }
 
 /// Durable identity rows plus the facts the matcher reads.
 impl SqliteIdentifyStore {
-    pub fn album_identity(&self, local_album_id: &str) -> Option<AlbumIdentity> {
-        self.read("album identity", |conn| {
-            conn.query_row(
-                "SELECT release_group_mbid, release_mbid, decision_source, row_revision \
-                 FROM local_album_external_identities \
-                 WHERE local_album_id = ?1 AND provider = ?2",
-                params![local_album_id, PROVIDER],
-                |row| {
-                    Ok(AlbumIdentity {
-                        local_album_id: local_album_id.to_owned(),
-                        provider: PROVIDER.to_owned(),
-                        release_group_mbid: Some(row.get(0)?),
-                        release_mbid: row.get(1)?,
-                        decision_source: decision_from(&row.get::<_, String>(2)?),
-                        row_revision: row.get::<_, i64>(3)? as u64,
-                    })
-                },
-            )
-            .optional()
+    pub fn album_identity(
+        &self,
+        local_album_id: &str,
+    ) -> Result<Option<AlbumIdentity>, StoreError> {
+        self.db.read_blocking("identify.album_identity", |conn| {
+            Ok(read_album_identity(conn, local_album_id)?)
         })
-        .flatten()
     }
 
-    pub fn save_album_identity(&self, identity: AlbumIdentity) {
-        let Some(group) = identity.release_group_mbid.clone() else {
-            tracing::warn!(
-                album = identity.local_album_id,
-                "album identity without a release group not stored"
-            );
-            return;
-        };
-        // The write itself refuses to put an automatic or embedded row
-        // over a person's: the caller's own check may have read nothing.
-        let written = self.write("save album identity", |tx| {
-            tx.execute(
-                &format!(
-                    "INSERT INTO local_album_external_identities (local_album_id, provider, \
-                     release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-                     ON CONFLICT (local_album_id, provider) DO UPDATE SET \
-                     release_group_mbid = excluded.release_group_mbid, \
-                     release_mbid = excluded.release_mbid, \
-                     decision_source = excluded.decision_source, \
-                     selected_at = excluded.selected_at, row_revision = excluded.row_revision \
-                     WHERE excluded.decision_source NOT IN {REVISABLE} \
-                     OR local_album_external_identities.decision_source IN {REVISABLE}"
-                ),
-                params![
-                    identity.local_album_id,
-                    PROVIDER,
-                    group,
-                    identity.release_mbid,
-                    identity.decision_source.as_str(),
-                    now_secs(),
-                    identity.row_revision.max(1) as i64,
-                ],
-            )
-        });
-        if written == Some(0) {
-            tracing::warn!(
-                album = identity.local_album_id,
-                "automatic identity not written over a person's album identity"
-            );
-        }
+    /// Save an album's match, never an automatic or embedded row over a
+    /// person's.
+    pub fn save_album_identity(&self, identity: AlbumIdentity) -> Result<(), StoreError> {
+        self.db
+            .write_blocking(Lane::Background, "identify.save_album_identity", |tx| {
+                changing(tx, |tx| {
+                    save_album_row(tx, &identity)?;
+                    Ok(())
+                })
+            })
+            .map(|written| self.landed(written))
     }
 
-    pub fn clear_album_identity(&self, local_album_id: &str) {
+    pub fn clear_album_identity(&self, local_album_id: &str) -> Result<(), StoreError> {
         // Only automatic passes retract; a curator's row is never removed
         // here, even if one landed after the attempt read the album.
-        self.write("clear album identity", |tx| {
-            tx.execute(
-                &format!(
-                    "DELETE FROM local_album_external_identities \
-                     WHERE local_album_id = ?1 AND provider = ?2 \
-                     AND decision_source IN {REVISABLE}"
-                ),
-                params![local_album_id, PROVIDER],
-            )
-        });
+        self.db
+            .write_blocking(Lane::Background, "identify.clear_album_identity", |tx| {
+                changing(tx, |tx| {
+                    tx.execute(
+                        &format!(
+                            "DELETE FROM local_album_external_identities \
+                             WHERE local_album_id = ?1 AND provider = ?2 \
+                             AND decision_source IN {REVISABLE}"
+                        ),
+                        params![local_album_id, PROVIDER],
+                    )?;
+                    Ok(())
+                })
+            })
+            .map(|written| self.landed(written))
     }
 
-    pub fn track_identity(&self, local_track_id: &str) -> Option<TrackIdentity> {
-        self.read("track identity", |conn| {
-            conn.query_row(
-                "SELECT recording_mbid, release_track_mbid, decision_source, row_revision \
-                 FROM local_track_external_identities \
-                 WHERE local_track_id = ?1 AND provider = ?2",
-                params![local_track_id, PROVIDER],
-                |row| {
-                    Ok(TrackIdentity {
-                        local_track_id: local_track_id.to_owned(),
-                        provider: PROVIDER.to_owned(),
-                        recording_mbid: Some(row.get(0)?),
-                        release_track_mbid: row.get(1)?,
-                        decision_source: decision_from(&row.get::<_, String>(2)?),
-                        row_revision: row.get::<_, i64>(3)? as u64,
-                    })
-                },
-            )
-            .optional()
+    pub fn track_identity(
+        &self,
+        local_track_id: &str,
+    ) -> Result<Option<TrackIdentity>, StoreError> {
+        self.db.read_blocking("identify.track_identity", |conn| {
+            Ok(read_track_identity(conn, local_track_id)?)
         })
-        .flatten()
     }
 
-    pub fn save_track_identity(&self, identity: TrackIdentity) {
-        let Some(recording) = identity.recording_mbid.clone() else {
-            tracing::warn!(
-                track = identity.local_track_id,
-                "track identity without a recording not stored"
-            );
-            return;
-        };
-        // Guarded like the album row.
-        let written = self.write("save track identity", |tx| {
-            let written = tx.execute(
-                &format!(
-                    "INSERT INTO local_track_external_identities (local_track_id, provider, \
-                     recording_mbid, release_track_mbid, decision_source, selected_at, row_revision) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-                     ON CONFLICT (local_track_id, provider) DO UPDATE SET \
-                     recording_mbid = excluded.recording_mbid, \
-                     release_track_mbid = excluded.release_track_mbid, \
-                     decision_source = excluded.decision_source, \
-                     selected_at = excluded.selected_at, row_revision = excluded.row_revision \
-                     WHERE excluded.decision_source NOT IN {REVISABLE} \
-                     OR local_track_external_identities.decision_source IN {REVISABLE}"
-                ),
-                params![
-                    identity.local_track_id,
-                    PROVIDER,
-                    recording,
-                    identity.release_track_mbid,
-                    identity.decision_source.as_str(),
-                    now_secs(),
-                    identity.row_revision.max(1) as i64,
-                ],
-            )?;
-            if written == 1 {
-                let album: String = tx.query_row(
-                    "SELECT local_album_id FROM local_tracks WHERE id = ?1",
-                    params![identity.local_track_id],
-                    |row| row.get(0),
-                )?;
-                continue_tracks(tx, Scope::Album(&album), now_secs())?;
-            }
-            Ok(written)
-        });
-        if written == Some(0) {
-            tracing::warn!(
-                track = identity.local_track_id,
-                "automatic identity not written over a person's track identity"
-            );
-        }
+    /// Save a track's match, guarded like the album's, and carry what
+    /// people made of the album's tracks over to the new mapping.
+    pub fn save_track_identity(&self, identity: TrackIdentity) -> Result<(), StoreError> {
+        self.db
+            .write_blocking(Lane::Background, "identify.save_track_identity", |tx| {
+                changing(tx, |tx| {
+                    if save_track_row(tx, &identity)? == 1 {
+                        let album: String = tx.query_row(
+                            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+                            params![identity.local_track_id],
+                            |row| row.get(0),
+                        )?;
+                        continue_tracks(tx, Scope::Album(&album), now_secs())?;
+                    }
+                    Ok(())
+                })
+            })
+            .map(|written| self.landed(written))
     }
 
     /// Seal an automatic win: the album row and the given track rows, never
     /// over a curator's row, in one transaction. For an exact edition it
     /// keeps what it replaced so an administrator can undo it. `false`
     /// when a curator's row holds the album (nothing is written).
-    pub fn seal_automatic(&self, seal: &AutomaticSeal) -> bool {
-        self.write("seal automatic identity", |tx| seal_automatic_tx(tx, seal))
-            .unwrap_or(false)
+    pub fn seal_automatic(&self, seal: &AutomaticSeal) -> Result<bool, StoreError> {
+        self.db
+            .write_blocking(Lane::Background, "identify.seal_automatic", |tx| {
+                changing(tx, |tx| Ok(seal_automatic_tx(tx, seal)?))
+            })
+            .map(|sealed| self.landed(sealed))
+    }
+
+    /// Seal what an import's download names, in one transaction: the
+    /// release document, then the album and track rows and the cleared
+    /// flag, where nothing a person chose holds them. The rows are read
+    /// on the same transaction. When they cannot be read, nothing of the
+    /// match is written and the album is offered to identification
+    /// instead.
+    pub fn seal_import(&self, seal: &ImportSeal<'_>) -> Result<ImportSealed, StoreError> {
+        self.db
+            .write_blocking(Lane::Background, "identify.import_seal", |tx| {
+                changing(tx, |tx| seal_import_tx(tx, seal))
+            })
+            .map(|sealed| self.landed(sealed))
     }
 
     /// The album's match flag, if identification is unsure of it.
-    pub fn match_flag(&self, local_album_id: &str) -> Option<MatchFlag> {
-        self.read("match flag", |conn| {
-            conn.query_row(
-                "SELECT state, reason_code, release_mbid, candidates_json \
-                 FROM library_album_match_state WHERE local_album_id = ?1",
-                params![local_album_id],
-                |row| {
-                    let state: String = row.get(0)?;
-                    let candidates: String = row.get(3)?;
-                    Ok(MatchFlag {
-                        state: if state == "unmatched" {
-                            MatchFlagState::Unmatched
-                        } else {
-                            MatchFlagState::Unconfirmed
-                        },
-                        reason_code: row.get(1)?,
-                        release_mbid: row.get(2)?,
-                        candidates: serde_json::from_str(&candidates).unwrap_or_default(),
-                    })
-                },
-            )
-            .optional()
+    pub fn match_flag(&self, local_album_id: &str) -> Result<Option<MatchFlag>, StoreError> {
+        self.db.read_blocking("identify.match_flag", |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT state, reason_code, release_mbid, candidates_json \
+                     FROM library_album_match_state WHERE local_album_id = ?1",
+                    params![local_album_id],
+                    |row| {
+                        let state: String = row.get(0)?;
+                        let candidates: String = row.get(3)?;
+                        Ok(MatchFlag {
+                            state: if state == "unmatched" {
+                                MatchFlagState::Unmatched
+                            } else {
+                                MatchFlagState::Unconfirmed
+                            },
+                            reason_code: row.get(1)?,
+                            release_mbid: row.get(2)?,
+                            candidates: serde_json::from_str(&candidates).map_err(|error| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    3,
+                                    rusqlite::types::Type::Text,
+                                    Box::new(error),
+                                )
+                            })?,
+                        })
+                    },
+                )
+                .optional()?)
         })
-        .flatten()
     }
 
     /// Record (or with `None`, clear) the album's match flag.
@@ -613,14 +657,105 @@ impl SqliteIdentifyStore {
         local_album_id: &str,
         flag: Option<&MatchFlag>,
     ) -> Result<(), StoreError> {
-        self.write("match flag", |tx| {
-            write_match_flag(tx, local_album_id, flag)
-        })
-        .map(|_| ())
-        .ok_or_else(|| StoreError {
-            cause: format!("match flag for album {local_album_id} not written"),
-        })
+        self.db
+            .write_blocking(Lane::Background, "identify.match_flag", |tx| {
+                changing(tx, |tx| {
+                    write_match_flag(tx, local_album_id, flag)?;
+                    Ok(())
+                })
+            })
+            .map(|written| self.landed(written))
     }
+}
+
+/// [`SqliteIdentifyStore::seal_import`] on its transaction.
+fn seal_import_tx(tx: &Transaction<'_>, seal: &ImportSeal<'_>) -> Result<ImportSealed, StoreError> {
+    let album = seal.local_album_id;
+    let canonical = seal.release.id.trim().to_ascii_lowercase();
+    let read = (|| -> rusqlite::Result<_> {
+        let current = read_album_identity(tx, album)?;
+        let mut tracks = Vec::with_capacity(seal.tracks.len());
+        for track in &seal.tracks {
+            tracks.push(read_track_identity(tx, &track.local_track_id)?);
+        }
+        let stored = stored_release(tx, &canonical, 0.0)?;
+        Ok((current, tracks, stored))
+    })();
+    let (current, current_tracks, stored) = match read {
+        Ok(read) => read,
+        Err(error) => {
+            tracing::error!(
+                %error,
+                album,
+                "the import could not read the album's match; nothing of it is written \
+                 and the album is offered to identification"
+            );
+            offer_album(tx, album, now_ms())?;
+            return Ok(ImportSealed::Offered);
+        }
+    };
+    let now = now_secs();
+    store_release(tx, seal.release, stored, now)?;
+    if current
+        .as_ref()
+        .is_some_and(|row| !row.decision_source.automatic_may_overwrite())
+    {
+        return Ok(ImportSealed::ChosenKept);
+    }
+    // An album that already has an exact edition keeps it: a download
+    // matched to another edition adds its files without flipping the
+    // album. A whole-album download verified against the album's own
+    // edition confirms an unsure match.
+    let held = current
+        .as_ref()
+        .and_then(|row| row.release_mbid.clone())
+        .filter(|held| !seal.release.answers_to(held));
+    let mut wrote = false;
+    if held.is_some() {
+        tracing::info!(
+            album,
+            release = seal.release.id,
+            "download matched another edition; the album keeps its own"
+        );
+    } else if !seal.joined {
+        wrote |= save_album_row(
+            tx,
+            &AlbumIdentity {
+                local_album_id: album.to_owned(),
+                provider: PROVIDER.to_owned(),
+                release_group_mbid: Some(seal.release.release_group_id.clone()),
+                release_mbid: Some(seal.release.id.clone()),
+                decision_source: DecisionSource::Automatic,
+                row_revision: current.as_ref().map_or(1, |row| row.row_revision + 1),
+            },
+        )? > 0;
+        wrote |= write_match_flag(tx, album, None)? > 0;
+    }
+    for (track, current) in seal.tracks.iter().zip(&current_tracks) {
+        if current
+            .as_ref()
+            .is_some_and(|row| !row.decision_source.automatic_may_overwrite())
+        {
+            continue;
+        }
+        wrote |= save_track_row(
+            tx,
+            &TrackIdentity {
+                local_track_id: track.local_track_id.clone(),
+                provider: PROVIDER.to_owned(),
+                recording_mbid: Some(track.recording_mbid.clone()),
+                // A track of another edition keeps only its recording.
+                release_track_mbid: held.is_none().then(|| track.release_track_mbid.clone()),
+                decision_source: DecisionSource::Automatic,
+                row_revision: current.as_ref().map_or(1, |row| row.row_revision + 1),
+            },
+        )? > 0;
+    }
+    // Once, after the last identity and flag write.
+    if wrote {
+        continue_tracks(tx, Scope::Album(album), now)?;
+    }
+    Ok(ImportSealed::Sealed)
 }
 
 /// The raw album identity row, every column the undo puts back.
@@ -677,10 +812,6 @@ pub fn track_identity_rows(
     })?
     .collect()
 }
-
-/// Decision sources an automatic pass may replace: its own rows and ids
-/// the tags carried.
-const REVISABLE: &str = "('automatic','embedded')";
 
 fn to_json<T: serde::Serialize>(value: &T) -> rusqlite::Result<String> {
     serde_json::to_string(value)
@@ -836,8 +967,8 @@ fn keep_automatic_undo(
 /// writes.
 impl SqliteIdentifyStore {
     /// `None` means the album does not exist.
-    pub fn album_facts(&self, local_album_id: &str) -> Option<LocalAlbumFacts> {
-        self.read("album facts", |conn| {
+    pub fn album_facts(&self, local_album_id: &str) -> Result<Option<LocalAlbumFacts>, StoreError> {
+        self.db.read_blocking("identify.album_facts", |conn| {
             let album = conn
                 .query_row(
                     "SELECT title, COALESCE(album_artist_name, ''), is_compilation, year \
@@ -919,7 +1050,6 @@ impl SqliteIdentifyStore {
                 is_compilation,
             }))
         })
-        .flatten()
     }
 }
 
@@ -935,23 +1065,27 @@ const FINGERPRINTER_VERSION: &str = "chromaprint-test2-120s";
 /// revision, so an unchanged file is never decoded twice.
 impl SqliteIdentifyStore {
     /// The stored print and its duration in seconds.
-    pub fn fingerprint(&self, local_track_id: &str, stat_revision: &str) -> Option<(String, u32)> {
-        self.read("stored fingerprint", |conn| {
-            conn.query_row(
-                "SELECT fingerprint, duration_seconds FROM audio_fingerprint_outcomes \
-                 WHERE local_track_id = ?1 AND stat_revision = ?2 \
-                 AND fingerprinter_version = ?3 AND fingerprint IS NOT NULL",
-                params![local_track_id, stat_revision, FINGERPRINTER_VERSION],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, Option<f64>>(1)?.unwrap_or(0.0).max(0.0) as u32,
-                    ))
-                },
-            )
-            .optional()
+    pub fn fingerprint(
+        &self,
+        local_track_id: &str,
+        stat_revision: &str,
+    ) -> Result<Option<(String, u32)>, StoreError> {
+        self.db.read_blocking("identify.fingerprint", |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT fingerprint, duration_seconds FROM audio_fingerprint_outcomes \
+                     WHERE local_track_id = ?1 AND stat_revision = ?2 \
+                     AND fingerprinter_version = ?3 AND fingerprint IS NOT NULL",
+                    params![local_track_id, stat_revision, FINGERPRINTER_VERSION],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, Option<f64>>(1)?.unwrap_or(0.0).max(0.0) as u32,
+                        ))
+                    },
+                )
+                .optional()?)
         })
-        .flatten()
     }
 
     /// Keep a print; `matched` says whether AcoustID knew it.
@@ -962,40 +1096,61 @@ impl SqliteIdentifyStore {
         fingerprint: &str,
         duration_seconds: u32,
         matched: bool,
-    ) {
+    ) -> Result<(), StoreError> {
         let now = now_secs();
-        self.write("save fingerprint", |tx| {
-            // One print per track: older file revisions are stale.
-            tx.execute(
-                "DELETE FROM audio_fingerprint_outcomes WHERE local_track_id = ?1 \
-                 AND (stat_revision != ?2 OR fingerprinter_version != ?3)",
-                params![local_track_id, stat_revision, FINGERPRINTER_VERSION],
-            )?;
-            tx.execute(
-                "INSERT INTO audio_fingerprint_outcomes (id, local_track_id, stat_revision, \
-                 fingerprinter_version, state, fingerprint, duration_seconds, \
-                 first_attempt_at, last_attempt_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
-                 ON CONFLICT (local_track_id, stat_revision, fingerprinter_version) DO UPDATE SET \
-                 state = excluded.state, fingerprint = excluded.fingerprint, \
-                 duration_seconds = excluded.duration_seconds, \
-                 last_attempt_at = excluded.last_attempt_at, attempt_count = attempt_count + 1",
-                params![
-                    hex_sha256(
-                        format!("{local_track_id}\0{stat_revision}\0{FINGERPRINTER_VERSION}")
-                            .as_bytes()
-                    ),
-                    local_track_id,
-                    stat_revision,
-                    FINGERPRINTER_VERSION,
-                    if matched { "matched" } else { "no_match" },
-                    fingerprint,
-                    f64::from(duration_seconds),
-                    now,
-                ],
-            )
-        });
+        self.db
+            .write_blocking(Lane::Background, "identify.save_fingerprint", |tx| {
+                changing(tx, |tx| {
+                    // One print per track: older file revisions are stale.
+                    tx.execute(
+                        "DELETE FROM audio_fingerprint_outcomes WHERE local_track_id = ?1 \
+                         AND (stat_revision != ?2 OR fingerprinter_version != ?3)",
+                        params![local_track_id, stat_revision, FINGERPRINTER_VERSION],
+                    )?;
+                    tx.execute(
+                        "INSERT INTO audio_fingerprint_outcomes (id, local_track_id, \
+                         stat_revision, fingerprinter_version, state, fingerprint, \
+                         duration_seconds, first_attempt_at, last_attempt_at) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
+                         ON CONFLICT (local_track_id, stat_revision, fingerprinter_version) \
+                         DO UPDATE SET state = excluded.state, \
+                         fingerprint = excluded.fingerprint, \
+                         duration_seconds = excluded.duration_seconds, \
+                         last_attempt_at = excluded.last_attempt_at, \
+                         attempt_count = attempt_count + 1",
+                        params![
+                            hex_sha256(
+                                format!(
+                                    "{local_track_id}\0{stat_revision}\0{FINGERPRINTER_VERSION}"
+                                )
+                                .as_bytes()
+                            ),
+                            local_track_id,
+                            stat_revision,
+                            FINGERPRINTER_VERSION,
+                            if matched { "matched" } else { "no_match" },
+                            fingerprint,
+                            f64::from(duration_seconds),
+                            now,
+                        ],
+                    )?;
+                    Ok(())
+                })
+            })
+            .map(|written| self.landed(written))
     }
+}
+
+/// Work out what album `album`'s match proves about its artists and settle
+/// their links; with `converge`, also merge what the links prove to be one
+/// artist.
+fn artist_pass(tx: &Transaction<'_>, album: &str, converge: bool) -> Result<(), StoreError> {
+    let now = now_ms();
+    let linked = artist_links::link_album(tx, album, now)?;
+    if converge && !linked.is_empty() {
+        converge_ids(tx, &linked, now as f64 / 1000.0)?;
+    }
+    Ok(())
 }
 
 /// Artists linked to MusicBrainz from their album's accepted match
@@ -1003,123 +1158,142 @@ impl SqliteIdentifyStore {
 impl SqliteIdentifyStore {
     /// Work out what the album's match proves about its artists and settle
     /// their links, with no merge. Library Management runs this before it
-    /// plans an album. `false` when it failed (logged).
-    pub fn link_album_artists(&self, local_album_id: &str) -> bool {
-        self.artist_pass(local_album_id, false)
+    /// plans an album.
+    pub fn link_album_artists(&self, local_album_id: &str) -> Result<(), StoreError> {
+        self.db
+            .write_blocking(Lane::Background, "identify.link_album_artists", |tx| {
+                changing(tx, |tx| artist_pass(tx, local_album_id, false))
+            })
+            .map(|written| self.landed(written))
     }
 
     /// [`Self::link_album_artists`], then merge what the links it made
     /// prove to be one artist. Identification runs this after each
     /// attempt and for each album a sweep finds stale.
-    pub fn link_and_merge_album_artists(&self, local_album_id: &str) -> bool {
-        self.artist_pass(local_album_id, true)
-    }
-
-    fn artist_pass(&self, album: &str, converge: bool) -> bool {
-        let mut conn = self.lock();
-        let outcome = (|| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let now = now_ms();
-            let linked = artist_links::link_album(&tx, album, now)?;
-            if converge && !linked.is_empty() {
-                converge_ids(&tx, &linked, now as f64 / 1000.0)?;
-            }
-            tx.commit()
-        })();
-        match outcome {
-            Ok(()) => true,
-            Err(error) => {
-                let error: rusqlite::Error = error;
-                tracing::warn!(
-                    %error,
-                    album_id = album,
-                    "the album's artist links could not be worked out; a later sweep tries again"
-                );
-                false
-            }
-        }
+    pub fn link_and_merge_album_artists(&self, local_album_id: &str) -> Result<(), StoreError> {
+        self.db
+            .write_blocking(
+                Lane::Background,
+                "identify.link_and_merge_album_artists",
+                |tx| changing(tx, |tx| artist_pass(tx, local_album_id, true)),
+            )
+            .map(|written| self.landed(written))
     }
 
     /// One sweep: up to [`artist_links::SWEEP_BATCH`] albums whose match
     /// or track mappings changed since their last pass, each in its own
     /// transaction, then up to as many of the app's links, in id order
-    /// from where the last sweep stopped, each settled again.
-    pub fn sweep_artist_links(&self) {
-        self.drain_continuations();
-        let version = self.read("database version", |conn| {
-            let data: i64 = conn.query_row("PRAGMA data_version", [], |row| row.get(0))?;
-            Ok((data, conn.total_changes()))
-        });
-        let quiet = match (version, *self.swept_guard()) {
-            (Some((data, own)), Some(last)) => {
-                own == last.own_changes
-                    && (data == last.data_version || last.at.elapsed() < SWEEP_FLOOR)
-            }
-            _ => false,
-        };
+    /// from where the last sweep stopped, each settled again in its own
+    /// transaction. Continued tracks are worked off first. An album or a
+    /// link that fails is logged and the sweep goes on; a busy or closing
+    /// database stops it, and the next sweep picks up from there.
+    pub fn sweep_artist_links(&self) -> Result<(), StoreError> {
+        match self.drain_continuations() {
+            Ok(()) => {}
+            Err(error @ (StoreError::Busy(_) | StoreError::Closed)) => return Err(error),
+            Err(error) => tracing::warn!(
+                %error,
+                "continued tracks not worked off; a later sweep tries again"
+            ),
+        }
+        // Read before the stale albums, so a write that lands meanwhile
+        // wakes the next sweep.
+        let writes = self.writes.load(Ordering::Relaxed);
+        let quiet = self
+            .swept_guard()
+            .is_some_and(|last| last.writes == writes && last.at.elapsed() < SWEEP_FLOOR);
         if !quiet {
-            let stale = self
-                .read("stale albums", |conn| {
-                    artist_links::stale_albums(conn, artist_links::SWEEP_BATCH)
-                })
-                .unwrap_or_default();
+            let stale = self.db.read_blocking("identify.stale_albums", |conn| {
+                Ok::<_, StoreError>(artist_links::stale_albums(conn, artist_links::SWEEP_BATCH)?)
+            })?;
             for album in &stale {
-                self.link_and_merge_album_artists(album);
+                match self.link_and_merge_album_artists(album) {
+                    Ok(()) => {}
+                    Err(error @ (StoreError::Busy(_) | StoreError::Closed)) => return Err(error),
+                    Err(error) => tracing::warn!(
+                        %error,
+                        album_id = album,
+                        "the album's artist links could not be worked out; a later sweep tries again"
+                    ),
+                }
             }
-            *self.swept_guard() =
-                version
-                    .filter(|_| stale.is_empty())
-                    .map(|(data_version, own_changes)| Swept {
-                        data_version,
-                        own_changes,
-                        at: Instant::now(),
-                    });
+            *self.swept_guard() = stale.is_empty().then(|| Swept {
+                writes,
+                at: Instant::now(),
+            });
         }
         let cursor = self.cursor_guard().clone();
-        let rows = self
-            .read("linked artists", |conn| {
-                artist_links::automatic_links_after(conn, &cursor, artist_links::SWEEP_BATCH)
-            })
-            .unwrap_or_default();
+        let (rows, due) = self.db.read_blocking("identify.linked_artists", |conn| {
+            let rows =
+                artist_links::automatic_links_after(conn, &cursor, artist_links::SWEEP_BATCH)?;
+            let mut due = Vec::new();
+            for artist in &rows {
+                if !artist_links::plan(conn, std::slice::from_ref(artist))?.is_empty() {
+                    due.push(artist.clone());
+                }
+            }
+            Ok::<_, StoreError>((rows, due))
+        })?;
         *self.cursor_guard() = match rows.last() {
             Some(last) if rows.len() == artist_links::SWEEP_BATCH => last.clone(),
             _ => String::new(),
         };
+        let mut settled = cursor;
         for artist in rows {
-            let one = std::slice::from_ref(&artist);
-            let due = self.read("artist link", |conn| {
-                Ok(!artist_links::plan(conn, one)?.is_empty())
-            });
-            if due == Some(true) {
-                self.write("settle artist link", |tx| {
-                    artist_links::settle(tx, one, now_ms())
-                });
+            if due.contains(&artist) {
+                let one = std::slice::from_ref(&artist);
+                let outcome = self
+                    .db
+                    .write_blocking(Lane::Background, "identify.settle_artist_link", |tx| {
+                        changing(tx, |tx| {
+                            artist_links::settle(tx, one, now_ms())?;
+                            Ok(())
+                        })
+                    })
+                    .map(|written| self.landed(written));
+                match outcome {
+                    Ok(()) => {}
+                    Err(error @ (StoreError::Busy(_) | StoreError::Closed)) => {
+                        // The rest of this batch goes first next time.
+                        *self.cursor_guard() = settled;
+                        return Err(error);
+                    }
+                    Err(error) => tracing::warn!(
+                        %error,
+                        artist_id = artist,
+                        "an artist link could not be settled; a later sweep tries again"
+                    ),
+                }
             }
+            settled = artist;
         }
+        Ok(())
     }
 
     /// Up to `limit` artist ids waiting for MusicBrainz's answer, newest
     /// first.
-    pub fn pending_artist_ids(&self, limit: usize) -> Vec<String> {
-        self.read("pending artist ids", |conn| {
-            merged_ids::pending(conn, limit)
-        })
-        .unwrap_or_default()
+    pub fn pending_artist_ids(&self, limit: usize) -> Result<Vec<String>, StoreError> {
+        self.db
+            .read_blocking("identify.pending_artist_ids", |conn| {
+                Ok(merged_ids::pending(conn, limit)?)
+            })
     }
 
     /// Write MusicBrainz's answer about artist id `mbid` in one
     /// transaction, then merge the records it proves to be one artist.
-    /// `false` when the write failed (logged).
-    pub fn answer_artist_id(&self, mbid: &str, answer: &ArtistAnswer) -> bool {
-        self.write("artist id answer", |tx| {
-            let now = now_ms();
-            let ids = merged_ids::answer(tx, mbid, answer, now)?;
-            if !ids.is_empty() {
-                converge_ids(tx, &ids, now as f64 / 1000.0)?;
-            }
-            Ok(())
-        })
-        .is_some()
+    pub fn answer_artist_id(&self, mbid: &str, answer: &ArtistAnswer) -> Result<(), StoreError> {
+        self.db
+            .write_blocking(Lane::Background, "identify.answer_artist_id", |tx| {
+                changing(tx, |tx| {
+                    let now = now_ms();
+                    let ids = merged_ids::answer(tx, mbid, answer, now)?;
+                    if !ids.is_empty() {
+                        converge_ids(tx, &ids, now as f64 / 1000.0)?;
+                    }
+                    Ok(())
+                })
+            })
+            .map(|written| self.landed(written))
     }
 
     fn swept_guard(&self) -> MutexGuard<'_, Option<Swept>> {
@@ -1139,20 +1313,31 @@ impl SqliteIdentifyStore {
     /// only a bounded number themselves, and a v2 import can leave many.
     /// While some are left every sweep goes on; once none are, it looks
     /// again after [`SWEEP_FLOOR`].
-    fn drain_continuations(&self) {
+    fn drain_continuations(&self) -> Result<(), StoreError> {
         let due = self
             .drained_guard()
             .is_none_or(|last| last.more || last.at.elapsed() >= SWEEP_FLOOR);
         if !due {
-            return;
+            return Ok(());
         }
         let mut more = true;
+        let mut outcome = Ok(());
         for _ in 0..DRAIN_TURNS {
-            more = self
-                .write("drain continued tracks", |tx| {
-                    drain_continuations(tx, DRAIN_BOUND, now_secs())
+            let turn = self
+                .db
+                .write_blocking(Lane::Background, "identify.drain_continuations", |tx| {
+                    changing(tx, |tx| {
+                        Ok(drain_continuations(tx, DRAIN_BOUND, now_secs())?)
+                    })
                 })
-                .unwrap_or(false);
+                .map(|written| self.landed(written));
+            match turn {
+                Ok(left) => more = left,
+                Err(error) => {
+                    outcome = Err(error);
+                    break;
+                }
+            }
             if !more {
                 break;
             }
@@ -1161,6 +1346,7 @@ impl SqliteIdentifyStore {
             more,
             at: Instant::now(),
         });
+        outcome
     }
 
     fn drained_guard(&self) -> MutexGuard<'_, Option<Drained>> {
@@ -1176,129 +1362,160 @@ impl SqliteIdentifyStore {
 impl SqliteIdentifyStore {
     /// The stored document for one release, if it was saved no more than
     /// `max_age_secs` ago (`None` accepts any age).
-    pub fn release(&self, release_mbid: &str, max_age_secs: Option<u64>) -> Option<Release> {
+    pub fn release(
+        &self,
+        release_mbid: &str,
+        max_age_secs: Option<u64>,
+    ) -> Result<Option<Release>, StoreError> {
         let oldest = max_age_secs.map_or(0.0, |age| now_secs() - age as f64);
-        self.read("release document", |conn| {
-            stored_release(conn, release_mbid, oldest)
+        self.db.read_blocking("identify.release", |conn| {
+            Ok(stored_release(conn, release_mbid, oldest)?)
         })
-        .flatten()
     }
 
-    pub fn save_release(&self, release: &Release) {
-        // A refetch by the canonical id carries no redirect, so it would
-        // forget the merged ids an earlier lookup learned: keep them.
+    /// Keep a release document, on the caller's lane.
+    pub fn save_release(&self, release: &Release, lane: Lane) -> Result<(), StoreError> {
         let canonical = release.id.trim().to_ascii_lowercase();
-        let mut release = release.clone();
-        if let Some(stored) = self.release(&canonical, None) {
-            for old in stored.old_ids {
-                if !release
-                    .old_ids
-                    .iter()
-                    .any(|known| known.eq_ignore_ascii_case(&old))
-                {
-                    release.old_ids.push(old);
-                }
-            }
-        }
-        let release = &release;
-        let payload = match serde_json::to_string(release) {
-            Ok(payload) => payload,
-            Err(error) => {
-                tracing::error!(%error, release = release.id, "release document did not encode");
-                return;
-            }
-        };
-        let payload_sha = hex_sha256(payload.as_bytes());
-        // The release's own id plus every merged id that redirects to it:
-        // each gets a row with the same payload, so a lookup by any of them
-        // stays a plain indexed match on entity_id.
-        let mut entities = vec![canonical];
-        for old in &release.old_ids {
-            let old = old.trim().to_ascii_lowercase();
-            if !old.is_empty() && !entities.contains(&old) {
-                entities.push(old);
-            }
-        }
-        let now = now_secs();
-        self.write("save release document", |tx| {
-            for entity in &entities {
-                // Rows are immutable, so a refetch replaces the old row.
-                tx.execute(
-                    "DELETE FROM library_management_metadata_snapshots \
-                     WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3",
-                    params![PROVIDER, RELEASE_KIND, entity],
-                )?;
-                tx.execute(
-                    "INSERT INTO library_management_metadata_snapshots (id, provider, \
-                     entity_kind, entity_id, input_hash, canonical_payload_json, payload_sha256, \
-                     fetched_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                    params![
-                        hex_sha256(format!("{entity}\0{payload_sha}").as_bytes()),
-                        PROVIDER,
-                        RELEASE_KIND,
-                        entity,
-                        release_input_hash(),
-                        payload,
-                        payload_sha,
-                        now,
-                        now + RELEASE_FRESH_SECS as f64,
-                    ],
-                )?;
-            }
-            // Expired documents stay while an identity names them or a
-            // pending review offers them to a curator. Merged-id rows share
-            // their document's payload hash, so they go and stay with it.
-            tx.execute(
-                "DELETE FROM library_management_metadata_snapshots \
-                 WHERE provider = ?1 AND entity_kind = ?2 AND expires_at < ?3 \
-                 AND payload_sha256 NOT IN (SELECT kept.payload_sha256 \
-                 FROM library_management_metadata_snapshots AS kept \
-                 WHERE kept.provider = ?1 AND kept.entity_kind = ?2 AND kept.entity_id IN ( \
-                 SELECT lower(release_mbid) FROM local_album_external_identities \
-                 WHERE release_mbid IS NOT NULL \
-                 UNION SELECT lower(json_extract(candidate.value, '$.release_mbid')) \
-                 FROM library_identify_reviews, json_each(candidates_json) AS candidate \
-                 WHERE state = ?4 AND json_extract(candidate.value, '$.release_mbid') IS NOT NULL))",
-                params![PROVIDER, RELEASE_KIND, now, review_state_str(ReviewState::Pending)],
-            )?;
-            Ok(())
-        });
+        self.db
+            .write_blocking(lane, "identify.save_release", |tx| {
+                changing(tx, |tx| {
+                    let stored = stored_release(tx, &canonical, 0.0)?;
+                    store_release(tx, release, stored, now_secs())
+                })
+            })
+            .map(|written| self.landed(written))
     }
+}
+
+/// Write `release`'s document under its own id and every merged id that
+/// redirects to it, then drop expired documents nothing names. `stored`
+/// is the document on file for its id, whose merged ids are kept: a
+/// refetch by the canonical id carries no redirect, so it would forget
+/// the merged ids an earlier lookup learned.
+fn store_release(
+    tx: &Transaction<'_>,
+    release: &Release,
+    stored: Option<Release>,
+    now: f64,
+) -> Result<(), StoreError> {
+    let canonical = release.id.trim().to_ascii_lowercase();
+    let mut release = release.clone();
+    if let Some(stored) = stored {
+        for old in stored.old_ids {
+            if !release
+                .old_ids
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(&old))
+            {
+                release.old_ids.push(old);
+            }
+        }
+    }
+    let payload = serde_json::to_string(&release).map_err(|error| {
+        StoreError::Failed(format!(
+            "release document {} did not encode: {error}",
+            release.id
+        ))
+    })?;
+    let payload_sha = hex_sha256(payload.as_bytes());
+    // The release's own id plus every merged id that redirects to it:
+    // each gets a row with the same payload, so a lookup by any of them
+    // stays a plain indexed match on entity_id.
+    let mut entities = vec![canonical];
+    for old in &release.old_ids {
+        let old = old.trim().to_ascii_lowercase();
+        if !old.is_empty() && !entities.contains(&old) {
+            entities.push(old);
+        }
+    }
+    for entity in &entities {
+        // Rows are immutable, so a refetch replaces the old row.
+        tx.execute(
+            "DELETE FROM library_management_metadata_snapshots \
+             WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3",
+            params![PROVIDER, RELEASE_KIND, entity],
+        )?;
+        tx.execute(
+            "INSERT INTO library_management_metadata_snapshots (id, provider, \
+             entity_kind, entity_id, input_hash, canonical_payload_json, payload_sha256, \
+             fetched_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                hex_sha256(format!("{entity}\0{payload_sha}").as_bytes()),
+                PROVIDER,
+                RELEASE_KIND,
+                entity,
+                release_input_hash(),
+                payload,
+                payload_sha,
+                now,
+                now + RELEASE_FRESH_SECS as f64,
+            ],
+        )?;
+    }
+    // Expired documents stay while an identity names them or a pending
+    // review offers them to a curator. Merged-id rows share their
+    // document's payload hash, so they go and stay with it.
+    tx.execute(
+        "DELETE FROM library_management_metadata_snapshots \
+         WHERE provider = ?1 AND entity_kind = ?2 AND expires_at < ?3 \
+         AND payload_sha256 NOT IN (SELECT kept.payload_sha256 \
+         FROM library_management_metadata_snapshots AS kept \
+         WHERE kept.provider = ?1 AND kept.entity_kind = ?2 AND kept.entity_id IN ( \
+         SELECT lower(release_mbid) FROM local_album_external_identities \
+         WHERE release_mbid IS NOT NULL \
+         UNION SELECT lower(json_extract(candidate.value, '$.release_mbid')) \
+         FROM library_identify_reviews, json_each(candidates_json) AS candidate \
+         WHERE state = ?4 AND json_extract(candidate.value, '$.release_mbid') IS NOT NULL))",
+        params![
+            PROVIDER,
+            RELEASE_KIND,
+            now,
+            review_state_str(ReviewState::Pending)
+        ],
+    )?;
+    Ok(())
 }
 
 impl SqliteIdentifyStore {
     /// Graft fetched parts (credits, artist names) onto the stored
     /// document for a release, in one transaction ([`rewrite_document`]).
-    /// Returns the grafted document, or `None` when none is stored or the
-    /// write failed.
+    /// Returns the grafted document, or `None` when none is stored.
     pub fn graft_extras(
         &self,
         release_mbid: &str,
         fetched: &crate::matching::model::ReleaseExtras,
-    ) -> Option<Release> {
-        self.write("graft release extras", |tx| {
-            rewrite_document(tx, release_mbid, |release| release.graft_extras(fetched))
-        })
-        .flatten()
+    ) -> Result<Option<Release>, StoreError> {
+        self.db
+            .write_blocking(Lane::Background, "identify.graft_extras", |tx| {
+                changing(tx, |tx| {
+                    Ok(rewrite_document(tx, release_mbid, |release| {
+                        release.graft_extras(fetched)
+                    })?)
+                })
+            })
+            .map(|written| self.landed(written))
     }
 
     /// Add the merged ids `fetched` answers to that the stored document of
     /// its release lacks, so a lookup by a merged id finds it. The stored
     /// document is otherwise kept as it is ([`rewrite_document`]). `false`
-    /// when none is stored or the write failed.
-    pub fn keep_old_ids(&self, fetched: &Release) -> bool {
-        self.write("keep merged release ids", |tx| {
-            rewrite_document(tx, &fetched.id, |stored| {
-                for old in &fetched.old_ids {
-                    let old = old.trim().to_ascii_lowercase();
-                    if !old.is_empty() && !stored.answers_to(&old) {
-                        stored.old_ids.push(old);
-                    }
-                }
+    /// when none is stored.
+    pub fn keep_old_ids(&self, fetched: &Release, lane: Lane) -> Result<bool, StoreError> {
+        self.db
+            .write_blocking(lane, "identify.keep_old_ids", |tx| {
+                changing(tx, |tx| {
+                    Ok(rewrite_document(tx, &fetched.id, |stored| {
+                        for old in &fetched.old_ids {
+                            let old = old.trim().to_ascii_lowercase();
+                            if !old.is_empty() && !stored.answers_to(&old) {
+                                stored.old_ids.push(old);
+                            }
+                        }
+                    })?
+                    .is_some())
+                })
             })
-        })
-        .flatten()
-        .is_some()
+            .map(|written| self.landed(written))
     }
 }
 
@@ -1825,328 +2042,357 @@ const ALIAS_KINDS: [AliasKind; 2] = [AliasKind::MergedAlbum, AliasKind::MergedAr
 
 /// Retired-id aliases.
 impl SqliteIdentifyStore {
-    pub fn aliases_for(&self, surviving_id: &str) -> Vec<Alias> {
-        let mut out = Vec::new();
-        for kind in ALIAS_KINDS {
-            let (table, owner) = alias_table(kind);
-            let retired: Vec<String> = self
-                .read("aliases", |conn| {
-                    let mut stmt = conn.prepare(&format!(
-                        "SELECT alias FROM {table} WHERE {owner} = ?1 ORDER BY alias"
-                    ))?;
-                    let rows = stmt.query_map(params![surviving_id], |row| row.get(0))?;
-                    rows.collect()
-                })
-                .unwrap_or_default();
-            out.extend(retired.into_iter().map(|retired_id| Alias {
-                retired_id,
-                surviving_id: surviving_id.to_owned(),
-                kind,
-            }));
-        }
-        out
+    pub fn aliases_for(&self, surviving_id: &str) -> Result<Vec<Alias>, StoreError> {
+        self.db.read_blocking("identify.aliases", |conn| {
+            let mut out = Vec::new();
+            for kind in ALIAS_KINDS {
+                let (table, owner) = alias_table(kind);
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT alias FROM {table} WHERE {owner} = ?1 ORDER BY alias"
+                ))?;
+                let retired = stmt
+                    .query_map(params![surviving_id], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                out.extend(retired.into_iter().map(|retired_id| Alias {
+                    retired_id,
+                    surviving_id: surviving_id.to_owned(),
+                    kind,
+                }));
+            }
+            Ok(out)
+        })
     }
 }
 
 /// Durable identification queue.
 impl SqliteIdentifyStore {
-    /// Store a job. When a live job already holds the same album and
-    /// input revision, that job comes back instead; `None` means the
-    /// store could not record anything.
-    pub fn enqueue(&self, job: IdentifyJob) -> Option<IdentifyJob> {
+    /// Store a job, on the caller's lane. When a live job already holds
+    /// the same album and input revision, that job comes back instead.
+    pub fn enqueue(&self, job: IdentifyJob, lane: Lane) -> Result<IdentifyJob, StoreError> {
         let key = idempotency_key(&job.local_album_id, &job.input_revision);
-        self.write("enqueue identify job", |tx| {
-            let now = now_ms();
-            let inserted = tx.execute(
-                INSERT_JOB,
-                params![
-                    job.id,
-                    job.local_album_id,
-                    kind_str(job.kind),
-                    job.priority as i64,
-                    state_str(job.state),
-                    job.attempts as i64,
-                    job.not_before_ms as i64,
-                    job.input_revision,
-                    key,
-                    job.requested_by_user_id,
-                    job.failure_code,
-                    now,
-                ],
-            )?;
-            if inserted == 1 {
-                bump_identification_stream(tx)?;
-                return Ok(job.clone());
-            }
-            tx.query_row(
-                &format!(
-                    "SELECT {JOB_COLUMNS} FROM library_identify_jobs \
-                     WHERE idempotency_key = ?1 AND state IN ('queued','running','deferred')"
-                ),
-                params![key],
-                map_job,
-            )
-        })
+        self.db
+            .write_blocking(lane, "identify.enqueue", |tx| {
+                changing(tx, |tx| {
+                    let now = now_ms();
+                    let inserted = tx.execute(
+                        INSERT_JOB,
+                        params![
+                            job.id,
+                            job.local_album_id,
+                            kind_str(job.kind),
+                            job.priority as i64,
+                            state_str(job.state),
+                            job.attempts as i64,
+                            job.not_before_ms as i64,
+                            job.input_revision,
+                            key,
+                            job.requested_by_user_id,
+                            job.failure_code,
+                            now,
+                        ],
+                    )?;
+                    if inserted == 1 {
+                        bump_identification_stream(tx)?;
+                        return Ok(job.clone());
+                    }
+                    Ok(tx.query_row(
+                        &format!(
+                            "SELECT {JOB_COLUMNS} FROM library_identify_jobs \
+                             WHERE idempotency_key = ?1 AND state IN ('queued','running','deferred')"
+                        ),
+                        params![key],
+                        map_job,
+                    )?)
+                })
+            })
+            .map(|written| self.landed(written))
     }
 
-    pub fn claim(&self, now_ms: u64, lease_ms: u64) -> Option<IdentifyJob> {
-        self.write("claim identify job", |tx| {
-            let now = now_ms as i64;
-            // While identification is paused nothing is claimed, lapsed
-            // leases included; the check sits in the same statement so a
-            // pause can never race a claim.
-            let job = tx
+    /// The next due job, leased to the caller. `None` when nothing is due.
+    pub fn claim(&self, now_ms: u64, lease_ms: u64) -> Result<Option<IdentifyJob>, StoreError> {
+        self.db
+            .write_blocking(Lane::Background, "identify.claim", |tx| {
+                changing(tx, |tx| {
+                    let now = now_ms as i64;
+                    // While identification is paused nothing is claimed, lapsed
+                    // leases included; the check sits in the same statement so a
+                    // pause can never race a claim.
+                    let job = tx
+                        .query_row(
+                            &format!(
+                                "SELECT {JOB_COLUMNS} FROM library_identify_jobs \
+                                 WHERE ((state IN ('queued','deferred') AND not_before_ms <= ?1) \
+                                 OR (state = 'running' AND lease_expires_ms <= ?1)) \
+                                 AND NOT EXISTS (SELECT 1 FROM library_work_control \
+                                     WHERE queue_kind = 'identification' AND state = 'paused') \
+                                 ORDER BY priority, created_ms, rowid LIMIT 1"
+                            ),
+                            params![now],
+                            map_job,
+                        )
+                        .optional()?;
+                    let Some(mut job) = job else {
+                        return Ok(None);
+                    };
+                    tx.execute(
+                        "UPDATE library_identify_jobs SET state = 'running', \
+                         lease_expires_ms = ?1, updated_ms = ?2 WHERE id = ?3",
+                        params![now + lease_ms as i64, now, job.id],
+                    )?;
+                    bump_identification_stream(tx)?;
+                    job.state = JobState::Running;
+                    Ok(Some(job))
+                })
+            })
+            .map(|written| self.landed(written))
+    }
+
+    pub fn update(&self, job: IdentifyJob) -> Result<(), StoreError> {
+        let key = idempotency_key(&job.local_album_id, &job.input_revision);
+        self.db
+            .write_blocking(Lane::Background, "identify.update", |tx| {
+                changing(tx, |tx| {
+                    tx.execute(
+                        "UPDATE library_identify_jobs SET state = ?1, attempts = ?2, \
+                         not_before_ms = ?3, input_revision = ?4, idempotency_key = ?5, \
+                         failure_code = ?6, priority = ?7, updated_ms = ?8, \
+                         lease_expires_ms = CASE WHEN ?1 = 'running' THEN lease_expires_ms END \
+                         WHERE id = ?9",
+                        params![
+                            state_str(job.state),
+                            job.attempts as i64,
+                            job.not_before_ms as i64,
+                            job.input_revision,
+                            key,
+                            job.failure_code,
+                            job.priority as i64,
+                            now_ms(),
+                            job.id,
+                        ],
+                    )?;
+                    Ok(bump_identification_stream(tx)?)
+                })
+            })
+            .map(|written| self.landed(written))
+    }
+
+    pub fn job(&self, job_id: &str) -> Result<Option<IdentifyJob>, StoreError> {
+        self.db.read_blocking("identify.job", |conn| {
+            Ok(conn
                 .query_row(
-                    &format!(
-                        "SELECT {JOB_COLUMNS} FROM library_identify_jobs \
-                         WHERE ((state IN ('queued','deferred') AND not_before_ms <= ?1) \
-                         OR (state = 'running' AND lease_expires_ms <= ?1)) \
-                         AND NOT EXISTS (SELECT 1 FROM library_work_control \
-                             WHERE queue_kind = 'identification' AND state = 'paused') \
-                         ORDER BY priority, created_ms, rowid LIMIT 1"
-                    ),
-                    params![now],
+                    &format!("SELECT {JOB_COLUMNS} FROM library_identify_jobs WHERE id = ?1"),
+                    params![job_id],
                     map_job,
                 )
-                .optional()?;
-            let Some(mut job) = job else {
-                return Ok(None);
-            };
-            tx.execute(
-                "UPDATE library_identify_jobs SET state = 'running', lease_expires_ms = ?1, \
-                 updated_ms = ?2 WHERE id = ?3",
-                params![now + lease_ms as i64, now, job.id],
-            )?;
-            bump_identification_stream(tx)?;
-            job.state = JobState::Running;
-            Ok(Some(job))
+                .optional()?)
         })
-        .flatten()
     }
 
-    pub fn update(&self, job: IdentifyJob) {
-        let key = idempotency_key(&job.local_album_id, &job.input_revision);
-        self.write("update identify job", |tx| {
-            tx.execute(
-                "UPDATE library_identify_jobs SET state = ?1, attempts = ?2, \
-                 not_before_ms = ?3, input_revision = ?4, idempotency_key = ?5, \
-                 failure_code = ?6, priority = ?7, updated_ms = ?8, \
-                 lease_expires_ms = CASE WHEN ?1 = 'running' THEN lease_expires_ms END \
-                 WHERE id = ?9",
-                params![
-                    state_str(job.state),
-                    job.attempts as i64,
-                    job.not_before_ms as i64,
-                    job.input_revision,
-                    key,
-                    job.failure_code,
-                    job.priority as i64,
-                    now_ms(),
-                    job.id,
-                ],
-            )?;
-            bump_identification_stream(tx)
-        });
-    }
-
-    pub fn job(&self, job_id: &str) -> Option<IdentifyJob> {
-        self.read("identify job", |conn| {
-            conn.query_row(
-                &format!("SELECT {JOB_COLUMNS} FROM library_identify_jobs WHERE id = ?1"),
-                params![job_id],
-                map_job,
-            )
-            .optional()
-        })
-        .flatten()
-    }
-
-    pub fn jobs_for_album(&self, local_album_id: &str) -> Vec<IdentifyJob> {
-        self.read("album jobs", |conn| {
+    pub fn jobs_for_album(&self, local_album_id: &str) -> Result<Vec<IdentifyJob>, StoreError> {
+        self.db.read_blocking("identify.jobs_for_album", |conn| {
             let mut stmt = conn.prepare(&format!(
                 "SELECT {JOB_COLUMNS} FROM library_identify_jobs \
                  WHERE local_album_id = ?1 ORDER BY created_ms, rowid"
             ))?;
             let rows = stmt.query_map(params![local_album_id], map_job)?;
-            rows.collect()
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
         })
-        .unwrap_or_default()
     }
 
     /// Boot recovery: jobs a previous process left running go back to
     /// the queue. Returns how many.
-    pub fn recover(&self) -> usize {
-        self.write("recover identify jobs", |tx| {
-            let requeued = tx.execute(
-                "UPDATE library_identify_jobs SET state = 'queued', lease_expires_ms = NULL, \
-                 updated_ms = ?1 WHERE state = 'running'",
-                params![now_ms()],
-            )?;
-            if requeued > 0 {
-                bump_identification_stream(tx)?;
-            }
-            Ok(requeued)
-        })
-        .unwrap_or(0)
+    pub fn recover(&self) -> Result<usize, StoreError> {
+        self.db
+            .write_blocking(Lane::Background, "identify.recover", |tx| {
+                changing(tx, |tx| {
+                    let requeued = tx.execute(
+                        "UPDATE library_identify_jobs SET state = 'queued', \
+                         lease_expires_ms = NULL, updated_ms = ?1 WHERE state = 'running'",
+                        params![now_ms()],
+                    )?;
+                    if requeued > 0 {
+                        bump_identification_stream(tx)?;
+                    }
+                    Ok(requeued)
+                })
+            })
+            .map(|written| self.landed(written))
     }
 }
 
 /// Curator review queue.
 impl SqliteIdentifyStore {
-    pub fn file(&self, review: ReviewItem) {
-        let candidates = match serde_json::to_string(&review.candidates) {
-            Ok(json) => json,
-            Err(error) => {
-                tracing::error!(%error, review = review.id, "review candidates did not encode");
-                return;
-            }
-        };
-        self.write("file review", |tx| {
-            let now = now_ms();
-            tx.execute(
-                "INSERT OR REPLACE INTO library_identify_reviews (id, local_album_id, \
-                 reason_code, candidates_json, state, resolved_by_user_id, \
-                 selected_candidate_key, created_ms, updated_ms) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
-                params![
-                    review.id,
-                    review.local_album_id,
-                    review.reason_code,
-                    candidates,
-                    review_state_str(review.state),
-                    review.resolved_by_user_id,
-                    review.selected_candidate_key,
-                    now,
-                ],
-            )?;
-            bump_identification_stream(tx)
-        });
+    pub fn file(&self, review: ReviewItem) -> Result<(), StoreError> {
+        let candidates = serde_json::to_string(&review.candidates).map_err(|error| {
+            StoreError::Failed(format!(
+                "review {} candidates did not encode: {error}",
+                review.id
+            ))
+        })?;
+        self.db
+            .write_blocking(Lane::Background, "identify.file_review", |tx| {
+                changing(tx, |tx| {
+                    let now = now_ms();
+                    tx.execute(
+                        "INSERT OR REPLACE INTO library_identify_reviews (id, local_album_id, \
+                         reason_code, candidates_json, state, resolved_by_user_id, \
+                         selected_candidate_key, created_ms, updated_ms) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                        params![
+                            review.id,
+                            review.local_album_id,
+                            review.reason_code,
+                            candidates,
+                            review_state_str(review.state),
+                            review.resolved_by_user_id,
+                            review.selected_candidate_key,
+                            now,
+                        ],
+                    )?;
+                    Ok(bump_identification_stream(tx)?)
+                })
+            })
+            .map(|written| self.landed(written))
     }
 
-    pub fn get(&self, review_id: &str) -> Option<ReviewItem> {
-        self.read("review", |conn| {
-            conn.query_row(
-                &format!("SELECT {REVIEW_COLUMNS} FROM library_identify_reviews WHERE id = ?1"),
-                params![review_id],
-                map_review,
-            )
-            .optional()
+    /// One review. A review whose stored candidates no longer decode is
+    /// logged and read as gone ([`map_review`]).
+    pub fn get(&self, review_id: &str) -> Result<Option<ReviewItem>, StoreError> {
+        self.db.read_blocking("identify.review", |conn| {
+            Ok(conn
+                .query_row(
+                    &format!("SELECT {REVIEW_COLUMNS} FROM library_identify_reviews WHERE id = ?1"),
+                    params![review_id],
+                    map_review,
+                )
+                .optional()?
+                .flatten())
         })
-        .flatten()
-        .flatten()
     }
 
-    pub fn pending_for_album(&self, local_album_id: &str) -> Vec<ReviewItem> {
-        self.read("pending reviews", |conn| {
+    pub fn pending_for_album(&self, local_album_id: &str) -> Result<Vec<ReviewItem>, StoreError> {
+        self.db.read_blocking("identify.pending_reviews", |conn| {
             let mut stmt = conn.prepare(&format!(
                 "SELECT {REVIEW_COLUMNS} FROM library_identify_reviews \
                  WHERE local_album_id = ?1 AND state = 'pending' ORDER BY created_ms, id"
             ))?;
             let rows = stmt.query_map(params![local_album_id], map_review)?;
-            rows.collect::<rusqlite::Result<Vec<_>>>()
+            Ok(rows
+                .collect::<rusqlite::Result<Vec<_>>>()?
+                .into_iter()
+                .flatten()
+                .collect())
         })
-        .unwrap_or_default()
-        .into_iter()
-        .flatten()
-        .collect()
     }
 
+    /// Settle a review from a request. `false` when no row changed.
     pub fn set_state(
         &self,
         review_id: &str,
         state: ReviewState,
         by_user_id: Option<&str>,
         selected_key: Option<&str>,
-    ) -> bool {
-        self.write("settle review", |tx| {
-            let changed = tx.execute(
-                "UPDATE library_identify_reviews SET state = ?1, resolved_by_user_id = ?2, \
-                 selected_candidate_key = ?3, updated_ms = ?4 WHERE id = ?5",
-                params![
-                    review_state_str(state),
-                    by_user_id,
-                    selected_key,
-                    now_ms(),
-                    review_id
-                ],
-            )?;
-            if changed == 1 {
-                bump_identification_stream(tx)?;
-            }
-            Ok(changed)
-        })
-        .is_some_and(|changed| changed == 1)
+    ) -> Result<bool, StoreError> {
+        self.db
+            .write_blocking(Lane::Foreground, "identify.settle_review", |tx| {
+                changing(tx, |tx| {
+                    let changed = tx.execute(
+                        "UPDATE library_identify_reviews SET state = ?1, \
+                         resolved_by_user_id = ?2, selected_candidate_key = ?3, updated_ms = ?4 \
+                         WHERE id = ?5",
+                        params![
+                            review_state_str(state),
+                            by_user_id,
+                            selected_key,
+                            now_ms(),
+                            review_id
+                        ],
+                    )?;
+                    if changed == 1 {
+                        bump_identification_stream(tx)?;
+                    }
+                    Ok(changed == 1)
+                })
+            })
+            .map(|written| self.landed(written))
     }
 
     /// Settle a pending review as approved and seal the identities it
     /// chose, all or nothing. `Ok(false)` when the review is no longer
     /// pending. Each sealed row takes its stored revision plus one.
     pub fn approve(&self, approval: &Approval) -> Result<bool, StoreError> {
-        let mut conn = self.lock();
-        let outcome = (|| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let settled = tx.execute(
-                "UPDATE library_identify_reviews SET state = 'approved', \
-                 resolved_by_user_id = ?1, selected_candidate_key = ?2, updated_ms = ?3 \
-                 WHERE id = ?4 AND state = 'pending'",
-                params![
-                    approval.by_user_id,
-                    approval.candidate_key,
-                    now_ms(),
-                    approval.review_id
-                ],
-            )?;
-            if settled != 1 {
-                return Ok(false);
-            }
-            // A review approval can be taken back like any edition choice.
-            let point = crate::operations::choice::undo_point(&tx, &approval.album.local_album_id)?;
-            seal_album_identity(&tx, &approval.album)?;
-            for track in &approval.tracks {
-                seal_track_identity(&tx, track)?;
-            }
-            // A curator's approval confirms the album: an unconfirmed flag
-            // left by an earlier best guess must not keep holding its files
-            // back from management (an edition choice clears it the same way).
-            tx.execute(
-                "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
-                params![approval.album.local_album_id],
-            )?;
-            // A candidate without track evidence (an edition a catalog
-            // correction dropped, restored from its review) names the
-            // release only: the remap worker places the files on it.
-            if approval.tracks.is_empty()
-                && let Some(release) = approval.album.release_mbid.as_deref()
-            {
-                crate::operations::choice::queue_remap(
-                    &tx,
-                    &approval.album.local_album_id,
-                    release,
-                    Some(&approval.by_user_id),
-                    crate::clock::now_unix(),
-                )?;
-            }
-            crate::operations::choice::keep_undo_point(
-                &tx,
-                &approval.album.local_album_id,
-                &point,
-                &approval.by_user_id,
-                "review_approve",
-                "REVIEW_APPROVED",
-                crate::clock::now_unix(),
-            )
-            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-            bump_identification_stream(&tx)?;
-            let now = crate::clock::now_unix();
-            join_replaced(&tx, Scope::Album(&approval.album.local_album_id), now)?;
-            continue_tracks(&tx, Scope::Album(&approval.album.local_album_id), now)?;
-            tx.commit()?;
-            Ok(true)
-        })();
-        outcome.map_err(|error: rusqlite::Error| StoreError {
-            cause: format!("approve review {}: {error}", approval.review_id),
-        })
+        self.db
+            .write_blocking(APPROVE_LANE, "identify.approve_review", |tx| {
+                changing(tx, |tx| approve_tx(tx, approval))
+            })
+            .map(|written| self.landed(written))
     }
+}
+
+/// The lane a review approval writes on: a request's.
+const APPROVE_LANE: Lane = Lane::Foreground;
+
+/// [`SqliteIdentifyStore::approve`] on its transaction.
+fn approve_tx(tx: &Transaction<'_>, approval: &Approval) -> Result<bool, StoreError> {
+    let album = &approval.album.local_album_id;
+    let settled = tx.execute(
+        "UPDATE library_identify_reviews SET state = 'approved', \
+         resolved_by_user_id = ?1, selected_candidate_key = ?2, updated_ms = ?3 \
+         WHERE id = ?4 AND state = 'pending'",
+        params![
+            approval.by_user_id,
+            approval.candidate_key,
+            now_ms(),
+            approval.review_id
+        ],
+    )?;
+    if settled != 1 {
+        return Ok(false);
+    }
+    // A review approval can be taken back like any edition choice.
+    let point = crate::operations::choice::undo_point(tx, album)?;
+    seal_album_identity(tx, &approval.album)?;
+    for track in &approval.tracks {
+        seal_track_identity(tx, track)?;
+    }
+    // A curator's approval confirms the album: an unconfirmed flag left by
+    // an earlier best guess must not keep holding its files back from
+    // management (an edition choice clears it the same way).
+    tx.execute(
+        "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
+        params![album],
+    )?;
+    // A candidate without track evidence (an edition a catalog correction
+    // dropped, restored from its review) names the release only: the remap
+    // worker places the files on it.
+    if approval.tracks.is_empty()
+        && let Some(release) = approval.album.release_mbid.as_deref()
+    {
+        crate::operations::choice::queue_remap(
+            tx,
+            album,
+            release,
+            Some(&approval.by_user_id),
+            crate::clock::now_unix(),
+        )?;
+    }
+    crate::operations::choice::keep_undo_point(
+        tx,
+        album,
+        &point,
+        &approval.by_user_id,
+        "review_approve",
+        "REVIEW_APPROVED",
+        crate::clock::now_unix(),
+    )
+    .map_err(|error| {
+        StoreError::Failed(format!("approve review {}: {error}", approval.review_id))
+    })?;
+    bump_identification_stream(tx)?;
+    let now = crate::clock::now_unix();
+    join_replaced(tx, Scope::Album(album), now)?;
+    continue_tracks(tx, Scope::Album(album), now)?;
+    Ok(true)
 }
 
 /// Seal one album identity inside the caller's transaction. A new row
@@ -2247,9 +2493,10 @@ mod tests {
         let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("settle-match").unwrap();
         let path = dir.path().join("app.db");
         droppedneedle_kernel::schema::template::copy_to(&path).unwrap();
-        let mut conn = droppedneedle_kernel::db::open_connection(&path).unwrap();
-        conn.execute_batch(
-            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+        let db = Db::open_for_tests(&path).unwrap();
+        let seed = |tx: &Transaction<'_>| {
+            tx.execute_batch(
+                "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
              album_artist_id, grouping_source, created_at, updated_at) VALUES \
              ('old', 'r', 'old', 'T', 't', '00000000-0000-4000-8000-000000000002', \
               'automatic', 1, 1), \
@@ -2263,7 +2510,11 @@ mod tests {
              candidates_json, state, created_ms, updated_ms) VALUES \
              ('waiting', 'new', 'R', '[]', 'pending', 0, 0), \
              ('closed', 'new', 'R', '[]', 'dismissed', 0, 0);",
-        )
+            )
+        };
+        db.write_blocking(Lane::Background, "test.seed", |tx| {
+            Ok::<_, droppedneedle_kernel::db::DbError>(seed(tx)?)
+        })
         .unwrap();
         let state = |conn: &Connection| -> Vec<(String, String)> {
             conn.prepare(
@@ -2277,11 +2528,18 @@ mod tests {
             .collect::<rusqlite::Result<_>>()
             .unwrap()
         };
-        let before = state(&conn);
+        let before = db
+            .read_blocking("test.before", |conn| {
+                Ok::<_, droppedneedle_kernel::db::DbError>(state(conn))
+            })
+            .unwrap();
         assert_eq!(before.len(), 4);
 
-        let tx = conn.transaction().unwrap();
-        assert!(settle_followed_match(&tx, "new", "old", 1.0).is_err());
-        assert_eq!(state(&tx), before);
+        db.write_blocking(Lane::Background, "test.settle", |tx| {
+            assert!(settle_followed_match(tx, "new", "old", 1.0).is_err());
+            assert_eq!(state(tx), before);
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        })
+        .unwrap();
     }
 }

@@ -715,7 +715,7 @@ impl LibrarySetup {
         let missing = |message: String| ServiceError::Conflict { message };
         let album = self
             .identify_store
-            .album_identity(album_id)
+            .album_identity(album_id)?
             .ok_or_else(|| {
                 missing(format!(
                     "Album {album_id} has no accepted identity; identify it first"
@@ -736,7 +736,7 @@ impl LibrarySetup {
                         "Album {album_id} has no accepted exact release; approve an exact edition"
                     ))
                 })?;
-            let track = self.identify_store.track_identity(track_id);
+            let track = self.identify_store.track_identity(track_id)?;
             return Ok(ReleaseIdentity {
                 release_mbid: custom.id,
                 release_group_mbid,
@@ -760,7 +760,7 @@ impl LibrarySetup {
             .ok_or_else(|| missing(format!("Album {album_id} has no accepted release group")))?;
         let track = self
             .identify_store
-            .track_identity(track_id)
+            .track_identity(track_id)?
             .ok_or_else(|| missing(format!("Track {track_id} has no accepted mapping")))?;
         let recording_mbid = track
             .recording_mbid
@@ -839,24 +839,25 @@ impl LibrarySetup {
 
     /// The tags a retag writes: the identified release's full tag set
     /// (when its document is on file and the format is writable), with
-    /// the caller's explicit updates on top.
+    /// the caller's explicit updates on top. A document that cannot be
+    /// read fails the plan rather than writing fewer tags.
     fn with_release_tags(
         &self,
         identity: &ReleaseIdentity,
         rel_path: &str,
         explicit: &BTreeMap<String, Vec<String>>,
-    ) -> BTreeMap<String, Vec<String>> {
+    ) -> Result<BTreeMap<String, Vec<String>>, ServiceError> {
         let writable = super::tags::format_for_path(PathBuf::from(rel_path).as_path())
             .is_ok_and(super::tags::save::writable);
         if !writable {
-            return explicit.clone();
+            return Ok(explicit.clone());
         }
-        let Some(release) = self.identify_store.release(&identity.release_mbid, None) else {
+        let Some(release) = self.identify_store.release(&identity.release_mbid, None)? else {
             tracing::info!(
                 release = identity.release_mbid,
                 "no stored release document; retag writes only the requested fields"
             );
-            return explicit.clone();
+            return Ok(explicit.clone());
         };
         let Some(track) = release
             .tracks
@@ -868,7 +869,7 @@ impl LibrarySetup {
                 track = identity.release_track_mbid,
                 "release document lacks the mapped track; retag writes only the requested fields"
             );
-            return explicit.clone();
+            return Ok(explicit.clone());
         };
         let mut tags = super::tags::picard::release_tags(&release, track);
         // A value the writer would refuse is dropped here, at preview,
@@ -883,7 +884,7 @@ impl LibrarySetup {
                 .iter()
                 .map(|(name, values)| (name.clone(), values.clone())),
         );
-        tags
+        Ok(tags)
     }
 
     /// Lowercase container format for one rel path.
@@ -941,7 +942,7 @@ impl LibrarySetup {
         // whole bundle blocks before any file is touched.
         let album = self
             .identify_store
-            .album_identity(album_id)
+            .album_identity(album_id)?
             .ok_or_else(|| ServiceError::Conflict {
                 message: format!("Album {album_id} has no accepted identity; identify it first"),
             })?;
@@ -981,7 +982,7 @@ impl LibrarySetup {
             // updates win over it. Organize moves keep their tags.
             let managed_updates = match kind {
                 PlanKind::SamePath => {
-                    self.with_release_tags(&identity, &item.rel_path, &item.managed_updates)
+                    self.with_release_tags(&identity, &item.rel_path, &item.managed_updates)?
                 }
                 PlanKind::Move => item.managed_updates.clone(),
             };

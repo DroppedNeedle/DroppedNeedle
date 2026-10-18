@@ -135,14 +135,11 @@ fn rig_on(routes: HashMap<String, RawResponse>, down: bool, source: Source) -> R
     let path = dir.join("app.db");
     migrated_db(&path);
     let db = droppedneedle_kernel::db::open_connection(&path).expect("side connection opens");
-    let store = Arc::new(SqliteIdentifyStore::open(&path).expect("store opens"));
+    let store = Arc::new(SqliteIdentifyStore::new(
+        droppedneedle_kernel::db::Db::open_for_tests(&path).expect("store opens"),
+    ));
     let service = IdentifyService::new(IdentifyDeps {
-        identities: store.clone(),
-        facts: store.clone(),
-        aliases: store.clone(),
-        queue: store.clone(),
-        reviews: store.clone(),
-        releases: store.clone(),
+        store: store.clone(),
         providers: Arc::new(LiveProviders::new(
             musicbrainz,
             store.clone(),
@@ -238,18 +235,22 @@ fn album(files: &[FileTags<'_>]) -> LocalAlbumFacts {
 
 async fn identify(rig: &Rig, facts: LocalAlbumFacts) -> identify::service::AttemptReport {
     seed_album(rig, &facts);
-    rig.service.enqueue_album(
-        "job-1",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-1",
-        None,
-        0,
-    );
-    rig.store.claim(0, 60_000);
+    rig.service
+        .enqueue_album(
+            "job-1",
+            "album-1",
+            IdentifyKind::Automatic,
+            "rev-1",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    rig.store.claim(0, 60_000).unwrap();
     rig.service
         .run_claimed_job("job-1", 0)
         .await
+        .unwrap()
         .expect("attempt report")
 }
 
@@ -284,10 +285,18 @@ async fn tagged_album_identifies_through_a_merged_release_id() {
     let report = identify(&rig, album(&files)).await;
 
     assert_eq!(report.outcome, IdentificationOutcome::Identified);
-    let identity = rig.store.album_identity("album-1").expect("identity");
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
     assert_eq!(identity.release_mbid.as_deref(), Some(STANDARD));
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP));
-    let track = rig.store.track_identity("t2").expect("track identity");
+    let track = rig
+        .store
+        .track_identity("t2")
+        .unwrap()
+        .expect("track identity");
     assert_eq!(
         track.release_track_mbid.as_deref(),
         Some(tracks[1].as_str())
@@ -299,7 +308,7 @@ async fn tagged_album_identifies_through_a_merged_release_id() {
         vec![format!("/release/{MERGED}"), format!("/release/{STANDARD}")]
     );
     // The release document stays on file for tagging.
-    let stored = rig.store.release(STANDARD, None).expect("stored");
+    let stored = rig.store.release(STANDARD, None).unwrap().expect("stored");
     assert_eq!(stored.old_ids, vec![MERGED.to_owned()]);
     assert_eq!(stored.labels, vec!["Harbour Lights Records".to_owned()]);
 }
@@ -323,12 +332,20 @@ async fn messy_album_keeps_a_best_guess_without_a_review() {
     assert_eq!(report.outcome, IdentificationOutcome::Ambiguous);
     assert_eq!(report.reason_code, "WEAK_MATCH");
     assert_eq!(report.review_id, None);
-    let identity = rig.store.album_identity("album-1").expect("best guess");
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("best guess");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP));
     assert_eq!(identity.decision_source, DecisionSource::Automatic);
     // The unconfirmed flag carries the closest candidates with their
     // distances: close enough to show a person, not close enough to trust.
-    let flag = rig.store.match_flag("album-1").expect("unconfirmed flag");
+    let flag = rig
+        .store
+        .match_flag("album-1")
+        .unwrap()
+        .expect("unconfirmed flag");
     assert_eq!(flag.state, identify::models::MatchFlagState::Unconfirmed);
     assert_eq!(flag.candidates.len(), 2);
     for candidate in &flag.candidates {
@@ -344,8 +361,8 @@ async fn messy_album_keeps_a_best_guess_without_a_review() {
         assert!(tracks[3].release_track_mbid.is_some());
     }
     // "Pick another edition" finds the documents still on file.
-    assert!(rig.store.release(STANDARD, None).is_some());
-    assert!(rig.store.release(REMASTER, None).is_some());
+    assert!(rig.store.release(STANDARD, None).unwrap().is_some());
+    assert!(rig.store.release(REMASTER, None).unwrap().is_some());
 }
 
 /// Two editions with the same titles: the one whose track lengths match
@@ -363,9 +380,17 @@ async fn edition_with_the_closest_tracklist_wins() {
     let report = identify(&rig, album(&files)).await;
 
     assert_eq!(report.outcome, IdentificationOutcome::Identified);
-    let identity = rig.store.album_identity("album-1").expect("identity");
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
     assert_eq!(identity.release_mbid.as_deref(), Some(REMASTER));
-    let extended = rig.store.track_identity("t2").expect("track identity");
+    let extended = rig
+        .store
+        .track_identity("t2")
+        .unwrap()
+        .expect("track identity");
     assert_eq!(
         extended.recording_mbid.as_deref(),
         Some("c0ffee00-0000-4000-8000-00000000d005")
@@ -378,7 +403,7 @@ async fn musicbrainz_outage_defers_the_job() {
     let rig = rig(true);
     let report = identify(&rig, album(&[("Lamplight", 214, None)])).await;
     assert_eq!(report.outcome, IdentificationOutcome::ProviderDeferred);
-    assert!(rig.store.album_identity("album-1").is_none());
+    assert!(rig.store.album_identity("album-1").unwrap().is_none());
 }
 
 /// Random Access Memories (Daft Punk), as two of its editions: the
@@ -549,9 +574,17 @@ async fn a_stray_track_id_does_not_move_the_album_to_another_edition() {
     let report = identify(&rig, facts).await;
 
     assert_eq!(report.outcome, IdentificationOutcome::Identified);
-    let identity = rig.store.album_identity("album-1").expect("identity");
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
     assert_eq!(identity.release_mbid.as_deref(), Some(RAM));
-    let track = rig.store.track_identity("t8").expect("track identity");
+    let track = rig
+        .store
+        .track_identity("t8")
+        .unwrap()
+        .expect("track identity");
     let expected = ram_track(RAM, 7);
     assert_eq!(track.release_track_mbid.as_deref(), Some(expected.as_str()));
 }
@@ -567,7 +600,15 @@ async fn a_merged_release_id_finds_the_document_already_on_file() {
 
     let rig = rig(false);
     let standard_facts = album(&[("Lamplight", 214, None)]);
-    let fetched = rig.service.recall(&standard_facts, Some(STANDARD)).await;
+    let fetched = rig
+        .service
+        .recall(
+            &standard_facts,
+            Some(STANDARD),
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .await
+        .unwrap();
     assert_eq!(fetched.releases.len(), 1);
     let names = ArtistNames {
         fetched_at_ms: 1,
@@ -589,6 +630,7 @@ async fn a_merged_release_id_finds_the_document_already_on_file() {
                 names: Some(names.clone()),
             },
         )
+        .unwrap()
         .expect("names grafted");
     rig.seen.lock().expect("seen").clear();
 
@@ -620,11 +662,15 @@ async fn a_merged_release_id_finds_the_document_already_on_file() {
     let stored = rig
         .store
         .release(MERGED, None)
+        .unwrap()
         .expect("found by the merged id");
     assert_eq!(stored.id, STANDARD);
     assert_eq!(stored.artist_names, Some(names));
     rig.seen.lock().expect("seen").clear();
-    rig.service.recall(&facts, None).await;
+    rig.service
+        .recall(&facts, None, droppedneedle_kernel::db::Lane::Background)
+        .await
+        .unwrap();
     let seen = rig.seen.lock().expect("seen").clone();
     assert!(
         !seen.contains(&format!("/release/{MERGED}")),
@@ -641,7 +687,7 @@ async fn a_merged_release_id_finds_the_document_already_on_file() {
              WHERE local_album_id = 'album-1';"
         ))
         .expect("a person's match names the merged id");
-    assert!(rig.store.link_album_artists("album-1"));
+    rig.store.link_album_artists("album-1").unwrap();
     let state: String = rig
         .db
         .query_row(
@@ -803,29 +849,34 @@ impl Rig {
                 )
                 .expect("track mapping seeds");
         }
-        self.store.save_release(&Release {
-            id: ARTIST_RELEASE.to_owned(),
-            release_group_id: ARTIST_GROUP.to_owned(),
-            title: "Album".to_owned(),
-            artists: vec![CreditedArtist {
-                id: credited.to_owned(),
-                name: NAME.to_owned(),
-                sort_name: None,
-                join: String::new(),
-            }],
-            tracks: (1..=2)
-                .map(|number| ReleaseTrack {
-                    id: format!("rt-{number}"),
-                    recording_id: format!("rec-{number}"),
-                    title: format!("Song {number}"),
-                    disc: 1,
-                    position: number,
-                    absolute_position: number,
-                    ..ReleaseTrack::default()
-                })
-                .collect(),
-            ..Release::default()
-        });
+        self.store
+            .save_release(
+                &Release {
+                    id: ARTIST_RELEASE.to_owned(),
+                    release_group_id: ARTIST_GROUP.to_owned(),
+                    title: "Album".to_owned(),
+                    artists: vec![CreditedArtist {
+                        id: credited.to_owned(),
+                        name: NAME.to_owned(),
+                        sort_name: None,
+                        join: String::new(),
+                    }],
+                    tracks: (1..=2)
+                        .map(|number| ReleaseTrack {
+                            id: format!("rt-{number}"),
+                            recording_id: format!("rec-{number}"),
+                            title: format!("Song {number}"),
+                            disc: 1,
+                            position: number,
+                            absolute_position: number,
+                            ..ReleaseTrack::default()
+                        })
+                        .collect(),
+                    ..Release::default()
+                },
+                droppedneedle_kernel::db::Lane::Background,
+            )
+            .unwrap();
     }
 
     fn texts(&self, sql: &str) -> Vec<String> {
@@ -895,7 +946,7 @@ fn asked(id: &str) -> String {
 async fn an_artist_id_musicbrainz_merged_is_followed() {
     let rig = rig_on(probe_routes(), false, Source::BrainzMash);
     rig.artist_album(Some(RETIRED), CURRENT);
-    assert!(rig.store.link_and_merge_album_artists("al"));
+    rig.store.link_and_merge_album_artists("al").unwrap();
     assert_eq!(
         rig.checks(),
         [
@@ -905,7 +956,7 @@ async fn an_artist_id_musicbrainz_merged_is_followed() {
     );
     assert!(rig.link_of("ar-r").is_empty());
 
-    assert_eq!(rig.service.resolve_merged_artist_ids(20).await, 2);
+    assert_eq!(rig.service.resolve_merged_artist_ids(20).await.unwrap(), 2);
     assert_eq!(
         rig.checks(),
         [
@@ -925,7 +976,7 @@ async fn an_artist_id_musicbrainz_merged_is_followed() {
     assert_eq!(seen.len(), 1 + current, "{seen:?}");
 
     let before = rig.written();
-    assert_eq!(rig.service.resolve_merged_artist_ids(20).await, 0);
+    assert_eq!(rig.service.resolve_merged_artist_ids(20).await.unwrap(), 0);
     assert_eq!(
         rig.seen().len(),
         seen.len(),
@@ -942,8 +993,8 @@ async fn ids_musicbrainz_keeps_apart_are_asked_again_after_a_month() {
     let routes = with(probe_routes(), vec![(asked(OTHER), artist_answer(OTHER))]);
     let rig = rig_on(routes, false, Source::BrainzMash);
     rig.artist_album(Some(OTHER), CURRENT);
-    assert!(rig.store.link_and_merge_album_artists("al"));
-    assert_eq!(rig.service.resolve_merged_artist_ids(20).await, 2);
+    rig.store.link_and_merge_album_artists("al").unwrap();
+    assert_eq!(rig.service.resolve_merged_artist_ids(20).await.unwrap(), 2);
     assert_eq!(
         rig.checks(),
         [format!("{OTHER} kept -"), format!("{CURRENT} kept -")]
@@ -953,8 +1004,8 @@ async fn ids_musicbrainz_keeps_apart_are_asked_again_after_a_month() {
 
     let before = rig.written();
     let asks = rig.seen().len();
-    assert!(rig.store.link_and_merge_album_artists("al"));
-    assert_eq!(rig.service.resolve_merged_artist_ids(20).await, 0);
+    rig.store.link_and_merge_album_artists("al").unwrap();
+    assert_eq!(rig.service.resolve_merged_artist_ids(20).await.unwrap(), 0);
     assert_eq!(rig.written(), before);
     assert_eq!(rig.seen().len(), asks);
 
@@ -965,9 +1016,9 @@ async fn ids_musicbrainz_keeps_apart_are_asked_again_after_a_month() {
             params![OTHER],
         )
         .expect("checked a month ago");
-    assert!(rig.store.link_and_merge_album_artists("al"));
+    rig.store.link_and_merge_album_artists("al").unwrap();
     assert_eq!(rig.checks()[0], format!("{OTHER} pending -"));
-    assert_eq!(rig.service.resolve_merged_artist_ids(20).await, 1);
+    assert_eq!(rig.service.resolve_merged_artist_ids(20).await.unwrap(), 1);
     assert_eq!(rig.seen()[asks..], [asked(OTHER)]);
 }
 
@@ -991,9 +1042,9 @@ async fn no_answer_leaves_the_ids_pending() {
         (rig_on(probe_routes(), false, Source::Unbound), 0),
     ] {
         rig.artist_album(Some(RETIRED), CURRENT);
-        assert!(rig.store.link_and_merge_album_artists("al"));
+        rig.store.link_and_merge_album_artists("al").unwrap();
         let before = rig.written();
-        assert_eq!(rig.service.resolve_merged_artist_ids(20).await, 0);
+        assert_eq!(rig.service.resolve_merged_artist_ids(20).await.unwrap(), 0);
         assert_eq!(rig.seen().len(), requests, "{:?}", rig.seen());
         assert_eq!(rig.written(), before);
         assert_eq!(
@@ -1014,14 +1065,14 @@ async fn a_retry_after_holds_artist_lookups_back() {
     let routes = HashMap::from([(asked(RETIRED), limited()), (asked(CURRENT), limited())]);
     let rig = rig_on(routes, false, Source::Official);
     rig.artist_album(Some(RETIRED), CURRENT);
-    assert!(rig.store.link_and_merge_album_artists("al"));
-    assert_eq!(rig.service.resolve_merged_artist_ids(20).await, 0);
+    rig.store.link_and_merge_album_artists("al").unwrap();
+    assert_eq!(rig.service.resolve_merged_artist_ids(20).await.unwrap(), 0);
     assert_eq!(rig.seen().len(), 1);
     tokio::time::advance(std::time::Duration::from_secs(29)).await;
-    assert_eq!(rig.service.resolve_merged_artist_ids(20).await, 0);
+    assert_eq!(rig.service.resolve_merged_artist_ids(20).await.unwrap(), 0);
     assert_eq!(rig.seen().len(), 1, "held back");
     tokio::time::advance(std::time::Duration::from_secs(8)).await;
-    assert_eq!(rig.service.resolve_merged_artist_ids(20).await, 0);
+    assert_eq!(rig.service.resolve_merged_artist_ids(20).await.unwrap(), 0);
     assert_eq!(rig.seen().len(), 2, "asked again");
 }
 
@@ -1047,8 +1098,8 @@ async fn merges_the_app_does_not_follow() {
     for routes in [placeholder, outside] {
         let rig = rig_on(routes, false, Source::BrainzMash);
         rig.artist_album(Some(RETIRED), CURRENT);
-        assert!(rig.store.link_and_merge_album_artists("al"));
-        assert_eq!(rig.service.resolve_merged_artist_ids(20).await, 2);
+        rig.store.link_and_merge_album_artists("al").unwrap();
+        assert_eq!(rig.service.resolve_merged_artist_ids(20).await.unwrap(), 2);
         assert_eq!(
             rig.checks(),
             [format!("{RETIRED} kept -"), format!("{CURRENT} kept -")]
@@ -1068,7 +1119,7 @@ async fn merges_the_app_does_not_follow() {
              VALUES ('{RETIRED}', 'pending', 1);"
         ))
         .expect("the current id on file as merged into the retired one");
-    assert_eq!(rig.service.resolve_merged_artist_ids(20).await, 1);
+    assert_eq!(rig.service.resolve_merged_artist_ids(20).await.unwrap(), 1);
     assert_eq!(
         rig.checks(),
         [
@@ -1088,9 +1139,9 @@ async fn a_release_crediting_the_retired_id_proves_the_current_one() {
 
     let rig = rig_on(probe_routes(), false, Source::BrainzMash);
     rig.artist_album(Some(CURRENT), RETIRED);
-    assert!(rig.store.link_and_merge_album_artists("al"));
+    rig.store.link_and_merge_album_artists("al").unwrap();
     assert!(stale_albums(&rig.db, 50).expect("stale").is_empty());
-    rig.service.resolve_merged_artist_ids(20).await;
+    rig.service.resolve_merged_artist_ids(20).await.unwrap();
     assert_eq!(
         rig.texts("SELECT DISTINCT artist_mbid FROM library_artist_credit_proofs"),
         [CURRENT]
@@ -1116,8 +1167,8 @@ async fn a_recorded_merge_follows_a_later_one() {
             params![RETIRED, CURRENT],
         )
         .expect("an earlier merge on file");
-    assert!(rig.store.link_and_merge_album_artists("al"));
-    rig.service.resolve_merged_artist_ids(20).await;
+    rig.store.link_and_merge_album_artists("al").unwrap();
+    rig.service.resolve_merged_artist_ids(20).await.unwrap();
     assert_eq!(
         rig.checks(),
         [
@@ -1137,8 +1188,8 @@ async fn a_persons_link_follows_the_merge_unless_another_holds_the_id() {
     let rig = rig_on(probe_routes(), false, Source::BrainzMash);
     rig.artist_album(None, CURRENT);
     rig.link("ar-r", RETIRED, "manual");
-    assert!(rig.store.link_and_merge_album_artists("al"));
-    rig.service.resolve_merged_artist_ids(20).await;
+    rig.store.link_and_merge_album_artists("al").unwrap();
+    rig.service.resolve_merged_artist_ids(20).await.unwrap();
     assert_eq!(rig.link_of("ar-r"), [format!("{CURRENT} manual")]);
     assert_eq!(
         rig.texts(
@@ -1156,8 +1207,8 @@ async fn a_persons_link_follows_the_merge_unless_another_holds_the_id() {
     rig.link("ar-r", RETIRED, "manual");
     rig.artist("ar-s", "Someone Else", 2.0);
     rig.link("ar-s", CURRENT, "manual");
-    assert!(rig.store.link_and_merge_album_artists("al"));
-    rig.service.resolve_merged_artist_ids(20).await;
+    rig.store.link_and_merge_album_artists("al").unwrap();
+    rig.service.resolve_merged_artist_ids(20).await.unwrap();
     assert_eq!(rig.checks()[0], format!("{RETIRED} kept -"));
     assert_eq!(rig.link_of("ar-r"), [format!("{RETIRED} manual")]);
     assert_eq!(rig.held(), [RETIRED]);

@@ -4,8 +4,8 @@
 //! everything here runs off the async workers (handlers use
 //! `spawn_blocking`; the loop drives its tick on a blocking thread).
 //! Requests write on the foreground lane, the worker on the background
-//! lane. Identify store methods use their own connection, so they are
-//! never called inside a write here.
+//! lane. Identify store methods take their own turn on the database, so
+//! they are never called inside a write here.
 
 use droppedneedle_kernel::db::Lane;
 

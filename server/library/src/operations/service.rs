@@ -317,9 +317,10 @@ impl Operations {
         };
         for item in &plan.items {
             let applied = match (action, item.candidate_key.as_deref()) {
-                (reviews::BulkAction::KeepTagged, _) => {
-                    Ok(self.identify.reject_candidates(&item.review_id, actor))
-                }
+                (reviews::BulkAction::KeepTagged, _) => self
+                    .identify
+                    .reject_candidates(&item.review_id, actor)
+                    .map_err(|error| error.to_string()),
                 (reviews::BulkAction::Accept, Some(key)) => self
                     .identify
                     .approve_candidate(&item.review_id, actor, key)
@@ -375,7 +376,9 @@ impl Operations {
         actor: Option<&str>,
     ) -> Result<EditionChoice, OperationError> {
         let release = parse_release(raw_release)?;
-        let candidate = self.candidate_for(album_id, &release).await?;
+        let candidate = self
+            .candidate_for(album_id, &release, Lane::Foreground)
+            .await?;
         let (ops, album, actor) = (self.clone(), album_id.to_owned(), actor.map(str::to_owned));
         tokio::task::spawn_blocking(move || {
             ops.db
@@ -420,7 +423,9 @@ impl Operations {
         if guard.identity_revision != expected_identity_revision {
             return Err(OperationError::Conflict(reasons::EDITION_CHANGED));
         }
-        let candidate = self.candidate_for(album_id, &release).await?;
+        let candidate = self
+            .candidate_for(album_id, &release, Lane::Foreground)
+            .await?;
         let (ops, album, actor) = (self.clone(), album_id.to_owned(), actor.to_owned());
         tokio::task::spawn_blocking(move || {
             ops.db
@@ -452,12 +457,14 @@ impl Operations {
     }
 
     /// The release scored against the album's files, as a candidate.
+    /// Documents the recall fetched are kept on `lane`.
     async fn candidate_for(
         &self,
         album_id: &str,
         release_mbid: &str,
+        lane: Lane,
     ) -> Result<ReidentificationCandidate, OperationError> {
-        Ok(self.scored(album_id, release_mbid).await?.2)
+        Ok(self.scored(album_id, release_mbid, lane).await?.2)
     }
 
     /// The album's files, the release as MusicBrainz lists it, and the
@@ -466,17 +473,21 @@ impl Operations {
         &self,
         album_id: &str,
         release_mbid: &str,
+        lane: Lane,
     ) -> Result<(LocalAlbumFacts, Release, ReidentificationCandidate), OperationError> {
         let facts = {
             let store = self.store.clone();
             let album = album_id.to_owned();
             tokio::task::spawn_blocking(move || store.album_facts(&album))
                 .await
-                .map_err(|error| OperationError::Store(error.to_string()))?
+                .map_err(|error| OperationError::Store(error.to_string()))??
         }
         .filter(|facts| !facts.tracks.is_empty())
         .ok_or(OperationError::NotFound(reasons::ALBUM_NOT_FOUND))?;
-        let recall = self.identify.recall(&facts, Some(release_mbid)).await;
+        let recall = self
+            .identify
+            .recall(&facts, Some(release_mbid), lane)
+            .await?;
         if recall.provider_deferred {
             return Err(OperationError::Unavailable(
                 recall
@@ -591,7 +602,7 @@ impl Operations {
                 .clone()
                 .ok_or(OperationError::Invalid(reasons::NO_EDITION_TO_PLAN))?,
         };
-        let (facts, release, candidate) = self.scored(album_id, &release).await?;
+        let (facts, release, candidate) = self.scored(album_id, &release, Lane::Foreground).await?;
         let stored = match current.as_deref() {
             Some(current) if release.answers_to(current.trim()) => {
                 hand_match::on_release(stored, &release)
@@ -640,7 +651,7 @@ impl Operations {
             .await
             .map_err(|error| OperationError::Store(error.to_string()))??
         };
-        let (_, release, candidate) = self.scored(album_id, &release).await?;
+        let (_, release, candidate) = self.scored(album_id, &release, Lane::Foreground).await?;
         let ops = self.clone();
         let (album, track, wanted, actor) = (
             album_id.to_owned(),
@@ -700,20 +711,18 @@ impl Operations {
             .write_blocking(Lane::Foreground, "operations.hand_back", |tx| {
                 choice::hand_back(tx, album_id, actor, now_unix())
             })?;
-        let revision = self
-            .store
-            .input_revision(album_id)
-            .ok_or_else(|| OperationError::Store("album revision unreadable".to_owned()))?;
-        let queued = self.identify.enqueue_album(
+        let revision = self.store.input_revision(album_id)?;
+        if let Err(error) = self.identify.enqueue_album(
             &self.ids.new_id(),
             album_id,
             IdentifyKind::Manual,
             &revision,
             Some(actor),
             crate::clock::now_ms(),
-        );
-        if queued.is_none() {
+            Lane::Foreground,
+        ) {
             tracing::warn!(
+                %error,
                 album = album_id,
                 "edition handed back but the identification was not queued"
             );
@@ -765,7 +774,11 @@ impl Operations {
             return Ok(false);
         };
         let outcome = self
-            .candidate_for(&pending.local_album_id, &pending.release_mbid)
+            .candidate_for(
+                &pending.local_album_id,
+                &pending.release_mbid,
+                Lane::Background,
+            )
             .await;
         let actor = pending.chosen_by_user_id.as_deref();
         let place_only = pending.origin == RemapOrigin::PlaceOnly;
@@ -914,7 +927,7 @@ impl Operations {
                 if known.is_none() {
                     return Err(OperationError::NotFound(reasons::ALBUM_NOT_FOUND));
                 }
-                Ok(ops.store.album_identity(&album_id))
+                Ok(ops.store.album_identity(&album_id)?)
             })
             .await
             .map_err(|error| OperationError::Store(error.to_string()))??

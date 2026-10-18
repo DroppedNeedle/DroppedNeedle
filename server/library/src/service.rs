@@ -1,4 +1,6 @@
 //! Library service: roots, scans, identification, and reviews.
+use droppedneedle_kernel::db::Lane;
+
 use super::clock::now_ms;
 use super::identify::models::{AlbumIdentity, IdentifyJob, IdentifyKind};
 use super::manage::publish_error;
@@ -189,17 +191,20 @@ impl LibrarySetup {
         kind: IdentifyKind,
         user_id: &str,
     ) -> Result<IdentifyJob, ServiceError> {
-        if self.identify_store.album_facts(album_id).is_none() {
+        if self.identify_store.album_facts(album_id)?.is_none() {
             return Err(ServiceError::NotFound);
         }
-        let revision = self
-            .identify_store
-            .input_revision(album_id)
-            .ok_or_else(|| ServiceError::internal(&"album revision unreadable"))?;
+        let revision = self.identify_store.input_revision(album_id)?;
         let job_id = self.ids.new_id();
-        self.identify
-            .enqueue_album(&job_id, album_id, kind, &revision, Some(user_id), now_ms())
-            .ok_or_else(|| ServiceError::internal(&"identify job not recorded"))
+        Ok(self.identify.enqueue_album(
+            &job_id,
+            album_id,
+            kind,
+            &revision,
+            Some(user_id),
+            now_ms(),
+            Lane::Foreground,
+        )?)
     }
 
     /// Unsettled publish bundles in the journal. Blocking.
@@ -208,8 +213,11 @@ impl LibrarySetup {
     }
 
     /// Pending reviews for one album, oldest first.
-    pub fn pending_reviews(&self, album_id: &str) -> Vec<super::identify::models::ReviewItem> {
-        self.identify.pending_reviews(album_id)
+    pub fn pending_reviews(
+        &self,
+        album_id: &str,
+    ) -> Result<Vec<super::identify::models::ReviewItem>, ServiceError> {
+        Ok(self.identify.pending_reviews(album_id)?)
     }
 
     /// Approve a pending review with the curator's chosen candidate,
@@ -221,7 +229,7 @@ impl LibrarySetup {
         user_id: &str,
         candidate_key: &str,
     ) -> Result<(super::identify::models::ReviewItem, Option<AlbumIdentity>), ServiceError> {
-        let Some(review) = self.identify_store.get(review_id) else {
+        let Some(review) = self.identify_store.get(review_id)? else {
             return Err(ServiceError::NotFound);
         };
         if review.state != super::identify::models::ReviewState::Pending {
@@ -238,15 +246,16 @@ impl LibrarySetup {
         }
         let approved = self
             .identify
-            .approve_candidate(review_id, user_id, candidate_key)
-            .map_err(|error| ServiceError::internal(&error))?;
+            .approve_candidate(review_id, user_id, candidate_key)?;
         if !approved {
             return Err(ServiceError::Conflict {
                 message: "Review could not be approved".to_owned(),
             });
         }
-        let settled = self.identify_store.get(review_id).unwrap_or(review);
-        let identity = self.identify_store.album_identity(&settled.local_album_id);
+        let settled = self.identify_store.get(review_id)?.unwrap_or(review);
+        let identity = self
+            .identify_store
+            .album_identity(&settled.local_album_id)?;
         Ok((settled, identity))
     }
 
@@ -256,7 +265,7 @@ impl LibrarySetup {
         review_id: &str,
         user_id: &str,
     ) -> Result<super::identify::models::ReviewItem, ServiceError> {
-        let Some(review) = self.identify_store.get(review_id) else {
+        let Some(review) = self.identify_store.get(review_id)? else {
             return Err(ServiceError::NotFound);
         };
         if review.state != super::identify::models::ReviewState::Pending {
@@ -264,11 +273,11 @@ impl LibrarySetup {
                 message: "Review is already settled".to_owned(),
             });
         }
-        if !self.identify.reject_candidates(review_id, user_id) {
+        if !self.identify.reject_candidates(review_id, user_id)? {
             return Err(ServiceError::Conflict {
                 message: "Review could not be rejected".to_owned(),
             });
         }
-        Ok(self.identify_store.get(review_id).unwrap_or(review))
+        Ok(self.identify_store.get(review_id)?.unwrap_or(review))
     }
 }

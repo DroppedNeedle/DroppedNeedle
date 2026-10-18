@@ -266,7 +266,7 @@ fn album_state(
             automatic::SCAN_HELD_BACK,
         )));
     }
-    let Some(identity) = store.album_identity(album_id) else {
+    let Some(identity) = store.album_identity(album_id)? else {
         return Ok(AlbumState::Blocked(reasons::identity_not_accepted()));
     };
     let gate = db
@@ -303,7 +303,7 @@ fn album_state(
     ) else {
         return Ok(AlbumState::Blocked(reasons::release_not_selected()));
     };
-    let Some(release) = store.release(&release_mbid, None) else {
+    let Some(release) = store.release(&release_mbid, None)? else {
         return Ok(AlbumState::Blocked(reasons::release_unavailable()));
     };
     Ok(AlbumState::Ready {
@@ -312,6 +312,12 @@ fn album_state(
         release_group_mbid,
         album_identity_revision: identity.row_revision,
     })
+}
+
+/// Why a file is left out when its match could not be read.
+fn match_unreadable(track_id: &str, error: &crate::identify::stores::StoreError) -> ItemReason {
+    tracing::warn!(%error, track_id, "the file's match could not be read; the file is left out");
+    reasons::match_unreadable()
 }
 
 fn base_item(
@@ -449,7 +455,9 @@ fn plan_file(
     let (recording_mbid, release_track_mbid, mapping_revision, release_track) =
         if super::custom::is_custom(release) {
             // A custom edition's tracks are the album's own files.
-            let mapping = store.track_identity(&track.id);
+            let mapping = store
+                .track_identity(&track.id)
+                .map_err(|error| match_unreadable(&track.id, &error))?;
             let release_track = release
                 .tracks
                 .iter()
@@ -467,6 +475,7 @@ fn plan_file(
         } else {
             let mapping = store
                 .track_identity(&track.id)
+                .map_err(|error| match_unreadable(&track.id, &error))?
                 .ok_or_else(reasons::track_not_mapped)?;
             let (Some(recording_mbid), Some(release_track_mbid)) = (
                 mapping.recording_mbid.clone(),
@@ -1346,11 +1355,19 @@ pub(crate) fn acoustid_values(
                 TagField::AcoustIdFingerprint,
                 held(TagField::AcoustIdFingerprint),
             );
-        let recording = setup
-            .identify_store
-            .track_identity(subject.track_id)
-            .and_then(|mapping| mapping.recording_mbid)
-            .filter(|recording| !recording.trim().is_empty());
+        let recording = match setup.identify_store.track_identity(subject.track_id) {
+            Ok(mapping) => mapping
+                .and_then(|mapping| mapping.recording_mbid)
+                .filter(|recording| !recording.trim().is_empty()),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    track = subject.track_id,
+                    "the file's match could not be read; no AcoustID values for it this run"
+                );
+                continue;
+            }
+        };
         let mut want_id = port.is_some()
             && recording.is_some()
             && acoustid_wanted(
@@ -1383,10 +1400,16 @@ pub(crate) fn acoustid_values(
             meta.len(),
             crate::scan::mtime_ns_from_metadata(&meta),
         );
-        let print = match setup
+        // A stored print that cannot be read is logged and taken from the
+        // audio again: that gives the same print.
+        let stored = setup
             .identify_store
             .fingerprint(subject.track_id, &revision)
-        {
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, track = subject.track_id, "stored fingerprint unreadable");
+                None
+            });
+        let print = match stored {
             Some((print, duration_seconds)) => AcoustIdPrint {
                 print,
                 duration_seconds,
@@ -1454,13 +1477,15 @@ pub(crate) fn acoustid_values(
                     result.score() > droppedneedle_providers::acoustid::BATCH_MIN_SCORE
                         && !result.recordings().is_empty()
                 });
-                setup.identify_store.save_fingerprint(
+                if let Err(error) = setup.identify_store.save_fingerprint(
                     track,
                     revision,
                     &print.print,
                     print.duration_seconds,
                     matched,
-                );
+                ) {
+                    tracing::warn!(%error, track, "fingerprint not kept");
+                }
                 if let Some(id) = acoustid_id_for(results, recording) {
                     extras
                         .files
@@ -1826,7 +1851,13 @@ pub fn plan_album(
     // just stored, so a run that writes their ids and new names keeps
     // them. No merge here: it would move the album's revision under the
     // plan.
-    ctx.setup.identify_store.link_album_artists(&scope.album_id);
+    if let Err(error) = ctx.setup.identify_store.link_album_artists(&scope.album_id) {
+        tracing::warn!(
+            %error,
+            album_id = scope.album_id,
+            "the album's artist links could not be worked out; the plan uses the links on file"
+        );
+    }
     extras.cover_owner = tracks.first().map(|track| track.id.clone());
     // A selection of single files is not the whole album.
     measure_replaygain(ctx, tracks, scope.track_ids.is_none(), &mut extras);

@@ -184,7 +184,8 @@ impl LibrarySetup {
     /// Identification reads MusicBrainz identity-critical and keeps the
     /// release documents it fetches; AcoustID runs only for albums whose
     /// tags are weak, with the key read from the settings per job. The
-    /// library's stores open their own connections on `db`'s file.
+    /// publisher and its journal readers still open their own connections
+    /// on `db`'s file.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         http: &droppedneedle_kernel::http_client::HttpClientFactory,
@@ -302,10 +303,7 @@ impl LibrarySetup {
             let registry = registry.clone();
             Arc::new(move || registry.resolver().registry().root_paths())
         };
-        let identify_store = Arc::new(
-            SqliteIdentifyStore::open(db_path)
-                .map_err(|error| format!("identify store: {error}"))?,
-        );
+        let identify_store = Arc::new(SqliteIdentifyStore::new(db.clone()));
         let pool = BlockingPool::new(4);
         let wakeups = WorkWakeups::new();
         let fs = FsCoordinator::new();
@@ -352,23 +350,18 @@ impl LibrarySetup {
         });
         let identify = Arc::new(
             IdentifyService::new(IdentifyDeps {
-                identities: identify_store.clone(),
-                facts: identify_store.clone(),
-                aliases: identify_store.clone(),
-                queue: identify_store.clone(),
-                reviews: identify_store.clone(),
-                releases: identify_store.clone(),
+                store: identify_store.clone(),
                 providers,
             })
             .with_preferences(edition_preferences(config.clone())),
         );
         let (contrib, contrib_worker) = super::contrib::assemble(
-            db_path,
+            db,
             contrib_providers,
             Arc::new(super::adapters::IdentifyFollowUp::new(
                 identify_store.clone(),
             )),
-        )?;
+        );
         let publish = PublishCell::new(db_path);
         let placement = publish.placement();
         Ok(Self {
@@ -513,11 +506,23 @@ impl LibrarySetup {
             super::import::sweep_import_leftovers(&roots, settled);
             recoveries
         };
-        let requeued = { self.identify_store.recover() };
-        if requeued > 0 {
-            tracing::info!(requeued, "identify jobs from the previous run requeued");
+        let identify = self.identify_store.clone();
+        match tokio::task::spawn_blocking(move || identify.recover()).await {
+            Ok(Ok(0)) => {}
+            Ok(Ok(requeued)) => {
+                tracing::info!(requeued, "identify jobs from the previous run requeued");
+            }
+            // The jobs' leases run out and the queue takes them again.
+            Ok(Err(error)) => tracing::warn!(%error, "identify jobs not requeued at startup"),
+            Err(error) => tracing::warn!(%error, "identify job recovery did not run"),
         }
-        let recovered = self.contrib_worker.recover(now_unix()).await;
+        let recovered = match self.contrib_worker.recover(now_unix()).await {
+            Ok(recovered) => recovered,
+            Err(error) => {
+                tracing::warn!(%error, "contribution verification leases not recovered");
+                0
+            }
+        };
         LibraryRecovery {
             publish_recoveries: recoveries
                 .into_iter()

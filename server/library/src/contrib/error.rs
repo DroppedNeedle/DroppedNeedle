@@ -51,6 +51,20 @@ pub enum ContribError {
     /// The contribution store failed. The cause goes to the log only.
     #[error("The contribution could not be saved.")]
     Storage(String),
+    /// The database was too busy to answer, or is shutting down. Answered
+    /// as the server-busy 503; the cause goes to the log only.
+    #[error("The server is busy.")]
+    Busy(String),
+}
+
+impl From<droppedneedle_kernel::db::DbError> for ContribError {
+    fn from(error: droppedneedle_kernel::db::DbError) -> Self {
+        use droppedneedle_kernel::db::DbError;
+        match error {
+            DbError::Busy { .. } | DbError::LaneClosed => Self::Busy(error.to_string()),
+            other => Self::Storage(other.to_string()),
+        }
+    }
 }
 
 impl ContribError {
@@ -86,6 +100,7 @@ impl ContribError {
             Self::TokenUnavailable => "CONTRIBUTION_TOKEN_FAILED",
             Self::ProviderUnmappable => "PROVIDER_DATA_UNREADABLE",
             Self::Storage(_) => "CONTRIBUTION_STORAGE_FAILED",
+            Self::Busy(_) => "SERVER_BUSY",
         }
     }
 
@@ -112,7 +127,7 @@ impl ContribError {
             Self::ResultMismatch(_) => {
                 "Check the release on MusicBrainz, then run the duplicate check again."
             }
-            Self::Data(_) | Self::Storage(_) => {
+            Self::Data(_) | Self::Storage(_) | Self::Busy(_) => {
                 "Try again. If it keeps failing, check the server log and report it."
             }
             Self::ProviderUnavailable => "Wait a minute and try again.",

@@ -10,6 +10,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use droppedneedle_kernel::db::Lane;
+use droppedneedle_kernel::jobs::schedule::SplitMix64;
 use droppedneedle_providers::slots::RequestPriority;
 
 use super::error::ContribError;
@@ -23,6 +25,9 @@ pub const LEASE_SECONDS: f64 = 90.0;
 pub const MAX_AUTOMATIC_WINDOW_SECONDS: f64 = 2.0 * 60.0 * 60.0;
 pub const MAX_AUTOMATIC_ATTEMPTS: u32 = 10;
 pub const CLEANUP_INTERVAL_SECONDS: f64 = 60.0 * 60.0;
+/// A job the database was too busy to run waits this long, plus up to
+/// as much again, before it runs again.
+const BUSY_RETRY_SECONDS: f64 = 5.0;
 
 #[derive(Debug, Clone)]
 pub struct VerificationWorkerConfig {
@@ -44,7 +49,6 @@ impl Default for VerificationWorkerConfig {
 pub struct VerificationWorker {
     service: Arc<ContributionService>,
     musicbrainz: Arc<dyn MusicBrainzContrib>,
-    identity: Arc<SqliteContributions>,
     store: Arc<SqliteContributions>,
     config: VerificationWorkerConfig,
     next_cleanup_at: Mutex<f64>,
@@ -54,49 +58,77 @@ impl VerificationWorker {
     pub fn new(
         service: Arc<ContributionService>,
         musicbrainz: Arc<dyn MusicBrainzContrib>,
-        identity: Arc<SqliteContributions>,
         config: VerificationWorkerConfig,
     ) -> Self {
         let store = service.store().clone();
         Self {
             service,
             musicbrainz,
-            identity,
             store,
             config,
             next_cleanup_at: Mutex::new(0.0),
         }
     }
 
-    pub async fn recover(&self, now: f64) -> u64 {
-        let recovered = self.store.recover_verification_leases(now).await;
+    /// Put jobs whose lease ran out back in the queue, and once an hour
+    /// drop expired provider data and old records. Returns how many jobs
+    /// went back. A clean-up that fails is logged and tried next hour.
+    pub async fn recover(&self, now: f64) -> Result<u64, ContribError> {
+        let recovered = self.store.recover_verification_leases(now).await?;
         let due = self
             .next_cleanup_at
             .lock()
             .map(|g| now >= *g)
             .unwrap_or(true);
         if due {
-            let _ = self.service.purge_expired_provider_data(now, 200).await;
-            self.store.clean_records(now).await;
+            if let Err(error) = self.service.purge_expired_provider_data(now, 200).await {
+                tracing::warn!(%error, "expired contribution provider data not purged");
+            }
+            if let Err(error) = self.store.clean_records(now).await {
+                tracing::warn!(%error, "old contribution records not cleaned");
+            }
             if let Ok(mut guard) = self.next_cleanup_at.lock() {
                 *guard = now + CLEANUP_INTERVAL_SECONDS;
             }
         }
-        recovered
+        Ok(recovered)
     }
 
-    pub async fn claim(&self, now: f64) -> Option<VerificationJobRow> {
+    pub async fn claim(&self, now: f64) -> Result<Option<VerificationJobRow>, ContribError> {
         self.store
             .claim_verification(&self.config.worker_id, now, self.config.lease_seconds)
             .await
     }
 
+    /// Claim and run the next due job. A job the database was too busy to
+    /// run goes back to the queue without using up an attempt; if even
+    /// that cannot be written, its lease brings it back.
     pub async fn run_once(&self, now: f64) -> Result<Option<VerificationOutcome>, ContribError> {
-        let job = match self.claim(now).await {
-            Some(job) => job,
-            None => return Ok(None),
+        let Some(job) = self.claim(now).await? else {
+            return Ok(None);
         };
-        Ok(Some(self.run_claimed(&job, now).await?))
+        match self.run_claimed(&job, now).await {
+            Ok(outcome) => Ok(Some(outcome)),
+            Err(error @ ContribError::Busy(_)) => {
+                let wait = BUSY_RETRY_SECONDS
+                    + SplitMix64::new(SplitMix64::seed_from_time())
+                        .below_duration(Duration::from_secs_f64(BUSY_RETRY_SECONDS))
+                        .as_secs_f64();
+                if let Err(release) = self
+                    .store
+                    .release_verification(&job.id, &self.config.worker_id, now + wait, now)
+                    .await
+                {
+                    tracing::warn!(
+                        error = %release,
+                        job_id = job.id,
+                        "busy verification job not put back; its lease brings it back"
+                    );
+                }
+                Err(error)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn run_claimed(
@@ -114,7 +146,11 @@ impl VerificationWorker {
                 self.config.lease_seconds,
             )
             .await?;
-        let contribution = match self.service.get(&job.contribution_id).await {
+        let contribution = match self
+            .service
+            .get_as(&job.contribution_id, Lane::Background)
+            .await
+        {
             Ok(contribution) => contribution,
             Err(ContribError::ContributionNotFound | ContribError::AlbumNotFound) => {
                 return Ok(VerificationOutcome::SubjectMissing);
@@ -251,7 +287,7 @@ impl VerificationWorker {
             )
             .await?;
         if result == VerificationOutcome::Linked {
-            let (_, _, policy) = self.identity.input_revisions(&context.tracks);
+            let (_, _, policy) = self.store.input_revisions(&context.tracks);
             self.service
                 .after_linked(&contribution, &policy, now)
                 .await?;
@@ -298,7 +334,7 @@ impl VerificationWorker {
         now: f64,
     ) -> Result<VerificationOutcome, ContribError> {
         let context = match self
-            .identity
+            .store
             .album_context(&contribution.local_album_id)
             .await?
         {
@@ -369,7 +405,9 @@ pub fn spawn_verification_worker(
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_secs_f64())
                         .unwrap_or(0.0);
-                    worker.recover(now).await;
+                    if let Err(error) = worker.recover(now).await {
+                        tracing::warn!(%error, "contribution verification leases not recovered");
+                    }
                     loop {
                         match worker.run_once(now).await {
                             Ok(Some(_)) => {}

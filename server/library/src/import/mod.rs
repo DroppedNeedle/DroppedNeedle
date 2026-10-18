@@ -50,7 +50,7 @@ use std::path::{Path, PathBuf};
 
 use self::naming::NamingFields;
 use super::clock::today_day;
-use super::identify::models::{AlbumIdentity, DecisionSource, TrackIdentity};
+use super::identify::sqlite::{ImportSeal, ImportTrack};
 use super::matching::Release;
 use super::matching::model::credit_text;
 use super::publish::planner::{
@@ -594,9 +594,11 @@ impl LibrarySetup {
 
     /// The match is the identity: seal the album and its tracks as an
     /// automatic MusicBrainz identification, unless a person already
-    /// decided them, and keep the release document for retags. Files that
-    /// joined the album they were fetched for (`joined`) seal only their
-    /// tracks: a few fetched tracks never confirm the album's match.
+    /// decided them, and keep the release document for retags, in one
+    /// transaction. Files that joined the album they were fetched for
+    /// (`joined`) seal only their tracks: a few fetched tracks never
+    /// confirm the album's match. When the seal does not land, the album
+    /// is offered to identification instead.
     fn seal_import_identity(
         &self,
         album_id: &str,
@@ -605,64 +607,36 @@ impl LibrarySetup {
         joined: bool,
     ) {
         let store = &self.identify_store;
-        store.save_release(&import.release);
-        let current = store.album_identity(album_id);
-        if current
-            .as_ref()
-            .is_some_and(|row| !row.decision_source.automatic_may_overwrite())
-        {
+        let seal = ImportSeal {
+            local_album_id: album_id,
+            release: &import.release,
+            joined,
+            tracks: bundle
+                .items
+                .iter()
+                // Extra files carry no recording: nothing to seal.
+                .filter(|item| !item.identity.recording_mbid.is_empty())
+                .map(|item| ImportTrack {
+                    local_track_id: item.track_id.clone(),
+                    recording_mbid: item.identity.recording_mbid.clone(),
+                    release_track_mbid: item.identity.release_track_mbid.clone(),
+                })
+                .collect(),
+        };
+        let Err(error) = store.seal_import(&seal) else {
             return;
-        }
-        // An album that already has an exact edition keeps it: a download
-        // matched to another edition adds its files without flipping the
-        // album. A whole-album download verified against the album's own
-        // edition confirms an unsure match.
-        let held = current
-            .as_ref()
-            .and_then(|row| row.release_mbid.clone())
-            .filter(|held| !import.release.answers_to(held));
-        if held.is_some() {
-            tracing::info!(
+        };
+        tracing::error!(
+            %error,
+            album = album_id,
+            "the import's match was not sealed; the album is offered to identification"
+        );
+        if let Err(error) = store.offer(album_id) {
+            tracing::error!(
+                %error,
                 album = album_id,
-                release = import.release.id,
-                "download matched another edition; the album keeps its own"
+                "the imported album could not be offered to identification"
             );
-        } else if !joined {
-            store.save_album_identity(AlbumIdentity {
-                local_album_id: album_id.to_owned(),
-                provider: "musicbrainz".to_owned(),
-                release_group_mbid: Some(import.release.release_group_id.clone()),
-                release_mbid: Some(import.release.id.clone()),
-                decision_source: DecisionSource::Automatic,
-                row_revision: current.as_ref().map_or(1, |row| row.row_revision + 1),
-            });
-            if let Err(error) = store.set_match_flag(album_id, None) {
-                tracing::error!(%error, album = album_id, "match flag not cleared after import");
-            }
-        }
-        for item in &bundle.items {
-            // Extra files carry no recording: nothing to seal.
-            if item.identity.recording_mbid.is_empty() {
-                continue;
-            }
-            let current = store.track_identity(&item.track_id);
-            if current
-                .as_ref()
-                .is_some_and(|row| !row.decision_source.automatic_may_overwrite())
-            {
-                continue;
-            }
-            store.save_track_identity(TrackIdentity {
-                local_track_id: item.track_id.clone(),
-                provider: "musicbrainz".to_owned(),
-                recording_mbid: Some(item.identity.recording_mbid.clone()),
-                // A track of another edition keeps only its recording.
-                release_track_mbid: held
-                    .is_none()
-                    .then(|| item.identity.release_track_mbid.clone()),
-                decision_source: DecisionSource::Automatic,
-                row_revision: current.map_or(1, |row| row.row_revision + 1),
-            });
         }
     }
 }

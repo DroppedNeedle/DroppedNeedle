@@ -17,7 +17,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::{get, post, put},
 };
-use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use serde::Deserialize;
 use serde_json::json;
@@ -122,6 +122,9 @@ pub struct MusicBrainzCallbackQuery {
 
 impl From<ContribError> for ApiError {
     fn from(error: ContribError) -> Self {
+        if let ContribError::Busy(cause) = &error {
+            return ApiError::unavailable(Unavailable::ServerBusy, cause);
+        }
         let status = match &error {
             ContribError::ContributionNotFound
             | ContribError::AlbumNotFound
@@ -133,9 +136,9 @@ impl From<ContribError> for ApiError {
             | ContribError::DuplicateCheckRequired(_)
             | ContribError::ExactDuplicate(_)
             | ContribError::ResultMismatch(_) => StatusCode::CONFLICT,
-            ContribError::ProviderUnavailable | ContribError::DiscogsUnavailable => {
-                StatusCode::SERVICE_UNAVAILABLE
-            }
+            ContribError::ProviderUnavailable
+            | ContribError::DiscogsUnavailable
+            | ContribError::Busy(_) => StatusCode::SERVICE_UNAVAILABLE,
             ContribError::ProviderUnmappable | ContribError::DiscogsUnusable => {
                 StatusCode::BAD_GATEWAY
             }

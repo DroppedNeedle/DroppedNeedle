@@ -120,6 +120,14 @@ pub fn format_unsupported(format: &str) -> ItemReason {
     )
 }
 
+pub fn match_unreadable() -> ItemReason {
+    ItemReason::new(
+        "MATCH_UNREADABLE",
+        "The file's MusicBrainz match could not be read.",
+        "Make a new preview. If it keeps happening, check the server log.",
+    )
+}
+
 pub fn file_unreadable() -> ItemReason {
     ItemReason::new(
         "FILE_UNREADABLE",

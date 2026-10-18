@@ -370,21 +370,19 @@ impl Repairs {
         if albums.is_empty() {
             return Ok(());
         }
-        // Enqueueing takes the store's own connection, so it runs outside
-        // any transaction here. A crash before the mark only queues the
-        // same albums again, which is harmless.
+        // Each album is queued in a write of its own. One that fails stops
+        // the mark, so the next scan queues them again; queueing an album
+        // twice reuses its live job.
         for (album, revision) in &albums {
-            let queued = self.identify.enqueue_album(
+            self.identify.enqueue_album(
                 &self.ids.new_id(),
                 album,
                 IdentifyKind::Historical,
                 revision,
                 None,
                 now_ms(),
-            );
-            if queued.is_none() {
-                tracing::warn!(local_album_id = %album, "could not queue an album's re-identification");
-            }
+                Lane::Background,
+            )?;
         }
         tracing::info!(
             albums = albums.len(),
@@ -760,10 +758,11 @@ impl Repairs {
         })
     }
 
-    fn facts(&self, album_id: &str) -> Option<LocalAlbumFacts> {
-        self.store
-            .album_facts(album_id)
-            .filter(|facts| !facts.tracks.is_empty())
+    fn facts(&self, album_id: &str) -> Result<Option<LocalAlbumFacts>, OperationError> {
+        Ok(self
+            .store
+            .album_facts(album_id)?
+            .filter(|facts| !facts.tracks.is_empty()))
     }
 
     /// Check one album against MusicBrainz.
@@ -807,14 +806,17 @@ impl Repairs {
                 Some(_) => {}
             }
         }
-        let Some(facts) = self.facts(album_id) else {
+        let Some(facts) = self.facts(album_id)? else {
             return Ok(Checked::Found(
                 Box::new(Verdict::new("stale", "IDENTITY_CHANGED")),
                 None,
             ));
         };
         let release = identity.as_ref().and_then(|id| id.release_mbid.clone());
-        let recall = self.identify.recall(&facts, release.as_deref()).await;
+        let recall = self
+            .identify
+            .recall(&facts, release.as_deref(), Lane::Background)
+            .await?;
         if recall.provider_deferred {
             return Ok(Checked::Deferred);
         }

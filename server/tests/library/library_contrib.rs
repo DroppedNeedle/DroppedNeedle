@@ -125,14 +125,15 @@ impl Rig {
         let path = dir.join("app.db");
         migrated_db(&path);
         let db = droppedneedle_kernel::db::open_connection(&path).unwrap();
-        let store = Arc::new(SqliteContributions::open(&path).unwrap());
+        let store = Arc::new(SqliteContributions::new(
+            droppedneedle_kernel::db::Db::open_for_tests(&path).unwrap(),
+        ));
         let discogs = Arc::new(ScriptedDiscogs::new());
         let musicbrainz = Arc::new(ScriptedMusicBrainz::new());
         let catalog = Arc::new(RecordingCatalog::default());
         let clock = Arc::new(TestClock::new(NOW));
         let service = Arc::new(
             ContributionService::new(
-                store.clone(),
                 store.clone(),
                 Arc::new(MatchingAttachmentEvidence),
                 clock.clone(),
@@ -324,7 +325,6 @@ impl Rig {
         Arc::new(VerificationWorker::new(
             self.service.clone(),
             self.musicbrainz.clone(),
-            self.store.clone(),
             VerificationWorkerConfig::default(),
         ))
     }
@@ -1619,7 +1619,7 @@ async fn brief_worker_skips_non_verifying_and_recovers_leases() {
     let verifying = to_verifying(&rig).await;
     let worker = rig.worker();
     // Claim out-of-band, then cancel the contribution: the job no longer applies.
-    let job = worker.claim(rig.now()).await.unwrap();
+    let job = worker.claim(rig.now()).await.unwrap().unwrap();
     let record = rig.service.get(&verifying.id).await.unwrap();
     rig.service
         .cancel(&record.id, record.row_revision, ACTOR)
@@ -1630,15 +1630,15 @@ async fn brief_worker_skips_non_verifying_and_recovers_leases() {
     let _ = job;
     // Expired running leases requeue on recover; cleanup cadence is hourly.
     let verifying = to_verifying(&rig).await;
-    let job = worker.claim(rig.now()).await.unwrap();
+    let job = worker.claim(rig.now()).await.unwrap().unwrap();
     assert_eq!(job.attempt_count, 1);
     rig.clock.advance(91.0);
-    let recovered = worker.recover(rig.now()).await;
+    let recovered = worker.recover(rig.now()).await.unwrap();
     assert_eq!(recovered, 1);
     let jobs = rig.jobs_for(&verifying.id);
     assert_eq!(jobs[0].state, "queued");
     // Second recover inside the hour skips cleanup but still recovers (none due).
-    let recovered = worker.recover(rig.now()).await;
+    let recovered = worker.recover(rig.now()).await.unwrap();
     assert_eq!(recovered, 0);
 }
 
@@ -1660,7 +1660,6 @@ async fn brief_worker_spawn_loop_links_then_shuts_down() {
     let worker = Arc::new(VerificationWorker::new(
         rig.service.clone(),
         rig.musicbrainz.clone(),
-        rig.store.clone(),
         VerificationWorkerConfig {
             worker_id: "test-loop".to_string(),
             poll_interval: POLL_INTERVAL,

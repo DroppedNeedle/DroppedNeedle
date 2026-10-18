@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use droppedneedle_kernel::db::Lane;
 use droppedneedle_providers::slots::RequestPriority;
 use sha2::{Digest as _, Sha256};
 
@@ -20,7 +21,6 @@ use super::sqlite::SqliteContributions;
 
 pub struct ContributionService {
     store: Arc<SqliteContributions>,
-    identity: Arc<SqliteContributions>,
     discogs: Option<Arc<dyn DiscogsContrib>>,
     musicbrainz: Option<Arc<dyn MusicBrainzContrib>>,
     catalog: Option<Arc<dyn ContributionCatalog>>,
@@ -31,13 +31,11 @@ pub struct ContributionService {
 impl ContributionService {
     pub fn new(
         store: Arc<SqliteContributions>,
-        identity: Arc<SqliteContributions>,
         evidence: Arc<dyn AttachmentEvidence>,
         clock: Arc<dyn ContributionClock>,
     ) -> Self {
         Self {
             store,
-            identity,
             discogs: None,
             musicbrainz: None,
             catalog: None,
@@ -116,6 +114,16 @@ impl ContributionService {
     }
 
     pub async fn get(&self, contribution_id: &str) -> Result<ContributionRecord, ContribError> {
+        self.get_as(contribution_id, Lane::Foreground).await
+    }
+
+    /// [`Self::get`], marking a stale row on `lane`: the verification
+    /// worker reads on its own.
+    pub async fn get_as(
+        &self,
+        contribution_id: &str,
+        lane: Lane,
+    ) -> Result<ContributionRecord, ContribError> {
         let row = self
             .store
             .get(contribution_id)
@@ -129,7 +137,7 @@ impl ContributionService {
                 ContributionState::Linked | ContributionState::Cancelled | ContributionState::Stale
             ) {
             self.store
-                .mark_stale(contribution_id, row.row_revision, self.now())
+                .mark_stale(lane, contribution_id, row.row_revision, self.now())
                 .await?
         } else {
             row
@@ -149,7 +157,7 @@ impl ContributionService {
         // terminal-state guard (the store no-ops terminal rows itself).
         let row = if row_is_stale(&row) {
             self.store
-                .mark_stale(&row.id, row.row_revision, self.now())
+                .mark_stale(Lane::Foreground, &row.id, row.row_revision, self.now())
                 .await?
         } else {
             row
@@ -187,6 +195,7 @@ impl ContributionService {
         let row = self
             .store
             .compare_and_set(
+                Lane::Foreground,
                 contribution_id,
                 expected_row_revision,
                 actor_user_id,
@@ -246,6 +255,7 @@ impl ContributionService {
         let row = self
             .store
             .compare_and_set(
+                Lane::Foreground,
                 contribution_id,
                 expected_row_revision,
                 actor_user_id,
@@ -354,6 +364,7 @@ impl ContributionService {
         let row = self
             .store
             .compare_and_set(
+                Lane::Foreground,
                 contribution_id,
                 expected_row_revision,
                 actor_user_id,
@@ -390,6 +401,7 @@ impl ContributionService {
         let row = self
             .store
             .compare_and_set(
+                Lane::Foreground,
                 contribution_id,
                 expected_row_revision,
                 actor_user_id,
@@ -553,6 +565,7 @@ impl ContributionService {
         let row = self
             .store
             .compare_and_set(
+                Lane::Foreground,
                 contribution_id,
                 expected_row_revision,
                 actor_user_id,
@@ -624,6 +637,7 @@ impl ContributionService {
         let row = self
             .store
             .compare_and_set(
+                Lane::Foreground,
                 contribution_id,
                 expected_row_revision,
                 actor_user_id,
@@ -643,7 +657,7 @@ impl ContributionService {
             let groups = vec![verified.release_group_mbid.clone()];
             let artists: Vec<String> = verified.artist_mbid.clone().into_iter().collect();
             catalog.invalidate_identity_scope(&groups, &artists).await;
-            let (_, _, policy) = self.identity.input_revisions(&context.tracks);
+            let (_, _, policy) = self.store.input_revisions(&context.tracks);
             catalog
                 .after_identified(&current.local_album_id, &policy)
                 .await;
@@ -721,7 +735,7 @@ impl ContributionService {
             public_base_url.trim_end_matches('/')
         );
         let context = self
-            .identity
+            .store
             .album_context(&current.local_album_id)
             .await?
             .unwrap_or_default();
@@ -757,6 +771,7 @@ impl ContributionService {
         let row = self
             .store
             .compare_and_set(
+                Lane::Foreground,
                 contribution_id,
                 expected_row_revision,
                 actor_user_id,
@@ -823,6 +838,7 @@ impl ContributionService {
         let row = self
             .store
             .compare_and_set(
+                Lane::Foreground,
                 contribution_id,
                 expected_row_revision,
                 actor_user_id,
@@ -845,6 +861,7 @@ impl ContributionService {
         let row = self
             .store
             .compare_and_set(
+                Lane::Foreground,
                 contribution_id,
                 expected_row_revision,
                 actor_user_id,
@@ -863,7 +880,7 @@ impl ContributionService {
         verified: &MusicBrainzVerifiedRelease,
     ) -> Result<(AttachmentDecision, AlbumIdentificationContext), ContribError> {
         let context = self
-            .identity
+            .store
             .album_context(&contribution.local_album_id)
             .await?
             .ok_or(ContribError::AlbumNotFound)?;
@@ -932,10 +949,10 @@ impl ContributionService {
         now: f64,
         limit: usize,
     ) -> Result<usize, ContribError> {
-        let rows = self.store.list_for_provider_purge(now, limit).await;
+        let rows = self.store.list_for_provider_purge(now, limit).await?;
         let mut purged = 0;
         for row in rows {
-            if self.purge_row(&row, now).await? {
+            if self.purge_row(&row, now, Lane::Background).await? {
                 purged += 1;
             }
         }
@@ -951,7 +968,7 @@ impl ContributionService {
             Some(row) => row,
             None => return Ok(false),
         };
-        self.purge_row(&row, now).await
+        self.purge_row(&row, now, Lane::Background).await
     }
 
     async fn maybe_purge_row(
@@ -959,7 +976,7 @@ impl ContributionService {
         row: &ContributionRow,
         now: f64,
     ) -> Result<ContributionRow, ContribError> {
-        if self.purge_row(row, now).await?
+        if self.purge_row(row, now, Lane::Foreground).await?
             && let Some(fresh) = self.store.get(&row.id).await?
         {
             return Ok(fresh);
@@ -967,7 +984,12 @@ impl ContributionService {
         Ok(row.clone())
     }
 
-    async fn purge_row(&self, row: &ContributionRow, now: f64) -> Result<bool, ContribError> {
+    async fn purge_row(
+        &self,
+        row: &ContributionRow,
+        now: f64,
+        lane: Lane,
+    ) -> Result<bool, ContribError> {
         if row.provider_snapshot_expires_at.is_none() {
             return Ok(false);
         }
@@ -977,6 +999,7 @@ impl ContributionService {
         match self
             .store
             .compare_and_set(
+                lane,
                 &row.id,
                 row.row_revision,
                 row.updated_by_user_id.as_deref().unwrap_or(""),
@@ -1044,7 +1067,7 @@ impl ContributionService {
         album_id: &str,
     ) -> Result<LocalReleaseSnapshot, ContribError> {
         let context = self
-            .identity
+            .store
             .album_context(album_id)
             .await?
             .ok_or(ContribError::AlbumNotFound)?;
@@ -1063,7 +1086,7 @@ impl ContributionService {
             return Err(ContribError::AlbumNotFound);
         }
         let owned: Vec<IdentityTrack> = tracks.into_iter().cloned().collect();
-        let (tag, file, policy) = self.identity.input_revisions(&owned);
+        let (tag, file, policy) = self.store.input_revisions(&owned);
         let input_revision = format!("{tag}:{file}:{policy}");
         let mut grouped: HashMap<i64, Vec<ReleaseTrackSnapshot>> = HashMap::new();
         let mut medium_titles: HashMap<i64, Option<String>> = HashMap::new();

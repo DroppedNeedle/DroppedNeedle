@@ -297,9 +297,15 @@ pub fn ensure_release_extras(
     let got_relations = fetched.relations.is_some();
     let got_names = fetched.names.is_some();
     if got_relations || got_names {
+        // A stored document that cannot be updated still gets the fetched
+        // parts for this run; the next run fetches them again.
         match store.graft_extras(&release.id, &fetched) {
-            Some(grafted) => *release = grafted,
-            None => release.graft_extras(&fetched),
+            Ok(Some(grafted)) => *release = grafted,
+            Ok(None) => release.graft_extras(&fetched),
+            Err(error) => {
+                tracing::warn!(%error, release = release.id, "fetched parts not kept on file");
+                release.graft_extras(&fetched);
+            }
         }
     }
     let outcome = |wanted: bool, got: bool, fresh: bool, stored: bool, part: &str| match (

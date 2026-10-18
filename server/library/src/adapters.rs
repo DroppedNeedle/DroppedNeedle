@@ -185,10 +185,11 @@ impl ContributionCatalog for IdentifyFollowUp {
                 tokio::task::spawn_blocking(move || identify.offer(&album)).await
             };
             match offered {
-                Ok(Some(queued)) => {
+                Ok(Ok(queued)) => {
                     tracing::info!(album, policy, queued, "linked album offered to identify")
                 }
-                Ok(None) => tracing::warn!(
+                Ok(Err(error)) => tracing::warn!(
+                    %error,
                     album,
                     "linked album could not be offered to identify; the next scan will"
                 ),

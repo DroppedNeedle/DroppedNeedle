@@ -57,12 +57,11 @@ impl Rig {
         outbound.identify_providers = Port::given(identify.clone());
         outbound.contribution_providers = Port::given(contrib.providers());
         let app = TestApp::start_with(tag, outbound).await;
-        let db = &app.config.library_db_path;
+        let db = droppedneedle_kernel::db::Db::open_for_tests(&app.config.library_db_path)
+            .expect("database opens");
         Self {
-            scan_store: SqliteScanStore::new(
-                droppedneedle_kernel::db::Db::open_for_tests(db).expect("database opens"),
-            ),
-            identify_store: SqliteIdentifyStore::open(db).expect("identify rows open"),
+            scan_store: SqliteScanStore::new(db.clone()),
+            identify_store: SqliteIdentifyStore::new(db),
             app,
             identify,
             contrib,
@@ -267,7 +266,7 @@ async fn drain_scans(library: &LibrarySetup) {
 /// files carry (as if MusicBrainz had folded it into each), so the
 /// album id cannot pick one.
 fn ambiguous_recall(store: &SqliteIdentifyStore, album_id: &str) -> RecallResult {
-    ambiguous_from(&store.album_facts(album_id).expect("album facts"))
+    ambiguous_from(&store.album_facts(album_id).unwrap().expect("album facts"))
 }
 
 /// [`ambiguous_recall`] for the album identification is asking about.
@@ -353,7 +352,8 @@ fn file_edition_review(store: &SqliteIdentifyStore, album_id: &str) -> String {
         album_id,
         "EDITION_CLEARED_CONFLICT",
         vec![candidate("rg-1", REL_1), candidate("rg-2", REL_2)],
-    );
+    )
+    .unwrap();
     id
 }
 
@@ -431,12 +431,20 @@ async fn library_journey_scan_identify_review_organize_undo() {
     );
     {
         assert!(
-            rig.identify_store.album_identity(album_key).is_some(),
+            rig.identify_store
+                .album_identity(album_key)
+                .unwrap()
+                .is_some(),
             "identification picks a best guess"
         );
     }
     {
-        assert!(rig.identify_store.pending_for_album(album_key).is_empty());
+        assert!(
+            rig.identify_store
+                .pending_for_album(album_key)
+                .unwrap()
+                .is_empty()
+        );
     }
     // A correction that drops the album's editions leaves a review.
     file_edition_review(&rig.identify_store, album_key);
@@ -555,6 +563,7 @@ async fn library_journey_scan_identify_review_organize_undo() {
         let identity = rig
             .identify_store
             .album_identity(album_key)
+            .unwrap()
             .expect("identity stays with the album");
         assert_eq!(identity.release_mbid.as_deref(), Some(REL_1));
     }
@@ -1978,29 +1987,39 @@ async fn automatic_write_keeps_a_manual_identity() {
         .expect("identity seed");
 
     let store = &library.identify_store;
-    store.save_album_identity(AlbumIdentity {
-        local_album_id: album.clone(),
-        provider: "musicbrainz".to_owned(),
-        release_group_mbid: Some("rg-download".to_owned()),
-        release_mbid: Some("rel-download".to_owned()),
-        decision_source: DecisionSource::Automatic,
-        row_revision: 1,
-    });
-    store.save_track_identity(TrackIdentity {
-        local_track_id: track.clone(),
-        provider: "musicbrainz".to_owned(),
-        recording_mbid: Some("rec-download".to_owned()),
-        release_track_mbid: None,
-        decision_source: DecisionSource::Automatic,
-        row_revision: 1,
-    });
+    store
+        .save_album_identity(AlbumIdentity {
+            local_album_id: album.clone(),
+            provider: "musicbrainz".to_owned(),
+            release_group_mbid: Some("rg-download".to_owned()),
+            release_mbid: Some("rel-download".to_owned()),
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+        })
+        .unwrap();
+    store
+        .save_track_identity(TrackIdentity {
+            local_track_id: track.clone(),
+            provider: "musicbrainz".to_owned(),
+            recording_mbid: Some("rec-download".to_owned()),
+            release_track_mbid: None,
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+        })
+        .unwrap();
 
-    let kept = store.album_identity(&album).expect("album identity");
+    let kept = store
+        .album_identity(&album)
+        .unwrap()
+        .expect("album identity");
     assert_eq!(kept.decision_source, DecisionSource::Manual);
     assert_eq!(kept.release_group_mbid.as_deref(), Some("rg-chosen"));
     assert_eq!(kept.release_mbid.as_deref(), Some("rel-chosen"));
     assert_eq!(kept.row_revision, 3);
-    let kept = store.track_identity(&track).expect("track identity");
+    let kept = store
+        .track_identity(&track)
+        .unwrap()
+        .expect("track identity");
     assert_eq!(kept.decision_source, DecisionSource::LegacyImport);
     assert_eq!(kept.recording_mbid.as_deref(), Some("rec-chosen"));
     assert_eq!(kept.row_revision, 3);
@@ -2011,15 +2030,20 @@ async fn automatic_write_keeps_a_manual_identity() {
         .db()
         .run_sql("UPDATE local_track_external_identities SET decision_source = 'embedded';")
         .expect("source flipped");
-    store.save_track_identity(TrackIdentity {
-        local_track_id: track.clone(),
-        provider: "musicbrainz".to_owned(),
-        recording_mbid: Some("rec-download".to_owned()),
-        release_track_mbid: None,
-        decision_source: DecisionSource::Automatic,
-        row_revision: 4,
-    });
-    let revised = store.track_identity(&track).expect("track identity");
+    store
+        .save_track_identity(TrackIdentity {
+            local_track_id: track.clone(),
+            provider: "musicbrainz".to_owned(),
+            recording_mbid: Some("rec-download".to_owned()),
+            release_track_mbid: None,
+            decision_source: DecisionSource::Automatic,
+            row_revision: 4,
+        })
+        .unwrap();
+    let revised = store
+        .track_identity(&track)
+        .unwrap()
+        .expect("track identity");
     assert_eq!(revised.recording_mbid.as_deref(), Some("rec-download"));
 }
 
@@ -2047,7 +2071,7 @@ async fn failed_approval_leaves_the_review_pending() {
         .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
     file_edition_review(&library.identify_store, &album);
-    let review = library.pending_reviews(&album);
+    let review = library.pending_reviews(&album).unwrap();
     assert_eq!(review.len(), 1);
     library
         .scan_store
@@ -2064,7 +2088,7 @@ async fn failed_approval_leaves_the_review_pending() {
         "a store failure is an error, not an approval"
     );
     assert_eq!(
-        library.pending_reviews(&album).len(),
+        library.pending_reviews(&album).unwrap().len(),
         1,
         "review stays pending"
     );
@@ -2163,6 +2187,7 @@ async fn identification_survives_restarts() {
     let identity = rig
         .identify_store
         .album_identity(&album)
+        .unwrap()
         .expect("identity survives");
     assert_eq!(identity.decision_source, DecisionSource::Manual);
     assert_eq!(identity.release_mbid.as_deref(), Some(REL_1));
@@ -2332,16 +2357,20 @@ async fn release_documents_answer_to_merged_ids() {
         old_ids: vec!["REL-OLD".to_owned()],
         ..Release::default()
     };
-    store.save_release(&release);
+    store
+        .save_release(&release, droppedneedle_kernel::db::Lane::Background)
+        .unwrap();
     release.title = "Refetched".to_owned();
     release.old_ids.clear();
-    store.save_release(&release);
+    store
+        .save_release(&release, droppedneedle_kernel::db::Lane::Background)
+        .unwrap();
     for id in ["rel-new", "rel-old"] {
-        let found = store.release(id, None).expect("document found");
+        let found = store.release(id, None).unwrap().expect("document found");
         assert_eq!(found.id, "rel-new");
         assert_eq!(found.title, "Refetched");
     }
-    assert!(store.release("rel-other", None).is_none());
+    assert!(store.release("rel-other", None).unwrap().is_none());
 }
 
 /// Contribution journey through the real routes and the SQLite store:
@@ -2637,7 +2666,7 @@ async fn library_contribution_seed_callback_verify_links_album() {
 /// The release the planted files name, built from their own tags so every
 /// id agrees.
 fn tagged_release(store: &SqliteIdentifyStore, album_id: &str) -> Release {
-    tagged_from(&store.album_facts(album_id).expect("album facts"))
+    tagged_from(&store.album_facts(album_id).unwrap().expect("album facts"))
 }
 
 /// [`tagged_release`] for the album identification is asking about.
@@ -2741,7 +2770,11 @@ async fn library_journey_undo_automatic_edition() {
     let album = body["album_id"].as_str().expect("album id").to_owned();
     let release = tagged_release(&rig.identify_store, &album);
     let (manual_track, auto_track) = {
-        let facts = rig.identify_store.album_facts(&album).expect("facts");
+        let facts = rig
+            .identify_store
+            .album_facts(&album)
+            .unwrap()
+            .expect("facts");
         (
             facts.tracks[0].local_track_id.clone(),
             facts.tracks[1].local_track_id.clone(),
@@ -2788,7 +2821,11 @@ async fn library_journey_undo_automatic_edition() {
     // The scan-queued attempt seals the exact edition automatically.
     rig.resume_identification(paused_at).await;
     rig.identified(1).await;
-    let sealed = rig.identify_store.album_identity(&album).expect("sealed");
+    let sealed = rig
+        .identify_store
+        .album_identity(&album)
+        .unwrap()
+        .expect("sealed");
     assert_eq!(sealed.release_mbid.as_deref(), Some(release.id.as_str()));
     assert_eq!(
         track_row(&app.config.library_db_path, &manual_track),
@@ -2820,7 +2857,7 @@ async fn library_journey_undo_automatic_edition() {
     let (status, body) = app.call("POST", &undo, &headers, Some(fresh.clone())).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["outcome"], json!("cleared_to_review"));
-    assert!(rig.identify_store.album_identity(&album).is_none());
+    assert!(rig.identify_store.album_identity(&album).unwrap().is_none());
     // The curator's track row was never touched; the automatic one is back
     // on its earlier release, disc, and position.
     assert_eq!(
@@ -3309,7 +3346,11 @@ async fn library_journey_choose_edition() {
         (&json!(1), &json!(0), &json!(1)),
         "{body}"
     );
-    let unchanged = rig.identify_store.album_identity(&album).expect("row");
+    let unchanged = rig
+        .identify_store
+        .album_identity(&album)
+        .unwrap()
+        .expect("row");
     assert_eq!(unchanged.release_mbid.as_deref(), Some(fit.id.as_str()));
 
     // Choose the smaller edition: one file placed, one kept as an extra.
@@ -3338,7 +3379,11 @@ async fn library_journey_choose_edition() {
         .await;
     assert_eq!(status, StatusCode::OK);
     rig.identified(1).await;
-    let kept = rig.identify_store.album_identity(&album).expect("row");
+    let kept = rig
+        .identify_store
+        .album_identity(&album)
+        .unwrap()
+        .expect("row");
     assert_eq!(kept.release_mbid.as_deref(), Some(OTHER));
 
     // Undo brings back the automatic best fit.
@@ -3362,7 +3407,11 @@ async fn library_journey_choose_edition() {
     let (status, body) = app.call("DELETE", &edition, &headers, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     rig.identified(1).await;
-    let back = rig.identify_store.album_identity(&album).expect("row");
+    let back = rig
+        .identify_store
+        .album_identity(&album)
+        .unwrap()
+        .expect("row");
     assert_eq!(back.release_mbid.as_deref(), Some(fit.id.as_str()));
 
     // A release MusicBrainz does not know is refused with a reason.
@@ -5291,7 +5340,7 @@ async fn library_journey_identity_repair_and_preparation() {
     let done = settle_repair(app, &headers, &job_path).await;
     assert_eq!(done["state"], json!("succeeded"), "{done}");
     assert_eq!(done["succeeded_count"], json!(1));
-    assert!(rig.identify_store.album_identity(&album).is_none());
+    assert!(rig.identify_store.album_identity(&album).unwrap().is_none());
     let (_, findings) = app
         .call("GET", &format!("{job_path}/findings"), &headers, None)
         .await;
@@ -5307,7 +5356,11 @@ async fn library_journey_identity_repair_and_preparation() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let restored = rig.identify_store.album_identity(&album).expect("restored");
+    let restored = rig
+        .identify_store
+        .album_identity(&album)
+        .unwrap()
+        .expect("restored");
     assert_eq!(restored.release_mbid.as_deref(), Some(release.id.as_str()));
 
     // Preparation: the album has its exact release, so the report is
@@ -5458,7 +5511,11 @@ async fn library_journey_identity_repair_and_preparation() {
         "{findings}"
     );
     assert_eq!(item["suggested_edition"]["auto_gate"], json!("AUTO_ACCEPT"));
-    let accepted = rig.identify_store.album_identity(&album).expect("accepted");
+    let accepted = rig
+        .identify_store
+        .album_identity(&album)
+        .unwrap()
+        .expect("accepted");
     assert_eq!(accepted.release_mbid.as_deref(), Some(release.id.as_str()));
     // A confident acceptance is applied as confirmed: no flag remains.
     let match_state = || -> Option<String> {
@@ -5488,7 +5545,7 @@ async fn library_journey_identity_repair_and_preparation() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(rig.identify_store.album_identity(&album).is_none());
+    assert!(rig.identify_store.album_identity(&album).unwrap().is_none());
     // The undo puts back the match state the acceptance replaced.
     assert_eq!(match_state().as_deref(), Some("unmatched:NO_CANDIDATE"));
     rig.stop().await;
@@ -9442,6 +9499,7 @@ async fn an_import_in_place_of_a_missing_track_marks_nothing() {
         .library
         .identify_store
         .release(&release_mbid, None)
+        .unwrap()
         .expect("release stored");
     let source = managed.scratch.to_path_buf().join("incoming/02.flac");
     std::fs::create_dir_all(source.parent().expect("parent")).expect("mkdir");
@@ -9466,6 +9524,128 @@ async fn an_import_in_place_of_a_missing_track_marks_nothing() {
     assert_eq!(managed.mark(&album), None);
     assert_eq!(managed.mark(&imported.album_id), None);
     assert_eq!(managed.count(STEPPED_BACK), 0);
+}
+
+/// An import onto an album whose match cannot be read writes none of the
+/// album's identity: the person's album row, the track rows and the flag
+/// stay as they were, the file still lands, and the album is offered to
+/// identification instead.
+#[tokio::test]
+async fn an_import_that_cannot_read_the_albums_match_leaves_it_alone() {
+    use droppedneedle_library::import::{DownloadImport, ImportOrigin, ImportSource};
+
+    let (scratch, library, _, at_rest, _) = album_at_rest("lib-import-unreadable-match", 3).await;
+    let db = scratch_db(&scratch);
+    scratch
+        .identify
+        .set_recall(fitting_release(&library, &at_rest));
+    while library.identify_tick().await > 0 {}
+    let payload: String = db
+        .query_row(
+            "SELECT canonical_payload_json FROM library_management_metadata_snapshots \
+             WHERE entity_kind = 'release' AND entity_id = ?1 \
+             ORDER BY fetched_at DESC LIMIT 1",
+            [REL_1],
+            |row| row.get(0),
+        )
+        .expect("release stored");
+    let release: Release = serde_json::from_str(&payload).expect("release decodes");
+    let import = |task: &str, tracks: &[usize]| {
+        let files = tracks
+            .iter()
+            .map(|&track| {
+                let source = scratch
+                    .to_path_buf()
+                    .join(format!("incoming/{task}/{track}.flac"));
+                std::fs::create_dir_all(source.parent().expect("parent")).expect("mkdir");
+                std::fs::copy(fixtures_dir().join("flac_full_02.flac"), &source)
+                    .expect("download planted");
+                ImportSource {
+                    path: source,
+                    track,
+                }
+            })
+            .collect();
+        library
+            .import_download(&DownloadImport {
+                task_id: task.to_owned(),
+                origin: ImportOrigin::Download,
+                staging: None,
+                release: release.clone(),
+                files,
+                extras: Vec::new(),
+            })
+            .expect("imported")
+    };
+    let relative = |path: &Path| {
+        path.strip_prefix(scratch.to_path_buf().join("music"))
+            .expect("under the root")
+            .to_string_lossy()
+            .into_owned()
+    };
+    let first = import("task-1", &[0, 1, 2]);
+    let album = first.album_id.clone();
+    let missing = indexed_at(&library, &relative(&first.paths[1]));
+    std::fs::remove_file(&first.paths[1]).expect("file deleted");
+    rescan(&library).await;
+
+    // A person's match holding a value the reader cannot decode (the
+    // table is not STRICT), and an unsure flag on the album.
+    db.execute_batch(&format!(
+        "UPDATE local_album_external_identities SET decision_source = 'manual', \
+         release_group_mbid = X'00' WHERE local_album_id = '{album}'; \
+         INSERT OR REPLACE INTO library_album_match_state (local_album_id, state, \
+         reason_code, release_mbid, candidates_json, updated_at) \
+         VALUES ('{album}', 'unconfirmed', 'EDITION_UNCERTAIN', '{REL_1}', '[]', 1);"
+    ))
+    .expect("match made unreadable");
+    let identity = |db: &rusqlite::Connection| -> Vec<String> {
+        db.prepare(
+            "SELECT 'album ' || quote(release_group_mbid) || ' ' || quote(release_mbid) || ' ' \
+             || decision_source || ' ' || row_revision || ' ' || selected_at \
+             FROM local_album_external_identities WHERE local_album_id = ?1 \
+             UNION ALL SELECT 'track ' || local_track_id || ' ' || recording_mbid || ' ' \
+             || quote(release_track_mbid) || ' ' || decision_source || ' ' || row_revision \
+             || ' ' || selected_at FROM local_track_external_identities \
+             WHERE local_track_id IN (SELECT id FROM local_tracks WHERE local_album_id = ?1) \
+             UNION ALL SELECT 'flag ' || state || ' ' || reason_code \
+             FROM library_album_match_state WHERE local_album_id = ?1 \
+             UNION ALL SELECT 'release ' || id || ' ' || payload_sha256 || ' ' || fetched_at \
+             FROM library_management_metadata_snapshots \
+             WHERE entity_kind = 'release' AND entity_id = ?2 ORDER BY 1",
+        )
+        .expect("prepare")
+        .query_map([album.as_str(), REL_1], |row| row.get(0))
+        .expect("query")
+        .collect::<rusqlite::Result<_>>()
+        .expect("rows")
+    };
+    let before = identity(&db);
+    assert_eq!(
+        before.len(),
+        6,
+        "album, three tracks, the flag and the release document: {before:?}"
+    );
+
+    let again = import("task-2", &[1]);
+    assert_eq!(again.album_id, album, "the download joins the album");
+    assert!(again.paths[0].is_file(), "the file is in place");
+    assert_eq!(
+        indexed_at(&library, &relative(&again.paths[0])),
+        missing,
+        "it takes the missing track's id"
+    );
+
+    assert_eq!(identity(&db), before, "nothing of the match is written");
+    let live_jobs: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_identify_jobs WHERE local_album_id = ?1 \
+             AND state IN ('queued', 'deferred', 'running')",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("jobs");
+    assert!(live_jobs > 0, "the album is offered to identification");
 }
 
 /// A file v2 tagged, changed by hand since, then renamed in the app: the
@@ -10692,7 +10872,13 @@ fn match_state(db: &rusqlite::Connection, album: &str) -> Option<String> {
 
 /// The album's files as MusicBrainz would offer them for `REL_1`.
 fn fitting_release(library: &LibrarySetup, album: &str) -> RecallResult {
-    one_track_per_title(&library.identify_store.album_facts(album).expect("facts"))
+    one_track_per_title(
+        &library
+            .identify_store
+            .album_facts(album)
+            .unwrap()
+            .expect("facts"),
+    )
 }
 
 /// A release MusicBrainz lists under `REL_1` that none of the files fit.
@@ -10869,7 +11055,7 @@ async fn approving_a_release_makes_the_queued_remap_the_persons() {
     let db = scratch_db(&scratch);
     queue_remap_row(&library, &album, "group_pin");
     file_edition_review(&library.identify_store, &album);
-    let review = library.pending_reviews(&album);
+    let review = library.pending_reviews(&album).unwrap();
     library
         .approve_review(&review[0].id, "curator", &format!("rg-2:{REL_2}"))
         .expect("approved");
@@ -11780,7 +11966,8 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
             distance: 0.0,
             penalties: Vec::new(),
         }],
-    );
+    )
+    .unwrap();
     library
         .approve_review("rev-join", "curator", &key)
         .expect("approved");
@@ -13087,6 +13274,7 @@ async fn an_imported_track_takes_the_history_of_the_one_it_replaces() {
     let release = library
         .identify_store
         .release(REL_1, None)
+        .unwrap()
         .expect("release stored");
     let import = |task: &str, tracks: &[usize], fixture: &str| {
         let extension = Path::new(fixture).extension().expect("extension");
@@ -13215,7 +13403,8 @@ async fn an_approval_continues_a_track_at_once() {
             distance: 0.0,
             penalties: Vec::new(),
         }],
-    );
+    )
+    .unwrap();
     library
         .approve_review("rev-approve", "curator", &key)
         .expect("approved");
@@ -13978,7 +14167,7 @@ impl ManagedLibrary {
             ..Default::default()
         };
         for (index, track) in tracks.iter().enumerate() {
-            let identity = store.track_identity(track).expect("track mapped");
+            let identity = store.track_identity(track).unwrap().expect("track mapped");
             let mut credits = pick(index);
             credits.recording_id = identity.recording_mbid.expect("recording");
             relations
@@ -14311,7 +14500,9 @@ async fn grafted_credits_keep_the_stored_edition() {
         }],
         ..Release::default()
     };
-    store.save_release(&release);
+    store
+        .save_release(&release, droppedneedle_kernel::db::Lane::Background)
+        .unwrap();
     let db = droppedneedle_kernel::db::open_connection(&_scratch.to_path_buf().join("app.db"))
         .expect("db opens");
     let times = || -> Vec<(String, f64, Option<f64>)> {
@@ -14360,10 +14551,11 @@ async fn grafted_credits_keep_the_stored_edition() {
                 names: Some(names),
             },
         )
+        .unwrap()
         .expect("grafted");
     assert_eq!(times(), saved, "fetched and expiry times are kept");
     for id in ["rel-new", "rel-old"] {
-        let found = store.release(id, None).expect("document found");
+        let found = store.release(id, None).unwrap().expect("document found");
         assert_eq!(found, grafted);
         assert_eq!(found.title, "Kept");
         assert_eq!(found.old_ids, vec!["rel-old".to_owned()]);
@@ -14522,6 +14714,7 @@ async fn a_track_id_from_another_edition_is_corrected() {
     let identity = library
         .identify_store
         .album_identity(&album)
+        .unwrap()
         .expect("identity");
     assert_eq!(identity.release_mbid.as_deref(), Some(r.id.as_str()));
 
@@ -14604,7 +14797,13 @@ async fn a_track_id_from_another_edition_is_corrected() {
         ..RecallResult::default()
     });
     library.identify_tick().await;
-    assert!(library.identify_store.album_identity(&lone_album).is_none());
+    assert!(
+        library
+            .identify_store
+            .album_identity(&lone_album)
+            .unwrap()
+            .is_none()
+    );
     let plan = ops
         .edition_plan(&lone_album, Some(&r.id))
         .await
@@ -14772,6 +14971,7 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
         library
             .identify_store
             .album_identity(album)
+            .unwrap()
             .map(|identity| {
                 (
                     identity.release_mbid,
@@ -14896,19 +15096,17 @@ impl ManagedLibrary {
         use droppedneedle_library::scan::revision::{exact_stat_revision, mtime_ns_from_metadata};
         let meta = std::fs::symlink_metadata(self.path(track)).expect("file stat");
         let on_disk = exact_stat_revision(meta.len(), mtime_ns_from_metadata(&meta));
-        self.library.identify_store.save_fingerprint(
-            track,
-            revision.unwrap_or(&on_disk),
-            SEEDED_PRINT,
-            218,
-            true,
-        );
+        self.library
+            .identify_store
+            .save_fingerprint(track, revision.unwrap_or(&on_disk), SEEDED_PRINT, 218, true)
+            .unwrap();
     }
 
     fn recording(&self, track: &str) -> String {
         self.library
             .identify_store
             .track_identity(track)
+            .unwrap()
             .and_then(|mapping| mapping.recording_mbid)
             .expect("track mapped to a recording")
     }
@@ -15369,7 +15567,11 @@ impl ManagedLibrary {
         self.db().execute_batch(&sql).expect("edition chosen");
         self.library
             .identify_store
-            .save_release(&chosen_release(count as u32));
+            .save_release(
+                &chosen_release(count as u32),
+                droppedneedle_kernel::db::Lane::Background,
+            )
+            .unwrap();
         (album, tracks)
     }
 
@@ -16495,6 +16697,7 @@ async fn a_custom_edition_passes_over_the_apps_artist_link() {
         .library
         .identify_store
         .release(&release_id, None)
+        .unwrap()
         .expect("release on file");
     for credit in &mut release.artists {
         credit.id = OTHER.to_owned();

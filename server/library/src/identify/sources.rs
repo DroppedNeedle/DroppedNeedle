@@ -867,12 +867,17 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
             .map(|track| (track.local_track_id.clone(), track.stat_revision.clone()))
             .collect();
         let store = self.store.clone();
+        // A print that cannot be read is logged and the file decoded
+        // again: that gives the same print.
         let stored: HashMap<String, (String, u32)> = tokio::task::spawn_blocking(move || {
             wanted
                 .into_iter()
-                .filter_map(|(id, revision)| {
-                    let print = store.fingerprint(&id, &revision)?;
-                    Some((id, print))
+                .filter_map(|(id, revision)| match store.fingerprint(&id, &revision) {
+                    Ok(print) => Some((id, print?)),
+                    Err(error) => {
+                        tracing::warn!(%error, track_id = id, "stored fingerprint unreadable");
+                        None
+                    }
                 })
                 .collect()
         })
@@ -939,7 +944,10 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
         let store = self.store.clone();
         let kept = tokio::task::spawn_blocking(move || {
             for (id, revision, print, seconds, matched) in keep {
-                store.save_fingerprint(&id, &revision, &print, seconds, matched);
+                if let Err(error) = store.save_fingerprint(&id, &revision, &print, seconds, matched)
+                {
+                    tracing::warn!(%error, track_id = id, "fingerprint not kept");
+                }
             }
         })
         .await;

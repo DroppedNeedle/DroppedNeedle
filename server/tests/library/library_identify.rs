@@ -56,15 +56,12 @@ fn rig_with_recall(recall: RecallResult) -> Rig {
     let path = dir.join("app.db");
     migrated_db(&path);
     let db = droppedneedle_kernel::db::open_connection(&path).expect("side connection opens");
-    let store = Arc::new(SqliteIdentifyStore::open(&path).expect("store opens"));
+    let store = Arc::new(SqliteIdentifyStore::new(
+        droppedneedle_kernel::db::Db::open_for_tests(&path).expect("store opens"),
+    ));
     let providers = Arc::new(FakeProviders::with_recall(recall));
     let service = IdentifyService::new(IdentifyDeps {
-        identities: store.clone(),
-        facts: store.clone(),
-        aliases: store.clone(),
-        queue: store.clone(),
-        reviews: store.clone(),
-        releases: store.clone(),
+        store: store.clone(),
         providers: providers.clone(),
     });
     let rig = Rig {
@@ -224,25 +221,30 @@ async fn automatic_identity_is_revisable() {
     let first = recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_1])]);
     let rig = rig_with_recall(first);
     rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.service.enqueue_album(
-        "job-1",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-1",
-        None,
-        0,
-    );
-    rig.store.claim(0, 60_000);
+    rig.service
+        .enqueue_album(
+            "job-1",
+            "album-1",
+            IdentifyKind::Automatic,
+            "rev-1",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    rig.store.claim(0, 60_000).unwrap();
     let report = rig
         .service
         .run_claimed_job("job-1", 0)
         .await
+        .unwrap()
         .expect("report");
     assert_eq!(report.outcome, IdentificationOutcome::Identified);
     assert_eq!(report.job.state, JobState::Succeeded);
     assert_eq!(
         rig.store
             .album_identity("album-1")
+            .unwrap()
             .expect("identity")
             .release_group_mbid
             .as_deref(),
@@ -255,25 +257,33 @@ async fn automatic_identity_is_revisable() {
         RELEASE_B1,
         &[RECORDING_1, RECORDING_2],
     )]));
-    rig.service.enqueue_album(
-        "job-2",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-2",
-        None,
-        0,
-    );
-    rig.store.claim(0, 60_000);
+    rig.service
+        .enqueue_album(
+            "job-2",
+            "album-1",
+            IdentifyKind::Automatic,
+            "rev-2",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    rig.store.claim(0, 60_000).unwrap();
     let report = rig
         .service
         .run_claimed_job("job-2", 0)
         .await
+        .unwrap()
         .expect("report");
     assert_eq!(report.outcome, IdentificationOutcome::Identified);
-    let identity = rig.store.album_identity("album-1").expect("identity");
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_B));
     assert_eq!(identity.decision_source, DecisionSource::Automatic);
-    let brief = rig.service.identity_brief("album-1");
+    let brief = rig.service.identity_brief("album-1").unwrap();
     assert!(brief.revisable);
     assert_eq!(brief.protected_source, None);
 }
@@ -282,30 +292,36 @@ async fn automatic_identity_is_revisable() {
 async fn automatic_retracts_on_contradiction() {
     let rig = rig_with_recall(recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_2])]));
     rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.store.save_album_identity(AlbumIdentity {
-        local_album_id: "album-1".to_owned(),
-        provider: "musicbrainz".to_owned(),
-        release_group_mbid: Some(GROUP_A.to_owned()),
-        release_mbid: Some(RELEASE_A1.to_owned()),
-        decision_source: DecisionSource::Automatic,
-        row_revision: 1,
-    });
-    rig.service.enqueue_album(
-        "job-1",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-1",
-        None,
-        0,
-    );
-    rig.store.claim(0, 60_000);
+    rig.store
+        .save_album_identity(AlbumIdentity {
+            local_album_id: "album-1".to_owned(),
+            provider: "musicbrainz".to_owned(),
+            release_group_mbid: Some(GROUP_A.to_owned()),
+            release_mbid: Some(RELEASE_A1.to_owned()),
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+        })
+        .unwrap();
+    rig.service
+        .enqueue_album(
+            "job-1",
+            "album-1",
+            IdentifyKind::Automatic,
+            "rev-1",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    rig.store.claim(0, 60_000).unwrap();
     let report = rig
         .service
         .run_claimed_job("job-1", 0)
         .await
+        .unwrap()
         .expect("report");
     assert_eq!(report.outcome, IdentificationOutcome::Contradictory);
-    assert!(rig.store.album_identity("album-1").is_none());
+    assert!(rig.store.album_identity("album-1").unwrap().is_none());
     // Nothing waits in a blocking review: the album keeps its own tags.
     assert_eq!(report.review_id, None);
 }
@@ -314,37 +330,47 @@ async fn automatic_retracts_on_contradiction() {
 async fn manual_survives_rescan() {
     let rig = rig_with_recall(recall(vec![release(GROUP_B, RELEASE_B1, &[RECORDING_1])]));
     rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.store.save_album_identity(AlbumIdentity {
-        local_album_id: "album-1".to_owned(),
-        provider: "musicbrainz".to_owned(),
-        release_group_mbid: Some(GROUP_A.to_owned()),
-        release_mbid: Some(RELEASE_A1.to_owned()),
-        decision_source: DecisionSource::Manual,
-        row_revision: 3,
-    });
+    rig.store
+        .save_album_identity(AlbumIdentity {
+            local_album_id: "album-1".to_owned(),
+            provider: "musicbrainz".to_owned(),
+            release_group_mbid: Some(GROUP_A.to_owned()),
+            release_mbid: Some(RELEASE_A1.to_owned()),
+            decision_source: DecisionSource::Manual,
+            row_revision: 3,
+        })
+        .unwrap();
     // A rescan re-reads the files, then a fresh automatic pass disagrees.
     rig.rescan("album-1");
-    rig.service.enqueue_album(
-        "job-1",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-2",
-        None,
-        0,
-    );
-    rig.store.claim(0, 60_000);
+    rig.service
+        .enqueue_album(
+            "job-1",
+            "album-1",
+            IdentifyKind::Automatic,
+            "rev-2",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    rig.store.claim(0, 60_000).unwrap();
     let report = rig
         .service
         .run_claimed_job("job-1", 0)
         .await
+        .unwrap()
         .expect("report");
     assert_eq!(report.reason_code, "CHOSEN_EDITION_KEPT");
-    let identity = rig.store.album_identity("album-1").expect("identity");
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
     assert_eq!(identity.decision_source, DecisionSource::Manual);
     assert_eq!(identity.row_revision, 3);
     assert_eq!(report.review_id, None);
-    let brief: IdentityBrief = rig.service.identity_brief("album-1");
+    let brief: IdentityBrief = rig.service.identity_brief("album-1").unwrap();
     assert!(!brief.revisable);
     assert_eq!(brief.protected_source, Some(DecisionSource::Manual));
 }
@@ -364,55 +390,70 @@ fn automatic_writes_never_replace_a_curators_row() {
         decision_source: DecisionSource::Manual,
         row_revision: 3,
     };
-    rig.store.save_album_identity(chosen.clone());
+    rig.store.save_album_identity(chosen.clone()).unwrap();
 
-    let sealed = rig.store.seal_automatic(&AutomaticSeal {
-        local_album_id: "album-1".to_owned(),
-        release_group_mbid: GROUP_B.to_owned(),
-        release_mbid: Some(RELEASE_B1.to_owned()),
-        tracks: Vec::new(),
-        flag: None,
-    });
+    let sealed = rig
+        .store
+        .seal_automatic(&AutomaticSeal {
+            local_album_id: "album-1".to_owned(),
+            release_group_mbid: GROUP_B.to_owned(),
+            release_mbid: Some(RELEASE_B1.to_owned()),
+            tracks: Vec::new(),
+            flag: None,
+        })
+        .unwrap();
     assert!(!sealed);
-    rig.store.save_album_identity(AlbumIdentity {
-        release_group_mbid: Some(GROUP_B.to_owned()),
-        release_mbid: Some(RELEASE_B1.to_owned()),
-        decision_source: DecisionSource::Automatic,
-        row_revision: 1,
-        ..chosen.clone()
-    });
-    rig.store.clear_album_identity("album-1");
+    rig.store
+        .save_album_identity(AlbumIdentity {
+            release_group_mbid: Some(GROUP_B.to_owned()),
+            release_mbid: Some(RELEASE_B1.to_owned()),
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+            ..chosen.clone()
+        })
+        .unwrap();
+    rig.store.clear_album_identity("album-1").unwrap();
 
-    assert_eq!(rig.store.album_identity("album-1"), Some(chosen));
+    assert_eq!(rig.store.album_identity("album-1").unwrap(), Some(chosen));
 }
 
 #[tokio::test]
 async fn legacy_import_survives_rescan() {
     let rig = rig_with_recall(recall(vec![release(GROUP_B, RELEASE_B1, &[RECORDING_1])]));
     rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.store.save_album_identity(AlbumIdentity {
-        local_album_id: "album-1".to_owned(),
-        provider: "musicbrainz".to_owned(),
-        release_group_mbid: Some(GROUP_A.to_owned()),
-        release_mbid: Some(RELEASE_A1.to_owned()),
-        decision_source: DecisionSource::LegacyImport,
-        row_revision: 1,
-    });
+    rig.store
+        .save_album_identity(AlbumIdentity {
+            local_album_id: "album-1".to_owned(),
+            provider: "musicbrainz".to_owned(),
+            release_group_mbid: Some(GROUP_A.to_owned()),
+            release_mbid: Some(RELEASE_A1.to_owned()),
+            decision_source: DecisionSource::LegacyImport,
+            row_revision: 1,
+        })
+        .unwrap();
     rig.rescan("album-1");
-    rig.service.enqueue_album(
-        "job-1",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-2",
-        None,
-        0,
-    );
-    rig.store.claim(0, 60_000);
+    rig.service
+        .enqueue_album(
+            "job-1",
+            "album-1",
+            IdentifyKind::Automatic,
+            "rev-2",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    rig.store.claim(0, 60_000).unwrap();
     rig.service
         .run_claimed_job("job-1", 0)
         .await
+        .unwrap()
         .expect("report");
-    let identity = rig.store.album_identity("album-1").expect("identity");
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
     assert_eq!(identity.decision_source, DecisionSource::LegacyImport);
 }
@@ -428,33 +469,43 @@ async fn automatic_pass_skips_protected_track_rows() {
         "album-1",
         &[("t1", Some(RECORDING_1)), ("t2", Some(RECORDING_2))],
     ));
-    rig.store.save_track_identity(TrackIdentity {
-        local_track_id: "t2".to_owned(),
-        provider: "musicbrainz".to_owned(),
-        recording_mbid: Some(RECORDING_2.to_owned()),
-        release_track_mbid: None,
-        decision_source: DecisionSource::Manual,
-        row_revision: 7,
-    });
-    rig.service.enqueue_album(
-        "job-1",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-1",
-        None,
-        0,
-    );
-    rig.store.claim(0, 60_000);
+    rig.store
+        .save_track_identity(TrackIdentity {
+            local_track_id: "t2".to_owned(),
+            provider: "musicbrainz".to_owned(),
+            recording_mbid: Some(RECORDING_2.to_owned()),
+            release_track_mbid: None,
+            decision_source: DecisionSource::Manual,
+            row_revision: 7,
+        })
+        .unwrap();
+    rig.service
+        .enqueue_album(
+            "job-1",
+            "album-1",
+            IdentifyKind::Automatic,
+            "rev-1",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    rig.store.claim(0, 60_000).unwrap();
     rig.service
         .run_claimed_job("job-1", 0)
         .await
+        .unwrap()
         .expect("report");
     // The automatic track sealed; the manual track kept its own row.
     assert_eq!(
-        rig.store.track_identity("t1").expect("t1").decision_source,
+        rig.store
+            .track_identity("t1")
+            .unwrap()
+            .expect("t1")
+            .decision_source,
         DecisionSource::Automatic
     );
-    let kept = rig.store.track_identity("t2").expect("t2");
+    let kept = rig.store.track_identity("t2").unwrap().expect("t2");
     assert_eq!(kept.decision_source, DecisionSource::Manual);
     assert_eq!(kept.row_revision, 7);
 }
@@ -543,7 +594,8 @@ fn file_edition_review(rig: &Rig, review_id: &str, album: &str) {
             candidate(GROUP_A, RELEASE_A1),
             candidate(GROUP_B, RELEASE_B1),
         ],
-    );
+    )
+    .unwrap();
 }
 
 #[tokio::test]
@@ -568,28 +620,40 @@ async fn review_approve_seals_manual_and_holds() {
             .approve_candidate(review, "curator-1", &key(GROUP_B, RELEASE_B1)),
         Ok(false)
     );
-    let stored = rig.store.get(review).expect("review");
+    let stored = rig.store.get(review).unwrap().expect("review");
     assert_eq!(stored.state, ReviewState::Approved);
-    let identity = rig.store.album_identity("album-1").expect("identity");
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
     assert_eq!(identity.decision_source, DecisionSource::Manual);
 
     // A later automatic pass, whose evidence points at another group,
     // cannot move the curator's choice.
-    rig.service.enqueue_album(
-        "job-2",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-2",
-        None,
-        0,
-    );
-    rig.store.claim(0, 60_000);
+    rig.service
+        .enqueue_album(
+            "job-2",
+            "album-1",
+            IdentifyKind::Automatic,
+            "rev-2",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    rig.store.claim(0, 60_000).unwrap();
     rig.service
         .run_claimed_job("job-2", 0)
         .await
+        .unwrap()
         .expect("report");
-    let held = rig.store.album_identity("album-1").expect("identity");
+    let held = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
     assert_eq!(held.release_group_mbid.as_deref(), Some(GROUP_A));
     assert_eq!(held.decision_source, DecisionSource::Manual);
 }
@@ -600,20 +664,20 @@ fn review_reject_keeps_tagged() {
     rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     file_edition_review(&rig, "rev-1", "album-1");
     let review = "rev-1";
-    assert!(rig.service.reject_candidates(review, "curator-1"));
-    assert!(!rig.service.reject_candidates(review, "curator-1"));
+    assert!(rig.service.reject_candidates(review, "curator-1").unwrap());
+    assert!(!rig.service.reject_candidates(review, "curator-1").unwrap());
     assert_eq!(
         rig.service
             .approve_candidate(review, "curator-1", &key(GROUP_A, RELEASE_A1)),
         Ok(false)
     );
     assert_eq!(
-        rig.store.get(review).expect("review").state,
+        rig.store.get(review).unwrap().expect("review").state,
         ReviewState::Rejected
     );
-    assert!(rig.store.album_identity("album-1").is_none());
-    assert!(!rig.service.review_is_pending(review));
-    assert!(rig.service.pending_reviews("album-1").is_empty());
+    assert!(rig.store.album_identity("album-1").unwrap().is_none());
+    assert!(!rig.service.review_is_pending(review).unwrap());
+    assert!(rig.service.pending_reviews("album-1").unwrap().is_empty());
 }
 
 /// A live release needs confirmation: without release-track ids on the
@@ -626,22 +690,30 @@ async fn edition_uncertain_keeps_the_best_guess() {
         live(release(GROUP_A, RELEASE_A2, &[RECORDING_1, RECORDING_2])),
     ]));
     rig.seed_album(&album_facts("album-1", &[("t1", None), ("t2", None)]));
-    rig.service.enqueue_album(
-        "job-1",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-1",
-        None,
-        0,
-    );
-    rig.store.claim(0, 60_000);
+    rig.service
+        .enqueue_album(
+            "job-1",
+            "album-1",
+            IdentifyKind::Automatic,
+            "rev-1",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    rig.store.claim(0, 60_000).unwrap();
     let report = rig
         .service
         .run_claimed_job("job-1", 0)
         .await
+        .unwrap()
         .expect("report");
     assert_eq!(report.outcome, IdentificationOutcome::EditionUncertain);
-    let identity = rig.store.album_identity("album-1").expect("identity");
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
     assert!(identity.release_mbid.is_some());
     assert_eq!(identity.decision_source, DecisionSource::Automatic);
@@ -654,29 +726,39 @@ async fn held_exact_survives_weaker_tier() {
         live(release(GROUP_A, RELEASE_A2, &[RECORDING_1, RECORDING_2])),
     ]));
     rig.seed_album(&album_facts("album-1", &[("t1", None), ("t2", None)]));
-    rig.store.save_album_identity(AlbumIdentity {
-        local_album_id: "album-1".to_owned(),
-        provider: "musicbrainz".to_owned(),
-        release_group_mbid: Some(GROUP_A.to_owned()),
-        release_mbid: Some(RELEASE_A1.to_owned()),
-        decision_source: DecisionSource::Automatic,
-        row_revision: 1,
-    });
-    rig.service.enqueue_album(
-        "job-1",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-1",
-        None,
-        0,
-    );
-    rig.store.claim(0, 60_000);
+    rig.store
+        .save_album_identity(AlbumIdentity {
+            local_album_id: "album-1".to_owned(),
+            provider: "musicbrainz".to_owned(),
+            release_group_mbid: Some(GROUP_A.to_owned()),
+            release_mbid: Some(RELEASE_A1.to_owned()),
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+        })
+        .unwrap();
+    rig.service
+        .enqueue_album(
+            "job-1",
+            "album-1",
+            IdentifyKind::Automatic,
+            "rev-1",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    rig.store.claim(0, 60_000).unwrap();
     rig.service
         .run_claimed_job("job-1", 0)
         .await
+        .unwrap()
         .expect("report");
     // Same-group weaker evidence must not demote the sealed exact.
-    let identity = rig.store.album_identity("album-1").expect("identity");
+    let identity = rig
+        .store
+        .album_identity("album-1")
+        .unwrap()
+        .expect("identity");
     assert_eq!(identity.release_mbid.as_deref(), Some(RELEASE_A1));
 }
 
@@ -703,20 +785,45 @@ fn queue_claims_by_priority_then_backs_off() {
     for album in ["album-b", "album-m", "album-a"] {
         rig.seed_album(&album_facts(album, &[]));
     }
-    rig.service.enqueue_album(
-        "job-backlog",
-        "album-b",
-        IdentifyKind::Historical,
-        "r",
-        None,
-        0,
-    );
     rig.service
-        .enqueue_album("job-manual", "album-m", IdentifyKind::Manual, "r", None, 0);
+        .enqueue_album(
+            "job-backlog",
+            "album-b",
+            IdentifyKind::Historical,
+            "r",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
     rig.service
-        .enqueue_album("job-auto", "album-a", IdentifyKind::Automatic, "r", None, 0);
-    assert_eq!(rig.store.jobs_for_album("album-a").len(), 1);
-    let first = rig.store.claim(0, LEASE_SECONDS * 1000).expect("claim");
+        .enqueue_album(
+            "job-manual",
+            "album-m",
+            IdentifyKind::Manual,
+            "r",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    rig.service
+        .enqueue_album(
+            "job-auto",
+            "album-a",
+            IdentifyKind::Automatic,
+            "r",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    assert_eq!(rig.store.jobs_for_album("album-a").unwrap().len(), 1);
+    let first = rig
+        .store
+        .claim(0, LEASE_SECONDS * 1000)
+        .unwrap()
+        .expect("claim");
     assert_eq!(first.id, "job-auto");
     assert_eq!(first.priority, PRIORITY_NEW_OR_CHANGED);
     // Backoff ladder doubles from 30 seconds up to the cap.
@@ -736,32 +843,36 @@ async fn provider_deferred_job_waits_then_terminals() {
         ..RecallResult::default()
     });
     rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.service.enqueue_album(
-        "job-1",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-1",
-        None,
-        0,
-    );
-    rig.store.claim(0, 60_000);
+    rig.service
+        .enqueue_album(
+            "job-1",
+            "album-1",
+            IdentifyKind::Automatic,
+            "rev-1",
+            None,
+            0,
+            droppedneedle_kernel::db::Lane::Background,
+        )
+        .unwrap();
+    rig.store.claim(0, 60_000).unwrap();
     let report = rig
         .service
         .run_claimed_job("job-1", 1_000)
         .await
+        .unwrap()
         .expect("report");
     assert_eq!(report.outcome, IdentificationOutcome::ProviderDeferred);
-    let job = rig.store.job("job-1").expect("job");
+    let job = rig.store.job("job-1").unwrap().expect("job");
     assert_eq!(job.state, identify::models::JobState::Deferred);
     assert_eq!(job.not_before_ms, 1_000 + 30_000);
     // No identity was written on a deferred attempt.
-    assert!(rig.store.album_identity("album-1").is_none());
+    assert!(rig.store.album_identity("album-1").unwrap().is_none());
 }
 
 #[test]
 fn brief_carries_the_whole_case() {
     let rig = rig_with_recall(RecallResult::default());
-    let empty = rig.service.identity_brief("album-1");
+    let empty = rig.service.identity_brief("album-1").unwrap();
     assert!(empty.revisable);
     assert_eq!(empty.reason_code, "NO_IDENTITY");
     assert_eq!(empty.pending_review_id, None);
@@ -888,7 +999,9 @@ impl Links {
         )
         .expect("admin seeds");
         Self {
-            store: SqliteIdentifyStore::open(&path).expect("store opens"),
+            store: SqliteIdentifyStore::new(
+                droppedneedle_kernel::db::Db::open_for_tests(&path).expect("store opens"),
+            ),
             db,
             _dir: dir,
         }
@@ -1003,25 +1116,30 @@ impl Links {
                 })
                 .collect()
         };
-        self.store.save_release(&Release {
-            id: LINK_RELEASE.to_owned(),
-            release_group_id: LINK_GROUP.to_owned(),
-            title: "Album".to_owned(),
-            artists: credited(artists),
-            tracks: (1..=tracks)
-                .map(|number| ReleaseTrack {
-                    id: format!("rt-{number}"),
-                    recording_id: format!("rec-{number}"),
-                    title: format!("Song {number}"),
-                    artists: credited(track_artists),
-                    disc: 1,
-                    position: number,
-                    absolute_position: number,
-                    ..ReleaseTrack::default()
-                })
-                .collect(),
-            ..Release::default()
-        });
+        self.store
+            .save_release(
+                &Release {
+                    id: LINK_RELEASE.to_owned(),
+                    release_group_id: LINK_GROUP.to_owned(),
+                    title: "Album".to_owned(),
+                    artists: credited(artists),
+                    tracks: (1..=tracks)
+                        .map(|number| ReleaseTrack {
+                            id: format!("rt-{number}"),
+                            recording_id: format!("rec-{number}"),
+                            title: format!("Song {number}"),
+                            artists: credited(track_artists),
+                            disc: 1,
+                            position: number,
+                            absolute_position: number,
+                            ..ReleaseTrack::default()
+                        })
+                        .collect(),
+                    ..Release::default()
+                },
+                droppedneedle_kernel::db::Lane::Background,
+            )
+            .unwrap();
     }
 
     fn link_of(&self, artist: &str) -> Option<(String, String)> {
@@ -1181,7 +1299,7 @@ fn an_accepted_match_links_every_credited_artist() {
         2,
         &[(LINK_X, "Alpha")],
     );
-    links.store.sweep_artist_links();
+    links.store.sweep_artist_links().unwrap();
     assert_eq!(
         links.proofs(),
         vec![
@@ -1196,9 +1314,9 @@ fn an_accepted_match_links_every_credited_artist() {
     assert_eq!(links.state("al").as_deref(), Some("projected"));
 
     let before = links.written();
-    links.store.sweep_artist_links();
-    assert!(links.store.link_and_merge_album_artists("al"));
-    assert!(links.store.link_album_artists("al"));
+    links.store.sweep_artist_links().unwrap();
+    links.store.link_and_merge_album_artists("al").unwrap();
+    links.store.link_album_artists("al").unwrap();
     assert_eq!(links.written(), before, "nothing new, nothing written");
 }
 
@@ -1221,7 +1339,7 @@ fn a_joined_album_credit_proves_nothing() {
         1,
         &[(LINK_X, "Alpha")],
     );
-    links.store.sweep_artist_links();
+    links.store.sweep_artist_links().unwrap();
     assert_eq!(
         links.proofs(),
         vec![Links::proof("track", "t1", 0, "ar-a", LINK_X)]
@@ -1247,7 +1365,7 @@ fn another_spelling_links_only_through_the_artists_names() {
     links.artist("ar-s", "Ryuichi Sakamoto", 1.0);
     links.album("al", &[("ar-s", "Ryuichi Sakamoto", None)], &[], "manual");
     links.release(&[(LINK_X, "坂本龍一")], 0, &[]);
-    links.store.sweep_artist_links();
+    links.store.sweep_artist_links().unwrap();
     assert_eq!(links.link_of("ar-s"), None);
     assert!(links.proofs().is_empty());
     assert_eq!(links.state("al").as_deref(), Some("projected"));
@@ -1275,8 +1393,9 @@ fn another_spelling_links_only_through_the_artists_names() {
                 names: Some(names),
             },
         )
+        .unwrap()
         .expect("names grafted");
-    assert!(links.store.link_album_artists("al"));
+    links.store.link_album_artists("al").unwrap();
     assert_eq!(links.link_of("ar-s"), automatic(LINK_X));
 }
 
@@ -1298,14 +1417,14 @@ fn a_best_guess_links_once_it_looks_right() {
         )
         .expect("best guess seeds");
     links.release(&[(LINK_X, "Alpha")], 0, &[]);
-    links.store.sweep_artist_links();
+    links.store.sweep_artist_links().unwrap();
     assert_eq!(links.link_of("ar-a"), None);
     assert_eq!(links.state("al").as_deref(), Some("waiting_for_identity"));
 
     let tx = links.db.unchecked_transaction().expect("transaction");
     choice::confirm(&tx, "al", "admin", 2.0).expect("looks right");
     tx.commit().expect("commit");
-    links.store.sweep_artist_links();
+    links.store.sweep_artist_links().unwrap();
     assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
     assert_eq!(links.state("al").as_deref(), Some("projected"));
 }
@@ -1327,7 +1446,7 @@ fn files_naming_another_artist_keep_the_row_unlinked() {
         "automatic",
     );
     links.release(&[(LINK_X, "Alpha"), (LINK_Z, "Pe")], 0, &[]);
-    links.store.sweep_artist_links();
+    links.store.sweep_artist_links().unwrap();
     assert_eq!(
         links.proofs(),
         vec![
@@ -1357,7 +1476,7 @@ fn detaching_the_match_takes_its_links_away() {
         "automatic",
     );
     links.release(&[(LINK_X, "Alpha")], 1, &[(LINK_X, "Alpha")]);
-    links.store.sweep_artist_links();
+    links.store.sweep_artist_links().unwrap();
     assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
 
     let tx = links.db.unchecked_transaction().expect("transaction");
@@ -1365,7 +1484,7 @@ fn detaching_the_match_takes_its_links_away() {
         .expect("detached")
         .expect("a match to detach");
     tx.commit().expect("commit");
-    links.store.sweep_artist_links();
+    links.store.sweep_artist_links().unwrap();
     assert!(links.proofs().is_empty());
     assert_eq!(links.state("al"), None);
     assert_eq!(links.link_of("ar-a"), None);
@@ -1379,7 +1498,7 @@ fn files_that_turn_to_another_artist_lose_the_link() {
     links.artist("ar-a", "Alpha", 1.0);
     links.album("al", &[("ar-a", "Alpha", None)], &[], "automatic");
     links.release(&[(LINK_X, "Alpha")], 0, &[]);
-    links.store.sweep_artist_links();
+    links.store.sweep_artist_links().unwrap();
     assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
 
     links
@@ -1389,7 +1508,7 @@ fn files_that_turn_to_another_artist_lose_the_link() {
             params![LINK_Y],
         )
         .expect("files read again");
-    links.store.sweep_artist_links();
+    links.store.sweep_artist_links().unwrap();
     assert_eq!(links.link_of("ar-a"), None);
     assert_eq!(links.state("al").as_deref(), Some("projected"));
 }
@@ -1413,7 +1532,7 @@ fn a_row_its_matched_album_proves_merges_into_the_linked_row() {
     links.release(&[(LINK_X, "Alpha")], 1, &[(LINK_X, "Alpha")]);
     links.listen("ar-r");
 
-    assert!(links.store.link_and_merge_album_artists("al"));
+    links.store.link_and_merge_album_artists("al").unwrap();
     assert_eq!(links.retired_into("ar-r").as_deref(), Some("ar-s"));
     assert_eq!(
         links.count(
@@ -1446,8 +1565,8 @@ fn a_row_its_matched_album_proves_merges_into_the_linked_row() {
     members.sort_unstable();
     assert_eq!(members, vec!["ar-r", "ar-s"]);
 
-    assert!(links.store.link_and_merge_album_artists("al"));
-    links.store.sweep_artist_links();
+    links.store.link_and_merge_album_artists("al").unwrap();
+    links.store.sweep_artist_links().unwrap();
     assert_eq!(links.merges(), 1, "nothing new to merge");
 }
 
@@ -1467,8 +1586,8 @@ fn a_row_not_proven_on_every_credit_is_not_merged() {
         links
     };
     let unmerged = |links: &Links| {
-        assert!(links.store.link_and_merge_album_artists("al"));
-        links.store.sweep_artist_links();
+        links.store.link_and_merge_album_artists("al").unwrap();
+        links.store.sweep_artist_links().unwrap();
         assert_eq!(links.retired_into("ar-r"), None);
         assert_eq!(links.merges(), 0);
     };
@@ -1505,11 +1624,11 @@ fn a_row_not_proven_on_every_credit_is_not_merged() {
 fn the_album_walk_waits_out_other_writers() {
     let links = Links::new();
     links.release(&[(LINK_X, "Alpha")], 0, &[]);
-    links.store.sweep_artist_links();
+    links.store.sweep_artist_links().unwrap();
 
     links.artist("ar-a", "Alpha", 1.0);
     links.album("al", &[("ar-a", "Alpha", None)], &[], "automatic");
-    links.store.sweep_artist_links();
+    links.store.sweep_artist_links().unwrap();
     assert_eq!(
         links.link_of("ar-a"),
         None,
@@ -1518,7 +1637,7 @@ fn the_album_walk_waits_out_other_writers() {
     assert_eq!(links.state("al"), None);
 
     links.release(&[(LINK_X, "Alpha")], 0, &[]);
-    links.store.sweep_artist_links();
+    links.store.sweep_artist_links().unwrap();
     assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
 }
 
@@ -1566,19 +1685,21 @@ fn a_continuation_backlog_moves_in_bounded_turns() {
             .expect("plays count")
     };
 
-    rig.store.save_track_identity(TrackIdentity {
-        local_track_id: "t1".to_owned(),
-        provider: "musicbrainz".to_owned(),
-        recording_mbid: Some(RECORDING_1.to_owned()),
-        release_track_mbid: Some("rt-1".to_owned()),
-        decision_source: DecisionSource::Automatic,
-        row_revision: 1,
-    });
+    rig.store
+        .save_track_identity(TrackIdentity {
+            local_track_id: "t1".to_owned(),
+            provider: "musicbrainz".to_owned(),
+            recording_mbid: Some(RECORDING_1.to_owned()),
+            release_track_mbid: Some("rt-1".to_owned()),
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+        })
+        .unwrap();
     let after_write = left(&rig);
     assert!(after_write > 0, "the write moved the whole backlog");
     assert!(after_write < backlog, "the write moved none of the backlog");
 
-    rig.store.sweep_artist_links();
+    rig.store.sweep_artist_links().unwrap();
     assert_eq!(left(&rig), 0, "the sweep works the backlog off");
     let on_live: i64 = rig
         .db

@@ -32,7 +32,7 @@ use super::sources::{
     ReleaseSource, SourceError, Unanswered, group_editions,
 };
 use super::sqlite::SqliteIdentifyStore;
-use super::stores::{fresh_release, keep_releases};
+use super::stores::fresh_release;
 use crate::matching::decide::STRONG;
 use crate::matching::strings::fold;
 use crate::matching::{LocalAlbum, Release, match_release, should_fingerprint};
@@ -271,16 +271,21 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
         })
     }
 
-    /// A release from the store when fresh, else from the source.
+    /// A release from the store when fresh, else from the source. The
+    /// caller keeps what recall fetched, on its own lane. A store that
+    /// cannot be read is logged and the source asked: it answers the same
+    /// document.
     async fn release(&self, mbid: &str) -> Result<Option<Release>, SourceError> {
-        if let Some(stored) = fresh_release(&self.store, mbid).await {
-            return Ok(Some(stored));
+        match fresh_release(&self.store, mbid).await {
+            Ok(Some(stored)) => return Ok(Some(stored)),
+            Ok(None) => {}
+            Err(error) => tracing::warn!(
+                %error,
+                release_mbid = mbid,
+                "stored release document unreadable; asking MusicBrainz"
+            ),
         }
-        let fetched = self.releases.release(mbid).await?;
-        if let Some(release) = &fetched {
-            keep_releases(&self.store, vec![release.clone()]).await;
-        }
-        Ok(fetched)
+        self.releases.release(mbid).await
     }
 
     /// Map file recording MBIDs that no candidate carries to the ids

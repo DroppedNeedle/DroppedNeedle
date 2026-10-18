@@ -9,6 +9,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
 use tokio::time::Instant;
 
@@ -31,12 +32,7 @@ use crate::matching::{EditionPrefs, LocalAlbum, ReleaseMatch, Verdict, decide, m
 
 /// Every dependency the identify service needs, injected by constructor.
 pub struct IdentifyDeps {
-    pub identities: Arc<SqliteIdentifyStore>,
-    pub facts: Arc<SqliteIdentifyStore>,
-    pub aliases: Arc<SqliteIdentifyStore>,
-    pub queue: Arc<SqliteIdentifyStore>,
-    pub reviews: Arc<SqliteIdentifyStore>,
-    pub releases: Arc<SqliteIdentifyStore>,
+    pub store: Arc<SqliteIdentifyStore>,
     pub providers: Arc<dyn IdentifyProviders>,
 }
 
@@ -84,8 +80,9 @@ impl IdentifyService {
         self
     }
 
-    /// Enqueue one album. Fresh and changed work runs first, curator
-    /// retries next, historical backlog last.
+    /// Enqueue one album, on the caller's lane. Fresh and changed work
+    /// runs first, curator retries next, historical backlog last.
+    #[allow(clippy::too_many_arguments)]
     pub fn enqueue_album(
         &self,
         job_id: &str,
@@ -94,7 +91,8 @@ impl IdentifyService {
         input_revision: &str,
         requested_by_user_id: Option<&str>,
         now_ms: u64,
-    ) -> Option<IdentifyJob> {
+        lane: Lane,
+    ) -> Result<IdentifyJob, StoreError> {
         let priority = match kind {
             IdentifyKind::Automatic => PRIORITY_NEW_OR_CHANGED,
             IdentifyKind::Manual => PRIORITY_REVIEW_RETRY,
@@ -112,38 +110,46 @@ impl IdentifyService {
             requested_by_user_id: requested_by_user_id.map(str::to_owned),
             failure_code: None,
         };
-        self.deps.queue.enqueue(job)
+        self.deps.store.enqueue(job, lane)
     }
 
     /// Run one claimed job to a terminal landing. Async only because the
-    /// provider seam is async; every rule inside is sync and pure.
-    pub async fn run_claimed_job(&self, job_id: &str, now_ms: u64) -> Option<AttemptReport> {
-        let mut job = self.deps.queue.job(job_id)?;
-        let Some(facts) = self.deps.facts.album_facts(&job.local_album_id) else {
+    /// provider seam is async; every rule inside is sync and pure. `None`
+    /// when the job is gone. A store error leaves the job where it was:
+    /// the caller decides what happens to it.
+    pub async fn run_claimed_job(
+        &self,
+        job_id: &str,
+        now_ms: u64,
+    ) -> Result<Option<AttemptReport>, StoreError> {
+        let Some(mut job) = self.deps.store.job(job_id)? else {
+            return Ok(None);
+        };
+        let Some(facts) = self.deps.store.album_facts(&job.local_album_id)? else {
             // The album left the catalog: nothing to identify.
             land_job(&mut job, AttemptLanding::Failed, now_ms, Some("ALBUM_GONE"));
-            self.deps.queue.update(job.clone());
-            return Some(AttemptReport {
+            self.deps.store.update(job.clone())?;
+            return Ok(Some(AttemptReport {
                 job,
                 outcome: IdentificationOutcome::Failed,
                 reason_code: "ALBUM_GONE".to_owned(),
                 review_id: None,
-            });
+            }));
         };
-        let current = self.deps.identities.album_identity(&facts.local_album_id);
+        let current = self.deps.store.album_identity(&facts.local_album_id)?;
         // A person's choice is final: automatic passes never look again.
         if current
             .as_ref()
             .is_some_and(|row| !row.decision_source.automatic_may_overwrite())
         {
             land_job(&mut job, AttemptLanding::Done, now_ms, None);
-            self.deps.queue.update(job.clone());
-            return Some(AttemptReport {
+            self.deps.store.update(job.clone())?;
+            return Ok(Some(AttemptReport {
                 job,
                 outcome: IdentificationOutcome::Identified,
                 reason_code: "CHOSEN_EDITION_KEPT".to_owned(),
                 review_id: None,
-            });
+            }));
         }
         let RecallOutcome {
             result: mut recall, ..
@@ -172,58 +178,59 @@ impl IdentifyService {
                 now_ms,
                 recall.failure_code.as_deref(),
             );
-            self.deps.queue.update(job.clone());
-            return Some(AttemptReport {
+            self.deps.store.update(job.clone())?;
+            return Ok(Some(AttemptReport {
                 job,
                 outcome: IdentificationOutcome::ProviderDeferred,
                 reason_code: "PROVIDER_DEFERRED".to_owned(),
                 review_id: None,
-            });
+            }));
         }
         // Every candidate's document stays on file: the identity's release
         // for tagging, the others because a curator may approve them.
-        // Live recall already stored what it fetched.
-        keep_releases(&self.deps.releases, recall.releases.clone()).await;
+        keep_releases(&self.deps.store, recall.releases.clone(), Lane::Background).await?;
         let (ranking, decision) = self.ranked(&facts, &recall, held.as_deref());
-        let report = self.apply_decision(&mut job, &facts, &ranking, decision, now_ms);
-        self.deps.queue.update(job);
-        Some(report)
+        let report = self.apply_decision(&mut job, &facts, &ranking, decision, now_ms)?;
+        self.deps.store.update(job)?;
+        Ok(Some(report))
     }
 
     /// Recall candidates for one album outside the queue: every release
     /// the usual recall finds, or only `exact_release` when an
     /// administrator named one. Fetched documents stay on file, as for a
-    /// queued attempt.
+    /// queued attempt, written on the caller's lane.
     pub async fn recall(
         &self,
         facts: &LocalAlbumFacts,
         exact_release: Option<&str>,
-    ) -> RecallResult {
+        lane: Lane,
+    ) -> Result<RecallResult, StoreError> {
         let outcome = match exact_release {
             Some(mbid) => self.deps.providers.recall_release(facts, mbid).await,
             None => self.deps.providers.recall_candidates(facts).await,
         };
         if !outcome.result.provider_deferred {
-            keep_releases(&self.deps.releases, outcome.result.releases.clone()).await;
+            keep_releases(&self.deps.store, outcome.result.releases.clone(), lane).await?;
         }
-        outcome.result
+        Ok(outcome.result)
     }
 
     /// Ask MusicBrainz about up to `limit` artist ids waiting for an
     /// answer, newest first, and write each answer in its own transaction.
     /// A lookup that gets no answer stops the batch and holds lookups back
     /// for the `Retry-After` it gave, else 5 minutes doubling to an hour,
-    /// each with up to 20% more. Returns how many ids were answered.
-    pub async fn resolve_merged_artist_ids(&self, limit: usize) -> usize {
+    /// each with up to 20% more. Returns how many ids were answered. An
+    /// answer that cannot be written holds lookups back too.
+    pub async fn resolve_merged_artist_ids(&self, limit: usize) -> Result<usize, StoreError> {
         if self
             .hold_guard()
             .until
             .is_some_and(|until| Instant::now() < until)
         {
-            return 0;
+            return Ok(0);
         }
         let mut answered = 0;
-        for mbid in self.deps.identities.pending_artist_ids(limit) {
+        for mbid in self.deps.store.pending_artist_ids(limit)? {
             match self.deps.providers.canonical_artist(&mbid).await {
                 Ok(answer) => {
                     {
@@ -231,13 +238,9 @@ impl IdentifyService {
                         hold.until = None;
                         hold.failures = 0;
                     }
-                    if !self.deps.identities.answer_artist_id(&mbid, &answer) {
+                    if let Err(error) = self.deps.store.answer_artist_id(&mbid, &answer) {
                         self.hold(None);
-                        tracing::debug!(
-                            artist_mbid = mbid,
-                            "an artist id answer could not be written; lookups wait"
-                        );
-                        break;
+                        return Err(error);
                     }
                     answered += 1;
                 }
@@ -252,7 +255,7 @@ impl IdentifyService {
                 }
             }
         }
-        answered
+        Ok(answered)
     }
 
     fn hold_guard(&self) -> std::sync::MutexGuard<'_, ArtistHold> {
@@ -405,10 +408,10 @@ impl IdentifyService {
         ranking: &Ranking,
         decision: Decision,
         now_ms: u64,
-    ) -> AttemptReport {
+    ) -> Result<AttemptReport, StoreError> {
         let scored = &ranking.candidates;
         let album = facts.local_album_id.as_str();
-        let current = self.deps.identities.album_identity(album);
+        let current = self.deps.store.album_identity(album)?;
         let outcome = decision.outcome();
         let reason_code = decision.reason_code();
         let closest: Vec<CandidateEvidence> = scored.iter().take(CLOSEST).cloned().collect();
@@ -420,21 +423,24 @@ impl IdentifyService {
             review_id: None,
         };
         if let Decision::Identified(index) = decision {
-            self.seal_automatic(facts, &scored[index], None);
-            return report("SUPPORTED");
+            self.seal_automatic(facts, &scored[index], None)?;
+            return Ok(report("SUPPORTED"));
         }
         // A confirmed automatic edition stays unless the new evidence rules
         // it out: a weaker pass never demotes or replaces it.
-        let confirmed_exact = current.as_ref().and_then(|row| {
-            (row.decision_source == DecisionSource::Automatic
-                && self.deps.identities.match_flag(album).is_none())
-            .then(|| row.release_mbid.clone())
-            .flatten()
-        });
+        let confirmed_exact = match current.as_ref() {
+            Some(row)
+                if row.decision_source == DecisionSource::Automatic
+                    && self.deps.store.match_flag(album)?.is_none() =>
+            {
+                row.release_mbid.clone()
+            }
+            _ => None,
+        };
         if let Some(held) = confirmed_exact.as_deref()
             && !ruled_out(ranking, held)
         {
-            return report("QUIET_RECONFIRM");
+            return Ok(report("QUIET_RECONFIRM"));
         }
         if let Some(guess) = ranking.guess.and_then(|index| scored.get(index)) {
             self.seal_automatic(
@@ -446,8 +452,8 @@ impl IdentifyService {
                     release_mbid: guess.release_mbid.clone(),
                     candidates: closest,
                 }),
-            );
-            return report(&reason_code);
+            )?;
+            return Ok(report(&reason_code));
         }
         if matches!(decision, Decision::Contradictory)
             && retracts_on_contradiction(
@@ -455,10 +461,10 @@ impl IdentifyService {
                 IdentificationOutcome::Contradictory,
             )
         {
-            self.deps.identities.clear_album_identity(album);
+            self.deps.store.clear_album_identity(album)?;
         }
-        if self.deps.identities.album_identity(album).is_none()
-            && let Err(error) = self.deps.identities.set_match_flag(
+        if self.deps.store.album_identity(album)?.is_none() {
+            self.deps.store.set_match_flag(
                 album,
                 Some(&MatchFlag {
                     state: MatchFlagState::Unmatched,
@@ -466,11 +472,9 @@ impl IdentifyService {
                     release_mbid: None,
                     candidates: closest,
                 }),
-            )
-        {
-            tracing::error!(%error, album, "unmatched flag not recorded");
+            )?;
         }
-        report(&reason_code)
+        Ok(report(&reason_code))
     }
 
     /// Seal an automatic win: album row and supported track rows (curator
@@ -482,7 +486,7 @@ impl IdentifyService {
         facts: &LocalAlbumFacts,
         winner: &CandidateEvidence,
         flag: Option<MatchFlag>,
-    ) -> bool {
+    ) -> Result<bool, StoreError> {
         let tracks = winner
             .track_evidence
             .iter()
@@ -498,20 +502,20 @@ impl IdentifyService {
                 })
             })
             .collect();
-        let sealed = self.deps.identities.seal_automatic(&AutomaticSeal {
+        let sealed = self.deps.store.seal_automatic(&AutomaticSeal {
             local_album_id: facts.local_album_id.clone(),
             release_group_mbid: winner.release_group_mbid.clone(),
             release_mbid: winner.release_mbid.clone(),
             tracks,
             flag,
-        });
+        })?;
         if !sealed {
             tracing::info!(
                 album = facts.local_album_id,
                 "a curator decided this album meanwhile; automatic seal skipped"
             );
         }
-        sealed
+        Ok(sealed)
     }
 
     /// A curator approves a review: the chosen candidate seals as a manual
@@ -524,7 +528,7 @@ impl IdentifyService {
         by_user_id: &str,
         candidate_key: &str,
     ) -> Result<bool, StoreError> {
-        let Some(review) = self.deps.reviews.get(review_id) else {
+        let Some(review) = self.deps.store.get(review_id)? else {
             return Ok(false);
         };
         if review.state != ReviewState::Pending {
@@ -553,7 +557,7 @@ impl IdentifyService {
                 })
             })
             .collect();
-        self.deps.reviews.approve(&Approval {
+        self.deps.store.approve(&Approval {
             review_id: review_id.to_owned(),
             by_user_id: by_user_id.to_owned(),
             candidate_key: candidate_key.to_owned(),
@@ -570,18 +574,18 @@ impl IdentifyService {
     }
 
     /// A curator rejects a review: the album keeps its tags, nothing seals.
-    pub fn reject_candidates(&self, review_id: &str, by_user_id: &str) -> bool {
-        reject_review(self.deps.reviews.as_ref(), review_id, by_user_id)
+    pub fn reject_candidates(&self, review_id: &str, by_user_id: &str) -> Result<bool, StoreError> {
+        reject_review(self.deps.store.as_ref(), review_id, by_user_id)
     }
 
     /// One card with the whole case for an album.
-    pub fn identity_brief(&self, local_album_id: &str) -> IdentityBrief {
-        let identity = self.deps.identities.album_identity(local_album_id);
-        let pending = self.deps.reviews.pending_for_album(local_album_id);
+    pub fn identity_brief(&self, local_album_id: &str) -> Result<IdentityBrief, StoreError> {
+        let identity = self.deps.store.album_identity(local_album_id)?;
+        let pending = self.deps.store.pending_for_album(local_album_id)?;
         let revisable = identity
             .as_ref()
             .is_none_or(|row| row.decision_source.automatic_may_overwrite());
-        IdentityBrief {
+        Ok(IdentityBrief {
             local_album_id: local_album_id.to_owned(),
             protected_source: identity.as_ref().and_then(|row| {
                 (!row.decision_source.automatic_may_overwrite()).then_some(row.decision_source)
@@ -602,23 +606,27 @@ impl IdentifyService {
                 .first()
                 .map(|review| review.candidates.clone())
                 .unwrap_or_default(),
-            aliases: self.deps.aliases.aliases_for(local_album_id),
+            aliases: self.deps.store.aliases_for(local_album_id)?,
             identity,
             revisable,
-        }
+        })
     }
 
     /// Pending reviews for one album, oldest filing first.
-    pub fn pending_reviews(&self, local_album_id: &str) -> Vec<super::models::ReviewItem> {
-        self.deps.reviews.pending_for_album(local_album_id)
+    pub fn pending_reviews(
+        &self,
+        local_album_id: &str,
+    ) -> Result<Vec<super::models::ReviewItem>, StoreError> {
+        self.deps.store.pending_for_album(local_album_id)
     }
 
     /// Review states still awaiting a curator.
-    pub fn review_is_pending(&self, review_id: &str) -> bool {
-        self.deps
-            .reviews
-            .get(review_id)
-            .is_some_and(|review| review.state == ReviewState::Pending)
+    pub fn review_is_pending(&self, review_id: &str) -> Result<bool, StoreError> {
+        Ok(self
+            .deps
+            .store
+            .get(review_id)?
+            .is_some_and(|review| review.state == ReviewState::Pending))
     }
 }
 

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use droppedneedle_kernel::jobs::schedule::SplitMix64;
 use tokio::sync::watch;
 
 use super::clock::{now_ms, now_unix, today_day};
@@ -23,6 +24,22 @@ const SUPERVISOR_IDLE_CEILING: Duration = Duration::from_secs(5);
 
 /// Identify queue poll cadence.
 const IDENTIFY_POLL: Duration = Duration::from_secs(2);
+
+/// After a tick that hit a store error the loop waits from
+/// [`IDENTIFY_POLL`], doubling up to this, plus up to a fifth more.
+const IDENTIFY_BACKOFF_CAP: Duration = Duration::from_secs(60);
+
+/// A job the database was too busy to run waits this long, plus up to as
+/// much again, keeping its attempts.
+const STORE_BUSY_RETRY: Duration = Duration::from_secs(5);
+
+/// What one identify drain did.
+#[derive(Default)]
+struct Drain {
+    attempted: usize,
+    /// A store call failed: the loop backs off before the next drain.
+    store_failed: bool,
+}
 
 /// Artist ids asked about after each identification attempt, and when
 /// the queue is empty.
@@ -162,7 +179,13 @@ impl LibrarySetup {
     /// boot recovery (or the lease running out) puts it back in the
     /// queue.
     pub async fn identify_tick_with_shutdown(&self, shutdown: &watch::Receiver<bool>) -> usize {
-        let mut attempted = 0;
+        self.identify_drain(shutdown).await.attempted
+    }
+
+    /// [`identify_tick_with_shutdown`](Self::identify_tick_with_shutdown),
+    /// also saying whether a store call failed, so the loop backs off.
+    async fn identify_drain(&self, shutdown: &watch::Receiver<bool>) -> Drain {
+        let mut drain = Drain::default();
         let mut shutdown = shutdown.clone();
         loop {
             if *shutdown.borrow() {
@@ -170,7 +193,10 @@ impl LibrarySetup {
             }
             // Artist links follow every change of a match, whoever made it,
             // so they are swept before each claim, paused or not.
-            self.identify_store.sweep_artist_links();
+            if let Err(error) = self.identify_store.sweep_artist_links() {
+                tracing::warn!(%error, "artist link sweep stopped; the next one goes on");
+                drain.store_failed = true;
+            }
             // An administrator's pause stops new claims; a job already
             // running finishes.
             if self.identification_paused() {
@@ -179,22 +205,38 @@ impl LibrarySetup {
             let claimed = self
                 .identify_store
                 .claim(now_ms(), super::identify::queue::LEASE_SECONDS * 1000);
-            let Some(job) = claimed else {
-                self.resolve_merged_artist_ids(IDLE_ARTIST_LOOKUPS, &mut shutdown)
-                    .await;
-                break;
+            let job = match claimed {
+                Ok(Some(job)) => job,
+                Ok(None) => {
+                    self.resolve_merged_artist_ids(IDLE_ARTIST_LOOKUPS, &mut shutdown)
+                        .await;
+                    break;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "no identify job claimed: the queue could not be read");
+                    drain.store_failed = true;
+                    break;
+                }
             };
             let attempt = self.identify.run_claimed_job(&job.id, now_ms());
             tokio::select! {
                 biased;
                 _ = shutdown.changed() => break,
                 report = attempt => match report {
-                    Some(report) => {
-                        attempted += 1;
+                    Ok(Some(report)) => {
+                        drain.attempted += 1;
                         // What the match proves about the album's artists,
                         // before automatic management plans the album.
-                        self.identify_store
-                            .link_and_merge_album_artists(&report.job.local_album_id);
+                        if let Err(error) = self
+                            .identify_store
+                            .link_and_merge_album_artists(&report.job.local_album_id)
+                        {
+                            tracing::warn!(
+                                %error,
+                                album_id = report.job.local_album_id,
+                                "the album's artist links could not be worked out; a later sweep tries again"
+                            );
+                        }
                         // An artist id the pass found disagreeing may be one
                         // MusicBrainz merged; asking now lets the answer land
                         // before a managed run writes the current id.
@@ -225,13 +267,66 @@ impl LibrarySetup {
                             "identify attempt finished"
                         );
                     }
-                    None => {
+                    Ok(None) => {
                         tracing::warn!(job_id = job.id, "identify job vanished mid-claim");
+                    }
+                    Err(error) => {
+                        // The loop backs off before it claims again.
+                        drain.store_failed = true;
+                        self.after_store_error(job, error);
+                        break;
                     }
                 },
             }
         }
-        attempted
+        drain
+    }
+
+    /// Settle a claimed job whose attempt hit a store error. Busy: the
+    /// job waits a few seconds and keeps its attempts. Shutting down:
+    /// nothing is written; boot recovery requeues it. Anything else: the
+    /// job takes a step on its backoff ladder as `STORE_FAILED`, so one
+    /// that never reads ends in Attention instead of retrying for ever. A
+    /// write that fails here leaves the job to its lease.
+    fn after_store_error(
+        &self,
+        mut job: super::identify::models::IdentifyJob,
+        error: super::identify::stores::StoreError,
+    ) {
+        use super::identify::models::JobState;
+        use super::identify::stores::{AttemptLanding, StoreError, land_job};
+        tracing::warn!(
+            %error,
+            job_id = job.id,
+            album_id = job.local_album_id,
+            "identify attempt stopped on a store error"
+        );
+        let now = now_ms();
+        match &error {
+            StoreError::Closed => return,
+            StoreError::Busy(_) => {
+                let jitter = SplitMix64::new(SplitMix64::seed_from_time())
+                    .below_duration(STORE_BUSY_RETRY)
+                    .as_millis() as u64;
+                job.state = JobState::Deferred;
+                job.not_before_ms = now + STORE_BUSY_RETRY.as_millis() as u64 + jitter;
+            }
+            StoreError::Failed(_) => {
+                land_job(
+                    &mut job,
+                    AttemptLanding::Deferred,
+                    now,
+                    Some("STORE_FAILED"),
+                );
+            }
+        }
+        if let Err(error) = self.identify_store.update(job.clone()) {
+            tracing::warn!(
+                %error,
+                job_id = job.id,
+                "identify job not put back; its lease brings it back"
+            );
+        }
     }
 
     /// Ask MusicBrainz about up to `limit` artist ids the passes found
@@ -244,7 +339,11 @@ impl LibrarySetup {
         tokio::select! {
             biased;
             _ = shutdown.changed() => {}
-            _ = self.identify.resolve_merged_artist_ids(limit) => {}
+            resolved = self.identify.resolve_merged_artist_ids(limit) => {
+                if let Err(error) = resolved {
+                    tracing::warn!(%error, "artist id lookups stopped on a store error");
+                }
+            }
         }
     }
 
@@ -398,18 +497,30 @@ pub(crate) async fn watcher_loop(setup: LibrarySetup, mut shutdown: watch::Recei
 
 /// Identify queue loop: drain every due job each tick.
 pub(crate) async fn identify_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
+    let mut rng = SplitMix64::new(SplitMix64::seed_from_time());
+    let mut failures: u32 = 0;
     loop {
         if *shutdown.borrow() {
             break;
         }
         let revision = setup.wakeups.revision("identification");
-        {
+        let drain = {
             let (setup, shutdown) = (setup.clone(), shutdown.clone());
-            drive_blocking(
-                move || async move { setup.identify_tick_with_shutdown(&shutdown).await },
-            )
-            .await;
+            drive_blocking(move || async move { setup.identify_drain(&shutdown).await }).await
+        };
+        if drain.is_some_and(|drain| drain.store_failed) {
+            failures = failures.saturating_add(1);
+            let wait = IDENTIFY_POLL
+                .saturating_mul(1 << (failures - 1).min(5))
+                .min(IDENTIFY_BACKOFF_CAP);
+            let wait = wait + rng.below_duration(wait / 5);
+            tokio::select! {
+                _ = shutdown.changed() => break,
+                _ = tokio::time::sleep(wait) => {}
+            }
+            continue;
         }
+        failures = 0;
         // Resume wakes the loop at once; otherwise it polls.
         tokio::select! {
             _ = shutdown.changed() => break,

@@ -1567,14 +1567,11 @@ fn matched(release: &str, source: &str) -> Option<(String, String)> {
 /// Run the identification job waiting for the album, as the worker
 /// would, and return its verdict.
 async fn identify_now(rig: &RegroupRig, album: &str) -> String {
-    let store = Arc::new(SqliteIdentifyStore::open(&rig.db()).expect("identify store opens"));
+    let store = Arc::new(SqliteIdentifyStore::new(
+        droppedneedle_kernel::db::Db::open_for_tests(&rig.db()).expect("identify store opens"),
+    ));
     let service = IdentifyService::new(IdentifyDeps {
-        identities: store.clone(),
-        facts: store.clone(),
-        aliases: store.clone(),
-        queue: store.clone(),
-        reviews: store.clone(),
-        releases: store.clone(),
+        store: store.clone(),
         providers: Arc::new(FakeProviders::with_recall(RecallResult::default())),
     });
     let now_ms = std::time::SystemTime::now()
@@ -1582,11 +1579,15 @@ async fn identify_now(rig: &RegroupRig, album: &str) -> String {
         .expect("clock")
         .as_millis() as u64
         + 60_000;
-    let job = store.claim(now_ms, 60_000).expect("a job is waiting");
+    let job = store
+        .claim(now_ms, 60_000)
+        .unwrap()
+        .expect("a job is waiting");
     assert_eq!(job.local_album_id, album, "the waiting job is the album's");
     service
         .run_claimed_job(&job.id, now_ms)
         .await
+        .unwrap()
         .expect("the job reports")
         .reason_code
 }
@@ -4274,21 +4275,27 @@ async fn a_store_error_holds_the_continuation_not_the_seal() {
         "CREATE TRIGGER refuse_alias BEFORE INSERT ON local_track_aliases \
          BEGIN SELECT RAISE(ABORT, 'refused for the test'); END;",
     );
-    let identify = SqliteIdentifyStore::open(&rig.db()).expect("identify store opens");
-    assert!(identify.seal_automatic(&AutomaticSeal {
-        local_album_id: album.clone(),
-        release_group_mbid: "rg-r".to_owned(),
-        release_mbid: Some(REL_R.to_owned()),
-        tracks: vec![TrackIdentity {
-            local_track_id: new.clone(),
-            provider: "musicbrainz".to_owned(),
-            recording_mbid: Some("rec-x".to_owned()),
-            release_track_mbid: Some(TRACK_X.to_owned()),
-            decision_source: DecisionSource::Automatic,
-            row_revision: 1,
-        }],
-        flag: None,
-    }));
+    let identify = SqliteIdentifyStore::new(
+        droppedneedle_kernel::db::Db::open_for_tests(&rig.db()).expect("identify store opens"),
+    );
+    assert!(
+        identify
+            .seal_automatic(&AutomaticSeal {
+                local_album_id: album.clone(),
+                release_group_mbid: "rg-r".to_owned(),
+                release_mbid: Some(REL_R.to_owned()),
+                tracks: vec![TrackIdentity {
+                    local_track_id: new.clone(),
+                    provider: "musicbrainz".to_owned(),
+                    recording_mbid: Some("rec-x".to_owned()),
+                    release_track_mbid: Some(TRACK_X.to_owned()),
+                    decision_source: DecisionSource::Automatic,
+                    row_revision: 1,
+                }],
+                flag: None,
+            })
+            .unwrap()
+    );
     assert_eq!(
         rig.count(&format!(
             "SELECT COUNT(*) FROM local_track_external_identities \
@@ -5048,26 +5055,30 @@ async fn a_join_waits_for_the_rest_of_the_old_album() {
     let after = rig.after.clone();
     let new_rows = rig.replace(&[0, 1], "b", &after).await;
     let new = rig.album_of("b/t000.flac");
-    let identify = SqliteIdentifyStore::open(&rig.db()).expect("identify store opens");
+    let identify = SqliteIdentifyStore::new(
+        droppedneedle_kernel::db::Db::open_for_tests(&rig.db()).expect("identify store opens"),
+    );
     assert!(
-        identify.seal_automatic(&AutomaticSeal {
-            local_album_id: new.clone(),
-            release_group_mbid: "rg-r".to_owned(),
-            release_mbid: Some(REL_R.to_owned()),
-            tracks: new_rows
-                .iter()
-                .enumerate()
-                .map(|(n, row)| TrackIdentity {
-                    local_track_id: row.clone(),
-                    provider: "musicbrainz".to_owned(),
-                    recording_mbid: Some("rec-x".to_owned()),
-                    release_track_mbid: Some(format!("rt-{n}")),
-                    decision_source: DecisionSource::Automatic,
-                    row_revision: 1,
-                })
-                .collect(),
-            flag: None,
-        })
+        identify
+            .seal_automatic(&AutomaticSeal {
+                local_album_id: new.clone(),
+                release_group_mbid: "rg-r".to_owned(),
+                release_mbid: Some(REL_R.to_owned()),
+                tracks: new_rows
+                    .iter()
+                    .enumerate()
+                    .map(|(n, row)| TrackIdentity {
+                        local_track_id: row.clone(),
+                        provider: "musicbrainz".to_owned(),
+                        recording_mbid: Some("rec-x".to_owned()),
+                        release_track_mbid: Some(format!("rt-{n}")),
+                        decision_source: DecisionSource::Automatic,
+                        row_revision: 1,
+                    })
+                    .collect(),
+                flag: None,
+            })
+            .unwrap()
     );
     rig.assert_apart(&old, &old_rows[0], "a track gone in the latest scan");
     rig.scan().await;
@@ -5270,9 +5281,11 @@ impl RegroupRig {
     }
 
     fn store_release(&self, release: &droppedneedle_library::matching::Release) {
-        SqliteIdentifyStore::open(&self.db())
-            .expect("identify store opens")
-            .save_release(release);
+        SqliteIdentifyStore::new(
+            droppedneedle_kernel::db::Db::open_for_tests(&self.db()).expect("identify store opens"),
+        )
+        .save_release(release, droppedneedle_kernel::db::Lane::Background)
+        .unwrap();
     }
 
     /// The album matched to `release` with `source`, chosen at `at`.
@@ -6051,27 +6064,35 @@ impl ArtistRig {
             "SELECT COUNT(*) FROM local_tracks WHERE local_album_id = '{album}' \
              AND availability = 'indexed'"
         ));
-        let store = SqliteIdentifyStore::open(&self.scratch.join("app.db")).expect("store opens");
-        store.save_release(&Release {
-            id: RELEASE.to_owned(),
-            release_group_id: GROUP.to_owned(),
-            title: "Album".to_owned(),
-            artists: credit.clone(),
-            tracks: (1..=numbers as u32)
-                .map(|number| ReleaseTrack {
-                    id: format!("rt-{number}"),
-                    recording_id: format!("rec-{number}"),
-                    title: format!("Song {number}"),
+        let store = SqliteIdentifyStore::new(
+            droppedneedle_kernel::db::Db::open_for_tests(&self.scratch.join("app.db"))
+                .expect("store opens"),
+        );
+        store
+            .save_release(
+                &Release {
+                    id: RELEASE.to_owned(),
+                    release_group_id: GROUP.to_owned(),
+                    title: "Album".to_owned(),
                     artists: credit.clone(),
-                    disc: 1,
-                    position: number,
-                    absolute_position: number,
-                    ..ReleaseTrack::default()
-                })
-                .collect(),
-            ..Release::default()
-        });
-        assert!(store.link_album_artists(&album));
+                    tracks: (1..=numbers as u32)
+                        .map(|number| ReleaseTrack {
+                            id: format!("rt-{number}"),
+                            recording_id: format!("rec-{number}"),
+                            title: format!("Song {number}"),
+                            artists: credit.clone(),
+                            disc: 1,
+                            position: number,
+                            absolute_position: number,
+                            ..ReleaseTrack::default()
+                        })
+                        .collect(),
+                    ..Release::default()
+                },
+                droppedneedle_kernel::db::Lane::Background,
+            )
+            .unwrap();
+        store.link_album_artists(&album).unwrap();
     }
 
     /// The MusicBrainz link of the artist and who made it.

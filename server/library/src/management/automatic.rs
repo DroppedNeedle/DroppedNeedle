@@ -699,7 +699,7 @@ impl Management {
         {
             return Ok(Gate::Follow);
         }
-        let Some(identity) = self.setup.identify_store.album_identity(album_id) else {
+        let Some(identity) = self.setup.identify_store.album_identity(album_id)? else {
             return Ok(Gate::NotYet(Verdict::Wait("IDENTITY_NOT_ACCEPTED")));
         };
         // A custom edition is managed automatically only where the folder
@@ -722,7 +722,7 @@ impl Management {
         }
         let mut mapping = Vec::new();
         for file in &files {
-            match identities.track_identity(&file.id) {
+            match identities.track_identity(&file.id)? {
                 Some(track)
                     if track.recording_mbid.is_some() && track.release_track_mbid.is_some() =>
                 {
@@ -800,7 +800,7 @@ impl Management {
         let names_release = self
             .setup
             .identify_store
-            .album_identity(album_id)
+            .album_identity(album_id)?
             .is_some_and(|identity| identity.release_mbid.is_some());
         if !names_release {
             return Ok(false);
@@ -893,7 +893,7 @@ impl Management {
         // looked at again by itself, rather than being planned without
         // them.
         if let Some(release_mbid) = identity.release_mbid.as_deref()
-            && let Some(mut release) = self.setup.identify_store.release(release_mbid, None)
+            && let Some(mut release) = self.setup.identify_store.release(release_mbid, None)?
             && super::enrich::ensure_release_extras(
                 &self.setup.enrichment,
                 &self.setup.identify_store,

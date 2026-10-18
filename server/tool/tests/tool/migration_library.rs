@@ -348,6 +348,7 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     let identity = library
         .identify_store
         .album_identity(V2_ALBUM_ID)
+        .unwrap()
         .expect("identity kept");
     assert_eq!(identity.decision_source, DecisionSource::Manual);
     assert_eq!(identity.release_mbid.as_deref(), Some("rel-blue"));
@@ -355,6 +356,7 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     let pinned = library
         .identify_store
         .album_identity(PINNED_ALBUM_ID)
+        .unwrap()
         .expect("pinned identity");
     assert_eq!(pinned.decision_source, DecisionSource::Manual);
     assert_eq!(pinned.release_mbid.as_deref(), Some("rel-giant-jp"));
