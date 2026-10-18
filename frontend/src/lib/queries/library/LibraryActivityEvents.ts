@@ -8,6 +8,8 @@ import {
 	type MuxUnsubscribe
 } from '$lib/queries/events/MuxEventStream';
 
+const CATALOG_REFRESH_WINDOW_MS = 10_000;
+
 export function createLibraryActivityEvents(mux: MuxEventStream = muxEventStream) {
 	let unsubs: MuxUnsubscribe[] = [];
 	let revisions: Record<string, number> | null = null;
@@ -15,6 +17,8 @@ export function createLibraryActivityEvents(mux: MuxEventStream = muxEventStream
 	let admin = false;
 	let userId: string | null = null;
 	let unsubscribeQueryCache: (() => void) | null = null;
+	let catalogTimer: ReturnType<typeof setTimeout> | null = null;
+	let catalogPending = false;
 
 	function invalidateActivity(): void {
 		void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.activityPrefix() });
@@ -23,6 +27,30 @@ export function createLibraryActivityEvents(mux: MuxEventStream = muxEventStream
 	function invalidateOperations(): void {
 		void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.operationsPrefix() });
 		void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.reviewsPrefix() });
+	}
+
+	// Catalog changes can arrive in a burst during a scan. Refresh at once, then
+	// at most once per window, with one trailing refresh for changes inside it.
+	function requestCatalogRefresh(): void {
+		if (catalogTimer !== null) {
+			catalogPending = true;
+			return;
+		}
+		catalogTimer = setTimeout(endCatalogWindow, CATALOG_REFRESH_WINDOW_MS);
+		void invalidateLibraryCatalog();
+	}
+
+	function endCatalogWindow(): void {
+		catalogTimer = null;
+		if (!catalogPending) return;
+		catalogPending = false;
+		requestCatalogRefresh();
+	}
+
+	function cancelCatalogWindow(): void {
+		if (catalogTimer !== null) clearTimeout(catalogTimer);
+		catalogTimer = null;
+		catalogPending = false;
 	}
 
 	function parseRevisions(event: Event): Record<string, number> | null {
@@ -55,7 +83,7 @@ export function createLibraryActivityEvents(mux: MuxEventStream = muxEventStream
 		);
 		if (signature === previousSignature) return;
 		if (next.catalog !== previous.catalog) {
-			void invalidateLibraryCatalog();
+			requestCatalogRefresh();
 			return;
 		}
 		invalidateActivity();
@@ -111,6 +139,7 @@ export function createLibraryActivityEvents(mux: MuxEventStream = muxEventStream
 	function stop(): void {
 		for (const unsub of unsubs) unsub();
 		unsubs = [];
+		cancelCatalogWindow();
 		revisions = null;
 		pendingInitialRevisions = null;
 		admin = false;

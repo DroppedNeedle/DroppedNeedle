@@ -79,6 +79,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	mux.disconnect();
+	vi.useRealTimers();
 });
 
 describe('createLibraryActivityEvents', () => {
@@ -157,6 +158,37 @@ describe('createLibraryActivityEvents', () => {
 			revisionEvent({ scan: 3, identification: 2, operation: 3, catalog: 4 })
 		);
 		expect(h.invalidate).not.toHaveBeenCalled();
+	});
+
+	it('refreshes the catalog at most once per 10 s window, with a trailing refresh', () => {
+		vi.useFakeTimers();
+		const events = createLibraryActivityEvents(mux);
+		events.start(false, 'user-1');
+		const catalogChange = (catalog: number): void => {
+			FakeEventSource.instances[0].emit(
+				'activity.changed',
+				revisionEvent({ scan: 1, identification: 2, operation: 3, catalog })
+			);
+		};
+		catalogChange(1);
+
+		catalogChange(2);
+		vi.advanceTimersByTime(1000);
+		catalogChange(3);
+		vi.advanceTimersByTime(1000);
+		catalogChange(4);
+		expect(h.invalidateCatalog).toHaveBeenCalledOnce();
+
+		vi.advanceTimersByTime(7000);
+		expect(h.invalidateCatalog).toHaveBeenCalledOnce();
+		vi.advanceTimersByTime(1000);
+		expect(h.invalidateCatalog).toHaveBeenCalledTimes(2);
+
+		// Pending when the events object stops: its trailing refresh must not fire.
+		catalogChange(5);
+		events.stop();
+		vi.advanceTimersByTime(60_000);
+		expect(h.invalidateCatalog).toHaveBeenCalledTimes(2);
 	});
 
 	it('ignores malformed revision payloads', () => {
