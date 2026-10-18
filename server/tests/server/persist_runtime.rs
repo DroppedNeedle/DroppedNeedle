@@ -28,8 +28,8 @@ use axum::{
 use droppedneedle_kernel::{
     db::{
         BACKUP_KEEP, CancelFlag, CheckpointMode, ChunkedError, Db, DbConfig, DbError, DbRuntime,
-        FOREGROUND_QUEUE_CAPACITY, LONG_READERS, Lane, LaneLimits, WakeupChannel, block_on,
-        filesystem_is_local, map_sqlx_busy, open_runtime, sqlx_is_busy,
+        FOREGROUND_QUEUE_CAPACITY, LONG_READERS, Lane, LaneLimits, block_on, filesystem_is_local,
+        map_sqlx_busy, open_runtime, sqlx_is_busy,
     },
     error::{ApiError, Unavailable},
     ids::REQUEST_ID_HEADER,
@@ -668,26 +668,6 @@ async fn backup_cancel_stops_before_rename() {
         .filter(|name| name.ends_with(".db"))
         .collect();
     assert!(landed.is_empty(), "nothing must rename, left {landed:?}");
-    runtime.shutdown().await;
-    std::fs::remove_dir_all(dir).ok();
-}
-
-/// A wakeup request issued before the wait still wakes it; no lost wakeup.
-#[tokio::test]
-async fn wakeup_request_before_wait_is_not_lost() {
-    let (runtime, dir) = open_scratch("lostwakeup").await;
-    let wakeups = runtime.wakeups().clone();
-    let seq = wakeups
-        .request(runtime.db(), Lane::Foreground, WakeupChannel::Operation)
-        .await
-        .unwrap();
-    assert_eq!(seq, 1);
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        wakeups.wait(WakeupChannel::Operation),
-    )
-    .await
-    .expect("a request issued before wait must still wake it");
     runtime.shutdown().await;
     std::fs::remove_dir_all(dir).ok();
 }

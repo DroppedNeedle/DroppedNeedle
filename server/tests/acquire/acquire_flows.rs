@@ -374,7 +374,7 @@ async fn loop_cadence_and_shutdown() {
     early.shut_down();
     let (handle, _) = spawn_sync_loop(
         early,
-        runtime.wakeups().clone(),
+        runtime.job_rows().clone(),
         runtime.db().clone(),
         Arc::new(SystemClock),
         deps.clone(),
@@ -387,7 +387,7 @@ async fn loop_cadence_and_shutdown() {
     let sleeper = ManualSleeper::new();
     let (handle, _) = spawn_sync_loop(
         sleeper.clone(),
-        runtime.wakeups().clone(),
+        runtime.job_rows().clone(),
         runtime.db().clone(),
         Arc::new(SystemClock),
         deps,
@@ -401,7 +401,7 @@ async fn loop_cadence_and_shutdown() {
     sleeper.shut_down();
     handle.task.await.unwrap();
     assert_eq!(sleeper.requested(), vec![SYNC_INITIAL_DELAY, SYNC_INTERVAL]);
-    let job = runtime.wakeups().get_job(SYNC_JOB).await.unwrap().unwrap();
+    let job = runtime.job_rows().get_job(SYNC_JOB).await.unwrap().unwrap();
     assert_eq!(job.state, JobState::Stopped);
     runtime.shutdown().await;
 }

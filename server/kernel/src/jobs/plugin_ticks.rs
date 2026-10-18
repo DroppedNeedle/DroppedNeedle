@@ -525,7 +525,7 @@ where
 {
     let name = format!("{}{}", TICK_PREFIX, spec.name);
     registry
-        .spawn(&name, JobKind::Ephemeral, None, move |ctx| async move {
+        .spawn(&name, JobKind::Ephemeral, move |ctx| async move {
             run(ctx, &host, &spec).await
         })
         .await

@@ -74,7 +74,7 @@ use super::worker::{DownloadWorker, Source, SourceSet, WorkerConfig, run_startup
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::collections::state::CollectionsState;
 use droppedneedle_kernel::config::AppConfig;
-use droppedneedle_kernel::db::{Db, DurableWorkWakeups, JobState};
+use droppedneedle_kernel::db::{Db, JobRegistryRows, JobState};
 use droppedneedle_kernel::events::{EventSink, PlaylistImported, UserNotice, new_event_id};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
@@ -1151,7 +1151,7 @@ impl AcquireSetup {
     /// loop. Returns `(scope, task)` pairs the caller awaits after serve.
     pub async fn spawn_loops(
         &self,
-        wakeups: DurableWorkWakeups,
+        job_rows: JobRegistryRows,
         db: Db,
         shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> Result<Vec<(&'static str, tokio::task::JoinHandle<()>)>, String> {
@@ -1160,7 +1160,7 @@ impl AcquireSetup {
         let (handle, _) = spawn_wanted_loop(
             TokioSleeper::new(shutdown.clone()),
             ThreadJitter,
-            wakeups.clone(),
+            job_rows.clone(),
             db.clone(),
             system_clock.clone(),
             self.flows.wanted_deps.clone(),
@@ -1170,7 +1170,7 @@ impl AcquireSetup {
         let (handle, _) = spawn_follow_loop(
             TokioSleeper::new(shutdown.clone()),
             ThreadJitter,
-            wakeups.clone(),
+            job_rows.clone(),
             db.clone(),
             system_clock.clone(),
             self.flows.follow_deps.clone(),
@@ -1179,7 +1179,7 @@ impl AcquireSetup {
         out.push((handle.name, handle.task));
         let (handle, _) = spawn_sweep_loop(
             TokioSleeper::new(shutdown.clone()),
-            wakeups.clone(),
+            job_rows.clone(),
             db.clone(),
             system_clock.clone(),
             self.flows.sweep_deps.clone(),
@@ -1188,7 +1188,7 @@ impl AcquireSetup {
         out.push((handle.name, handle.task));
         let (handle, _) = spawn_sync_loop(
             TokioSleeper::new(shutdown.clone()),
-            wakeups.clone(),
+            job_rows.clone(),
             db.clone(),
             system_clock.clone(),
             self.flows.sync_deps.clone(),
@@ -1197,7 +1197,7 @@ impl AcquireSetup {
         out.push((handle.name, handle.task));
         let (handle, _) = spawn_prune_loop(
             TokioSleeper::new(shutdown.clone()),
-            wakeups.clone(),
+            job_rows.clone(),
             db.clone(),
             system_clock,
             self.prune.clone(),
@@ -1206,7 +1206,7 @@ impl AcquireSetup {
         out.push((handle.name, handle.task));
         let worker = super::worker::spawn_download_worker(
             self.worker.clone(),
-            wakeups.clone(),
+            job_rows.clone(),
             db.clone(),
             shutdown.clone(),
         )
@@ -1214,7 +1214,7 @@ impl AcquireSetup {
         out.push((super::worker::DOWNLOAD_WORKER_JOB, worker));
         out.push((
             PROBE_JOB,
-            self.spawn_probe_loop(wakeups, db, shutdown).await?,
+            self.spawn_probe_loop(job_rows, db, shutdown).await?,
         ));
         Ok(out)
     }
@@ -1224,11 +1224,11 @@ impl AcquireSetup {
     /// Registered ephemeral for liveness.
     async fn spawn_probe_loop(
         &self,
-        wakeups: DurableWorkWakeups,
+        job_rows: JobRegistryRows,
         db: Db,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> Result<tokio::task::JoinHandle<()>, String> {
-        register_ephemeral_loop(&wakeups, &db, PROBE_JOB).await?;
+        register_ephemeral_loop(&job_rows, &db, PROBE_JOB).await?;
         let cache = self.probe_cache.clone();
         let clients = self.clients.clone();
         Ok(tokio::spawn(async move {
@@ -1237,7 +1237,7 @@ impl AcquireSetup {
                 loop {
                     let inputs = clients.current().probe_inputs.clone();
                     refresh_probes(&cache, &inputs).await;
-                    if let Err(error) = wakeups.heartbeat(&db, PROBE_JOB).await {
+                    if let Err(error) = job_rows.heartbeat(&db, PROBE_JOB).await {
                         tracing::warn!(%error, "probe refresh heartbeat failed");
                     }
                     tokio::select! {
@@ -1249,7 +1249,7 @@ impl AcquireSetup {
                     }
                 }
             }
-            if let Err(error) = wakeups
+            if let Err(error) = job_rows
                 .set_job_state(&db, PROBE_JOB, JobState::Stopped)
                 .await
             {

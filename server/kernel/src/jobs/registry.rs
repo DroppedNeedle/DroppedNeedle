@@ -28,8 +28,8 @@ use std::{
 
 use tokio::sync::Notify;
 
-pub use crate::db::durable::{JobKind, JobRecord, JobState, WakeupChannel};
-use crate::db::{Db, DbError, durable::DurableWorkWakeups};
+pub use crate::db::durable::{JobKind, JobRecord, JobState};
+use crate::db::{Db, DbError, durable::JobRegistryRows};
 
 /// Boxed sendable future for object-safe async ports (house style: `async fn`
 /// is not object-safe, so traits hand-box).
@@ -38,13 +38,8 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// Durable half of the registry. Infallible on purpose: implementations log
 /// their own failures so a registry write can never fail the loop it tracks.
 pub trait RegistryStore: Clone + Send + Sync + 'static {
-    /// Insert the row, or refresh kind/channel on re-register.
-    fn register_job(
-        &self,
-        name: &str,
-        kind: JobKind,
-        channel: Option<WakeupChannel>,
-    ) -> BoxFuture<'_, ()>;
+    /// Insert the row, or refresh its kind on re-register.
+    fn register_job(&self, name: &str, kind: JobKind) -> BoxFuture<'_, ()>;
     /// Move a registered row to a new liveness state.
     fn set_job_state(&self, name: &str, state: JobState) -> BoxFuture<'_, ()>;
     /// Beat the row's heart without changing its state.
@@ -70,12 +65,7 @@ impl MemoryRegistryStore {
 }
 
 impl RegistryStore for MemoryRegistryStore {
-    fn register_job(
-        &self,
-        name: &str,
-        kind: JobKind,
-        channel: Option<WakeupChannel>,
-    ) -> BoxFuture<'_, ()> {
+    fn register_job(&self, name: &str, kind: JobKind) -> BoxFuture<'_, ()> {
         let rows = Arc::clone(&self.rows);
         let name = name.to_owned();
         Box::pin(async move {
@@ -85,13 +75,11 @@ impl RegistryStore for MemoryRegistryStore {
                 .entry(name.clone())
                 .and_modify(|row| {
                     row.kind = kind;
-                    row.wakeup_channel = channel;
                     row.updated_at = now;
                 })
                 .or_insert_with(|| JobRecord {
                     name,
                     kind,
-                    wakeup_channel: channel,
                     state: JobState::Idle,
                     last_heartbeat_at: None,
                     updated_at: now,
@@ -151,18 +139,18 @@ impl RegistryStore for MemoryRegistryStore {
     }
 }
 
-/// Production registry rows over the durable-work fabric. Every call funnels
+/// Production registry rows in `durable_job_registry`. Every write funnels
 /// through the background writer lane; failures log and resolve to nothing.
 #[derive(Clone)]
 pub struct DurableRegistryStore {
-    wakeups: DurableWorkWakeups,
+    rows: JobRegistryRows,
     db: Db,
 }
 
 impl DurableRegistryStore {
-    /// Bind the store over the durable-work fabric and the database.
-    pub fn new(wakeups: DurableWorkWakeups, db: Db) -> Self {
-        Self { wakeups, db }
+    /// Bind the store over the registry rows and the database.
+    pub fn new(rows: JobRegistryRows, db: Db) -> Self {
+        Self { rows, db }
     }
 
     fn log_failure(operation: &str, name: &str, error: &DbError) {
@@ -176,20 +164,11 @@ impl DurableRegistryStore {
 }
 
 impl RegistryStore for DurableRegistryStore {
-    fn register_job(
-        &self,
-        name: &str,
-        kind: JobKind,
-        channel: Option<WakeupChannel>,
-    ) -> BoxFuture<'_, ()> {
+    fn register_job(&self, name: &str, kind: JobKind) -> BoxFuture<'_, ()> {
         let store = self.clone();
         let name = name.to_owned();
         Box::pin(async move {
-            if let Err(error) = store
-                .wakeups
-                .register_job(&store.db, &name, kind, channel)
-                .await
-            {
+            if let Err(error) = store.rows.register_job(&store.db, &name, kind).await {
                 Self::log_failure("register", &name, &error);
             }
         })
@@ -199,7 +178,7 @@ impl RegistryStore for DurableRegistryStore {
         let store = self.clone();
         let name = name.to_owned();
         Box::pin(async move {
-            if let Err(error) = store.wakeups.set_job_state(&store.db, &name, state).await {
+            if let Err(error) = store.rows.set_job_state(&store.db, &name, state).await {
                 Self::log_failure("set-state", &name, &error);
             }
         })
@@ -209,7 +188,7 @@ impl RegistryStore for DurableRegistryStore {
         let store = self.clone();
         let name = name.to_owned();
         Box::pin(async move {
-            if let Err(error) = store.wakeups.heartbeat(&store.db, &name).await {
+            if let Err(error) = store.rows.heartbeat(&store.db, &name).await {
                 Self::log_failure("heartbeat", &name, &error);
             }
         })
@@ -219,7 +198,7 @@ impl RegistryStore for DurableRegistryStore {
         let store = self.clone();
         let name = name.to_owned();
         Box::pin(async move {
-            store.wakeups.get_job(&name).await.unwrap_or_else(|error| {
+            store.rows.get_job(&name).await.unwrap_or_else(|error| {
                 Self::log_failure("get", &name, &error);
                 None
             })
@@ -229,7 +208,7 @@ impl RegistryStore for DurableRegistryStore {
     fn list_jobs(&self) -> BoxFuture<'_, Vec<JobRecord>> {
         let store = self.clone();
         Box::pin(async move {
-            store.wakeups.list_jobs().await.unwrap_or_else(|error| {
+            store.rows.list_jobs().await.unwrap_or_else(|error| {
                 Self::log_failure("list", "-", &error);
                 Vec::new()
             })
@@ -257,15 +236,10 @@ pub enum StoreKind {
 }
 
 impl RegistryStore for StoreKind {
-    fn register_job(
-        &self,
-        name: &str,
-        kind: JobKind,
-        channel: Option<WakeupChannel>,
-    ) -> BoxFuture<'_, ()> {
+    fn register_job(&self, name: &str, kind: JobKind) -> BoxFuture<'_, ()> {
         match self {
-            Self::Memory(store) => store.register_job(name, kind, channel),
-            Self::Durable(store) => store.register_job(name, kind, channel),
+            Self::Memory(store) => store.register_job(name, kind),
+            Self::Durable(store) => store.register_job(name, kind),
         }
     }
 
@@ -435,7 +409,6 @@ impl<S: RegistryStore> JobRegistry<S> {
         &self,
         name: &str,
         kind: JobKind,
-        channel: Option<WakeupChannel>,
         run: F,
     ) -> Result<(), AlreadyRunning>
     where
@@ -462,7 +435,7 @@ impl<S: RegistryStore> JobRegistry<S> {
                 }),
             );
         }
-        self.shared.store.register_job(name, kind, channel).await;
+        self.shared.store.register_job(name, kind).await;
         self.shared
             .store
             .set_job_state(name, JobState::Running)

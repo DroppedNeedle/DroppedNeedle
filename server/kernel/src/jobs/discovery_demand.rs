@@ -53,7 +53,7 @@ where
     S: RegistryStore,
 {
     registry
-        .spawn(JOB_NAME, JobKind::Ephemeral, None, move |ctx| {
+        .spawn(JOB_NAME, JobKind::Ephemeral, move |ctx| {
             let demand = Arc::clone(&demand);
             async move { run(ctx, demand.as_ref(), &schedule).await }
         })

@@ -102,7 +102,7 @@ where
     let store = Arc::new(store);
     let sources = Arc::new(sources);
     registry
-        .spawn(JOB_NAME, JobKind::Ephemeral, None, move |ctx| {
+        .spawn(JOB_NAME, JobKind::Ephemeral, move |ctx| {
             let store = Arc::clone(&store);
             let sources = Arc::clone(&sources);
             async move { run(ctx, store.as_ref(), sources.as_ref(), &schedule).await }

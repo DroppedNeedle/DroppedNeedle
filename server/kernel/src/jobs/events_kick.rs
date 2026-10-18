@@ -69,7 +69,7 @@ where
     }
     let watcher = Arc::new(watcher);
     let spawned = registry
-        .spawn(JOB_NAME, JobKind::Ephemeral, None, move |ctx| {
+        .spawn(JOB_NAME, JobKind::Ephemeral, move |ctx| {
             let watcher = Arc::clone(&watcher);
             async move {
                 if let Err(cause) = watcher.run_sweep(None, Arc::clone(ctx.stop())).await {

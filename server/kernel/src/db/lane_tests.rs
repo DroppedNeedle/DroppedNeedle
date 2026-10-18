@@ -1170,7 +1170,7 @@ async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
     let (runtime, _dir) = small_wal_runtime("wal-hold").await;
     let lane = runtime.db().lane().clone();
     let registry = JobRegistry::new(DurableRegistryStore::new(
-        runtime.wakeups().clone(),
+        runtime.job_rows().clone(),
         runtime.db().clone(),
     ));
     checkpoint::spawn_on(
@@ -1184,7 +1184,7 @@ async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
     // most of a minute away, so nothing below can be its doing.
     until("the checkpoint loop finishes its first pass", || async {
         runtime
-            .wakeups()
+            .job_rows()
             .get_job(checkpoint::JOB_NAME)
             .await
             .unwrap()
@@ -1204,7 +1204,7 @@ async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
     tokio::time::timeout(
         limit,
         runtime
-            .wakeups()
+            .job_rows()
             .heartbeat(runtime.db(), checkpoint::JOB_NAME),
     )
     .await

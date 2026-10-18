@@ -293,6 +293,7 @@ impl E2e {
         )
         .with_db(droppedneedle::admin::AdminDb::new(
             self.runtime.db().clone(),
+            self.runtime.job_rows().clone(),
         ))
         .with_backups(droppedneedle_kernel::db::BackupService::new(
             &self.db_path,

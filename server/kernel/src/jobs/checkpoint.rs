@@ -106,7 +106,7 @@ where
 {
     let runner = Arc::new(runner);
     registry
-        .spawn(JOB_NAME, JobKind::Ephemeral, None, move |ctx| {
+        .spawn(JOB_NAME, JobKind::Ephemeral, move |ctx| {
             let runner = Arc::clone(&runner);
             async move { run(ctx, runner.as_ref(), &schedule).await }
         })

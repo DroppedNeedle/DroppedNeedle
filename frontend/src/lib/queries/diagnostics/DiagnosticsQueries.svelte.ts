@@ -15,7 +15,7 @@ export const DIAGNOSTICS_ENDPOINTS = {
 const POLL_INTERVAL_MS = 5_000;
 
 /**
- * Background jobs and their wake-up channels. `enabled` comes from the
+ * Background jobs and the latest checkpoint pass. `enabled` comes from the
  * caller: a closed settings tab or hidden window must issue no requests.
  */
 export const getQueueStatsQuery = (getEnabled: Getter<boolean> = () => true) =>

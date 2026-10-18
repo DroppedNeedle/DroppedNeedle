@@ -41,7 +41,7 @@ use super::{
     analyze::AnalyzeService,
     backup::BackupService,
     checkpoint::{ACTIVE_HIGH_WATER_BYTES, ACTIVE_LOW_WATER_BYTES, CheckpointService},
-    durable::DurableWorkWakeups,
+    durable::JobRegistryRows,
     error::DbError,
     fs::{reject_remote_filesystem, reject_symlink},
     handle::Db,
@@ -160,7 +160,7 @@ pub struct DbRuntime {
     watch: LaneWatch,
     shutdown_grace: Duration,
     checkpoint: CheckpointService,
-    wakeups: DurableWorkWakeups,
+    job_rows: JobRegistryRows,
     backups: BackupService,
 }
 
@@ -242,7 +242,7 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
         &pools,
         |pools| pools.pass(),
     )?);
-    let wakeups = DurableWorkWakeups::new(pool);
+    let job_rows = JobRegistryRows::new(pool);
 
     Ok(DbRuntime {
         path,
@@ -251,7 +251,7 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
         watch,
         shutdown_grace: config.shutdown_grace,
         checkpoint,
-        wakeups,
+        job_rows,
         backups,
     })
 }
@@ -336,9 +336,9 @@ impl DbRuntime {
         &self.checkpoint
     }
 
-    /// Worker wakeups and job registry.
-    pub fn wakeups(&self) -> &DurableWorkWakeups {
-        &self.wakeups
+    /// The job registry's rows.
+    pub fn job_rows(&self) -> &JobRegistryRows {
+        &self.job_rows
     }
 
     /// Backup and restore service.

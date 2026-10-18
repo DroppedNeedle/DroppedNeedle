@@ -28,7 +28,7 @@ use axum::{
 };
 
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_kernel::db::{BackupService, CheckpointService, Db, DurableWorkWakeups};
+use droppedneedle_kernel::db::{BackupService, CheckpointService, Db, JobRegistryRows};
 use droppedneedle_providers::{InMemoryProviderCache, Providers};
 
 pub use error::AdminError;
@@ -36,27 +36,24 @@ pub use models::{
     BackupListResponse, BackupRunResponse, BackupView, CacheClearBody, CacheClearResponse,
     CacheStatsResponse, CacheSyncCancelResponse, CheckpointView, JobView, PrecacheRunResponse,
     ProviderLimiterView, ProviderStatsResponse, QueueStatsResponse, QuotaOverrideBody,
-    QuotaOverrideView, QuotaResponse, RestoreCheck, RestoreReport, SlotView, WakeupChannelView,
+    QuotaOverrideView, QuotaResponse, RestoreCheck, RestoreReport, SlotView,
 };
 pub use system::{ServiceHealthItem, SystemHealthResponse};
 
 /// Database handles the admin routes read and write through.
 #[derive(Clone)]
 pub struct AdminDb {
-    /// The database: admin reads (wakeup rows, quota rows, task sizes)
-    /// and quota override writes.
+    /// The database: admin reads (quota rows, task sizes) and quota
+    /// override writes.
     pub db: Db,
-    /// Durable fabric for the job-registry half of queue stats.
-    pub wakeups: DurableWorkWakeups,
+    /// The runtime's job registry rows, for queue stats.
+    pub job_rows: JobRegistryRows,
 }
 
 impl AdminDb {
-    /// Bundle the database with the wakeup handle over its reader pool.
-    pub fn new(db: Db) -> Self {
-        Self {
-            wakeups: DurableWorkWakeups::new(db.sqlx().clone()),
-            db,
-        }
+    /// Bundle the database with the runtime's job registry rows.
+    pub fn new(db: Db, job_rows: JobRegistryRows) -> Self {
+        Self { db, job_rows }
     }
 }
 

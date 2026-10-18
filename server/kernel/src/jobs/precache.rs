@@ -150,7 +150,7 @@ where
     let outcome_task = Arc::clone(&outcome);
     let done_task = Arc::clone(&done);
     registry
-        .spawn(JOB_NAME, JobKind::Ephemeral, None, move |ctx| {
+        .spawn(JOB_NAME, JobKind::Ephemeral, move |ctx| {
             let work = Arc::clone(&work);
             async move {
                 let result = supervise(&ctx, work.as_ref(), &limits).await;

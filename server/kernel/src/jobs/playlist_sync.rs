@@ -100,7 +100,7 @@ where
     let settings = Arc::new(settings);
     let exporter = Arc::new(exporter);
     registry
-        .spawn(JOB_NAME, JobKind::Ephemeral, None, move |ctx| {
+        .spawn(JOB_NAME, JobKind::Ephemeral, move |ctx| {
             let settings = Arc::clone(&settings);
             let exporter = Arc::clone(&exporter);
             async move { run(ctx, settings.as_ref(), exporter.as_ref(), &schedule).await }

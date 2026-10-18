@@ -42318,13 +42318,6 @@
           "state": {
             "type": "string",
             "description": "`idle`, `running`, `stopped`, or `failed`."
-          },
-          "wakeup_channel": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Waking channel, when the job has one."
           }
         }
       },
@@ -51408,17 +51401,9 @@
         "type": "object",
         "description": "Queue and job-registry snapshot.",
         "required": [
-          "channels",
           "jobs"
         ],
         "properties": {
-          "channels": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WakeupChannelView"
-            },
-            "description": "Demand per durable-work channel."
-          },
           "checkpoint": {
             "oneOf": [
               {
@@ -59650,36 +59635,6 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
-          }
-        }
-      },
-      "WakeupChannelView": {
-        "type": "object",
-        "description": "One durable-work channel's demand.",
-        "required": [
-          "channel",
-          "requested_seq",
-          "consumed_seq",
-          "pending"
-        ],
-        "properties": {
-          "channel": {
-            "type": "string",
-            "description": "Channel name."
-          },
-          "consumed_seq": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Wakeups consumed."
-          },
-          "pending": {
-            "type": "boolean",
-            "description": "True when requested work is still unconsumed."
-          },
-          "requested_seq": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Wakeups requested."
           }
         }
       },

@@ -59,7 +59,7 @@ where
 {
     let mixer = Arc::new(mixer);
     registry
-        .spawn(JOB_NAME, JobKind::Ephemeral, None, move |ctx| {
+        .spawn(JOB_NAME, JobKind::Ephemeral, move |ctx| {
             let mixer = Arc::clone(&mixer);
             async move { run(ctx, mixer.as_ref(), &schedule).await }
         })

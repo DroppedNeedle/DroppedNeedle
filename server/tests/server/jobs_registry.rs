@@ -31,19 +31,14 @@ async fn wait_until_clear(registry: &TestRegistry, name: &str) {
 async fn duplicate_spawn_rejected_while_running() {
     let registry = registry();
     registry
-        .spawn(
-            "sleeper",
-            JobKind::Ephemeral,
-            None,
-            |ctx: JobCtx<_>| async move {
-                ctx.stop().notified().await;
-                JobExit::Stopped
-            },
-        )
+        .spawn("sleeper", JobKind::Ephemeral, |ctx: JobCtx<_>| async move {
+            ctx.stop().notified().await;
+            JobExit::Stopped
+        })
         .await
         .expect("first spawn wins");
     let duplicate = registry
-        .spawn("sleeper", JobKind::Ephemeral, None, |_ctx| async {
+        .spawn("sleeper", JobKind::Ephemeral, |_ctx| async {
             JobExit::Stopped
         })
         .await;
@@ -54,7 +49,7 @@ async fn duplicate_spawn_rejected_while_running() {
 
     // A cleared name spawns clean.
     registry
-        .spawn("sleeper", JobKind::Ephemeral, None, |_ctx| async {
+        .spawn("sleeper", JobKind::Ephemeral, |_ctx| async {
             JobExit::Stopped
         })
         .await
@@ -67,15 +62,10 @@ async fn cancel_all_stops_everything() {
     let registry = registry();
     for name in ["first", "second", "third"] {
         registry
-            .spawn(
-                name,
-                JobKind::Ephemeral,
-                None,
-                |ctx: JobCtx<_>| async move {
-                    ctx.stop().notified().await;
-                    JobExit::Stopped
-                },
-            )
+            .spawn(name, JobKind::Ephemeral, |ctx: JobCtx<_>| async move {
+                ctx.stop().notified().await;
+                JobExit::Stopped
+            })
             .await
             .expect("spawn wins");
     }
@@ -92,7 +82,7 @@ async fn cancel_all_stops_everything() {
 async fn panicking_task_marks_failed_row() {
     let registry = registry();
     registry
-        .spawn("panicker", JobKind::Ephemeral, None, |_ctx| async {
+        .spawn("panicker", JobKind::Ephemeral, |_ctx| async {
             panic!("test panic, caught by the registry");
         })
         .await

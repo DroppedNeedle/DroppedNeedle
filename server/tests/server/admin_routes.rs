@@ -61,7 +61,10 @@ impl Rig {
             jobs = jobs.with_precache_sources(sources);
         }
         let admin = AdminSetup::new(rig.deps.clone(), quota.clone(), cache.clone(), providers)
-            .with_db(AdminDb::new(runtime.db().clone()))
+            .with_db(AdminDb::new(
+                runtime.db().clone(),
+                runtime.job_rows().clone(),
+            ))
             .with_backups(droppedneedle_kernel::db::BackupService::new(
                 &dir.join("app.db"),
                 &dir.join("backups"),
@@ -670,7 +673,10 @@ async fn quota_override_for_an_unmirrored_user_is_not_found() {
         rig.cache.clone(),
         providers,
     )
-    .with_db(AdminDb::new(rig.runtime.db().clone()));
+    .with_db(AdminDb::new(
+        rig.runtime.db().clone(),
+        rig.runtime.job_rows().clone(),
+    ));
     let app = with_test_principal(
         admin.gated_router(),
         test_principal(&rig.admin_id, Role::Admin, "sess-1", SessionKind::Standard),

@@ -117,19 +117,6 @@ pub struct CacheSyncCancelResponse {
     pub status: String,
 }
 
-/// One durable-work channel's demand.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct WakeupChannelView {
-    /// Channel name.
-    pub channel: String,
-    /// Wakeups requested.
-    pub requested_seq: i64,
-    /// Wakeups consumed.
-    pub consumed_seq: i64,
-    /// True when requested work is still unconsumed.
-    pub pending: bool,
-}
-
 /// One registered background job.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct JobView {
@@ -137,9 +124,6 @@ pub struct JobView {
     pub name: String,
     /// `durable` or `ephemeral`.
     pub kind: String,
-    /// Waking channel, when the job has one.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub wakeup_channel: Option<String>,
     /// `idle`, `running`, `stopped`, or `failed`.
     pub state: String,
     /// Last heartbeat as unix seconds, when the job ever beat.
@@ -150,8 +134,6 @@ pub struct JobView {
 /// Queue and job-registry snapshot.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct QueueStatsResponse {
-    /// Demand per durable-work channel.
-    pub channels: Vec<WakeupChannelView>,
     /// Registered background jobs in name order.
     pub jobs: Vec<JobView>,
     /// Latest database checkpoint pass, once the checkpoint loop has

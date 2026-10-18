@@ -509,7 +509,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         provider_cache.clone(),
         providers.clone(),
     )
-    .with_db(AdminDb::new(db.clone()))
+    .with_db(AdminDb::new(db.clone(), runtime.job_rows().clone()))
     .with_backups(BackupService::new(
         &config.library_db_path,
         runtime.backups().backup_dir(),
@@ -556,7 +556,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     ));
     // The one registry every background job registers on.
     let jobs = JobsSetup::build(
-        runtime.wakeups().clone(),
+        runtime.job_rows().clone(),
         db.clone(),
         runtime.checkpoint().clone(),
         config_store.clone(),
@@ -708,7 +708,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .with_events(events.clone());
     let acquire_loops = state
         .acquire
-        .spawn_loops(runtime.wakeups().clone(), db.clone(), stop.clone())
+        .spawn_loops(runtime.job_rows().clone(), db.clone(), stop.clone())
         .await
         .map_err(stage("acquire loops"))?;
     background.extend(acquire_loops);

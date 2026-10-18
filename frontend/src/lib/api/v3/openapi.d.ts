@@ -15228,8 +15228,6 @@ export interface components {
             name: string;
             /** @description `idle`, `running`, `stopped`, or `failed`. */
             state: string;
-            /** @description Waking channel, when the job has one. */
-            wakeup_channel?: string | null;
         };
         /** @description `kind` query shared by the per-request mutations. */
         KindQuery: {
@@ -19471,8 +19469,6 @@ export interface components {
         };
         /** @description Queue and job-registry snapshot. */
         QueueStatsResponse: {
-            /** @description Demand per durable-work channel. */
-            channels: components["schemas"]["WakeupChannelView"][];
             checkpoint?: null | components["schemas"]["CheckpointView"];
             /** @description Registered background jobs in name order. */
             jobs: components["schemas"]["JobView"][];
@@ -23079,23 +23075,6 @@ export interface components {
             offset: number;
             /** Format: int64 */
             total: number;
-        };
-        /** @description One durable-work channel's demand. */
-        WakeupChannelView: {
-            /** @description Channel name. */
-            channel: string;
-            /**
-             * Format: int64
-             * @description Wakeups consumed.
-             */
-            consumed_seq: number;
-            /** @description True when requested work is still unconsumed. */
-            pending: boolean;
-            /**
-             * Format: int64
-             * @description Wakeups requested.
-             */
-            requested_seq: number;
         };
         /** @description Wanted mutation outcome. */
         WantedActionResponse: {

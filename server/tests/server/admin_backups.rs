@@ -47,7 +47,10 @@ impl Rig {
         let providers = Arc::new(droppedneedle_providers::Providers::new(cache.clone()));
         let backup_dir = dir.join("backups");
         let admin = AdminSetup::new(rig.deps.clone(), quota, cache, providers)
-            .with_db(AdminDb::new(runtime.db().clone()))
+            .with_db(AdminDb::new(
+                runtime.db().clone(),
+                runtime.job_rows().clone(),
+            ))
             .with_backups(droppedneedle_kernel::db::BackupService::new(
                 &dir.join("app.db"),
                 &backup_dir,

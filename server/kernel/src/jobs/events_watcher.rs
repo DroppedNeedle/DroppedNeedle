@@ -176,7 +176,7 @@ where
     let poll_source = Arc::new(poll_source);
     let clock = Arc::new(clock);
     registry
-        .spawn(JOB_NAME, JobKind::Ephemeral, None, move |ctx| {
+        .spawn(JOB_NAME, JobKind::Ephemeral, move |ctx| {
             let watcher = Arc::clone(&watcher);
             let poll_source = Arc::clone(&poll_source);
             let clock = Arc::clone(&clock);
