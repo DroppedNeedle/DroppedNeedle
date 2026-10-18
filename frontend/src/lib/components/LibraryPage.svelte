@@ -17,6 +17,7 @@
 	import LibraryFilterBar from '$lib/components/LibraryFilterBar.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import { ChevronLeft, CircleX, Play, Shuffle } from 'lucide-svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -278,9 +279,9 @@
 					</figure>
 
 					<div class="flex flex-col gap-2 p-3">
-						<h2 class="card-title text-sm line-clamp-2 min-h-10">
+						<CardTitle class="text-sm line-clamp-2 min-h-10">
 							{a.getAlbumName(album)}
-						</h2>
+						</CardTitle>
 						{#if cardBodyExtra}
 							{@render cardBodyExtra(album)}
 						{:else}

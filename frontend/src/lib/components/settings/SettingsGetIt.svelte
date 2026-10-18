@@ -7,6 +7,7 @@
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 
 	const form = createSettingsForm<GetItSettings>({
@@ -36,7 +37,7 @@
 	{#snippet header()}
 		<div class="flex items-center gap-2">
 			<ShoppingBag class="h-5 w-5 text-primary" aria-hidden="true" />
-			<h2 class="card-title">Buy links</h2>
+			<CardTitle>Buy links</CardTitle>
 		</div>
 	{/snippet}
 	<p class="text-sm text-base-content/60">

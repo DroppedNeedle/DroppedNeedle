@@ -9,6 +9,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
@@ -82,7 +83,7 @@
 				</svg>
 			</div>
 			<div>
-				<h2 class="card-title">Spotify</h2>
+				<CardTitle>Spotify</CardTitle>
 				<p class="text-sm text-base-content/60">App credentials for the whole instance.</p>
 			</div>
 		</div>

@@ -10,6 +10,7 @@
 	import LibraryBadge from './LibraryBadge.svelte';
 	import AlbumCardOverlay from './AlbumCardOverlay.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
@@ -118,7 +119,7 @@
 		</figure>
 
 		<div class="flex flex-col gap-2 p-3">
-			<h2 class="card-title text-sm line-clamp-2 min-h-[2.5rem]">{album.title}</h2>
+			<CardTitle class="text-sm line-clamp-2 min-h-[2.5rem]">{album.title}</CardTitle>
 			<p class="text-xs opacity-70 line-clamp-1">
 				{#if album.year}{album.year}{:else}Unknown{/if}
 				{#if album.artist}

@@ -15,6 +15,7 @@
 	import { Plus, Info, Play, Shuffle, ListPlus, ListStart, ListMusic } from 'lucide-svelte';
 	import LibraryFilterBar from '$lib/components/LibraryFilterBar.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import {
 		ytCardQuickPlay,
@@ -293,7 +294,7 @@
 					</figure>
 
 					<div class="p-3">
-						<h2 class="card-title text-sm line-clamp-2 min-h-10">{link.album_name}</h2>
+						<CardTitle class="text-sm line-clamp-2 min-h-10">{link.album_name}</CardTitle>
 						<p class="text-xs opacity-70 line-clamp-1">{link.artist_name}</p>
 					</div>
 				</Card>

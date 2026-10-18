@@ -9,6 +9,7 @@
 	import { syncStatus } from '$lib/stores/syncStatus.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 
 	const statsQuery = getCacheStatsQuery();
@@ -95,7 +96,7 @@
 
 <Card>
 	{#snippet header()}
-		<h2 class="card-title text-2xl mb-4">Cache management</h2>
+		<CardTitle class="text-2xl mb-4">Cache management</CardTitle>
 	{/snippet}
 	<p class="text-base-content/70 mb-6">
 		Provider responses (MusicBrainz, Last.fm, ListenBrainz and the rest) are kept in memory, and

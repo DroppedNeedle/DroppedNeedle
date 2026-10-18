@@ -5,6 +5,8 @@
 	import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardActions from '$lib/ui/CardActions.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 
 	let preferences: UserPreferences = $state({
 		primary_types: [],
@@ -152,7 +154,7 @@
 
 <Card>
 	{#snippet header()}
-		<h2 class="card-title text-2xl mb-2">Release Types</h2>
+		<CardTitle class="text-2xl mb-2">Release Types</CardTitle>
 	{/snippet}
 	<p class="text-base-content/70 mb-6">
 		Choose which release types appear on artist pages and in search. The same choices apply to
@@ -176,7 +178,7 @@
 		{@render typeTable(secondaryTypes, 'secondary_types')}
 	</div>
 
-	<div class="card-actions justify-end items-center gap-4">
+	<CardActions class="justify-end items-center gap-4">
 		{#if saveMessage}
 			<div
 				class="alert flex-1"
@@ -189,5 +191,5 @@
 		<AsyncButton variant="primary" onclick={handleSave} pending={saving} pendingLabel="Saving...">
 			Save Settings
 		</AsyncButton>
-	</div>
+	</CardActions>
 </Card>

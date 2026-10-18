@@ -1,6 +1,7 @@
 <script lang="ts">
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import LibraryFormatBadge from './LibraryFormatBadge.svelte';
 	import LocalIdentityBadge from './LocalIdentityBadge.svelte';
 	import type { LibraryAlbumSummary } from '$lib/types';
@@ -46,7 +47,7 @@
 	</figure>
 
 	<div class="space-y-2 px-3 pb-3">
-		<h2 class="card-title text-sm line-clamp-2 min-h-[2.5rem]">{album.title}</h2>
+		<CardTitle class="text-sm line-clamp-2 min-h-[2.5rem]">{album.title}</CardTitle>
 		<p class="text-xs opacity-70 line-clamp-1">
 			{#if album.year}{album.year}{:else}Unknown{/if}
 			{#if album.artist_name}

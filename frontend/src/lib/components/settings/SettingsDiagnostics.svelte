@@ -14,6 +14,7 @@
 		providerLabel
 	} from './diagnosticsDisplay';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 
 	// The section mounts only while its settings tab is active; document
 	// visibility is mirrored into state so both query `enabled` flags flip
@@ -49,7 +50,7 @@
 	{#snippet header()}
 		<div class="flex items-center gap-2">
 			<Activity class="h-5 w-5 text-primary" aria-hidden="true" />
-			<h2 class="card-title">Diagnostics</h2>
+			<CardTitle>Diagnostics</CardTitle>
 		</div>
 	{/snippet}
 	<p class="text-sm text-base-content/60">

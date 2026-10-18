@@ -11,6 +11,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
@@ -59,7 +60,7 @@
 	{#snippet header()}
 		<div class="flex items-center gap-2">
 			<Blocks class="h-5 w-5 text-primary" aria-hidden="true" />
-			<h2 class="card-title">Plugins</h2>
+			<CardTitle>Plugins</CardTitle>
 		</div>
 	{/snippet}
 	<p class="text-sm text-base-content/60">

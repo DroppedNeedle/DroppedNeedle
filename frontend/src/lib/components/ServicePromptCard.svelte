@@ -5,6 +5,7 @@
 	import type { ComponentType } from 'svelte';
 	import Button, { type ButtonVariant } from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 
 	const serviceIcons: Record<string, ComponentType> = {
@@ -93,7 +94,7 @@
 			<SvelteComponent class="h-10 w-10 sm:h-12 sm:w-12" />
 		</div>
 		<div class="min-w-0 flex-1 pr-6">
-			<h3 class="card-title mb-1 text-base sm:text-lg">{prompt.title}</h3>
+			<CardTitle as="h3" class="mb-1 text-base sm:text-lg">{prompt.title}</CardTitle>
 			<p class="mb-2 text-xs text-base-content/70 sm:mb-3 sm:text-sm">
 				{prompt.description}
 			</p>

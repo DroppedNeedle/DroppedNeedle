@@ -16,6 +16,7 @@
 	} from '$lib/queries/listenbrainz/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
@@ -119,7 +120,7 @@
 					<AudioLines class="h-5 w-5" />
 				</div>
 				<div>
-					<h2 class="card-title">ListenBrainz</h2>
+					<CardTitle>ListenBrainz</CardTitle>
 					<p class="text-sm text-base-content/60">Instance connection for scrobbling.</p>
 				</div>
 			</div>
@@ -212,7 +213,7 @@
 	<Card variant="bordered">
 		{#snippet header()}
 			<div>
-				<h2 class="card-title">Scrobble targets</h2>
+				<CardTitle>Scrobble targets</CardTitle>
 				<p class="text-sm text-base-content/60">Where plays from this instance are reported.</p>
 			</div>
 		{/snippet}

@@ -3,6 +3,7 @@
 	import ArtistImage from './ArtistImage.svelte';
 	import ArtistCardDownloadButton from './ArtistCardDownloadButton.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import { Users } from 'lucide-svelte';
 
 	interface Props {
@@ -55,7 +56,7 @@
 		{/if}
 	</figure>
 	<div class="flex flex-col items-center gap-1 p-2 pt-0 text-center">
-		<h2 class="card-title text-xs line-clamp-1 min-h-[1.25rem]">{name}</h2>
+		<CardTitle class="text-xs line-clamp-1 min-h-[1.25rem]">{name}</CardTitle>
 		{#if albumCount !== undefined}
 			<p class="text-xs text-base-content/50">{albumCount} album{albumCount !== 1 ? 's' : ''}</p>
 		{/if}

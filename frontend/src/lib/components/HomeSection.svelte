@@ -27,6 +27,7 @@
 	import SampleButton from './discover/SampleButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
@@ -190,7 +191,7 @@
 								{/if}
 							</figure>
 							<div class="flex flex-col items-center gap-2 px-2 pb-2 text-center">
-								<h3 class="card-title text-xs line-clamp-1">{item.name}</h3>
+								<CardTitle as="h3" class="text-xs line-clamp-1">{item.name}</CardTitle>
 								{#if item.listen_count}
 									<p class="text-xs text-base-content/50">{formatListenCount(item.listen_count)}</p>
 								{/if}
@@ -245,7 +246,7 @@
 								{/if}
 							</figure>
 							<div class="flex flex-col gap-2 px-2 pb-2">
-								<h3 class="card-title text-xs line-clamp-1">{item.name}</h3>
+								<CardTitle as="h3" class="text-xs line-clamp-1">{item.name}</CardTitle>
 								{#if item.artist_name}
 									<p class="text-xs text-base-content/50 line-clamp-1">{item.artist_name}</p>
 								{/if}
@@ -303,7 +304,7 @@
 									{/if}
 								</figure>
 								<div class="flex min-w-0 flex-1 flex-col justify-center gap-2 p-2">
-									<h3 class="card-title text-xs line-clamp-1">{item.name}</h3>
+									<CardTitle as="h3" class="text-xs line-clamp-1">{item.name}</CardTitle>
 									{#if item.artist_name}
 										<p class="text-xs text-base-content/50 line-clamp-1">{item.artist_name}</p>
 									{/if}

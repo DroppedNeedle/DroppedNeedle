@@ -5,11 +5,14 @@
 	A caller's `aria-*` attributes pass through, so a `section` card can be
 	named by its own heading with `aria-labelledby`.
 	Replaces the hand-written `card` blocks and the rounded panels doing a
-	card's job.
+	card's job. A heading or a row of buttons the props cannot hold uses
+	CardTitle or CardActions inside the card.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { HTMLAttributes } from 'svelte/elements';
+	import CardActions from './CardActions.svelte';
+	import CardTitle from './CardTitle.svelte';
 
 	interface Props extends Omit<HTMLAttributes<HTMLElement>, 'title' | 'children'> {
 		variant?: 'flat' | 'bordered' | 'raised';
@@ -79,11 +82,11 @@
 		{#if header}
 			{@render header()}
 		{:else if title}
-			<h2 id={titleId} class="card-title">{title}</h2>
+			<CardTitle id={titleId}>{title}</CardTitle>
 		{/if}
 		{@render children?.()}
 		{#if actions}
-			<div class="card-actions justify-end">{@render actions()}</div>
+			<CardActions class="justify-end">{@render actions()}</CardActions>
 		{/if}
 	</div>
 </svelte:element>

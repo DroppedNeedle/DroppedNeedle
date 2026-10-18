@@ -6,6 +6,7 @@
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
@@ -95,7 +96,7 @@
 	{#snippet header()}
 		<div class="flex items-center gap-2">
 			<Disc3 class="h-5 w-5 text-primary" aria-hidden="true" />
-			<h2 class="card-title">Edition preferences</h2>
+			<CardTitle>Edition preferences</CardTitle>
 		</div>
 	{/snippet}
 	<div class="flex flex-col gap-4">

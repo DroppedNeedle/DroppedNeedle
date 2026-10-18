@@ -7,6 +7,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
@@ -37,7 +38,7 @@
 				<Radio class="h-5 w-5" />
 			</div>
 			<div>
-				<h2 class="card-title">Last.fm</h2>
+				<CardTitle>Last.fm</CardTitle>
 				<p class="text-sm text-base-content/60">App credentials for the whole server.</p>
 			</div>
 		</div>

@@ -11,6 +11,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	interface Props {
@@ -117,7 +118,7 @@
 	{#snippet header()}
 		<div class="flex items-start justify-between gap-3">
 			<div>
-				<h2 class="card-title text-2xl">{title}</h2>
+				<CardTitle class="text-2xl">{title}</CardTitle>
 				<p class="text-base-content/70">{description}</p>
 			</div>
 			<div

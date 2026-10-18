@@ -6,6 +6,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 
 	const API_KEY_MASK = 'wrapped****';
@@ -38,7 +39,7 @@
 				<Gift class="h-5 w-5" />
 			</div>
 			<div>
-				<h2 class="card-title text-2xl">Wrapped API</h2>
+				<CardTitle class="text-2xl">Wrapped API</CardTitle>
 				<p class="text-sm text-base-content/60">
 					Lets an external service (e.g. a newsletterr instance) pull year-in-review listening stats
 					for your users.

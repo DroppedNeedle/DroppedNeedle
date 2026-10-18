@@ -14,6 +14,7 @@
 	import type { AdminAppPasswordView, ConnectAppsSettings } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import NumberField from '$lib/ui/NumberField.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
@@ -123,7 +124,7 @@
 	{:else}
 		<Card variant="bordered">
 			{#snippet header()}
-				<h3 class="card-title text-base">Protocols</h3>
+				<CardTitle as="h3" class="text-base">Protocols</CardTitle>
 			{/snippet}
 			<div class="mt-3 flex flex-col gap-5">
 				<ToggleRow
@@ -182,10 +183,10 @@
 	<Card variant="bordered">
 		<div class="flex flex-col gap-4">
 			<div class="flex flex-wrap items-center justify-between gap-2">
-				<h3 class="card-title text-base">
+				<CardTitle as="h3" class="text-base">
 					<Users class="h-4 w-4" aria-hidden="true" />
 					Connected app-passwords
-				</h3>
+				</CardTitle>
 				<span class="badge badge-ghost" aria-label="connected app-password count">
 					{rosterCount} active
 				</span>

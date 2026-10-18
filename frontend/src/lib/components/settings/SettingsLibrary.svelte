@@ -24,6 +24,7 @@
 	import SettingsLyrics from './SettingsLyrics.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardActions from '$lib/ui/CardActions.svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
@@ -373,8 +374,8 @@
 				{#if settingsBlockedMessage}
 					<p class="text-sm text-warning">{settingsBlockedMessage}</p>
 				{/if}
-				<div
-					class="card-actions items-center justify-between gap-3 border-t border-base-content/10 pt-5"
+				<CardActions
+					class="items-center justify-between gap-3 border-t border-base-content/10 pt-5"
 				>
 					{#if impactErrorMessage}
 						<p class="text-sm text-error">{impactErrorMessage}</p>
@@ -388,7 +389,7 @@
 						onclick={(event: MouseEvent) => void previewSave(event)}
 						>Preview and save settings</Button
 					>
-				</div>
+				</CardActions>
 			</div>
 		</Card>
 

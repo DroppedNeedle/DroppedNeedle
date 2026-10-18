@@ -6,6 +6,7 @@
 	import ArtistImage from './ArtistImage.svelte';
 	import AlbumCardOverlay from './AlbumCardOverlay.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 
 	type ItemType = 'album' | 'artist';
@@ -209,13 +210,12 @@
 				? 'flex flex-col gap-2 px-2 pb-2 sm:px-3 sm:pb-3'
 				: 'flex flex-col gap-2 px-2 pb-2'}
 		>
-			<h3
-				class={variant === 'expanded'
-					? 'card-title line-clamp-1 text-xs sm:text-sm'
-					: 'card-title line-clamp-1 text-xs'}
+			<CardTitle
+				as="h3"
+				class={variant === 'expanded' ? 'line-clamp-1 text-xs sm:text-sm' : 'line-clamp-1 text-xs'}
 			>
 				{item.name}
-			</h3>
+			</CardTitle>
 			{#if isAlbum(item) && item.artist_name}
 				<p class="line-clamp-1 text-xs text-base-content/50">{item.artist_name}</p>
 			{/if}

@@ -10,6 +10,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
@@ -73,7 +74,7 @@
 				<CalendarClock class="h-5 w-5" aria-hidden="true" />
 			</div>
 			<div>
-				<h2 class="card-title">Live Events</h2>
+				<CardTitle>Live Events</CardTitle>
 				<p class="text-sm text-base-content/60">
 					Concert listings for followed artists, shown on the Following page.
 				</p>
