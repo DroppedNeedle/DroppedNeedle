@@ -1,10 +1,10 @@
 //! Library management: sealed previews, apply, undo, baseline restore.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::adapters::FsSpaceProbe;
-use super::clock::today_day;
+use super::clock::{now_ms, today_day};
 use super::publish::journal::JournalStore;
 use super::publish::planner::{
     Capability, CollisionGate, DiskPreflight, FileFingerprint, PlanBundle, PlanItem, PlanKind,
@@ -20,7 +20,7 @@ use super::scan::models::EffectivePolicy;
 use super::scan::roots::RootRegistry;
 use super::service::ServiceError;
 use super::wiring::{LibrarySetup, RootDirs};
-use droppedneedle_kernel::db::DbError;
+use droppedneedle_kernel::db::{CancelFlag, Db, DbError};
 
 /// Preview seals live until the next unix day.
 const PREVIEW_TTL_DAYS: i64 = 1;
@@ -61,9 +61,11 @@ pub(crate) struct OpenPublish {
 
 /// Publish state. Empty until the first usable root is configured;
 /// reopened (with reconciliation) whenever the usable root set
-/// changes. One mutex serializes publishes against reopens.
+/// changes. One mutex serializes publishes against reopens. No read or
+/// write closure takes that mutex, so holding it across a database call
+/// cannot deadlock the lane.
 pub struct PublishCell {
-    db_path: PathBuf,
+    db: Db,
     pub(crate) cell: Option<OpenPublish>,
     placement: RootPlacement,
 }
@@ -121,18 +123,18 @@ pub struct PlacementCheck {
 }
 
 /// Unsettled publish bundles as the journal records them: anything not
-/// cleaned, compensated, or flagged for an administrator. Reads its own
-/// connection, so a status read never waits on a publish holding the cell.
+/// cleaned, compensated, or flagged for an administrator. Its reads never
+/// wait on a publish holding the cell. `committed` and `unsettled` decide
+/// a job's next step, so they wait for a connection instead of answering
+/// busy; `list` is a status read on the request pool.
 #[derive(Clone)]
 pub struct HeldBundles {
-    db_path: PathBuf,
+    db: Db,
 }
 
 impl HeldBundles {
-    pub(crate) fn new(db_path: &Path) -> Self {
-        Self {
-            db_path: db_path.to_owned(),
-        }
+    pub(crate) fn new(db: Db) -> Self {
+        Self { db }
     }
 
     /// True when the publisher committed `bundle_id`: its files changed
@@ -140,35 +142,38 @@ impl HeldBundles {
     pub fn committed(&self, bundle_id: &str) -> Result<bool, PublishError> {
         use super::publish::JournalState;
         use super::publish::publisher::Catalog as _;
-        let conn = droppedneedle_kernel::db::open_connection(&self.db_path)
-            .map_err(|error| PublishError::Store(error.to_string()))?;
-        let journals = JournalStore::new(&conn).bundle(bundle_id)?;
-        if journals.iter().any(|journal| {
-            matches!(
-                journal.state,
-                JournalState::Committed | JournalState::Cleaned | JournalState::CleanupPending
-            )
-        }) {
-            return Ok(true);
-        }
-        // A journal flagged for an administrator after the commit: the
-        // catalog already points at the bytes this bundle published.
-        for journal in journals
-            .iter()
-            .filter(|journal| journal.state == JournalState::NeedsAttention)
-        {
-            let Some(track_id) = journal.track_id.as_deref() else {
-                continue;
-            };
-            if let Some((root, rel, published, _)) = SqliteCatalog.locate(&conn, track_id)?
-                && root == journal.dest_root
-                && rel == journal.dest_rel
-                && published == journal.staged_sha256
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        self.db
+            .read_long("publish.held_committed", &CancelFlag::never(), |conn| {
+                let journals = JournalStore::new(conn).bundle(bundle_id)?;
+                if journals.iter().any(|journal| {
+                    matches!(
+                        journal.state,
+                        JournalState::Committed
+                            | JournalState::Cleaned
+                            | JournalState::CleanupPending
+                    )
+                }) {
+                    return Ok(true);
+                }
+                // A journal flagged for an administrator after the commit: the
+                // catalog already points at the bytes this bundle published.
+                for journal in journals
+                    .iter()
+                    .filter(|journal| journal.state == JournalState::NeedsAttention)
+                {
+                    let Some(track_id) = journal.track_id.as_deref() else {
+                        continue;
+                    };
+                    if let Some((root, rel, published, _)) = SqliteCatalog.locate(conn, track_id)?
+                        && root == journal.dest_root
+                        && rel == journal.dest_rel
+                        && published == journal.staged_sha256
+                    {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            })
     }
 
     /// True while `bundle_id` has journals neither committed nor settled:
@@ -176,9 +181,11 @@ impl HeldBundles {
     /// Blocking.
     pub fn unsettled(&self, bundle_id: &str) -> Result<bool, PublishError> {
         use super::publish::JournalState;
-        let conn = droppedneedle_kernel::db::open_connection(&self.db_path)
-            .map_err(|error| PublishError::Store(error.to_string()))?;
-        let journals = JournalStore::new(&conn).bundle(bundle_id)?;
+        let journals =
+            self.db
+                .read_long("publish.held_unsettled", &CancelFlag::never(), |conn| {
+                    JournalStore::new(conn).bundle(bundle_id)
+                })?;
         Ok(journals.iter().any(|journal| {
             !journal.state.is_terminal()
                 && !matches!(
@@ -190,9 +197,9 @@ impl HeldBundles {
 
     /// Bundle ids with unsettled journals. Blocking.
     pub fn list(&self) -> Result<Vec<String>, PublishError> {
-        let conn = droppedneedle_kernel::db::open_connection(&self.db_path)
-            .map_err(|error| PublishError::Store(error.to_string()))?;
-        JournalStore::new(&conn).active_bundles()
+        self.db.read_blocking("publish.held_list", |conn| {
+            JournalStore::new(conn).active_bundles()
+        })
     }
 }
 
@@ -200,14 +207,14 @@ impl HeldBundles {
 /// last pass found them. Nothing here removes or adopts one.
 #[derive(Clone)]
 pub struct LeftoverFiles {
-    db_path: PathBuf,
+    db: Db,
     report: std::sync::Arc<std::sync::Mutex<Option<LeftoverReport>>>,
 }
 
 impl LeftoverFiles {
-    pub(crate) fn new(db_path: &Path) -> Self {
+    pub(crate) fn new(db: Db) -> Self {
         Self {
-            db_path: db_path.to_owned(),
+            db,
             report: Default::default(),
         }
     }
@@ -219,10 +226,8 @@ impl LeftoverFiles {
         registry: &RootRegistry,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Option<LeftoverReport>, PublishError> {
-        let conn = droppedneedle_kernel::db::open_connection(&self.db_path)
-            .map_err(|error| PublishError::Store(error.to_string()))?;
         let found = super::publish::recovery::find_leftovers(
-            &conn,
+            &self.db,
             &PublishCell::root_dirs(registry),
             std::time::SystemTime::now(),
             cancelled,
@@ -246,10 +251,10 @@ impl LeftoverFiles {
 }
 
 impl PublishCell {
-    /// An unopened cell over the application database at `db_path`.
-    pub(crate) fn new(db_path: &Path) -> Self {
+    /// An unopened cell over the application database.
+    pub(crate) fn new(db: Db) -> Self {
         Self {
-            db_path: db_path.to_owned(),
+            db,
             cell: None,
             placement: RootPlacement::default(),
         }
@@ -280,17 +285,16 @@ impl PublishCell {
     /// True while the journal holds an unsettled bundle (cleanup still
     /// pending, a deferred recovery, a compensation that did not finish).
     /// The cell lock keeps any publish out, so none of them is in flight.
-    pub(crate) fn has_held(&self) -> bool {
-        let Some(open) = self.cell.as_ref() else {
-            return false;
-        };
-        match JournalStore::new(open.publisher.connection()).active_bundles() {
-            Ok(bundles) => !bundles.is_empty(),
-            Err(error) => {
-                tracing::warn!(%error, "publish journal unreadable; no retry this tick");
-                false
-            }
+    pub(crate) fn has_held(&self) -> Result<bool, PublishError> {
+        if self.cell.is_none() {
+            return Ok(false);
         }
+        self.db
+            .read_long("publish.held", &CancelFlag::never(), |conn| {
+                Ok(conn
+                    .prepare_cached(super::publish::sql::ANY_ACTIVE.text())?
+                    .query_row([], |row| row.get(0))?)
+            })
     }
 
     /// Reconcile again under the open sandbox: the maintenance tick's
@@ -301,8 +305,7 @@ impl PublishCell {
         let Some(open) = self.cell.as_ref() else {
             return Ok(Vec::new());
         };
-        let mut conn = super::publish::recovery::open_recovery_connection(&self.db_path)?;
-        super::publish::recovery::reconcile(&mut conn, &open.sandbox, &SqliteCatalog)
+        super::publish::recovery::reconcile(&self.db, &open.sandbox, &SqliteCatalog)
     }
 
     fn root_dirs(registry: &RootRegistry) -> Vec<super::publish::paths::Root> {
@@ -337,21 +340,17 @@ impl PublishCell {
             return Ok(Vec::new());
         }
         let sandbox = Sandbox::new(roots)?;
-        // Reconcile through a short-lived connection first: the
-        // publisher owns its connection privately, so recovery runs
-        // before it opens. The journal lives in the application
-        // database, so root order never decides where it is.
-        let recoveries = {
-            let mut conn = super::publish::recovery::open_recovery_connection(&self.db_path)?;
-            super::publish::recovery::reconcile(&mut conn, &sandbox, &SqliteCatalog)?
-        };
-        let publisher = Publisher::open(
+        // Recovery runs before the new session takes publishes. The
+        // journal lives in the application database, so root order never
+        // decides where it is.
+        let recoveries = super::publish::recovery::reconcile(&self.db, &sandbox, &SqliteCatalog)?;
+        let publisher = Publisher::new(
             sandbox.clone(),
-            &self.db_path,
+            self.db.clone(),
             SqliteCatalog,
             FsSpaceProbe::new(space_roots.clone()),
-            today_day,
-        )?;
+            || now_ms() as i64,
+        );
         self.placement.follow(Some(sandbox.clone()));
         self.cell = Some(OpenPublish {
             sandbox,
@@ -610,7 +609,9 @@ pub(crate) fn publish_error(error: PublishError) -> ServiceError {
         PublishError::UnsafePath(message) | PublishError::Archive(message) => {
             ServiceError::InvalidInput { message }
         }
+        PublishError::Interrupted(cause) => ServiceError::Busy { cause },
         PublishError::Store(message)
+        | PublishError::TimedOut(message)
         | PublishError::Io(message)
         | PublishError::InjectedCrash(message) => ServiceError::internal(&message),
     }
@@ -627,18 +628,6 @@ impl LibrarySetup {
         ids.into_iter()
             .map(|id| self.fs.blocking_write(&id))
             .collect()
-    }
-
-    /// Async form of [`publish_guards`](Self::publish_guards) for
-    /// callers already on the runtime.
-    pub(crate) async fn publish_guards_async(&self, registry: &RootRegistry) -> Vec<WriteGuard> {
-        let mut ids = PublishCell::pending_ids(registry);
-        ids.sort();
-        let mut guards = Vec::with_capacity(ids.len());
-        for id in ids {
-            guards.push(self.fs.write(&id).await);
-        }
-        guards
     }
 
     /// Drop expired preview seals.
@@ -790,6 +779,30 @@ impl LibrarySetup {
             })
     }
 
+    /// The accepted identity a track's album holds now, or `None` when the
+    /// track has left the catalog or its album has no exact identity. A
+    /// store that could not be read is an error, never "gone".
+    fn live_identity(&self, track_id: &str) -> Result<Option<ReleaseIdentity>, ServiceError> {
+        let gone = |error: &ServiceError| {
+            matches!(
+                error,
+                ServiceError::NotFound
+                    | ServiceError::Conflict { .. }
+                    | ServiceError::InvalidInput { .. }
+            )
+        };
+        let album_id = match self.track_album(track_id) {
+            Ok(album_id) => album_id,
+            Err(error) if gone(&error) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match self.resolve_identity(&album_id, track_id) {
+            Ok(identity) => Ok(Some(identity)),
+            Err(error) if gone(&error) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Live fingerprint for one sandbox file. Unreadable files are
     /// 409s: valid input against a moved file.
     fn live_fingerprint(
@@ -907,8 +920,6 @@ impl LibrarySetup {
         album_id: &str,
         items: Vec<PreviewItemInput>,
     ) -> Result<PreviewSealed, ServiceError> {
-        use super::publish::publisher::Catalog as _;
-
         if items.is_empty() {
             return Err(ServiceError::InvalidInput {
                 message: "Preview needs at least one file".to_owned(),
@@ -933,9 +944,7 @@ impl LibrarySetup {
             cell.refresh(&registry, &self.root_dirs)
                 .map_err(publish_error)?;
             let open = cell.open().map_err(publish_error)?;
-            let revision = SqliteCatalog
-                .revision(open.publisher.connection())
-                .map_err(publish_error)?;
+            let revision = open.publisher.catalog_revision().map_err(publish_error)?;
             (open.sandbox.clone(), revision)
         };
         // Accepted album identity first: without an exact release the
@@ -1126,8 +1135,6 @@ impl LibrarySetup {
         token: &str,
         applied_by: Option<&str>,
     ) -> Result<AppliedBundle, ServiceError> {
-        use super::publish::publisher::Catalog as _;
-
         let token_hash = sha256_hex(token.as_bytes());
         let entry = {
             let mut previews = self
@@ -1151,9 +1158,7 @@ impl LibrarySetup {
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         let live = self.seal_live(&open.sandbox, &entry.sealed.bundle, &token_hash)?;
-        let catalog_revision = SqliteCatalog
-            .revision(open.publisher.connection())
-            .map_err(publish_error)?;
+        let catalog_revision = open.publisher.catalog_revision().map_err(publish_error)?;
         let mut live = live;
         live.catalog_revision = catalog_revision;
         open.publisher
@@ -1290,7 +1295,7 @@ impl LibrarySetup {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let registry = self.live_registry();
         let reopen = cell.needs_refresh(&registry);
-        let retry = !reopen && cell.has_held();
+        let retry = !reopen && cell.has_held()?;
         let _guards = if reopen || retry {
             self.publish_guards(&registry)
         } else {
@@ -1353,8 +1358,6 @@ impl LibrarySetup {
         pins: SealPins,
         override_of: &dyn Fn(&str) -> u64,
     ) -> Result<AppliedBundle, PublishError> {
-        use super::publish::publisher::Catalog as _;
-
         let mut cell = self
             .publish
             .lock()
@@ -1373,7 +1376,7 @@ impl LibrarySetup {
                 super::publish::staging::document_for_write(&path, &item.managed_updates)?,
             );
         }
-        let catalog_revision = SqliteCatalog.revision(open.publisher.connection())?;
+        let catalog_revision = open.publisher.catalog_revision()?;
         open.publisher
             .set_undo_retention_days(self.undo_retention_days());
         let bundle = PlanBundle {
@@ -1441,9 +1444,12 @@ impl LibrarySetup {
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         if let Some(caller) = only_by {
-            let applied_by =
-                super::publish::operations::applied_by(open.publisher.connection(), bundle_id)
-                    .map_err(publish_error)?;
+            let applied_by = self
+                .db
+                .read_blocking("publish.applied_by", |conn| {
+                    super::publish::operations::applied_by(conn, bundle_id)
+                })
+                .map_err(publish_error)?;
             if applied_by.flatten().as_deref() != Some(caller) {
                 return Err(ServiceError::NotFound);
             }
@@ -1545,34 +1551,51 @@ impl LibrarySetup {
         use super::publish::publisher::Catalog as _;
         use super::publish::undo::{UndoInput, UndoLive, plan_undo};
 
-        let conn = open.publisher.connection();
-        let source = super::publish::operations::load_operation(conn, bundle_id)
+        // Everything the undo reads from the database, in one read that
+        // ends before any file is looked at.
+        let sources = self
+            .db
+            .read_blocking("publish.undo_sources", |conn| {
+                let Some(source) = super::publish::operations::load_operation(conn, bundle_id)?
+                else {
+                    return Ok(None);
+                };
+                let snapshots = SnapshotStore::new(conn).bundle(bundle_id)?;
+                let journals = JournalStore::new(conn).bundle(bundle_id)?;
+                let blobs = BlobStore::new(conn);
+                let mut rows = Vec::new();
+                for (_, track_id, blob_sha, expires_day) in snapshots {
+                    let Some(item) = source.items.iter().find(|item| item.track_id == track_id)
+                    else {
+                        continue;
+                    };
+                    let Some(journal) = journals
+                        .iter()
+                        .find(|journal| journal.track_id.as_deref() == Some(track_id.as_str()))
+                    else {
+                        continue;
+                    };
+                    let bytes = blobs.get(&blob_sha)?;
+                    let located = SqliteCatalog.locate(conn, &track_id)?;
+                    rows.push((
+                        track_id,
+                        item.clone(),
+                        journal.clone(),
+                        bytes,
+                        expires_day,
+                        located,
+                    ));
+                }
+                Ok::<_, PublishError>(Some(rows))
+            })
             .map_err(publish_error)?
             .ok_or(ServiceError::NotFound)?;
-        let snapshots = SnapshotStore::new(conn)
-            .bundle(bundle_id)
-            .map_err(publish_error)?;
-        let journals = JournalStore::new(conn)
-            .bundle(bundle_id)
-            .map_err(publish_error)?;
-        let blobs = BlobStore::new(conn);
-        let by_track: HashMap<&str, &PlanItem> = source
-            .items
-            .iter()
-            .map(|item| (item.track_id.as_str(), item))
-            .collect();
         let mut inputs = Vec::new();
-        for (_, track_id, blob_sha, expires_day) in &snapshots {
-            let Some(item) = by_track.get(track_id.as_str()) else {
-                continue;
-            };
-            let Some(journal) = journals
-                .iter()
-                .find(|journal| journal.track_id.as_deref() == Some(track_id.as_str()))
-            else {
-                continue;
-            };
-            let bytes = blobs.get(blob_sha).map_err(publish_error)?;
+        let mut locations_read = HashMap::new();
+        let mut by_track: HashMap<String, PlanItem> = HashMap::new();
+        for (track_id, item, journal, bytes, expires_day, located) in sources {
+            locations_read.insert(track_id.clone(), located);
+            by_track.insert(track_id.clone(), item.clone());
             let before =
                 super::publish::undo::BeforeState::from_bytes(&bytes).map_err(publish_error)?;
             let staged_size = super::publish::paths::read_regular_file(
@@ -1594,7 +1617,7 @@ impl LibrarySetup {
                 published_rel: journal.dest_rel.clone(),
                 identity: item.identity.clone(),
                 override_revision: item.override_revision,
-                expires_day: *expires_day,
+                expires_day,
             });
         }
         let mut files = UndoFiles::default();
@@ -1604,16 +1627,18 @@ impl LibrarySetup {
         let mut overrides = BTreeMap::new();
         let mut live_inputs = Vec::new();
         for input in inputs {
-            let located = SqliteCatalog
-                .locate(conn, &input.track_id)
-                .map_err(publish_error)?;
-            let live = located.and_then(|(root_id, rel_path, _, _)| {
-                let fingerprint =
-                    Self::live_fingerprint(&open.sandbox, &root_id, &rel_path).ok()?;
-                let album_id = self.track_album(&input.track_id).ok()?;
-                let identity = self.resolve_identity(&album_id, &input.track_id).ok()?;
-                Some((root_id, rel_path, fingerprint, identity))
-            });
+            let located = locations_read.remove(&input.track_id).flatten();
+            let live = match located {
+                Some((root_id, rel_path, _, _)) => {
+                    match Self::live_fingerprint(&open.sandbox, &root_id, &rel_path) {
+                        Ok(fingerprint) => self
+                            .live_identity(&input.track_id)?
+                            .map(|identity| (root_id, rel_path, fingerprint, identity)),
+                        Err(_) => None,
+                    }
+                }
+                None => None,
+            };
             let Some((root_id, rel_path, fingerprint, identity)) = live else {
                 files.blocked.push((input.track_id.clone(), UndoSkip::Gone));
                 continue;
@@ -1821,34 +1846,50 @@ impl LibrarySetup {
         use super::publish::publisher::Catalog as _;
         use super::publish::undo::{BaselineInput, plan_baseline_restore};
 
-        let conn = open.publisher.connection();
-        let blobs = BlobStore::new(conn);
-        let baselines = BaselineStore::new(conn);
+        // Each track's baseline bytes and catalog place, in one read that
+        // ends before any file is looked at.
+        let sources = self
+            .db
+            .read_blocking("publish.baseline_sources", |conn| {
+                let blobs = BlobStore::new(conn);
+                let baselines = BaselineStore::new(conn);
+                track_ids
+                    .iter()
+                    .map(|track_id| {
+                        let bytes = match baselines.get(track_id)? {
+                            Some((blob_sha, _, _)) => Some(blobs.get(&blob_sha)?),
+                            None => None,
+                        };
+                        Ok((bytes, SqliteCatalog.locate(conn, track_id)?))
+                    })
+                    .collect::<Result<Vec<_>, PublishError>>()
+            })
+            .map_err(publish_error)?;
         let mut files = BaselineFiles::default();
         let mut inputs = Vec::new();
         let mut current_locs: HashMap<String, (String, String)> = HashMap::new();
         let mut live: HashMap<String, (FileFingerprint, String, ReleaseIdentity)> = HashMap::new();
-        for track_id in track_ids {
-            let baseline = match baselines.get(track_id).map_err(publish_error)? {
-                Some((blob_sha, _, _)) => {
-                    let bytes = blobs.get(&blob_sha).map_err(publish_error)?;
-                    Some(
-                        super::publish::undo::BeforeState::from_bytes(&bytes)
-                            .map_err(publish_error)?,
-                    )
+        for (track_id, (bytes, located)) in track_ids.iter().zip(sources) {
+            let baseline = match bytes {
+                Some(bytes) => Some(
+                    super::publish::undo::BeforeState::from_bytes(&bytes).map_err(publish_error)?,
+                ),
+                None => None,
+            };
+            let state = match located {
+                Some((root_id, rel_path, _, _)) => {
+                    match (
+                        Self::live_fingerprint(&open.sandbox, &root_id, &rel_path),
+                        Self::live_format(&rel_path),
+                    ) {
+                        (Ok(current), Ok(format)) => self
+                            .live_identity(track_id)?
+                            .map(|identity| (root_id, rel_path, current, format, identity)),
+                        _ => None,
+                    }
                 }
                 None => None,
             };
-            let located = SqliteCatalog
-                .locate(conn, track_id)
-                .map_err(publish_error)?;
-            let state = located.and_then(|(root_id, rel_path, _, _)| {
-                let current = Self::live_fingerprint(&open.sandbox, &root_id, &rel_path).ok()?;
-                let format = Self::live_format(&rel_path).ok()?;
-                let album_id = self.track_album(track_id).ok()?;
-                let identity = self.resolve_identity(&album_id, track_id).ok()?;
-                Some((root_id, rel_path, current, format, identity))
-            });
             let Some((root_id, rel_path, current, format, identity)) = state else {
                 files.blocked.push((track_id.clone(), BaselineSkip::Gone));
                 continue;
@@ -1912,7 +1953,11 @@ impl LibrarySetup {
                 super::publish::staging::restore_updates(&before.doc, &current, &live_loc.1);
             // Files management generated for the track (a cover, an
             // `.lrc`) go too, while they still hold the bytes it wrote.
-            let removals: Vec<_> = super::publish::operations::generated_for_track(conn, &track_id)
+            let removals: Vec<_> = self
+                .db
+                .read_blocking("publish.generated_for_track", |conn| {
+                    super::publish::operations::generated_for_track(conn, &track_id)
+                })
                 .map_err(publish_error)?
                 .into_iter()
                 .filter(|output| {
@@ -1975,12 +2020,8 @@ impl LibrarySetup {
         plan_items: Vec<PlanItem>,
         docs: BTreeMap<String, TagDocument>,
     ) -> Result<AppliedBundle, ServiceError> {
-        use super::publish::publisher::Catalog as _;
-
         let open = cell.open().map_err(publish_error)?;
-        let catalog_revision = SqliteCatalog
-            .revision(open.publisher.connection())
-            .map_err(publish_error)?;
+        let catalog_revision = open.publisher.catalog_revision().map_err(publish_error)?;
         let bundle = PlanBundle {
             id: self.ids.new_id(),
             items: plan_items,

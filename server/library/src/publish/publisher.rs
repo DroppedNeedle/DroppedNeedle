@@ -14,9 +14,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use rusqlite::{Connection, OptionalExtension, Transaction};
+use droppedneedle_kernel::db::{CancelFlag, Db, Durable, DurableLane, Lane};
+use rusqlite::{Connection, OptionalExtension};
 
-use super::journal::{FileJournal, JournalKind, JournalReplacement, JournalState, JournalStore};
+use super::journal::{
+    FileJournal, JournalKind, JournalReplacement, JournalState, JournalStore, JournalWriter,
+};
 use super::paths::Sandbox;
 use super::place::Original;
 use super::planner::{
@@ -53,6 +56,9 @@ pub struct TrackCommit {
     /// The track whose file this one replaced at its destination, retired
     /// in the same commit, and where in the recycle bin that file goes.
     pub replaces: Option<(String, String)>,
+    /// What an adopted file indexes as, read from the published file
+    /// before the commit's transaction by [`read_adopted`].
+    pub indexed: Option<crate::scan::store::CommitIndexedItem>,
 }
 
 /// Management-state prefix journals carry for files a commit adds to the
@@ -99,11 +105,7 @@ pub trait Catalog {
     /// catalog once. Track and album ids stay as they are. Files an
     /// import fetched for a library album join it, and are placed on its
     /// edition in the same transaction.
-    fn commit_bundle(
-        &self,
-        tx: &Transaction<'_>,
-        commit: &BundleCommit,
-    ) -> Result<(), PublishError>;
+    fn commit_bundle(&self, tx: &Durable<'_>, commit: &BundleCommit) -> Result<(), PublishError>;
     /// Mark a track missing so streaming and search stay accurate when
     /// committed bytes cannot be recovered.
     fn mark_missing(&self, conn: &Connection, track_id: &str) -> Result<(), PublishError>;
@@ -167,11 +169,7 @@ impl Catalog for SqliteCatalog {
         .map_err(PublishError::from)
     }
 
-    fn commit_bundle(
-        &self,
-        tx: &Transaction<'_>,
-        commit: &BundleCommit,
-    ) -> Result<(), PublishError> {
+    fn commit_bundle(&self, tx: &Durable<'_>, commit: &BundleCommit) -> Result<(), PublishError> {
         let conn: &Connection = tx;
         let changed = conn.execute(
             "UPDATE library_catalog_revision SET value = value + 1
@@ -463,9 +461,7 @@ fn adopt_track(
     track: &TrackCommit,
     adoption: &super::planner::Adoption,
 ) -> Result<Option<JoinedAlbum>, PublishError> {
-    use crate::scan::seams::ScannedTags;
     use crate::scan::sqlite_store::Adopted;
-    use crate::scan::store::CommitIndexedItem;
 
     let joined = match &adoption.join {
         Some(join) => joined_album(conn, join)?,
@@ -502,27 +498,15 @@ fn adopt_track(
         }
     }
 
-    let path = Path::new(&track.file_path);
-    let meta = std::fs::symlink_metadata(path).map_err(PublishError::from)?;
-    let format = crate::tags::format_for_path(path)
-        .map_err(|error| PublishError::Catalog(error.to_string()))?;
-    let (tag, header) = crate::tags::read::read_scan_metadata(path, format)
-        .map_err(|error| PublishError::Catalog(format!("published file unreadable: {error}")))?;
-    let item = CommitIndexedItem {
-        root_id: track.root_id.clone(),
-        relative_path: track.rel_path.clone(),
-        absolute_path: track.file_path.clone(),
-        size_bytes: meta.len(),
-        mtime_ns: crate::scan::revision::mtime_ns_from_metadata(&meta),
-        tags_read_at: now_secs(),
-        tags: ScannedTags { tag, header },
-        effective_policy: adoption.policy,
-        policy_revision: adoption.policy_revision.clone(),
-        verdict_counter: "new_count",
-    };
+    let item = track.indexed.as_ref().ok_or_else(|| {
+        PublishError::Catalog(format!(
+            "track {} was not read before its commit",
+            track.track_id
+        ))
+    })?;
     let adopted = crate::scan::sqlite_store::adopt_file(
         conn,
-        &item,
+        item,
         &Adopted {
             track_id: &track.track_id,
             album_id: joined.as_ref().map(|joined| joined.album_id.as_str()),
@@ -554,6 +538,44 @@ fn adopt_track(
         ],
     )?;
     Ok(joined)
+}
+
+/// Read each adopted file of a commit before its transaction: what the
+/// catalog indexes it as, exactly as a scan would. The transaction then
+/// never waits on a disk or a share.
+pub(super) fn read_adopted(tracks: &mut [TrackCommit]) -> Result<(), PublishError> {
+    use crate::scan::seams::ScannedTags;
+    use crate::scan::store::CommitIndexedItem;
+
+    for track in tracks.iter_mut() {
+        let Some(adoption) = &track.adopt else {
+            continue;
+        };
+        let path = Path::new(&track.file_path);
+        // The stat comes before the tag read: a scan re-reads a file whose
+        // size or modified time differs from the recorded stat, so a change
+        // made after this point is still caught.
+        let meta = std::fs::symlink_metadata(path).map_err(PublishError::from)?;
+        let format = crate::tags::format_for_path(path)
+            .map_err(|error| PublishError::Catalog(error.to_string()))?;
+        let (tag, header) =
+            crate::tags::read::read_scan_metadata(path, format).map_err(|error| {
+                PublishError::Catalog(format!("published file unreadable: {error}"))
+            })?;
+        track.indexed = Some(CommitIndexedItem {
+            root_id: track.root_id.clone(),
+            relative_path: track.rel_path.clone(),
+            absolute_path: track.file_path.clone(),
+            size_bytes: meta.len(),
+            mtime_ns: crate::scan::revision::mtime_ns_from_metadata(&meta),
+            tags_read_at: now_secs(),
+            tags: ScannedTags { tag, header },
+            effective_policy: adoption.policy,
+            policy_revision: adoption.policy_revision.clone(),
+            verdict_counter: "new_count",
+        });
+    }
+    Ok(())
 }
 
 /// Crash-injection point between durable steps. Each variant names the
@@ -624,11 +646,13 @@ pub enum PublishOutcome {
     CleanupPending,
 }
 
-/// Staged publisher. Owns its SQLite connection so the catalog commit
-/// plus journal transitions land in one transaction.
+/// Staged publisher. It holds the database and no connection of its own:
+/// every journal row goes through a durable write, so it is on disk before
+/// the file step it describes, and the catalog commit with its journal
+/// transitions is one of them.
 pub struct Publisher<C: Catalog, P: SpaceProbe> {
     sandbox: Sandbox,
-    conn: Connection,
+    db: Db,
     catalog: C,
     space: P,
     gate: CapabilityGate,
@@ -636,9 +660,10 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
     place_seams: super::place::Seams,
     before_place: Option<BeforePlace>,
     before_set_aside: Option<BeforePlace>,
-    /// The unix day, read at the start of each publish: a publisher stays
-    /// open for as long as the root set does.
+    /// Unix milliseconds, read at the start of each publish: a publisher
+    /// stays open for as long as the root set does.
     clock: Box<dyn Fn() -> i64 + Send>,
+    now_ms: i64,
     today_day: i64,
     undo_retention_days: i64,
 }
@@ -653,21 +678,63 @@ pub const NO_SAFE_METHOD_ORIGINAL_ASIDE: &str = "This folder has no safe way to 
 /// placed there, after every check has passed.
 pub type BeforePlace = Box<dyn Fn(&Path) + Send>;
 
+/// The unix day of a time in unix milliseconds.
+fn day_of(ms: i64) -> i64 {
+    ms.div_euclid(86_400_000)
+}
+
+/// A read made once a publish or a recovery pass has started. It waits for
+/// a connection for as long as it takes: a request read's `Busy` answer
+/// would stop the work halfway.
+pub(super) fn long_read<R>(
+    db: &Db,
+    name: &'static str,
+    op: impl FnOnce(&Connection) -> Result<R, PublishError>,
+) -> Result<R, PublishError> {
+    db.read_long(name, &CancelFlag::never(), op)
+}
+
+/// One durable journal write on the background lane.
+pub(super) fn durable<R>(
+    db: &Db,
+    name: &'static str,
+    op: impl FnOnce(&Durable<'_>) -> Result<R, PublishError>,
+) -> Result<R, PublishError> {
+    db.write_durable(DurableLane::Background, name, op)
+}
+
+/// Keep the picture bytes a before-state names, owned like it.
+fn keep_pictures(
+    conn: &Connection,
+    before: &TagDocument,
+    owner_kind: &str,
+    owner_id: &str,
+) -> Result<(), PublishError> {
+    let blobs = BlobStore::new(conn);
+    let snapshots = SnapshotStore::new(conn);
+    for (sha256, bytes) in &before.picture_bytes {
+        let stored = blobs.put(bytes)?;
+        if &stored != sha256 {
+            return Err(PublishError::Snapshot("picture bytes hash mismatch".into()));
+        }
+        snapshots.add_ref(sha256, owner_kind, owner_id)?;
+    }
+    Ok(())
+}
+
 impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
-    /// Open a publisher on the application database through the
-    /// database factory. The journal tables come from the migrations.
-    pub fn open(
+    /// A publisher over `db`. `clock` reads the time in unix milliseconds.
+    pub fn new(
         sandbox: Sandbox,
-        db_path: &Path,
+        db: Db,
         catalog: C,
         space: P,
         clock: impl Fn() -> i64 + Send + 'static,
-    ) -> Result<Self, PublishError> {
-        let conn = droppedneedle_kernel::db::open_journal_connection(db_path)
-            .map_err(|error| PublishError::Store(error.to_string()))?;
-        Ok(Self {
+    ) -> Self {
+        let now_ms = clock();
+        Self {
             sandbox,
-            conn,
+            db,
             catalog,
             space,
             gate: CapabilityGate::production(),
@@ -675,10 +742,11 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             place_seams: super::place::Seams::default(),
             before_place: None,
             before_set_aside: None,
-            today_day: clock(),
+            now_ms,
+            today_day: day_of(now_ms),
             clock: Box::new(clock),
             undo_retention_days: super::DEFAULT_UNDO_RETENTION_DAYS as i64,
-        })
+        }
     }
 
     /// Keep before-state snapshots for this many days (the Library
@@ -717,9 +785,12 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         self.before_set_aside = hook;
     }
 
-    /// Borrow the publisher's database connection.
-    pub fn connection(&self) -> &Connection {
-        &self.conn
+    /// The catalog revision a bundle plans against, read on the request
+    /// pool before anything is written.
+    pub fn catalog_revision(&self) -> Result<u64, PublishError> {
+        self.db.read_blocking("publish.catalog_revision", |conn| {
+            self.catalog.revision(conn)
+        })
     }
 
     /// Publish one sealed bundle through prepare, publish, catalog
@@ -736,6 +807,11 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
 
     /// [`Self::publish`], recording the account that applied the bundle
     /// so that account may undo it.
+    ///
+    /// A database that refuses a call (busy, or shutting down) stops the
+    /// publish where it is, with no unwind: the unwind's own rows would
+    /// hear the same answer, and recovery finishes or unwinds the bundle
+    /// at the next start or maintenance tick.
     pub fn publish_as(
         &mut self,
         sealed: &SealedPreview,
@@ -744,13 +820,18 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         applied_by: Option<&str>,
     ) -> Result<PublishOutcome, PublishError> {
         let bundle = &sealed.bundle;
-        self.today_day = (self.clock)();
+        self.now_ms = (self.clock)();
+        self.today_day = day_of(self.now_ms);
         self.run_pregates(sealed, live)?;
         // Durable source operation for undo: recorded after the gates
         // pass, before the first byte stages. Rows for operations that
         // then fail linger harmlessly: undo of one compares the published
         // bytes, which never landed, so it stays put.
-        super::operations::record_operation(&self.conn, bundle, self.today_day, applied_by)?;
+        let (today, now) = (self.today_day, self.now_ms);
+        self.db
+            .write_blocking(Lane::Background, "publish.record_operation", |tx| {
+                super::operations::record_operation(tx, bundle, today, now, applied_by)
+            })?;
         // A file that cannot be staged unwinds the ones staged before it,
         // so no part of the bundle is held or later finished by recovery.
         let staged = match self.prepare(bundle, docs) {
@@ -797,11 +878,23 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             SealError::BadToken => PublishError::Validation("bad confirmation token".into()),
             SealError::Expired => PublishError::Validation("preview expired".into()),
         })?;
-        let journals = JournalStore::new(&self.conn);
-        let baselines = super::snapshots::BaselineStore::new(&self.conn);
-        for item in sealed.bundle.items.iter() {
+        let items = &sealed.bundle.items;
+        let facts = self.db.read_blocking("publish.pregates", |conn| {
+            let journals = JournalStore::new(conn);
+            let baselines = super::snapshots::BaselineStore::new(conn);
+            items
+                .iter()
+                .map(|item| {
+                    Ok((
+                        baselines.v2_original_missing(&item.track_id)?,
+                        journals.unsettled_bundle_for_track(&item.track_id, &sealed.bundle.id)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, PublishError>>()
+        })?;
+        for (item, (v2_missing, held)) in items.iter().zip(facts) {
             self.gate.check(item)?;
-            if baselines.v2_original_missing(&item.track_id)? {
+            if v2_missing {
                 return Err(PublishError::Snapshot(format!(
                     "track {} has an original-file baseline from v2 that did not come across; \
                      restore V2_ROOT/cache/library-management from your backup, export from v2 \
@@ -809,9 +902,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                     item.track_id
                 )));
             }
-            if let Some(held) =
-                journals.unsettled_bundle_for_track(&item.track_id, &sealed.bundle.id)?
-            {
+            if let Some(held) = held {
                 return Err(PublishError::Journal(format!(
                     "track {} has an unfinished managed write (bundle {held}) waiting for recovery",
                     item.track_id
@@ -821,6 +912,20 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         CollisionGate::check_bundle(&self.sandbox, &sealed.bundle)?;
         DiskPreflight::check(&sealed.bundle, &self.space)?;
         Ok(())
+    }
+
+    /// Insert one fresh journal row, durably, before its temp is written.
+    fn journal_insert(&self, journal: &FileJournal) -> Result<(), PublishError> {
+        durable(&self.db, "publish.journal_prepare", |tx| {
+            JournalWriter::new(tx).insert(journal)
+        })
+    }
+
+    /// Move one row from `Prepared` to `Staged`, durably.
+    fn journal_staged(&self, id: &str) -> Result<(), PublishError> {
+        durable(&self.db, "publish.journal_staged", |tx| {
+            JournalWriter::new(tx).advance(id, JournalState::Prepared, JournalState::Staged)
+        })
     }
 
     /// Prepare: verify sources, render staged bytes through the tag
@@ -880,7 +985,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 &temp,
             )?;
             let staged_sha = sha256_hex(&staged_bytes);
-            let journals = JournalStore::new(&self.conn);
             let journal = FileJournal {
                 id: journal_id.clone(),
                 bundle_id: bundle.id.clone(),
@@ -909,9 +1013,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             };
             // Journal first, then the temp: a crash between the two leaves
             // a row recovery knows about, never an orphan temp.
-            if journals.get(&journal_id)?.is_none() {
-                journals.insert(&journal)?;
-            }
+            self.journal_insert(&journal)?;
             // The file this one stands in for lends its permission bits:
             // the one it replaces at the destination, else its own source
             // in the library. A download coming in keeps the default.
@@ -928,12 +1030,10 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 self.capture_before(bundle, item, before)?;
             }
             // Staged only once its before-state is kept: recovery resumes
-            // a bundle only when every row is staged.
-            JournalStore::new(&self.conn).transition(
-                &journal_id,
-                JournalState::Prepared,
-                JournalState::Staged,
-            )?;
+            // a bundle only when every row is staged. This durable write
+            // also puts the before-state on disk ahead of the placement
+            // that overwrites the file.
+            self.journal_staged(&journal_id)?;
             for (side_ordinal, sidecar) in item.sidecars.iter().enumerate() {
                 self.prepare_sidecar(
                     bundle,
@@ -964,6 +1064,13 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         Ok(staged_files)
     }
 
+    /// One blob's bytes, hash-verified.
+    fn blob(&self, sha256: &str) -> Result<Vec<u8>, PublishError> {
+        long_read(&self.db, "publish.blob", |conn| {
+            BlobStore::new(conn).get(sha256)
+        })
+    }
+
     /// The pictures a plan item sets, with their bytes from the blob
     /// store; `None` when it leaves the file's pictures alone.
     fn planned_pictures(
@@ -973,13 +1080,12 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         let Some(values) = item.managed_updates.get(super::PICTURES_KEY) else {
             return Ok(None);
         };
-        let blobs = BlobStore::new(&self.conn);
         let mut specs = Vec::with_capacity(values.len());
         for value in values {
             let picture = super::PictureRef::decode(value).ok_or_else(|| {
                 PublishError::Validation(format!("picture entry {value} is malformed"))
             })?;
-            let data = blobs.get(&picture.sha256)?;
+            let data = self.blob(&picture.sha256)?;
             if sha256_hex(&data) != picture.sha256 {
                 return Err(PublishError::Validation(
                     "a planned picture is not the stored one".into(),
@@ -996,79 +1102,60 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         Ok(Some(specs))
     }
 
-    /// Keep the picture bytes a before-state names, owned like it.
-    fn keep_pictures(
-        &self,
-        before: &TagDocument,
-        owner_kind: &str,
-        owner_id: &str,
-    ) -> Result<(), PublishError> {
-        let blobs = BlobStore::new(&self.conn);
-        let snapshots = SnapshotStore::new(&self.conn);
-        for (sha256, bytes) in &before.picture_bytes {
-            let stored = blobs.put(bytes)?;
-            if &stored != sha256 {
-                return Err(PublishError::Snapshot("picture bytes hash mismatch".into()));
-            }
-            snapshots.add_ref(sha256, owner_kind, owner_id)?;
-        }
-        Ok(())
-    }
-
-    /// Before-state for undo and the first-management baseline.
+    /// Before-state for undo and the first-management baseline, in one
+    /// ordinary write. The durable `Staged` write that follows puts it on
+    /// disk before the file is overwritten.
     fn capture_before(
-        &mut self,
+        &self,
         bundle: &PlanBundle,
         item: &super::planner::PlanItem,
         before: TagDocument,
     ) -> Result<(), PublishError> {
-        {
-            let prior_mgmt = self
-                .catalog
-                .locate(&self.conn, &item.track_id)?
-                .map(|(_, _, _, state)| state)
-                .filter(|state| !state.is_empty());
-            let before_state = super::undo::BeforeState {
-                doc: before,
-                source_root: item.source_root.clone(),
-                source_rel: item.source_rel.clone(),
-                source_sha256: item.fingerprint.sha256.clone(),
-                mgmt_state_before: prior_mgmt,
-            };
-            // First-management baseline: captured once, immutable
-            // forever. A baseline that appeared concurrently wins; the
-            // only Snapshot error capture raises is already-exists.
-            if super::snapshots::BaselineStore::new(&self.conn)
-                .get(&item.track_id)?
-                .is_none()
-            {
-                self.keep_pictures(&before_state.doc, "baseline", &item.track_id)?;
-                let baseline_blob = BlobStore::new(&self.conn).put(&before_state.to_bytes()?)?;
-                match super::snapshots::BaselineStore::new(&self.conn).capture(
-                    &item.track_id,
-                    &baseline_blob,
-                    &item.source_root,
-                    &item.source_rel,
-                    self.today_day,
-                ) {
-                    Ok(()) => {}
-                    Err(PublishError::Snapshot(_)) => {}
-                    Err(other) => return Err(other),
+        let (today, expires) = (self.today_day, self.today_day + self.undo_retention_days);
+        self.db
+            .write_blocking(Lane::Background, "publish.capture_before", |tx| {
+                let prior_mgmt = self
+                    .catalog
+                    .locate(tx, &item.track_id)?
+                    .map(|(_, _, _, state)| state)
+                    .filter(|state| !state.is_empty());
+                let before_state = super::undo::BeforeState {
+                    doc: before,
+                    source_root: item.source_root.clone(),
+                    source_rel: item.source_rel.clone(),
+                    source_sha256: item.fingerprint.sha256.clone(),
+                    mgmt_state_before: prior_mgmt,
+                };
+                let blobs = BlobStore::new(tx);
+                let baselines = super::snapshots::BaselineStore::new(tx);
+                // First-management baseline: captured once, immutable
+                // forever. A baseline that appeared concurrently wins; the
+                // only Snapshot error capture raises is already-exists.
+                if baselines.get(&item.track_id)?.is_none() {
+                    keep_pictures(tx, &before_state.doc, "baseline", &item.track_id)?;
+                    let baseline_blob = blobs.put(&before_state.to_bytes()?)?;
+                    match baselines.capture(
+                        &item.track_id,
+                        &baseline_blob,
+                        &item.source_root,
+                        &item.source_rel,
+                        today,
+                    ) {
+                        Ok(()) | Err(PublishError::Snapshot(_)) => {}
+                        Err(other) => return Err(other),
+                    }
                 }
-            }
-            self.keep_pictures(&before_state.doc, "operation", &bundle.id)?;
-            let blob = BlobStore::new(&self.conn).put(&before_state.to_bytes()?)?;
-            let snapshots = SnapshotStore::new(&self.conn);
-            snapshots.record(
-                &format!("{}-{}", bundle.id, item.track_id),
-                &bundle.id,
-                &item.track_id,
-                &blob,
-                self.today_day,
-                self.today_day + self.undo_retention_days,
-            )?;
-        }
-        Ok(())
+                keep_pictures(tx, &before_state.doc, "operation", &bundle.id)?;
+                let blob = blobs.put(&before_state.to_bytes()?)?;
+                SnapshotStore::new(tx).record(
+                    &format!("{}-{}", bundle.id, item.track_id),
+                    &bundle.id,
+                    &item.track_id,
+                    &blob,
+                    today,
+                    expires,
+                )
+            })
     }
 
     /// Stage one sidecar as a verified byte copy with its own journal.
@@ -1104,33 +1191,29 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         }
         let temp = self.sandbox.temp_path_for(&dest, &journal_id)?;
         self.sandbox.ensure_under_roots(&temp)?;
-        let journals = JournalStore::new(&self.conn);
-        if journals.get(&journal_id)?.is_none() {
-            journals.insert(&FileJournal {
-                id: journal_id.clone(),
-                bundle_id: bundle.id.clone(),
-                kind: JournalKind::Sidecar,
-                source: Some((sidecar.source_root.clone(), sidecar.source_rel.clone())),
-                dest_root: sidecar.dest_root.clone(),
-                dest_rel: sidecar.dest_rel.clone(),
-                staged: temp.to_string_lossy().to_string(),
-                backup: None,
-                source_sha256: Some(sidecar.fingerprint.sha256.clone()),
-                staged_sha256: sha256_hex(&bytes),
-                track_id: None,
-                catalog_revision: Some(bundle.catalog_revision as i64),
-                mgmt_state: None,
-                state: JournalState::Prepared,
-                seq: 0,
-                replaces: None,
-            })?;
-        }
+        self.journal_insert(&FileJournal {
+            id: journal_id.clone(),
+            bundle_id: bundle.id.clone(),
+            kind: JournalKind::Sidecar,
+            source: Some((sidecar.source_root.clone(), sidecar.source_rel.clone())),
+            dest_root: sidecar.dest_root.clone(),
+            dest_rel: sidecar.dest_rel.clone(),
+            staged: temp.to_string_lossy().to_string(),
+            backup: None,
+            source_sha256: Some(sidecar.fingerprint.sha256.clone()),
+            staged_sha256: sha256_hex(&bytes),
+            track_id: None,
+            catalog_revision: Some(bundle.catalog_revision as i64),
+            mgmt_state: None,
+            state: JournalState::Prepared,
+            seq: 0,
+            replaces: None,
+        })?;
         let mode = keep_mode
             .then(|| paths::permission_bits(&source))
             .transpose()?;
         write_staged_temp(&temp, &bytes, mode)?;
-        journals.transition(&journal_id, JournalState::Prepared, JournalState::Staged)?;
-        Ok(())
+        self.journal_staged(&journal_id)
     }
 
     /// Stage one generated file from the blob store under its own journal.
@@ -1141,7 +1224,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         index: usize,
         output: &super::planner::GeneratedOutput,
     ) -> Result<(), PublishError> {
-        let bytes = BlobStore::new(&self.conn).get(&output.sha256)?;
+        let bytes = self.blob(&output.sha256)?;
         if sha256_hex(&bytes) != output.sha256 {
             return Err(PublishError::Validation(format!(
                 "generated {} for {} is not the planned file",
@@ -1158,34 +1241,31 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         }
         let temp = self.sandbox.temp_path_for(&dest, &journal_id)?;
         self.sandbox.ensure_under_roots(&temp)?;
-        let journals = JournalStore::new(&self.conn);
-        if journals.get(&journal_id)?.is_none() {
-            journals.insert(&FileJournal {
-                id: journal_id.clone(),
-                bundle_id: bundle.id.clone(),
-                kind: JournalKind::Output,
-                source: None,
-                dest_root: output.dest_root.clone(),
-                dest_rel: output.dest_rel.clone(),
-                staged: temp.to_string_lossy().to_string(),
-                backup: None,
-                source_sha256: None,
-                staged_sha256: output.sha256.clone(),
-                track_id: None,
-                catalog_revision: Some(bundle.catalog_revision as i64),
-                mgmt_state: None,
-                state: JournalState::Prepared,
-                seq: 0,
-                replaces: None,
-            })?;
-        }
+        self.journal_insert(&FileJournal {
+            id: journal_id.clone(),
+            bundle_id: bundle.id.clone(),
+            kind: JournalKind::Output,
+            source: None,
+            dest_root: output.dest_root.clone(),
+            dest_rel: output.dest_rel.clone(),
+            staged: temp.to_string_lossy().to_string(),
+            backup: None,
+            source_sha256: None,
+            staged_sha256: output.sha256.clone(),
+            track_id: None,
+            catalog_revision: Some(bundle.catalog_revision as i64),
+            mgmt_state: None,
+            state: JournalState::Prepared,
+            seq: 0,
+            replaces: None,
+        })?;
         write_staged_temp(&temp, &bytes, None)?;
-        journals.transition(&journal_id, JournalState::Prepared, JournalState::Staged)?;
-        Ok(())
+        self.journal_staged(&journal_id)
     }
 
-    /// Journal taking away one generated file (an undo). Nothing moves
-    /// until publish; the file must still hold the bytes that were written.
+    /// Journal taking away one generated file (an undo), inserted and
+    /// staged in one durable write. Nothing moves until publish; the file
+    /// must still hold the bytes that were written.
     fn prepare_removal(
         &mut self,
         bundle: &PlanBundle,
@@ -1201,29 +1281,29 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         let aside = self.sandbox.temp_path_for(&dest, &journal_id)?;
         self.sandbox.ensure_under_roots(&aside)?;
         super::generated::check(&dest, &removal.sha256)?;
-        let journals = JournalStore::new(&self.conn);
-        if journals.get(&journal_id)?.is_none() {
-            journals.insert(&FileJournal {
-                id: journal_id.clone(),
-                bundle_id: bundle.id.clone(),
-                kind: JournalKind::Delete,
-                source: None,
-                dest_root: removal.dest_root.clone(),
-                dest_rel: removal.dest_rel.clone(),
-                staged: aside.to_string_lossy().to_string(),
-                backup: None,
-                source_sha256: Some(removal.sha256.clone()),
-                staged_sha256: removal.sha256.clone(),
-                track_id: None,
-                catalog_revision: Some(bundle.catalog_revision as i64),
-                mgmt_state: None,
-                state: JournalState::Prepared,
-                seq: 0,
-                replaces: None,
-            })?;
-        }
-        journals.transition(&journal_id, JournalState::Prepared, JournalState::Staged)?;
-        Ok(())
+        let journal = FileJournal {
+            id: journal_id.clone(),
+            bundle_id: bundle.id.clone(),
+            kind: JournalKind::Delete,
+            source: None,
+            dest_root: removal.dest_root.clone(),
+            dest_rel: removal.dest_rel.clone(),
+            staged: aside.to_string_lossy().to_string(),
+            backup: None,
+            source_sha256: Some(removal.sha256.clone()),
+            staged_sha256: removal.sha256.clone(),
+            track_id: None,
+            catalog_revision: Some(bundle.catalog_revision as i64),
+            mgmt_state: None,
+            state: JournalState::Prepared,
+            seq: 0,
+            replaces: None,
+        };
+        durable(&self.db, "publish.journal_removal", |tx| {
+            let writer = JournalWriter::new(tx);
+            writer.insert(&journal)?;
+            writer.advance(&journal_id, JournalState::Prepared, JournalState::Staged)
+        })
     }
 
     /// Publish renames plus the atomic catalog commit, then cleanup.
@@ -1232,7 +1312,9 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         bundle: &PlanBundle,
         staged: &[PreparedFile],
     ) -> Result<PublishOutcome, PublishError> {
-        let journals = JournalStore::new(&self.conn).bundle(&bundle.id)?;
+        let journals = long_read(&self.db, "publish.bundle_journals", |conn| {
+            JournalStore::new(conn).bundle(&bundle.id)
+        })?;
         let roots: BTreeSet<&str> = journals
             .iter()
             .map(|journal| journal.dest_root.as_str())
@@ -1251,11 +1333,14 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         self.maybe_crash(CrashPoint::BeforeCatalogCommit)?;
         self.commit(bundle, staged)?;
         self.maybe_crash(CrashPoint::AfterCatalogCommit)?;
-        let outcome = self.cleanup(bundle, staged)?;
-        if outcome == PublishOutcome::CleanupPending {
-            return Ok(outcome);
-        }
-        Ok(PublishOutcome::Committed)
+        self.cleanup(bundle, staged)
+    }
+
+    /// Record one placement, durably.
+    fn journal_published(&self, id: &str) -> Result<(), PublishError> {
+        durable(&self.db, "publish.journal_published", |tx| {
+            JournalWriter::new(tx).advance(id, JournalState::Staged, JournalState::Published)
+        })
     }
 
     /// Place one staged journal on its destination. Same-path
@@ -1273,9 +1358,10 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         if journal.bundle_id != bundle.id {
             return Err(PublishError::Journal("journal bundle mismatch".into()));
         }
-        let current = JournalStore::new(&self.conn)
-            .get(&journal.id)?
-            .ok_or_else(|| PublishError::Journal(format!("missing journal {}", journal.id)))?;
+        let current = long_read(&self.db, "publish.journal", |conn| {
+            JournalStore::new(conn).get(&journal.id)
+        })?
+        .ok_or_else(|| PublishError::Journal(format!("missing journal {}", journal.id)))?;
         if current.state == JournalState::Published {
             return Ok(());
         }
@@ -1301,12 +1387,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 &journal.staged_sha256,
                 self.place_seams,
             )?;
-            JournalStore::new(&self.conn).transition(
-                &journal.id,
-                JournalState::Staged,
-                JournalState::Published,
-            )?;
-            return Ok(());
+            return self.journal_published(&journal.id);
         }
         let staged_path = Path::new(&journal.staged);
         self.sandbox.ensure_under_roots(staged_path)?;
@@ -1359,7 +1440,10 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 // the two then still knows where the original went.
                 let backup = self.sandbox.backup_path_for(&dest, &journal.id)?;
                 self.sandbox.ensure_under_roots(&backup)?;
-                JournalStore::new(&self.conn).set_backup(&journal.id, &backup.to_string_lossy())?;
+                let backup_text = backup.to_string_lossy();
+                durable(&self.db, "publish.journal_backup", |tx| {
+                    JournalWriter::new(tx).set_backup(&journal.id, &backup_text)
+                })?;
                 self.maybe_crash(CrashPoint::AfterBackupJournaled)?;
                 let home = paths::backup_home(
                     &self.sandbox,
@@ -1392,22 +1476,11 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         let mode = self.sandbox.placement_mode(&journal.dest_root);
         super::place::place_with(mode, staged_path, &dest, self.place_seams)
             .map_err(|error| error.into_publish(&journal.dest_root, &journal.dest_rel))?;
-        let moved = JournalStore::new(&self.conn).transition(
-            &journal.id,
-            JournalState::Staged,
-            JournalState::Published,
-        )?;
-        if !moved {
-            return Err(PublishError::Journal(format!(
-                "journal {} moved under publish",
-                journal.id
-            )));
-        }
-        Ok(())
+        self.journal_published(&journal.id)
     }
 
-    /// Single-transaction commit: catalog CAS plus every journal
-    /// `published -> committed`, then cache invalidation rows.
+    /// Single durable transaction: catalog CAS plus every journal
+    /// `published -> committed`. The adopted files are read before it.
     fn commit(&mut self, bundle: &PlanBundle, staged: &[PreparedFile]) -> Result<(), PublishError> {
         let mut tracks = Vec::with_capacity(staged.len());
         for file in staged {
@@ -1435,79 +1508,102 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                         .clone()
                         .map(|track| (track, replaced.recycle_to.clone()))
                 }),
+                indexed: None,
             });
         }
+        read_adopted(&mut tracks)?;
         let commit = BundleCommit {
             bundle_id: bundle.id.clone(),
             expected_catalog_revision: bundle.catalog_revision,
             tracks,
         };
-        let tx = self
-            .conn
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(PublishError::from)?;
-        if let Err(err) = self.catalog.commit_bundle(&tx, &commit) {
-            drop(tx);
-            return Err(err);
-        }
-        let journals = JournalStore::new(&tx);
-        for journal in journals.bundle(&bundle.id)? {
-            if journal.state != JournalState::Published {
-                return Err(PublishError::Journal(format!(
-                    "journal {} is {} at commit",
-                    journal.id,
-                    journal.state.as_str()
-                )));
+        durable(&self.db, "publish.bundle_commit", |tx| {
+            self.catalog.commit_bundle(tx, &commit)?;
+            let writer = JournalWriter::new(tx);
+            for journal in JournalStore::new(tx).bundle(&bundle.id)? {
+                if journal.state != JournalState::Published {
+                    return Err(PublishError::Journal(format!(
+                        "journal {} is {} at commit",
+                        journal.id,
+                        journal.state.as_str()
+                    )));
+                }
+                writer.advance(
+                    &journal.id,
+                    JournalState::Published,
+                    JournalState::Committed,
+                )?;
             }
-            let moved = journals.transition(
-                &journal.id,
-                JournalState::Published,
-                JournalState::Committed,
-            )?;
-            if !moved {
-                return Err(PublishError::Journal(format!(
-                    "journal {} moved under commit",
-                    journal.id
-                )));
-            }
-        }
-        tx.commit().map_err(PublishError::from)?;
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Post-commit cleanup: remove verified old sources and backups,
     /// prune newly empty source directories, and mark journals
     /// cleaned. Failures stay durable `cleanup_pending` and never roll
-    /// back the commit.
+    /// back the commit. A database that refuses a call, or a write that
+    /// runs out of time, ends the cleanup with the bundle committed and
+    /// its cleanup pending: recovery finishes it.
     fn cleanup(
         &mut self,
         bundle: &PlanBundle,
         staged: &[PreparedFile],
     ) -> Result<PublishOutcome, PublishError> {
+        match self.cleanup_rows(bundle, staged) {
+            Ok(false) => Ok(PublishOutcome::Committed),
+            Ok(true) => Ok(PublishOutcome::CleanupPending),
+            Err(error) if error.wrote_nothing() => {
+                tracing::warn!(bundle_id = %bundle.id, %error, "publish cleanup stopped; recovery finishes it");
+                Ok(PublishOutcome::CleanupPending)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// [`Self::cleanup`] row by row; true when some cleanup stays pending.
+    fn cleanup_rows(
+        &self,
+        bundle: &PlanBundle,
+        staged: &[PreparedFile],
+    ) -> Result<bool, PublishError> {
         let mut pending = false;
         let mut cleaned_any = false;
-        let journals = JournalStore::new(&self.conn).bundle(&bundle.id)?;
+        let journals = long_read(&self.db, "publish.bundle_journals", |conn| {
+            JournalStore::new(conn).bundle(&bundle.id)
+        })?;
         for journal in journals.iter() {
             if journal.state != JournalState::Committed {
                 continue;
             }
             if let Err(error) = self.cleanup_one(journal, staged) {
+                if error.wrote_nothing() {
+                    return Err(error);
+                }
                 pending = true;
                 tracing::warn!(journal_id = %journal.id, %error, "publish cleanup failed; left pending");
-                if let Err(error) = JournalStore::new(&self.conn).transition(
-                    &journal.id,
-                    JournalState::Committed,
-                    JournalState::CleanupPending,
-                ) {
-                    tracing::warn!(journal_id = %journal.id, %error, "cleanup-pending not recorded");
+                let recorded = durable(&self.db, "publish.journal_cleanup_pending", |tx| {
+                    JournalWriter::new(tx).transition(
+                        &journal.id,
+                        JournalState::Committed,
+                        JournalState::CleanupPending,
+                    )
+                });
+                match recorded {
+                    Err(error) if error.wrote_nothing() => return Err(error),
+                    Err(error) => {
+                        tracing::warn!(journal_id = %journal.id, %error, "cleanup-pending not recorded");
+                    }
+                    Ok(_) => {}
                 }
                 continue;
             }
-            let moved = JournalStore::new(&self.conn).transition(
-                &journal.id,
-                JournalState::Committed,
-                JournalState::Cleaned,
-            )?;
+            let moved = durable(&self.db, "publish.journal_cleaned", |tx| {
+                JournalWriter::new(tx).transition(
+                    &journal.id,
+                    JournalState::Committed,
+                    JournalState::Cleaned,
+                )
+            })?;
             if !moved {
                 pending = true;
             }
@@ -1516,11 +1612,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 self.maybe_crash(CrashPoint::DuringCleanup)?;
             }
         }
-        if pending {
-            Ok(PublishOutcome::CleanupPending)
-        } else {
-            Ok(PublishOutcome::Committed)
-        }
+        Ok(pending)
     }
 
     /// Remove one journal's verified source or backup, then prune
@@ -1543,7 +1635,9 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             let mode = self.sandbox.placement_mode(&journal.dest_root);
             let recycle_to = Path::new(&replaced.recycle_to);
             if paths::recycle_backup(mode, backup, recycle_to, &replaced.sha256)? {
-                JournalStore::new(&self.conn).set_recycled(&journal.id, now_secs())?;
+                durable(&self.db, "publish.journal_recycled", |tx| {
+                    JournalWriter::new(tx).set_recycled(&journal.id, now_secs())
+                })?;
             }
             if let Some(parent) = backup.parent() {
                 sync_dir_logged(parent);
@@ -1596,25 +1690,32 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     /// keeps its backup and needs attention; the publish still fails with
     /// its own error. True when a backup was kept.
     fn compensate(&mut self, bundle: &PlanBundle) -> Result<bool, PublishError> {
-        let journals = JournalStore::new(&self.conn).bundle(&bundle.id)?;
+        let journals = long_read(&self.db, "publish.bundle_journals", |conn| {
+            JournalStore::new(conn).bundle(&bundle.id)
+        })?;
         let rows = if self.injector == Some(CrashPoint::AfterFirstUnwind) {
             &journals[..journals.len().min(1)]
         } else {
             &journals[..]
         };
         let kept =
-            super::recovery::compensate_bundle(&self.conn, &self.sandbox, rows, self.place_seams)?;
+            super::recovery::compensate_bundle(&self.db, &self.sandbox, rows, self.place_seams)?;
         self.maybe_crash(CrashPoint::AfterFirstUnwind)?;
         Ok(kept.is_some())
     }
 
     /// Whether a publish failure compensates (pre-commit) rather than
     /// surfacing a post-commit state. Injected crashes compensate or
-    /// resume through recovery, never here.
+    /// resume through recovery, never here, and so does a database that
+    /// refused a call: the unwind's own rows would hear the same answer.
+    /// A write that ran out of time committed nothing and unwinds like
+    /// any other failure.
     fn compensatable(err: &PublishError) -> bool {
         !matches!(
             err,
-            PublishError::InjectedCrash(_) | PublishError::Cleanup(_)
+            PublishError::InjectedCrash(_)
+                | PublishError::Cleanup(_)
+                | PublishError::Interrupted(_)
         )
     }
 

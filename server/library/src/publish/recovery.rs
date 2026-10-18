@@ -47,14 +47,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use rusqlite::Connection;
+use droppedneedle_kernel::db::{CancelFlag, Db, Durable};
 
-use super::journal::{FileJournal, JournalKind, JournalState, JournalStore};
+use super::journal::{FileJournal, JournalKind, JournalState, JournalStore, JournalWriter};
 use super::paths::Sandbox;
 use super::place::{
     Original, PlaceError, Seams, SetAsideError, place_from_hidden, place_with, set_aside_with,
 };
-use super::publisher::{BundleCommit, Catalog, TrackCommit};
+use super::publisher::{BundleCommit, Catalog, TrackCommit, durable, long_read, read_adopted};
 use super::snapshots::sha256_hex;
 use super::{PublishError, paths};
 
@@ -84,14 +84,6 @@ pub struct BundleRecovery {
     pub bundle_id: String,
     /// What happened.
     pub action: RecoveryAction,
-}
-
-/// Open the connection a recovery pass runs on, through the database
-/// factory. Recovery writes journal rows and then moves files, so its
-/// rows are synced like the publisher's.
-pub fn open_recovery_connection(db_path: &Path) -> Result<Connection, PublishError> {
-    droppedneedle_kernel::db::open_journal_connection(db_path)
-        .map_err(|error| PublishError::Store(error.to_string()))
 }
 
 /// A hidden file under a library root that no journal row names: a
@@ -132,7 +124,7 @@ pub const LEFTOVER_LIST_MAX: usize = 100;
 /// own cleanups and are skipped. `None` when `cancelled` turned true.
 /// Blocking.
 pub fn find_leftovers(
-    conn: &Connection,
+    db: &Db,
     roots: &[paths::Root],
     now: SystemTime,
     cancelled: &dyn Fn() -> bool,
@@ -226,16 +218,23 @@ pub fn find_leftovers(
         }
     }
     // The journal is read after the walk, so a row written while the walk
-    // ran still clears its file.
+    // ran still clears its file, and no read is open while it walks.
     if !found.is_empty() {
-        let mut named = conn.prepare("SELECT staged, backup FROM library_publish_journal")?;
-        let mut rows = named.query([])?;
-        while let Some(row) = rows.next()? {
-            found.remove(&row.get::<_, String>(0)?);
-            if let Some(backup) = row.get::<_, Option<String>>(1)? {
-                found.remove(&backup);
-            }
-        }
+        db.read_long(
+            "publish.leftover_names",
+            &CancelFlag::never(),
+            |conn| -> Result<(), PublishError> {
+                let mut named = conn.prepare_cached(super::sql::JOURNAL_NAMES.text())?;
+                let mut rows = named.query([])?;
+                while let Some(row) = rows.next()? {
+                    found.remove(&row.get::<_, String>(0)?);
+                    if let Some(backup) = row.get::<_, Option<String>>(1)? {
+                        found.remove(&backup);
+                    }
+                }
+                Ok(())
+            },
+        )?;
     }
     Ok(Some(LeftoverReport {
         count: found.len(),
@@ -245,8 +244,17 @@ pub fn find_leftovers(
 
 /// Refuse mutable runtime when more than `STARTUP_RECOVERY_LIMIT`
 /// bundles still hold nonterminal journals.
-pub fn startup_gate(conn: &Connection) -> Result<(), PublishError> {
-    let active = JournalStore::new(conn).active_bundles()?;
+pub fn startup_gate(db: &Db) -> Result<(), PublishError> {
+    gate(&active_bundles(db)?)
+}
+
+fn active_bundles(db: &Db) -> Result<Vec<String>, PublishError> {
+    long_read(db, "publish.recovery_bundles", |conn| {
+        JournalStore::new(conn).active_bundles()
+    })
+}
+
+fn gate(active: &[String]) -> Result<(), PublishError> {
     if active.len() > super::STARTUP_RECOVERY_LIMIT {
         return Err(PublishError::Journal(format!(
             "refusing startup with {} recoverable bundles",
@@ -261,49 +269,45 @@ pub fn startup_gate(conn: &Connection) -> Result<(), PublishError> {
 /// import, acquisition, or operation workers. One bundle never stops
 /// the others: a bundle naming a root that is no longer a usable library
 /// root (removed or excluded), or one this pass fails on (an unsafe path,
-/// a file operation), is logged and left as it is for a later pass; the
-/// publish maintenance tick retries it, and its tracks take no new
-/// managed writes meanwhile. Only the startup gate or an unreadable
-/// journal fails the pass.
+/// a file operation, a write that ran out of time), is logged and left as
+/// it is for a later pass; the publish maintenance tick retries it, and
+/// its tracks take no new managed writes meanwhile. A database that
+/// refuses a call (busy, or shutting down) ends the pass at that bundle,
+/// since every later one would hear the same. Only the startup gate or an
+/// unreadable journal fails the pass.
 pub fn reconcile<C: Catalog>(
-    conn: &mut Connection,
+    db: &Db,
     sandbox: &Sandbox,
     catalog: &C,
 ) -> Result<Vec<BundleRecovery>, PublishError> {
-    reconcile_with(conn, sandbox, catalog, Seams::default())
+    reconcile_with(db, sandbox, catalog, Seams::default())
 }
 
 /// [`reconcile`] on a filesystem made to lack a placement step. Tests
 /// only; production never calls this.
 #[cfg(any(test, feature = "test-support"))]
 pub fn reconcile_with_seams<C: Catalog>(
-    conn: &mut Connection,
+    db: &Db,
     sandbox: &Sandbox,
     catalog: &C,
     seams: Seams,
 ) -> Result<Vec<BundleRecovery>, PublishError> {
-    reconcile_with(conn, sandbox, catalog, seams)
+    reconcile_with(db, sandbox, catalog, seams)
 }
 
 fn reconcile_with<C: Catalog>(
-    conn: &mut Connection,
+    db: &Db,
     sandbox: &Sandbox,
     catalog: &C,
     seams: Seams,
 ) -> Result<Vec<BundleRecovery>, PublishError> {
-    // Recovery commits a row and then moves the file it describes, so the
-    // row has to be on disk first.
-    let synchronous: i64 = conn.query_row("PRAGMA synchronous", [], |row| row.get(0))?;
-    if synchronous < 2 {
-        return Err(PublishError::Journal(
-            "recovery needs a connection from open_recovery_connection".into(),
-        ));
-    }
-    startup_gate(conn)?;
-    let bundles = JournalStore::new(conn).active_bundles()?;
+    let bundles = active_bundles(db)?;
+    gate(&bundles)?;
     let mut results = Vec::new();
     for bundle_id in bundles {
-        let journals = JournalStore::new(conn).bundle(&bundle_id)?;
+        let journals = long_read(db, "publish.bundle_journals", |conn| {
+            JournalStore::new(conn).bundle(&bundle_id)
+        })?;
         let action = if let Some(root) = unusable_root(sandbox, &journals) {
             // The root may come back (a re-added or re-included root), and
             // the bundle may hold a hidden backup there: keep it as it is.
@@ -312,8 +316,16 @@ fn reconcile_with<C: Catalog>(
                 "bundle {bundle_id} names root {root}, which is not a usable library root"
             ))
         } else {
-            match reconcile_bundle(conn, sandbox, catalog, &bundle_id, seams) {
+            match reconcile_bundle(db, sandbox, catalog, &bundle_id, seams) {
                 Ok(action) => action,
+                Err(error) if error.is_interrupted() => {
+                    tracing::warn!(bundle_id, %error, "publish recovery stopped: the database refused it");
+                    results.push(BundleRecovery {
+                        bundle_id,
+                        action: RecoveryAction::Deferred(error.to_string()),
+                    });
+                    break;
+                }
                 Err(error) => {
                     tracing::warn!(bundle_id, %error, "publish bundle left for the next recovery pass");
                     RecoveryAction::Deferred(error.to_string())
@@ -341,19 +353,25 @@ fn unusable_root(sandbox: &Sandbox, journals: &[FileJournal]) -> Option<String> 
 
 /// Reconcile one bundle.
 fn reconcile_bundle<C: Catalog>(
-    conn: &mut Connection,
+    db: &Db,
     sandbox: &Sandbox,
     catalog: &C,
     bundle_id: &str,
     seams: Seams,
 ) -> Result<RecoveryAction, PublishError> {
-    let journals = JournalStore::new(conn).bundle(bundle_id)?;
+    // The rows and the recorded operation in one read, so they agree.
+    let (journals, operation) = long_read(db, "publish.bundle_journals", |conn| {
+        Ok((
+            JournalStore::new(conn).bundle(bundle_id)?,
+            super::operations::operation_json(conn, bundle_id)?,
+        ))
+    })?;
     if journals.iter().all(|journal| journal.state.is_terminal()) {
         return Ok(RecoveryAction::Noop);
     }
     let evidence = match inspect_bundle(sandbox, &journals)? {
         BundleEvidence::Ambiguous(reason) => {
-            flag_attention(conn, &journals)?;
+            flag_attention(db, &journals)?;
             return Ok(RecoveryAction::NeedsAttention(reason));
         }
         BundleEvidence::Clear(clear) => clear,
@@ -369,7 +387,7 @@ fn reconcile_bundle<C: Catalog>(
         sandbox.probe_placement(root)?;
     }
     if evidence.any_committed {
-        return reconcile_committed(conn, sandbox, catalog, bundle_id, &journals);
+        return reconcile_committed(db, sandbox, catalog, bundle_id, &journals);
     }
     // A compensated or needs-attention row means an unwind already began
     // and stopped, between two rows or on an error. Such a bundle can
@@ -381,7 +399,7 @@ fn reconcile_bundle<C: Catalog>(
         )
     });
     if unwinding && put_back_refused(sandbox, &journals) {
-        flag_attention(conn, &journals)?;
+        flag_attention(db, &journals)?;
         return Ok(RecoveryAction::NeedsAttention(format!(
             "bundle {bundle_id} has a file with no safe way back onto its name"
         )));
@@ -390,13 +408,13 @@ fn reconcile_bundle<C: Catalog>(
     // placed so far come off and their originals go home.
     let mut refused = None;
     let resumeable = evidence.resumeable && !unwinding;
-    if resumeable && !staged_in_full(conn, bundle_id, &journals)? {
+    if resumeable && !staged_in_full(bundle_id, operation.as_deref(), &journals) {
         tracing::warn!(
             bundle_id,
             "publish bundle stopped before every file staged; unwinding it"
         );
     } else if resumeable {
-        match resume_precommit(conn, sandbox, catalog, bundle_id, &journals, seams)? {
+        match resume_precommit(db, sandbox, catalog, bundle_id, &journals, seams)? {
             None => return Ok(RecoveryAction::ResumedCommitted),
             Some(reason) => {
                 tracing::warn!(bundle_id, reason, "publish bundle unwound after its resume");
@@ -404,9 +422,11 @@ fn reconcile_bundle<C: Catalog>(
             }
         }
     }
-    let journals = JournalStore::new(conn).bundle(bundle_id)?;
+    let journals = long_read(db, "publish.bundle_journals", |conn| {
+        JournalStore::new(conn).bundle(bundle_id)
+    })?;
     Ok(
-        match (compensate_bundle(conn, sandbox, &journals, seams)?, refused) {
+        match (compensate_bundle(db, sandbox, &journals, seams)?, refused) {
             (None, _) => RecoveryAction::Compensated,
             (Some(kept), None) => RecoveryAction::NeedsAttention(kept),
             (Some(kept), Some(refused)) => {
@@ -419,33 +439,31 @@ fn reconcile_bundle<C: Catalog>(
 /// Whether every row `prepare` writes for the bundle exists and is past
 /// `Prepared` (its temp written and its before-state kept). A bundle that
 /// stopped partway through staging can look complete on disk, so only
-/// its recorded operation can tell; one with no readable record is
-/// treated as partial.
-fn staged_in_full(
-    conn: &Connection,
-    bundle_id: &str,
-    journals: &[FileJournal],
-) -> Result<bool, PublishError> {
-    let bundle = match super::operations::load_operation(conn, bundle_id) {
-        Ok(Some(bundle)) => bundle,
-        Ok(None) => return Ok(false),
+/// its recorded operation (`operation`, its JSON) can tell; one with no
+/// record, or one that no longer decodes, is treated as partial.
+fn staged_in_full(bundle_id: &str, operation: Option<&str>, journals: &[FileJournal]) -> bool {
+    let Some(json) = operation else {
+        return false;
+    };
+    let bundle: super::planner::PlanBundle = match serde_json::from_str(json) {
+        Ok(bundle) => bundle,
         // Unwinding is always safe before a commit; a record that no
-        // longer reads must not hold the bundle's tracks forever.
+        // longer decodes must not hold the bundle's tracks forever.
         Err(error) => {
-            tracing::warn!(bundle_id, %error, "recorded operation does not read");
-            return Ok(false);
+            tracing::warn!(bundle_id, %error, "recorded operation does not decode");
+            return false;
         }
     };
     if journals
         .iter()
         .any(|journal| journal.state == JournalState::Prepared)
     {
-        return Ok(false);
+        return false;
     }
     let present: BTreeSet<&str> = journals.iter().map(|journal| journal.id.as_str()).collect();
-    Ok(super::publisher::journal_ids(&bundle)
+    super::publisher::journal_ids(&bundle)
         .iter()
-        .all(|id| present.contains(id.as_str())))
+        .all(|id| present.contains(id.as_str()))
 }
 
 /// Whether an earlier unwind found no safe way to put a file back: a
@@ -648,18 +666,32 @@ fn inspect_bundle(
     }))
 }
 
-/// Move every still-active row in the bundle to `needs_attention`.
-fn flag_attention(conn: &Connection, journals: &[FileJournal]) -> Result<(), PublishError> {
-    let store = JournalStore::new(conn);
+/// Move every still-active row in the bundle to `needs_attention`, in one
+/// durable write.
+fn flag_attention(db: &Db, journals: &[FileJournal]) -> Result<(), PublishError> {
+    durable(db, "publish.journal_attention", |tx| {
+        flag_rows(tx, journals)
+    })
+}
+
+fn flag_rows(tx: &Durable<'_>, journals: &[FileJournal]) -> Result<(), PublishError> {
+    let writer = JournalWriter::new(tx);
     for journal in journals {
         if journal.state.is_terminal() {
             continue;
         }
-        if !store.transition(&journal.id, journal.state, JournalState::NeedsAttention)? {
+        if !writer.transition(&journal.id, journal.state, JournalState::NeedsAttention)? {
             tracing::warn!(journal_id = %journal.id, "needs-attention not recorded: state moved");
         }
     }
     Ok(())
+}
+
+/// Record a placement recovery finished, durably.
+fn record_published(db: &Db, journal_id: &str, from: JournalState) -> Result<(), PublishError> {
+    durable(db, "publish.recover_published", |tx| {
+        JournalWriter::new(tx).advance(journal_id, from, JournalState::Published)
+    })
 }
 
 /// Finish a pre-commit bundle: complete any missing renames, then run
@@ -669,7 +701,7 @@ fn flag_attention(conn: &Connection, journals: &[FileJournal]) -> Result<(), Pub
 /// was refused: nothing more is placed and the caller unwinds the bundle.
 /// `seams` is the default outside tests.
 fn resume_precommit<C: Catalog>(
-    conn: &mut Connection,
+    db: &Db,
     sandbox: &Sandbox,
     catalog: &C,
     bundle_id: &str,
@@ -685,11 +717,13 @@ fn resume_precommit<C: Catalog>(
         {
             continue;
         }
-        if let Some(reason) = resume_rename(conn, sandbox, journal, seams)? {
+        if let Some(reason) = resume_rename(db, sandbox, journal, seams)? {
             return Ok(Some(reason));
         }
     }
-    let refreshed = JournalStore::new(conn).bundle(bundle_id)?;
+    let refreshed = long_read(db, "publish.bundle_journals", |conn| {
+        JournalStore::new(conn).bundle(bundle_id)
+    })?;
     let mut tracks = Vec::new();
     let mut expected_revision: Option<u64> = None;
     for journal in refreshed.iter() {
@@ -739,6 +773,7 @@ fn resume_precommit<C: Catalog>(
                         .clone()
                         .map(|track| (track, replaced.recycle_to.clone()))
                 }),
+                indexed: None,
             });
         }
     }
@@ -753,17 +788,31 @@ fn resume_precommit<C: Catalog>(
             ));
         }
     }
-    let commit = BundleCommit {
+    let mut commit = BundleCommit {
         bundle_id: bundle_id.to_string(),
         expected_catalog_revision: expected,
         tracks,
     };
-    let tx = conn
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-        .map_err(PublishError::from)?;
-    if let Err(err) = catalog.commit_bundle(&tx, &commit) {
-        drop(tx);
-        if let Some(reason) = compensate_bundle(conn, sandbox, &refreshed, seams)? {
+    let committed = read_adopted(&mut commit.tracks).and_then(|()| {
+        durable(db, "publish.recover_commit", |tx| {
+            catalog.commit_bundle(tx, &commit)?;
+            let writer = JournalWriter::new(tx);
+            for journal in refreshed.iter() {
+                writer.advance(
+                    &journal.id,
+                    JournalState::Published,
+                    JournalState::Committed,
+                )?;
+            }
+            Ok(())
+        })
+    });
+    if let Err(err) = committed {
+        // Nothing committed. A database that refused the call would refuse
+        // the unwind's rows too, so the bundle waits for the next pass.
+        if !err.is_interrupted()
+            && let Some(reason) = compensate_bundle(db, sandbox, &refreshed, seams)?
+        {
             tracing::warn!(
                 bundle_id,
                 reason,
@@ -772,22 +821,7 @@ fn resume_precommit<C: Catalog>(
         }
         return Err(err);
     }
-    let store = JournalStore::new(&tx);
-    for journal in refreshed.iter() {
-        let moved = store.transition(
-            &journal.id,
-            JournalState::Published,
-            JournalState::Committed,
-        )?;
-        if !moved {
-            return Err(PublishError::Journal(format!(
-                "journal {} moved under resume commit",
-                journal.id
-            )));
-        }
-    }
-    tx.commit().map_err(PublishError::from)?;
-    finish_cleanup(conn, sandbox, bundle_id)?;
+    finish_cleanup(db, sandbox, bundle_id)?;
     Ok(None)
 }
 
@@ -798,7 +832,7 @@ fn resume_precommit<C: Catalog>(
 /// no safe way onto its name, or its original could not be set aside
 /// safely. Neither it nor the file in its way is touched.
 fn resume_rename(
-    conn: &Connection,
+    db: &Db,
     sandbox: &Sandbox,
     journal: &FileJournal,
     seams: Seams,
@@ -832,17 +866,13 @@ fn resume_rename(
             }
             Err(error) => return Err(error),
         }
-        JournalStore::new(conn).transition(&journal.id, journal.state, JournalState::Published)?;
+        record_published(db, &journal.id, journal.state)?;
         return Ok(None);
     }
     if let Ok(bytes) = paths::read_regular_file(&dest) {
         if sha256_hex(&bytes) == journal.staged_sha256 {
             if paths::read_regular_file(staged).is_err() {
-                JournalStore::new(conn).transition(
-                    &journal.id,
-                    journal.state,
-                    JournalState::Published,
-                )?;
+                record_published(db, &journal.id, journal.state)?;
                 return Ok(None);
             }
             // The staged file is also still under its hidden name. As one
@@ -898,7 +928,10 @@ fn resume_rename(
                 None => sandbox.backup_path_for(&dest, &journal.id)?,
             };
             sandbox.ensure_under_roots(&backup)?;
-            JournalStore::new(conn).set_backup(&journal.id, &backup.to_string_lossy())?;
+            let backup_text = backup.to_string_lossy();
+            durable(db, "publish.recover_backup", |tx| {
+                JournalWriter::new(tx).set_backup(&journal.id, &backup_text)
+            })?;
             let home = paths::backup_home(
                 sandbox,
                 journal.source.as_ref(),
@@ -936,21 +969,12 @@ fn resume_rename(
         }
         Err(error) => return Err(error.into_publish(&journal.dest_root, &journal.dest_rel)),
     }
-    let current = JournalStore::new(conn)
-        .get(&journal.id)?
-        .ok_or_else(|| PublishError::Journal(format!("missing journal {}", journal.id)))?;
+    let current = long_read(db, "publish.journal", |conn| {
+        JournalStore::new(conn).get(&journal.id)
+    })?
+    .ok_or_else(|| PublishError::Journal(format!("missing journal {}", journal.id)))?;
     if current.state != JournalState::Published {
-        let moved = JournalStore::new(conn).transition(
-            &journal.id,
-            current.state,
-            JournalState::Published,
-        )?;
-        if !moved {
-            return Err(PublishError::Journal(format!(
-                "journal {} moved under resume",
-                journal.id
-            )));
-        }
+        record_published(db, &journal.id, current.state)?;
     }
     Ok(None)
 }
@@ -962,7 +986,7 @@ fn resume_rename(
 /// only ever goes onto a free name: a destination holding anything else
 /// keeps it, and the staged copy stays beside it as evidence.
 fn reconcile_committed<C: Catalog>(
-    conn: &mut Connection,
+    db: &Db,
     sandbox: &Sandbox,
     catalog: &C,
     bundle_id: &str,
@@ -973,13 +997,13 @@ fn reconcile_committed<C: Catalog>(
             continue;
         }
         if matches!(journal.state, JournalState::Prepared | JournalState::Staged) {
-            flag_attention(conn, journals)?;
+            flag_attention(db, journals)?;
             return Ok(RecoveryAction::NeedsAttention(format!(
                 "bundle {bundle_id} has mixed commit states"
             )));
         }
         if journal.state == JournalState::Published {
-            flag_attention(conn, journals)?;
+            flag_attention(db, journals)?;
             return Ok(RecoveryAction::NeedsAttention(format!(
                 "bundle {bundle_id} disagrees with its catalog commit"
             )));
@@ -1009,16 +1033,18 @@ fn reconcile_committed<C: Catalog>(
                     .map_err(|error| error.into_publish(&journal.dest_root, &journal.dest_rel))?;
             }
         } else if !staged_holds {
-            if let Some(track_id) = journal.track_id.as_deref() {
-                catalog.mark_missing(conn, track_id)?;
-            }
-            flag_attention(conn, journals)?;
+            durable(db, "publish.recover_output_lost", |tx| {
+                if let Some(track_id) = journal.track_id.as_deref() {
+                    catalog.mark_missing(tx, track_id)?;
+                }
+                flag_rows(tx, journals)
+            })?;
             return Ok(RecoveryAction::NeedsAttention(format!(
                 "committed output missing for journal {}",
                 journal.id
             )));
         } else if !dest_free {
-            flag_attention(conn, journals)?;
+            flag_attention(db, journals)?;
             return Ok(RecoveryAction::NeedsAttention(format!(
                 "another file holds the committed destination of journal {}",
                 journal.id
@@ -1029,7 +1055,7 @@ fn reconcile_committed<C: Catalog>(
                 Err(
                     PlaceError::Collision | PlaceError::Unavailable(_) | PlaceError::CrossDevice,
                 ) => {
-                    flag_attention(conn, journals)?;
+                    flag_attention(db, journals)?;
                     return Ok(RecoveryAction::NeedsAttention(format!(
                         "committed output for journal {} could not be restored without \
                          risking an overwrite",
@@ -1042,13 +1068,13 @@ fn reconcile_committed<C: Catalog>(
             }
         }
         if let Some(track_id) = journal.track_id.as_deref() {
-            match catalog.locate(conn, track_id)? {
+            match long_read(db, "publish.locate", |conn| catalog.locate(conn, track_id))? {
                 Some((root, rel, fingerprint, _)) => {
                     if root != journal.dest_root
                         || rel != journal.dest_rel
                         || fingerprint != journal.staged_sha256
                     {
-                        flag_attention(conn, journals)?;
+                        flag_attention(db, journals)?;
                         return Ok(RecoveryAction::NeedsAttention(format!(
                             "catalog disagrees with journal {}",
                             journal.id
@@ -1056,7 +1082,7 @@ fn reconcile_committed<C: Catalog>(
                     }
                 }
                 None => {
-                    flag_attention(conn, journals)?;
+                    flag_attention(db, journals)?;
                     return Ok(RecoveryAction::NeedsAttention(format!(
                         "catalog lost track {track_id}"
                     )));
@@ -1064,19 +1090,17 @@ fn reconcile_committed<C: Catalog>(
             }
         }
     }
-    finish_cleanup(conn, sandbox, bundle_id)?;
+    finish_cleanup(db, sandbox, bundle_id)?;
     Ok(RecoveryAction::CleanupFinished)
 }
 
 /// Retry pinned post-commit cleanup: remove verified sources and
 /// backups, then mark journals cleaned. Failures return journals to
 /// `cleanup_pending` for the next pass.
-fn finish_cleanup(
-    conn: &Connection,
-    sandbox: &Sandbox,
-    bundle_id: &str,
-) -> Result<(), PublishError> {
-    let journals = JournalStore::new(conn).bundle(bundle_id)?;
+fn finish_cleanup(db: &Db, sandbox: &Sandbox, bundle_id: &str) -> Result<(), PublishError> {
+    let journals = long_read(db, "publish.bundle_journals", |conn| {
+        JournalStore::new(conn).bundle(bundle_id)
+    })?;
     for journal in journals {
         if !matches!(
             journal.state,
@@ -1108,7 +1132,9 @@ fn finish_cleanup(
                 });
             match moved {
                 Ok(true) => {
-                    JournalStore::new(conn).set_recycled(&journal.id, now_secs())?;
+                    durable(db, "publish.journal_recycled", |tx| {
+                        JournalWriter::new(tx).set_recycled(&journal.id, now_secs())
+                    })?;
                 }
                 Ok(false) => {}
                 Err(error) => {
@@ -1141,15 +1167,18 @@ fn finish_cleanup(
                 failed = true;
             }
         }
-        let store = JournalStore::new(conn);
-        let cleaned =
-            !failed && store.transition(&journal.id, journal.state, JournalState::Cleaned)?;
-        if !cleaned
-            && journal.state != JournalState::CleanupPending
-            && !store.transition(&journal.id, journal.state, JournalState::CleanupPending)?
-        {
-            tracing::warn!(journal_id = %journal.id, "cleanup-pending not recorded: state moved");
-        }
+        durable(db, "publish.journal_cleaned", |tx| {
+            let writer = JournalWriter::new(tx);
+            let cleaned =
+                !failed && writer.transition(&journal.id, journal.state, JournalState::Cleaned)?;
+            if !cleaned
+                && journal.state != JournalState::CleanupPending
+                && !writer.transition(&journal.id, journal.state, JournalState::CleanupPending)?
+            {
+                tracing::warn!(journal_id = %journal.id, "cleanup-pending not recorded: state moved");
+            }
+            Ok(())
+        })?;
     }
     Ok(())
 }
@@ -1165,12 +1194,11 @@ fn finish_cleanup(
 /// and every row still active goes with it. `seams` is the default
 /// outside tests.
 pub(super) fn compensate_bundle(
-    conn: &Connection,
+    db: &Db,
     sandbox: &Sandbox,
     journals: &[FileJournal],
     seams: Seams,
 ) -> Result<Option<String>, PublishError> {
-    let store = JournalStore::new(conn);
     let mut attention = None;
     for (index, journal) in journals.iter().enumerate() {
         if journal.state.is_terminal()
@@ -1193,11 +1221,14 @@ pub(super) fn compensate_bundle(
                 JournalState::NeedsAttention
             }
             Unwound::NoSafeMethod(reason) => {
-                flag_attention(conn, &journals[index..])?;
+                flag_attention(db, &journals[index..])?;
                 return Ok(Some(reason));
             }
         };
-        if !store.transition(&journal.id, journal.state, next)? {
+        let recorded = durable(db, "publish.journal_unwound", |tx| {
+            JournalWriter::new(tx).transition(&journal.id, journal.state, next)
+        })?;
+        if !recorded {
             tracing::warn!(journal_id = %journal.id, "unwind not recorded: state moved");
         }
     }

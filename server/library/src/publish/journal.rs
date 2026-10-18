@@ -8,9 +8,10 @@
 
 use std::path::Path;
 
+use droppedneedle_kernel::db::Durable;
 use rusqlite::{Connection, OptionalExtension};
 
-use super::PublishError;
+use super::{PublishError, sql};
 
 /// Monotonic journal states. Terminal states are `Cleaned`,
 /// `Compensated`, and `NeedsAttention`; recovery never moves a
@@ -212,48 +213,78 @@ impl FileJournal {
     }
 }
 
-const JOURNAL_COLUMNS: &str = "j.id, j.bundle_id, j.kind, j.source_root, j.source_rel, \
-     j.dest_root, j.dest_rel, j.staged, j.backup, j.source_sha256, j.staged_sha256, \
-     j.track_id, j.catalog_revision, j.mgmt_state, j.state, j.seq, \
-     r.replaced_rel, r.replaced_sha256, r.replaced_track_id, r.recycle_to \
-     FROM library_publish_journal j \
-     LEFT JOIN library_publish_replacements r ON r.journal_id = j.id";
-
-/// The publish journal in the application database, next to the catalog
-/// a bundle commits against in the same transaction.
+/// The publish journal's reads, on any connection: a pool read, or the
+/// transaction of a write that decides from them.
 pub struct JournalStore<'a> {
     conn: &'a Connection,
 }
 
 impl<'a> JournalStore<'a> {
-    /// Borrow a connection as a journal store.
+    /// Read the journal through `conn`.
     pub fn new(conn: &'a Connection) -> Self {
         Self { conn }
     }
 
-    /// Insert a fresh intent in `Prepared` state, with the file it
-    /// replaces in the same savepoint.
-    pub fn insert(&self, journal: &FileJournal) -> Result<(), PublishError> {
-        self.conn.execute_batch("SAVEPOINT journal_insert")?;
-        let inserted = self.insert_rows(journal);
-        match inserted {
-            Ok(()) => self.conn.execute_batch("RELEASE journal_insert")?,
-            Err(_) => self
-                .conn
-                .execute_batch("ROLLBACK TO journal_insert; RELEASE journal_insert")?,
-        }
-        inserted
+    /// Load one journal by id.
+    pub fn get(&self, id: &str) -> Result<Option<FileJournal>, PublishError> {
+        self.conn
+            .prepare_cached(sql::JOURNAL_BY_ID.text())?
+            .query_row(rusqlite::params![id], read_journal)
+            .optional()
+            .map_err(PublishError::from)
     }
 
-    fn insert_rows(&self, journal: &FileJournal) -> Result<(), PublishError> {
-        self.conn.execute(
-            "INSERT INTO library_publish_journal
-             (id, bundle_id, kind, source_root, source_rel, dest_root, dest_rel,
-              staged, backup, source_sha256, staged_sha256, track_id,
-              catalog_revision, mgmt_state, state, seq)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                     ?13, ?14, ?15, 0)",
-            rusqlite::params![
+    /// Load every journal in a bundle, ordered by id for determinism.
+    pub fn bundle(&self, bundle_id: &str) -> Result<Vec<FileJournal>, PublishError> {
+        let mut stmt = self.conn.prepare_cached(sql::JOURNAL_BY_BUNDLE.text())?;
+        let rows = stmt.query_map(rusqlite::params![bundle_id], read_journal)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Another bundle that still holds an unsettled journal for this
+    /// track, if any.
+    pub fn unsettled_bundle_for_track(
+        &self,
+        track_id: &str,
+        except_bundle: &str,
+    ) -> Result<Option<String>, PublishError> {
+        Ok(self
+            .conn
+            .prepare_cached(sql::UNSETTLED_FOR_TRACK.text())?
+            .query_row(rusqlite::params![track_id, except_bundle], |row| row.get(0))
+            .optional()?)
+    }
+
+    /// Distinct bundle ids that still hold nonterminal journals,
+    /// ordered for deterministic startup recovery.
+    pub fn active_bundles(&self) -> Result<Vec<String>, PublishError> {
+        let mut stmt = self.conn.prepare_cached(sql::ACTIVE_BUNDLES.text())?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+}
+
+/// The publish journal's writes. They take the transaction of a durable
+/// write, so every journal row is on disk before the file step it
+/// describes. A failed write here leaves the transaction to be rolled
+/// back: no closure may catch one of these errors and return `Ok`.
+pub struct JournalWriter<'a> {
+    tx: &'a Durable<'a>,
+}
+
+impl<'a> JournalWriter<'a> {
+    /// Write the journal inside the durable write `tx`.
+    pub fn new(tx: &'a Durable<'a>) -> Self {
+        Self { tx }
+    }
+
+    /// Insert a fresh intent in `Prepared` state, with the file it
+    /// replaces. Bundle ids are new for every publish, so the row cannot
+    /// exist yet; one that does fails the insert.
+    pub fn insert(&self, journal: &FileJournal) -> Result<(), PublishError> {
+        self.tx
+            .prepare_cached(sql::JOURNAL_INSERT.text())?
+            .execute(rusqlite::params![
                 journal.id,
                 journal.bundle_id,
                 journal.kind.as_str(),
@@ -268,129 +299,108 @@ impl<'a> JournalStore<'a> {
                 journal.track_id.as_deref(),
                 journal.catalog_revision,
                 journal.mgmt_state.as_deref(),
-                journal.state.as_str(),
-            ],
-        )?;
+                JournalState::Prepared.as_str(),
+            ])?;
         if let Some(replaced) = &journal.replaces {
-            self.conn.execute(
-                "INSERT INTO library_publish_replacements
-                 (journal_id, replaced_rel, replaced_sha256, replaced_track_id, recycle_to)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![
+            self.tx
+                .prepare_cached(sql::REPLACEMENT_INSERT.text())?
+                .execute(rusqlite::params![
                     journal.id,
                     replaced.rel,
                     replaced.sha256,
                     replaced.track_id.as_deref(),
                     replaced.recycle_to,
-                ],
-            )?;
+                ])?;
         }
         Ok(())
     }
 
     /// Record that a replaced file reached the recycle bin.
     pub fn set_recycled(&self, id: &str, at: f64) -> Result<(), PublishError> {
-        self.conn.execute(
-            "UPDATE library_publish_replacements SET recycled_at = ?2 WHERE journal_id = ?1",
-            rusqlite::params![id, at],
-        )?;
+        self.tx
+            .prepare_cached(sql::JOURNAL_SET_RECYCLED.text())?
+            .execute(rusqlite::params![id, at])?;
         Ok(())
+    }
+
+    /// Move a row from `expected` to `next`, bumping its sequence. A row
+    /// already at `next` is touched the same way, so the write always
+    /// changes a row and syncs what came before it. A row in any other
+    /// state, or no row, is an error: the file step after this must not
+    /// run.
+    pub fn advance(
+        &self,
+        id: &str,
+        expected: JournalState,
+        next: JournalState,
+    ) -> Result<(), PublishError> {
+        legal(expected, next)?;
+        let changed = self
+            .tx
+            .prepare_cached(sql::JOURNAL_ADVANCE.text())?
+            .execute(rusqlite::params![next.as_str(), id, expected.as_str()])?;
+        if changed == 1 {
+            return Ok(());
+        }
+        let state: Option<String> = self
+            .tx
+            .prepare_cached(sql::JOURNAL_STATE.text())?
+            .query_row(rusqlite::params![id], |row| row.get(0))
+            .optional()?;
+        Err(PublishError::Journal(match state {
+            Some(state) => format!(
+                "journal {id} is {state}, not {} or {}",
+                expected.as_str(),
+                next.as_str()
+            ),
+            None => format!("missing journal {id}"),
+        }))
     }
 
     /// Compare-and-swap transition: moves only when the row still holds
     /// `expected`, and bumps the monotonic sequence. Returns `false`
-    /// when another worker (or recovery) already moved the row.
+    /// when the row had already moved. For records that follow a file
+    /// step and guard none.
     pub fn transition(
         &self,
         id: &str,
         expected: JournalState,
         next: JournalState,
     ) -> Result<bool, PublishError> {
-        if !expected.can_transition_to(next) {
-            return Err(PublishError::Journal(format!(
-                "illegal transition {} -> {}",
-                expected.as_str(),
-                next.as_str()
-            )));
-        }
-        let changed = self.conn.execute(
-            "UPDATE library_publish_journal SET state = ?1, seq = seq + 1
-             WHERE id = ?2 AND state = ?3",
-            rusqlite::params![next.as_str(), id, expected.as_str()],
-        )?;
+        legal(expected, next)?;
+        let changed = self
+            .tx
+            .prepare_cached(sql::JOURNAL_TRANSITION.text())?
+            .execute(rusqlite::params![next.as_str(), id, expected.as_str()])?;
         Ok(changed == 1)
     }
 
-    /// Record the absolute backup path retained for a same-path write.
+    /// Record the absolute backup path retained for a same-path write. A
+    /// row that already names this path is touched again; one naming
+    /// another path, or no row, is an error.
     pub fn set_backup(&self, id: &str, backup: &str) -> Result<(), PublishError> {
-        self.conn.execute(
-            "UPDATE library_publish_journal SET backup = ?1 WHERE id = ?2",
-            rusqlite::params![backup, id],
-        )?;
+        let changed = self
+            .tx
+            .prepare_cached(sql::JOURNAL_SET_BACKUP.text())?
+            .execute(rusqlite::params![backup, id])?;
+        if changed != 1 {
+            return Err(PublishError::Journal(format!(
+                "journal {id} names another backup, or is missing"
+            )));
+        }
         Ok(())
     }
+}
 
-    /// Load one journal by id.
-    pub fn get(&self, id: &str) -> Result<Option<FileJournal>, PublishError> {
-        self.conn
-            .query_row(
-                &format!("SELECT {JOURNAL_COLUMNS} WHERE j.id = ?1"),
-                rusqlite::params![id],
-                read_journal,
-            )
-            .optional()
-            .map_err(PublishError::from)
+fn legal(expected: JournalState, next: JournalState) -> Result<(), PublishError> {
+    if expected.can_transition_to(next) {
+        return Ok(());
     }
-
-    /// Load every journal in a bundle, ordered by id for determinism.
-    pub fn bundle(&self, bundle_id: &str) -> Result<Vec<FileJournal>, PublishError> {
-        let mut stmt = self.conn.prepare(&format!(
-            "SELECT {JOURNAL_COLUMNS} WHERE j.bundle_id = ?1 ORDER BY j.id"
-        ))?;
-        let rows = stmt.query_map(rusqlite::params![bundle_id], read_journal)?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
-
-    /// Distinct bundle ids that still hold nonterminal journals,
-    /// ordered for deterministic startup recovery.
-    /// Another bundle that still holds an unsettled journal for this
-    /// track, if any.
-    pub fn unsettled_bundle_for_track(
-        &self,
-        track_id: &str,
-        except_bundle: &str,
-    ) -> Result<Option<String>, PublishError> {
-        use rusqlite::OptionalExtension as _;
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT bundle_id FROM library_publish_journal
-                 WHERE track_id = ?1 AND bundle_id <> ?2
-                 AND state NOT IN ('cleaned', 'compensated', 'needs_attention')
-                 LIMIT 1",
-                rusqlite::params![track_id, except_bundle],
-                |row| row.get(0),
-            )
-            .optional()?)
-    }
-
-    pub fn active_bundles(&self) -> Result<Vec<String>, PublishError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT bundle_id FROM library_publish_journal
-             WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention')
-             ORDER BY bundle_id",
-        )?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
+    Err(PublishError::Journal(format!(
+        "illegal transition {} -> {}",
+        expected.as_str(),
+        next.as_str()
+    )))
 }
 
 fn read_journal(row: &rusqlite::Row<'_>) -> Result<FileJournal, rusqlite::Error> {

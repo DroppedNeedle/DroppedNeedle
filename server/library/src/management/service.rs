@@ -1870,8 +1870,9 @@ impl Management {
         Ok(Some(
             match self.publish_album(snapshot, &items, undo, organizes, &bundle_id) {
                 Ok(applied) => (None, written(&applied.bundle_id, &applied.outcome)),
-                // Nothing was published: the job goes back to the queue, and
-                // the next pass finds this bundle empty and starts afresh.
+                // The database was busy: the job goes back to the queue. The
+                // next pass finds this bundle empty and starts afresh, or
+                // finds the publish it stopped and waits for recovery.
                 Err(Refused::Busy(error)) => return Err(error),
                 Err(_) if self.committed(&bundle_id) => (None, written(&bundle_id, "committed")),
                 // A publish that stopped part way (the journal still holds
@@ -1988,6 +1989,12 @@ impl Management {
         self.setup
             .publish_plans(bundle_id, plans, pins, &override_of)
             .map_err(|error| {
+                // The database refused a call: the publish stopped where
+                // it was, and the job goes back to the queue.
+                if let crate::publish::PublishError::Interrupted(cause) = &error {
+                    tracing::warn!(%error, job_id = snapshot.job.id, "management publish waits: the database is busy");
+                    return Refused::Busy(ManagementError::Busy(cause.clone()));
+                }
                 let reason = reasons::from_publish(&error);
                 if reason.code == "WRITE_FAILED" || reason.code == "BASELINE_UNAVAILABLE" {
                     tracing::error!(%error, job_id = snapshot.job.id, "management publish failed");

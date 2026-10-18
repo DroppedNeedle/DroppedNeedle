@@ -13,7 +13,7 @@ use rusqlite::{OptionalExtension as _, params};
 
 use super::models::ManagementError;
 use super::service::Management;
-use crate::clock::{now_unix, today_day};
+use crate::clock::{now_ms, now_unix};
 use crate::publish::recovery::Leftover;
 use crate::publish::snapshots::sha256_hex;
 
@@ -59,11 +59,9 @@ pub struct Resolved {
 /// Most writes needing attention listed at once.
 const ATTENTION_LIST_MAX: i64 = 100;
 
-/// Unix days between a write's creation day and today before it counts as
-/// retried for more than 24 hours. The journal keeps the day a write was
-/// made and no time, so one day apart can be a few minutes either side of
-/// midnight; two days apart is always more than 24 hours.
-const RETRYING_AFTER_DAYS: i64 = 2;
+/// How long a write stays unsettled, from when it was recorded, before it
+/// counts as still being retried. A healthy write settles in seconds.
+const RETRYING_AFTER_MS: i64 = 24 * 60 * 60 * 1000;
 
 fn attention_bundle(row: &rusqlite::Row<'_>) -> rusqlite::Result<AttentionBundle> {
     Ok(AttentionBundle {
@@ -85,25 +83,18 @@ const RESOLVED_NOTE: &str = "Marked as handled: every file was checked in place.
      or in the library catalog was changed. If the library does not list these files, rescan \
      their folder; leftover temporary copies stay where they are until you remove them.";
 
-/// Writes made at least [`RETRYING_AFTER_DAYS`] before `today` that
-/// recovery has still neither finished nor undone. Each has been through
-/// recovery at startup and on every maintenance tick since. A committed
-/// write whose cleanup is pending is finished and counted elsewhere, so
-/// it is left out.
+/// Writes recorded at least [`RETRYING_AFTER_MS`] before `now_ms` (unix
+/// milliseconds) that recovery has still neither finished nor undone.
+/// Each has been through recovery at startup and on every maintenance
+/// tick since. A committed write whose cleanup is pending is finished and
+/// counted elsewhere, so it is left out.
 pub fn retrying_bundles(
     conn: &rusqlite::Connection,
-    today: i64,
+    now_ms: i64,
 ) -> rusqlite::Result<Vec<AttentionBundle>> {
-    let mut retrying = conn.prepare(
-        "SELECT bundle_id, COUNT(*), GROUP_CONCAT(dest_rel, char(10)) \
-         FROM library_publish_journal \
-         WHERE state IN ('prepared', 'staged', 'published', 'committed') AND bundle_id IN \
-         (SELECT bundle_id FROM library_publish_operations WHERE created_day <= ?1) \
-         GROUP BY bundle_id ORDER BY bundle_id LIMIT ?2",
-    )?;
-    retrying
+    conn.prepare_cached(crate::publish::sql::RETRYING_BUNDLES.text())?
         .query_map(
-            params![today - RETRYING_AFTER_DAYS, ATTENTION_LIST_MAX],
+            params![now_ms - RETRYING_AFTER_MS, ATTENTION_LIST_MAX],
             attention_bundle,
         )?
         .collect()
@@ -157,15 +148,10 @@ impl Management {
                 )?,
                 ..Diagnostics::default()
             };
-            diagnostics.oldest_updated_at = conn.query_row(
-                &format!(
-                    "SELECT MIN(o.created_day) FROM library_publish_operations o WHERE o.bundle_id IN \
-                     (SELECT bundle_id FROM library_publish_journal WHERE {open} OR ({attention}))"
-                ),
-                [],
-                |row| row.get::<_, Option<i64>>(0),
-            )?
-            .map(|day| day as f64 * 86_400.0);
+            diagnostics.oldest_updated_at = conn
+                .prepare_cached(crate::publish::sql::OLDEST_OPEN_WRITE.text())?
+                .query_row([], |row| row.get::<_, Option<i64>>(0))?
+                .map(|ms| ms as f64 / 1000.0);
             let mut states = conn.prepare(
                 "SELECT state, COUNT(*) FROM library_publish_journal GROUP BY state ORDER BY state",
             )?;
@@ -181,7 +167,7 @@ impl Management {
             for row in bundles.query_map(params![ATTENTION_LIST_MAX], attention_bundle)? {
                 diagnostics.needs_attention_bundles.push(row?);
             }
-            diagnostics.retrying_bundles = retrying_bundles(conn, today_day())?;
+            diagnostics.retrying_bundles = retrying_bundles(conn, now_ms() as i64)?;
             Ok(diagnostics)
         })
         .map(|mut diagnostics| {

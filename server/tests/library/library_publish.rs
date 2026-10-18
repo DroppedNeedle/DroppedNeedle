@@ -20,6 +20,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::common::ScratchDir;
+use droppedneedle_kernel::db::{Db, DurableLane};
 use publish::paths::Root;
 use publish::place::{PlacementMode, Seams};
 use publish::planner::{
@@ -118,8 +119,15 @@ fn track_row(conn: &Connection, id: &str) -> (String, String, Option<f64>) {
     .unwrap()
 }
 
+/// A side connection for seeding and checking rows.
 fn open_db(fix: &Fixture) -> Connection {
-    publish::recovery::open_recovery_connection(&fix.db_path).unwrap()
+    droppedneedle_kernel::db::open_connection(&fix.db_path).unwrap()
+}
+
+/// The database as the next start sees it: a new handle on the file. The
+/// publisher that ran before is dropped first, as a stopped server is.
+fn restart(fix: &Fixture) -> Db {
+    Db::open_for_tests(&fix.db_path).unwrap()
 }
 
 /// Fixed free-space probe so disk preflight pins exact values.
@@ -290,15 +298,17 @@ fn seal(bundle: &PlanBundle) -> (SealedPreview, SealRecheck) {
     (sealed, live)
 }
 
+/// Day 50, in unix milliseconds.
+const DAY_50_MS: i64 = 50 * 86_400_000;
+
 fn open_publisher(fix: &Fixture) -> Publisher<SqliteCatalog, FixedSpace> {
-    Publisher::open(
+    Publisher::new(
         fix.sandbox.clone(),
-        &fix.db_path,
+        restart(fix),
         SqliteCatalog,
         FixedSpace(u64::MAX),
-        || 50,
+        || DAY_50_MS,
     )
-    .unwrap()
 }
 
 /// Staged bytes carry the planned title through the real save
@@ -523,7 +533,7 @@ fn move_bundle_commits_atomically() {
         "no staging debris remains"
     );
 
-    let journals = JournalStore::new(publisher.connection())
+    let journals = JournalStore::new(&open_db(&fix))
         .bundle("bundle-1")
         .unwrap();
     assert_eq!(journals.len(), 3);
@@ -535,17 +545,13 @@ fn move_bundle_commits_atomically() {
     // transaction, and its revision bump invalidates read caches.
     let catalog = SqliteCatalog;
     assert_eq!(
-        catalog.revision(publisher.connection()).unwrap(),
+        catalog.revision(&open_db(&fix)).unwrap(),
         start_revision() + 1
     );
-    let located = catalog
-        .locate(publisher.connection(), "track-a")
-        .unwrap()
-        .unwrap();
+    let located = catalog.locate(&open_db(&fix), "track-a").unwrap().unwrap();
     assert_eq!(located.0, "music");
     assert_eq!(located.1, "organized/a.flac");
-    let at_dest: i64 = publisher
-        .connection()
+    let at_dest: i64 = open_db(&fix)
         .query_row(
             "SELECT COUNT(*) FROM local_tracks WHERE id = 'track-a' \
              AND relative_path = 'organized/a.flac'",
@@ -590,8 +596,10 @@ fn crash_at_every_phase_resumes_without_half_state() {
         );
         drop(publisher);
 
-        let mut conn = open_db(&fix);
-        let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+        let db = restart(&fix);
+
+        let conn = open_db(&fix);
+        let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
         assert_eq!(results.len(), 1, "{point:?}: one bundle reconciled");
 
         for item in bundle.items.iter() {
@@ -683,8 +691,10 @@ fn same_path_crash_keeps_original_until_commit() {
     assert!(matches!(err, PublishError::InjectedCrash(_)));
     drop(publisher);
 
-    let mut conn = open_db(&fix);
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let db = restart(&fix);
+
+    let conn = open_db(&fix);
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results.len(), 1);
     for item in bundle.items.iter() {
         let dest = fix
@@ -720,7 +730,9 @@ fn a_refused_file_unwinds_the_files_staged_before_it() {
     assert!(matches!(err, PublishError::Capability(_)), "got {err:?}");
     drop(publisher);
 
-    let mut conn = open_db(&fix);
+    let db = restart(&fix);
+
+    let conn = open_db(&fix);
     assert!(
         JournalStore::new(&conn)
             .active_bundles()
@@ -733,7 +745,7 @@ fn a_refused_file_unwinds_the_files_staged_before_it() {
         "no staged copy is left"
     );
     assert_eq!(std::fs::read(&path_a).unwrap(), original_a);
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert!(
         results.is_empty(),
         "recovery has nothing to do: {results:?}"
@@ -766,8 +778,10 @@ fn a_crash_after_the_first_file_staged_unwinds() {
     assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
     drop(publisher);
 
-    let mut conn = open_db(&fix);
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let db = restart(&fix);
+
+    let conn = open_db(&fix);
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
     assert_eq!(std::fs::read(&source_a).unwrap(), original_a);
@@ -809,8 +823,9 @@ fn a_crash_before_the_before_state_unwinds() {
     assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
     drop(publisher);
 
-    let mut conn = open_db(&fix);
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let db = restart(&fix);
+
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
     assert_eq!(std::fs::read(&path_a).unwrap(), original_a);
@@ -855,69 +870,64 @@ fn an_unwind_keeps_an_identical_file_it_never_replaced() {
         std::fs::remove_file(temp).unwrap();
     }
 
-    let mut conn = open_db(&fix);
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let db = restart(&fix);
+
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
     assert_eq!(std::fs::read(&occupier).unwrap(), source);
 }
 
-/// Journal rows are synced to disk before the file moves they describe:
-/// the publisher's connection syncs every commit, and recovery refuses a
-/// connection that does not.
+/// A publisher stays open for days. Each write is timed when it is made,
+/// and one still unsettled 24 hours later is listed as being retried, not
+/// before, whatever midnight it crossed. A committed write whose cleanup
+/// is pending is finished and is not listed.
 #[test]
-fn journal_connections_sync_every_commit() {
-    let fix = fixture("journal-full-sync");
-    let synchronous: i64 = open_publisher(&fix)
-        .connection()
-        .query_row("PRAGMA synchronous", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(synchronous, 2);
-    let mut unsynced = droppedneedle_kernel::db::open_connection(&fix.db_path).unwrap();
-    assert!(reconcile(&mut unsynced, &fix.sandbox, &SqliteCatalog).is_err());
-}
-
-/// A publisher stays open for days. Each write is dated the day it is
-/// made, so one made today is never listed as retried for more than a
-/// day; one still unsettled two days on is. A committed write whose
-/// cleanup is pending is finished and is not listed.
-#[test]
-fn a_write_counts_as_stuck_from_the_day_it_was_made() {
+fn a_write_counts_as_stuck_after_24_hours() {
     use droppedneedle_library::management::recovery::retrying_bundles;
     use std::sync::atomic::{AtomicI64, Ordering};
 
-    let fix = fixture("stuck-from-its-own-day");
-    let day = std::sync::Arc::new(AtomicI64::new(50));
-    let clock = std::sync::Arc::clone(&day);
-    let mut publisher = Publisher::open(
+    const HOUR: i64 = 3_600_000;
+    let fix = fixture("stuck-after-24-hours");
+    let now = std::sync::Arc::new(AtomicI64::new(DAY_50_MS));
+    let clock = std::sync::Arc::clone(&now);
+    let mut publisher = Publisher::new(
         fix.sandbox.clone(),
-        &fix.db_path,
+        restart(&fix),
         SqliteCatalog,
         FixedSpace(u64::MAX),
         move || clock.load(Ordering::Relaxed),
-    )
-    .unwrap();
-    day.store(53, Ordering::Relaxed);
+    );
+    // Day 53, 23:00.
+    let made = 53 * 86_400_000 + 23 * HOUR;
+    now.store(made, Ordering::Relaxed);
     let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
     let (sealed, live) = seal(&bundle);
     publisher.set_crash_point(Some(CrashPoint::AfterStage));
     publisher.publish(&sealed, &live, &docs).unwrap_err();
+    drop(publisher);
 
     let conn = open_db(&fix);
-    let stuck = |today: i64| -> Vec<String> {
-        retrying_bundles(&conn, today)
+    let stuck = |at: i64| -> Vec<String> {
+        retrying_bundles(&conn, at)
             .unwrap()
             .into_iter()
             .map(|bundle| bundle.bundle_id)
             .collect()
     };
-    assert!(stuck(54).is_empty(), "made yesterday: not yet a day old");
-    assert_eq!(stuck(55), vec!["bundle-1".to_string()]);
+    assert!(
+        stuck(made + 23 * HOUR).is_empty(),
+        "23 hours, past midnight: not yet"
+    );
+    assert_eq!(stuck(made + 24 * HOUR), vec!["bundle-1".to_string()]);
     conn.execute(
         "UPDATE library_publish_journal SET state = 'cleanup_pending'",
         [],
     )
     .unwrap();
-    assert!(stuck(55).is_empty(), "a committed write is finished");
+    assert!(
+        stuck(made + 24 * HOUR).is_empty(),
+        "a committed write is finished"
+    );
 }
 
 /// A set-aside original whose journal rows are gone is reported once it
@@ -944,6 +954,7 @@ fn leftover_pass_reports_old_unjournaled_hidden_files_and_keeps_them() {
     std::fs::write(music.join("staging").join(plugin_temp), b"temp").unwrap();
 
     let conn = open_db(&fix);
+    let db = restart(&fix);
     let roots = [Root {
         id: "music".to_string(),
         dir: fix.dir.join("music"),
@@ -951,7 +962,7 @@ fn leftover_pass_reports_old_unjournaled_hidden_files_and_keeps_them() {
     let now = std::time::SystemTime::now();
     let later = now + std::time::Duration::from_secs(2 * 86_400);
     let pass = |at| {
-        publish::recovery::find_leftovers(&conn, &roots, at, &|| false)
+        publish::recovery::find_leftovers(&db, &roots, at, &|| false)
             .unwrap()
             .expect("not cancelled")
     };
@@ -994,8 +1005,10 @@ fn foreign_bytes_at_dest_flag_attention_without_deleting() {
     std::fs::create_dir_all(occupier.parent().unwrap()).unwrap();
     std::fs::write(&occupier, b"external-file").unwrap();
 
-    let mut conn = open_db(&fix);
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let db = restart(&fix);
+
+    let conn = open_db(&fix);
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results.len(), 1);
     assert!(
         matches!(
@@ -1101,7 +1114,7 @@ fn late_occupier_survives_placement() {
         );
         assert_eq!(std::fs::read(&target).unwrap(), b"arrived-late", "{case}");
 
-        let journals = JournalStore::new(publisher.connection())
+        let journals = JournalStore::new(&open_db(&fix))
             .bundle("bundle-1")
             .unwrap();
         match kind {
@@ -1129,7 +1142,7 @@ fn late_occupier_survives_placement() {
             }
         }
         assert_eq!(
-            SqliteCatalog.revision(publisher.connection()).unwrap(),
+            SqliteCatalog.revision(&open_db(&fix)).unwrap(),
             start_revision(),
             "{case}"
         );
@@ -1159,7 +1172,9 @@ fn interrupted_link_is_finished_by_recovery() {
         );
         drop(publisher);
 
-        let mut conn = open_db(&fix);
+        let db = restart(&fix);
+
+        let conn = open_db(&fix);
         let first = JournalStore::new(&conn)
             .bundle("bundle-1")
             .unwrap()
@@ -1175,7 +1190,7 @@ fn interrupted_link_is_finished_by_recovery() {
             "{kind:?}: linked, not yet unlinked"
         );
 
-        let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+        let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
         assert_eq!(
             results[0].action,
             publish::RecoveryAction::ResumedCommitted,
@@ -1219,7 +1234,9 @@ fn committed_output_is_restored_only_onto_a_free_name() {
         ));
         drop(publisher);
 
-        let mut conn = open_db(&fix);
+        let db = restart(&fix);
+
+        let conn = open_db(&fix);
         let first = JournalStore::new(&conn)
             .bundle("bundle-1")
             .unwrap()
@@ -1236,7 +1253,7 @@ fn committed_output_is_restored_only_onto_a_free_name() {
             std::fs::write(&dest, b"users-newer-file").unwrap();
         }
 
-        let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+        let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
         if occupied {
             assert!(
                 matches!(
@@ -1285,7 +1302,7 @@ fn unwind_keeps_a_backup_it_cannot_restore() {
     let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
     assert!(matches!(err, PublishError::Collision(_)), "got {err:?}");
 
-    let journals = JournalStore::new(publisher.connection())
+    let journals = JournalStore::new(&open_db(&fix))
         .bundle("bundle-1")
         .unwrap();
     let first_backup = journals[0].backup.as_deref().expect("backup journaled");
@@ -1323,7 +1340,9 @@ fn unwind_finishes_when_no_backup_is_left() {
         ));
         drop(publisher);
 
-        let mut conn = open_db(&fix);
+        let db = restart(&fix);
+
+        let conn = open_db(&fix);
         let first = JournalStore::new(&conn)
             .bundle("bundle-1")
             .unwrap()
@@ -1344,7 +1363,7 @@ fn unwind_finishes_when_no_backup_is_left() {
             std::fs::remove_file(&first.staged).unwrap();
         }
 
-        let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+        let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
         assert_eq!(
             results[0].action,
             publish::RecoveryAction::Compensated,
@@ -1395,15 +1414,17 @@ fn recovery_finishes_an_unwind_that_stopped_between_rows() {
     publisher.set_crash_point(Some(CrashPoint::AfterFirstUnwind));
     let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
     assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
-    let journals = JournalStore::new(publisher.connection())
+    let journals = JournalStore::new(&open_db(&fix))
         .bundle("bundle-1")
         .unwrap();
     assert_eq!(journals[0].state, JournalState::Compensated);
     assert_eq!(journals[1].state, JournalState::Published);
     drop(publisher);
 
-    let mut conn = open_db(&fix);
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let db = restart(&fix);
+
+    let conn = open_db(&fix);
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
     for rel in ["staging/a.flac", "staging/b.flac"] {
         let path = fix.sandbox.resolve("music", rel).unwrap();
@@ -1416,7 +1437,7 @@ fn recovery_finishes_an_unwind_that_stopped_between_rows() {
             .iter()
             .all(|journal| journal.state == JournalState::Compensated)
     );
-    let again = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let again = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert!(again.is_empty(), "a second pass finds nothing to do");
 }
 
@@ -1436,7 +1457,9 @@ fn recovery_moves_nothing_after_a_put_back_with_no_safe_way() {
     assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
     drop(publisher);
 
-    let mut conn = open_db(&fix);
+    let db = restart(&fix);
+
+    let conn = open_db(&fix);
     let store = JournalStore::new(&conn);
     let first = store.bundle("bundle-1").unwrap().remove(0);
     // As that unwind leaves its row: the placed copy is off the name, the
@@ -1444,12 +1467,17 @@ fn recovery_moves_nothing_after_a_put_back_with_no_safe_way() {
     let first_dest = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
     std::fs::remove_file(&first_dest).unwrap();
     assert!(
-        store
-            .transition(&first.id, first.state, JournalState::NeedsAttention)
-            .unwrap()
+        db.write_durable(DurableLane::Background, "test.flag", |tx| {
+            publish::JournalWriter::new(tx).transition(
+                &first.id,
+                first.state,
+                JournalState::NeedsAttention,
+            )
+        })
+        .unwrap()
     );
 
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert!(
         matches!(
             results[0].action,
@@ -1485,7 +1513,9 @@ fn a_refused_set_aside_during_resume_unwinds_the_bundle() {
     assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
     drop(publisher);
 
-    let mut conn = open_db(&fix);
+    let db = restart(&fix);
+
+    let conn = open_db(&fix);
     let second = JournalStore::new(&conn)
         .bundle("bundle-1")
         .unwrap()
@@ -1497,7 +1527,7 @@ fn a_refused_set_aside_during_resume_unwinds_the_bundle() {
         .unwrap();
     std::fs::write(&taken, b"not-ours").unwrap();
 
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert!(
         matches!(
             &results[0].action,
@@ -1536,14 +1566,15 @@ fn a_refused_placement_during_resume_unwinds_the_bundle() {
     let placed = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
     assert_staged(&placed, "track-a");
 
-    let mut conn = open_db(&fix);
+    let db = restart(&fix);
+
+    let conn = open_db(&fix);
     let no_safe_step = Seams {
         skip_rename: true,
         link_errno: Some(libc::EPERM),
         ..Seams::default()
     };
-    let results =
-        reconcile_with_seams(&mut conn, &fix.sandbox, &SqliteCatalog, no_safe_step).unwrap();
+    let results = reconcile_with_seams(&db, &fix.sandbox, &SqliteCatalog, no_safe_step).unwrap();
     assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
     assert!(placed.symlink_metadata().is_err(), "the placed copy is off");
     for rel in ["staging/a.flac", "staging/b.flac"] {
@@ -1584,8 +1615,10 @@ fn a_users_copy_at_the_destination_unwinds_the_resume() {
     std::fs::copy(&source, &copy).unwrap();
     let inode = std::fs::metadata(&copy).unwrap().ino();
 
-    let mut conn = open_db(&fix);
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let db = restart(&fix);
+
+    let conn = open_db(&fix);
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
     assert!(std::fs::read(&copy).unwrap() == original);
     assert_eq!(std::fs::metadata(&copy).unwrap().ino(), inode);
@@ -1602,7 +1635,7 @@ fn a_users_copy_at_the_destination_unwinds_the_resume() {
             .iter()
             .all(|journal| journal.state == JournalState::Compensated)
     );
-    let again = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let again = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert!(again.is_empty(), "a second pass finds nothing to do");
 }
 
@@ -1634,7 +1667,7 @@ fn unwind_keeps_an_original_that_was_never_set_aside() {
 
     assert_eq!(std::fs::read(&second).unwrap(), original);
     assert_eq!(std::fs::metadata(&second).unwrap().ino(), inode);
-    let journals = JournalStore::new(publisher.connection())
+    let journals = JournalStore::new(&open_db(&fix))
         .bundle("bundle-1")
         .unwrap();
     assert_eq!(journals[1].state, JournalState::Compensated);
@@ -1751,7 +1784,7 @@ fn a_file_replaced_before_its_set_aside_goes_back() {
         let other = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
         assert!(std::fs::read(other).unwrap() == original, "{case}");
         assert!(hidden_leftovers(&fix.dir).is_empty(), "{case}");
-        let journals = JournalStore::new(publisher.connection())
+        let journals = JournalStore::new(&open_db(&fix))
             .bundle("bundle-1")
             .unwrap();
         assert!(
@@ -1761,7 +1794,7 @@ fn a_file_replaced_before_its_set_aside_goes_back() {
             "{case}"
         );
         assert_eq!(
-            SqliteCatalog.revision(publisher.connection()).unwrap(),
+            SqliteCatalog.revision(&open_db(&fix)).unwrap(),
             start_revision(),
             "{case}"
         );
@@ -1809,7 +1842,7 @@ fn a_file_that_could_not_come_back_is_never_set_aside() {
             matches!(&err, PublishError::NotLinkable(text) if text.contains("\"staging/a.flac\"")),
             "{mode:?}: got {err:?}"
         );
-        let journals = JournalStore::new(publisher.connection())
+        let journals = JournalStore::new(&open_db(&fix))
             .bundle("bundle-1")
             .unwrap();
         assert!(
@@ -1868,8 +1901,10 @@ fn replacement_recycles_only_after_commit() {
         "set aside, not gone"
     );
 
-    let mut conn = open_db(&fix);
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let db = restart(&fix);
+
+    let conn = open_db(&fix);
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
     assert_staged(&occupier, "track-a");
     assert_eq!(std::fs::read(&bin).unwrap(), b"replaced-library-file");
@@ -1987,8 +2022,8 @@ fn generated_files_land_and_go_away_journaled() {
     ));
     drop(publisher);
     assert!(!path.exists(), "set aside before the commit");
-    let mut conn = open_db(&fix);
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let db = restart(&fix);
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
     assert!(!path.exists(), "gone after the commit");
     assert!(hidden_leftovers(&fix.dir).is_empty());
@@ -2043,7 +2078,9 @@ fn interrupted_generated_put_back_is_finished_by_recovery() {
     ));
     drop(publisher);
 
-    let mut conn = open_db(&fix);
+    let db = restart(&fix);
+
+    let conn = open_db(&fix);
     let removal = JournalStore::new(&conn)
         .bundle("bundle-undo")
         .unwrap()
@@ -2053,7 +2090,7 @@ fn interrupted_generated_put_back_is_finished_by_recovery() {
     assert!(!path.exists(), "set aside before the commit");
     std::fs::hard_link(&removal.staged, &path).unwrap();
 
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
     assert_eq!(std::fs::read(&path).unwrap(), cover);
     assert_eq!(std::fs::metadata(&path).unwrap().nlink(), 1);
@@ -2450,7 +2487,10 @@ fn snapshots_expire_baselines_stay_and_blobs_dedup() {
     snapshots
         .record("fresh", "b1", "t2", &first, 40, 130)
         .unwrap();
-    assert_eq!(snapshots.purge_expired(50).unwrap(), 1);
+    assert_eq!(
+        publish::snapshots::purge_expired(&restart(&fix), 50).unwrap(),
+        1
+    );
     assert!(snapshots.get("old").unwrap().is_none());
     assert!(snapshots.get("fresh").unwrap().is_some());
 
@@ -2652,8 +2692,10 @@ fn symlink_at_dest_flags_attention_without_touching_target() {
     std::fs::write(&canary, b"canary").unwrap();
     std::os::unix::fs::symlink(&canary, &dest).unwrap();
 
-    let mut conn = open_db(&fix);
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let db = restart(&fix);
+
+    let conn = open_db(&fix);
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results.len(), 1);
     assert!(
         matches!(
@@ -2693,8 +2735,9 @@ fn committed_dest_swapped_for_symlink_refuses_without_touching_target() {
     std::fs::write(&canary, b"canary").unwrap();
     std::os::unix::fs::symlink(&canary, &dest).unwrap();
 
-    let mut conn = open_db(&fix);
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let db = restart(&fix);
+
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert!(
         matches!(&results[0].action, publish::RecoveryAction::Deferred(reason) if reason.contains("symlink")),
         "got {results:?}"
@@ -2705,7 +2748,7 @@ fn committed_dest_swapped_for_symlink_refuses_without_touching_target() {
 
     std::fs::remove_file(&dest).unwrap();
     std::fs::write(&dest, &staged_bytes).unwrap();
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].action, publish::RecoveryAction::CleanupFinished);
 }
@@ -2725,10 +2768,12 @@ fn crash_after_backup_journaled_resumes() {
     ));
     drop(publisher);
 
-    let mut conn = open_db(&fix);
+    let db = restart(&fix);
+
+    let conn = open_db(&fix);
     let journaled = JournalStore::new(&conn).bundle("bundle-1").unwrap();
     assert!(journaled.iter().any(|journal| journal.backup.is_some()));
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
     for item in bundle.items.iter() {
@@ -2762,12 +2807,13 @@ fn same_path_after_stage_resume_retains_backup() {
     drop(publisher);
 
     // No backup could exist yet: publish never reached its first rename.
-    let mut conn = open_db(&fix);
+    let db = restart(&fix);
+    let conn = open_db(&fix);
     let before = JournalStore::new(&conn).bundle("bundle-1").unwrap();
     assert_eq!(before.len(), 2);
     assert!(before.iter().all(|journal| journal.backup.is_none()));
 
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
     for item in bundle.items.iter() {
@@ -2945,7 +2991,9 @@ fn rows_with_old_style_hidden_names_resume() {
     ));
     drop(publisher);
 
-    let mut conn = open_db(&fix);
+    let db = restart(&fix);
+
+    let conn = open_db(&fix);
     let mut backups = 0;
     for journal in JournalStore::new(&conn).bundle("bundle-1").unwrap() {
         let dest = fix
@@ -2979,7 +3027,7 @@ fn rows_with_old_style_hidden_names_resume() {
         }
     }
     assert_eq!(backups, 1);
-    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
     for item in bundle.items.iter() {
         let dest = fix

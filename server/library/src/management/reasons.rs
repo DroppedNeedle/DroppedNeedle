@@ -397,6 +397,8 @@ pub fn from_publish(error: &PublishError) -> ItemReason {
         PublishError::Cleanup(_)
         | PublishError::Archive(_)
         | PublishError::Store(_)
+        | PublishError::Interrupted(_)
+        | PublishError::TimedOut(_)
         | PublishError::Io(_)
         | PublishError::InjectedCrash(_) => write_failed(),
     }

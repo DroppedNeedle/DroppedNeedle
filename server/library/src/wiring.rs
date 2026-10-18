@@ -291,7 +291,6 @@ impl LibrarySetup {
         db: &droppedneedle_kernel::db::Db,
         config: Arc<ConfigStore>,
     ) -> Result<Self, String> {
-        let db_path = db.path();
         let scan_store = Arc::new(SqliteScanStore::new(db.clone()));
         // The roots load before anything can scan or stream: a restart
         // comes back with exactly the roots the settings hold.
@@ -362,7 +361,7 @@ impl LibrarySetup {
                 identify_store.clone(),
             )),
         );
-        let publish = PublishCell::new(db_path);
+        let publish = PublishCell::new(db.clone());
         let placement = publish.placement();
         Ok(Self {
             ids,
@@ -383,8 +382,8 @@ impl LibrarySetup {
             contrib_worker,
             publish: Arc::new(std::sync::Mutex::new(publish)),
             placement,
-            held_bundles: super::manage::HeldBundles::new(db_path),
-            leftover_files: super::manage::LeftoverFiles::new(db_path),
+            held_bundles: super::manage::HeldBundles::new(db.clone()),
+            leftover_files: super::manage::LeftoverFiles::new(db.clone()),
             previews: Arc::new(std::sync::Mutex::new(HashMap::new())),
             watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
             root_dirs,
@@ -480,17 +479,20 @@ impl LibrarySetup {
     /// that cannot be reconciled is logged and left for an
     /// administrator, and managed writes stay closed until it clears.
     pub async fn run_recovery(&self) -> LibraryRecovery {
-        let registry = self.live_registry();
-        // Startup is uncontended, so the guards cost nothing; taken
-        // first so reconcile can never race a scan.
-        let _guards = self.publish_guards_async(&registry).await;
-        let recoveries = {
-            let mut cell = self
+        // Recovery waits on the database and holds the cell's mutex, so it
+        // runs off the async runtime.
+        let setup = self.clone();
+        let recovered = tokio::task::spawn_blocking(move || {
+            let registry = setup.live_registry();
+            // Startup is uncontended, so the guards cost nothing; taken
+            // first so reconcile can never race a scan.
+            let _guards = setup.publish_guards(&registry);
+            let mut cell = setup
                 .publish
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let recoveries = cell
-                .refresh(&registry, &self.root_dirs)
+                .refresh(&registry, &setup.root_dirs)
                 .unwrap_or_else(|error| {
                     tracing::error!(%error, "publish recovery did not run; managed writes stay closed");
                     Vec::new()
@@ -502,10 +504,19 @@ impl LibrarySetup {
                 .iter()
                 .map(|root| root.path.clone())
                 .collect();
-            let settled = cell.cell.is_some() && !cell.has_held();
+            let held = cell.has_held().unwrap_or_else(|error| {
+                tracing::warn!(%error, "publish journal unreadable; import leftovers kept");
+                true
+            });
+            let settled = cell.cell.is_some() && !held;
             super::import::sweep_import_leftovers(&roots, settled);
             recoveries
-        };
+        })
+        .await;
+        let recoveries = recovered.unwrap_or_else(|error| {
+            tracing::error!(%error, "publish recovery panicked; managed writes stay closed");
+            Vec::new()
+        });
         let identify = self.identify_store.clone();
         match tokio::task::spawn_blocking(move || identify.recover()).await {
             Ok(Ok(0)) => {}

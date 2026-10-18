@@ -45,6 +45,8 @@
 //! `write_durable` is `write_blocking` with the commit synced to disk before
 //! it returns, at the cost of one sync a call. It is for rows that must
 //! outlive a power cut, and it waits for its turn without the 5 s limit.
+//! Its closure gets the transaction as a [`Durable`], which only the lane
+//! makes, so a write that must be durable can ask for one.
 //!
 //! Many rows go through `write_chunked` or `write_chunked_blocking`, one
 //! `Lane::Bulk` turn per chunk. Bulk writes are the only ones that wait
@@ -114,9 +116,9 @@ pub use savepoint::savepoint;
 pub use scope::block_on;
 pub use writer::{
     BACKGROUND_CHUNK_ROWS, BACKGROUND_HARD_BUDGET, BACKGROUND_QUEUE_CAPACITY,
-    BACKGROUND_SOFT_BUDGET, Budget, CancelFlag, DurableLane, FOREGROUND_BURST,
+    BACKGROUND_SOFT_BUDGET, Budget, CancelFlag, Durable, DurableLane, FOREGROUND_BURST,
     FOREGROUND_HARD_BUDGET, FOREGROUND_QUEUE_CAPACITY, FOREGROUND_SOFT_BUDGET,
     FOREGROUND_WAIT_LIMIT, HOLDER_LOG_EVERY, Lane, LaneIdle, LaneLimits, LaneWatch, ReliefPass,
     WAIT_BUCKET_BOUNDS_MS, WATCH_TICK, WaitTimes, WalHold, apply_connection_pragmas, decide_lane,
-    open_connection, open_journal_connection,
+    open_connection,
 };

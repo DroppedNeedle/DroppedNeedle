@@ -57,7 +57,7 @@ use super::publish::planner::{
     AlbumJoin, Capability, FileFingerprint, JoinedTrack, PlanBundle, PlanItem, PlanKind,
     ReleaseIdentity, SealRecheck, SealedPreview,
 };
-use super::publish::publisher::{Catalog as _, JoinedAlbum, SqliteCatalog, joined_album};
+use super::publish::publisher::{JoinedAlbum, joined_album};
 use super::publish::snapshots::sha256_hex;
 use super::publish::{HIDDEN_PREFIX, PublishError};
 use super::scan::models::EffectivePolicy;
@@ -291,14 +291,6 @@ impl LibrarySetup {
             .sandbox
             .resolve_no_symlink(&root.id, &task_dir)
             .map_err(|error| fault(error.to_string()))?;
-        let conn = open.publisher.connection();
-        // A publish of an earlier landing that still waits for recovery
-        // reads the provenance record in this folder: leave it as it is.
-        if !staging_settled(conn, &task_dir).map_err(|error| fault(error.to_string()))? {
-            return Err(fault(
-                "an earlier import of this download is waiting for recovery".to_owned(),
-            ));
-        }
         let replaced = join
             .as_ref()
             .map(|join| join.replaced.clone())
@@ -308,20 +300,42 @@ impl LibrarySetup {
             release_mbid: join.release_mbid,
             release_group_mbid: import.release.release_group_id.clone(),
         });
-        let joined = match &join {
-            Some(join) => joined_album(conn, join).map_err(|error| fault(error.to_string()))?,
-            None => None,
-        };
-        // A joined file goes beside the copy's own files.
-        if let Some(joined) = &joined {
-            for placement in &mut placements {
-                let folder = copy_folder(conn, &joined.album_id, &root.id, placement.track.disc)
-                    .map_err(|error| fault(error.to_string()))?;
-                if let (Some(folder), Some(name)) =
-                    (folder, Path::new(&placement.dest_rel).file_name())
-                {
-                    placement.dest_rel = format!("{folder}/{}", name.to_string_lossy());
+        // Whether an earlier landing still waits, the album the files
+        // join, and the folder each joined file goes to, in one read.
+        let (settled, joined, folders) = self
+            .db
+            .read_blocking("import.join_state", |conn| {
+                let settled = staging_settled(conn, &task_dir)?;
+                let joined = match &join {
+                    Some(join) => joined_album(conn, join)?,
+                    None => None,
+                };
+                let mut folders = Vec::with_capacity(placements.len());
+                if let Some(joined) = &joined {
+                    for placement in &placements {
+                        folders.push(copy_folder(
+                            conn,
+                            &joined.album_id,
+                            &root.id,
+                            placement.track.disc,
+                        )?);
+                    }
                 }
+                Ok::<_, PublishError>((settled, joined, folders))
+            })
+            .map_err(|error| fault(error.to_string()))?;
+        // A publish of an earlier landing that still waits for recovery
+        // reads the provenance record in this folder: leave it as it is.
+        if !settled {
+            return Err(fault(
+                "an earlier import of this download is waiting for recovery".to_owned(),
+            ));
+        }
+        // A joined file goes beside the copy's own files.
+        for (placement, folder) in placements.iter_mut().zip(folders) {
+            if let (Some(folder), Some(name)) = (folder, Path::new(&placement.dest_rel).file_name())
+            {
+                placement.dest_rel = format!("{folder}/{}", name.to_string_lossy());
             }
         }
         // Files bound for a taken destination are held on their own (the
@@ -345,14 +359,17 @@ impl LibrarySetup {
                 Some(format!("a file already sits at {}", placement.dest_rel))
             } else {
                 match self
-                    .planned_track_id(
-                        conn,
-                        &root.id,
-                        &placement.dest_rel,
-                        join.is_some(),
-                        joined.as_ref(),
-                        &replaced,
-                    )
+                    .db
+                    .read_blocking("import.planned_track_id", |conn| {
+                        Ok::<_, PublishError>(self.planned_track_id(
+                            conn,
+                            &root.id,
+                            &placement.dest_rel,
+                            join.is_some(),
+                            joined.as_ref(),
+                            &replaced,
+                        )?)
+                    })
                     .map_err(|error| fault(error.to_string()))?
                 {
                     Ok(track_id) => {
@@ -453,8 +470,9 @@ impl LibrarySetup {
             }
             write_provenance(&staged_dir, import, &bundle_id, &items)
                 .map_err(|error| fault(format!("import provenance not written: {error}")))?;
-            let catalog_revision = SqliteCatalog
-                .revision(open.publisher.connection())
+            let catalog_revision = open
+                .publisher
+                .catalog_revision()
                 .map_err(|error| fault(error.to_string()))?;
             let bundle = PlanBundle {
                 id: bundle_id.clone(),
@@ -500,7 +518,9 @@ impl LibrarySetup {
         })();
         // A publish that did not settle waits for recovery, which reads the
         // provenance record: the folder stays until the leftover sweep.
-        match staging_settled(open.publisher.connection(), &task_dir) {
+        match self.db.read_blocking("import.staging_settled", |conn| {
+            Ok::<_, PublishError>(staging_settled(conn, &task_dir)?)
+        }) {
             Ok(true) => remove_staging(&staged_dir),
             Ok(false) => tracing::warn!(
                 dir = %staged_dir.display(),

@@ -20,7 +20,7 @@ use super::writer::LaneLimits;
 use super::{
     error::{ChunkedError, DbError},
     read_pool::ReadPools,
-    writer::{CancelFlag, DurableLane, Lane, WriteLane},
+    writer::{CancelFlag, Durable, DurableLane, Lane, WriteLane},
 };
 
 /// The database, for reads and writes. Cloneable; every clone shares the one
@@ -173,7 +173,8 @@ impl Db {
     }
 
     /// [`Db::write_blocking`] whose commit is on disk before it returns. It
-    /// is never held by the WAL, so its lane has no bulk class.
+    /// is never held by the WAL, so its lane has no bulk class. The closure
+    /// gets the transaction as a [`Durable`].
     pub fn write_durable<R, E, F>(
         &self,
         lane: DurableLane,
@@ -181,7 +182,7 @@ impl Db {
         op: F,
     ) -> Result<R, E>
     where
-        F: FnOnce(&Transaction) -> Result<R, E>,
+        F: FnOnce(&Durable<'_>) -> Result<R, E>,
         E: From<DbError> + std::fmt::Display,
     {
         self.lane.write_durable(lane, name, op)

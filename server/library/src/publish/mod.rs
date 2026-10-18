@@ -90,6 +90,7 @@ pub mod publisher;
 pub mod record;
 pub mod recovery;
 pub mod snapshots;
+pub(crate) mod sql;
 pub mod staging;
 pub mod tags_seam;
 pub mod undo;
@@ -97,7 +98,8 @@ pub mod v2_baseline;
 
 pub use archive::{ArchiveBlock, ArchiveEntry, ArchivePolicy, ArchiveReport, validate_archive};
 pub use journal::{
-    FileJournal, JournalKind, JournalReplacement, JournalState, JournalStore, fsync_dir,
+    FileJournal, JournalKind, JournalReplacement, JournalState, JournalStore, JournalWriter,
+    fsync_dir,
 };
 pub use paths::{CollisionKey, Sandbox, collision_key};
 pub use place::{PlaceError, Placed, PlacementMode, place_from_hidden};
@@ -185,6 +187,15 @@ pub enum PublishError {
     /// SQLite or serialization failure inside the publisher stores.
     #[error("store: {0}")]
     Store(String),
+    /// The database refused the call before it ran (busy, or shutting
+    /// down): nothing it would have written landed. A publish stops here
+    /// and leaves the bundle to recovery.
+    #[error("store: {0}")]
+    Interrupted(String),
+    /// A write ran past its time budget and was rolled back: nothing it
+    /// would have written landed.
+    #[error("store: {0}")]
+    TimedOut(String),
     /// Filesystem I/O failure.
     #[error("io: {0}")]
     Io(String),
@@ -192,7 +203,32 @@ pub enum PublishError {
 
 impl From<rusqlite::Error> for PublishError {
     fn from(err: rusqlite::Error) -> Self {
-        Self::Store(err.to_string())
+        Self::from(droppedneedle_kernel::db::DbError::from(err))
+    }
+}
+
+impl From<droppedneedle_kernel::db::DbError> for PublishError {
+    fn from(err: droppedneedle_kernel::db::DbError) -> Self {
+        use droppedneedle_kernel::db::DbError;
+        match err {
+            DbError::Busy { .. } | DbError::LaneClosed => Self::Interrupted(err.to_string()),
+            DbError::TxTimeout { .. } => Self::TimedOut(err.to_string()),
+            other => Self::Store(other.to_string()),
+        }
+    }
+}
+
+impl PublishError {
+    /// The database refused the call before it ran; see
+    /// [`PublishError::Interrupted`].
+    pub fn is_interrupted(&self) -> bool {
+        matches!(self, Self::Interrupted(_))
+    }
+
+    /// The database refused the call or rolled it back past its time
+    /// budget: nothing it would have written landed.
+    pub fn wrote_nothing(&self) -> bool {
+        matches!(self, Self::Interrupted(_) | Self::TimedOut(_))
     }
 }
 

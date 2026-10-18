@@ -48,10 +48,6 @@ const TOOL: Place = place(
     "the offline tool, which runs with the server stopped and owns the file",
 );
 
-/// The library's own connections, which go once the library is given a
-/// `Db`.
-const LIBRARY_UNTIL_DB: &str = "the library's own connections, until the library moves onto Db";
-
 const OPENS: &[Place] = &[
     DB,
     place(
@@ -78,9 +74,6 @@ const OPENS: &[Place] = &[
         "src/bootstrap/data_dirs.rs",
         "the read-only stamp probe of an existing database before the runtime opens it, and its tests",
     ),
-    place("library/src/manage.rs", LIBRARY_UNTIL_DB),
-    place("library/src/publish/publisher.rs", LIBRARY_UNTIL_DB),
-    place("library/src/publish/recovery.rs", LIBRARY_UNTIL_DB),
     place(
         "media/src/playback/sqlite.rs",
         "playback's own connection, until playback moves onto Db",
@@ -95,13 +88,7 @@ const OPENS: &[Place] = &[
     ),
 ];
 
-const TRANSACTIONS: &[Place] = &[
-    DB,
-    TOOL,
-    place("library/src/publish/journal.rs", LIBRARY_UNTIL_DB),
-    place("library/src/publish/publisher.rs", LIBRARY_UNTIL_DB),
-    place("library/src/publish/recovery.rs", LIBRARY_UNTIL_DB),
-];
+const TRANSACTIONS: &[Place] = &[DB, TOOL];
 
 const RULES: &[Rule] = &[
     Rule {
@@ -109,7 +96,6 @@ const RULES: &[Rule] = &[
         patterns: &[
             r"Connection::open",
             r"\bopen_connection\b",
-            r"\bopen_journal_connection\b",
             r"SqlitePoolOptions",
             r"SqlitePool::connect",
             r"SqliteConnection::connect",

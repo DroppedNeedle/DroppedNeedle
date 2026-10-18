@@ -6,10 +6,11 @@
 //! immutable and indefinite and are removed only by explicit
 //! administrator purge.
 
+use droppedneedle_kernel::db::{CancelFlag, Db, Lane};
 use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
-use super::PublishError;
+use super::{PublishError, sql};
 
 /// SHA-256 hex of one byte string.
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -180,36 +181,69 @@ impl<'a> SnapshotStore<'a> {
         }
         Ok(out)
     }
+}
 
-    /// Delete expired snapshot rows and their operation references.
-    /// Blob bytes with remaining owners survive; the orphan sweep owns
-    /// unreferenced bytes later.
-    pub fn purge_expired(&self, today_day: i64) -> Result<usize, PublishError> {
-        let expired: Vec<(String, String)> = {
-            let mut stmt = self.conn.prepare(
-                "SELECT id, bundle_id FROM library_publish_snapshots WHERE expires_day <= ?1",
-            )?;
-            let rows = stmt.query_map(rusqlite::params![today_day], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?;
-            let mut out = Vec::new();
-            for row in rows {
-                out.push(row?);
+/// Bundles whose expired snapshots one write deletes.
+const PURGE_CHUNK_BUNDLES: usize = 10;
+
+/// Blobs one write of the sweep deletes.
+const SWEEP_CHUNK_BLOBS: usize = 500;
+
+/// Delete the snapshots expired by `today_day` with their operation
+/// references, a few bundles a write. Every snapshot of a bundle shares one
+/// expiry day, so each write takes whole snapshots with their references.
+/// Blob bytes with remaining owners survive; the sweep owns unreferenced
+/// bytes later. Returns the snapshots deleted.
+pub fn purge_expired(db: &Db, today_day: i64) -> Result<usize, PublishError> {
+    let bundles: Vec<String> = db.read_long(
+        "publish.expired_snapshot_bundles",
+        &CancelFlag::never(),
+        |conn| {
+            let mut stmt = conn.prepare_cached(sql::EXPIRED_SNAPSHOT_BUNDLES.text())?;
+            let rows = stmt.query_map(rusqlite::params![today_day], |row| row.get(0))?;
+            Ok::<_, PublishError>(rows.collect::<Result<_, _>>()?)
+        },
+    )?;
+    let mut purged = 0;
+    for chunk in bundles.chunks(PURGE_CHUNK_BUNDLES) {
+        purged += db.write_blocking(Lane::Background, "publish.purge_snapshots", |tx| {
+            let mut deleted = 0;
+            for bundle_id in chunk {
+                tx.prepare_cached(sql::DELETE_OPERATION_REFS.text())?
+                    .execute(rusqlite::params![bundle_id])?;
+                deleted += tx
+                    .prepare_cached(sql::DELETE_EXPIRED_SNAPSHOTS.text())?
+                    .execute(rusqlite::params![bundle_id, today_day])?;
             }
-            out
-        };
-        for (id, bundle_id) in expired.iter() {
-            self.conn.execute(
-                "DELETE FROM library_publish_blob_refs WHERE owner_kind = 'operation' AND owner_id = ?1",
-                rusqlite::params![bundle_id],
-            )?;
-            self.conn.execute(
-                "DELETE FROM library_publish_snapshots WHERE id = ?1",
-                rusqlite::params![id],
-            )?;
-        }
-        Ok(expired.len())
+            Ok::<_, PublishError>(deleted)
+        })?;
     }
+    Ok(purged)
+}
+
+/// Delete the bytes no snapshot, baseline or preview refers to any more,
+/// from a list read first, a chunk a write. Each delete checks the
+/// references again in its own transaction, so a reference written since
+/// the list was read keeps its blob. Returns the blobs deleted.
+pub fn sweep_unreferenced_blobs(db: &Db) -> Result<usize, PublishError> {
+    let hashes: Vec<String> =
+        db.read_long("publish.unreferenced_blobs", &CancelFlag::never(), |conn| {
+            let mut stmt = conn.prepare_cached(sql::UNREFERENCED_BLOBS.text())?;
+            let rows = stmt.query_map([], |row| row.get(0))?;
+            Ok::<_, PublishError>(rows.collect::<Result<_, _>>()?)
+        })?;
+    let mut freed = 0;
+    for chunk in hashes.chunks(SWEEP_CHUNK_BLOBS) {
+        freed += db.write_blocking(Lane::Background, "publish.sweep_blobs", |tx| {
+            let mut stmt = tx.prepare_cached(sql::DELETE_UNREFERENCED_BLOB.text())?;
+            let mut deleted = 0;
+            for sha256 in chunk {
+                deleted += stmt.execute(rusqlite::params![sha256])?;
+            }
+            Ok::<_, PublishError>(deleted)
+        })?;
+    }
+    Ok(freed)
 }
 
 /// First-management baselines: immutable pre-DroppedNeedle semantic

@@ -55,5 +55,6 @@ pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFi
         scan::sql::registered(),
         identify::sql::registered(),
         contrib::sql::registered(),
+        publish::sql::registered(),
     ]
 }

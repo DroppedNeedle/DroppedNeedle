@@ -157,6 +157,29 @@ pub enum DurableLane {
     Background,
 }
 
+/// The transaction of a durable write: its commit is synced to disk before
+/// [`WriteLane::write_durable`] returns. Only the lane makes one, so code
+/// that takes `&Durable` runs only inside a durable write, and a row such
+/// code writes cannot be written by an ordinary one. It derefs to the
+/// transaction for everything else.
+pub struct Durable<'a> {
+    tx: &'a Transaction<'a>,
+}
+
+impl<'a> Durable<'a> {
+    fn new(tx: &'a Transaction<'a>) -> Self {
+        Self { tx }
+    }
+}
+
+impl<'a> std::ops::Deref for Durable<'a> {
+    type Target = Transaction<'a>;
+
+    fn deref(&self) -> &Transaction<'a> {
+        self.tx
+    }
+}
+
 impl From<DurableLane> for Lane {
     fn from(lane: DurableLane) -> Self {
         match lane {
@@ -1300,7 +1323,8 @@ impl WriteLane {
     ///
     /// Each call costs one sync while the lane is held, so this is for rows
     /// that must outlive a power cut (a journal row before the file move it
-    /// describes) and nothing else.
+    /// describes) and nothing else. The closure receives the transaction as
+    /// a [`Durable`], which code that must only write durably asks for.
     ///
     /// A durable write is never answered `Busy` for waiting too long: it
     /// waits for its turn like a background write, in the queue `lane`
@@ -1328,10 +1352,10 @@ impl WriteLane {
         op: F,
     ) -> Result<R, E>
     where
-        F: FnOnce(&Transaction) -> Result<R, E>,
+        F: FnOnce(&Durable<'_>) -> Result<R, E>,
         E: From<DbError> + std::fmt::Display,
     {
-        self.write_parked(lane.into(), name, true, None, op)
+        self.write_parked(lane.into(), name, true, None, |tx| op(&Durable::new(tx)))
             .map_err(TxError::into_caller)
     }
 
@@ -1604,17 +1628,6 @@ fn finish<R, E>(name: &'static str, outcome: Outcome<R, E>) -> Result<R, TxError
 pub fn open_connection(path: &Path) -> Result<Connection, DbError> {
     let connection = Connection::open(path)?;
     apply_connection_pragmas(&connection)?;
-    Ok(connection)
-}
-
-/// [`open_connection`] with `synchronous=FULL`, for the connections that
-/// write the publish journal. A journal row has to be on disk before the
-/// file move it describes: under `NORMAL` a power cut can lose the last
-/// commits in the WAL, and the move would outlive its row. Each commit
-/// costs a sync, so nothing else opens a connection this way.
-pub fn open_journal_connection(path: &Path) -> Result<Connection, DbError> {
-    let connection = open_connection(path)?;
-    connection.execute_batch("PRAGMA synchronous=FULL;")?;
     Ok(connection)
 }
 

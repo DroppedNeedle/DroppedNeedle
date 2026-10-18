@@ -11,22 +11,23 @@ use rusqlite::{Connection, OptionalExtension};
 use super::PublishError;
 use super::planner::PlanBundle;
 
-/// Record one sealed bundle, with the account that applied it when a
-/// person did. Overwriting an existing row is refused: bundle ids are
-/// unique per operation.
+/// Record one sealed bundle, made at `now_ms` (unix milliseconds) on
+/// `today_day`, with the account that applied it when a person did.
+/// Overwriting an existing row is refused: bundle ids are unique per
+/// operation.
 pub fn record_operation(
     conn: &Connection,
     bundle: &PlanBundle,
     today_day: i64,
+    now_ms: i64,
     applied_by: Option<&str>,
 ) -> Result<(), PublishError> {
     let json = serde_json::to_string(bundle).map_err(PublishError::from)?;
-    let changed = conn.execute(
-        "INSERT OR IGNORE INTO library_publish_operations
-         (bundle_id, bundle_json, created_day, applied_by_user_id)
-         VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![bundle.id, json, today_day, applied_by],
-    )?;
+    let changed = conn
+        .prepare_cached(super::sql::OPERATION_INSERT.text())?
+        .execute(rusqlite::params![
+            bundle.id, json, today_day, now_ms, applied_by
+        ])?;
     if changed == 0 {
         return Err(PublishError::Journal(format!(
             "operation {} already recorded",
@@ -79,6 +80,16 @@ pub fn generated_for_track(
         }
     }
     Ok(out)
+}
+
+/// One recorded bundle as stored, undecoded, or `None` when the id is
+/// unknown. A read failure is an error; whether the text decodes is the
+/// caller's question.
+pub fn operation_json(conn: &Connection, bundle_id: &str) -> Result<Option<String>, PublishError> {
+    conn.prepare_cached(super::sql::OPERATION_JSON.text())?
+        .query_row(rusqlite::params![bundle_id], |row| row.get(0))
+        .optional()
+        .map_err(PublishError::from)
 }
 
 /// Load one recorded bundle, or `None` when the id is unknown.

@@ -3,12 +3,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
 use tokio::sync::watch;
 
 use super::clock::{now_ms, now_unix, today_day};
 use super::publish::PublishError;
-use super::publish::snapshots::SnapshotStore;
+use super::publish::snapshots;
 use super::scan::ScanStoreError;
 use super::scan::coordinator::{ResolverSource as _, ScanRequestError};
 use super::scan::supervisor::SupervisorInputs;
@@ -378,7 +379,7 @@ impl LibrarySetup {
         // Reconcile-on-reopen (and the retry of held bundles) can resume
         // renames; a no-op tick takes no guards and bumps no revisions.
         let reopen = cell.needs_refresh(&registry);
-        let retry = !reopen && cell.has_held();
+        let retry = !reopen && cell.has_held()?;
         let _guards = if reopen || retry {
             self.publish_guards(&registry)
         } else {
@@ -388,19 +389,22 @@ impl LibrarySetup {
         if retry {
             cell.retry_held()?;
         }
-        let purged = match cell.cell.as_mut() {
-            Some(open) => {
-                let conn = open.publisher.connection();
-                let purged = SnapshotStore::new(conn).purge_expired(today_day())?;
+        // Under the cell, so no publish is between storing a blob and
+        // referring to it. Each step is a short background write, never
+        // held back while the WAL is full, so the cell is not held for
+        // long.
+        let purged = match cell.cell.as_ref() {
+            Some(_) => {
+                let purged = snapshots::purge_expired(&self.db, today_day())?;
                 // Generated files a preview planned (covers, lyrics) wait in
                 // the blob store until their job is done with them.
-                conn.execute(
-                    "DELETE FROM library_publish_blob_refs WHERE owner_kind = 'preview' \
-                     AND owner_id NOT IN (SELECT id FROM library_operation_jobs \
-                     WHERE state NOT IN ('succeeded', 'cancelled'))",
-                    [],
-                )?;
-                let freed = super::publish::snapshots::BlobStore::new(conn).sweep_unreferenced()?;
+                self.db
+                    .write_blocking(Lane::Background, "publish.drop_preview_refs", |tx| {
+                        tx.prepare_cached(super::publish::sql::DROP_PREVIEW_REFS.text())?
+                            .execute([])?;
+                        Ok::<_, PublishError>(())
+                    })?;
+                let freed = snapshots::sweep_unreferenced_blobs(&self.db)?;
                 if freed > 0 {
                     tracing::info!(freed, "freed before-states no undo needs any more");
                 }

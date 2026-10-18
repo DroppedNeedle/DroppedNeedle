@@ -1447,6 +1447,63 @@ async fn publish_operations_keep_their_rows_and_gain_an_author() {
     );
 }
 
+/// Migration 0068 records when each managed write was made. Writes from
+/// before it take the start of their day, so none waits longer than the
+/// day it kept.
+#[tokio::test]
+async fn publish_operations_take_the_start_of_their_day() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 68)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO library_publish_operations (bundle_id, bundle_json, created_day) \
+         VALUES ('early', '{\"id\":\"early\"}', 7), ('late', '{}', 20000);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let rows = sqlx::query_as::<_, (String, String, i64, i64)>(
+        "SELECT bundle_id, bundle_json, created_day, created_at \
+         FROM library_publish_operations ORDER BY bundle_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "early".to_owned(),
+                "{\"id\":\"early\"}".to_owned(),
+                7,
+                7 * 86_400_000
+            ),
+            (
+                "late".to_owned(),
+                "{}".to_owned(),
+                20000,
+                20000 * 86_400_000
+            ),
+        ]
+    );
+}
+
 /// The causes a takeover may carry in the database are exactly the ones
 /// the code names, in both directions.
 #[tokio::test]
