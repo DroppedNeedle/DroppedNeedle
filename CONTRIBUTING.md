@@ -58,6 +58,8 @@ make check                  # all of the above (not cargo audit, cargo deny or t
 
 Browser tests use Playwright. Install the browser once with `make frontend-browser-install`.
 
+A browser spec renders the real component with `renderWithQuery` from `frontend/src/lib/test/render.ts`, which gives each test a fresh TanStack `QueryClient` with no retries and no persister. It answers the component's requests with `fakeApi` from `frontend/src/lib/test/api.ts`: routes are keyed by method and contract template (`'GET /api/v3/albums/{album_id}/basic'`), each answer is typed as that operation's response from the generated contract, so svelte-check fails a fixture that drifts from the server, and `apiError(status, code)` builds an error answer. A request with no route fails the test and names it. Mock the player, `$app/navigation` and things outside the browser, never the query modules, the api client or TanStack.
+
 ### Browser journeys
 
 The journeys in `frontend/tests/journeys/` walk through the real app in a browser: set up a fresh server, sign in, and so on. They run against the container image, not the dev server:

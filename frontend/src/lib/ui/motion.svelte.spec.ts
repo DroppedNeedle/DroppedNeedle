@@ -1,4 +1,4 @@
-import { cdp } from '@vitest/browser/context';
+import { cdp } from 'vitest/browser';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import '../../app.css';

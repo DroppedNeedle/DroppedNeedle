@@ -1,107 +1,38 @@
-import { page } from '@vitest/browser/context';
+import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render } from 'vitest-browser-svelte';
-import type { LibraryAlbumDetail, NativeTrackListItem } from '$lib/types';
-
-const h = vi.hoisted(() => ({
-	playQueue: vi.fn(),
-	addToQueue: vi.fn(),
-	playNext: vi.fn(),
-	goto: vi.fn(),
-	isAdmin: false,
-	isTrusted: false,
-	editions: undefined as
-		| {
-				items: Array<{
-					release_mbid: string;
-					track_count: number;
-					title: string | null;
-					disambiguation: string | null;
-					date: string | null;
-					country: string | null;
-					packaging: string | null;
-					status: string | null;
-					is_owned: boolean;
-					is_pinned: boolean;
-				}>;
-				pinned_release_mbid: string | null;
-				owned_release_mbid: string | null;
-				selected_release_mbid: string | null;
-		  }
-		| undefined,
-	plan: undefined as unknown,
-	history: undefined as unknown,
-	toast: vi.fn()
-}));
+import { fakeApi, type FakeApi, type RouteData } from '$lib/test/api';
+import { renderWithQuery } from '$lib/test/render';
 
 vi.mock('$app/state', () => ({
 	page: { params: { id: 'local-album-1' }, url: new URL('http://localhost/album/local-album-1') }
 }));
-vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => h.goto(...args) }));
-vi.mock('$lib/stores/authStore.svelte', () => ({
-	authStore: {
-		get isAdmin() {
-			return h.isAdmin;
-		},
-		get isTrusted() {
-			return h.isTrusted;
-		},
-		user: { id: 'user-1' }
-	},
-	LAST_USER_ID_KEY: 'test:last-user'
-}));
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$lib/stores/player.svelte', () => ({
-	playerStore: {
-		playQueue: (...args: unknown[]) => h.playQueue(...args),
-		addToQueue: (...args: unknown[]) => h.addToQueue(...args),
-		playNext: (...args: unknown[]) => h.playNext(...args)
-	}
-}));
-vi.mock('$lib/stores/toast', () => ({
-	toastStore: { show: (...args: unknown[]) => h.toast(...args) }
+	playerStore: { playQueue: vi.fn(), addToQueue: vi.fn(), playNext: vi.fn() }
 }));
 
-const album: LibraryAlbumDetail = {
+import LocalAlbumPage from './LocalAlbumPage.svelte';
+import { authStore } from '$lib/stores/authStore.svelte';
+import { toAuthUser } from '$lib/queries/auth/types';
+
+const album: RouteData<'GET /api/v3/library/albums/{id}'> = {
 	id: 'local-album-1',
 	title: 'Local Only Album',
-	artist_name: 'Local Artist',
 	artist_id: 'local-artist-1',
-	musicbrainz_release_group_id: null,
-	musicbrainz_release_id: null,
-	musicbrainz_artist_id: null,
-	album_identity_state: 'local_only',
+	artist_name: 'Local Artist',
+	identity_state: 'local_only',
+	is_compilation: false,
 	track_count: 1,
 	total_duration_seconds: 181,
 	total_size_bytes: 1024,
 	format: 'flac',
 	year: 2026,
-	is_compilation: false,
-	release_type: 'album',
 	cover_available: false,
-	date_added: 1,
-	sort_name: null,
-	original_release_date: null,
-	row_revision: 2,
-	input_revision: 'input-2',
-	identification_status: 'local_metadata',
-	review_id: null,
-	review_revision: null,
-	management_identity_readiness: 'exact_release_required',
-	mapped_track_count: 0,
-	management_identity_kind: null,
-	custom_manifest_id: null,
-	custom_manifest_version: null,
-	custom_manifest_track_count: 0,
-	custom_manifest_recognized_track_count: 0,
-	custom_manifest_stale: false,
-	active_edition_conversion: null,
-	contribution_id: null,
-	contribution_state: null,
-	display_release_mbid: null,
-	pick_basis: null
+	favorite: false,
+	date_added: 1
 };
 
-const track: NativeTrackListItem = {
+const track: RouteData<'GET /api/v3/library/albums/{id}/tracks'>['items'][number] = {
 	id: 'local-track-1',
 	title: 'Unmatched Song',
 	album_id: album.id,
@@ -110,10 +41,6 @@ const track: NativeTrackListItem = {
 	artist_name: album.artist_name,
 	album_artist_id: album.artist_id,
 	album_artist_name: album.artist_name,
-	musicbrainz_recording_id: null,
-	musicbrainz_release_group_id: null,
-	musicbrainz_artist_id: null,
-	musicbrainz_album_artist_id: null,
 	disc_number: 1,
 	track_number: 1,
 	year: 2026,
@@ -127,175 +54,54 @@ const track: NativeTrackListItem = {
 	file_size_bytes: 1024,
 	date_added: 1,
 	cover_available: false,
-	current_tier: null,
-	below_cutoff: false
+	favorite: false
 };
 
-vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
-	getLibraryAlbumsQuery: () => ({ data: { items: [] } }),
-	getLibraryAlbumDetailQuery: () => ({
-		data: album,
-		isLoading: false,
-		isError: false,
-		refetch: vi.fn()
-	}),
-	getLibraryAlbumTracksQuery: () => ({
-		data: { items: [track], total: 1, offset: 0, limit: 100 },
-		isLoading: false,
-		isError: false
-	})
-}));
-
-vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
-	getAlbumEditionsQuery: () => ({
-		get data() {
-			return h.editions;
+function fakeLibrary(options: { downloadAllowed: boolean }): FakeApi {
+	return fakeApi({
+		'GET /api/v3/library/albums/{id}': album,
+		'GET /api/v3/library/albums/{id}/tracks': { items: [track], total: 1, offset: 0, limit: 100 },
+		'GET /api/v3/download/access': { allowed: options.downloadAllowed },
+		'GET /api/v3/library/albums/{album_id}/edition': {
+			album_id: album.id,
+			candidates: [],
+			edition_kind: 'none',
+			files_by_itself: true,
+			identifying: false,
+			identity_revision: 0,
+			placing: null,
+			reason: { code: 'UNIDENTIFIED', message: 'Not matched yet.', action: '' },
+			release_mbid: null,
+			release_group_mbid: null,
+			state: 'unidentified',
+			undo_available: false,
+			writing: false
 		},
-		isLoading: false,
-		isError: false
-	}),
-	acquireEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	getAlbumEditionStatusQuery: () => ({ data: undefined, isLoading: false, isError: false }),
-	getEditionTracksQuery: () => ({ data: undefined, isLoading: false, isError: false }),
-	chooseAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	handBackAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	confirmAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	undoAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	sealCustomEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	leaveAlbumUnmanaged: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	previewEditionTags: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	writeEditionTags: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	undoTagWrite: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	editionsKey: (id: string) => ['editions', id],
-	getEditionPlanQuery: () => ({
-		get data() {
-			return h.plan;
-		},
-		isLoading: false,
-		isError: false
-	}),
-	removeEditionExtras: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
-	restoreEditionExtras: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
-	matchEditionFile: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	unmatchEditionFile: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	getWaitingAlbumsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
-	invalidateAlbumEdition: () => Promise.resolve()
-}));
-
-vi.mock('$lib/queries/library/LibraryAlbumHistoryQueries.svelte', () => ({
-	getAlbumHistoryQuery: () => ({
-		get data() {
-			return h.history;
-		},
-		isPending: false,
-		isError: false,
-		refetch: vi.fn()
-	})
-}));
-
-vi.mock('$lib/queries/library/LibraryRetagPairQueries.svelte', () => ({
-	getRetagPairsQuery: () => ({ data: { pairs: [], total: 0 } }),
-	joinRetagPair: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	dismissRetagPair: () => ({ mutateAsync: vi.fn(), isPending: false })
-}));
-
-vi.mock('$lib/queries/ratings/RatingQueries.svelte', () => ({
-	getRatingsQuery: () => ({ data: undefined }),
-	ratingOf: () => 0,
-	setRating: () => ({ mutate: vi.fn() })
-}));
-
-vi.mock('$lib/queries/library/LibraryEditionQueries.svelte', () => ({
-	getReleaseEditionSearchQuery: () => ({
-		data: {
-			title_query: '',
-			artist_query: '',
-			items: [],
-			total: 0,
-			offset: 0,
-			limit: 12
-		},
-		isLoading: false,
-		isFetching: false,
-		isError: false,
-		refetch: vi.fn()
-	})
-}));
-
-vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => {
-	const mutation = () => ({
-		mutateAsync: vi.fn(),
-		isPending: false,
-		isError: false,
-		reset: vi.fn()
+		'GET /api/v3/library/albums/{album_id}/history': { items: [] },
+		'POST /api/v3/ratings/lookup': { albums: {}, artists: {}, tracks: {} }
 	});
-	return {
-		reenableAlbumManagement: mutation,
-		previewAlbumMembership: mutation,
-		applyAlbumMembership: mutation
-	};
-});
-
-vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
-	controlLibraryOperation: () => ({ mutateAsync: vi.fn() })
-}));
-
-vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
-	handBackLibraryAlbumMutation: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
-	handBackRefusalMessage: () => null
-}));
-
-vi.mock('$lib/queries/libraryContributions/LibraryContributionMutations.svelte', () => ({
-	createLibraryContributionMutation: () => ({ isPending: false, mutate: vi.fn() })
-}));
-
-const blob = vi.hoisted(() => ({ download: vi.fn() }));
-vi.mock('$lib/utils/blobDownload', () => ({ downloadBlob: blob.download }));
-vi.mock('$lib/queries/local/DownloadAccessQuery.svelte', () => ({
-	getDownloadAccessQuery: () => ({ data: { allowed: true } })
-}));
-// AddToPlaylistModal always mounts (hidden) and creates its mutations at init;
-// keep them inert so no QueryClientProvider is needed.
-vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
-	createPlaylistV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	addPlaylistTracksV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	checkPlaylistTracksV3: () => ({ mutateAsync: vi.fn(), isPending: false })
-}));
-
-import LocalAlbumPage from './LocalAlbumPage.svelte';
+}
 
 beforeEach(() => {
-	vi.clearAllMocks();
-	h.isAdmin = false;
-	h.isTrusted = false;
-	h.editions = undefined;
-	h.plan = undefined;
-	h.history = undefined;
-	album.management_identity_readiness = 'exact_release_required';
-	album.identification_status = 'local_metadata';
-	album.musicbrainz_release_group_id = null;
-	album.musicbrainz_release_id = null;
-	album.album_identity_state = 'local_only';
-	album.display_release_mbid = null;
-	album.pick_basis = null;
-	delete album.download_allowed;
+	localStorage.clear();
+	authStore.setUser(
+		toAuthUser({
+			id: 'user-1',
+			display_name: 'Someone',
+			role: 'user',
+			email: null,
+			avatar_url: null,
+			username: 'someone',
+			username_display: 'Someone'
+		})
+	);
 });
 
 describe('local album page track menu', () => {
-	beforeEach(() => {
-		blob.download.mockResolvedValue(undefined);
-	});
-
-	async function renderPage() {
-		await render(LocalAlbumPage, {
-			props: { albumId: album.id }
-		} as unknown as Parameters<typeof render>[1]);
-	}
-
 	it('hides the button and omits the menu Download item when restricted', async () => {
 		expect.assertions(4);
-		album.download_allowed = false;
-		await renderPage();
+		fakeLibrary({ downloadAllowed: false });
+		await renderWithQuery(LocalAlbumPage, { albumId: album.id });
 
 		await expect.element(page.getByText('Unmatched Song')).toBeVisible();
 		await expect
@@ -309,32 +115,79 @@ describe('local album page track menu', () => {
 
 describe('local album page and its edition', () => {
 	it("shows a file's note on its row and the album history below the tracks", async () => {
-		h.plan = {
-			album_id: album.id,
-			files: [
-				{
-					local_track_id: track.id,
-					title: track.title,
-					fate: 'keep',
-					note: { code: 'TRACK_ID_CORRECTED', message: '', action: '' }
-				}
-			]
-		};
-		h.history = {
-			items: [
-				{
-					kind: 'tracks_continued',
-					at: Date.UTC(2026, 9, 12),
-					by: null,
-					track_count: 1,
-					track_titles: ['Unmatched Song'],
-					other_album_title: null
-				}
-			]
-		};
-		await render(LocalAlbumPage, {
-			props: { albumId: album.id }
-		} as unknown as Parameters<typeof render>[1]);
+		const api = fakeLibrary({ downloadAllowed: true });
+		api.use({
+			'GET /api/v3/library/albums/{album_id}/edition': {
+				album_id: album.id,
+				candidates: [],
+				edition_kind: 'release',
+				files_by_itself: true,
+				identifying: false,
+				identity_revision: 0,
+				placing: null,
+				reason: { code: 'CHOSEN', message: '', action: '' },
+				release_mbid: 'release-1',
+				release_group_mbid: 'group-1',
+				state: 'chosen',
+				undo_available: false,
+				writing: false
+			},
+			'GET /api/v3/library/albums/{album_id}/edition/plan': {
+				album_id: album.id,
+				artist_name: album.artist_name,
+				title: album.title,
+				release_group_mbid: 'group-1',
+				release_mbid: 'release-1',
+				identity_revision: 0,
+				is_current: true,
+				same_album: true,
+				edition: { title: album.title, disc_count: 1, track_count: 1, formats: ['CD'] },
+				kept_count: 1,
+				missing_count: 0,
+				other_version_count: 0,
+				duplicate_count: 0,
+				extra_count: 0,
+				files: [
+					{
+						local_track_id: track.id,
+						title: track.title,
+						disc_number: 1,
+						track_number: 1,
+						edition_disc_number: 1,
+						edition_position: 1,
+						fate: 'keep',
+						length_ms: 181000,
+						match_written: false,
+						matched_by_hand: false,
+						note: { code: 'TRACK_ID_CORRECTED', message: '', action: '' }
+					}
+				],
+				tracks: [
+					{
+						disc_number: 1,
+						position: 1,
+						title: track.title,
+						length_ms: 181000,
+						local_track_id: track.id,
+						recording_mbid: 'rec-1',
+						release_track_mbid: 'track-1'
+					}
+				]
+			},
+			'GET /api/v3/library/albums/{album_id}/history': {
+				items: [
+					{
+						kind: 'tracks_continued',
+						at: Date.UTC(2026, 9, 12),
+						by: null,
+						track_count: 1,
+						track_titles: ['Unmatched Song'],
+						other_album_title: null
+					}
+				]
+			}
+		});
+		await renderWithQuery(LocalAlbumPage, { albumId: album.id });
 
 		const row = page.getByRole('listitem').filter({ hasText: 'Unmatched Song' }).first();
 		await expect
