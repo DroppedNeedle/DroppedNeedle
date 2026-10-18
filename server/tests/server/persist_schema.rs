@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use droppedneedle_kernel::db::statement::{Declared, StatementFile};
+use droppedneedle_kernel::db::statement::{Declared, Schema, StatementFile};
 use droppedneedle_kernel::db::{DbConfig, open_runtime};
 use droppedneedle_kernel::schema::{MIGRATOR, apply_migrations, assert_migrated, latest_version};
 use regex::Regex;
@@ -3530,6 +3530,7 @@ type StatementFiles = fn() -> Vec<StatementFile>;
 const REGISTRIES: &[(&str, StatementFiles)] = &[
     ("kernel", droppedneedle_kernel::statement_files),
     ("catalog", droppedneedle_catalog::statement_files),
+    ("tool", droppedneedle_tool::statement_files),
 ];
 
 /// The crate name of a folder under `server/`.
@@ -3585,8 +3586,9 @@ fn prepare_one(connection: &rusqlite::Connection, name: &str, text: &str) -> Opt
 }
 
 /// Decision 5: every declared statement, and every statement a family can
-/// make, prepares against the migrated schema, so a renamed column or a
-/// dropped table fails here. Every `sql.rs` on disk is registered under the
+/// make, prepares against the migrated schema, or a `schema = V2` block's
+/// against the v2 fixture database, so a renamed column or a dropped table
+/// fails here. Every `sql.rs` on disk is registered under the
 /// module its path names, with as many declarations as its text holds.
 /// Preparing does not check how many values a call site binds, that a
 /// column list matches its row mapper, or the query plan.
@@ -3623,7 +3625,10 @@ fn every_registered_statement_prepares() {
                     file.module
                 ));
             }
-            if registered.insert(file.module, file.declared).is_some() {
+            if registered
+                .insert(file.module, (file.schema, file.declared))
+                .is_some()
+            {
                 wrong.push(format!("{}: listed twice", file.module));
             }
         }
@@ -3632,7 +3637,7 @@ fn every_registered_statement_prepares() {
     for (module, (path, written)) in &on_disk {
         match registered.get(module.as_str()) {
             None => wrong.push(format!("{path}: missing from its crate's list of sql.rs files")),
-            Some(declared) if declared.len() != *written => wrong.push(format!(
+            Some((_, declared)) if declared.len() != *written => wrong.push(format!(
                 "{path}: {written} declarations written, {} registered; declare SQL only inside its sql! block",
                 declared.len()
             )),
@@ -3650,13 +3655,24 @@ fn every_registered_statement_prepares() {
     let dir = crate::common::ScratchDir::new("statements");
     let path = dir.join("app.db");
     crate::common::migrated_db(&path);
-    let connection = rusqlite::Connection::open(&path).expect("template copy opens");
+    let app = rusqlite::Connection::open(&path).expect("template copy opens");
+    let v2_root = dir.join("v2");
+    droppedneedle_tool::tooling::fixture::build_v2_fixture(&v2_root).expect("v2 fixture builds");
+    let v2 = rusqlite::Connection::open(v2_root.join("cache").join("library.db"))
+        .expect("v2 fixture opens");
     let (mut statements, mut families, mut made) = (0, 0, 0);
-    for declared in registered.values().flatten() {
+    for (schema, declared) in registered
+        .values()
+        .flat_map(|(schema, declared)| declared.iter().map(move |one| (*schema, one)))
+    {
+        let connection = match schema {
+            Schema::App => &app,
+            Schema::V2 => &v2,
+        };
         match declared {
             Declared::Statement(statement) => {
                 statements += 1;
-                wrong.extend(prepare_one(&connection, statement.name(), statement.text()));
+                wrong.extend(prepare_one(connection, statement.name(), statement.text()));
             }
             Declared::Family(family) => {
                 families += 1;
@@ -3669,7 +3685,7 @@ fn every_registered_statement_prepares() {
                         for (at, text) in texts.iter().enumerate() {
                             made += 1;
                             let name = format!("{} (combination {at})", family.name());
-                            wrong.extend(prepare_one(&connection, &name, text));
+                            wrong.extend(prepare_one(connection, &name, text));
                         }
                     }
                 }

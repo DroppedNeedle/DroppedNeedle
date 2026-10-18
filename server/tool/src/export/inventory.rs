@@ -11,6 +11,8 @@ use rusqlite::Connection;
 
 use crate::export::envelope::LeftBehind;
 use crate::export::error::ExportError;
+use crate::export::sql::{COUNT_ROWS_FROM, TABLE_NAMES};
+use droppedneedle_kernel::db::statement::quoted_identifier;
 
 /// Older copies v2 kept from before its own library upgrade. v2 itself
 /// reads the `library_*` tables the export carries instead.
@@ -150,12 +152,7 @@ pub fn left_behind_tables(
         table: "sqlite_master".to_owned(),
         detail: error.to_string(),
     };
-    let mut stmt = db
-        .prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'table' \
-             AND name NOT LIKE 'sqlite_%' ORDER BY name",
-        )
-        .map_err(read_error)?;
+    let mut stmt = db.prepare(TABLE_NAMES.text()).map_err(read_error)?;
     let tables = stmt
         .query_map([], |row| row.get::<_, String>(0))
         .map_err(read_error)?
@@ -167,9 +164,11 @@ pub fn left_behind_tables(
             continue;
         }
         let rows: i64 = db
-            .query_row(&format!("SELECT COUNT(*) FROM \"{table}\""), [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                &format!("{COUNT_ROWS_FROM}{}", quoted_identifier(&table)),
+                [],
+                |row| row.get(0),
+            )
             .map_err(|error| ExportError::V2Database {
                 table: table.clone(),
                 detail: error.to_string(),

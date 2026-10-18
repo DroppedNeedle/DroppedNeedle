@@ -16,6 +16,10 @@
 //! }
 //! ```
 //!
+//! A block whose statements run against a v2 database (the exporter's)
+//! starts with `schema = V2;`; every other block is written against the
+//! application schema.
+//!
 //! A statement becomes a [`Statement`] constant and a fragment a `&str`
 //! constant. `+` joins literals and `&str` constants at compile time, so a
 //! statement built from a column list is still one `&'static str`. A family
@@ -27,7 +31,8 @@
 //! tests and the `test-support` feature. Each crate that holds a `sql.rs`
 //! joins its files' lists in one function at its root, and the schema test
 //! prepares every statement, and every family over every combination of
-//! its choices, against a copy of the migrated template. Preparing proves
+//! its choices, against a copy of the migrated template, or for a
+//! `schema = V2` block against the v2 fixture database. Preparing proves
 //! the tables and columns a statement names exist and that the text is one
 //! valid statement; it does not prove the call site binds the right number
 //! of values, that a column list matches its row mapper, or the query plan.
@@ -187,6 +192,15 @@ impl Family {
     }
 }
 
+/// The schema a `sql!` block's statements are written against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Schema {
+    /// The migrated application database.
+    App,
+    /// A v2 database, read by the exporter.
+    V2,
+}
+
 /// One declaration in a `sql!` block.
 #[derive(Debug, Clone, Copy)]
 pub enum Declared {
@@ -203,6 +217,8 @@ pub enum Declared {
 pub struct StatementFile {
     /// The file's module path, `droppedneedle_catalog::concerts::sql`.
     pub module: &'static str,
+    /// The schema its statements are prepared against.
+    pub schema: Schema,
     /// What the file declares.
     pub declared: Vec<Declared>,
 }
@@ -221,8 +237,11 @@ pub use const_format::concatcp as __concatcp;
 /// [`db::statement`](crate::db::statement).
 #[macro_export]
 macro_rules! sql {
+    (schema = $schema:ident; $($body:tt)*) => {
+        $crate::__sql_items! { $schema [] $($body)* }
+    };
     ($($body:tt)*) => {
-        $crate::__sql_items! { [] $($body)* }
+        $crate::__sql_items! { App [] $($body)* }
     };
 }
 
@@ -230,23 +249,23 @@ macro_rules! sql {
 #[macro_export]
 macro_rules! __sql_items {
     (
-        [$($done:tt)*]
+        $schema:ident [$($done:tt)*]
         $(#[$meta:meta])* $vis:vis fragment $name:ident = $first:tt $(+ $part:tt)* ;
         $($rest:tt)*
     ) => {
         $(#[$meta])*
         $vis const $name: &str = $crate::db::statement::__concatcp!($first $(, $part)*);
-        $crate::__sql_items! { [$($done)* (fragment $name)] $($rest)* }
+        $crate::__sql_items! { $schema [$($done)* (fragment $name)] $($rest)* }
     };
     (
-        [$($done:tt)*]
+        $schema:ident [$($done:tt)*]
         $(#[$meta:meta])* family $name:ident = $builder:ident ;
         $($rest:tt)*
     ) => {
-        $crate::__sql_items! { [$($done)* (family $name $builder)] $($rest)* }
+        $crate::__sql_items! { $schema [$($done)* (family $name $builder)] $($rest)* }
     };
     (
-        [$($done:tt)*]
+        $schema:ident [$($done:tt)*]
         $(#[$meta:meta])* $vis:vis $name:ident = $first:tt $(+ $part:tt)* ;
         $($rest:tt)*
     ) => {
@@ -255,14 +274,15 @@ macro_rules! __sql_items {
             concat!(module_path!(), "::", stringify!($name)),
             $crate::db::statement::__concatcp!($first $(, $part)*),
         );
-        $crate::__sql_items! { [$($done)* (statement $name)] $($rest)* }
+        $crate::__sql_items! { $schema [$($done)* (statement $name)] $($rest)* }
     };
-    ([$($done:tt)*]) => {
+    ($schema:ident [$($done:tt)*]) => {
         /// This file's declarations, for the schema test.
         #[cfg(any(test, feature = "test-support"))]
         pub(crate) fn registered() -> $crate::db::statement::StatementFile {
             $crate::db::statement::StatementFile {
                 module: module_path!(),
+                schema: $crate::db::statement::Schema::$schema,
                 declared: vec![$($crate::__sql_declared!($done)),*],
             }
         }

@@ -15,6 +15,7 @@ pub mod inventory;
 pub mod library_keys;
 pub mod seal;
 pub mod sections;
+pub(crate) mod sql;
 pub mod v2dir;
 
 pub use envelope::{

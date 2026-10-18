@@ -29,6 +29,10 @@ use crate::export::envelope::{
 use crate::export::error::ExportError;
 use crate::export::fernet::FernetKey;
 use crate::export::seal::Sealer;
+use crate::export::sql::{
+    APP_PASSWORDS, APPROVALS, CONNECTIONS, EVENT_CITIES, EVENT_SEEN, FOLLOWS, PROVIDERS,
+    RECOVERY_CODES, TABLE_COUNT, TABLE_EXISTS, USERS,
+};
 use crate::export::v2dir::V2Dirs;
 use crate::export::{EXPORT_FORMAT, FORMAT_VERSION};
 use droppedneedle_kernel::runtime_config::Secret;
@@ -436,12 +440,8 @@ fn open_v2_db(path: &Path) -> Result<Connection, ExportError> {
 /// True when the v2 database holds `table`. Older instances may lack the
 /// newer user tables; those sections are simply empty.
 fn table_exists(db: &Connection, table: &str) -> Result<bool, ExportError> {
-    db.query_row(
-        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
-        [table],
-        |row| row.get::<_, bool>(0),
-    )
-    .map_err(|error| db_error(table, error))
+    db.query_row(TABLE_EXISTS.text(), [table], |row| row.get::<_, bool>(0))
+        .map_err(|error| db_error(table, error))
 }
 
 /// Resolve one stored v2 secret, refusing a token the key cannot open.
@@ -462,11 +462,7 @@ fn db_error(table: &str, error: rusqlite::Error) -> ExportError {
 
 fn read_users(db: &Connection) -> Result<Vec<UserRecord>, ExportError> {
     let mut stmt = db
-        .prepare(
-            "SELECT id, display_name, email, avatar_url, role, created_at,
-                    last_login_at, username, username_display
-             FROM auth_users ORDER BY id",
-        )
+        .prepare(USERS.text())
         .map_err(|error| db_error("auth_users", error))?;
     let rows = stmt
         .query_map([], |row| {
@@ -508,10 +504,7 @@ fn attach_user_rows(
     }
 
     let mut stmt = db
-        .prepare(
-            "SELECT user_id, provider, provider_uid, provider_data, created_at
-             FROM auth_providers ORDER BY user_id, provider, provider_uid",
-        )
+        .prepare(PROVIDERS.text())
         .map_err(|error| db_error("auth_providers", error))?;
     let rows = stmt
         .query_map([], |row| {
@@ -541,11 +534,7 @@ fn attach_user_rows(
     }
 
     let mut stmt = db
-        .prepare(
-            "SELECT user_id, name, secret_encrypted, created_at, last_used_at,
-                    last_client, revoked
-             FROM connect_app_passwords ORDER BY user_id, created_at",
-        )
+        .prepare(APP_PASSWORDS.text())
         .map_err(|error| db_error("connect_app_passwords", error))?;
     let rows = stmt
         .query_map([], |row| {
@@ -587,10 +576,7 @@ fn attach_user_rows(
     }
 
     let mut stmt = db
-        .prepare(
-            "SELECT user_id, code_hash, created_at, expires_at
-             FROM auth_password_recovery_codes",
-        )
+        .prepare(RECOVERY_CODES.text())
         .map_err(|error| db_error("auth_password_recovery_codes", error))?;
     let rows = stmt
         .query_map([], |row| {
@@ -627,11 +613,7 @@ fn read_connections(
         return Ok(Vec::new());
     }
     let mut stmt = db
-        .prepare(
-            "SELECT user_id, service, connection_data, enabled, created_at, updated_at
-             FROM user_connections WHERE user_id IN (SELECT id FROM auth_users)
-             ORDER BY user_id, service",
-        )
+        .prepare(CONNECTIONS.text())
         .map_err(|error| db_error("user_connections", error))?;
     let rows = stmt
         .query_map([], |row| {
@@ -666,11 +648,7 @@ fn read_connections(
 
 fn read_follows(db: &Connection) -> Result<Vec<FollowRecord>, ExportError> {
     let mut stmt = db
-        .prepare(
-            "SELECT user_id, artist_mbid, artist_name, auto_download,
-                    followed_at, updated_at
-             FROM user_followed_artists ORDER BY user_id, artist_mbid_lower",
-        )
+        .prepare(FOLLOWS.text())
         .map_err(|error| db_error("user_followed_artists", error))?;
     let rows = stmt
         .query_map([], |row| {
@@ -694,11 +672,7 @@ fn read_follows(db: &Connection) -> Result<Vec<FollowRecord>, ExportError> {
 
 fn read_approvals(db: &Connection) -> Result<Vec<ApprovalRecord>, ExportError> {
     let mut stmt = db
-        .prepare(
-            "SELECT user_id, artist_mbid, artist_name, state, requested_at,
-                    reviewed_by_id, reviewed_by_name, reviewed_at, batch_id, source
-             FROM auto_download_approvals ORDER BY user_id, artist_mbid_lower",
-        )
+        .prepare(APPROVALS.text())
         .map_err(|error| db_error("auto_download_approvals", error))?;
     let rows = stmt
         .query_map([], |row| {
@@ -726,13 +700,9 @@ fn read_approvals(db: &Connection) -> Result<Vec<ApprovalRecord>, ExportError> {
 /// Whether the v2 database has `table`. The concerts tables only exist once
 /// a v2 server with the feature has started, so their absence is empty.
 fn has_table(db: &Connection, table: &str) -> Result<bool, ExportError> {
-    db.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
-        [table],
-        |row| row.get::<_, i64>(0),
-    )
-    .map(|count| count > 0)
-    .map_err(|error| db_error(table, error))
+    db.query_row(TABLE_COUNT.text(), [table], |row| row.get::<_, i64>(0))
+        .map(|count| count > 0)
+        .map_err(|error| db_error(table, error))
 }
 
 fn read_event_cities(db: &Connection) -> Result<Vec<EventCityRecord>, ExportError> {
@@ -740,11 +710,7 @@ fn read_event_cities(db: &Connection) -> Result<Vec<EventCityRecord>, ExportErro
         return Ok(Vec::new());
     }
     let mut stmt = db
-        .prepare(
-            "SELECT user_id, city_name, country_code, latitude, longitude, radius_km,
-                    position
-             FROM user_event_cities ORDER BY user_id, position",
-        )
+        .prepare(EVENT_CITIES.text())
         .map_err(|error| db_error("user_event_cities", error))?;
     let rows = stmt
         .query_map([], |row| {
@@ -768,7 +734,7 @@ fn read_event_seen(db: &Connection) -> Result<Vec<EventSeenRecord>, ExportError>
         return Ok(Vec::new());
     }
     let mut stmt = db
-        .prepare("SELECT user_id, seen_at FROM user_event_seen ORDER BY user_id")
+        .prepare(EVENT_SEEN.text())
         .map_err(|error| db_error("user_event_seen", error))?;
     let rows = stmt
         .query_map([], |row| {
