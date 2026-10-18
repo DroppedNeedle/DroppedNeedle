@@ -10,6 +10,8 @@
 	lays out its own scroll panes. It has a close button in its header.
 	`closeButton` adds the same header close to the other sizes, for a dialog
 	with no Cancel of its own.
+	`titleHref` makes the title a link to the thing the dialog shows; it still
+	names the dialog, and following it closes the dialog.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -18,6 +20,8 @@
 	interface Props {
 		open: boolean;
 		title: string;
+		/** Makes the title a link. */
+		titleHref?: string;
 		/** One line under the title; the dialog's accessible description. */
 		description?: string;
 		size?: 'sm' | 'md' | 'lg' | 'xl' | 'sheet';
@@ -33,6 +37,7 @@
 	let {
 		open = $bindable(false),
 		title,
+		titleHref,
 		description,
 		size = 'md',
 		dismissible = true,
@@ -83,6 +88,20 @@
 	}
 </script>
 
+{#snippet heading(className: string)}
+	<h2 id={titleId} class={className}>
+		{#if titleHref}
+			<a
+				href={titleHref}
+				class="rounded-sm transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+				onclick={() => dialog?.close()}>{title}</a
+			>
+		{:else}
+			{title}
+		{/if}
+	</h2>
+{/snippet}
+
 <dialog
 	bind:this={dialog}
 	class="modal"
@@ -100,7 +119,7 @@
 				class="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-base-content/10 bg-base-100 px-4 py-3 md:static md:px-6 md:py-4"
 			>
 				<div class="min-w-0">
-					<h2 id={titleId} class="text-lg font-bold">{title}</h2>
+					{@render heading('text-lg font-bold')}
 					{#if description}
 						<p id={descriptionId} class="mt-0.5 text-sm text-base-content/65">{description}</p>
 					{/if}
@@ -129,7 +148,7 @@
 		<div class="modal-box {widths[size as keyof typeof widths]}">
 			{#if closeButton && dismissible}
 				<div class="flex items-start justify-between gap-3">
-					<h2 id={titleId} class="min-w-0 text-lg font-bold">{title}</h2>
+					{@render heading('min-w-0 text-lg font-bold')}
 					<button
 						type="button"
 						class="btn btn-square btn-ghost btn-sm -mt-1 -mr-2 shrink-0"
@@ -138,7 +157,7 @@
 					>
 				</div>
 			{:else}
-				<h2 id={titleId} class="text-lg font-bold">{title}</h2>
+				{@render heading('text-lg font-bold')}
 			{/if}
 			{#if description}
 				<p id={descriptionId} class="mt-1 text-sm text-base-content/65">{description}</p>

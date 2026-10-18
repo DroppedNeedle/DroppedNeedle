@@ -13,6 +13,7 @@
 	import { outsideLink } from '$lib/components/outsideLink';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -199,8 +200,10 @@
 			{/if}
 
 			{#if canEdit && (missing > 0 || versions > 0) && (!isCurrent || group)}
-				<section
-					class="flex flex-col gap-3 rounded-box border border-base-content/10 p-4"
+				<Card
+					as="section"
+					variant="bordered"
+					padding="md"
 					aria-labelledby="edition-make-copy-title"
 				>
 					<h4 id="edition-make-copy-title" class="text-sm font-semibold">
@@ -242,7 +245,7 @@
 							</p>
 						{/if}
 					{/if}
-				</section>
+				</Card>
 			{/if}
 			{#if primary}
 				<div class="hidden flex-wrap items-center gap-3 md:flex">

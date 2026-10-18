@@ -2,6 +2,8 @@
 	A panel that groups one thing's content. `flat` sits on the page tint,
 	`bordered` is a framed panel, `raised` a tile in a grid. With `href` the
 	whole card is one link named by its title, so it holds no other controls.
+	A caller's `aria-*` attributes pass through, so a `section` card can be
+	named by its own heading with `aria-labelledby`.
 	Replaces the hand-written `card` blocks and the rounded panels doing a
 	card's job.
 -->
@@ -71,7 +73,7 @@
 	{...rest}
 	{href}
 	class={classes}
-	aria-labelledby={href !== undefined && title ? titleId : undefined}
+	aria-labelledby={href !== undefined && title ? titleId : rest['aria-labelledby']}
 >
 	<div class={paddings[padding]}>
 		{#if header}

@@ -3,6 +3,8 @@
 	its accessible name. A labelled form row uses TextField, NumberField or
 	SecretField instead, which frame this with a visible label.
 	Replaces the hand-written `input`, `input-sm` and `input-soft` inputs.
+	`borderless` drops the box for a search field laid over its own panel,
+	which then shows the focus (a `focus-within` style on the panel).
 -->
 <script lang="ts">
 	import type { HTMLInputAttributes } from 'svelte/elements';
@@ -13,6 +15,8 @@
 		value?: string | number | null;
 		type?: 'text' | 'search' | 'url' | 'email' | 'password' | 'number' | 'date' | 'time';
 		size?: 'sm' | 'md';
+		/** No box, border or focus outline; the caller's panel draws them. */
+		borderless?: boolean;
 		/** Monospace, for URLs, paths and ids. */
 		mono?: boolean;
 		error?: boolean;
@@ -26,6 +30,7 @@
 		value = $bindable(),
 		type = 'text',
 		size = 'md',
+		borderless = false,
 		mono = false,
 		error = false,
 		icon: Icon,
@@ -36,7 +41,12 @@
 
 	const sizes = { sm: 'input input-sm', md: 'input' };
 	const box = $derived(
-		[sizes[size], mono ? 'font-mono text-sm' : '', error ? 'input-error' : '', className]
+		[
+			borderless ? 'w-full bg-transparent outline-none' : sizes[size],
+			mono ? 'font-mono text-sm' : '',
+			error ? 'input-error' : '',
+			className
+		]
 			.filter(Boolean)
 			.join(' ')
 	);

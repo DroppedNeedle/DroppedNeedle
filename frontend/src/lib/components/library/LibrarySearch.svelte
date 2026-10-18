@@ -9,12 +9,13 @@
 	import type { NativeTrackListItem } from '$lib/types';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import IconButton from '$lib/ui/IconButton.svelte';
+	import Input from '$lib/ui/Input.svelte';
 	import { NOISE_TEXTURE } from './noiseTexture';
 
 	let term = $state('');
 	let debounced = $state('');
 	let focused = $state(false);
-	let inputEl = $state<HTMLInputElement>();
+	let inputEl = $state<HTMLInputElement | null>(null);
 	let rootEl = $state<HTMLElement>();
 
 	// rotating placeholder hints signal what's searchable; first entry doubles as the resting label
@@ -148,18 +149,17 @@
 								{/key}
 							</span>
 						{/if}
-						<input
+						<Input
 							id="library-search-input"
-							bind:this={inputEl}
+							label="Search your library"
+							borderless
+							bind:ref={inputEl}
 							bind:value={term}
 							onfocus={() => (focused = true)}
 							onkeydown={onInputKeydown}
-							type="text"
-							placeholder=""
-							aria-label="Search your library"
 							autocomplete="off"
 							spellcheck="false"
-							class="absolute inset-0 w-full bg-transparent text-lg font-semibold text-base-content outline-none sm:text-xl"
+							class="absolute inset-0 text-lg font-semibold text-base-content sm:text-xl"
 						/>
 					</span>
 					<span class="mt-1 block truncate text-sm text-base-content/55">

@@ -91,6 +91,13 @@
 	let artistMbid = $derived(getArtistMbid());
 	let coverUrl = $derived(getCoverUrl(getAlbumCoverUrl() || null, mbid ?? albumId));
 	let canNavigate = $derived(!!mbid || !!albumName);
+	let albumHref = $derived(
+		mbid
+			? withBasePath(`/album/${mbid}`)
+			: albumName
+				? withBasePath(`/search?q=${encodeURIComponent(albumName)}`)
+				: undefined
+	);
 	let canNavigateArtist = $derived(!!artistMbid);
 	let trackCount = $derived(
 		sourceType === 'jellyfin'
@@ -202,15 +209,10 @@
 	}
 
 	function goToAlbum(): void {
-		if (!canNavigate) return;
-		if (mbid) {
-			const target = mbid;
-			handleClose();
-			goto(withBasePath(`/album/${target}`));
-		} else if (albumName) {
-			handleClose();
-			goto(withBasePath(`/search?q=${encodeURIComponent(albumName)}`));
-		}
+		if (!albumHref) return;
+		const target = albumHref;
+		handleClose();
+		goto(target);
 	}
 
 	function goToArtist(): void {
@@ -532,7 +534,7 @@
 </script>
 
 {#if album}
-	<Modal bind:open title={albumName} size="xl" closeButton {onclose}>
+	<Modal bind:open title={albumName} titleHref={albumHref} size="xl" closeButton {onclose}>
 		<div class="flex gap-4 sm:gap-5">
 			<div class="shrink-0">
 				{#if canNavigate}

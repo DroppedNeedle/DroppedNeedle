@@ -4,6 +4,7 @@
 	import { resolve } from '$app/paths';
 	import { UserRound } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import SearchSuggestions from '$lib/components/SearchSuggestions.svelte';
 	import ServiceHealthIndicator from '$lib/components/ServiceHealthIndicator.svelte';
 	import { getApiUrl } from '$lib/api/api-utils';
@@ -57,24 +58,12 @@
 	</div>
 	<div class="navbar-end w-auto pr-1 sm:pr-2">
 		<ServiceHealthIndicator />
-		<!-- An avatar in a round button: the kit's IconButton takes only an icon. -->
-		<Button
+		<IconButton
 			href={withBasePath('/profile')}
-			variant="ghost"
-			pill
-			class="size-10 px-0"
-			aria-label="Profile"
-		>
-			{#if authStore.user?.avatar_url}
-				<img
-					src={getApiUrl(authStore.user.avatar_url)}
-					alt=""
-					class="h-7 w-7 rounded-full object-cover"
-				/>
-			{:else}
-				<UserRound class="h-6 w-6" aria-hidden="true" />
-			{/if}
-		</Button>
+			label="Profile"
+			icon={UserRound}
+			image={authStore.user?.avatar_url ? getApiUrl(authStore.user.avatar_url) : null}
+		/>
 	</div>
 </div>
 
