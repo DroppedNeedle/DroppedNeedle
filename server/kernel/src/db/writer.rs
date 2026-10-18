@@ -81,7 +81,6 @@ use tokio::sync::oneshot;
 
 use super::{
     error::{ChunkedError, DbError, rusqlite_is_busy},
-    fold::register_fold,
     read_pool::OldestRead,
     scope::{self, LaneId},
 };
@@ -1653,7 +1652,6 @@ struct WriterConnection {
 impl WriterConnection {
     fn open(path: &Path, lane: LaneId) -> Result<Self, DbError> {
         let connection = open_connection(path)?;
-        register_fold(&connection)?;
         let clock = Arc::new(AbortClock::new());
         let handler_clock = Arc::clone(&clock);
         connection.progress_handler(PROGRESS_OPS, Some(move || handler_clock.check()));

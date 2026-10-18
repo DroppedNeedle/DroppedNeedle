@@ -822,32 +822,6 @@ async fn chunked_write_commits_and_cancels() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// The writer connection's `fold()` SQL function folds like v2.
-#[tokio::test]
-async fn fold_sql_function_matches_v2_casefold() {
-    let (runtime, dir) = open_scratch("fold").await;
-    let folded: String = runtime
-        .db()
-        .write(Lane::Foreground, "brief-fold", |tx| {
-            tx.query_row("SELECT fold('Straße à  Athènes')", [], |row| row.get(0))
-                .map_err(DbError::from)
-        })
-        .await
-        .unwrap();
-    assert_eq!(folded, "strasse a athenes");
-    let null: Option<String> = runtime
-        .db()
-        .write(Lane::Foreground, "brief-fold-null", |tx| {
-            tx.query_row("SELECT fold(NULL)", [], |row| row.get(0))
-                .map_err(DbError::from)
-        })
-        .await
-        .unwrap();
-    assert_eq!(null, None);
-    runtime.shutdown().await;
-    std::fs::remove_dir_all(dir).ok();
-}
-
 /// A play reported while another writer holds the database past the busy
 /// timeout is retried and recorded, never dropped.
 #[tokio::test]

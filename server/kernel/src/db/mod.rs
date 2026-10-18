@@ -60,9 +60,9 @@
 //! foreground-burst-8 fairness, [`backup`] copies the live database out with
 //! the online backup API, [`durable`] carries the worker wakeups and job
 //! registry, [`analyze`] keeps the planner statistics fresh, [`fs`]
-//! enforces the local-filesystem rule, [`fold`] keeps the accent-insensitive
-//! search function, `scope` records which write and read closures a thread
-//! is inside, [`datalock`] is the file lock the server holds and the offline
+//! enforces the local-filesystem rule, [`fold`] folds text for
+//! accent-insensitive search, `scope` records which write and read closures
+//! a thread is inside, [`datalock`] is the file lock the server holds and the offline
 //! tool takes exclusively, `scratch` is the self-removing directory tests
 //! write under, and [`error`] holds the typed errors.
 
@@ -100,7 +100,7 @@ pub use factory::{
     ACQUIRE_TIMEOUT, BOOT_WAIT, BUSY_TIMEOUT, CACHE_SIZE_KIB, DbConfig, DbRuntime, IDLE_TIMEOUT,
     MAX_READERS, MIN_CONNECTIONS, MMAP_SIZE, WAL_AUTOCHECKPOINT, open_runtime,
 };
-pub use fold::{fold_text, register_fold};
+pub use fold::fold_text;
 pub use fs::{filesystem_is_local, reject_remote_filesystem, reject_symlink, same_filesystem};
 pub use handle::Db;
 pub use read_pool::{LONG_READERS, OldestRead, ReadActivity};
