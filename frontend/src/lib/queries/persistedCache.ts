@@ -3,6 +3,12 @@ import {
 	experimental_createQueryPersister,
 	type PersistedQuery
 } from '@tanstack/svelte-query-persist-client';
+import {
+	notifyManager,
+	type Query,
+	type QueryFunctionContext,
+	type QueryKey
+} from '@tanstack/svelte-query';
 
 /**
  * Cache generation stamp. TanStack drops any persisted row whose buster
@@ -20,13 +26,45 @@ export const PERSISTED_CACHE_MAX_AGE = 1000 * 60 * 60 * 24 * 7;
  * The one persister factory: IndexedDB storage keeps complex objects as-is,
  * so serialization is the identity. Both the app query client and the
  * cache-buster brief build through here, which keeps the brief honest.
+ *
+ * TanStack's persister refreshes a stale restored query with a fetch that
+ * nothing awaits, so an invalidation or unmount that cancels it rejects
+ * unhandled. This persister turns that refresh off and starts the same refresh
+ * below with its rejection caught.
  */
 export function createPersistedQueryPersister(storage: AsyncStorage<PersistedQuery>) {
-	return experimental_createQueryPersister({
+	const persister = experimental_createQueryPersister({
 		storage,
 		buster: PERSISTED_CACHE_BUSTER,
 		maxAge: PERSISTED_CACHE_MAX_AGE,
 		serialize: (persistedQuery) => persistedQuery,
-		deserialize: (cached) => cached
+		deserialize: (cached) => cached,
+		refetchOnRestore: false
 	});
+	return {
+		...persister,
+		persisterFn: async <T, TQueryKey extends QueryKey>(
+			queryFn: (context: QueryFunctionContext<TQueryKey>) => T | Promise<T>,
+			context: QueryFunctionContext<TQueryKey>,
+			query: Query
+		): Promise<T> => {
+			let fetched = false;
+			const data = await persister.persisterFn(
+				(ctx) => {
+					fetched = true;
+					return queryFn(ctx);
+				},
+				context,
+				query
+			);
+			if (!fetched) {
+				// Scheduled after TanStack's restore step, which resets the restored timestamp.
+				notifyManager.schedule(() => {
+					// eslint-disable-next-line no-restricted-syntax -- TanStack's Query.fetch, not a network call
+					if (query.isStale()) void query.fetch().catch(() => undefined);
+				});
+			}
+			return data;
+		}
+	};
 }
