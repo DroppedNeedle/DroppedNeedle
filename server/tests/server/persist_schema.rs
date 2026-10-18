@@ -3436,6 +3436,131 @@ async fn every_table_has_one_owner() {
     assert!(stale.is_empty(), "listed but not in the schema: {stale:?}");
 }
 
+/// Every foreign key has an index whose leading columns are the key's
+/// columns: without one, deleting or rekeying a parent row scans the
+/// child table once per row. A primary key or unique index counts; a
+/// partial index does not.
+#[tokio::test]
+async fn every_foreign_key_is_indexed() {
+    let pool = migrated_pool().await;
+    let mut unindexed = Vec::new();
+    for table in table_names(&pool).await {
+        let keys: Vec<(i64, i64, String)> = sqlx::query_as(
+            "SELECT id, seq, \"from\" FROM pragma_foreign_key_list(?) ORDER BY id, seq",
+        )
+        .bind(&table)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        if keys.is_empty() {
+            continue;
+        }
+        let mut by_key: BTreeMap<i64, Vec<String>> = BTreeMap::new();
+        for (id, _, column) in keys {
+            by_key.entry(id).or_default().push(column);
+        }
+        let indexes: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_index_list(?) WHERE partial = 0")
+                .bind(&table)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let mut leading = Vec::new();
+        for index in indexes {
+            let columns: Vec<Option<String>> =
+                sqlx::query_scalar("SELECT name FROM pragma_index_info(?) ORDER BY seqno")
+                    .bind(&index)
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+            leading.push(columns.into_iter().flatten().collect::<Vec<_>>());
+        }
+        // An INTEGER PRIMARY KEY is the rowid and has no index of its own.
+        let rowid: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM pragma_table_info(?) WHERE pk = 1 AND upper(type) = 'INTEGER' \
+             AND (SELECT COUNT(*) FROM pragma_table_info(?) WHERE pk > 0) = 1",
+        )
+        .bind(&table)
+        .bind(&table)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        leading.push(rowid);
+        for columns in by_key.into_values() {
+            let mut wanted = columns.clone();
+            wanted.sort();
+            let covered = leading.iter().any(|index| {
+                index.len() >= wanted.len() && {
+                    let mut head = index[..wanted.len()].to_vec();
+                    head.sort();
+                    head == wanted
+                }
+            });
+            if !covered {
+                unindexed.push(format!("{table}({})", columns.join(", ")));
+            }
+        }
+    }
+    assert!(
+        unindexed.is_empty(),
+        "foreign keys with no index:\n{}",
+        unindexed.join("\n")
+    );
+}
+
+/// Migration 0067 adds the foreign key indexes to a database at 66 and
+/// keeps its rows.
+#[tokio::test]
+async fn foreign_key_indexes_arrive_on_upgrade() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 67)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = OFF; \
+         INSERT INTO library_track_management_state (local_track_id, baseline_id) \
+         VALUES ('t1', 'b1');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 67 && stamped == latest_version(), "{stamped}");
+    let index: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'index' \
+         AND name = 'idx_library_track_management_state_baseline_id'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(index.is_some());
+    let kept: Option<String> = sqlx::query_scalar(
+        "SELECT local_track_id FROM library_track_management_state WHERE baseline_id = 'b1'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept.as_deref(), Some("t1"));
+}
+
 /// Each migration stamps its own number, so applying them in order on an
 /// empty database ends at the latest version. A file renumbered without
 /// its `user_version` stamp (or the reverse) fails here, before boot would
