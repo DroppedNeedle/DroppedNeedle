@@ -53,7 +53,6 @@
 [kernel]
 db_planner_stats
 durable_job_registry
-durable_work_wakeups
 
 [auth]
 auth_oidc_states

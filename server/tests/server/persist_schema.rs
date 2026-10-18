@@ -61,7 +61,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 161);
+    assert_eq!(table_names(&pool).await.len(), 160);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -93,15 +93,6 @@ async fn fresh_migrate_marks_version_and_seeds() {
                 "unknown".to_owned(),
             ),
         ]
-    );
-    let wakeups: Vec<String> =
-        sqlx::query_scalar("SELECT channel FROM durable_work_wakeups ORDER BY channel")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        wakeups,
-        vec!["contribution", "identification", "operation", "scan"]
     );
     for (table, want) in [
         ("library_event_stream_revisions", 3),
@@ -3306,6 +3297,80 @@ async fn album_play_summary_arrives_worked_out_from_the_plays() {
         summary(&pool).await[0],
         row("ghost", "al1", 2, day(5), 1),
         "a play by a user id with no account moves its row"
+    );
+}
+
+/// Migration 0066 drops the wakeup channel table, counters and all, and
+/// keeps every job registry row as it was.
+#[tokio::test]
+async fn wakeup_channels_drop_and_job_rows_survive() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 66)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "UPDATE durable_work_wakeups SET seq = 3, consumed_seq = 2 WHERE channel = 'scan'; \
+         INSERT INTO durable_job_registry (name, kind, state, last_heartbeat_at, updated_at) \
+         VALUES ('download-worker', 'durable', 'running', 12.5, 13.0), \
+         ('checkpoint', 'ephemeral', 'stopped', NULL, 14.0);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 66 && stamped == latest_version(), "{stamped}");
+    let left: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE name = 'durable_work_wakeups'")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(left.is_empty(), "{left:?}");
+    type JobRow = (String, String, Option<String>, String, Option<f64>, f64);
+    let jobs: Vec<JobRow> = sqlx::query_as(
+        "SELECT name, kind, wakeup_channel, state, last_heartbeat_at, updated_at \
+         FROM durable_job_registry ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        jobs,
+        vec![
+            (
+                "checkpoint".to_owned(),
+                "ephemeral".to_owned(),
+                None,
+                "stopped".to_owned(),
+                None,
+                14.0,
+            ),
+            (
+                "download-worker".to_owned(),
+                "durable".to_owned(),
+                None,
+                "running".to_owned(),
+                Some(12.5),
+                13.0,
+            ),
+        ]
     );
 }
 
