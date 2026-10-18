@@ -97,18 +97,42 @@ const HOLDING_ALIASES: &str = "WITH dead AS (SELECT x.alias FROM local_track_ali
         WHERE w.subject_kind = 'track' AND w.local_track_id = x.local_track_id \
         AND w.field_name = o.field_name)";
 
+/// How many aliases a pass inside another write moves, besides the pairs
+/// that write itself made on its album: each alias costs about half a
+/// millisecond on a large library, so a backlog never pushes a request
+/// or job write past its time budget. [`drain_continuations`] moves the
+/// rest.
+pub(crate) const WRITE_BOUND: usize = 200;
+
+/// How many aliases one turn of [`drain_continuations`] moves.
+pub(crate) const DRAIN_BOUND: usize = 500;
+
 /// Find new pairs, keep aliases current and move what people made from
-/// every alias to the track it names, in a savepoint of the caller's
-/// transaction. A store error rolls the savepoint back with one warning
-/// and leaves the caller's work to commit; the next pass tries again.
-/// Call it after the transaction's last identity, match-state and
-/// custom-edition write.
+/// aliases to the tracks they name, in a savepoint of the caller's
+/// transaction. On one album, every pair the pass makes there moves in
+/// full; beyond those, at most [`WRITE_BOUND`] aliases move, and what is
+/// left waits for [`drain_continuations`]. A store error rolls the
+/// savepoint back with one warning and leaves the caller's work to
+/// commit; the next pass tries again. Call it after the transaction's
+/// last identity, match-state and custom-edition write.
 pub(crate) fn continue_tracks(
     tx: &Transaction<'_>,
     scope: Scope<'_>,
     now: f64,
 ) -> rusqlite::Result<()> {
-    run(tx, scope, &[], now)
+    run(tx, scope, &[], true, WRITE_BOUND, now).map(|_| ())
+}
+
+/// One turn of working off aliases that still hold what people made:
+/// up to `limit` of them move, each in full, and no new pair is looked
+/// for. `true` while more wait. A store error rolls the turn back with
+/// one warning and answers `false`; the next turn tries again.
+pub(crate) fn drain_continuations(
+    tx: &Transaction<'_>,
+    limit: usize,
+    now: f64,
+) -> rusqlite::Result<bool> {
+    run(tx, Scope::Library, &[], false, limit, now)
 }
 
 /// [`continue_tracks`] on one album, after an import whose files replaced
@@ -123,20 +147,25 @@ pub(crate) fn continue_replaced(
     replaced: &[(String, String)],
     now: f64,
 ) -> rusqlite::Result<()> {
-    run(tx, Scope::Album(album), replaced, now)
+    run(tx, Scope::Album(album), replaced, true, WRITE_BOUND, now).map(|_| ())
 }
 
+/// One pass in a savepoint. `discover` looks for new pairs; `limit`
+/// bounds the aliases moved beyond the pairs made on the pass's album.
+/// `true` when aliases that hold something are left.
 fn run(
     tx: &Transaction<'_>,
     scope: Scope<'_>,
     replaced: &[(String, String)],
+    discover: bool,
+    limit: usize,
     now: f64,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<bool> {
     let mut at = Context::default();
     match savepoint(tx, "continue_tracks", || {
-        pass(tx, scope, replaced, now, &mut at)
+        pass(tx, scope, replaced, discover, limit, now, &mut at)
     })? {
-        Ok(()) => Ok(()),
+        Ok(more) => Ok(more),
         Err(error) => {
             tracing::warn!(
                 %error,
@@ -145,7 +174,7 @@ fn run(
                 new_track = at.new.as_deref().unwrap_or(""),
                 "tracks not continued; the next pass tries again"
             );
-            Ok(())
+            Ok(false)
         }
     }
 }
@@ -170,9 +199,11 @@ fn pass(
     tx: &Transaction<'_>,
     scope: Scope<'_>,
     given: &[(String, String)],
+    discover: bool,
+    limit: usize,
     now: f64,
     at: &mut Context,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<bool> {
     // An old row whose file is back answers for itself again. What moved
     // stays where it went.
     tx.execute(
@@ -225,10 +256,13 @@ fn pass(
             new_pairs.insert((old.clone(), new.clone()));
         }
     }
-    let albums: Vec<String> = tx
-        .prepare_cached(CANDIDATE_ALBUMS)?
-        .query_map(params![only], |row| row.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
+    let albums: Vec<String> = if discover {
+        tx.prepare_cached(CANDIDATE_ALBUMS)?
+            .query_map(params![only], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?
+    } else {
+        Vec::new()
+    };
     for album in albums {
         at.album = Some(album.clone());
         for (old, new) in pairs_on(tx, &album)? {
@@ -243,6 +277,28 @@ fn pass(
         .prepare_cached(HOLDING_ALIASES)?
         .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
+    // The pairs made on the pass's own album move in full, so the write
+    // that made them is complete at commit. Then up to `limit` others, in
+    // id order.
+    let own: Vec<&String> = match only {
+        Some(_) => holding
+            .iter()
+            .filter(|old| new_pairs.iter().any(|(made, _)| made == *old))
+            .collect(),
+        None => Vec::new(),
+    };
+    let moving: Vec<String> = own
+        .iter()
+        .map(|old| (*old).clone())
+        .chain(
+            holding
+                .iter()
+                .filter(|old| !own.contains(old))
+                .take(limit)
+                .cloned(),
+        )
+        .collect();
+    let more = holding.len() > moving.len();
     let pair_json = |old: &str, new: &str, is_new: bool| {
         let mut pair = json!({ "old_track_id": old, "new_track_id": new, "new_pair": is_new });
         if replaced.contains(old)
@@ -254,14 +310,14 @@ fn pass(
     };
     let mut logs: BTreeMap<String, AlbumLog> = BTreeMap::new();
     for (old, new) in &new_pairs {
-        if !holding.contains(old) {
+        if !moving.contains(old) {
             let album = album_of(tx, old)?;
             let log = logs.entry(album).or_default();
             log.new_pairs += 1;
             log.pairs.push(pair_json(old, new, true));
         }
     }
-    for old in &holding {
+    for old in &moving {
         let (new, moves_overrides): (String, bool) = tx.query_row(
             "SELECT local_track_id, moves_overrides FROM local_track_aliases WHERE alias = ?1",
             params![old],
@@ -320,7 +376,7 @@ fn pass(
     if changed {
         bump_catalog(tx)?;
     }
-    Ok(())
+    Ok(more)
 }
 
 /// The `(old, new)` pairs the rule proves on one album.

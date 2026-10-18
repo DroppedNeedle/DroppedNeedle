@@ -32,7 +32,7 @@ use super::queue::{PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY};
 use super::sources::ArtistAnswer;
 use super::stores::{Approval, RELEASE_FRESH_SECS, StoreError};
 use crate::corrections::artist_convergence::converge_ids;
-use crate::corrections::continuation::{Scope, continue_tracks};
+use crate::corrections::continuation::{DRAIN_BOUND, Scope, continue_tracks, drain_continuations};
 use crate::corrections::release_join::join_replaced;
 use crate::matching::Release;
 use crate::operations::choice::RemapOrigin;
@@ -306,7 +306,21 @@ pub struct SqliteIdentifyStore {
     /// When an album sweep last found nothing to do, and the database's
     /// version then.
     swept: Mutex<Option<Swept>>,
+    /// When the sweep last worked off continued tracks, and whether some
+    /// were left.
+    drained: Mutex<Option<Drained>>,
 }
+
+/// The last drain of continued tracks.
+#[derive(Clone, Copy)]
+struct Drained {
+    more: bool,
+    at: Instant,
+}
+
+/// Turns one sweep spends on continued tracks before it lets the queue
+/// claim: a backlog is worked off over the following sweeps.
+const DRAIN_TURNS: usize = 10;
 
 /// After an album sweep finds nothing stale, the next one waits this long
 /// while only other connections write. Plays, sessions and scans write
@@ -334,6 +348,7 @@ impl SqliteIdentifyStore {
             conn: Mutex::new(conn),
             link_cursor: Mutex::new(String::new()),
             swept: Mutex::new(None),
+            drained: Mutex::new(None),
         })
     }
 
@@ -1030,6 +1045,7 @@ impl SqliteIdentifyStore {
     /// transaction, then up to as many of the app's links, in id order
     /// from where the last sweep stopped, each settled again.
     pub fn sweep_artist_links(&self) {
+        self.drain_continuations();
         let version = self.read("database version", |conn| {
             let data: i64 = conn.query_row("PRAGMA data_version", [], |row| row.get(0))?;
             Ok((data, conn.total_changes()))
@@ -1114,6 +1130,41 @@ impl SqliteIdentifyStore {
 
     fn cursor_guard(&self) -> MutexGuard<'_, String> {
         self.link_cursor
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Work off what continued tracks still hold, in turns of
+    /// [`DRAIN_BOUND`] aliases each in its own transaction: writes move
+    /// only a bounded number themselves, and a v2 import can leave many.
+    /// While some are left every sweep goes on; once none are, it looks
+    /// again after [`SWEEP_FLOOR`].
+    fn drain_continuations(&self) {
+        let due = self
+            .drained_guard()
+            .is_none_or(|last| last.more || last.at.elapsed() >= SWEEP_FLOOR);
+        if !due {
+            return;
+        }
+        let mut more = true;
+        for _ in 0..DRAIN_TURNS {
+            more = self
+                .write("drain continued tracks", |tx| {
+                    drain_continuations(tx, DRAIN_BOUND, now_secs())
+                })
+                .unwrap_or(false);
+            if !more {
+                break;
+            }
+        }
+        *self.drained_guard() = Some(Drained {
+            more,
+            at: Instant::now(),
+        });
+    }
+
+    fn drained_guard(&self) -> MutexGuard<'_, Option<Drained>> {
+        self.drained
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }

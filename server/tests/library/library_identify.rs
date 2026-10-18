@@ -1521,3 +1521,72 @@ fn the_album_walk_waits_out_other_writers() {
     links.store.sweep_artist_links();
     assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
 }
+
+/// A write on one album moves only a bounded share of the library's
+/// waiting continuations, so a backlog never pushes it past its time
+/// budget. The identify sweep then works the whole backlog off: no play
+/// is left on a track that continued into another.
+#[test]
+fn a_continuation_backlog_moves_in_bounded_turns() {
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.db
+        .execute(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('listener', 'Listener', 'user', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .expect("listener seeds");
+    let backlog = 450;
+    for n in 0..backlog {
+        rig.db
+            .execute_batch(&format!(
+                "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, \
+                 relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, \
+                 title, title_folded, album_title, album_title_folded, file_format, \
+                 ingest_source, imported_at, membership_source, availability) \
+                 VALUES ('gone-{n}', 'album-1', 'root-1', '/music/gone-{n}.flac', \
+                 'gone-{n}.flac', 'gone-{n}', 1, 1, 'stat-1', 'Gone', 'gone', 'Some Album', \
+                 'some album', 'flac', 'scan', 0, 'automatic', 'missing'); \
+                 INSERT INTO local_track_aliases (alias, local_track_id, created_at) \
+                 VALUES ('gone-{n}', 't1', 0); \
+                 INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
+                 artist_name, played_at) VALUES ('play-{n}', 'listener', 'gone-{n}', 'T', 'A', \
+                 '2026-01-01T00:00:00Z');"
+            ))
+            .expect("continued track seeds");
+    }
+    let left = |rig: &Rig| -> i64 {
+        rig.db
+            .query_row(
+                "SELECT COUNT(*) FROM library_play_history WHERE local_track_id LIKE 'gone-%'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("plays count")
+    };
+
+    rig.store.save_track_identity(TrackIdentity {
+        local_track_id: "t1".to_owned(),
+        provider: "musicbrainz".to_owned(),
+        recording_mbid: Some(RECORDING_1.to_owned()),
+        release_track_mbid: Some("rt-1".to_owned()),
+        decision_source: DecisionSource::Automatic,
+        row_revision: 1,
+    });
+    let after_write = left(&rig);
+    assert!(after_write > 0, "the write moved the whole backlog");
+    assert!(after_write < backlog, "the write moved none of the backlog");
+
+    rig.store.sweep_artist_links();
+    assert_eq!(left(&rig), 0, "the sweep works the backlog off");
+    let on_live: i64 = rig
+        .db
+        .query_row(
+            "SELECT COUNT(*) FROM library_play_history WHERE local_track_id = 't1'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("plays count");
+    assert_eq!(on_live, backlog);
+}
