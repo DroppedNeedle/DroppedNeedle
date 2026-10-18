@@ -175,8 +175,6 @@ pub struct FileJournal {
     pub staged_sha256: String,
     /// Stable local track id, so recovery can rebuild the catalog commit.
     pub track_id: Option<String>,
-    /// Catalog revision the bundle commit compare-and-swaps on.
-    pub catalog_revision: Option<i64>,
     /// Management state the catalog commit records.
     pub mgmt_state: Option<String>,
     /// Current protocol state.
@@ -297,7 +295,6 @@ impl<'a> JournalWriter<'a> {
                 journal.source_sha256.as_deref(),
                 journal.staged_sha256,
                 journal.track_id.as_deref(),
-                journal.catalog_revision,
                 journal.mgmt_state.as_deref(),
                 JournalState::Prepared.as_str(),
             ])?;
@@ -404,24 +401,24 @@ fn legal(expected: JournalState, next: JournalState) -> Result<(), PublishError>
 }
 
 fn read_journal(row: &rusqlite::Row<'_>) -> Result<FileJournal, rusqlite::Error> {
-    let state_text: String = row.get(14)?;
+    let state_text: String = row.get(13)?;
     let kind_text: String = row.get(2)?;
     let state = JournalState::parse(&state_text).map_err(|err| {
-        rusqlite::Error::FromSqlConversionFailure(14, rusqlite::types::Type::Text, Box::new(err))
+        rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(err))
     })?;
     let kind = JournalKind::parse(&kind_text).map_err(|err| {
         rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(err))
     })?;
     let source_root: Option<String> = row.get(3)?;
     let source_rel: Option<String> = row.get(4)?;
-    let replaced_rel: Option<String> = row.get(16)?;
-    let replaced_sha: Option<String> = row.get(17)?;
-    let recycle_to: Option<String> = row.get(19)?;
+    let replaced_rel: Option<String> = row.get(15)?;
+    let replaced_sha: Option<String> = row.get(16)?;
+    let recycle_to: Option<String> = row.get(18)?;
     let replaces = match (replaced_rel, replaced_sha, recycle_to) {
         (Some(rel), Some(sha256), Some(recycle_to)) => Some(JournalReplacement {
             rel,
             sha256,
-            track_id: row.get(18)?,
+            track_id: row.get(17)?,
             recycle_to,
         }),
         _ => None,
@@ -438,10 +435,9 @@ fn read_journal(row: &rusqlite::Row<'_>) -> Result<FileJournal, rusqlite::Error>
         source_sha256: row.get(9)?,
         staged_sha256: row.get(10)?,
         track_id: row.get(11)?,
-        catalog_revision: row.get(12)?,
-        mgmt_state: row.get(13)?,
+        mgmt_state: row.get(12)?,
         state,
-        seq: row.get(15)?,
+        seq: row.get(14)?,
         replaces,
     })
 }

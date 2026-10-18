@@ -931,7 +931,7 @@ impl LibrarySetup {
             });
         }
         let registry = self.live_registry();
-        let (sandbox, catalog_revision) = {
+        let sandbox = {
             let mut cell = self
                 .publish
                 .lock()
@@ -943,9 +943,7 @@ impl LibrarySetup {
             };
             cell.refresh(&registry, &self.root_dirs)
                 .map_err(publish_error)?;
-            let open = cell.open().map_err(publish_error)?;
-            let revision = open.publisher.catalog_revision().map_err(publish_error)?;
-            (open.sandbox.clone(), revision)
+            cell.open().map_err(publish_error)?.sandbox.clone()
         };
         // Accepted album identity first: without an exact release the
         // whole bundle blocks before any file is touched.
@@ -1047,6 +1045,7 @@ impl LibrarySetup {
                 replaces: None,
                 outputs: Vec::new(),
                 removals: Vec::new(),
+                sealed: None,
             });
             let doc = Self::live_doc_for_write(
                 &sandbox,
@@ -1072,14 +1071,15 @@ impl LibrarySetup {
                 changes,
             });
         }
-        let bundle = PlanBundle {
+        let mut bundle = PlanBundle {
             id: self.ids.new_id(),
             items: plan_items,
             profile_revision: PINNED_REVISION,
             naming_revision: PINNED_REVISION,
             policy_revision: policy_revision_u64(&registry),
-            catalog_revision,
         };
+        // The tracks' rows as previewed: Apply is refused if they move.
+        super::publish::planner::seal_rows(&self.db, &mut bundle).map_err(publish_error)?;
         CollisionGate::check_bundle(&sandbox, &bundle).map_err(publish_error)?;
         DiskPreflight::check(&bundle, &FsSpaceProbe::new(self.root_dirs.clone()))
             .map_err(publish_error)?;
@@ -1158,9 +1158,6 @@ impl LibrarySetup {
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         let live = self.seal_live(&open.sandbox, &entry.sealed.bundle, &token_hash)?;
-        let catalog_revision = open.publisher.catalog_revision().map_err(publish_error)?;
-        let mut live = live;
-        live.catalog_revision = catalog_revision;
         open.publisher
             .set_undo_retention_days(self.undo_retention_days());
         let outcome = open
@@ -1250,7 +1247,6 @@ impl LibrarySetup {
             profile_revision: pins.profile,
             naming_revision: pins.naming,
             policy_revision: policy_revision_u64(&self.live_registry()),
-            catalog_revision: bundle.catalog_revision,
             settings_revision: pins.settings,
             today_day: today_day(),
             token_hash: token_hash.to_owned(),
@@ -1376,17 +1372,19 @@ impl LibrarySetup {
                 super::publish::staging::document_for_write(&path, &item.managed_updates)?,
             );
         }
-        let catalog_revision = open.publisher.catalog_revision()?;
         open.publisher
             .set_undo_retention_days(self.undo_retention_days());
-        let bundle = PlanBundle {
+        let mut bundle = PlanBundle {
             id: bundle_id.to_owned(),
             items: plan_items,
             profile_revision: pins.profile,
             naming_revision: pins.naming,
             policy_revision: policy_revision_u64(&registry),
-            catalog_revision,
         };
+        // What moved since planning is caught by the seal recheck below;
+        // the rows are sealed now, so the commit refuses only what moves
+        // while the album is being saved.
+        super::publish::planner::seal_rows(&self.db, &mut bundle)?;
         let token_hash = sha256_hex(self.ids.new_id().as_bytes());
         let sealed = SealedPreview::seal(
             bundle,
@@ -1759,6 +1757,7 @@ impl LibrarySetup {
                     replaces: None,
                     outputs: Vec::new(),
                     removals,
+                    sealed: None,
                 },
             });
         }
@@ -2005,6 +2004,7 @@ impl LibrarySetup {
                     replaces: None,
                     outputs: Vec::new(),
                     removals,
+                    sealed: None,
                 },
             });
         }
@@ -2021,15 +2021,14 @@ impl LibrarySetup {
         docs: BTreeMap<String, TagDocument>,
     ) -> Result<AppliedBundle, ServiceError> {
         let open = cell.open().map_err(publish_error)?;
-        let catalog_revision = open.publisher.catalog_revision().map_err(publish_error)?;
-        let bundle = PlanBundle {
+        let mut bundle = PlanBundle {
             id: self.ids.new_id(),
             items: plan_items,
             profile_revision: PINNED_REVISION,
             naming_revision: PINNED_REVISION,
             policy_revision: policy_revision_u64(&self.live_registry()),
-            catalog_revision,
         };
+        super::publish::planner::seal_rows(&self.db, &mut bundle).map_err(publish_error)?;
         // Restoration bundles re-run the dry-run gates: a restore
         // onto an occupied path blocks instead of overwriting.
         CollisionGate::check_bundle(&open.sandbox, &bundle).map_err(publish_error)?;

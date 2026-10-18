@@ -25,7 +25,8 @@ use publish::paths::Root;
 use publish::place::{PlacementMode, Seams};
 use publish::planner::{
     Capability, CapabilityGate, CollisionGate, FileFingerprint, PlanBundle, PlanItem, PlanKind,
-    ReleaseIdentity, SealError, SealRecheck, SealedPreview, SidecarPlan, SpaceProbe, TrackMapping,
+    ReleaseIdentity, SealError, SealRecheck, SealedPreview, SealedRow, SidecarPlan, SpaceProbe,
+    TrackMapping,
 };
 use publish::recovery::reconcile_with_seams;
 use publish::snapshots::{BaselineStore, BlobStore, SnapshotStore, sha256_hex};
@@ -50,7 +51,6 @@ const CATALOG_TRACKS: [(&str, &str); 4] = [
     ("t", "s.flac"),
 ];
 
-/// A migrated scratch database with the test tracks in the catalog.
 /// The catalog revision a fresh fixture database starts at (migrations
 /// may move it), so bundles plan against the real value.
 fn db_catalog_revision(fix: &Fixture) -> u64 {
@@ -70,6 +70,8 @@ fn start_revision() -> u64 {
     db_catalog_revision(&fixture("start-revision"))
 }
 
+/// A migrated scratch database with the test tracks in the catalog, and
+/// the album and track identities [`test_identity`] names.
 fn scratch_db(dir: &std::path::Path) -> PathBuf {
     let db_path = dir.join("app.db");
     crate::common::migrated_db(&db_path);
@@ -90,7 +92,21 @@ fn scratch_db(dir: &std::path::Path) -> PathBuf {
             rusqlite::params![id, rel],
         )
         .unwrap();
+        conn.execute(
+            "INSERT INTO local_track_external_identities (local_track_id, provider, \
+             recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at, \
+             row_revision) VALUES (?1, 'musicbrainz', 'rec-1', 'release-1', 'rt-1', 'manual', \
+             0, 4)",
+            [id],
+        )
+        .unwrap();
     }
+    conn.execute_batch(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+         VALUES ('album', 'musicbrainz', 'rg-1', 'release-1', 'manual', 0, 9);",
+    )
+    .unwrap();
     db_path
 }
 
@@ -233,6 +249,14 @@ fn plan_item(
         replaces: None,
         outputs: Vec::new(),
         removals: Vec::new(),
+        sealed: Some(SealedRow {
+            album_id: "album".to_string(),
+            stat_revision: "0:0".to_string(),
+            album_release_group_mbid: "rg-1".to_string(),
+            album_release_mbid: Some("release-1".to_string()),
+            recording_mbid: Some("rec-1".to_string()),
+            release_track_mbid: Some("rt-1".to_string()),
+        }),
     }
 }
 
@@ -265,7 +289,6 @@ fn two_track_bundle(fix: &Fixture, kind: PlanKind) -> (PlanBundle, BTreeMap<Stri
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
-        catalog_revision: db_catalog_revision(fix),
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-a".to_string(), TagDocument::empty());
@@ -290,7 +313,6 @@ fn seal(bundle: &PlanBundle) -> (SealedPreview, SealRecheck) {
         profile_revision: bundle.profile_revision,
         naming_revision: bundle.naming_revision,
         policy_revision: bundle.policy_revision,
-        catalog_revision: bundle.catalog_revision,
         settings_revision: 11,
         today_day: 50,
         token_hash: "tok".to_string(),
@@ -1398,14 +1420,14 @@ fn recovery_finishes_an_unwind_that_stopped_between_rows() {
     let (sealed, live) = seal(&bundle);
     let second_dest = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
     let mut publisher = open_publisher(&fix);
-    // The catalog moves on while the files are placed, so the commit
-    // fails with both files published and both originals set aside.
+    // A scan rewrites track-b's row while the files are placed, so the
+    // commit fails with both files published and both originals set aside.
     let db_path = fix.db_path.clone();
     publisher.set_before_place(Some(Box::new(move |dest| {
         if dest == second_dest {
             let conn = droppedneedle_kernel::db::open_connection(&db_path).unwrap();
             conn.execute(
-                "UPDATE library_catalog_revision SET value = value + 1 WHERE singleton = 1",
+                "UPDATE local_tracks SET stat_revision = '1:1' WHERE id = 'track-b'",
                 [],
             )
             .unwrap();
@@ -1979,7 +2001,6 @@ fn generated_files_land_and_go_away_journaled() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
-        catalog_revision: db_catalog_revision(&fix),
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-a".to_string(), TagDocument::empty());
@@ -2011,7 +2032,6 @@ fn generated_files_land_and_go_away_journaled() {
     let bundle = PlanBundle {
         id: "bundle-undo".to_string(),
         items: vec![item],
-        catalog_revision: db_catalog_revision(&fix),
         ..bundle
     };
     let (sealed, live) = seal(&bundle);
@@ -2065,7 +2085,6 @@ fn interrupted_generated_put_back_is_finished_by_recovery() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
-        catalog_revision: db_catalog_revision(&fix),
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-a".to_string(), TagDocument::empty());
@@ -2184,7 +2203,6 @@ fn unknown_empty_and_multivalued_tags_survive_apply() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
-        catalog_revision: db_catalog_revision(&fix),
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-s".to_string(), before);
@@ -2509,19 +2527,32 @@ fn snapshots_expire_baselines_stay_and_blobs_dedup() {
 // --- Publish hardening briefs: seal coverage, gate strictness, 4xx path
 // hygiene, symlink refusal, resume backups, MP3 frame survival. ---
 
+/// An item that moves a library track but was never sealed against its
+/// rows is refused before anything is recorded or staged.
 #[test]
-fn seal_rejects_stale_catalog() {
-    let fix = fixture("stale-catalog");
-    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
-    let (sealed, mut live) = seal(&bundle);
-    live.catalog_revision = 9;
+fn seal_refuses_an_unsealed_item() {
+    let fix = fixture("unsealed-item");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    bundle.items[0].sealed = None;
+    let (sealed, live) = seal(&bundle);
     let mut publisher = open_publisher(&fix);
     let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
     assert!(matches!(err, PublishError::Validation(_)), "got {err:?}");
-    assert!(matches!(
-        sealed.recheck(&live),
-        Err(SealError::StaleCatalog(_))
-    ));
+    let conn = open_db(&fix);
+    assert!(
+        JournalStore::new(&conn)
+            .bundle("bundle-1")
+            .unwrap()
+            .is_empty()
+    );
+    let operations: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM library_publish_operations WHERE bundle_id = 'bundle-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(operations, 0);
 }
 
 #[test]
@@ -2859,7 +2890,6 @@ fn retag_bundle(
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
-        catalog_revision: db_catalog_revision(fix),
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-s".to_string(), TagDocument::empty());
@@ -2882,7 +2912,6 @@ fn a_240_byte_file_name_is_published_and_retagged() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
-        catalog_revision: db_catalog_revision(&fix),
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-s".to_string(), TagDocument::empty());
@@ -3078,6 +3107,12 @@ fn id3_inject_frames(path: &std::path::Path, frames: &[(&str, &[u8])]) {
 #[test]
 fn mp3_unknown_frames_survive_publish_staging() {
     let fix = fixture("preserve-mp3");
+    open_db(&fix)
+        .execute(
+            "UPDATE local_tracks SET relative_path = 'staging/s.mp3' WHERE id = 'track-s'",
+            [],
+        )
+        .unwrap();
     let source = fix.sandbox.resolve("music", "staging/s.mp3").unwrap();
     std::fs::create_dir_all(source.parent().unwrap()).unwrap();
     std::fs::copy(fixtures_dir().join("management_full.mp3"), &source).unwrap();
@@ -3105,7 +3140,6 @@ fn mp3_unknown_frames_survive_publish_staging() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
-        catalog_revision: db_catalog_revision(&fix),
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-s".to_string(), TagDocument::empty());

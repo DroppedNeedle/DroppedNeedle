@@ -2344,6 +2344,106 @@ async fn baseline_restore_removes_fields_added_later() {
     assert_eq!(read_fields(&file).expect("fields read"), before);
 }
 
+/// A publish is checked against its own rows, not the catalog counter: a
+/// scan that only adds another album leaves a sealed preview good, and a
+/// change to the previewed track's own row refuses it before anything is
+/// recorded or staged.
+#[tokio::test]
+async fn a_publish_checks_its_own_rows() {
+    use droppedneedle_library::manage::PreviewItemInput;
+    use droppedneedle_library::publish::planner::PlanKind;
+    use droppedneedle_library::service::ServiceError;
+    use droppedneedle_library::tags::{TagField, read_fields};
+
+    let (scratch, library, music) = bare_library("lib-own-rows").await;
+    let file = plant(&music, "album/01.flac", "management_full.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "album/01.flac")
+        .unwrap()
+        .expect("track indexed");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    approve_first_candidate(&library, &scratch.identify, &album).await;
+    let counter = || {
+        library
+            .db
+            .query_i64("SELECT value FROM library_catalog_revision WHERE singleton = 1")
+            .expect("counter reads")
+    };
+    let preview = |date: &str| {
+        library
+            .plan_preview(
+                PlanKind::SamePath,
+                &album,
+                vec![PreviewItemInput {
+                    root_id: "music".to_owned(),
+                    rel_path: "album/01.flac".to_owned(),
+                    dest_rel: None,
+                    managed_updates: [("date".to_owned(), vec![date.to_owned()])].into(),
+                }],
+            )
+            .expect("preview seals")
+    };
+
+    // Another album arriving moves the counter, not this preview's rows.
+    let sealed = preview("2001");
+    plant(&music, "other/01.flac", "flac_full_01.flac");
+    rescan(&library).await;
+    assert!(
+        library
+            .scan_store
+            .track_at("music", "other/01.flac")
+            .unwrap()
+            .is_some(),
+        "the other album is indexed"
+    );
+    let after_scan = counter();
+    library
+        .apply_preview(&sealed.token, None)
+        .expect("a scan of another album leaves the preview good");
+    assert_eq!(
+        read_fields(&file).expect("fields read")[&TagField::Date],
+        vec!["2001".to_owned()]
+    );
+    assert!(counter() > after_scan, "the commit still bumps the counter");
+
+    // A change to the track's own row refuses the preview at the pregate.
+    rescan(&library).await;
+    let sealed = preview("2002");
+    let bytes = std::fs::read(&file).expect("file reads");
+    std::fs::File::options()
+        .write(true)
+        .open(&file)
+        .expect("file opens")
+        .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(3600))
+        .expect("mtime moves");
+    rescan(&library).await;
+    match library.apply_preview(&sealed.token, None) {
+        Err(ServiceError::Conflict { message }) => {
+            assert_eq!(message, format!("track {track} changed under the preview"));
+        }
+        Err(other) => panic!("expected a 409, got {other}"),
+        Ok(_) => panic!("expected a 409, the preview applied"),
+    }
+    assert_eq!(
+        library
+            .db
+            .query_i64(&format!(
+                "SELECT COUNT(*) FROM library_publish_operations WHERE bundle_id = '{}'",
+                sealed.bundle_id
+            ))
+            .expect("count reads"),
+        0,
+        "the pregate refuses before the operation is recorded"
+    );
+    assert_eq!(std::fs::read(&file).expect("file reads"), bytes);
+}
+
 /// A release document answers to its merged ids through their own rows,
 /// and a refetch by the canonical id (no redirect, so no merged ids)
 /// replaces every row and still answers to them.

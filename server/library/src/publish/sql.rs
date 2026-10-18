@@ -5,7 +5,7 @@ droppedneedle_kernel::sql! {
     /// One journal row with the file it replaces, if any.
     pub(super) fragment JOURNAL_ROWS = "SELECT j.id, j.bundle_id, j.kind, j.source_root, \
              j.source_rel, j.dest_root, j.dest_rel, j.staged, j.backup, j.source_sha256, \
-             j.staged_sha256, j.track_id, j.catalog_revision, j.mgmt_state, j.state, j.seq, \
+             j.staged_sha256, j.track_id, j.mgmt_state, j.state, j.seq, \
              r.replaced_rel, r.replaced_sha256, r.replaced_track_id, r.recycle_to \
              FROM library_publish_journal j \
              LEFT JOIN library_publish_replacements r ON r.journal_id = j.id";
@@ -18,8 +18,8 @@ droppedneedle_kernel::sql! {
     /// A fresh intent.
     pub(super) JOURNAL_INSERT = "INSERT INTO library_publish_journal \
              (id, bundle_id, kind, source_root, source_rel, dest_root, dest_rel, staged, backup, \
-             source_sha256, staged_sha256, track_id, catalog_revision, mgmt_state, state, seq) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 0)";
+             source_sha256, staged_sha256, track_id, mgmt_state, state, seq) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 0)";
     /// The file a fresh intent replaces.
     pub(super) REPLACEMENT_INSERT = "INSERT INTO library_publish_replacements \
              (journal_id, replaced_rel, replaced_sha256, replaced_track_id, recycle_to) \
@@ -49,6 +49,20 @@ droppedneedle_kernel::sql! {
              WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention'))";
     /// Every hidden name the journal records.
     pub(super) JOURNAL_NAMES = "SELECT staged, backup FROM library_publish_journal";
+    /// The catalog rows a publish is checked against, for the track ids in
+    /// the JSON array `?1`: each track's place, availability, stat
+    /// revision and album, with its album's and its own MusicBrainz
+    /// identity.
+    pub(super) OWN_ROWS = "SELECT t.id, t.root_id, t.relative_path, t.availability, \
+             t.stat_revision, t.local_album_id, \
+             ai.row_revision, ai.release_group_mbid, ai.release_mbid, \
+             ti.row_revision, ti.recording_mbid, ti.release_track_mbid \
+             FROM local_tracks t \
+             LEFT JOIN local_album_external_identities ai \
+             ON ai.local_album_id = t.local_album_id AND ai.provider = 'musicbrainz' \
+             LEFT JOIN local_track_external_identities ti \
+             ON ti.local_track_id = t.id AND ti.provider = 'musicbrainz' \
+             WHERE t.id IN (SELECT value FROM json_each(?1))";
     /// Record one operation, made at `?4` (unix milliseconds).
     pub(super) OPERATION_INSERT = "INSERT OR IGNORE INTO library_publish_operations \
              (bundle_id, bundle_json, created_day, created_at, applied_by_user_id) \

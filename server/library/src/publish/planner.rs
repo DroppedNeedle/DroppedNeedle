@@ -2,10 +2,10 @@
 //!
 //! Planning pins everything Apply needs: per-file source stat and
 //! content hashes, the desired metadata, capability results, exact
-//! destination collision keys, and the settings/policy/catalog
-//! revisions. Planning never mutates library files; it only writes
-//! management metadata, content-addressed blobs, plan rows, and
-//! operation state.
+//! destination collision keys, the settings and policy revisions, and
+//! each moved track's catalog rows (see [`seal_rows`]). Planning never
+//! mutates library files; it only writes management metadata,
+//! content-addressed blobs, plan rows, and operation state.
 //!
 //! Manual Apply consumes the exact sealed preview and rejects stale
 //! file, identity, profile, or policy state. Automatic work additionally
@@ -161,6 +161,10 @@ pub struct PlanItem {
     /// while it still holds the bytes that run wrote.
     #[serde(default)]
     pub removals: Vec<GeneratedOutput>,
+    /// The catalog rows the item was sealed against. Every item but an
+    /// adoption has one by the time it publishes; one without is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sealed: Option<SealedRow>,
 }
 
 /// A file generated from no source (see [`PlanItem::outputs`]).
@@ -296,8 +300,165 @@ pub struct PlanBundle {
     pub naming_revision: u64,
     /// Global typed-library policy revision.
     pub policy_revision: u64,
-    /// Catalog revision the plan was built against.
-    pub catalog_revision: u64,
+}
+
+/// The catalog rows a moved or retagged item was sealed against, beside
+/// what [`PlanItem`] already pins (its source place and identity
+/// revisions). The identity values are the album identity row's and the
+/// track mapping row's as the seal read them; the mapping values are
+/// `None` when the track has no mapping row.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SealedRow {
+    pub album_id: String,
+    pub stat_revision: String,
+    pub album_release_group_mbid: String,
+    pub album_release_mbid: Option<String>,
+    pub recording_mbid: Option<String>,
+    pub release_track_mbid: Option<String>,
+}
+
+/// Everything a commit checks one sealed track's rows against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitSeal {
+    pub source_root: String,
+    pub source_rel: String,
+    pub album_identity_revision: u64,
+    pub mapping_revision: u64,
+    pub row: SealedRow,
+}
+
+impl PlanItem {
+    /// What the commit checks this item against; `None` for an adoption,
+    /// or an item that was never sealed (which the check refuses).
+    pub fn commit_seal(&self) -> Option<CommitSeal> {
+        let row = self.sealed.clone()?;
+        Some(CommitSeal {
+            source_root: self.source_root.clone(),
+            source_rel: self.source_rel.clone(),
+            album_identity_revision: self.identity.album_identity_revision,
+            mapping_revision: self.identity.mapping_revision,
+            row,
+        })
+    }
+}
+
+/// One track's catalog rows as they are now.
+struct OwnRow {
+    root_id: String,
+    relative_path: String,
+    availability: String,
+    stat_revision: String,
+    album_id: String,
+    album_revision: Option<i64>,
+    album_release_group_mbid: Option<String>,
+    album_release_mbid: Option<String>,
+    mapping_revision: Option<i64>,
+    recording_mbid: Option<String>,
+    release_track_mbid: Option<String>,
+}
+
+/// The current rows of `track_ids`, by id, in one read. A track with no
+/// row is absent.
+fn own_rows<'a>(
+    conn: &rusqlite::Connection,
+    track_ids: impl Iterator<Item = &'a str>,
+) -> Result<BTreeMap<String, OwnRow>, PublishError> {
+    let ids = serde_json::to_string(&track_ids.collect::<Vec<_>>())?;
+    let mut stmt = conn.prepare_cached(super::sql::OWN_ROWS.text())?;
+    let rows = stmt.query_map([ids], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            OwnRow {
+                root_id: row.get(1)?,
+                relative_path: row.get(2)?,
+                availability: row.get(3)?,
+                stat_revision: row.get(4)?,
+                album_id: row.get(5)?,
+                album_revision: row.get(6)?,
+                album_release_group_mbid: row.get(7)?,
+                album_release_mbid: row.get(8)?,
+                mapping_revision: row.get(9)?,
+                recording_mbid: row.get(10)?,
+                release_track_mbid: row.get(11)?,
+            },
+        ))
+    })?;
+    let mut out = BTreeMap::new();
+    for row in rows {
+        let (id, row) = row?;
+        out.insert(id, row);
+    }
+    Ok(out)
+}
+
+/// Seal every item that moves or retags a library track (every item but
+/// an adoption) against its catalog rows as they are now. A track that is
+/// no longer indexed at the item's source, or whose album has no
+/// MusicBrainz identity, fails the seal.
+pub fn seal_rows(
+    db: &droppedneedle_kernel::db::Db,
+    bundle: &mut PlanBundle,
+) -> Result<(), PublishError> {
+    let sealing = || bundle.items.iter().filter(|item| item.adopt.is_none());
+    let current = db.read_blocking("publish.seal_rows", |conn| {
+        own_rows(conn, sealing().map(|item| item.track_id.as_str()))
+    })?;
+    for item in bundle.items.iter_mut().filter(|item| item.adopt.is_none()) {
+        let changed = || {
+            PublishError::Validation(format!("Track {} changed under the preview", item.track_id))
+        };
+        let row = current.get(&item.track_id).ok_or_else(changed)?;
+        if row.root_id != item.source_root
+            || row.relative_path != item.source_rel
+            || row.availability != "indexed"
+        {
+            return Err(changed());
+        }
+        let album_release_group_mbid = row.album_release_group_mbid.clone().ok_or_else(changed)?;
+        item.sealed = Some(SealedRow {
+            album_id: row.album_id.clone(),
+            stat_revision: row.stat_revision.clone(),
+            album_release_group_mbid,
+            album_release_mbid: row.album_release_mbid.clone(),
+            recording_mbid: row.recording_mbid.clone(),
+            release_track_mbid: row.release_track_mbid.clone(),
+        });
+    }
+    Ok(())
+}
+
+/// The first of `tracks` whose rows moved since its seal, read on `conn`:
+/// the publish pregate's read, or the commit's own transaction. A track
+/// with no seal counts as moved.
+pub(crate) fn first_moved<'a>(
+    conn: &rusqlite::Connection,
+    tracks: &[(&'a str, Option<&CommitSeal>)],
+) -> Result<Option<&'a str>, PublishError> {
+    let current = own_rows(conn, tracks.iter().map(|(id, _)| *id))?;
+    for (track_id, seal) in tracks {
+        let unchanged = match (seal, current.get(*track_id)) {
+            (Some(seal), Some(row)) => {
+                let mapping = (seal.mapping_revision != 0).then_some(seal.mapping_revision as i64);
+                row.root_id == seal.source_root
+                    && row.relative_path == seal.source_rel
+                    && row.availability == "indexed"
+                    && row.stat_revision == seal.row.stat_revision
+                    && row.album_id == seal.row.album_id
+                    && row.album_revision == Some(seal.album_identity_revision as i64)
+                    && row.album_release_group_mbid.as_deref()
+                        == Some(seal.row.album_release_group_mbid.as_str())
+                    && row.album_release_mbid == seal.row.album_release_mbid
+                    && row.mapping_revision == mapping
+                    && row.recording_mbid == seal.row.recording_mbid
+                    && row.release_track_mbid == seal.row.release_track_mbid
+            }
+            _ => false,
+        };
+        if !unchanged {
+            return Ok(Some(track_id));
+        }
+    }
+    Ok(None)
 }
 
 /// Capability gate: unsupported format/field combinations hard-block
@@ -697,8 +858,6 @@ pub enum SealError {
     StaleProfile(String),
     /// Policy (root assignment, triggers, retention) changed.
     StalePolicy(String),
-    /// Catalog moved under the preview.
-    StaleCatalog(String),
     /// Wrong confirmation token.
     BadToken,
     /// Preview expired.
@@ -720,8 +879,6 @@ pub struct SealRecheck {
     pub naming_revision: u64,
     /// Current global policy revision.
     pub policy_revision: u64,
-    /// Current catalog revision.
-    pub catalog_revision: u64,
     /// Current settings revision.
     pub settings_revision: u64,
     /// Today as a unix day.
@@ -763,9 +920,6 @@ impl SealedPreview {
         }
         if live.policy_revision != self.bundle.policy_revision {
             return Err(SealError::StalePolicy("policy revision moved".into()));
-        }
-        if live.catalog_revision != self.bundle.catalog_revision {
-            return Err(SealError::StaleCatalog("catalog revision moved".into()));
         }
         for item in self.bundle.items.iter() {
             match live.fingerprints.get(&item.track_id) {

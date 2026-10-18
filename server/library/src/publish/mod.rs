@@ -38,8 +38,9 @@
 //!   between two files is resolved per journal by comparing staged,
 //!   destination, source, and backup fingerprints, never by assuming
 //!   path existence means ownership. Journal: `staged -> published`.
-//! - **Catalog commit** is one SQLite transaction guarded by
-//!   compare-and-swap on catalog and subject revisions. Journal:
+//! - **Catalog commit** is one SQLite transaction that first checks
+//!   each moved track's own rows (place, availability, stat revision,
+//!   album and identity) are still as sealed. Journal:
 //!   `published -> committed`. A crash between the last rename and the
 //!   commit resumes the commit only when every destination still holds
 //!   the exact staged bytes.
@@ -154,7 +155,8 @@ pub enum PublishError {
     /// policy no longer match the sealed preview.
     #[error("validation: {0}")]
     Validation(String),
-    /// Catalog-commit gate: the compare-and-swap transaction failed.
+    /// Catalog-commit gate: the bundle's own rows moved since its seal,
+    /// or the commit transaction refused a row.
     #[error("catalog commit: {0}")]
     Catalog(String),
     /// Cleanup gate: post-commit source/backup removal failed. The

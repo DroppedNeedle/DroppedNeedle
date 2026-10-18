@@ -23,8 +23,8 @@ use super::journal::{
 use super::paths::Sandbox;
 use super::place::Original;
 use super::planner::{
-    AlbumJoin, CapabilityGate, CollisionGate, DiskPreflight, JoinedTrack, PlanBundle, PlanKind,
-    SealError, SealRecheck, SealedPreview, SpaceProbe,
+    AlbumJoin, CapabilityGate, CollisionGate, CommitSeal, DiskPreflight, JoinedTrack, PlanBundle,
+    PlanKind, SealError, SealRecheck, SealedPreview, SpaceProbe,
 };
 use super::snapshots::{BlobStore, SnapshotStore, sha256_hex};
 use super::tags_seam::TagDocument;
@@ -59,6 +59,9 @@ pub struct TrackCommit {
     /// What an adopted file indexes as, read from the published file
     /// before the commit's transaction by [`read_adopted`].
     pub indexed: Option<crate::scan::store::CommitIndexedItem>,
+    /// The rows a track that is not adopted was sealed against. The commit
+    /// refuses the bundle when they moved, or when there is no seal.
+    pub sealed: Option<CommitSeal>,
 }
 
 /// Management-state prefix journals carry for files a commit adds to the
@@ -79,9 +82,6 @@ fn mgmt_state_for(adopt: bool, profile_revision: u64) -> String {
 pub struct BundleCommit {
     /// Bundle id for history and invalidation.
     pub bundle_id: String,
-    /// Catalog revision the plan was built against; the commit
-    /// compare-and-swaps on it.
-    pub expected_catalog_revision: u64,
     /// Track adoptions in this bundle.
     pub tracks: Vec<TrackCommit>,
 }
@@ -100,11 +100,12 @@ pub trait Catalog {
         conn: &Connection,
         track_id: &str,
     ) -> Result<Option<(String, String, String, String)>, PublishError>;
-    /// Commit one bundle: CAS on the expected revision, move every track
-    /// row (and its album's root) to its published location, bump the
-    /// catalog once. Track and album ids stay as they are. Files an
-    /// import fetched for a library album join it, and are placed on its
-    /// edition in the same transaction.
+    /// Commit one bundle: check every moved track's rows are still as
+    /// sealed, move every track row (and its album's root) to its
+    /// published location, and bump the catalog revision once. Track and
+    /// album ids stay as they are. Files an import fetched for a library
+    /// album join it, and are placed on its edition in the same
+    /// transaction.
     fn commit_bundle(&self, tx: &Durable<'_>, commit: &BundleCommit) -> Result<(), PublishError>;
     /// Mark a track missing so streaming and search stay accurate when
     /// committed bytes cannot be recovered.
@@ -129,8 +130,8 @@ fn now_secs() -> f64 {
 
 /// The application catalog: `local_tracks` holds where a track lives,
 /// `library_track_management_state` what the publisher last wrote, and
-/// `library_catalog_revision` the compare-and-swap counter (the same one
-/// read caches key on, so a commit invalidates them).
+/// `library_catalog_revision` a change counter every commit bumps once
+/// (read caches key on it, so a commit invalidates them).
 #[derive(Debug, Clone, Default)]
 pub struct SqliteCatalog;
 
@@ -171,14 +172,28 @@ impl Catalog for SqliteCatalog {
 
     fn commit_bundle(&self, tx: &Durable<'_>, commit: &BundleCommit) -> Result<(), PublishError> {
         let conn: &Connection = tx;
+        // The bundle's own rows, read in this transaction: a scan or an
+        // identification that changed one since the seal refuses the
+        // whole bundle before any row moves. Adoptions have no rows yet.
+        let sealed: Vec<(&str, Option<&CommitSeal>)> = commit
+            .tracks
+            .iter()
+            .filter(|track| track.adopt.is_none())
+            .map(|track| (track.track_id.as_str(), track.sealed.as_ref()))
+            .collect();
+        if let Some(moved) = super::planner::first_moved(conn, &sealed)? {
+            return Err(PublishError::Catalog(format!(
+                "track {moved} changed under bundle {}",
+                commit.bundle_id
+            )));
+        }
         let changed = conn.execute(
-            "UPDATE library_catalog_revision SET value = value + 1
-             WHERE singleton = 1 AND value = ?1",
-            rusqlite::params![commit.expected_catalog_revision as i64],
+            "UPDATE library_catalog_revision SET value = value + 1 WHERE singleton = 1",
+            [],
         )?;
         if changed != 1 {
             return Err(PublishError::Catalog(format!(
-                "catalog moved under bundle {}",
+                "no catalog revision to bump for bundle {}",
                 commit.bundle_id
             )));
         }
@@ -785,14 +800,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         self.before_set_aside = hook;
     }
 
-    /// The catalog revision a bundle plans against, read on the request
-    /// pool before anything is written.
-    pub fn catalog_revision(&self) -> Result<u64, PublishError> {
-        self.db.read_blocking("publish.catalog_revision", |conn| {
-            self.catalog.revision(conn)
-        })
-    }
-
     /// Publish one sealed bundle through prepare, publish, catalog
     /// commit, and cleanup. `docs` carries the current semantic tag
     /// document per track id for the staged writer seam.
@@ -874,12 +881,23 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             SealError::StaleProfile(text) | SealError::StalePolicy(text) => {
                 PublishError::Validation(text)
             }
-            SealError::StaleCatalog(text) => PublishError::Validation(text),
             SealError::BadToken => PublishError::Validation("bad confirmation token".into()),
             SealError::Expired => PublishError::Validation("preview expired".into()),
         })?;
         let items = &sealed.bundle.items;
+        let seals: Vec<Option<CommitSeal>> = items.iter().map(|item| item.commit_seal()).collect();
+        let checked: Vec<(&str, Option<&CommitSeal>)> = items
+            .iter()
+            .zip(&seals)
+            .filter(|(item, _)| item.adopt.is_none())
+            .map(|(item, seal)| (item.track_id.as_str(), seal.as_ref()))
+            .collect();
         let facts = self.db.read_blocking("publish.pregates", |conn| {
+            if let Some(moved) = super::planner::first_moved(conn, &checked)? {
+                return Err(PublishError::Validation(format!(
+                    "track {moved} changed under the preview"
+                )));
+            }
             let journals = JournalStore::new(conn);
             let baselines = super::snapshots::BaselineStore::new(conn);
             items
@@ -997,7 +1015,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 source_sha256: Some(item.fingerprint.sha256.clone()),
                 staged_sha256: staged_sha.clone(),
                 track_id: Some(item.track_id.clone()),
-                catalog_revision: Some(bundle.catalog_revision as i64),
                 mgmt_state: Some(mgmt_state_for(
                     item.adopt.is_some(),
                     bundle.profile_revision,
@@ -1203,7 +1220,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             source_sha256: Some(sidecar.fingerprint.sha256.clone()),
             staged_sha256: sha256_hex(&bytes),
             track_id: None,
-            catalog_revision: Some(bundle.catalog_revision as i64),
             mgmt_state: None,
             state: JournalState::Prepared,
             seq: 0,
@@ -1253,7 +1269,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             source_sha256: None,
             staged_sha256: output.sha256.clone(),
             track_id: None,
-            catalog_revision: Some(bundle.catalog_revision as i64),
             mgmt_state: None,
             state: JournalState::Prepared,
             seq: 0,
@@ -1293,7 +1308,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             source_sha256: Some(removal.sha256.clone()),
             staged_sha256: removal.sha256.clone(),
             track_id: None,
-            catalog_revision: Some(bundle.catalog_revision as i64),
             mgmt_state: None,
             state: JournalState::Prepared,
             seq: 0,
@@ -1479,7 +1493,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         self.journal_published(&journal.id)
     }
 
-    /// Single durable transaction: catalog CAS plus every journal
+    /// Single durable transaction: the catalog commit plus every journal
     /// `published -> committed`. The adopted files are read before it.
     fn commit(&mut self, bundle: &PlanBundle, staged: &[PreparedFile]) -> Result<(), PublishError> {
         let mut tracks = Vec::with_capacity(staged.len());
@@ -1509,12 +1523,12 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                         .map(|track| (track, replaced.recycle_to.clone()))
                 }),
                 indexed: None,
+                sealed: item.commit_seal(),
             });
         }
         read_adopted(&mut tracks)?;
         let commit = BundleCommit {
             bundle_id: bundle.id.clone(),
-            expected_catalog_revision: bundle.catalog_revision,
             tracks,
         };
         durable(&self.db, "publish.bundle_commit", |tx| {

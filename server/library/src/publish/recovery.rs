@@ -408,13 +408,16 @@ fn reconcile_bundle<C: Catalog>(
     // placed so far come off and their originals go home.
     let mut refused = None;
     let resumeable = evidence.resumeable && !unwinding;
-    if resumeable && !staged_in_full(bundle_id, operation.as_deref(), &journals) {
+    let recorded = resumeable
+        .then(|| staged_in_full(bundle_id, operation.as_deref(), &journals))
+        .flatten();
+    if resumeable && recorded.is_none() {
         tracing::warn!(
             bundle_id,
             "publish bundle stopped before every file staged; unwinding it"
         );
-    } else if resumeable {
-        match resume_precommit(db, sandbox, catalog, bundle_id, &journals, seams)? {
+    } else if let Some(recorded) = recorded {
+        match resume_precommit(db, sandbox, catalog, &recorded, &journals, seams)? {
             None => return Ok(RecoveryAction::ResumedCommitted),
             Some(reason) => {
                 tracing::warn!(bundle_id, reason, "publish bundle unwound after its resume");
@@ -436,34 +439,37 @@ fn reconcile_bundle<C: Catalog>(
     )
 }
 
-/// Whether every row `prepare` writes for the bundle exists and is past
-/// `Prepared` (its temp written and its before-state kept). A bundle that
-/// stopped partway through staging can look complete on disk, so only
-/// its recorded operation (`operation`, its JSON) can tell; one with no
-/// record, or one that no longer decodes, is treated as partial.
-fn staged_in_full(bundle_id: &str, operation: Option<&str>, journals: &[FileJournal]) -> bool {
-    let Some(json) = operation else {
-        return false;
-    };
+/// The recorded bundle, when every row `prepare` writes for it exists and
+/// is past `Prepared` (its temp written and its before-state kept). A
+/// bundle that stopped partway through staging can look complete on disk,
+/// so only its recorded operation (`operation`, its JSON) can tell; one
+/// with no record, or one that no longer decodes, is treated as partial.
+fn staged_in_full(
+    bundle_id: &str,
+    operation: Option<&str>,
+    journals: &[FileJournal],
+) -> Option<super::planner::PlanBundle> {
+    let json = operation?;
     let bundle: super::planner::PlanBundle = match serde_json::from_str(json) {
         Ok(bundle) => bundle,
         // Unwinding is always safe before a commit; a record that no
         // longer decodes must not hold the bundle's tracks forever.
         Err(error) => {
             tracing::warn!(bundle_id, %error, "recorded operation does not decode");
-            return false;
+            return None;
         }
     };
     if journals
         .iter()
         .any(|journal| journal.state == JournalState::Prepared)
     {
-        return false;
+        return None;
     }
     let present: BTreeSet<&str> = journals.iter().map(|journal| journal.id.as_str()).collect();
     super::publisher::journal_ids(&bundle)
         .iter()
         .all(|id| present.contains(id.as_str()))
+        .then_some(bundle)
 }
 
 /// Whether an earlier unwind found no safe way to put a file back: a
@@ -695,19 +701,23 @@ fn record_published(db: &Db, journal_id: &str, from: JournalState) -> Result<(),
 }
 
 /// Finish a pre-commit bundle: complete any missing renames, then run
-/// the pinned catalog transaction. Journals already past their rename
-/// (destination holds staged bytes while the row still says staged)
-/// transition forward without a second rename. `Some(reason)` when a file
+/// the catalog transaction, checked against the seals in the bundle's
+/// recorded operation (`recorded`). A moved track with no seal there (an
+/// operation recorded before seals were) is refused, and the bundle
+/// unwinds. Journals already past their rename (destination holds staged
+/// bytes while the row still says staged) transition forward without a
+/// second rename. `Some(reason)` when a file
 /// was refused: nothing more is placed and the caller unwinds the bundle.
 /// `seams` is the default outside tests.
 fn resume_precommit<C: Catalog>(
     db: &Db,
     sandbox: &Sandbox,
     catalog: &C,
-    bundle_id: &str,
+    recorded: &super::planner::PlanBundle,
     journals: &[FileJournal],
     seams: Seams,
 ) -> Result<Option<String>, PublishError> {
+    let bundle_id = recorded.id.as_str();
     for journal in journals {
         if journal.state.is_terminal()
             || matches!(
@@ -725,7 +735,6 @@ fn resume_precommit<C: Catalog>(
         JournalStore::new(conn).bundle(bundle_id)
     })?;
     let mut tracks = Vec::new();
-    let mut expected_revision: Option<u64> = None;
     for journal in refreshed.iter() {
         if journal.state != JournalState::Published {
             return Err(PublishError::Journal(format!(
@@ -734,12 +743,9 @@ fn resume_precommit<C: Catalog>(
                 journal.state.as_str()
             )));
         }
-        if let (Some(track_id), Some(rev), Some(mgmt)) = (
-            journal.track_id.as_deref(),
-            journal.catalog_revision,
-            journal.mgmt_state.as_deref(),
-        ) {
-            expected_revision.get_or_insert(rev as u64);
+        if let (Some(track_id), Some(mgmt)) =
+            (journal.track_id.as_deref(), journal.mgmt_state.as_deref())
+        {
             let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
             tracks.push(TrackCommit {
                 track_id: track_id.to_string(),
@@ -774,23 +780,21 @@ fn resume_precommit<C: Catalog>(
                         .map(|track| (track, replaced.recycle_to.clone()))
                 }),
                 indexed: None,
+                sealed: recorded
+                    .items
+                    .iter()
+                    .find(|item| item.track_id == track_id)
+                    .and_then(|item| item.commit_seal()),
             });
         }
     }
-    let expected = expected_revision
-        .ok_or_else(|| PublishError::Journal("bundle has no committable track".into()))?;
-    for journal in refreshed.iter() {
-        if let Some(rev) = journal.catalog_revision
-            && rev as u64 != expected
-        {
-            return Err(PublishError::Journal(
-                "bundle has mixed catalog revisions".into(),
-            ));
-        }
+    if tracks.is_empty() {
+        return Err(PublishError::Journal(
+            "bundle has no committable track".into(),
+        ));
     }
     let mut commit = BundleCommit {
         bundle_id: bundle_id.to_string(),
-        expected_catalog_revision: expected,
         tracks,
     };
     let committed = read_adopted(&mut commit.tracks).and_then(|()| {

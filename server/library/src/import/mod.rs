@@ -466,21 +466,17 @@ impl LibrarySetup {
                     replaces: None,
                     outputs: Vec::new(),
                     removals: Vec::new(),
+                    sealed: None,
                 });
             }
             write_provenance(&staged_dir, import, &bundle_id, &items)
                 .map_err(|error| fault(format!("import provenance not written: {error}")))?;
-            let catalog_revision = open
-                .publisher
-                .catalog_revision()
-                .map_err(|error| fault(error.to_string()))?;
             let bundle = PlanBundle {
                 id: bundle_id.clone(),
                 items,
                 profile_revision: PINNED_REVISION,
                 naming_revision: PINNED_REVISION,
                 policy_revision: super::manage::policy_revision_u64(&registry),
-                catalog_revision,
             };
             let token_hash = sha256_hex(bundle.id.as_bytes());
             let live = SealRecheck {
@@ -502,7 +498,6 @@ impl LibrarySetup {
                 profile_revision: PINNED_REVISION,
                 naming_revision: PINNED_REVISION,
                 policy_revision: bundle.policy_revision,
-                catalog_revision,
                 settings_revision: PINNED_REVISION,
                 today_day: today_day(),
                 token_hash: token_hash.clone(),
