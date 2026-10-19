@@ -39,7 +39,11 @@ from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.resilience.retry import CircuitOpenError
 from infrastructure.sse_publisher import SSEPublisher
 from models.acquisition_quality import AcquisitionQualitySnapshot
-from models.download_identity import SOURCE_SOULSEEK, soulseek_folder_identity
+from models.download_identity import (
+    SOURCE_SOULSEEK,
+    soulseek_folder_identity,
+    soulseek_identity,
+)
 from services.native.acquisition import quality as acq_quality
 from services.native.acquisition.scoring_core import (
     artist_words,
@@ -1865,6 +1869,21 @@ class DownloadOrchestrator:
                                 },
                             )
 
+                # Remote-queue exhaustion: a Soulseek peer that never started sending
+                # within ``queued_timeout`` keeps its place in the search pool - no
+                # import ran, so the per-file quarantine never fired. Without a row the
+                # next search (failover re-search, auto-retry, wanted sweep) re-picks the
+                # same peer by score and the task sits out the whole queued window again,
+                # never reaching the next peer or the next source. Block exactly the
+                # files we asked that peer for, RG-scoped like import quarantine, so a
+                # manual retry still clears them and other albums stay unaffected.
+                if (
+                    outcome == _OUT_QUEUED
+                    and task.source == SOURCE_SOULSEEK
+                    and not result.succeeded
+                ):
+                    await self._quarantine_queued_peer(task)
+
                 if local_fault:
                     preserved_result = ProcessResult(
                         succeeded=list(result.succeeded),
@@ -2589,6 +2608,38 @@ class DownloadOrchestrator:
         candidates = await self._store.get_search_job_candidates(task.search_job_id)
         if 0 <= task.candidate_index < len(candidates):
             tried.add(self._candidate_source_identity(candidates[task.candidate_index]))
+
+    async def _quarantine_queued_peer(self, task) -> None:  # noqa: ANN001 - DownloadTask
+        """Quarantine the exact (peer, file) identities of a transfer that timed out in
+        the peer's remote upload queue, so the scorers skip that copy on the next
+        search. Mirrors the per-file import quarantine (same identity, same RG scope,
+        same TTL); ``download_failed`` is the vocabulary for "never arrived"."""
+        try:
+            manifest = self._read_manifest(task.id)
+        except Exception:  # noqa: BLE001 - a missing manifest must not break failover
+            return
+        handle = manifest.handle
+        username = handle.username or task.source_username or ""
+        filenames = list(handle.filenames) or [f.filename for f in manifest.target_files]
+        if not username or not filenames:
+            return
+        for filename in filenames:
+            await self._store.record_quarantine(
+                source=SOURCE_SOULSEEK,
+                identity=soulseek_identity(username, filename),
+                reason="download_failed",
+                release_group_mbid=task.release_group_mbid,
+            )
+        logger.info(
+            "download.quarantined",
+            extra={
+                "task_id": task.id,
+                "source": SOURCE_SOULSEEK,
+                "reason": "queued_timeout",
+                "identity": username,
+                "files": len(filenames),
+            },
+        )
 
     async def _imported_track_count(self, task) -> int:  # noqa: ANN001 - DownloadTask
         """Distinct imported tracks for the release group. Counts distinct
