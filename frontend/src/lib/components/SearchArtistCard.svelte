@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Artist, EnrichmentSource } from '$lib/types';
 	import { artistHref } from '$lib/utils/entityRoutes';
+	import { imageMbid, isLocalOnlyRow } from '$lib/queries/search/SearchV3Adapters';
 	import { formatListenCount } from '$lib/utils/formatting';
 	import { getListenTitle } from '$lib/utils/enrichment';
 	import { Music2 } from 'lucide-svelte';
@@ -32,14 +33,14 @@
 	{/if}
 	<figure class="flex justify-center pt-4">
 		<ArtistImage
-			mbid={artist.local_id ?? artist.musicbrainz_id}
+			mbid={imageMbid(artist)}
 			alt={artist.title}
 			size="lg"
 			requestSize={250}
 			responsiveSizes="(max-width: 639px) 144px, 176px"
 			remoteUrl={artist.thumb_url ?? null}
 			source={artist.local_id ? 'local' : 'provider'}
-			available={artist.local_id ? artist.musicbrainz_id !== artist.local_id : true}
+			available={!isLocalOnlyRow(artist)}
 		/>
 	</figure>
 

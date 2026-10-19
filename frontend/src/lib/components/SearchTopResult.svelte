@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { coverSrc } from '$lib/api/covers';
+	import { albumArtworkPath, coverPath } from '$lib/api/covers';
 	import type { Artist, Album } from '$lib/types';
 	import { artistHref, albumHref } from '$lib/utils/entityRoutes';
+	import { imageMbid, isLocalOnlyRow } from '$lib/queries/search/SearchV3Adapters';
 	import HeroBackdrop from './HeroBackdrop.svelte';
 	import ArtistImage from './ArtistImage.svelte';
 	import AlbumImage from './AlbumImage.svelte';
@@ -14,12 +15,16 @@
 
 	let { artist = null, album = null }: Props = $props();
 
+	// A library album with no MusicBrainz id shows its own art, by local id.
+	let localAlbumId = $derived(album && isLocalOnlyRow(album) ? (album.local_id ?? null) : null);
+
 	let imageUrl = $derived.by(() => {
 		if (artist) {
-			return coverSrc('artist', artist.musicbrainz_id, 250);
+			return isLocalOnlyRow(artist) ? null : coverPath('artist', artist.musicbrainz_id, 250);
 		}
+		if (localAlbumId) return albumArtworkPath(localAlbumId, undefined, 250);
 		if (album) {
-			return coverSrc('release-group', album.musicbrainz_id, 250);
+			return coverPath('release-group', album.musicbrainz_id, 250);
 		}
 		return null;
 	});
@@ -68,12 +73,13 @@
 	<div class="relative z-10 flex items-center gap-4 sm:gap-5 w-full">
 		{#if resultType === 'artist' && artist}
 			<div class="shrink-0">
-				<ArtistImage mbid={artist.musicbrainz_id} alt={artist.title} size="lg" requestSize={250} />
+				<ArtistImage mbid={imageMbid(artist)} alt={artist.title} size="lg" requestSize={250} />
 			</div>
 		{:else if album}
 			<div class="shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden shadow-md">
 				<AlbumImage
-					mbid={album.musicbrainz_id}
+					albumId={localAlbumId ?? undefined}
+					mbid={imageMbid(album)}
 					alt={album.title}
 					size="full"
 					requestSize={250}

@@ -16,6 +16,16 @@ function rowKey(row: { id?: string | null; musicbrainz_id?: string | null }): st
 	return row.musicbrainz_id ?? row.id ?? '';
 }
 
+/** A library row with no MusicBrainz id: rowKey gave it its local id. */
+export function isLocalOnlyRow(row: { local_id?: string | null; musicbrainz_id: string }): boolean {
+	return !!row.local_id && row.local_id === row.musicbrainz_id;
+}
+
+/** The MusicBrainz id an image may be requested by. Never a local id. */
+export function imageMbid(row: { local_id?: string | null; musicbrainz_id: string }): string {
+	return isLocalOnlyRow(row) ? '' : row.musicbrainz_id;
+}
+
 export function toV1Artist(row: SearchResultItemV3): Artist {
 	return {
 		title: row.title,

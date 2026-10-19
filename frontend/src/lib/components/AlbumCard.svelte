@@ -96,11 +96,10 @@
 	>
 		<figure class="aspect-square overflow-hidden relative">
 			<AlbumImage
-				mbid={album.local_id ?? album.musicbrainz_id}
+				albumId={isLocalOnly ? (album.local_id ?? undefined) : undefined}
+				mbid={isLocalOnly ? '' : album.musicbrainz_id}
 				customUrl={album.cover_url}
 				remoteUrl={album.album_thumb_url ?? null}
-				source={album.local_id ? 'local' : 'provider'}
-				available={album.local_id ? (album.cover_available ?? false) : true}
 				alt={album.title}
 				size="full"
 				requestSize={250}
