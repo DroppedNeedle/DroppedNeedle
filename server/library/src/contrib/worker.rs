@@ -1,21 +1,29 @@
-//! Verification worker: background loop that confirms MusicBrainz results.
+//! Verification: the job that confirms a MusicBrainz result.
 //!
-//! Ports v2 `LibraryContributionVerificationWorker`. The worker claims queued
-//! jobs under a 90s lease, re-reads the release from MusicBrainz on the
-//! [`RequestPriority::BackgroundSync`] lane (never the user lane), runs the
-//! identify-owned evidence decision, and finishes the job as linked or
-//! needs-review. Shutdown is a `watch` flag; `LibrarySetup::spawn_loops`
-//! starts the worker through [`start_verification`].
+//! Ports v2 `LibraryContributionVerificationWorker`. A verification is one
+//! [`VERIFY`] job on the jobs table, keyed by its contribution; the jobs
+//! module claims, leases and recovers it, and runs [`VerificationWorker`]
+//! as its handler. The handler re-reads the release from MusicBrainz on
+//! the [`RequestPriority::BackgroundSync`] lane (never the user lane),
+//! runs the identify-owned evidence decision, and writes the contribution
+//! as linked or needs-review in the same write that completes the job. A
+//! release MusicBrainz does not have yet is retried with backoff for a
+//! while, then sent to review.
+//!
+//! The `library-contrib` loop does the hourly upkeep (expired provider
+//! data, old records). Its first pass after a start also queues a job for
+//! any verifying contribution left without one.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use droppedneedle_kernel::db::Lane;
-use droppedneedle_kernel::jobs::schedule::SplitMix64;
+use droppedneedle_kernel::jobs::queue::{JobCtx, JobError, JobHandler, JobKind, KindSpec, Outcome};
 use droppedneedle_kernel::jobs::{
-    AlreadyRunning, Next, Schedule, Supervisor, Tick, TickCtx, TickError, TickResult,
+    AlreadyRunning, BoxFuture, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
 };
 use droppedneedle_providers::slots::RequestPriority;
+use rusqlite::Transaction;
 
 use super::error::ContribError;
 use super::models::*;
@@ -24,27 +32,47 @@ use super::seams::*;
 use super::service::ContributionService;
 use super::sqlite::SqliteContributions;
 
-pub const LEASE_SECONDS: f64 = 90.0;
 pub const MAX_AUTOMATIC_WINDOW_SECONDS: f64 = 2.0 * 60.0 * 60.0;
 pub const MAX_AUTOMATIC_ATTEMPTS: u32 = 10;
 pub const CLEANUP_INTERVAL_SECONDS: f64 = 60.0 * 60.0;
-/// A job the database was too busy to run waits this long, plus up to
-/// as much again, before it runs again.
-const BUSY_RETRY_SECONDS: f64 = 5.0;
 
-#[derive(Debug, Clone)]
-pub struct VerificationWorkerConfig {
-    pub worker_id: String,
-    pub poll_interval: Duration,
-    pub lease_seconds: f64,
+/// The verification job kind; its key is the contribution id.
+pub const VERIFY: JobKind = JobKind::new("library.contribution_verify");
+
+/// How verification jobs run. The handler sends a job to review after
+/// [`MAX_AUTOMATIC_ATTEMPTS`]; the module's own limit sits above it, so it
+/// only ends a job that keeps timing out or crashing.
+pub const SPEC: KindSpec = KindSpec::new(VERIFY).max_attempts(MAX_AUTOMATIC_ATTEMPTS + 2);
+
+/// Finishes the claimed job inside the caller's write; `LeaseLost` rolls
+/// that write back.
+pub type Completion = Arc<dyn Fn(&Transaction) -> Result<(), JobError> + Send + Sync>;
+
+/// One claimed verification.
+#[derive(Clone)]
+pub struct Claim {
+    /// The contribution, the job's key.
+    pub contribution_id: String,
+    /// Which claim this is, from 1.
+    pub attempt: u32,
+    /// Completes the job in the write that records the outcome.
+    pub complete: Completion,
 }
 
-impl Default for VerificationWorkerConfig {
-    fn default() -> Self {
+/// What one verification run decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Verdict {
+    /// The contribution's outcome.
+    pub outcome: VerificationOutcome,
+    /// The job's answer.
+    pub job: Outcome,
+}
+
+impl Verdict {
+    fn done(outcome: VerificationOutcome) -> Self {
         Self {
-            worker_id: "contrib-verify-1".to_string(),
-            poll_interval: Duration::from_secs(5),
-            lease_seconds: LEASE_SECONDS,
+            outcome,
+            job: Outcome::Done,
         }
     }
 }
@@ -53,102 +81,126 @@ pub struct VerificationWorker {
     service: Arc<ContributionService>,
     musicbrainz: Arc<dyn MusicBrainzContrib>,
     store: Arc<SqliteContributions>,
-    config: VerificationWorkerConfig,
-    next_cleanup_at: Mutex<f64>,
 }
 
 impl VerificationWorker {
     pub fn new(
         service: Arc<ContributionService>,
         musicbrainz: Arc<dyn MusicBrainzContrib>,
-        config: VerificationWorkerConfig,
     ) -> Self {
         let store = service.store().clone();
         Self {
             service,
             musicbrainz,
             store,
-            config,
-            next_cleanup_at: Mutex::new(0.0),
         }
     }
 
-    /// Put jobs whose lease ran out back in the queue, and once an hour
-    /// drop expired provider data and old records. Returns how many jobs
-    /// went back. A clean-up that fails is logged and tried next hour.
-    pub async fn recover(&self, now: f64) -> Result<u64, ContribError> {
-        let recovered = self.store.recover_verification_leases(now).await?;
-        let due = self
-            .next_cleanup_at
-            .lock()
-            .map(|g| now >= *g)
-            .unwrap_or(true);
-        if due {
-            if let Err(error) = self.service.purge_expired_provider_data(now, 200).await {
-                tracing::warn!(%error, "expired contribution provider data not purged");
+    /// The handler the jobs module runs for [`VERIFY`].
+    pub fn handler(self: &Arc<Self>) -> Arc<dyn JobHandler> {
+        Arc::new(VerificationHandler(Arc::clone(self)))
+    }
+
+    /// Queue a job for every verifying contribution without one: one a v2
+    /// import carried, or one whose job failed for good. False, logged,
+    /// when the write failed.
+    pub async fn queue_missing(&self) -> bool {
+        match self.store.queue_missing_verifications().await {
+            Ok(0) => true,
+            Ok(queued) => {
+                tracing::info!(queued, "verifying contributions queued again");
+                true
             }
-            if let Err(error) = self.store.clean_records(now).await {
-                tracing::warn!(%error, "old contribution records not cleaned");
-            }
-            if let Ok(mut guard) = self.next_cleanup_at.lock() {
-                *guard = now + CLEANUP_INTERVAL_SECONDS;
+            Err(error) => {
+                tracing::warn!(%error, "verifying contributions not queued");
+                false
             }
         }
-        Ok(recovered)
     }
 
-    pub async fn claim(&self, now: f64) -> Result<Option<VerificationJobRow>, ContribError> {
-        self.store
-            .claim_verification(&self.config.worker_id, now, self.config.lease_seconds)
-            .await
+    /// Drop expired provider data and old records. Each step that fails is
+    /// logged, and the next pass tries again.
+    pub async fn upkeep(&self, now: f64) {
+        if let Err(error) = self.service.purge_expired_provider_data(now, 200).await {
+            tracing::warn!(%error, "expired contribution provider data not purged");
+        }
+        if let Err(error) = self.store.clean_records(now).await {
+            tracing::warn!(%error, "old contribution records not cleaned");
+        }
     }
 
-    /// Claim and run the next due job. A job the database was too busy to
-    /// run goes back to the queue without using up an attempt; if even
-    /// that cannot be written, its lease brings it back.
-    pub async fn run_once(&self, now: f64) -> Result<Option<VerificationOutcome>, ContribError> {
-        let Some(job) = self.claim(now).await? else {
+    /// Run one claimed job and turn its result into the job's answer. A
+    /// busy database puts the job back without spending the attempt; any
+    /// other error retries it after the kind's backoff.
+    async fn answer(&self, job: JobCtx) -> Outcome {
+        let ctx = job.clone();
+        let claim = Claim {
+            contribution_id: job.key().to_owned(),
+            attempt: job.attempt(),
+            complete: Arc::new(move |tx| ctx.complete(tx)),
+        };
+        match self.run_claimed(&claim, self.service.now()).await {
+            Ok(verdict) => verdict.job,
+            Err(ContribError::Busy(_)) => Outcome::Busy,
+            Err(error) => {
+                tracing::warn!(
+                    code = error.code(),
+                    %error,
+                    attempt = claim.attempt,
+                    "contribution verification failed; it runs again later"
+                );
+                Outcome::Retry {
+                    code: error.code(),
+                    at: None,
+                }
+            }
+        }
+    }
+
+    /// Claim the next due job and run it, as the runner would, for tests.
+    /// The claim's lease ends at once, so a job a retry left running is
+    /// taken back by the next call once the clock reaches its retry time:
+    /// the runner's put-back is the jobs module's, tested there.
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn run_once(&self) -> Result<Option<Verdict>, ContribError> {
+        let queue = self.store.queue().clone();
+        let spec = SPEC.lease(Duration::from_millis(1));
+        let claimed = {
+            let queue = queue.clone();
+            self.store
+                .db()
+                .write(Lane::Background, "contrib.test_claim", move |tx| {
+                    queue.claim_in(tx, &spec)
+                })
+                .await?
+        };
+        let Some(claimed) = claimed else {
             return Ok(None);
         };
-        match self.run_claimed(&job, now).await {
-            Ok(outcome) => Ok(Some(outcome)),
-            Err(error @ ContribError::Busy(_)) => {
-                let wait = BUSY_RETRY_SECONDS
-                    + SplitMix64::new(SplitMix64::seed_from_time())
-                        .below_duration(Duration::from_secs_f64(BUSY_RETRY_SECONDS))
-                        .as_secs_f64();
-                if let Err(release) = self
-                    .store
-                    .release_verification(&job.id, &self.config.worker_id, now + wait, now)
-                    .await
-                {
-                    tracing::warn!(
-                        error = %release,
-                        job_id = job.id,
-                        "busy verification job not put back; its lease brings it back"
-                    );
-                }
-                Err(error)
-            }
-            Err(error) => Err(error),
+        let lease = claimed.lease.clone();
+        let complete: Completion = {
+            let queue = queue.clone();
+            let lease = lease.clone();
+            Arc::new(move |tx| queue.complete(tx, &lease))
+        };
+        let claim = Claim {
+            contribution_id: claimed.key,
+            attempt: claimed.attempt,
+            complete: complete.clone(),
+        };
+        let verdict = self.run_claimed(&claim, self.service.now()).await?;
+        if verdict.job == Outcome::Done {
+            self.store
+                .db()
+                .write(Lane::Background, "contrib.test_done", move |tx| {
+                    complete(tx).map_err(ContribError::from)
+                })
+                .await?;
         }
+        Ok(Some(verdict))
     }
 
-    pub async fn run_claimed(
-        &self,
-        job: &VerificationJobRow,
-        now: f64,
-    ) -> Result<VerificationOutcome, ContribError> {
-        let job_revision = self
-            .store
-            .heartbeat_verification(
-                &job.id,
-                &self.config.worker_id,
-                job.row_revision,
-                now,
-                self.config.lease_seconds,
-            )
-            .await?;
+    pub async fn run_claimed(&self, job: &Claim, now: f64) -> Result<Verdict, ContribError> {
         let contribution = match self
             .service
             .get_as(&job.contribution_id, Lane::Background)
@@ -156,14 +208,14 @@ impl VerificationWorker {
         {
             Ok(contribution) => contribution,
             Err(ContribError::ContributionNotFound | ContribError::AlbumNotFound) => {
-                return Ok(VerificationOutcome::SubjectMissing);
+                return Ok(Verdict::done(VerificationOutcome::SubjectMissing));
             }
             Err(other) => return Err(other),
         };
         if contribution.state != ContributionState::Verifying
             || contribution.result_release_mbid.is_none()
         {
-            return Ok(VerificationOutcome::NoLongerVerifying);
+            return Ok(Verdict::done(VerificationOutcome::NoLongerVerifying));
         }
         let release_mbid = contribution.result_release_mbid.clone().unwrap_or_default();
         // Background priority: verification never jumps the user queue.
@@ -177,13 +229,7 @@ impl VerificationWorker {
             // retry, breaker untouched (as v2 decided).
             Err(ProviderFailure::Unmappable) => {
                 return self
-                    .finish_without_candidate(
-                        job,
-                        job_revision,
-                        &contribution,
-                        UNMAPPABLE_PROVIDER_PAYLOAD,
-                        now,
-                    )
+                    .finish_without_candidate(job, &contribution, UNMAPPABLE_PROVIDER_PAYLOAD, now)
                     .await;
             }
             Err(ProviderFailure::Unavailable {
@@ -194,34 +240,19 @@ impl VerificationWorker {
                 let retry_after = retry_after_seconds
                     .filter(|candidate| candidate.is_finite() && *candidate > 0.0);
                 return self
-                    .retry_or_review(
-                        job,
-                        job_revision,
-                        &contribution,
-                        FAILURE_MB_UNAVAILABLE,
-                        now,
-                        retry_after,
-                    )
+                    .retry_or_review(job, &contribution, FAILURE_MB_UNAVAILABLE, now, retry_after)
                     .await;
             }
         };
         let Some(verified) = verified else {
             return self
-                .retry_or_review(
-                    job,
-                    job_revision,
-                    &contribution,
-                    FAILURE_MB_NOT_PROPAGATED,
-                    now,
-                    None,
-                )
+                .retry_or_review(job, &contribution, FAILURE_MB_NOT_PROPAGATED, now, None)
                 .await;
         };
         if verified.release_mbid != release_mbid {
             return self
                 .finish_without_candidate(
                     job,
-                    job_revision,
                     &contribution,
                     FAILURE_RETURNED_RELEASE_MISMATCH,
                     now,
@@ -247,7 +278,7 @@ impl VerificationWorker {
         let attempt = self.service.verification_attempt(
             &contribution,
             &decision,
-            job.requested_by_user_id.as_deref(),
+            contribution.updated_by_user_id.as_deref(),
             &context.tracks,
             if identified {
                 "identified"
@@ -277,9 +308,8 @@ impl VerificationWorker {
         let result = self
             .store
             .finish_verification(
-                &job.id,
-                &self.config.worker_id,
-                job_revision,
+                &job.contribution_id,
+                job.complete.clone(),
                 contribution.row_revision,
                 expected_album_revision,
                 &attempt,
@@ -295,59 +325,53 @@ impl VerificationWorker {
                 .after_linked(&contribution, &policy, now)
                 .await?;
         }
-        Ok(result)
+        Ok(Verdict::done(result))
     }
 
     async fn retry_or_review(
         &self,
-        job: &VerificationJobRow,
-        job_revision: i64,
+        job: &Claim,
         contribution: &ContributionRecord,
-        failure_code: &str,
+        failure_code: &'static str,
         now: f64,
         retry_after_seconds: Option<f64>,
-    ) -> Result<VerificationOutcome, ContribError> {
+    ) -> Result<Verdict, ContribError> {
         let received_at = contribution.result_received_at.unwrap_or(now);
-        if job.attempt_count < MAX_AUTOMATIC_ATTEMPTS
-            && now - received_at < MAX_AUTOMATIC_WINDOW_SECONDS
+        if job.attempt < MAX_AUTOMATIC_ATTEMPTS && now - received_at < MAX_AUTOMATIC_WINDOW_SECONDS
         {
-            let delay = verification_retry_delay_seconds(job.attempt_count, retry_after_seconds);
-            self.store
-                .retry_verification(
-                    &job.id,
-                    &self.config.worker_id,
-                    job_revision,
-                    failure_code,
-                    now + delay,
-                    now,
-                )
-                .await?;
-            return Ok(VerificationOutcome::RetryScheduled);
+            let delay = verification_retry_delay_seconds(job.attempt, retry_after_seconds);
+            let at = ((now + delay) * 1000.0).round() as i64;
+            return Ok(Verdict {
+                outcome: VerificationOutcome::RetryScheduled,
+                job: Outcome::Retry {
+                    code: failure_code,
+                    at: Some(at),
+                },
+            });
         }
-        self.finish_without_candidate(job, job_revision, contribution, failure_code, now)
+        self.finish_without_candidate(job, contribution, failure_code, now)
             .await
     }
 
     async fn finish_without_candidate(
         &self,
-        job: &VerificationJobRow,
-        job_revision: i64,
+        job: &Claim,
         contribution: &ContributionRecord,
         failure_code: &str,
         now: f64,
-    ) -> Result<VerificationOutcome, ContribError> {
+    ) -> Result<Verdict, ContribError> {
         let context = match self
             .store
             .album_context(&contribution.local_album_id)
             .await?
         {
             Some(context) if context.album.is_some() => context,
-            _ => return Ok(VerificationOutcome::SubjectMissing),
+            _ => return Ok(Verdict::done(VerificationOutcome::SubjectMissing)),
         };
         let attempt = ContributionVerificationAttempt {
             id: uuid::Uuid::new_v4().to_string(),
             local_album_id: contribution.local_album_id.clone(),
-            requested_by_user_id: job.requested_by_user_id.clone(),
+            requested_by_user_id: contribution.updated_by_user_id.clone(),
             matcher_version: self.service.evidence().matcher_version(),
             state: "needs_review".to_string(),
             terminal_reason_code: Some(failure_code.to_string()),
@@ -358,11 +382,11 @@ impl VerificationWorker {
             completed_at: now,
         };
         let expected_album_revision = context.album.as_ref().map(|a| a.row_revision).unwrap_or(0);
-        self.store
+        let result = self
+            .store
             .finish_verification(
-                &job.id,
-                &self.config.worker_id,
-                job_revision,
+                &job.contribution_id,
+                job.complete.clone(),
                 contribution.row_revision,
                 expected_album_revision,
                 &attempt,
@@ -371,57 +395,53 @@ impl VerificationWorker {
                 &FinishIdentities::default(),
                 now,
             )
-            .await
+            .await?;
+        Ok(Verdict::done(result))
     }
 }
 
-/// The verification loop's name on the supervisor.
-pub const VERIFICATION_JOB: &str = "library-contrib";
+/// [`VerificationWorker`] as the jobs module runs it.
+struct VerificationHandler(Arc<VerificationWorker>);
 
-/// Row code of a pass whose lease recovery failed.
-const RECOVER_FAILED: &str = "CONTRIB_RECOVER_FAILED";
+impl JobHandler for VerificationHandler {
+    fn run(&self, job: JobCtx) -> BoxFuture<'static, Outcome> {
+        let worker = Arc::clone(&self.0);
+        Box::pin(async move { worker.answer(job).await })
+    }
+}
 
-/// Start the verification loop on `supervisor`. Each pass, one poll interval
-/// apart, recovers expired leases and drains every due job; a single job's
-/// error is logged and the pass moves on.
-pub fn start_verification(
+/// The contribution upkeep loop's name on the supervisor.
+pub const UPKEEP_JOB: &str = "library-contrib";
+
+/// Start the upkeep loop on `supervisor`: a pass at start, then hourly.
+/// Missing verification jobs are queued on the first pass that can write
+/// them, so a job that failed for good is retried once per start.
+pub fn start_upkeep(
     supervisor: &Supervisor,
     worker: Arc<VerificationWorker>,
 ) -> Result<(), AlreadyRunning> {
-    let poll = worker.config.poll_interval;
     supervisor.periodic(
-        VERIFICATION_JOB,
-        Schedule::new(poll).with_initial_delay(poll),
-        VerificationTick(worker),
+        UPKEEP_JOB,
+        Schedule::new(Duration::from_secs_f64(CLEANUP_INTERVAL_SECONDS)),
+        UpkeepTick {
+            worker,
+            queued: false,
+        },
     )
 }
 
-struct VerificationTick(Arc<VerificationWorker>);
+struct UpkeepTick {
+    worker: Arc<VerificationWorker>,
+    queued: bool,
+}
 
-impl Tick for VerificationTick {
-    async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
-        let worker = &self.0;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs_f64())
-            .unwrap_or(0.0);
-        let recovered = worker.recover(now).await;
-        while !ctx.token().is_cancelled() {
-            match worker.run_once(now).await {
-                Ok(Some(_)) => {}
-                Ok(None) => break,
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        "contribution verification job failed; continuing"
-                    );
-                    break;
-                }
-            }
+impl Tick for UpkeepTick {
+    async fn tick(&mut self, _ctx: &TickCtx) -> TickResult {
+        if !self.queued {
+            self.queued = self.worker.queue_missing().await;
         }
-        match recovered {
-            Ok(_) => Ok(Next::Continue),
-            Err(error) => Err(TickError::new(RECOVER_FAILED, error)),
-        }
+        let now = self.worker.service.now();
+        self.worker.upkeep(now).await;
+        Ok(Next::Continue)
     }
 }

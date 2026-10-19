@@ -186,6 +186,10 @@ pub fn library_asking(
         Arc::new(Providers::unpaced()),
         mb_source,
         db,
+        droppedneedle_kernel::jobs::queue::JobQueue::new(
+            db.clone(),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ),
         config,
         outbound.library(),
     )

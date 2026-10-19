@@ -815,7 +815,7 @@ impl ContributionService {
         let normalized = parse_musicbrainz_release_id(release_mbid)
             .map_err(|_| ContribError::validation("The MusicBrainz release MBID is invalid."))?;
         let token_hash = sha256_hex(token.as_bytes());
-        let (contribution_id, _) = self
+        let contribution_id = self
             .store
             .consume_callback_token(&token_hash, &normalized, self.now())
             .await?

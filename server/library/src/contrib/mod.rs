@@ -18,8 +18,9 @@
 //!   the curator back to the callback route - no live provider writes, ever.
 //! - State lives in SQLite ([`sqlite::SqliteContributions`]), which also
 //!   reads the album identification context from the catalog.
-//! - [`worker::start_verification`] runs the background loop;
-//!   `LibrarySetup::spawn_loops` starts it.
+//! - Verification is a job kind on the kernel's jobs table
+//!   ([`worker::VERIFY`]); the server registers [`worker::VerificationWorker`]
+//!   as its handler. [`worker::start_upkeep`] runs the hourly upkeep loop.
 
 pub mod error;
 pub mod models;
@@ -36,6 +37,7 @@ pub mod worker;
 use std::sync::Arc;
 
 use droppedneedle_kernel::db::Db;
+use droppedneedle_kernel::jobs::queue::JobQueue;
 
 /// The provider reads contributions run against: live clients in
 /// production, scripted ones in test bundles.
@@ -46,16 +48,17 @@ pub struct ContribProviders {
 }
 
 /// Build the contribution service and its verification worker over the
-/// application database.
+/// application database, queueing verification on `queue`.
 pub fn assemble(
     db: &Db,
+    queue: JobQueue,
     providers: ContribProviders,
     catalog: Arc<dyn seams::ContributionCatalog>,
 ) -> (
     Arc<service::ContributionService>,
     Arc<worker::VerificationWorker>,
 ) {
-    let store = Arc::new(sqlite::SqliteContributions::new(db.clone()));
+    let store = Arc::new(sqlite::SqliteContributions::new(db.clone(), queue));
     let service = Arc::new(
         service::ContributionService::new(
             store,
@@ -69,7 +72,6 @@ pub fn assemble(
     let worker = Arc::new(worker::VerificationWorker::new(
         service.clone(),
         providers.musicbrainz,
-        worker::VerificationWorkerConfig::default(),
     ));
     (service, worker)
 }

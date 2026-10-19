@@ -39,7 +39,7 @@ pub const LOOPS: &[&str] = &[
     SCAN_JOB,
     WATCHER_JOB,
     IDENTIFY_JOB,
-    super::contrib::worker::VERIFICATION_JOB,
+    super::contrib::worker::UPKEEP_JOB,
     super::operations::JOB_NAME,
     super::management::JOB_NAME,
     PUBLISH_JOB,
@@ -490,7 +490,7 @@ pub(crate) fn start_loops(
             .with_backoff(Duration::from_secs(1), IDENTIFY_BACKOFF_CAP),
         identify_tick(setup.clone(), handle),
     )?;
-    super::contrib::worker::start_verification(supervisor, setup.contrib_worker.clone())?;
+    super::contrib::worker::start_upkeep(supervisor, setup.contrib_worker.clone())?;
     super::operations::start(setup, supervisor)?;
     super::management::start(setup, supervisor)?;
     let leftovers = setup.clone();

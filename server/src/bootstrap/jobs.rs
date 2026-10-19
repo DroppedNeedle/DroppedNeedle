@@ -296,6 +296,8 @@ pub struct JobsSetup {
     scans: Arc<watch::Sender<u64>>,
     queues: Option<QueueSetup>,
     handlers: Handlers,
+    /// Kinds registered through [`JobsSetup::with_job`].
+    kinds: usize,
 }
 
 /// The jobs table handle the areas enqueue through, built once beside the
@@ -370,6 +372,7 @@ impl JobsSetup {
             scans: Arc::new(watch::channel(0).0),
             queues: None,
             handlers: Handlers::default(),
+            kinds: 0,
         }
     }
 
@@ -383,6 +386,7 @@ impl JobsSetup {
     /// registered, so none waits with nothing to run it.
     pub fn with_job(mut self, spec: KindSpec, handler: Arc<dyn JobHandler>) -> Self {
         self.handlers = self.handlers.with(spec, handler);
+        self.kinds += 1;
         self
     }
 
@@ -489,8 +493,12 @@ impl JobsSetup {
     /// Start the always-on loops ([`droppedneedle_kernel::jobs::BOOT_JOBS`]),
     /// and the post-scan precache wait when precache is wired. Boot is the
     /// only caller, so a name collision fails the boot loudly instead of
-    /// running half the loops.
+    /// running half the loops, and so do job kinds registered without a
+    /// jobs table, which would otherwise never run.
     pub fn spawn_loops(&self) -> Result<(), String> {
+        if self.queues.is_none() && self.kinds > 0 {
+            return Err("job kinds are registered but no jobs table was given".to_owned());
+        }
         checkpoint::spawn_on(
             &self.supervisor,
             self.checkpoint.clone(),

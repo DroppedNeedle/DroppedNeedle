@@ -1,6 +1,6 @@
 //! Open MusicBrainz contributions: albums a curator was adding to
-//! MusicBrainz when v2 stopped, with their verification jobs and the
-//! return links MusicBrainz will still call.
+//! MusicBrainz when v2 stopped, and the return links MusicBrainz will
+//! still call.
 //!
 //! v3 keeps contributions in the same tables v2 did, so rows travel
 //! verbatim. Only open contributions move: a linked one already left its
@@ -8,6 +8,10 @@
 //! nothing left to finish. v2 allowed one open contribution per album, so
 //! the album is the unique rule; an album that already has a contribution
 //! in v3 keeps that one.
+//!
+//! Verification jobs do not travel. v3 queues a verification for every
+//! verifying contribution when it starts, and the code of the last
+//! verification that failed moves onto the contribution.
 
 use super::library::live_user;
 use super::{Column, Parent, Source, TableSection, Target, col};
@@ -15,9 +19,12 @@ use super::{Column, Parent, Source, TableSection, Target, col};
 /// Contribution states that are still in progress.
 const OPEN: &str = "s.state NOT IN ('linked', 'cancelled', 'stale')";
 
-/// The row belongs to a contribution still in progress.
-const OF_OPEN: &str = "s.contribution_id IN (SELECT d.id FROM v2.library_contribution_drafts d \
-     WHERE d.state NOT IN ('linked', 'cancelled', 'stale'))";
+/// The code of the contribution's last verification that ended without a
+/// link, which v3 keeps on the contribution for its review reason.
+const LAST_FAILURE: &str = "(SELECT j.last_failure_code \
+     FROM v2.library_contribution_verification_jobs j WHERE j.contribution_id = s.id \
+     AND j.state IN ('needs_review', 'failed', 'cancelled') \
+     ORDER BY j.updated_at DESC, j.id DESC LIMIT 1)";
 
 const ON_DRAFT: Parent =
     Parent::required("library_contribution_drafts", &[("contribution_id", "id")]);
@@ -28,7 +35,7 @@ pub const DRAFTS: TableSection = TableSection {
     source: Source::Table {
         table: "library_contribution_drafts",
         filter: OPEN,
-        requires: &[],
+        requires: &["library_contribution_verification_jobs"],
     },
     target: Target::Table("library_contribution_drafts"),
     columns: &[
@@ -56,6 +63,7 @@ pub const DRAFTS: TableSection = TableSection {
         col("created_at"),
         col("updated_at"),
         col("row_revision"),
+        Column::new("last_verification_failure").from_sql(LAST_FAILURE),
     ],
     key: &["id"],
     unique: &[&["local_album_id"]],
@@ -67,40 +75,6 @@ pub const DRAFTS: TableSection = TableSection {
     left_behind: "finished MusicBrainz contributions (linked, cancelled or out of date). \
                   Nothing to do: a linked album keeps its MusicBrainz match; start a new \
                   contribution in v3 for one you still want to add",
-};
-
-/// Verification jobs of those contributions. A job v2 was running when
-/// it stopped is picked up again by v3 once its lease runs out.
-pub const VERIFICATION_JOBS: TableSection = TableSection {
-    name: "contribution_verification_job",
-    source: Source::Table {
-        table: "library_contribution_verification_jobs",
-        filter: OF_OPEN,
-        requires: &["library_contribution_drafts"],
-    },
-    target: Target::Table("library_contribution_verification_jobs"),
-    columns: &[
-        col("id"),
-        col("contribution_id"),
-        col("state"),
-        col("attempt_count"),
-        col("not_before"),
-        Column::new("requested_by_user_id").from_sql(live_user!("requested_by_user_id")),
-        col("last_failure_code"),
-        col("lease_owner"),
-        col("lease_expires_at"),
-        col("heartbeat_at"),
-        col("created_at"),
-        col("updated_at"),
-        col("terminal_at"),
-        col("row_revision"),
-        col("event_revision"),
-    ],
-    key: &["id"],
-    unique: &[],
-    parents: &[ON_DRAFT],
-    user_column: None,
-    left_behind: "verification jobs of finished contributions; nothing to do",
 };
 
 /// Return links MusicBrainz calls when a curator saves the release. Only

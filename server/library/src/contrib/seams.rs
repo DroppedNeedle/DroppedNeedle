@@ -301,7 +301,7 @@ pub struct ContributionRow {
     pub created_at: f64,
     pub updated_at: f64,
     pub row_revision: i64,
-    /// Failure code of the latest finished verification job, if any.
+    /// Code of the last verification that ended without a link, if any.
     pub last_verification_failure: Option<String>,
     // Freshness join (v2 resolves these from the album row on read).
     pub album_active: bool,
@@ -309,36 +309,9 @@ pub struct ContributionRow {
     pub current_album_row_revision: i64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VerificationJobState {
-    Queued,
-    Running,
-    Succeeded,
-    NeedsReview,
-    // v2 terminal state, kept so the store enum stays complete.
-    Failed,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct VerificationJobRow {
-    pub id: String,
-    pub contribution_id: String,
-    pub state: VerificationJobState,
-    pub worker_id: Option<String>,
-    pub attempt_count: u32,
-    pub not_before: f64,
-    pub created_at: f64,
-    pub lease_expires_at: Option<f64>,
-    pub last_failure_code: Option<String>,
-    pub requested_by_user_id: Option<String>,
-    pub terminal_at: Option<f64>,
-    pub row_revision: i64,
-}
-
-/// Callback consumption result: contribution id plus the verification job
-/// id when one was (re)queued (`None` when the contribution went stale).
-pub type CallbackConsumption = Option<(String, Option<String>)>;
+/// The contribution a callback token belonged to; `None` when the token
+/// is unknown, used or expired.
+pub type CallbackConsumption = Option<String>;
 
 /// Minimal attempt record (v2 `IdentificationAttempt`, trigger fixed to
 /// `contribution_submission`; the full evidence shape stays with identify).

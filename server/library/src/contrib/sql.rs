@@ -1,12 +1,14 @@
 //! The contribution store's newer statements.
 
 droppedneedle_kernel::sql! {
-    /// Put verification job `?1`, held by worker `?2`, back in the queue
-    /// from `?3` (at `?4`) without counting the attempt it claimed.
-    pub(super) RELEASE_VERIFICATION = "UPDATE library_contribution_verification_jobs \
-             SET state = 'queued', attempt_count = MAX(attempt_count - 1, 0), not_before = ?3, \
-             lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL, \
-             updated_at = ?4, row_revision = row_revision + 1, \
-             event_revision = event_revision + 1 \
-             WHERE id = ?1 AND state = 'running' AND lease_owner = ?2";
+    /// Record on contribution `?1` the code its verification ended with
+    /// (`?2`, NULL when it linked).
+    pub(super) RECORD_VERIFICATION_FAILURE = "UPDATE library_contribution_drafts \
+             SET last_verification_failure = ?2 WHERE id = ?1";
+
+    /// Verifying contributions with no queued or running verification job.
+    pub(super) VERIFYING_WITHOUT_JOB = "SELECT d.id FROM library_contribution_drafts d \
+             WHERE d.state = 'verifying' AND NOT EXISTS (SELECT 1 FROM durable_jobs j \
+             WHERE j.kind = 'library.contribution_verify' AND j.idempotency_key = d.id \
+             AND j.state IN ('queued', 'running')) ORDER BY d.id";
 }

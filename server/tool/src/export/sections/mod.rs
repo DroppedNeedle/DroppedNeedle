@@ -363,7 +363,6 @@ pub const ALL: &[&TableSection] = &[
     &management::EXCLUSIONS,
     &management::OVERRIDES,
     &contributions::DRAFTS,
-    &contributions::VERIFICATION_JOBS,
     &contributions::CALLBACK_TOKENS,
     &held::HELD_IMPORTS,
 ];

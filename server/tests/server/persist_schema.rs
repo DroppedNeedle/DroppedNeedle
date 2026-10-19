@@ -68,7 +68,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 163);
+    assert_eq!(table_names(&pool).await.len(), 162);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -4271,4 +4271,82 @@ fn raw_sql_stays_in_sql_files() {
         }
     }
     assert!(wrong.is_empty(), "raw SQL:\n{}", wrong.join("\n"));
+}
+
+/// Migration 0072 moves contribution verification onto the jobs table.
+/// A queued and a running verification become queued jobs with their
+/// attempts, due time and code; the reason of one that went to review
+/// stays on its contribution; the old table is gone.
+#[tokio::test]
+async fn contribution_verification_moves_onto_jobs() {
+    let pool = scratch_pool().await;
+    migrator_through(71).run(&pool).await.unwrap();
+    // The rows stand alone: no album or user behind them.
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = OFF; \
+         INSERT INTO library_contribution_drafts (id, local_album_id, state, \
+             album_row_revision, input_revision, local_snapshot_json, resolved_draft_json, \
+             source_selection_json, created_at, updated_at) \
+         VALUES ('c-queued', 'a1', 'verifying', 1, 'r', '{}', '{}', '{}', 1.0, 1.0), \
+                ('c-running', 'a2', 'verifying', 1, 'r', '{}', '{}', '{}', 1.0, 1.0), \
+                ('c-review', 'a3', 'needs_review', 1, 'r', '{}', '{}', '{}', 1.0, 1.0); \
+         INSERT INTO library_contribution_verification_jobs (id, contribution_id, state, \
+             attempt_count, not_before, last_failure_code, lease_owner, lease_expires_at, \
+             created_at, updated_at, terminal_at) \
+         VALUES ('j1', 'c-queued', 'queued', 2, 1700000100.5, \
+                 'MUSICBRAINZ_RELEASE_NOT_PROPAGATED', NULL, NULL, 1700000000.0, \
+                 1700000050.0, NULL), \
+                ('j2', 'c-running', 'running', 1, 1700000000.0, NULL, 'worker', \
+                 1700000090.0, 1700000000.0, 1700000010.0, NULL), \
+                ('j3', 'c-review', 'needs_review', 10, 0, 'ATTACHMENT_NAME_MISMATCH', NULL, \
+                 NULL, 1700000000.0, 1700000020.0, 1700000020.0);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let jobs: Vec<(String, String, i64, i64, Option<String>)> = sqlx::query_as(
+        "SELECT idempotency_key, state, attempts, not_before_at, last_error FROM durable_jobs \
+         WHERE kind = 'library.contribution_verify' ORDER BY idempotency_key",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        jobs,
+        vec![
+            (
+                "c-queued".to_owned(),
+                "queued".to_owned(),
+                2,
+                1_700_000_100_500,
+                Some("MUSICBRAINZ_RELEASE_NOT_PROPAGATED".to_owned()),
+            ),
+            (
+                "c-running".to_owned(),
+                "queued".to_owned(),
+                1,
+                1_700_000_000_000,
+                None,
+            ),
+        ]
+    );
+    let reason: Option<String> = sqlx::query_scalar(
+        "SELECT last_verification_failure FROM library_contribution_drafts WHERE id = 'c-review'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(reason.as_deref(), Some("ATTACHMENT_NAME_MISMATCH"));
+    let left: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE name LIKE '%contribution_verification_jobs%' \
+         OR name LIKE 'idx_contribution_job_%'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(left.is_empty(), "{left:?}");
 }

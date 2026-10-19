@@ -3,7 +3,8 @@
 //! through export and import, v3 scans it, and everything that cannot be
 //! rebuilt is still there: the track and album ids (which every Subsonic
 //! and Jellyfin id derives from), the manual identity, an edition pin as
-//! the album's protected edition, an open MusicBrainz contribution, and
+//! the album's protected edition, open MusicBrainz contributions (one
+//! still being verified, one waiting for review with its reason), and
 //! the original file, which "restore original" brings back exactly as v2
 //! first found it.
 
@@ -32,6 +33,10 @@ const SECOND_TRACK_REL: &str = "John Coltrane/Blue Train/02.flac";
 /// An album v2 identified on its own and a curator then pinned to another
 /// edition of the same release group.
 const PINNED_ALBUM_ID: &str = "v2-album-giant";
+/// An album whose MusicBrainz contribution v2 was still verifying.
+const VERIFYING_ALBUM_ID: &str = "v2-album-ballads";
+/// Why v2 sent the other open contribution to review.
+const REVIEW_REASON: &str = "MUSICBRAINZ_RELEASE_NOT_PROPAGATED";
 /// Where the first track's file was before v2 first managed it.
 const ORIGINAL_REL: &str = "Incoming/blue train.flac";
 
@@ -186,7 +191,29 @@ fn managed_album(v2_root: &Path, alice: &str) -> PathBuf {
          VALUES ('contrib-open', '{PINNED_ALBUM_ID}', '{alice}', 'seeded', 1, 'r1', '{{}}',
                  '{{}}', '{{}}', 1700000700.0, 1700000700.0, 1700000700.0),
                 ('contrib-done', '{V2_ALBUM_ID}', '{alice}', 'linked', 1, 'r1', '{{}}',
-                 '{{}}', '{{}}', NULL, 1700000100.0, 1700000200.0);
+                 '{{}}', '{{}}', NULL, 1700000100.0, 1700000200.0),
+                ('contrib-review', '{V2_ALBUM_ID}', '{alice}', 'needs_review', 1, 'r1',
+                 '{{}}', '{{}}', '{{}}', 1700000700.0, 1700000300.0, 1700000900.0),
+                ('contrib-verifying', '{VERIFYING_ALBUM_ID}', '{alice}', 'verifying', 1,
+                 'r1', '{{}}', '{{}}', '{{}}', 1700000700.0, 1700000300.0, 1700000900.0);
+         UPDATE library_contribution_drafts SET result_release_mbid = 'rel-ballads',
+             result_source = 'manual', result_received_at = 1700000800.0
+         WHERE id IN ('contrib-review', 'contrib-verifying');
+         INSERT INTO library_contribution_verification_jobs (id, contribution_id, state,
+             attempt_count, not_before, last_failure_code, created_at, updated_at,
+             terminal_at)
+         VALUES ('job-review-old', 'contrib-review', 'needs_review', 10, 0,
+                 'ATTACHMENT_NAME_MISMATCH', 1700000400.0, 1700000500.0, 1700000500.0),
+                ('job-review', 'contrib-review', 'needs_review', 10, 0, '{REVIEW_REASON}',
+                 1700000800.0, 1700000900.0, 1700000900.0),
+                ('job-verifying', 'contrib-verifying', 'running', 1, 1700000800.0, NULL,
+                 1700000800.0, 1700000850.0, NULL);
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+             album_artist_name, album_artist_name_folded, album_artist_id, grouping_source,
+             created_at, updated_at)
+         VALUES ('{VERIFYING_ALBUM_ID}', '{MUSIC_ROOT_ID}', 'kb', 'Ballads', 'ballads',
+                 'John Coltrane', 'john coltrane', 'v2-artist-1', 'automatic',
+                 1700000000.0, 1700000000.0);
          INSERT INTO library_contribution_callback_tokens (token_hash, contribution_id,
              requested_by_user_id, expires_at, created_at)
          VALUES ('token-open', 'contrib-open', '{alice}', 4000000000.0, 1700000700.0);
@@ -298,9 +325,9 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     assert_eq!(count("album_identity"), 2);
     assert_eq!(count("management_baseline"), 1);
     assert_eq!(count("original_baseline"), 1, "{:?}", report.items);
-    // The open MusicBrainz contribution moves with its return link; the
-    // linked one stays behind.
-    assert_eq!(count("contribution_draft"), 1);
+    // The open MusicBrainz contributions move, one with its return link;
+    // the linked one stays behind.
+    assert_eq!(count("contribution_draft"), 3);
     assert_eq!(count("contribution_callback_token"), 1);
     assert_eq!(count("youtube_link"), 1);
     assert_eq!(count("youtube_track_link"), 1);
@@ -319,6 +346,35 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     );
     let (library, _) = library_at(&handle, config);
     drain_scans(&library).await;
+
+    // The contribution v2 was verifying is verified again: v3's first
+    // upkeep pass queues its job. The one waiting for review keeps the
+    // reason v2's last verification gave.
+    let verifying_jobs = || {
+        rusqlite::Connection::open(&db_path)
+            .expect("v3 db")
+            .query_row(
+                "SELECT COUNT(*) FROM durable_jobs WHERE kind = 'library.contribution_verify' \
+                 AND idempotency_key = 'contrib-verifying' AND state = 'queued'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("jobs counted")
+    };
+    assert_eq!(verifying_jobs(), 0);
+    assert!(library.contrib_worker.queue_missing().await);
+    assert_eq!(verifying_jobs(), 1);
+    let review = library
+        .contrib
+        .store()
+        .get("contrib-review")
+        .await
+        .expect("contribution reads")
+        .expect("contribution carried");
+    assert_eq!(
+        review.last_verification_failure.as_deref(),
+        Some(REVIEW_REASON)
+    );
 
     // Ids stay: the unchanged file and the re-read one keep their track,
     // and both stay on v2's album.

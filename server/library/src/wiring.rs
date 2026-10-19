@@ -18,7 +18,6 @@ use std::sync::Arc;
 use axum::Router;
 
 use super::adapters::LoftyTagReader;
-use super::clock::now_unix;
 use super::contrib::ContribProviders;
 use super::contrib::service::ContributionService;
 use super::contrib::worker::VerificationWorker;
@@ -80,8 +79,6 @@ type ProviderFactory =
 pub struct LibraryRecovery {
     /// Per-bundle publish recovery actions.
     pub publish_recoveries: Vec<(String, String)>,
-    /// Contribution leases recovered.
-    pub contrib_recovered: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +186,7 @@ impl LibrarySetup {
         providers: Arc<droppedneedle_providers::Providers>,
         mb_source: droppedneedle_providers::musicbrainz::SourceFn,
         db: &droppedneedle_kernel::db::Db,
+        queue: droppedneedle_kernel::jobs::queue::JobQueue,
         config: Arc<ConfigStore>,
         endpoints: Endpoints,
     ) -> Result<Self, String> {
@@ -264,7 +262,7 @@ impl LibrarySetup {
                 ))
             }),
         };
-        let mut setup = Self::assemble(ids, make, contrib, db, config)?;
+        let mut setup = Self::assemble(ids, make, contrib, db, queue, config)?;
         setup.releases = Some(imports);
         setup.http = Some(http.shared().clone());
         let registry = setup.registry.clone();
@@ -285,6 +283,7 @@ impl LibrarySetup {
         make_providers: ProviderFactory,
         contrib_providers: ContribProviders,
         db: &droppedneedle_kernel::db::Db,
+        queue: droppedneedle_kernel::jobs::queue::JobQueue,
         config: Arc<ConfigStore>,
     ) -> Result<Self, String> {
         let scan_store = Arc::new(SqliteScanStore::new(db.clone()));
@@ -346,6 +345,7 @@ impl LibrarySetup {
         );
         let (contrib, contrib_worker) = super::contrib::assemble(
             db,
+            queue,
             contrib_providers,
             Arc::new(super::adapters::IdentifyFollowUp::new(
                 identify_store.clone(),
@@ -462,7 +462,7 @@ impl LibrarySetup {
     }
 
     /// Startup recovery: publish reconcile (resume-or-compensate,
-    /// never half-apply) plus contribution lease recovery. Scan
+    /// never half-apply) plus identify job requeue. Scan
     /// recovery runs in the supervisor preamble. Re-running after a
     /// clean shutdown is a no-op. Never fails boot: a publish journal
     /// that cannot be reconciled is logged and left for an
@@ -516,19 +516,11 @@ impl LibrarySetup {
             Ok(Err(error)) => tracing::warn!(%error, "identify jobs not requeued at startup"),
             Err(error) => tracing::warn!(%error, "identify job recovery did not run"),
         }
-        let recovered = match self.contrib_worker.recover(now_unix()).await {
-            Ok(recovered) => recovered,
-            Err(error) => {
-                tracing::warn!(%error, "contribution verification leases not recovered");
-                0
-            }
-        };
         LibraryRecovery {
             publish_recoveries: recoveries
                 .into_iter()
                 .map(|recovery| (recovery.bundle_id, format!("{:?}", recovery.action)))
                 .collect(),
-            contrib_recovered: recovered,
         }
     }
 

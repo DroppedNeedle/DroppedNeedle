@@ -396,6 +396,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         providers.clone(),
         mb_source.clone(),
         &db,
+        queues.queue().clone(),
         config_store.clone(),
         outbound.library(),
     )
@@ -509,12 +510,11 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         restarted = recovery.restarted,
         "acquire recovery complete"
     );
-    // Publish journal reconciliation and contribution lease recovery; scan
-    // recovery runs when the scan supervisor starts.
+    // Publish journal reconciliation; scan recovery runs when the scan
+    // supervisor starts.
     let library_recovery = library.run_recovery().await;
     tracing::info!(
         publish_bundles = library_recovery.publish_recoveries.len(),
-        contrib_recovered = library_recovery.contrib_recovered,
         "library recovery complete"
     );
     let compat = CompatSetup::build(CompatDeps::over_reads(
@@ -595,6 +595,10 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         concerts.sweep(),
     )
     .with_queue(queues)
+    .with_job(
+        droppedneedle_library::contrib::worker::SPEC,
+        library.contrib_worker.handler(),
+    )
     .with_mixer(mix_hooks.clone())
     .with_precache_sources_from(&reads, &config_store)
     .with_discovery_demand(Arc::new(

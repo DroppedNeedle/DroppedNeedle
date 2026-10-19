@@ -19,9 +19,9 @@ use contrib::scripted::*;
 use contrib::seams::*;
 use contrib::service::ContributionService;
 use contrib::sqlite::SqliteContributions;
-use contrib::worker::{
-    VERIFICATION_JOB, VerificationWorker, VerificationWorkerConfig, start_verification,
-};
+use contrib::worker::{Claim, SPEC, VERIFY, Verdict, VerificationWorker};
+use droppedneedle_kernel::db::{Db, Lane};
+use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, Outcome, runner, start_runners};
 use droppedneedle_library::adapters::MatchingAttachmentEvidence;
 use droppedneedle_providers::slots::RequestPriority;
 use futures_util::future::BoxFuture;
@@ -96,8 +96,6 @@ impl ContributionCatalog for RecordingCatalog {
 /// A verification job as its row holds it.
 struct Job {
     state: String,
-    not_before: f64,
-    last_failure_code: Option<String>,
 }
 
 /// A contribution verification attempt as its row holds it.
@@ -109,6 +107,7 @@ struct Attempt {
 
 struct Rig {
     db: rusqlite::Connection,
+    handle: Db,
     store: Arc<SqliteContributions>,
     discogs: Arc<ScriptedDiscogs>,
     musicbrainz: Arc<ScriptedMusicBrainz>,
@@ -125,13 +124,13 @@ impl Rig {
         let path = dir.join("app.db");
         migrated_db(&path);
         let db = droppedneedle_kernel::db::open_connection(&path).unwrap();
-        let store = Arc::new(SqliteContributions::new(
-            droppedneedle_kernel::db::Db::open_for_tests(&path).unwrap(),
-        ));
+        let handle = Db::open_for_tests(&path).unwrap();
+        let clock = Arc::new(TestClock::new(NOW));
+        let queue = JobQueue::new(handle.clone(), Arc::new(clock.kernel()));
+        let store = Arc::new(SqliteContributions::new(handle.clone(), queue));
         let discogs = Arc::new(ScriptedDiscogs::new());
         let musicbrainz = Arc::new(ScriptedMusicBrainz::new());
         let catalog = Arc::new(RecordingCatalog::default());
-        let clock = Arc::new(TestClock::new(NOW));
         let service = Arc::new(
             ContributionService::new(
                 store.clone(),
@@ -144,6 +143,7 @@ impl Rig {
         );
         let rig = Self {
             db,
+            handle,
             store,
             discogs,
             musicbrainz,
@@ -260,17 +260,12 @@ impl Rig {
     fn jobs_for(&self, contribution_id: &str) -> Vec<Job> {
         self.db
             .prepare(
-                "SELECT state, not_before, last_failure_code \
-                 FROM library_contribution_verification_jobs WHERE contribution_id = ?1 \
-                 ORDER BY created_at, rowid",
+                "SELECT state FROM durable_jobs WHERE kind = ?1 AND idempotency_key = ?2 \
+                 ORDER BY id",
             )
             .unwrap()
-            .query_map(params![contribution_id], |row| {
-                Ok(Job {
-                    state: row.get(0)?,
-                    not_before: row.get(1)?,
-                    last_failure_code: row.get(2)?,
-                })
+            .query_map(params![VERIFY.name(), contribution_id], |row| {
+                Ok(Job { state: row.get(0)? })
             })
             .unwrap()
             .collect::<rusqlite::Result<_>>()
@@ -325,12 +320,24 @@ impl Rig {
         Arc::new(VerificationWorker::new(
             self.service.clone(),
             self.musicbrainz.clone(),
-            VerificationWorkerConfig::default(),
         ))
     }
 
     fn now(&self) -> f64 {
         self.clock.now_seconds()
+    }
+}
+
+/// A run's contribution outcome.
+fn outcome(verdict: Option<Verdict>) -> Option<VerificationOutcome> {
+    verdict.map(|verdict| verdict.outcome)
+}
+
+/// When a retry asked to run again, in seconds, and its code.
+fn retry(verdict: Option<Verdict>) -> (f64, &'static str) {
+    match verdict.map(|verdict| verdict.job) {
+        Some(Outcome::Retry { code, at: Some(at) }) => (at as f64 / 1000.0, code),
+        other => panic!("expected a timed retry, got {other:?}"),
     }
 }
 
@@ -1326,7 +1333,7 @@ async fn brief_full_submission_roundtrip_through_mocked_editor() {
         Ok(Some(verified_release(MBID_RELEASE, MBID_GROUP))),
     );
     let worker = rig.worker();
-    let outcome = worker.run_once(rig.now()).await.unwrap();
+    let outcome = outcome(worker.run_once().await.unwrap());
     assert_eq!(outcome, Some(VerificationOutcome::Linked));
     let linked = rig.service.get(&checked.id).await.unwrap();
     assert_eq!(linked.state, ContributionState::Linked);
@@ -1488,23 +1495,22 @@ async fn brief_worker_retries_with_backoff_then_reviews() {
     rig.musicbrainz.insert_verification(MBID_RELEASE, Ok(None)); // not propagated yet
     let worker = rig.worker();
     // First failure: 15s backoff (15 * 2^min(1-1, 6)).
-    let outcome = worker.run_once(rig.now()).await.unwrap();
-    assert_eq!(outcome, Some(VerificationOutcome::RetryScheduled));
+    let verdict = worker.run_once().await.unwrap();
+    assert_eq!(outcome(verdict), Some(VerificationOutcome::RetryScheduled));
     let jobs = rig.jobs_for(&verifying.id);
     assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0].not_before, NOW + 15.0);
-    assert_eq!(
-        jobs[0].last_failure_code.as_deref(),
-        Some(FAILURE_MB_NOT_PROPAGATED)
-    );
+    let (mut not_before, code) = retry(verdict);
+    assert_eq!(not_before, NOW + 15.0);
+    assert_eq!(code, FAILURE_MB_NOT_PROPAGATED);
     // Nine more scheduled retries, then the window/attempt budget runs out.
     for _ in 0..8 {
-        rig.clock.set(rig.jobs_for(&verifying.id)[0].not_before);
-        let outcome = worker.run_once(rig.now()).await.unwrap();
-        assert_eq!(outcome, Some(VerificationOutcome::RetryScheduled));
+        rig.clock.set(not_before);
+        let verdict = worker.run_once().await.unwrap();
+        assert_eq!(outcome(verdict), Some(VerificationOutcome::RetryScheduled));
+        not_before = retry(verdict).0;
     }
-    rig.clock.set(rig.jobs_for(&verifying.id)[0].not_before);
-    let outcome = worker.run_once(rig.now()).await.unwrap();
+    rig.clock.set(not_before);
+    let outcome = outcome(worker.run_once().await.unwrap());
     assert_eq!(outcome, Some(VerificationOutcome::NeedsReview));
     let record = rig.service.get(&verifying.id).await.unwrap();
     assert_eq!(record.state, ContributionState::NeedsReview);
@@ -1534,12 +1540,15 @@ async fn brief_worker_unmappable_payload_reviews_immediately() {
     let verifying = to_verifying(&rig).await;
     rig.musicbrainz
         .insert_verification(MBID_RELEASE, Err(ProviderFailure::Unmappable));
-    let outcome = rig.worker().run_once(rig.now()).await.unwrap();
+    let outcome = outcome(rig.worker().run_once().await.unwrap());
     assert_eq!(outcome, Some(VerificationOutcome::NeedsReview));
     let jobs = rig.jobs_for(&verifying.id);
-    assert_eq!(jobs[0].state, "needs_review");
+    assert_eq!(jobs[0].state, "done");
     assert_eq!(
-        jobs[0].last_failure_code.as_deref(),
+        rig.raw(&verifying.id)
+            .await
+            .last_verification_failure
+            .as_deref(),
         Some(UNMAPPABLE_PROVIDER_PAYLOAD)
     );
     // No evidence ran on the payload failure: the attempt has no candidate.
@@ -1556,7 +1565,7 @@ async fn brief_worker_release_mismatch_reviews() {
         MBID_RELEASE,
         Ok(Some(verified_release(MBID_OTHER, MBID_GROUP))),
     );
-    let outcome = rig.worker().run_once(rig.now()).await.unwrap();
+    let outcome = outcome(rig.worker().run_once().await.unwrap());
     assert_eq!(outcome, Some(VerificationOutcome::NeedsReview));
     assert_eq!(outcome.unwrap().as_str(), "needs_review");
     let attempts = rig.attempts();
@@ -1573,7 +1582,7 @@ async fn brief_worker_contradiction_reviews_with_reason() {
     other.artist_name = "Somebody Else".to_string();
     rig.musicbrainz
         .insert_verification(MBID_RELEASE, Ok(Some(other)));
-    let outcome = rig.worker().run_once(rig.now()).await.unwrap();
+    let outcome = outcome(rig.worker().run_once().await.unwrap());
     assert_eq!(outcome, Some(VerificationOutcome::NeedsReview));
     let attempts = rig.attempts();
     assert_eq!(attempts[0].state, "needs_review");
@@ -1592,9 +1601,10 @@ async fn brief_worker_retry_after_floor_and_bogus_drop() {
             retry_after_seconds: Some(120.0),
         }),
     );
-    let outcome = rig.worker().run_once(rig.now()).await.unwrap();
-    assert_eq!(outcome, Some(VerificationOutcome::RetryScheduled));
-    assert_eq!(rig.jobs_for(&verifying.id)[0].not_before, NOW + 120.0);
+    let verdict = rig.worker().run_once().await.unwrap();
+    assert_eq!(outcome(verdict), Some(VerificationOutcome::RetryScheduled));
+    assert_eq!(retry(verdict).0, NOW + 120.0);
+    assert_eq!(rig.jobs_for(&verifying.id).len(), 1);
     // A bogus retry-after (NaN) is dropped, not clamped: plain 15s backoff.
     rig.musicbrainz.insert_verification(
         MBID_RELEASE,
@@ -1605,98 +1615,96 @@ async fn brief_worker_retry_after_floor_and_bogus_drop() {
     rig.clock.set(NOW + 120.0);
     let worker = rig.worker();
     // Drain the queued job from the first part, then re-run: attempt 2 -> 30s.
-    let outcome = worker.run_once(rig.now()).await.unwrap();
-    assert_eq!(outcome, Some(VerificationOutcome::RetryScheduled));
-    assert_eq!(
-        rig.jobs_for(&verifying.id)[0].not_before,
-        NOW + 120.0 + 30.0
-    );
+    let verdict = worker.run_once().await.unwrap();
+    assert_eq!(outcome(verdict), Some(VerificationOutcome::RetryScheduled));
+    assert_eq!(retry(verdict).0, NOW + 120.0 + 30.0);
 }
 
+/// A claimed job whose contribution was cancelled since does nothing,
+/// and the cancel took its job away. Lease recovery is the jobs module's,
+/// covered by its own suite.
 #[tokio::test]
-async fn brief_worker_skips_non_verifying_and_recovers_leases() {
+async fn brief_worker_skips_non_verifying() {
     let rig = Rig::new();
     let verifying = to_verifying(&rig).await;
     let worker = rig.worker();
     // Claim out-of-band, then cancel the contribution: the job no longer applies.
-    let job = worker.claim(rig.now()).await.unwrap().unwrap();
+    let queue = rig.store.queue().clone();
+    let claimed = {
+        let queue = queue.clone();
+        rig.handle
+            .write(Lane::Background, "test.claim", move |tx| {
+                queue.claim_in(tx, &SPEC)
+            })
+            .await
+            .unwrap()
+            .unwrap()
+    };
     let record = rig.service.get(&verifying.id).await.unwrap();
     rig.service
         .cancel(&record.id, record.row_revision, ACTOR)
         .await
         .unwrap();
     // Fresh worker run finds no queued job (cancel retired it).
-    assert!(worker.run_once(rig.now()).await.unwrap().is_none());
-    let _ = job;
-    // Expired running leases requeue on recover; cleanup cadence is hourly.
-    let verifying = to_verifying(&rig).await;
-    let job = worker.claim(rig.now()).await.unwrap().unwrap();
-    assert_eq!(job.attempt_count, 1);
-    rig.clock.advance(91.0);
-    let recovered = worker.recover(rig.now()).await.unwrap();
-    assert_eq!(recovered, 1);
-    let jobs = rig.jobs_for(&verifying.id);
-    assert_eq!(jobs[0].state, "queued");
-    // Second recover inside the hour skips cleanup but still recovers (none due).
-    let recovered = worker.recover(rig.now()).await.unwrap();
-    assert_eq!(recovered, 0);
+    assert!(worker.run_once().await.unwrap().is_none());
+    assert!(rig.jobs_for(&verifying.id).is_empty());
+    let lease = claimed.lease.clone();
+    let claim = Claim {
+        contribution_id: claimed.key.clone(),
+        attempt: claimed.attempt,
+        complete: Arc::new(move |tx| queue.complete(tx, &lease)),
+    };
+    let verdict = worker.run_claimed(&claim, rig.now()).await.unwrap();
+    assert_eq!(verdict.outcome, VerificationOutcome::NoLongerVerifying);
+    assert_eq!(verdict.job, Outcome::Done);
 }
 
-#[tokio::test(start_paused = true)]
-async fn brief_worker_spawn_loop_links_then_shuts_down() {
+/// The jobs module runs verification as the server registers it: the
+/// runner links the contribution, then stops with the supervisor.
+#[tokio::test]
+async fn brief_worker_runner_links_then_shuts_down() {
     let rig = Rig::new();
-    // The spawned loop uses wall-clock time; pin the rig clock near it.
-    let wall = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap();
-    rig.clock.set(wall);
     let verifying = to_verifying(&rig).await;
     rig.musicbrainz.insert_verification(
         MBID_RELEASE,
         Ok(Some(verified_release(MBID_RELEASE, MBID_GROUP))),
     );
-    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
-    let worker = Arc::new(VerificationWorker::new(
-        rig.service.clone(),
-        rig.musicbrainz.clone(),
-        VerificationWorkerConfig {
-            worker_id: "test-loop".to_string(),
-            poll_interval: POLL_INTERVAL,
-            lease_seconds: 90.0,
-        },
-    ));
     let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
-        droppedneedle_kernel::db::Db::open_for_tests(&rig._dir.join("app.db")).unwrap(),
+        rig.handle.clone(),
         Arc::new(droppedneedle_kernel::clock::SystemClock),
         droppedneedle_kernel::jobs::CancellationToken::new(),
     )
     .await
     .unwrap();
-    start_verification(&supervisor, worker).unwrap();
-    // Each sleep lets the loop pass its interval. The pass's store calls run
-    // on blocking threads, and the paused clock jumps ahead while they run,
-    // so the bound is wall-clock time, not a count of virtual sleeps.
+    start_runners(
+        rig.store.queue(),
+        &supervisor,
+        Handlers::default().with(SPEC, rig.worker().handler()),
+    )
+    .unwrap();
+    // The runner's store calls run on blocking threads, so the bound is
+    // wall-clock time.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     let mut linked = rig.service.get(&verifying.id).await.unwrap();
     while linked.state != ContributionState::Linked && std::time::Instant::now() < deadline {
-        tokio::time::sleep(POLL_INTERVAL).await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         linked = rig.service.get(&verifying.id).await.unwrap();
     }
     assert_eq!(
         linked.state,
         ContributionState::Linked,
-        "worker loop should link the contribution"
+        "the runner should link the contribution"
     );
-    // A pass already running finishes its store calls on blocking threads
-    // first. The paused clock jumps ahead while they run, so the bound is
-    // wall-clock time, not virtual time.
+    let jobs = rig.jobs_for(&verifying.id);
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].state, "done");
     supervisor.token().cancel();
+    let name = runner::runner_name(VERIFY);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while supervisor.is_running(VERIFICATION_JOB) {
+    while supervisor.is_running(&name) {
         assert!(
             std::time::Instant::now() < deadline,
-            "worker loop should shut down"
+            "the runner should shut down"
         );
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }

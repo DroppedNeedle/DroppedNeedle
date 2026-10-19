@@ -2,9 +2,11 @@
 //!
 //! [`SqliteContributions`] implements both the contribution store and the
 //! album identification context over the 0001 tables v2 already used:
-//! `library_contribution_drafts`, `..._callback_tokens` and
-//! `..._verification_jobs`, plus the catalog the scan writes
-//! (`local_albums`, `local_tracks`) and the identity tables identify owns.
+//! `library_contribution_drafts` and `..._callback_tokens`, plus the
+//! catalog the scan writes (`local_albums`, `local_tracks`) and the
+//! identity tables identify owns. Verification jobs are rows of
+//! [`VERIFY`] on the jobs table, queued and cancelled in the
+//! contribution's own write.
 //!
 //! Every call is one short read or write on the shared database. Writes
 //! run on the writer lane in the caller's class, read the row,
@@ -15,13 +17,15 @@
 //! transaction, so a crash leaves either both or neither.
 
 use droppedneedle_kernel::db::{Db, Lane};
+use droppedneedle_kernel::jobs::queue::{JobError, JobQueue};
 use futures_util::future::BoxFuture;
-use rusqlite::{Connection, OptionalExtension as _, Row, params};
+use rusqlite::{Connection, OptionalExtension as _, Row, Transaction, params};
 
 use super::error::ContribError;
 use super::models::*;
 use super::rules::album_input_revisions;
 use super::seams::*;
+use super::worker::{Completion, VERIFY};
 
 const PROVIDER: &str = "musicbrainz";
 /// Attempt trigger v2 stamped on contribution verification attempts.
@@ -34,15 +38,39 @@ impl From<rusqlite::Error> for ContribError {
     }
 }
 
+impl From<JobError> for ContribError {
+    fn from(error: JobError) -> Self {
+        match error {
+            JobError::LeaseLost => {
+                Self::stale("The contribution verification job changed before completion.")
+            }
+            JobError::Db(error) => error.into(),
+            other => Self::Storage(other.to_string()),
+        }
+    }
+}
+
 /// SQLite contribution store and identity reader.
 #[derive(Clone)]
 pub struct SqliteContributions {
     db: Db,
+    queue: JobQueue,
 }
 
 impl SqliteContributions {
-    pub fn new(db: Db) -> Self {
-        Self { db }
+    /// The store on `db`, queueing verification on `queue`.
+    pub fn new(db: Db, queue: JobQueue) -> Self {
+        Self { db, queue }
+    }
+
+    /// The jobs table verification runs on.
+    pub fn queue(&self) -> &JobQueue {
+        &self.queue
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn db(&self) -> &Db {
+        &self.db
     }
 }
 
@@ -79,17 +107,6 @@ fn state_from(raw: &str) -> Result<ContributionState, ContribError> {
             )));
         }
     })
-}
-
-fn job_state_from(raw: &str) -> VerificationJobState {
-    match raw {
-        "running" => VerificationJobState::Running,
-        "succeeded" => VerificationJobState::Succeeded,
-        "needs_review" => VerificationJobState::NeedsReview,
-        "failed" => VerificationJobState::Failed,
-        "cancelled" => VerificationJobState::Cancelled,
-        _ => VerificationJobState::Queued,
-    }
 }
 
 fn to_json<T: serde::Serialize>(value: &T) -> Result<String, ContribError> {
@@ -174,7 +191,7 @@ const ROW_COLUMNS: &str = "id, local_album_id, created_by_user_id, updated_by_us
      source_selection_json, provider_snapshot_expires_at, duplicate_result_json, \
      duplicate_checked_at, duplicate_input_revision, result_release_mbid, result_source, \
      result_received_at, seed_snapshot_json, seed_hash, seeded_at, terminal_at, created_at, \
-     updated_at, row_revision";
+     updated_at, row_revision, last_verification_failure";
 
 /// Raw column values; JSON decodes after the statement finishes.
 struct RawRow {
@@ -202,6 +219,7 @@ struct RawRow {
     created_at: f64,
     updated_at: f64,
     row_revision: i64,
+    last_verification_failure: Option<String>,
 }
 
 fn raw_row(row: &Row<'_>) -> rusqlite::Result<RawRow> {
@@ -230,6 +248,7 @@ fn raw_row(row: &Row<'_>) -> rusqlite::Result<RawRow> {
         created_at: row.get(21)?,
         updated_at: row.get(22)?,
         row_revision: row.get(23)?,
+        last_verification_failure: row.get(24)?,
     })
 }
 
@@ -247,15 +266,6 @@ fn load_row(
     let Some(raw) = raw else {
         return Ok(None);
     };
-    let last_failure: Option<String> = conn
-        .prepare_cached(
-            "SELECT last_failure_code FROM library_contribution_verification_jobs \
-             WHERE contribution_id = ?1 AND state IN ('needs_review','failed','cancelled') \
-             ORDER BY updated_at DESC, id DESC LIMIT 1",
-        )?
-        .query_row(params![contribution_id], |row| row.get(0))
-        .optional()?
-        .flatten();
     let live = album_input(conn, &raw.local_album_id)?;
     let selection: ContributionSourceSelection = from_json(&raw.selection)?;
     let discogs = selection
@@ -292,7 +302,7 @@ fn load_row(
         created_at: raw.created_at,
         updated_at: raw.updated_at,
         row_revision: raw.row_revision,
-        last_verification_failure: last_failure,
+        last_verification_failure: raw.last_verification_failure,
         album_active: live.is_some(),
         current_input_revision: live
             .as_ref()
@@ -409,103 +419,26 @@ fn consume_tokens(conn: &Connection, contribution_id: &str, now: f64) -> rusqlit
     Ok(())
 }
 
-fn cancel_jobs(conn: &Connection, contribution_id: &str, now: f64) -> rusqlite::Result<()> {
-    conn.prepare_cached(
-        "UPDATE library_contribution_verification_jobs SET state = 'cancelled', \
-         terminal_at = ?2, updated_at = ?2, lease_owner = NULL, lease_expires_at = NULL, \
-         heartbeat_at = NULL, row_revision = row_revision + 1, \
-         event_revision = event_revision + 1 \
-         WHERE contribution_id = ?1 AND state IN ('queued','running')",
-    )?
-    .execute(params![contribution_id, now])?;
+/// End the contribution's queued and running verification.
+fn cancel_jobs(queue: &JobQueue, tx: &Transaction, contribution_id: &str) -> Result<(), JobError> {
+    queue.cancel(tx, VERIFY, contribution_id)?;
     Ok(())
 }
 
-fn active_job(conn: &Connection, contribution_id: &str) -> rusqlite::Result<Option<String>> {
-    conn.prepare_cached(
-        "SELECT id FROM library_contribution_verification_jobs \
-         WHERE contribution_id = ?1 AND state IN ('queued','running') LIMIT 1",
-    )?
-    .query_row(params![contribution_id], |row| row.get(0))
-    .optional()
+/// Queue a verification of the contribution; a queued one already there
+/// stands.
+fn enqueue_job(queue: &JobQueue, tx: &Transaction, contribution_id: &str) -> Result<(), JobError> {
+    queue.enqueue(tx, VERIFY, contribution_id, &serde_json::json!({}))?;
+    Ok(())
 }
 
-fn enqueue_job(
+fn record_failure(
     conn: &Connection,
     contribution_id: &str,
-    requested_by: Option<&str>,
-    now: f64,
-) -> rusqlite::Result<String> {
-    let id = uuid::Uuid::new_v4().to_string();
-    conn.prepare_cached(
-        "INSERT INTO library_contribution_verification_jobs (id, contribution_id, state, \
-         attempt_count, not_before, requested_by_user_id, created_at, updated_at) \
-         VALUES (?1, ?2, 'queued', 0, ?3, ?4, ?3, ?3)",
-    )?
-    .execute(params![id, contribution_id, now, requested_by])?;
-    Ok(id)
-}
-
-const JOB_COLUMNS: &str = "id, contribution_id, state, lease_owner, attempt_count, not_before, \
-     created_at, lease_expires_at, last_failure_code, requested_by_user_id, terminal_at, \
-     row_revision";
-
-fn job_row(row: &Row<'_>) -> rusqlite::Result<VerificationJobRow> {
-    Ok(VerificationJobRow {
-        id: row.get(0)?,
-        contribution_id: row.get(1)?,
-        state: job_state_from(&row.get::<_, String>(2)?),
-        worker_id: row.get(3)?,
-        attempt_count: row.get::<_, i64>(4)?.max(0) as u32,
-        not_before: row.get(5)?,
-        created_at: row.get(6)?,
-        lease_expires_at: row.get(7)?,
-        last_failure_code: row.get(8)?,
-        requested_by_user_id: row.get(9)?,
-        terminal_at: row.get(10)?,
-        row_revision: row.get(11)?,
-    })
-}
-
-fn load_job(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<VerificationJobRow>> {
-    conn.prepare_cached(&format!(
-        "SELECT {JOB_COLUMNS} FROM library_contribution_verification_jobs WHERE id = ?1"
-    ))?
-    .query_row(params![job_id], job_row)
-    .optional()
-}
-
-/// Close a running job under its lease.
-fn close_job(
-    conn: &Connection,
-    job_id: &str,
-    worker_id: &str,
-    expected_revision: i64,
-    state: &str,
-    failure_code: Option<&str>,
-    now: f64,
-) -> Result<(), ContribError> {
-    let changed = conn
-        .prepare_cached(
-            "UPDATE library_contribution_verification_jobs SET state = ?4, \
-             last_failure_code = ?5, terminal_at = ?6, updated_at = ?6, lease_owner = NULL, \
-             lease_expires_at = NULL, heartbeat_at = NULL, row_revision = row_revision + 1, \
-             event_revision = event_revision + 1 \
-             WHERE id = ?1 AND state = 'running' AND lease_owner = ?2 AND row_revision = ?3",
-        )?
-        .execute(params![
-            job_id,
-            worker_id,
-            expected_revision,
-            state,
-            failure_code,
-            now
-        ])?;
-    if changed != 1 {
-        return Err(ContribError::stale(
-            "The contribution verification job changed before completion.",
-        ));
-    }
+    code: Option<&str>,
+) -> rusqlite::Result<()> {
+    conn.prepare_cached(super::sql::RECORD_VERIFICATION_FAILURE.text())?
+        .execute(params![contribution_id, code])?;
     Ok(())
 }
 
@@ -773,7 +706,8 @@ fn commit_link(conn: &Connection, link: &LinkIdentity<'_>, now: f64) -> Result<i
 /// methods). Returns the expected revision and the message a lost race
 /// reports.
 fn apply_update(
-    conn: &Connection,
+    conn: &Transaction,
+    queue: &JobQueue,
     row: &mut ContributionRow,
     expected_row_revision: i64,
     actor_user_id: &str,
@@ -1068,7 +1002,7 @@ fn apply_update(
                     ));
                 }
                 consume_tokens(conn, &row.id, now)?;
-                cancel_jobs(conn, &row.id, now)?;
+                cancel_jobs(queue, conn, &row.id)?;
                 let verifying = row.album_active && row.state != ContributionState::Stale;
                 row.state = if verifying {
                     ContributionState::Verifying
@@ -1080,7 +1014,7 @@ fn apply_update(
                 row.result_received_at = Some(now);
                 row.terminal_at = None;
                 if verifying {
-                    enqueue_job(conn, &row.id, Some(actor_user_id), now)?;
+                    enqueue_job(queue, conn, &row.id)?;
                 }
                 msg
             }
@@ -1105,9 +1039,7 @@ fn apply_update(
                     row,
                     "The contribution changed before verification was retried.",
                 )?;
-                if active_job(conn, &row.id)?.is_none() {
-                    enqueue_job(conn, &row.id, Some(actor_user_id), now)?;
-                }
+                enqueue_job(queue, conn, &row.id)?;
                 row.state = ContributionState::Verifying;
                 row.terminal_at = None;
                 msg
@@ -1124,7 +1056,7 @@ fn apply_update(
                     "The contribution changed before it could be cancelled.",
                 )?;
                 consume_tokens(conn, &row.id, now)?;
-                cancel_jobs(conn, &row.id, now)?;
+                cancel_jobs(queue, conn, &row.id)?;
                 row.state = ContributionState::Cancelled;
                 row.terminal_at = Some(now);
                 row.seed_snapshot_json = None;
@@ -1245,9 +1177,18 @@ impl SqliteContributions {
         update: ContributionUpdate,
     ) -> BoxFuture<'a, Result<ContributionRow, ContribError>> {
         let (id, actor) = (contribution_id.to_owned(), actor_user_id.to_owned());
+        let queue = self.queue.clone();
         Box::pin(self.db.write(lane, "contrib.update", move |conn| {
             let mut row = require_row(conn, &id)?;
-            let msg = apply_update(conn, &mut row, expected_row_revision, &actor, now, update)?;
+            let msg = apply_update(
+                conn,
+                &queue,
+                &mut row,
+                expected_row_revision,
+                &actor,
+                now,
+                update,
+            )?;
             save_row(conn, &row, expected_row_revision, msg)?;
             require_row(conn, &id)
         }))
@@ -1262,6 +1203,7 @@ impl SqliteContributions {
         now: f64,
     ) -> BoxFuture<'a, Result<ContributionRow, ContribError>> {
         let id = contribution_id.to_owned();
+        let queue = self.queue.clone();
         Box::pin(self.db.write(lane, "contrib.mark_stale", move |conn| {
             let row = require_row(conn, &id)?;
             if !terminal(row.state) {
@@ -1282,16 +1224,16 @@ impl SqliteContributions {
                     expected_row_revision,
                     "The contribution changed before it could be marked stale.",
                 )?;
-                cancel_jobs(conn, &id, now)?;
+                cancel_jobs(&queue, conn, &id)?;
             }
             require_row(conn, &id)
         }))
     }
 
-    /// Returns the contribution id plus the verification job id when one
-    /// was (re)queued; `None` means the token is unknown, consumed, or
-    /// expired (v2 `ResourceNotFoundError`). State conflicts surface as
-    /// `Err` so they keep their own message.
+    /// Returns the contribution id, its verification queued unless it went
+    /// stale; `None` means the token is unknown, consumed, or expired (v2
+    /// `ResourceNotFoundError`). State conflicts surface as `Err` so they
+    /// keep their own message.
     pub fn consume_callback_token<'a>(
         &'a self,
         token_hash: &'a str,
@@ -1299,19 +1241,19 @@ impl SqliteContributions {
         now: f64,
     ) -> BoxFuture<'a, Result<CallbackConsumption, ContribError>> {
         let (hash, release) = (token_hash.to_owned(), release_mbid.to_owned());
+        let queue = self.queue.clone();
         Box::pin(self.db.write(
             Lane::Foreground,
             "contrib.consume_callback_token",
             move |conn| {
-                let token: Option<(String, Option<String>)> = conn
+                let token: Option<String> = conn
                     .prepare_cached(
-                        "SELECT contribution_id, requested_by_user_id \
-                     FROM library_contribution_callback_tokens \
+                        "SELECT contribution_id FROM library_contribution_callback_tokens \
                      WHERE token_hash = ?1 AND consumed_at IS NULL AND expires_at >= ?2",
                     )?
-                    .query_row(params![hash, now], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .query_row(params![hash, now], |row| row.get(0))
                     .optional()?;
-                let Some((contribution_id, requested_by)) = token else {
+                let Some(contribution_id) = token else {
                     return Ok(None);
                 };
                 let Some(mut row) = load_row(conn, &contribution_id)? else {
@@ -1355,14 +1297,10 @@ impl SqliteContributions {
                     expected,
                     "The contribution changed before the MusicBrainz result was recorded.",
                 )?;
-                if !verifying {
-                    return Ok(Some((row.id, None)));
+                if verifying {
+                    enqueue_job(&queue, conn, &row.id)?;
                 }
-                let job = match active_job(conn, &row.id)? {
-                    Some(job) => job,
-                    None => enqueue_job(conn, &row.id, requested_by.as_deref(), now)?,
-                };
-                Ok(Some((row.id, Some(job))))
+                Ok(Some(row.id))
             },
         ))
     }
@@ -1403,74 +1341,6 @@ impl SqliteContributions {
         })
     }
 
-    /// The next due verification job, leased to `worker_id`. `None` when
-    /// nothing is due.
-    pub fn claim_verification<'a>(
-        &'a self,
-        worker_id: &'a str,
-        now: f64,
-        lease_seconds: f64,
-    ) -> BoxFuture<'a, Result<Option<VerificationJobRow>, ContribError>> {
-        let worker = worker_id.to_owned();
-        Box::pin(async move {
-            self.db
-                .write(
-                    Lane::Background,
-                    "contrib.claim_verification",
-                    move |conn| {
-                        let id: Option<String> = conn
-                            .prepare_cached(
-                                "SELECT id FROM library_contribution_verification_jobs \
-                         WHERE state = 'queued' AND not_before <= ?1 \
-                         ORDER BY not_before, created_at LIMIT 1",
-                            )?
-                            .query_row(params![now], |row| row.get(0))
-                            .optional()?;
-                        let Some(id) = id else {
-                            return Ok(None);
-                        };
-                        conn.prepare_cached(
-                            "UPDATE library_contribution_verification_jobs SET state = 'running', \
-                     attempt_count = attempt_count + 1, lease_owner = ?2, \
-                     lease_expires_at = ?3, heartbeat_at = ?4, updated_at = ?4, \
-                     row_revision = row_revision + 1, event_revision = event_revision + 1 \
-                     WHERE id = ?1",
-                        )?
-                        .execute(params![
-                            id,
-                            worker,
-                            now + lease_seconds,
-                            now
-                        ])?;
-                        Ok(load_job(conn, &id)?)
-                    },
-                )
-                .await
-        })
-    }
-
-    /// Put a job `worker_id` holds back in the queue without counting the
-    /// attempt it claimed: the database was too busy to run it. It runs
-    /// again from `not_before`.
-    pub fn release_verification<'a>(
-        &'a self,
-        job_id: &'a str,
-        worker_id: &'a str,
-        not_before: f64,
-        now: f64,
-    ) -> BoxFuture<'a, Result<(), ContribError>> {
-        let (job, worker) = (job_id.to_owned(), worker_id.to_owned());
-        Box::pin(self.db.write(
-            Lane::Background,
-            "contrib.release_verification",
-            move |conn| {
-                conn.prepare_cached(super::sql::RELEASE_VERIFICATION.text())?
-                    .execute(params![job, worker, not_before, now])?;
-                Ok(())
-            },
-        ))
-    }
-
     /// Rebuild retires the stale row and inserts a fresh row (new id,
     /// state draft); returns the new row (v2 `rebuild_library_contribution`).
     #[allow(clippy::too_many_arguments)]
@@ -1492,6 +1362,7 @@ impl SqliteContributions {
             input_revision.to_owned(),
         );
         let (snapshot, draft, selection) = (snapshot.clone(), draft.clone(), selection.clone());
+        let queue = self.queue.clone();
         Box::pin(
             self.db
                 .write(Lane::Foreground, "contrib.rebuild", move |conn| {
@@ -1520,7 +1391,7 @@ impl SqliteContributions {
                         "The contribution changed before it could be rebuilt.",
                     )?;
                     consume_tokens(conn, &id, now)?;
-                    cancel_jobs(conn, &id, now)?;
+                    cancel_jobs(&queue, conn, &id)?;
                     let fresh = insert_row(
                         conn,
                         &old.local_album_id,
@@ -1537,74 +1408,14 @@ impl SqliteContributions {
         )
     }
 
-    pub fn heartbeat_verification<'a>(
-        &'a self,
-        job_id: &'a str,
-        worker_id: &'a str,
-        expected_row_revision: i64,
-        now: f64,
-        lease_seconds: f64,
-    ) -> BoxFuture<'a, Result<i64, ContribError>> {
-        let (job, worker) = (job_id.to_owned(), worker_id.to_owned());
-        Box::pin(self.db.write(
-            Lane::Background,
-            "contrib.heartbeat_verification",
-            move |conn| {
-                conn.prepare_cached(
-                    "UPDATE library_contribution_verification_jobs SET lease_expires_at = ?4, \
-                 heartbeat_at = ?5, updated_at = ?5, row_revision = row_revision + 1 \
-                 WHERE id = ?1 AND state = 'running' AND lease_owner = ?2 AND row_revision = ?3 \
-                 RETURNING row_revision",
-                )?
-                .query_row(
-                    params![job, worker, expected_row_revision, now + lease_seconds, now],
-                    |row| row.get(0),
-                )
-                .optional()?
-                .ok_or_else(|| ContribError::stale("The contribution verification lease changed."))
-            },
-        ))
-    }
-
-    pub fn retry_verification<'a>(
-        &'a self,
-        job_id: &'a str,
-        worker_id: &'a str,
-        expected_row_revision: i64,
-        failure_code: &'a str,
-        not_before: f64,
-        now: f64,
-    ) -> BoxFuture<'a, Result<(), ContribError>> {
-        let (job, worker, code) = (
-            job_id.to_owned(),
-            worker_id.to_owned(),
-            failure_code.to_owned(),
-        );
-        Box::pin(self.db.write(Lane::Background, "contrib.retry_verification", move |conn| {
-            let changed = conn
-                .prepare_cached(
-                    "UPDATE library_contribution_verification_jobs SET state = 'queued', \
-                     last_failure_code = ?4, not_before = ?5, lease_owner = NULL, \
-                     lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?6, \
-                     row_revision = row_revision + 1, event_revision = event_revision + 1 \
-                     WHERE id = ?1 AND state = 'running' AND lease_owner = ?2 AND row_revision = ?3",
-                )?
-                .execute(params![job, worker, expected_row_revision, code, not_before, now])?;
-            if changed != 1 {
-                return Err(ContribError::stale(
-                    "The contribution verification job changed before retry.",
-                ));
-            }
-            Ok(())
-        }))
-    }
-
+    /// End a verification in one write: the contribution's outcome, its
+    /// failure code and the job's completion (`complete`), which rolls the
+    /// write back when another worker holds the job.
     #[allow(clippy::too_many_arguments)]
     pub fn finish_verification<'a>(
         &'a self,
-        job_id: &'a str,
-        worker_id: &'a str,
-        expected_job_revision: i64,
+        contribution_id: &'a str,
+        complete: Completion,
         expected_contribution_revision: i64,
         expected_album_revision: i64,
         attempt: &'a ContributionVerificationAttempt,
@@ -1613,25 +1424,14 @@ impl SqliteContributions {
         identities: &'a FinishIdentities,
         now: f64,
     ) -> BoxFuture<'a, Result<VerificationOutcome, ContribError>> {
-        let (job_id, worker) = (job_id.to_owned(), worker_id.to_owned());
+        let contribution_id = contribution_id.to_owned();
         let (attempt, identities) = (attempt.clone(), identities.clone());
         let failure_code = failure_code.map(str::to_owned);
         Box::pin(self.db.write(
             Lane::Background,
             "contrib.finish_verification",
             move |conn| {
-                let job = load_job(conn, &job_id)?
-                    .filter(|job| {
-                        job.state == VerificationJobState::Running
-                            && job.worker_id.as_deref() == Some(worker.as_str())
-                            && job.row_revision == expected_job_revision
-                    })
-                    .ok_or_else(|| {
-                        ContribError::stale(
-                            "The contribution verification job changed before completion.",
-                        )
-                    })?;
-                let mut row = require_row(conn, &job.contribution_id)?;
+                let mut row = require_row(conn, &contribution_id)?;
                 if !row.album_active
                     || row.input_revision != row.current_input_revision
                     || row.album_row_revision != row.current_album_row_revision
@@ -1647,15 +1447,8 @@ impl SqliteContributions {
                         expected,
                         "The contribution changed before verification completed.",
                     )?;
-                    close_job(
-                        conn,
-                        &job_id,
-                        &worker,
-                        expected_job_revision,
-                        "cancelled",
-                        Some("LOCAL_INPUT_CHANGED"),
-                        now,
-                    )?;
+                    record_failure(conn, &contribution_id, Some("LOCAL_INPUT_CHANGED"))?;
+                    complete(conn)?;
                     return Ok(VerificationOutcome::Stale);
                 }
                 if row.row_revision != expected_contribution_revision {
@@ -1771,42 +1564,30 @@ impl SqliteContributions {
                     expected,
                     "The contribution changed before verification completed.",
                 )?;
-                close_job(
-                    conn,
-                    &job_id,
-                    &worker,
-                    expected_job_revision,
-                    if linked { "succeeded" } else { "needs_review" },
-                    final_failure.as_deref(),
-                    now,
-                )?;
+                record_failure(conn, &contribution_id, final_failure.as_deref())?;
+                complete(conn)?;
                 Ok(final_outcome)
             },
         ))
     }
 
-    pub fn recover_verification_leases<'a>(
-        &'a self,
-        now: f64,
-    ) -> BoxFuture<'a, Result<u64, ContribError>> {
-        Box::pin(async move {
-            self.db
-                .write(
-                    Lane::Background,
-                    "contrib.recover_verification_leases",
-                    move |conn| {
-                        Ok(conn
-                    .prepare_cached(
-                        "UPDATE library_contribution_verification_jobs SET state = 'queued', \
-                         lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL, \
-                         not_before = ?1, updated_at = ?1, row_revision = row_revision + 1 \
-                         WHERE state = 'running' AND lease_expires_at < ?1",
-                    )?
-                    .execute(params![now])? as u64)
-                    },
-                )
-                .await
-        })
+    /// Queue a verification for every verifying contribution that has
+    /// none queued or running: one a v2 import carried, or one whose job
+    /// failed for good. Returns how many were queued.
+    pub async fn queue_missing_verifications(&self) -> Result<u64, ContribError> {
+        let queue = self.queue.clone();
+        self.db
+            .write(Lane::Background, "contrib.queue_missing", move |conn| {
+                let ids: Vec<String> = conn
+                    .prepare_cached(super::sql::VERIFYING_WITHOUT_JOB.text())?
+                    .query_map([], |row| row.get(0))?
+                    .collect::<rusqlite::Result<_>>()?;
+                for id in &ids {
+                    enqueue_job(&queue, conn, id)?;
+                }
+                Ok(ids.len() as u64)
+            })
+            .await
     }
 
     pub fn clean_records<'a>(&'a self, now: f64) -> BoxFuture<'a, Result<(), ContribError>> {
@@ -1832,13 +1613,6 @@ impl SqliteContributions {
                         "DELETE FROM library_contribution_drafts \
                          WHERE state IN ('cancelled','stale') AND result_release_mbid IS NULL \
                          AND terminal_at < ?1",
-                        params![now - 90.0 * DAY],
-                    )?;
-                    conn.execute(
-                        "DELETE FROM library_contribution_verification_jobs \
-                         WHERE state IN ('succeeded','needs_review','failed','cancelled') \
-                         AND terminal_at < ?1 AND contribution_id IN (SELECT id FROM \
-                         library_contribution_drafts WHERE state IN ('linked','cancelled','stale'))",
                         params![now - 90.0 * DAY],
                     )?;
                     Ok(())
