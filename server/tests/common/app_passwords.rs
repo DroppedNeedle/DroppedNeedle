@@ -6,7 +6,8 @@ use std::sync::Arc;
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::session::tokens;
 use droppedneedle_auth::users::models::AppPasswordRecord;
-use droppedneedle_auth::users::stores::{AppPasswordStore as _, Clock as _};
+use droppedneedle_auth::users::stores::AppPasswordStore as _;
+use droppedneedle_kernel::clock::Clock as _;
 
 use super::auth::AuthRig;
 

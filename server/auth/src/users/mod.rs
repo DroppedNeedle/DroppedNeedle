@@ -43,9 +43,9 @@ use axum::{
 pub use error::UsersError;
 pub use roles::{Admin, Curator, Principal, Role, RoleRequired, SessionKind, User};
 
-use droppedneedle_kernel::{ids::IdGenerator, runtime_config::crypto::Crypto};
+use droppedneedle_kernel::{clock::Clock, ids::IdGenerator, runtime_config::crypto::Crypto};
 use stores::{
-    AppPasswordStore, AvatarStore, Clock, FalliblePasswordHasher, LastFmAuthClient, LastFmStore,
+    AppPasswordStore, AvatarStore, FalliblePasswordHasher, LastFmAuthClient, LastFmStore,
     LastFmSwitch, PasswordScreen, RecoveryStore, SecurityPolicy, SessionManager, UserDirectory,
     UserStore,
 };

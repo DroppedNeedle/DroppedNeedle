@@ -21,26 +21,6 @@ impl std::fmt::Display for ProviderFailure {
     }
 }
 
-/// Clock seam. Sessions, presence TTLs, and scrobble timestamps read time
-/// through this so tests pin it.
-pub trait Clock: Send + Sync {
-    /// Current unix timestamp in seconds.
-    fn now_unix(&self) -> i64;
-}
-
-/// System clock for production.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SystemClock;
-
-impl Clock for SystemClock {
-    fn now_unix(&self) -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs() as i64)
-            .unwrap_or(0)
-    }
-}
-
 /// One catalog track, resolved for reporting.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackInfo {

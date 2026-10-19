@@ -286,10 +286,10 @@ fn unwired_youtube(
 fn test_discover_deps() -> discover::ReadsDeps {
     use discover::fakes::{
         FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio,
-        FakeYouTube, ManualClock,
+        FakeYouTube,
     };
 
-    let clock = ManualClock::new(0);
+    let clock = droppedneedle_kernel::clock::ManualClock::at(0);
     discover::ReadsDeps {
         content: Arc::new(FakeContent::new(clock.clone())),
         queues: Arc::new(FakeQueues),
@@ -299,7 +299,7 @@ fn test_discover_deps() -> discover::ReadsDeps {
         youtube: Arc::new(FakeYouTube::unconfigured()),
         radio: Arc::new(FakeRadio),
         now_playing: Arc::new(FakeNowPlaying),
-        clock: Arc::new(discover::ports::SystemClock),
+        clock: Arc::new(droppedneedle_kernel::clock::SystemClock),
     }
 }
 

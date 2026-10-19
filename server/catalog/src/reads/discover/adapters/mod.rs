@@ -25,10 +25,11 @@ use crate::reads::catalog::Catalog;
 use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::catalog::upstream::{InstanceLastFmKey, Upstream};
 use crate::reads::discover::{
-    ports::{ChartsSource, QueueStore, SystemClock, YouTubeSource},
+    ports::{ChartsSource, QueueStore, YouTubeSource},
     services::ReadsDeps,
 };
 use droppedneedle_auth::users::UsersDeps;
+use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::AdvancedSettings};
 use droppedneedle_media::remotes::connections::{

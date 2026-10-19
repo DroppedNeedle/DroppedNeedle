@@ -524,22 +524,3 @@ pub trait UserDirectory: Send + Sync {
     /// provider; the import re-derives nothing client-side.
     fn list_users(&self) -> BoxFuture<'_, Result<Vec<DirectoryUser>, DirectoryError>>;
 }
-
-/// Clock. Unix seconds keep every store free of datetime parsing.
-pub trait Clock: Send + Sync {
-    /// Now, unix epoch seconds.
-    fn now_unix(&self) -> i64;
-}
-
-/// System clock for production.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SystemClock;
-
-impl Clock for SystemClock {
-    fn now_unix(&self) -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0)
-    }
-}

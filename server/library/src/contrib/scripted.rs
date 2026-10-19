@@ -1,4 +1,4 @@
-//! The scripted outside world for contribution tests: the clock, Discogs,
+//! The scripted outside world for contribution tests: Discogs,
 //! MusicBrainz and the release editor.
 //!
 //! `FakeReleaseEditor` is the mocked submission endpoint: the seed form is
@@ -8,60 +8,12 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-#[cfg(any(test, feature = "test-support"))]
-use droppedneedle_kernel::clock::{Clock as _, ManualClock};
 use droppedneedle_providers::slots::RequestPriority;
 use futures_util::future::BoxFuture;
 
 use super::error::ContribError;
 use super::models::*;
 use super::seams::*;
-
-// ---------------------------------------------------------------------------
-// Clock
-// ---------------------------------------------------------------------------
-
-/// The contribution clock over a kernel [`ManualClock`], so the jobs
-/// table a test builds on [`TestClock::kernel`] reads the same time.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone)]
-pub struct TestClock {
-    now: ManualClock,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl TestClock {
-    pub fn new(now: f64) -> Self {
-        Self {
-            now: ManualClock::at(millis(now)),
-        }
-    }
-
-    pub fn set(&self, now: f64) {
-        self.now.set(millis(now));
-    }
-
-    pub fn advance(&self, seconds: f64) {
-        self.set(self.now_seconds() + seconds);
-    }
-
-    /// The same time as a kernel clock.
-    pub fn kernel(&self) -> ManualClock {
-        self.now.clone()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-fn millis(seconds: f64) -> i64 {
-    (seconds * 1000.0).round() as i64
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ContributionClock for TestClock {
-    fn now_seconds(&self) -> f64 {
-        self.now.now_ms() as f64 / 1000.0
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Provider fakes (reads only - the submission POST goes to FakeReleaseEditor)

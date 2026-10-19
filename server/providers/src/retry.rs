@@ -15,8 +15,8 @@
 //!   would cross it, the last failure returns immediately instead of
 //!   sleeping past the caller's deadline.
 //!
-//! Time and sleep come from a [`Clock`] so tests drive retries with
-//! [`ManualClock`] (no wall-clock waits) while production uses [`TokioClock`].
+//! Time and sleep are tokio's, so tests drive retries on paused time and
+//! never wait on the wall.
 
 use std::{
     collections::hash_map::RandomState,
@@ -25,8 +25,7 @@ use std::{
     time::Duration,
 };
 
-#[cfg(any(test, feature = "test-support"))]
-use std::sync::Mutex;
+use tokio::time::Instant;
 
 use super::error::ProviderError;
 
@@ -95,108 +94,6 @@ impl Default for RetryPolicy {
     }
 }
 
-/// Time and sleep for retries. Production uses [`TokioClock`]; tests use
-/// [`ManualClock`], whose clock only moves through `sleep`, so retry tests
-/// never wait on the wall.
-pub trait Clock: Send + Sync {
-    /// A timestamp marking the logical call's start.
-    type Mark: Copy + Send;
-    /// The current time.
-    fn now(&self) -> Self::Mark;
-    /// Time elapsed since a mark.
-    fn elapsed(&self, since: Self::Mark) -> Duration;
-    /// Wait out one backoff.
-    fn sleep(&self, duration: Duration) -> impl Future<Output = ()> + Send;
-}
-
-/// Real time and real sleep.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TokioClock;
-
-impl Clock for TokioClock {
-    type Mark = tokio::time::Instant;
-
-    fn now(&self) -> Self::Mark {
-        tokio::time::Instant::now()
-    }
-
-    fn elapsed(&self, since: Self::Mark) -> Duration {
-        self.now().saturating_duration_since(since)
-    }
-
-    async fn sleep(&self, duration: Duration) {
-        tokio::time::sleep(duration).await;
-    }
-}
-
-/// A scripted clock for tests: `sleep` records the delay and advances the
-/// fake clock instead of waiting.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct ManualClock {
-    state: Mutex<ManualState>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-struct ManualState {
-    now: Duration,
-    sleeps: Vec<Duration>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ManualClock {
-    /// A clock starting at zero with no recorded sleeps.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Every delay passed to `sleep`, in order.
-    #[must_use]
-    pub fn sleeps(&self) -> Vec<Duration> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .sleeps
-            .clone()
-    }
-
-    /// Move the clock without recording a sleep (for budget tests where the
-    /// operation itself burns time).
-    pub fn advance(&self, duration: Duration) {
-        self.state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .now += duration;
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Clock for ManualClock {
-    type Mark = Duration;
-
-    fn now(&self) -> Self::Mark {
-        self.state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .now
-    }
-
-    fn elapsed(&self, since: Self::Mark) -> Duration {
-        self.now().saturating_sub(since)
-    }
-
-    async fn sleep(&self, duration: Duration) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        state.now += duration;
-        state.sleeps.push(duration);
-    }
-}
-
 /// Run one logical provider call with retry.
 ///
 /// `idempotent` gates retrying entirely: writes pass `false` and run exactly
@@ -205,18 +102,16 @@ impl Clock for ManualClock {
 /// backoff; it is still subject to the budget.
 ///
 /// Returns the first success, or the last failure when nothing succeeded.
-pub async fn execute<C, T, F, Fut>(
+pub async fn execute<T, F, Fut>(
     policy: &RetryPolicy,
-    clock: &C,
     idempotent: bool,
     mut operation: F,
 ) -> Result<T, ProviderError>
 where
-    C: Clock,
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, ProviderError>> + Send,
 {
-    let started = clock.now();
+    let started = Instant::now();
     let mut attempt: u32 = 0;
     loop {
         attempt += 1;
@@ -229,7 +124,7 @@ where
                 let mut delay = failure.retry_after().unwrap_or_else(|| {
                     let backoff = policy.backoff_for_attempt(attempt);
                     if policy.jitter {
-                        apply_jitter(backoff, jitter_seed(clock, started, attempt))
+                        apply_jitter(backoff, jitter_seed(started, attempt))
                     } else {
                         backoff
                     }
@@ -239,12 +134,12 @@ where
                     delay = Duration::from_millis(1);
                 }
                 if let Some(budget) = policy.budget {
-                    let remaining = budget.saturating_sub(clock.elapsed(started));
+                    let remaining = budget.saturating_sub(started.elapsed());
                     if delay >= remaining {
                         return Err(failure);
                     }
                 }
-                clock.sleep(delay).await;
+                tokio::time::sleep(delay).await;
             }
         }
     }
@@ -263,19 +158,45 @@ fn unit_from_seed(seed: u64) -> f64 {
     (bits as f64) / ((1u64 << 53) as f64)
 }
 
-fn jitter_seed<C: Clock>(clock: &C, started: C::Mark, attempt: u32) -> u64 {
-    clock.elapsed(started).as_nanos() as u64 ^ (u64::from(attempt) << 32) ^ 0x9E37_79B9_7F4A_7C15
+fn jitter_seed(started: Instant, attempt: u32) -> u64 {
+    started.elapsed().as_nanos() as u64 ^ (u64::from(attempt) << 32) ^ 0x9E37_79B9_7F4A_7C15
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
     fn transport() -> ProviderError {
         ProviderError::Transport {
             provider: "musicbrainz",
             message: "reset".to_owned(),
+        }
+    }
+
+    /// When each attempt started, on paused tokio time.
+    #[derive(Default)]
+    struct Calls(Mutex<Vec<Instant>>);
+
+    impl Calls {
+        /// Record an attempt and return its 1-based number.
+        fn record(&self) -> usize {
+            let mut starts = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
+            starts.push(Instant::now());
+            starts.len()
+        }
+
+        fn count(&self) -> usize {
+            self.0
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .len()
+        }
+
+        /// The sleeps between attempts, in order.
+        fn sleeps(&self) -> Vec<Duration> {
+            let starts = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
+            starts.windows(2).map(|pair| pair[1] - pair[0]).collect()
         }
     }
 
@@ -292,13 +213,12 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn flaky_read_succeeds_after_scripted_backoffs() {
         let policy = RetryPolicy::default_policy().without_jitter();
-        let clock = ManualClock::new();
-        let calls = AtomicUsize::new(0);
-        let outcome = execute(&policy, &clock, true, || {
-            let call = calls.fetch_add(1, Ordering::SeqCst) + 1;
+        let calls = Calls::default();
+        let outcome = execute(&policy, true, || {
+            let call = calls.record();
             async move {
                 if call < 3 {
                     Err(transport())
@@ -309,53 +229,48 @@ mod tests {
         })
         .await;
         assert_eq!(outcome, Ok("found"));
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(calls.count(), 3);
         assert_eq!(
-            clock.sleeps(),
+            calls.sleeps(),
             [Duration::from_secs(1), Duration::from_secs(2)]
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn writes_run_exactly_once() {
         let policy = RetryPolicy::default_policy().without_jitter();
-        let clock = ManualClock::new();
-        let calls = AtomicUsize::new(0);
-        let outcome = execute(&policy, &clock, false, || {
-            calls.fetch_add(1, Ordering::SeqCst);
+        let calls = Calls::default();
+        let outcome = execute(&policy, false, || {
+            calls.record();
             async { Err::<(), _>(transport()) }
         })
         .await;
         assert!(outcome.is_err());
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(clock.sleeps().is_empty());
+        assert_eq!(calls.count(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn non_retriable_failures_return_immediately() {
         let policy = RetryPolicy::default_policy().without_jitter();
-        let clock = ManualClock::new();
-        let calls = AtomicUsize::new(0);
+        let calls = Calls::default();
         let denied = ProviderError::Forbidden { provider: "lastfm" };
-        let outcome = execute(&policy, &clock, true, || {
-            calls.fetch_add(1, Ordering::SeqCst);
+        let outcome = execute(&policy, true, || {
+            calls.record();
             let denied = denied.clone();
             async move { Err::<(), _>(denied) }
         })
         .await;
         assert_eq!(outcome, Err(denied));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(clock.sleeps().is_empty());
+        assert_eq!(calls.count(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn retry_after_replaces_the_backoff() {
         let policy =
             RetryPolicy::new(3, Duration::from_secs(1), Duration::from_secs(2)).without_jitter();
-        let clock = ManualClock::new();
-        let calls = AtomicUsize::new(0);
-        let outcome = execute(&policy, &clock, true, || {
-            let call = calls.fetch_add(1, Ordering::SeqCst) + 1;
+        let calls = Calls::default();
+        let outcome = execute(&policy, true, || {
+            let call = calls.record();
             async move {
                 if call == 1 {
                     Err(ProviderError::RateLimited {
@@ -370,50 +285,52 @@ mod tests {
         .await;
         assert_eq!(outcome, Ok(()));
         // The server's 30s won over the computed 1s backoff.
-        assert_eq!(clock.sleeps(), [Duration::from_secs(30)]);
+        assert_eq!(calls.sleeps(), [Duration::from_secs(30)]);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn budget_stops_before_a_sleep_that_crosses_it() {
         let policy = RetryPolicy::new(5, Duration::from_secs(5), Duration::from_secs(5))
             .without_jitter()
             .with_budget(Duration::from_secs(6));
-        let clock = ManualClock::new();
-        let calls = AtomicUsize::new(0);
-        let outcome = execute(&policy, &clock, true, || {
-            calls.fetch_add(1, Ordering::SeqCst);
+        let calls = Calls::default();
+        let outcome = execute(&policy, true, || {
+            calls.record();
             async { Err::<(), _>(transport()) }
         })
         .await;
         assert!(outcome.is_err());
         // First sleep (5s) fits; the second would cross the 6s budget.
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
-        assert_eq!(clock.sleeps(), [Duration::from_secs(5)]);
+        assert_eq!(calls.count(), 2);
+        assert_eq!(calls.sleeps(), [Duration::from_secs(5)]);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn exhausted_attempts_return_the_last_failure() {
         let policy = RetryPolicy::new(2, Duration::from_millis(10), Duration::from_millis(10))
             .without_jitter();
-        let clock = ManualClock::new();
-        let outcome = execute(&policy, &clock, true, || async {
-            Err::<(), _>(transport())
+        let calls = Calls::default();
+        let outcome = execute(&policy, true, || {
+            calls.record();
+            async { Err::<(), _>(transport()) }
         })
         .await;
         assert_eq!(outcome, Err(transport()));
-        assert_eq!(clock.sleeps(), [Duration::from_millis(10)]);
+        assert_eq!(calls.sleeps(), [Duration::from_millis(10)]);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn jitter_stays_within_half_to_one_and_a_half() {
         let policy = RetryPolicy::new(40, Duration::from_secs(4), Duration::from_secs(4));
-        let clock = ManualClock::new();
-        let outcome = execute(&policy, &clock, true, || async {
-            Err::<(), _>(transport())
+        let calls = Calls::default();
+        let outcome = execute(&policy, true, || {
+            calls.record();
+            async { Err::<(), _>(transport()) }
         })
         .await;
         assert!(outcome.is_err());
-        for sleep in clock.sleeps() {
+        assert_eq!(calls.count(), 40);
+        for sleep in calls.sleeps() {
             assert!(
                 sleep >= Duration::from_secs(2) && sleep <= Duration::from_secs(6),
                 "jittered {sleep:?} escaped 0.5x..1.5x of 4s"

@@ -9,72 +9,14 @@
 //!
 //! The scripted doubles (`ScriptedDownloads`, `ScriptedSearch`,
 //! `ScriptedPoll`, and friends) are test stand-ins, not production
-//! code. Time flows through [`Clock`] so cadence tests pin a [`ManualClock`]
-//! instead of sleeping.
+//! code.
 
+#[cfg(any(test, feature = "test-support"))]
+use std::collections::HashMap;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
-#[cfg(any(test, feature = "test-support"))]
-use std::{collections::HashMap, sync::Arc};
 
 use futures_util::future::BoxFuture;
-
-/// Clock seam. Loops and ops read time through this so tests pin it.
-pub trait Clock: Send + Sync {
-    /// Current unix timestamp in seconds.
-    fn now_unix(&self) -> i64;
-}
-
-/// System clock for production.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SystemClock;
-
-impl Clock for SystemClock {
-    fn now_unix(&self) -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs() as i64)
-            .unwrap_or(0)
-    }
-}
-
-/// Manual clock for tests: time moves only when a test advances it.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone, Default)]
-pub struct ManualClock {
-    now: Arc<Mutex<i64>>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ManualClock {
-    /// Pin the clock at `at` (unix seconds).
-    pub fn new(at: i64) -> Self {
-        Self {
-            now: Arc::new(Mutex::new(at)),
-        }
-    }
-
-    /// Move the clock forward by `secs`.
-    pub fn advance(&self, secs: i64) {
-        if let Ok(mut now) = self.now.lock() {
-            *now = now.saturating_add(secs);
-        }
-    }
-
-    /// Jump the clock to `at`.
-    pub fn set(&self, at: i64) {
-        if let Ok(mut now) = self.now.lock() {
-            *now = at;
-        }
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Clock for ManualClock {
-    fn now_unix(&self) -> i64 {
-        self.now.lock().map(|now| *now).unwrap_or(0)
-    }
-}
 
 /// What kind of request a dispatch serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

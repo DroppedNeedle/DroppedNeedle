@@ -48,7 +48,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use super::users::stores::Clock;
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;

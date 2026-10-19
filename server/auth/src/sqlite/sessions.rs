@@ -21,7 +21,8 @@ use crate::times::{parse_iso, to_iso};
 use crate::users::models::{ManagedSession, SessionOwner};
 use crate::users::roles::Role;
 use crate::users::services::COMPANION_LABEL_PREFIX;
-use crate::users::stores::{BoxFuture, Clock, SessionManager, StoreError};
+use crate::users::stores::{BoxFuture, SessionManager, StoreError};
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Lane, map_sqlx_busy};
 use droppedneedle_kernel::ids::IdGenerator;
 

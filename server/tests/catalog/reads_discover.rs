@@ -15,9 +15,10 @@ use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_catalog::reads::discover::fakes::{
     FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio,
-    FakeYouTube, ManualClock,
+    FakeYouTube,
 };
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
+use droppedneedle_kernel::clock::ManualClock;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -40,7 +41,7 @@ fn rig() -> Rig {
 }
 
 fn rig_with_youtube(configured: bool) -> Rig {
-    let clock = ManualClock::new(1_790_000_000);
+    let clock = ManualClock::at(1_790_000_000_000);
     let content = Arc::new(FakeContent::new(clock.clone()));
     let charts = Arc::new(FakeCharts::new());
     let youtube: Arc<dyn droppedneedle_catalog::reads::discover::ports::YouTubeSource> =

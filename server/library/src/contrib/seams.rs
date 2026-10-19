@@ -1,5 +1,5 @@
 //! Local seams: the narrow traits contributions need from code they do not
-//! own, plus the clock they run against and the types their store takes.
+//! own, and the types their store takes.
 //!
 //! Owned elsewhere (implemented in `library::adapters`):
 //! - [`AttachmentEvidence`] - the identification evidence decision for
@@ -20,26 +20,6 @@ use futures_util::future::BoxFuture;
 
 use super::error::ContribError;
 use super::models::*;
-
-// ---------------------------------------------------------------------------
-// Clock
-// ---------------------------------------------------------------------------
-
-pub trait ContributionClock: Send + Sync {
-    fn now_seconds(&self) -> f64;
-}
-
-#[derive(Debug, Default)]
-pub struct SystemClock;
-
-impl ContributionClock for SystemClock {
-    fn now_seconds(&self) -> f64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs_f64())
-            .unwrap_or(0.0)
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Identity context (owned by scan/identify)

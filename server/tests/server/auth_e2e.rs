@@ -27,7 +27,6 @@ use droppedneedle_auth::compat_auth::subsonic::{
 };
 use droppedneedle_auth::prod::ProdAuth;
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_auth::users::stores::SystemClock;
 use droppedneedle_auth::wiring::{AuthSetup, Upstreams};
 use droppedneedle_catalog::reads::ReadsSetup;
 use droppedneedle_catalog::reads::catalog::{
@@ -35,6 +34,7 @@ use droppedneedle_catalog::reads::catalog::{
     library::LocalCatalog,
     upstream::{CatalogSettings, Upstream},
 };
+use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::config::DEFAULT_PORT;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, open_runtime};
@@ -108,7 +108,7 @@ impl E2e {
             runtime.db(),
             Arc::clone(&crypto),
             Arc::clone(&ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&clock) as Arc<dyn droppedneedle_auth::users::stores::Clock>,
+            Arc::clone(&clock) as Arc<dyn droppedneedle_kernel::clock::Clock>,
             &dir.join("avatars"),
         );
         let http = HttpClientFactory::new().expect("http factory builds");
@@ -160,7 +160,7 @@ impl E2e {
             Arc::clone(&self.crypto),
             &self.http,
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&self.clock) as Arc<dyn droppedneedle_auth::users::stores::Clock>,
+            Arc::clone(&self.clock) as Arc<dyn droppedneedle_kernel::clock::Clock>,
             "",
             &self.upstreams,
             Arc::new(

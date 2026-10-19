@@ -28,10 +28,10 @@ use droppedneedle_catalog::reads::discover::adapters::queue::sources::{
 use droppedneedle_catalog::reads::discover::adapters::queue::store::QueueDb;
 use droppedneedle_catalog::reads::discover::fakes::{
     FakeBatches, FakeCharts, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio, FakeYouTube,
-    ManualClock,
 };
-use droppedneedle_catalog::reads::discover::ports::{BoxFuture, SystemClock};
+use droppedneedle_catalog::reads::discover::ports::BoxFuture;
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
+use droppedneedle_kernel::clock::{ManualClock, SystemClock};
 use droppedneedle_kernel::db::{DbRuntime, Lane};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -405,7 +405,7 @@ fn page_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
         queues: Arc::new(FakeQueues),
         warmer_enabled: false,
     });
-    let clock = ManualClock::new(1_790_000_000);
+    let clock = ManualClock::at(1_790_000_000_000);
     let deps = ReadsDeps {
         content: Arc::new(LiveContent::new(config, pool, page)),
         queues: Arc::new(FakeQueues),

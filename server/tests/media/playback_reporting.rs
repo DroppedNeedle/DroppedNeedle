@@ -17,11 +17,12 @@ use axum::{
 use droppedneedle_auth::Principal;
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_kernel::clock::{Clock, ManualClock};
 use playback::PlaybackDeps;
 use playback::fakes::{
-    FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeRemotes, FakeSinks, FakeWarmup, ManualClock,
+    FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeRemotes, FakeSinks, FakeWarmup,
 };
-use playback::ports::{Clock, ScrobblePrefs};
+use playback::ports::ScrobblePrefs;
 use playback::services::{
     MixedDedup, PresenceRegistry, SESSION_TTL_SECS, ScrobbleDedup, SessionKey, SessionStore,
     meets_subsonic_threshold, presence_key, should_scrobble_native, submit_session_scrobble,
@@ -47,7 +48,7 @@ struct Rig {
 }
 
 fn rig_with_sinks(sinks: FakeSinks) -> Rig {
-    let clock = ManualClock::new(NOW);
+    let clock = ManualClock::at(NOW * 1000);
     let sinks = Arc::new(sinks);
     let remotes = Arc::new(FakeRemotes::default());
     let history = Arc::new(FakeHistory::default());
@@ -222,7 +223,7 @@ async fn lifecycle_start_progress_stop_counts_the_play() {
         0
     );
     assert_eq!(rig.deps.sessions.len(NOW), 1);
-    rig.clock.advance(SESSION_TTL_SECS + 1);
+    rig.clock.advance((SESSION_TTL_SECS + 1) * 1000);
     assert_eq!(rig.deps.sessions.len(rig.clock.now_unix()), 0);
 }
 
@@ -264,7 +265,7 @@ async fn restart_after_rewind_opens_a_fresh_session() {
     start(&rig, "user-1", "track-1", "local").await;
     let (_, first) = stop(&rig, "user-1", "track-1", "local", Some(230_000)).await;
     assert_eq!(first["scrobbled"], true);
-    rig.clock.advance(300);
+    rig.clock.advance(300 * 1000);
     progress(&rig, "user-1", "track-1", Some(10_000), false).await;
     let (_, second) = stop(&rig, "user-1", "track-1", "local", Some(230_000)).await;
     assert_eq!(second["scrobbled"], true);

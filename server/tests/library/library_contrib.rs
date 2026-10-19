@@ -20,6 +20,7 @@ use contrib::seams::*;
 use contrib::service::ContributionService;
 use contrib::sqlite::SqliteContributions;
 use contrib::worker::{Claim, SPEC, VERIFY, Verdict, VerificationWorker};
+use droppedneedle_kernel::clock::ManualClock;
 use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::jobs::queue::{Handlers, JobQueue, Outcome, runner, start_runners};
 use droppedneedle_library::adapters::MatchingAttachmentEvidence;
@@ -34,6 +35,11 @@ const ALBUM: &str = "album-1";
 const ARTIST: &str = "artist-1";
 const ACTOR: &str = "user-1";
 const POLICY: &str = "policy-1";
+
+/// Unix seconds as the clock's milliseconds.
+fn millis(seconds: f64) -> i64 {
+    (seconds * 1000.0).round() as i64
+}
 
 const MBID_RELEASE: &str = "11111111-1111-4111-8111-111111111111";
 const MBID_GROUP: &str = "22222222-2222-4222-8222-222222222222";
@@ -112,7 +118,7 @@ struct Rig {
     discogs: Arc<ScriptedDiscogs>,
     musicbrainz: Arc<ScriptedMusicBrainz>,
     catalog: Arc<RecordingCatalog>,
-    clock: Arc<TestClock>,
+    clock: ManualClock,
     service: Arc<ContributionService>,
     _dir: ScratchDir,
 }
@@ -125,8 +131,8 @@ impl Rig {
         migrated_db(&path);
         let db = droppedneedle_kernel::db::open_connection(&path).unwrap();
         let handle = Db::open_for_tests(&path).unwrap();
-        let clock = Arc::new(TestClock::new(NOW));
-        let queue = JobQueue::new(handle.clone(), Arc::new(clock.kernel()));
+        let clock = ManualClock::at(millis(NOW));
+        let queue = JobQueue::new(handle.clone(), Arc::new(clock.clone()));
         let store = Arc::new(SqliteContributions::new(handle.clone(), queue));
         let discogs = Arc::new(ScriptedDiscogs::new());
         let musicbrainz = Arc::new(ScriptedMusicBrainz::new());
@@ -135,7 +141,7 @@ impl Rig {
             ContributionService::new(
                 store.clone(),
                 Arc::new(MatchingAttachmentEvidence),
-                clock.clone(),
+                Arc::new(clock.clone()),
             )
             .with_discogs(discogs.clone())
             .with_musicbrainz(musicbrainz.clone())
@@ -324,7 +330,7 @@ impl Rig {
     }
 
     fn now(&self) -> f64 {
-        self.clock.now_seconds()
+        self.service.now()
     }
 }
 
@@ -693,7 +699,7 @@ async fn brief_select_aligns_and_expiry_redacts() {
         ]
     );
     // Expired provider data redacts values but keeps source markers.
-    rig.clock.advance(7.0 * 60.0 * 60.0);
+    rig.clock.advance(7 * 60 * 60 * 1000);
     let expired = rig.service.get(&selected.id).await.unwrap();
     assert!(expired.discogs_source.as_ref().unwrap().expired);
     assert_eq!(
@@ -1504,12 +1510,12 @@ async fn brief_worker_retries_with_backoff_then_reviews() {
     assert_eq!(code, FAILURE_MB_NOT_PROPAGATED);
     // Nine more scheduled retries, then the window/attempt budget runs out.
     for _ in 0..8 {
-        rig.clock.set(not_before);
+        rig.clock.set(millis(not_before));
         let verdict = worker.run_once().await.unwrap();
         assert_eq!(outcome(verdict), Some(VerificationOutcome::RetryScheduled));
         not_before = retry(verdict).0;
     }
-    rig.clock.set(not_before);
+    rig.clock.set(millis(not_before));
     let outcome = outcome(worker.run_once().await.unwrap());
     assert_eq!(outcome, Some(VerificationOutcome::NeedsReview));
     let record = rig.service.get(&verifying.id).await.unwrap();
@@ -1612,7 +1618,7 @@ async fn brief_worker_retry_after_floor_and_bogus_drop() {
             retry_after_seconds: Some(f64::NAN),
         }),
     );
-    rig.clock.set(NOW + 120.0);
+    rig.clock.set(millis(NOW + 120.0));
     let worker = rig.worker();
     // Drain the queued job from the first part, then re-run: attempt 2 -> 30s.
     let verdict = worker.run_once().await.unwrap();

@@ -46,7 +46,7 @@ const LEGACY_PASSWORD: &str = "correct horse battery staple";
 
 async fn fixture(name: &str) -> AuthRig {
     let rig = AuthRig::new(&format!("stores-{name}")).await;
-    rig.clock.set(TEST_NOW);
+    rig.clock.set(TEST_NOW * 1000);
     rig
 }
 

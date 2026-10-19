@@ -25,3 +25,6 @@ unicode-normalization.workspace = true
 [features]
 # Fakes and test constructors for the test suites above.
 test-support = ["droppedneedle-kernel/test-support"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

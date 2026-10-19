@@ -41,7 +41,6 @@ use droppedneedle_acquire::AcquireSetup;
 use droppedneedle_auth::{
     federated::{MediaLinks, settings::InstallIds},
     prod::ProdAuth,
-    users::stores::SystemClock,
     wiring::AuthSetup,
 };
 use droppedneedle_catalog::reads::{
@@ -266,7 +265,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
 
     let config_store = Arc::new(open_settings(&db, &config_dir, key_origin).await?);
     let ids = Arc::new(UuidGenerator);
-    let clock = Arc::new(SystemClock);
+    let clock = Arc::new(droppedneedle_kernel::clock::SystemClock);
     // One live event hub for the process. Bundles built below publish into
     // it once the state attaches it; the revision loops feed it after
     // each commit.

@@ -720,11 +720,12 @@ impl RowBook {
             edit(row, now);
             row.updated_at = now;
             let moved = fresh || before != (row.state, row.last_error.clone());
+            // A clock stepped back past the written beat counts as due, or
+            // heartbeats would stall until wall time caught up again.
             let beat_due = match state.written_beat.get(name).copied().flatten() {
                 None => true,
-                Some(written) => {
-                    now.saturating_sub(written) >= HEARTBEAT_WRITE_EVERY.as_millis() as i64
-                }
+                Some(written) => !(0..HEARTBEAT_WRITE_EVERY.as_millis() as i64)
+                    .contains(&now.saturating_sub(written)),
             };
             let urgent = moved || beat_due;
             if urgent {

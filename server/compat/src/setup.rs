@@ -172,10 +172,10 @@ impl CompatSetup {
 
         use crate::jellyfin::seams::JellyfinSettings;
         use crate::subsonic::Settings;
+        use droppedneedle_kernel::clock::SystemClock;
         use droppedneedle_media::playback::fakes::{
             FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeSinks,
         };
-        use droppedneedle_media::playback::ports::SystemClock;
         use droppedneedle_media::playback::reports::ReportQueue;
         use droppedneedle_media::playback::services::{
             MixedDedup, PresenceRegistry, ScrobbleDedup, SessionStore,

@@ -5,12 +5,10 @@
 //! Fakes fail only when armed to: `fail_content` / `fail_charts` take a
 //! log-only cause the leak tests assert never reaches the wire.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, sync::Mutex};
 
 use droppedneedle_auth::Principal;
+use droppedneedle_kernel::clock::{Clock as _, ManualClock};
 
 use crate::reads::discover::{
     models::{
@@ -29,33 +27,11 @@ use crate::reads::discover::{
         RadioPlanResponse, RadioPlanTrack, RadioRequest,
     },
     ports::{
-        AlbumSamples, BatchFailure, BatchStore, BoxFuture, ChartsSource, Clock, DiscoverContent,
+        AlbumSamples, BatchFailure, BatchStore, BoxFuture, ChartsSource, DiscoverContent,
         NowPlayingStore, PreviewSource, ProviderFailure, QueueDeck, QueueStore, QueueTrigger,
         RadioFailure, RadioPlanner, YouTubeSource,
     },
 };
-
-/// Manual clock for loop and TTL tests. Starts at `start`, moves only when
-/// told.
-#[derive(Debug, Clone)]
-pub struct ManualClock {
-    now: Arc<Mutex<i64>>,
-}
-
-impl ManualClock {
-    /// Build a clock pinned at `start` (unix seconds).
-    pub fn new(start: i64) -> Self {
-        Self {
-            now: Arc::new(Mutex::new(start)),
-        }
-    }
-}
-
-impl Clock for ManualClock {
-    fn now_unix(&self) -> i64 {
-        self.now.lock().map(|now| *now).unwrap_or(0)
-    }
-}
 
 fn fake_artist(name: &str, rank: i64) -> ChartArtist {
     ChartArtist {

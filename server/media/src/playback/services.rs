@@ -24,12 +24,13 @@ use super::{
         ScrobbleNowPlayingRequest, ScrobbleResponse, ScrobbleSubmitRequest, ServiceResult,
     },
     ports::{
-        Clock, DisplayNames, ListeningPrefs, PlayEvents, PlayHistory, PlayRecord, ProviderFailure,
+        DisplayNames, ListeningPrefs, PlayEvents, PlayHistory, PlayRecord, ProviderFailure,
         RemoteReport, RemoteReporters, ReportTrack, ScrobblePrefs, ScrobbleSinks, ScrobbleTargets,
         ServiceOutcome, TrackCatalog, TrackInfo, VISIBILITY_FULL, VISIBILITY_OFFLINE,
         VISIBILITY_TRACK_HIDDEN,
     },
 };
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::events::{NowPlayingEntry, NowPlayingSnapshot};
 
 /// Session time-to-live in seconds (v2 `_SESSION_TTL_SECONDS`, 2h).

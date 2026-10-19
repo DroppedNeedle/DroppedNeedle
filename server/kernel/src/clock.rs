@@ -1,8 +1,9 @@
-//! Wall time for the kernel and the crates above it.
+//! Wall time for the kernel and every crate above it.
 //!
-//! The loop supervisor stamps its liveness rows from a [`Clock`], and loops
-//! that schedule against the calendar (the events watcher) read it too.
-//! Sleeps never go through it: they use tokio time, which tests pause.
+//! The one injectable wall clock: the loop supervisor, the jobs table,
+//! sessions, playback, discover and contributions all read it, so tests pin
+//! it with a [`ManualClock`]. Sleeps never go through it: they use tokio
+//! time, which tests pause.
 
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::{
@@ -54,6 +55,11 @@ impl ManualClock {
     /// Set the time.
     pub fn set(&self, now_ms: i64) {
         self.now_ms.store(now_ms, Ordering::SeqCst);
+    }
+
+    /// Move the time by `by_ms`.
+    pub fn advance(&self, by_ms: i64) {
+        self.now_ms.fetch_add(by_ms, Ordering::SeqCst);
     }
 }
 

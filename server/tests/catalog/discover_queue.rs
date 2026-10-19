@@ -21,10 +21,10 @@ use droppedneedle_catalog::reads::discover::adapters::queue::store::QueueDb;
 use droppedneedle_catalog::reads::discover::adapters::queue::{LiveQueue, QueueSettings};
 use droppedneedle_catalog::reads::discover::fakes::{
     FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeRadio, FakeYouTube,
-    ManualClock,
 };
-use droppedneedle_catalog::reads::discover::ports::{BoxFuture, SystemClock};
+use droppedneedle_catalog::reads::discover::ports::BoxFuture;
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
+use droppedneedle_kernel::clock::{ManualClock, SystemClock};
 use droppedneedle_kernel::db::DbRuntime;
 use droppedneedle_providers::Providers;
 use serde_json::{Value, json};
@@ -279,7 +279,7 @@ fn queue_app(runtime: &DbRuntime) -> Router {
         Providers::with_memory_cache().cache.clone(),
         Arc::new(move || settings.clone()),
     );
-    let clock = ManualClock::new(1_790_000_000);
+    let clock = ManualClock::at(1_790_000_000_000);
     let deps = ReadsDeps {
         content: Arc::new(FakeContent::new(clock.clone())),
         queues: Arc::new(queue),

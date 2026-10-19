@@ -23,8 +23,9 @@ use droppedneedle_auth::sqlite::SqliteSessionStore;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::models::{LocalCredential, UserRecord};
 use droppedneedle_auth::users::roles::{Admin, Principal, Role};
-use droppedneedle_auth::users::stores::{Clock, UserStore as _};
+use droppedneedle_auth::users::stores::UserStore as _;
 use droppedneedle_auth::wiring::AuthSetup;
+use droppedneedle_kernel::clock::{Clock, ManualClock};
 use droppedneedle_kernel::db::DbRuntime;
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
@@ -32,7 +33,6 @@ use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 
-use super::auth_fakes::ManualClock;
 use super::{ScratchDir, closed_outbound, config_store, scratch_runtime};
 
 /// The rig's clock at build: 2024-01-01T00:00:00Z.
@@ -94,7 +94,7 @@ impl AuthRig {
                 ..LastFmSettings::default()
             })
             .expect("Last.fm settings save");
-        let clock = Arc::new(ManualClock::new(TEST_NOW));
+        let clock = Arc::new(ManualClock::at(TEST_NOW * 1000));
         let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
         let auth = ProdAuth::new(
             runtime.db(),

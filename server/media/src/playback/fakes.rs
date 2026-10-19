@@ -11,41 +11,12 @@ use std::{
 
 use super::{
     ports::{
-        Clock, DisplayNames, ListeningPrefs, PlayHistory, PlayRecord, ProviderFailure,
-        RemoteReport, RemoteReporters, ReportTrack, ScrobblePrefs, ScrobbleSinks, ScrobbleTargets,
+        DisplayNames, ListeningPrefs, PlayHistory, PlayRecord, ProviderFailure, RemoteReport,
+        RemoteReporters, ReportTrack, ScrobblePrefs, ScrobbleSinks, ScrobbleTargets,
         ServiceOutcome, TrackCatalog, TrackInfo, VISIBILITY_FULL,
     },
     warmup::{WarmupScope, WarmupStats},
 };
-
-/// Manual clock for TTL and timestamp tests. Starts at `start`, moves only
-/// when told.
-#[derive(Debug, Clone)]
-pub struct ManualClock {
-    now: Arc<Mutex<i64>>,
-}
-
-impl ManualClock {
-    /// Build a clock pinned at `start` (unix seconds).
-    pub fn new(start: i64) -> Self {
-        Self {
-            now: Arc::new(Mutex::new(start)),
-        }
-    }
-
-    /// Move the clock forward by `secs`.
-    pub fn advance(&self, secs: i64) {
-        if let Ok(mut now) = self.now.lock() {
-            *now += secs;
-        }
-    }
-}
-
-impl Clock for ManualClock {
-    fn now_unix(&self) -> i64 {
-        self.now.lock().map(|now| *now).unwrap_or(0)
-    }
-}
 
 /// Scripted catalog: tracks the tests register, misses for the rest.
 #[derive(Debug, Default)]

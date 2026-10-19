@@ -1,42 +1,15 @@
-//! Fakes of what auth reaches outside the process: the clock, Last.fm's
-//! sign-in calls, a media server's user list and the breach check.
+//! Fakes of what auth reaches outside the process: Last.fm's sign-in
+//! calls, a media server's user list and the breach check.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicI64, Ordering};
 
 use droppedneedle_auth::federated::users::PROVIDER_PLEX;
 use droppedneedle_auth::users::hibp::{HibpHttp, HibpHttpError, RANGE_PREFIX_LEN};
 use droppedneedle_auth::users::stores::{
-    BoxFuture, Clock, DirectoryError, DirectoryUser, LastFmAuthClient, LastFmError, LastFmKeys,
+    BoxFuture, DirectoryError, DirectoryUser, LastFmAuthClient, LastFmError, LastFmKeys,
     LastFmSwitch, UserDirectory,
 };
 use tokio::sync::Mutex;
-
-/// Manually advanced clock for expiry tests.
-#[derive(Debug)]
-pub struct ManualClock {
-    now: AtomicI64,
-}
-
-impl ManualClock {
-    /// Clock pinned at `now`.
-    pub fn new(now: i64) -> Self {
-        Self {
-            now: AtomicI64::new(now),
-        }
-    }
-
-    /// Move time forward (or back) to `now`.
-    pub fn set(&self, now: i64) {
-        self.now.store(now, Ordering::SeqCst);
-    }
-}
-
-impl Clock for ManualClock {
-    fn now_unix(&self) -> i64 {
-        self.now.load(Ordering::SeqCst)
-    }
-}
 
 /// Fixed Last.fm master switch with no instance key pair.
 #[derive(Debug, Clone, Copy)]

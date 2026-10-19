@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use droppedneedle_providers::error::ProviderError;
 use droppedneedle_providers::geocoding::{self, DEFAULT_CITY_COUNT, GeoCity, GeocodingClient};
 use droppedneedle_providers::limiter::{RateLimiter, RatePolicy};
-use droppedneedle_providers::retry::{self, RetryPolicy, TokioClock};
+use droppedneedle_providers::retry::{self, RetryPolicy};
 use droppedneedle_providers::skiddle::{self, SkiddleArtist, SkiddleClient, SkiddleEvent};
 use droppedneedle_providers::ticketmaster::{self, TicketmasterClient, TmAttraction, TmEvent};
 
@@ -107,7 +107,7 @@ impl Guarded {
                 retry_after: None,
             });
         }
-        let outcome = retry::execute(&self.retry, &TokioClock, true, || {
+        let outcome = retry::execute(&self.retry, true, || {
             let attempt = operation();
             async move { attempt.await.map_err(Into::into) }
         })

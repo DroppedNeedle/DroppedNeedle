@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_providers::slots::RequestPriority;
 use sha2::{Digest as _, Sha256};
@@ -25,14 +26,14 @@ pub struct ContributionService {
     musicbrainz: Option<Arc<dyn MusicBrainzContrib>>,
     catalog: Option<Arc<dyn ContributionCatalog>>,
     evidence: Arc<dyn AttachmentEvidence>,
-    clock: Arc<dyn ContributionClock>,
+    clock: Arc<dyn Clock>,
 }
 
 impl ContributionService {
     pub fn new(
         store: Arc<SqliteContributions>,
         evidence: Arc<dyn AttachmentEvidence>,
-        clock: Arc<dyn ContributionClock>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             store,
@@ -68,7 +69,7 @@ impl ContributionService {
     }
 
     pub fn now(&self) -> f64 {
-        self.clock.now_seconds()
+        self.clock.now_ms() as f64 / 1000.0
     }
 
     fn require_discogs(&self) -> Result<&Arc<dyn DiscogsContrib>, ContribError> {

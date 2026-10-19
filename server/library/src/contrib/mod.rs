@@ -63,7 +63,7 @@ pub fn assemble(
         service::ContributionService::new(
             store,
             Arc::new(super::adapters::MatchingAttachmentEvidence),
-            Arc::new(seams::SystemClock),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
         )
         .with_discogs(providers.discogs)
         .with_musicbrainz(providers.musicbrainz.clone())
