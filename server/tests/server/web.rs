@@ -147,6 +147,33 @@ async fn debug_cors_answers_native_preflights() {
     assert_eq!(text(&headers, "access-control-allow-origin"), Some(origin));
 }
 
+/// Per-user JSON is kept by neither a proxy nor the browser's disk cache,
+/// and an answer whose handler sets its own `Cache-Control` keeps it.
+#[tokio::test]
+async fn api_json_is_no_store_and_a_handlers_own_cache_rule_is_kept() {
+    let app = TestApp::start("web-no-store").await;
+    let user = app.login_user("listener").await;
+    let auth = [("authorization", user.authorization.as_str())];
+
+    let (status, headers, _) = app.raw("GET", "/api/v3/library/artists", &auth, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(text(&headers, "content-type"), Some("application/json"));
+    assert_eq!(text(&headers, "cache-control"), Some("no-store"));
+
+    // An album with no art: the cover route answers its own `no-store`.
+    let (status, headers, _) = app
+        .raw(
+            "GET",
+            "/api/v3/library/albums/no-such-album/artwork",
+            &auth,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(text(&headers, "x-cover-state"), Some("missing"));
+    assert_eq!(text(&headers, "cache-control"), Some("no-store"));
+}
+
 fn text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).map(|value| value.to_str().unwrap())
 }

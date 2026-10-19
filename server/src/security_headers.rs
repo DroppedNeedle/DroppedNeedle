@@ -2,8 +2,10 @@
 //!
 //! Two layers. [`content_security`] gives the web UI's page its
 //! content-security policy and every other native response a policy under
-//! which nothing runs, plus `nosniff`. [`strict_transport_security`] wraps
-//! everything, the compat APIs included, and adds the HSTS header.
+//! which nothing runs, plus `nosniff`. A JSON answer under `/api/v3` with no
+//! `Cache-Control` of its own gets `no-store`, so per-user data is not kept by
+//! a proxy or the browser. [`strict_transport_security`] wraps everything, the
+//! compat APIs included, and adds the HSTS header.
 //!
 //! A route sets a policy of its own only to be stricter (the remote image
 //! relay, the plugin panel page), and the layer never replaces one. The
@@ -266,8 +268,10 @@ fn mark_etag(headers: &mut axum::http::HeaderMap, mark: &str) {
 
 /// Add `X-Content-Type-Options: nosniff` and a content-security policy to a
 /// native response: the page's policy on the web UI's page, with
-/// `Referrer-Policy`, and [`BARE_POLICY`] on everything else. A compat
-/// response is left exactly as it is, and so is a policy a route set.
+/// `Referrer-Policy`, and [`BARE_POLICY`] on everything else. A JSON answer
+/// under `/api/v3` that has no `Cache-Control` gets `no-store`. A compat
+/// response is left exactly as it is, and so is a policy or cache rule a
+/// route set.
 ///
 /// The Security settings choose how the page's policy is sent and who may
 /// frame the page. They are read once per request, before the handler, so
@@ -276,8 +280,9 @@ fn mark_etag(headers: &mut axum::http::HeaderMap, mark: &str) {
 /// are still enforced ([`framing_policy`]). Turned off, no policy is added
 /// anywhere and `nosniff` stays.
 ///
-/// Of the request, only `If-None-Match` is read, and only to be compared:
-/// see [`policy_mark`]. Nothing a request sends reaches a policy.
+/// Of the request, only its path and `If-None-Match` are read. The path picks
+/// the compat and `/api/v3` rules, and `If-None-Match` is only compared (see
+/// [`policy_mark`]). Nothing a request sends reaches a policy.
 pub async fn content_security(
     State(security): State<ContentSecurity>,
     mut request: Request,
@@ -286,6 +291,7 @@ pub async fn content_security(
     if is_compat_path(request.uri().path()) {
         return next.run(request).await;
     }
+    let api_path = request.uri().path().starts_with("/api/v3/");
     let settings = security.settings();
     let mark = policy_mark(&settings);
     if request.headers().contains_key(header::IF_NONE_MATCH) {
@@ -296,6 +302,12 @@ pub async fn content_security(
     let headers = response.headers_mut();
     if shell.is_some() {
         mark_etag(headers, &mark);
+    }
+    let json = headers
+        .get(header::CONTENT_TYPE)
+        .is_some_and(|value| value.as_bytes().starts_with(b"application/json"));
+    if api_path && json && !headers.contains_key(header::CACHE_CONTROL) {
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
     if !headers.contains_key(header::X_CONTENT_TYPE_OPTIONS) {
         headers.insert(
