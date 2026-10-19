@@ -15,6 +15,30 @@ use droppedneedle_tool::tooling::upgrade;
 use crate::common;
 
 /// Scratch directory, removed when the test ends.
+/// The settings stored in the database at `db`, key by key; empty when it
+/// holds none (or does not exist).
+fn settings_in(db: &Path) -> serde_json::Map<String, serde_json::Value> {
+    let Ok(connection) =
+        rusqlite::Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+    else {
+        return serde_json::Map::new();
+    };
+    let Ok(mut statement) = connection.prepare("SELECT key, value_json FROM config_sections")
+    else {
+        return serde_json::Map::new();
+    };
+    statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("settings rows read")
+        .map(|row| {
+            let (key, text) = row.expect("settings row reads");
+            (key, serde_json::from_str(&text).expect("a row is JSON"))
+        })
+        .collect()
+}
+
 fn scratch_dir(tag: &str) -> crate::common::ScratchDir {
     crate::common::ScratchDir::new(tag)
 }
@@ -297,9 +321,10 @@ fn import_and_dry_run_match_through_the_binary() {
         "dry-run parity"
     );
     assert!(
-        config_dir.join("config.json").is_file(),
-        "real import writes the v3 config"
+        !settings_in(&db).is_empty(),
+        "real import writes the v3 settings"
     );
+    assert!(!config_dir.join("config.json").exists());
 }
 
 #[test]
@@ -329,7 +354,7 @@ fn import_with_the_wrong_passphrase_writes_nothing() {
         report.get("exit").and_then(|exit| exit.get("code")),
         Some(&serde_json::json!("ENVELOPE_AUTH_FAILED"))
     );
-    assert!(!config_dir.join("config.json").exists(), "zero writes");
+    assert!(settings_in(&db).is_empty(), "zero writes");
 }
 
 #[test]
@@ -408,7 +433,7 @@ fn import_with_an_empty_passphrase_fails_closed() {
         report.get("exit").and_then(|exit| exit.get("code")),
         Some(&serde_json::json!("ENVELOPE_AUTH_FAILED"))
     );
-    assert!(!config_dir.join("config.json").exists(), "zero writes");
+    assert!(settings_in(&db).is_empty(), "zero writes");
 
     // Closed stdin reads as empty and fails the same way.
     let dry_db = root.join("dry.db");
@@ -628,11 +653,12 @@ fn upgrade_turns_a_v2_directory_into_v3_in_place() {
     let run = tool_in(&root, &["upgrade"]);
     assert!(run.status.success(), "stderr: {}", stderr_of(&run));
     assert!(is_v3(&root));
-    let config: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(root.join("config").join("config.json")).expect("v3 config reads"),
-    )
-    .expect("v3 config parses");
-    assert_eq!(config["instance_id"], fixture.instance_id.as_str());
+    let settings = settings_in(&root.join("cache").join("library.db"));
+    assert_eq!(settings["instance_id"], fixture.instance_id.as_str());
+    assert!(
+        !root.join("config").join("config.json").exists(),
+        "v3 keeps its settings in the database"
+    );
 
     // The v2 files are kept, each in its own folder's backup.
     let config_backup = root.join("config").join("v2-backup");
@@ -1173,13 +1199,13 @@ async fn run_merge(
     pool: &sqlx::SqlitePool,
     config_dir: &std::path::Path,
 ) -> droppedneedle_tool::r#import::ImportReport {
-    let crypto = droppedneedle_kernel::runtime_config::Crypto::load_or_generate(config_dir)
+    let (crypto, _) = droppedneedle_kernel::runtime_config::Crypto::load_or_generate(config_dir)
         .expect("v3 key loads");
     droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {
         export_bytes: std::fs::read(export).expect("export reads"),
         passphrase: "operator-passphrase".to_owned(),
         pool: pool.clone(),
-        config_path: config_dir.join("config.json"),
+        legacy: droppedneedle_kernel::runtime_config::LegacyConfig::at(config_dir, false),
         crypto,
         v2_config_path: None,
         attachments_dir: export.parent().map(std::path::Path::to_path_buf),

@@ -563,6 +563,18 @@ many name something v2 had already lost.
 Settings the export could not carry are listed under `settings_defaulted`
 in `WORK/import.json`. Check that list for anything you expected to keep.
 
+v3 keeps its settings in the database, beside the accounts, so the import
+writes no `config.json`. `V3_ROOT/config` holds the key file
+`data_enc.key`, which seals every stored password and API key.
+
+### Backups and restore
+
+A backup of the v3 database (the ones in `cache/backups`, or a copy that
+`droppedneedle-tool restore` puts back) holds the settings as well. Keep
+`config/data_enc.key` with it, and put it back beside a restored database:
+without it, v3 refuses to start on that database rather than lose the
+stored secrets.
+
 ### 7. Start v3
 
 Point your compose file's `/app/config` and `/app/cache` volumes at

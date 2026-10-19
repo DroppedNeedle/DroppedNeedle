@@ -219,8 +219,8 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
             export_bytes: std::fs::read(&export_path).expect("export reads"),
             passphrase: PASSPHRASE.to_owned(),
             pool: pool.clone(),
-            config_path: config_dir.join("config.json"),
-            crypto: Crypto::load_or_generate(&config_dir).expect("v3 key"),
+            legacy: droppedneedle_kernel::runtime_config::LegacyConfig::at(&config_dir, false),
+            crypto: Crypto::load_or_generate(&config_dir).expect("v3 key").0,
             v2_config_path: None,
             attachments_dir: Some(root.clone()),
             cache_dir: Some(v3.join("cache")),
@@ -284,17 +284,16 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
         "a pinned album with a custom edition is not queued"
     );
 
+    let handle = droppedneedle_kernel::db::Db::open_for_tests(&db_path).expect("database opens");
     let config = Arc::new(
-        ConfigStore::open(
-            &config_dir.join("config.json"),
+        ConfigStore::open_blocking(
+            handle.clone(),
             Crypto::load(&config_dir).expect("v3 key loads"),
+            &droppedneedle_kernel::runtime_config::LegacyConfig::None,
         )
-        .expect("config opens"),
+        .expect("settings open"),
     );
-    let (library, scripted) = library_at(
-        &droppedneedle_kernel::db::Db::open_for_tests(&db_path).expect("database opens"),
-        config,
-    );
+    let (library, scripted) = library_at(&handle, config);
     let facts = library
         .identify_store
         .album_facts(V2_ALBUM_ID)

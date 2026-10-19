@@ -272,8 +272,8 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
             export_bytes: std::fs::read(&export_path).expect("export reads"),
             passphrase: PASSPHRASE.to_owned(),
             pool: pool.clone(),
-            config_path: config_dir.join("config.json"),
-            crypto: Crypto::load_or_generate(&config_dir).expect("v3 key"),
+            legacy: droppedneedle_kernel::runtime_config::LegacyConfig::at(&config_dir, false),
+            crypto: Crypto::load_or_generate(&config_dir).expect("v3 key").0,
             v2_config_path: None,
             attachments_dir: Some(root.clone()),
             cache_dir: Some(v3.join("cache")),
@@ -308,17 +308,16 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     pool.close().await;
 
     // v3 starts on the imported state and scans the carried root.
+    let handle = droppedneedle_kernel::db::Db::open_for_tests(&db_path).expect("database opens");
     let config = Arc::new(
-        ConfigStore::open(
-            &config_dir.join("config.json"),
+        ConfigStore::open_blocking(
+            handle.clone(),
             Crypto::load(&config_dir).expect("v3 key loads"),
+            &droppedneedle_kernel::runtime_config::LegacyConfig::None,
         )
-        .expect("config opens"),
+        .expect("settings open"),
     );
-    let (library, _) = library_at(
-        &droppedneedle_kernel::db::Db::open_for_tests(&db_path).expect("database opens"),
-        config,
-    );
+    let (library, _) = library_at(&handle, config);
     drain_scans(&library).await;
 
     // Ids stay: the unchanged file and the re-read one keep their track,

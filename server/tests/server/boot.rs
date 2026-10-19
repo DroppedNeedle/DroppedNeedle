@@ -23,7 +23,7 @@ use droppedneedle_kernel::{
     http_client::HttpClientFactory,
     ids::{IdGenerator, UuidGenerator},
     runtime_config::{
-        ConfigStore, Crypto,
+        ConfigStore, Crypto, Section,
         sections::{PublicAddress, SecuritySettings},
     },
 };
@@ -40,26 +40,16 @@ fn scratch(name: &str) -> ScratchDir {
 /// dials the network.
 fn config_in(dir: &Path) -> AppConfig {
     let config = AppConfig::with_root(0, dir);
-    let config_dir = config.config_dir();
-    std::fs::create_dir_all(&config_dir).unwrap();
-    let store = ConfigStore::open(
-        &config.config_file,
-        Crypto::load_or_generate(&config_dir).unwrap(),
-    )
-    .unwrap();
+    let store = stored_settings(&config);
     let mut security: SecuritySettings = store.get().unwrap();
     security.hibp_check = false;
-    store.save(security).unwrap();
+    store.save_blocking(security).unwrap();
     config
 }
 
-/// The settings file of a server that is not running.
+/// The settings of a server that is not running.
 fn stored_settings(config: &AppConfig) -> ConfigStore {
-    ConfigStore::open(
-        &config.config_file,
-        Crypto::load_or_generate(&config.config_dir()).unwrap(),
-    )
-    .unwrap()
+    crate::common::app_settings(config)
 }
 
 /// The production graph with nothing listening at any outside address.
@@ -173,8 +163,9 @@ async fn database_one_version_behind_is_backed_up_before_migrating() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn boot_refuses_while_the_offline_tool_holds_the_database() {
     let dir = scratch("locked");
-    let config = config_in(&dir);
+    let config = AppConfig::with_root(0, &dir);
     let db_path = config.library_db_path.clone();
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
     let _import = droppedneedle_kernel::db::datalock::DataLock::exclusive(&db_path).unwrap();
     let refused = build(config).await;
     assert!(
@@ -190,7 +181,7 @@ async fn boot_refuses_while_the_offline_tool_holds_the_database() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn boot_refuses_a_second_server_on_the_same_data_folder() {
     let dir = scratch("second-server");
-    let config = config_in(&dir);
+    let config = AppConfig::with_root(0, &dir);
     let db_path = config.library_db_path.clone();
     // The running server's lock, taken by file name the way the server takes
     // it, so the test does not lean on the code it checks.
@@ -404,7 +395,7 @@ async fn the_answer_to_a_login_from_a_stated_https_address_sets_a_secure_cookie(
     let dir = scratch("stated-https");
     let config = config_in(&dir);
     stored_settings(&config)
-        .save(PublicAddress {
+        .save_blocking(PublicAddress {
             origins: vec![HTTPS_PAGE.to_owned()],
         })
         .unwrap();
@@ -945,27 +936,28 @@ async fn the_policy_mode_set_from_the_host_is_served_at_the_next_boot() {
     let config = config_in(&dir);
     web_ui_in(&config);
     let dirs = droppedneedle::bootstrap::data_dirs::DataDirs::from_config(&config);
-    let config_file = config.config_file.clone();
+    let revision = || stored_settings(&config).revision(SecuritySettings::KEY);
+    let before = revision();
 
     let (router, background) = build(config.clone()).await.unwrap();
     let running = start(router.clone(), background).await;
     let (enforced, reported) = policies(&router, "/").await;
     assert!(enforced.unwrap().contains("script-src") && reported.is_none());
-    // A running server holds the settings in memory: refused, nothing
-    // written.
-    let before = std::fs::read(&config_file).unwrap();
+    // A running server holds the settings: refused, nothing written.
     assert!(matches!(
-        set_content_security_policy(&dirs, Mode::Off),
+        set_content_security_policy(&dirs, Mode::Off).await,
         Err(HostSettingsError::ServerRunning(_))
     ));
-    assert_eq!(std::fs::read(&config_file).unwrap(), before);
     drop(router);
     running.shut_down().await;
+    assert_eq!(revision(), before);
 
     // Only that field changes. Reported, except who may frame the page and
     // where its frames go, which stay enforced.
     assert_eq!(
-        set_content_security_policy(&dirs, Mode::ReportOnly).unwrap(),
+        set_content_security_policy(&dirs, Mode::ReportOnly)
+            .await
+            .unwrap(),
         Mode::ReportOnly
     );
     let stored: SecuritySettings = stored_settings(&config).get().unwrap();
@@ -989,7 +981,7 @@ async fn the_policy_mode_set_from_the_host_is_served_at_the_next_boot() {
     running.shut_down().await;
 
     assert_eq!(
-        set_content_security_policy(&dirs, Mode::Off).unwrap(),
+        set_content_security_policy(&dirs, Mode::Off).await.unwrap(),
         Mode::Off
     );
     let (router, background) = build(config).await.unwrap();
@@ -1158,22 +1150,32 @@ async fn a_stated_public_address_is_the_only_thing_that_widens_the_origin_check(
     running.shut_down().await;
 }
 
-/// A settings file with no public address section, or `null` in its
-/// place, states no address. A section without `origins` is unreadable,
-/// never an empty list: a save cannot write one, so it is a hand edit.
+/// Settings with no public address section, or `null` in its place, state
+/// no address. A section without `origins` is unreadable, never an empty
+/// list: a save cannot write one, so it is a hand edit.
 #[test]
 fn a_stored_public_address_without_origins_is_unreadable_not_empty() {
     let dir = scratch("public-address-stored");
     let config = config_in(&dir);
     let read = |section: Option<serde_json::Value>| {
-        let mut file: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&config.config_file).unwrap()).unwrap();
-        let sections = file.as_object_mut().unwrap();
+        let db = rusqlite::Connection::open(&config.library_db_path).unwrap();
         match section {
-            Some(section) => sections.insert("public_address".to_owned(), section),
-            None => sections.remove("public_address"),
+            Some(section) => db
+                .execute(
+                    "INSERT INTO config_sections (key, value_json, revision, updated_at) \
+                     VALUES ('public_address', ?1, 1, 1) \
+                     ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json",
+                    [section.to_string()],
+                )
+                .unwrap(),
+            None => db
+                .execute(
+                    "DELETE FROM config_sections WHERE key = 'public_address'",
+                    [],
+                )
+                .unwrap(),
         };
-        std::fs::write(&config.config_file, file.to_string()).unwrap();
+        drop(db);
         stored_settings(&config).get::<PublicAddress>()
     };
     assert_eq!(read(None).unwrap(), PublicAddress::default());
@@ -1197,7 +1199,7 @@ async fn public_address_set_from_the_host_is_honoured_at_the_next_boot() {
     let dir = scratch("public-address-host");
     let config = config_in(&dir);
     let dirs = droppedneedle::bootstrap::data_dirs::DataDirs::from_config(&config);
-    let config_file = config.config_file.clone();
+    let revision = || stored_settings(&config).revision(PublicAddress::KEY);
     let typed = || vec!["HTTPS://Music.Test:443/".to_owned()];
 
     let (router, background) = build(config.clone()).await.unwrap();
@@ -1205,34 +1207,33 @@ async fn public_address_set_from_the_host_is_honoured_at_the_next_boot() {
     let cookie = admin_cookie(running.address).await;
     let (code, _) = save_as_browser(&router, PROXY, &cookie, PAGE, &[], any_save()).await;
     assert_eq!(code, 403);
-    // A running server holds the settings in memory: refused, nothing read
-    // or written.
-    let before = std::fs::read(&config_file).unwrap();
+    // A running server holds the settings: refused, nothing read or
+    // written.
     assert!(matches!(
-        set_public_address(&dirs, typed()),
+        set_public_address(&dirs, typed()).await,
         Err(HostSettingsError::ServerRunning(_))
     ));
     assert!(matches!(
-        stored(&dirs),
+        stored(&dirs).await,
         Err(HostSettingsError::ServerRunning(_))
     ));
-    assert_eq!(std::fs::read(&config_file).unwrap(), before);
     drop(router);
     running.shut_down().await;
+    assert_eq!(revision(), 0);
 
-    let before = std::fs::read(&config_file).unwrap();
     let refused = set_public_address(&dirs, vec!["https://music.test/music".to_owned()])
+        .await
         .expect_err("a path is refused");
     assert!(
         matches!(refused, HostSettingsError::Refused(_))
             && refused.to_string().contains("\"https://music.test/music\""),
         "{refused}"
     );
-    assert_eq!(std::fs::read(&config_file).unwrap(), before);
-    assert_eq!(stored(&dirs).unwrap(), Vec::<String>::new());
+    assert_eq!(revision(), 0);
+    assert_eq!(stored(&dirs).await.unwrap(), Vec::<String>::new());
 
-    assert_eq!(set_public_address(&dirs, typed()).unwrap(), [PAGE]);
-    assert_eq!(stored(&dirs).unwrap(), [PAGE]);
+    assert_eq!(set_public_address(&dirs, typed()).await.unwrap(), [PAGE]);
+    assert_eq!(stored(&dirs).await.unwrap(), [PAGE]);
 
     let (router, background) = build(config.clone()).await.unwrap();
     let running = start(router.clone(), background).await;
@@ -1252,10 +1253,56 @@ async fn public_address_set_from_the_host_is_honoured_at_the_next_boot() {
     running.shut_down().await;
 
     assert_eq!(
-        set_public_address(&dirs, Vec::new()).unwrap(),
+        set_public_address(&dirs, Vec::new()).await.unwrap(),
         Vec::<String>::new()
     );
-    assert_eq!(stored(&dirs).unwrap(), Vec::<String>::new());
+    assert_eq!(stored(&dirs).await.unwrap(), Vec::<String>::new());
+}
+
+/// On an instance this version has not started yet, a host command copies
+/// the old `config.json` in before it saves, as the first start would: the
+/// saved field and every other section of the file are there at the next
+/// boot. Saving first would otherwise leave the file unread for good.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_host_command_before_the_first_start_copies_config_json_in_first() {
+    use droppedneedle_kernel::runtime_config::sections::{
+        ContentSecurityPolicyMode as Mode, UserPreferences,
+    };
+    use droppedneedle_tool::tooling::host_settings::set_content_security_policy;
+
+    let dir = scratch("host-before-first-start");
+    let config = AppConfig::with_root(0, &dir);
+    std::fs::create_dir_all(config.config_dir()).unwrap();
+    std::fs::create_dir_all(&config.cache_dir).unwrap();
+    crate::common::migrated_db(&config.library_db_path);
+    Crypto::load_or_generate(&config.config_dir()).unwrap();
+    std::fs::write(
+        config.config_dir().join("config.json"),
+        serde_json::json!({
+            "security_settings": {"hibp_check": false},
+            "user_preferences": {"primary_types": ["album"]},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let dirs = droppedneedle::bootstrap::data_dirs::DataDirs::from_config(&config);
+
+    assert_eq!(
+        set_content_security_policy(&dirs, Mode::Off).await.unwrap(),
+        Mode::Off
+    );
+
+    let (router, background) = build(config.clone()).await.unwrap();
+    let running = start(router.clone(), background).await;
+    assert_eq!(policies(&router, "/").await, (None, None));
+    drop(router);
+    running.shut_down().await;
+    let settings = stored_settings(&config);
+    let security: SecuritySettings = settings.get().unwrap();
+    assert!(!security.hibp_check);
+    assert_eq!(security.content_security_policy, Mode::Off);
+    let preferences: UserPreferences = settings.get().unwrap();
+    assert_eq!(preferences.primary_types, ["album"]);
 }
 
 async fn set_up(address: SocketAddr) -> reqwest::StatusCode {

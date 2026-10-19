@@ -51,17 +51,19 @@ use crate::import::{
     run_import, validate_export,
 };
 use droppedneedle::bootstrap::data_dirs::{
-    BACKUP_DIR_NAME, DataDirs, Layout, MARKER_FILE_NAME, UnknownLayout, detect, wal_bytes, wal_path,
+    BACKUP_DIR_NAME, BootRefusal, DataDirs, Layout, MARKER_FILE_NAME, UnknownLayout, detect,
+    refuse_lost_key, wal_bytes, wal_path,
 };
 use droppedneedle_kernel::db::datalock::{DataLock, DataLockError, lock_path, server_lock_path};
-use droppedneedle_kernel::runtime_config::crypto::CryptoError;
-use droppedneedle_kernel::runtime_config::{Crypto, Secret};
+use droppedneedle_kernel::db::{DbConfig, open_runtime};
+use droppedneedle_kernel::runtime_config::crypto::{CryptoError, KEY_FILE_NAME};
+use droppedneedle_kernel::runtime_config::ingest::{LEGACY_CONFIG_FILE_NAME, mark_skip};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, KeyOrigin, LegacyConfig, Secret};
 use droppedneedle_kernel::schema::SchemaError;
 
 /// Work folder in `cache/` for the export file and its bundle.
 const WORK_DIR_NAME: &str = ".upgrade-work";
 const EXPORT_FILE_NAME: &str = "export.json";
-const CONFIG_FILE_NAME: &str = "config.json";
 const MARKER_FORMAT: &str = "droppedneedle-upgrade-marker";
 /// The validator's code for a follow or approval of a deleted user.
 const DANGLING_USER_REF: &str = "DANGLING_USER_REF";
@@ -85,7 +87,6 @@ fn backup_side(dirs: &DataDirs) -> DataDirs {
     let config_dir = dirs.config_backup();
     let cache_dir = dirs.cache_backup();
     DataDirs {
-        config_file: config_dir.join(dirs.config_file.file_name().unwrap_or_default()),
         db_path: cache_dir.join(dirs.db_path.file_name().unwrap_or_default()),
         config_dir,
         cache_dir,
@@ -494,11 +495,6 @@ fn preflight(dirs: &DataDirs) -> Result<(), UpgradeError> {
             reason: "the database is not directly inside the cache folder",
         });
     }
-    if dirs.config_file.file_name() != Some(OsStr::new(CONFIG_FILE_NAME)) {
-        return Err(UpgradeError::UnsupportedPaths {
-            reason: "the settings file is not named config.json",
-        });
-    }
     if let (Ok(config), Ok(cache)) = (
         std::fs::canonicalize(&dirs.config_dir),
         std::fs::canonicalize(&dirs.cache_dir),
@@ -654,7 +650,7 @@ async fn convert(
         config_dir: dirs.config_dir.clone(),
         cache_dir: dirs.cache_dir.clone(),
         attachments_dir: work.clone(),
-        v2_config: Some(backup.config_file.clone()),
+        v2_config: Some(backup.legacy_config_file()),
         dry_run,
         fault_before_commit: !dry_run
             && matches!(
@@ -972,7 +968,8 @@ pub struct OfflineImport {
     pub passphrase: Secret,
     /// Target v3 database, created and migrated when missing.
     pub db_path: PathBuf,
-    /// Target v3 config folder: `config.json` and the key file.
+    /// Target v3 config folder: the key file, and maybe a `config.json`
+    /// from before settings moved into the database.
     pub config_dir: PathBuf,
     /// Target v3 cache folder, where avatars and held downloads land.
     pub cache_dir: PathBuf,
@@ -1005,6 +1002,13 @@ pub enum OfflineImportError {
     /// The v3 key could not be loaded or created.
     #[error(transparent)]
     Key(#[from] CryptoError),
+    /// The target holds v3 data whose key file is missing.
+    #[error(transparent)]
+    LostKey(BootRefusal),
+    /// The target's settings could not be opened (a `config.json` from
+    /// before settings moved into the database that does not read).
+    #[error("cannot open the target's settings: {0}")]
+    Settings(String),
 }
 
 /// Open and migrate the target, make sure nobody else writes to it, and
@@ -1018,34 +1022,77 @@ pub async fn run_offline_import(
     _lock: &DataLock,
     job: OfflineImport,
 ) -> Result<ImportReport, OfflineImportError> {
+    refuse_lost_key(&job.config_dir, &job.db_path).map_err(OfflineImportError::LostKey)?;
+    let (crypto, legacy) = if job.dry_run {
+        // Throwaway in-memory key: a dry run re-encrypts into settings it
+        // discards, so no key file may be minted here. Without a key file
+        // the real run would mint one, and so would leave config.json
+        // unread.
+        let key_absent = !job.config_dir.join(KEY_FILE_NAME).exists();
+        (
+            Crypto::from_key_bytes(&[42u8; 32])?,
+            LegacyConfig::at(&job.config_dir, key_absent),
+        )
+    } else {
+        if !job.config_dir.join(KEY_FILE_NAME).exists() {
+            mark_skip(&job.config_dir)
+                .map_err(|error| OfflineImportError::Settings(error.to_string()))?;
+        }
+        let (crypto, origin) = Crypto::load_or_generate(&job.config_dir)?;
+        let legacy = LegacyConfig::at(&job.config_dir, origin == KeyOrigin::Minted);
+        // With no file there is nothing to copy in (an upgrade has moved
+        // v2's away), and the import's own pool migrates the database.
+        if job.config_dir.join(LEGACY_CONFIG_FILE_NAME).exists() {
+            ingest_settings(&job.db_path, &job.config_dir, &legacy).await?;
+        }
+        (crypto, legacy)
+    };
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)
         .connect(&format!("sqlite:{}?mode=rwc", job.db_path.display()))
         .await
         .map_err(OfflineImportError::Open)?;
-    let outcome = import_into(&pool, job).await;
+    let outcome = import_into(&pool, job, crypto, legacy).await;
     pool.close().await;
     outcome
+}
+
+/// Open the target's settings the way the server's start does, so a
+/// `config.json` it never started on is copied in before the import reads
+/// or replaces any section. Migrates the database too.
+async fn ingest_settings(
+    db_path: &Path,
+    config_dir: &Path,
+    legacy: &LegacyConfig,
+) -> Result<(), OfflineImportError> {
+    let failed = |error: &dyn std::fmt::Display| OfflineImportError::Settings(error.to_string());
+    let runtime = open_runtime(&DbConfig::new(db_path))
+        .await
+        .map_err(|error| failed(&error))?;
+    let opened = match Crypto::load(config_dir) {
+        Ok(crypto) => ConfigStore::open(runtime.db().clone(), crypto, legacy.clone())
+            .await
+            .map(drop)
+            .map_err(|error| failed(&error)),
+        Err(error) => Err(OfflineImportError::Key(error)),
+    };
+    runtime.shutdown().await;
+    opened
 }
 
 async fn import_into(
     pool: &SqlitePool,
     job: OfflineImport,
+    crypto: Crypto,
+    legacy: LegacyConfig,
 ) -> Result<ImportReport, OfflineImportError> {
     droppedneedle_kernel::schema::apply_migrations(pool).await?;
     probe_write_lock(pool).await?;
-    let crypto = if job.dry_run {
-        // Throwaway in-memory key: a dry run re-encrypts into a config it
-        // discards, so no key file may be minted here.
-        Crypto::from_key_bytes(&[42u8; 32])?
-    } else {
-        Crypto::load_or_generate(&job.config_dir)?
-    };
     Ok(run_import(ImportRequest {
         export_bytes: job.export_bytes,
         passphrase: job.passphrase.expose().to_owned(),
         pool: pool.clone(),
-        config_path: job.config_dir.join(CONFIG_FILE_NAME),
+        legacy,
         crypto,
         v2_config_path: job.v2_config,
         attachments_dir: Some(job.attachments_dir),

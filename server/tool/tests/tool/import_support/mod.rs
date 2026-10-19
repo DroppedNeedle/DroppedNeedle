@@ -9,7 +9,8 @@
 use crate::common::ScratchDir;
 use std::path::PathBuf;
 
-use droppedneedle_kernel::runtime_config::Crypto;
+use droppedneedle_kernel::runtime_config::sql as settings_sql;
+use droppedneedle_kernel::runtime_config::{Crypto, LegacyConfig};
 use droppedneedle_tool::export::seal::{DIGEST_KEY, Opener, Sealer};
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
@@ -167,7 +168,8 @@ pub fn test_crypto() -> Crypto {
 }
 
 /// Scratch config dir with a deterministic v3 key. Returns the dir guard
-/// (removed on drop, so keep it alive), the config file path and the
+/// (removed on drop, so keep it alive), the path of the `config.json` an
+/// import would start from while the target stores no settings, and the
 /// crypto handle.
 pub fn scratch_config(tag: &str) -> (ScratchDir, PathBuf, Crypto) {
     let dir = ScratchDir::new(&format!("import-{tag}"));
@@ -176,18 +178,20 @@ pub fn scratch_config(tag: &str) -> (ScratchDir, PathBuf, Crypto) {
     (dir, config_path, crypto)
 }
 
-/// Standard import request over scratch state.
+/// Standard import request over scratch state. `config_path` names the
+/// `config.json` in the target's config folder.
 pub fn import_request(
     export: &Value,
     pool: SqlitePool,
     config_path: PathBuf,
     crypto: Crypto,
 ) -> droppedneedle_tool::import::ImportRequest {
+    let config_dir = config_path.parent().map(PathBuf::from).unwrap_or_default();
     droppedneedle_tool::import::ImportRequest {
         export_bytes: signed(export),
         passphrase: PASSPHRASE.to_owned(),
         pool,
-        config_path,
+        legacy: LegacyConfig::at(&config_dir, false),
         crypto,
         v2_config_path: None,
         attachments_dir: None,
@@ -228,4 +232,54 @@ pub async fn count(pool: &SqlitePool, table: &str) -> i64 {
         .fetch_one(pool)
         .await
         .unwrap()
+}
+
+/// Store `settings` (an object, key by key) as rows, as a server that ran
+/// on the target would have left them.
+pub async fn seed_settings(pool: &SqlitePool, settings: Value) {
+    for (key, value) in settings.as_object().expect("settings object") {
+        sqlx::query(settings_sql::PUT_SECTION.text())
+            .bind(key)
+            .bind(value.to_string())
+            .bind(1_i64)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    }
+}
+
+/// Every settings row in key order: key, value, revision, change time.
+pub async fn settings_rows(pool: &SqlitePool) -> Vec<(String, Value, i64, i64)> {
+    let rows: Vec<(String, String, i64, i64)> = sqlx::query_as(
+        "SELECT key, value_json, revision, updated_at FROM config_sections ORDER BY key",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    rows.into_iter()
+        .map(|(key, text, revision, at)| (key, serde_json::from_str(&text).unwrap(), revision, at))
+        .collect()
+}
+
+/// The stored settings as one object, key by key.
+pub async fn stored_settings(pool: &SqlitePool) -> Value {
+    Value::Object(
+        settings_rows(pool)
+            .await
+            .into_iter()
+            .map(|(key, value, _, _)| (key, value))
+            .collect(),
+    )
+}
+
+/// A settings store holding the target's stored settings, for code that
+/// reads them through the store: they are copied in from a `config.json`
+/// written at `config_path`, as a first start copies one.
+pub async fn settings_store(
+    pool: &SqlitePool,
+    config_path: &std::path::Path,
+) -> droppedneedle_kernel::runtime_config::ConfigStore {
+    std::fs::write(config_path, stored_settings(pool).await.to_string()).unwrap();
+    let dir = config_path.parent().unwrap().to_path_buf();
+    droppedneedle_kernel::runtime_config::ConfigStore::scratch(&dir, test_crypto()).unwrap()
 }

@@ -75,6 +75,10 @@ environment says otherwise). upgrade --undo --yes deletes everything in
 the two folders except the v2-backup folders, then puts the v2 files back.
 remove-v2-backup deletes the kept v2 files.
 
+restore copies a server backup into an empty folder as library.db. The
+settings come with the database. Keep the instance's config/data_enc.key
+with it: without that key, stored passwords and API keys cannot be read.
+
 The passphrase comes from --passphrase-file or stdin, never from argv.
 Export writes <file> plus <name>.bundle.sqlite beside it; keep the two
 together. Import and dry-run print exactly one JSON report to stdout.
@@ -111,7 +115,9 @@ report-only  the browser lists in its console what the policy would refuse
              and refuses nothing
 off          no policy is sent
 
-It finds the data the way upgrade does.
+It finds the data the way upgrade does. Settings live in the database: on
+an instance this version has not started yet, it first copies in the old
+config/config.json, as the server's first start would.
 ";
 
 /// Help for `public-address`, printed without touching the data directory.
@@ -135,7 +141,9 @@ make changes as whoever is signed in.
 
 --show prints the saved list, one address a line. --clear empties it.
 
-It finds the data the way upgrade does.
+It finds the data the way upgrade does. Settings live in the database: on
+an instance this version has not started yet, even --show first copies in
+the old config/config.json, as the server's first start would.
 ";
 
 /// Help for `recovery-code`, printed without touching the data directory.
@@ -780,7 +788,11 @@ fn run_content_security_policy(args: &[String]) -> Result<(), String> {
             ));
         }
     };
-    let saved = host_settings::set_content_security_policy(&data_dirs()?, mode)
+    let saved = new_runtime()?
+        .block_on(host_settings::set_content_security_policy(
+            &data_dirs()?,
+            mode,
+        ))
         .map_err(|error| error.to_string())?;
     println!(
         "{}",
@@ -810,9 +822,10 @@ fn run_public_address(args: &[String]) -> Result<(), String> {
         }
         _ => data_dirs()?,
     };
+    let runtime = new_runtime()?;
     let saved = match args.as_slice() {
-        ["--show"] => host_settings::public_address(&dirs),
-        ["--clear"] => host_settings::set_public_address(&dirs, Vec::new()),
+        ["--show"] => runtime.block_on(host_settings::public_address(&dirs)),
+        ["--clear"] => runtime.block_on(host_settings::set_public_address(&dirs, Vec::new())),
         addresses => {
             if let Some(flag) = addresses.iter().find(|arg| arg.starts_with('-')) {
                 return Err(format!("unknown flag {flag:?}\n{PUBLIC_ADDRESS_HELP}"));
@@ -821,7 +834,7 @@ fn run_public_address(args: &[String]) -> Result<(), String> {
                 .iter()
                 .map(|&address| address.to_owned())
                 .collect();
-            host_settings::set_public_address(&dirs, addresses)
+            runtime.block_on(host_settings::set_public_address(&dirs, addresses))
         }
     }
     .map_err(|error| error.to_string())?;

@@ -8,7 +8,8 @@ use crate::import_support as support;
 
 use serde_json::{Value, json};
 use support::{
-    BCRYPT_HASH, Fixture, MBID, count, import_request, migrated_pool, scratch_config, test_crypto,
+    BCRYPT_HASH, Fixture, MBID, count, import_request, migrated_pool, scratch_config,
+    settings_rows, settings_store, stored_settings, test_crypto,
 };
 
 use droppedneedle_tool::import::{ExitCode, run_import};
@@ -96,12 +97,11 @@ async fn fresh_import_applies_everything() {
         .unwrap();
     assert_eq!(runs, 1);
 
-    let text = std::fs::read_to_string(&config_path).unwrap();
+    let stored_config = stored_settings(&pool).await;
     assert!(
-        !text.contains("jelly-secret"),
-        "plaintext must never reach disk"
+        !stored_config.to_string().contains("jelly-secret"),
+        "plaintext must never reach the settings"
     );
-    let stored_config: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(stored_config["instance_id"], json!("instance-1"));
     let report_json = report.to_json();
     assert!(!report_json.contains("jelly-secret"));
@@ -351,7 +351,7 @@ async fn reimport_is_identical_with_zero_writes() {
     export["settings"]["wanted"] = json!({"enabled": true});
 
     let pool = migrated_pool().await;
-    let (dir, config_path, _crypto) = scratch_config("idempotent");
+    let (_dir, config_path, _crypto) = scratch_config("idempotent");
     let first = run_import(import_request(
         &export,
         pool.clone(),
@@ -360,7 +360,7 @@ async fn reimport_is_identical_with_zero_writes() {
     ))
     .await;
     assert_eq!(first.exit.code, ExitCode::Ok);
-    let config_before = std::fs::read_to_string(&config_path).unwrap();
+    let config_before = settings_rows(&pool).await;
     let users_before = count(&pool, "auth_users").await;
     let runs_before = count(&pool, "import_runs").await;
 
@@ -394,16 +394,10 @@ async fn reimport_is_identical_with_zero_writes() {
     assert_eq!(count(&pool, "auth_users").await, users_before);
     assert_eq!(count(&pool, "import_runs").await, runs_before);
     assert_eq!(
-        std::fs::read_to_string(&config_path).unwrap(),
+        settings_rows(&pool).await,
         config_before,
-        "config bytes must not change on re-import"
+        "no settings row may change on re-import"
     );
-    let leftovers: Vec<_> = std::fs::read_dir(&dir)
-        .unwrap()
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
-        .collect();
-    assert!(leftovers.is_empty(), "no staging files may remain");
 }
 
 #[tokio::test]
@@ -411,7 +405,7 @@ async fn conflicted_reimport_converges_with_zero_writes() {
     // A nulled-then-NULL email never compares identical, so conflicted
     // re-imports report `conflict_kept_existing` (not `skipped_identical`)
     // and recount the ghost reviewer every run, but they converge: no
-    // row changes, no config bytes change, no audit row, repeat runs agree.
+    // row changes, no settings row changes, no audit row, repeat runs agree.
     let fixture = Fixture::shared();
     let mut seed = fixture.shell();
     seed["users"] = json!([fixture.user("u1")]);
@@ -448,7 +442,7 @@ async fn conflicted_reimport_converges_with_zero_writes() {
     let users_before = count(&pool, "auth_users").await;
     let approvals_before = count(&pool, "auto_download_approvals").await;
     let runs_before = count(&pool, "import_runs").await;
-    let config_before = std::fs::read_to_string(&config_path).unwrap();
+    let config_before = settings_rows(&pool).await;
 
     for _ in 0..2 {
         let again = run_import(import_request(
@@ -483,9 +477,9 @@ async fn conflicted_reimport_converges_with_zero_writes() {
         );
         assert_eq!(count(&pool, "import_runs").await, runs_before);
         assert_eq!(
-            std::fs::read_to_string(&config_path).unwrap(),
+            settings_rows(&pool).await,
             config_before,
-            "config bytes stay stable across conflicted re-imports"
+            "settings rows stay stable across conflicted re-imports"
         );
     }
 }
@@ -513,8 +507,7 @@ async fn bare_plugin_strings_pass_through_verbatim() {
     .await;
 
     assert_eq!(report.exit.code, ExitCode::Ok);
-    let stored: Value =
-        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    let stored: Value = stored_settings(&pool).await;
     assert_eq!(
         stored["plugins"]["myplug"]["settings"]["token"],
         json!("bare-secret")
@@ -600,8 +593,7 @@ async fn settings_replace_filters_and_preserves() {
             .settings_defaulted
             .contains(&"lyrics_settings".to_owned())
     );
-    let stored: Value =
-        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    let stored: Value = stored_settings(&pool).await;
     assert_eq!(stored["wanted"], json!({"enabled": true}));
     assert_eq!(stored["lyrics_settings"], json!({"enabled": true}));
     // The instance Last.fm key carries over, re-sealed under the v3 key.
@@ -654,8 +646,7 @@ async fn schedule_carry_moves_sync_frequency_once() {
     request.v2_config_path = Some(v2_config.clone());
     let report = run_import(request).await;
     assert_eq!(report.exit.code, ExitCode::Ok);
-    let stored: Value =
-        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    let stored: Value = stored_settings(&pool).await;
     assert_eq!(
         stored["library_scan_schedule"]["scan_frequency"],
         json!("6hr")
@@ -666,8 +657,7 @@ async fn schedule_carry_moves_sync_frequency_once() {
     let mut again = import_request(&export, pool.clone(), config_path.clone(), crypto);
     again.v2_config_path = Some(v2_config);
     run_import(again).await;
-    let kept: Value =
-        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    let kept: Value = stored_settings(&pool).await;
     assert_eq!(
         kept["library_scan_schedule"]["scan_frequency"],
         json!("6hr")
@@ -679,11 +669,10 @@ async fn schedule_carry_moves_sync_frequency_once() {
         json!({"scan_frequency": "daily", "daily_scan_time": "03:00"});
     let pool2 = migrated_pool().await;
     let (_dir2, config2, crypto2) = scratch_config("schedule-carry-export-wins");
-    let mut direct = import_request(&with_schedule, pool2, config2.clone(), crypto2);
+    let mut direct = import_request(&with_schedule, pool2.clone(), config2.clone(), crypto2);
     direct.v2_config_path = Some(dir.join("v2-config.json"));
     run_import(direct).await;
-    let direct_stored: Value =
-        serde_json::from_str(&std::fs::read_to_string(&config2).unwrap()).unwrap();
+    let direct_stored = stored_settings(&pool2).await;
     assert_eq!(
         direct_stored["library_scan_schedule"]["scan_frequency"],
         json!("daily")
@@ -941,8 +930,7 @@ async fn unknown_settings_section_with_corrupt_blob_is_ignored() {
             .any(|item| item.detail.contains("UNKNOWN_SETTINGS_SECTION")),
         "the warning must ride along in the report"
     );
-    let stored: Value =
-        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    let stored: Value = stored_settings(&pool).await;
     assert!(stored.get("future_section").is_none());
 }
 
@@ -968,7 +956,7 @@ async fn schedule_carry_instance_mismatch_refuses_with_zero_writes() {
     assert!(report.exit.message.contains("INSTANCE_MISMATCH"));
     assert_eq!(count(&pool, "auth_users").await, 0);
     assert_eq!(count(&pool, "import_runs").await, 0);
-    assert!(std::fs::read_to_string(&config_path).is_err());
+    assert!(settings_rows(&pool).await.is_empty());
 }
 
 #[test]
@@ -996,7 +984,7 @@ fn schedule_carry_corrupt_file_fails() {
 }
 
 #[tokio::test]
-async fn reimport_with_secrets_leaves_config_bytes_untouched() {
+async fn reimport_with_secrets_leaves_settings_rows_untouched() {
     let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
@@ -1013,7 +1001,7 @@ async fn reimport_with_secrets_leaves_config_bytes_untouched() {
     ))
     .await;
     assert_eq!(first.exit.code, ExitCode::Ok);
-    let bytes_before = std::fs::read(&config_path).unwrap();
+    let rows_before = settings_rows(&pool).await;
 
     let second = run_import(import_request(
         &export,
@@ -1024,9 +1012,9 @@ async fn reimport_with_secrets_leaves_config_bytes_untouched() {
     .await;
     assert_eq!(second.exit.code, ExitCode::Ok);
     assert_eq!(
-        std::fs::read(&config_path).unwrap(),
-        bytes_before,
-        "fresh nonces must not rewrite the config"
+        settings_rows(&pool).await,
+        rows_before,
+        "fresh nonces must not rewrite a row"
     );
 }
 
@@ -1085,7 +1073,6 @@ const V2_MANAGED_FIELDS: &[&str] = &[
 /// match in any case and cover nothing else, and the section reads.
 #[tokio::test]
 async fn v2_management_fields_carry_over_as_they_were() {
-    use droppedneedle_kernel::runtime_config::ConfigStore;
     use droppedneedle_kernel::runtime_config::sections::FieldMode;
     use droppedneedle_library::management::settings::service::LibraryManagementService;
     use droppedneedle_library::management::settings::{
@@ -1137,7 +1124,7 @@ async fn v2_management_fields_carry_over_as_they_were() {
         report.to_json()
     );
 
-    let store = Arc::new(ConfigStore::open(&config_path, test_crypto()).unwrap());
+    let store = Arc::new(settings_store(&pool, &config_path).await);
     let service = LibraryManagementService::new(store);
     let settings = service.get_settings().expect("the section reads").settings;
     let picard = settings
@@ -1181,7 +1168,6 @@ async fn v2_management_fields_carry_over_as_they_were() {
 /// listed these fields, so the carry leaves them to completion.
 #[tokio::test]
 async fn v2_profile_that_ticked_other_gets_the_role_fields() {
-    use droppedneedle_kernel::runtime_config::ConfigStore;
     use droppedneedle_kernel::runtime_config::sections::FieldMode;
     use droppedneedle_library::management::settings::service::LibraryManagementService;
     use droppedneedle_library::management::settings::{
@@ -1214,16 +1200,17 @@ async fn v2_profile_that_ticked_other_gets_the_role_fields() {
     let mut export = fixture.shell();
     export["settings"]["library_management"] = management;
     let (_dir, config_path, crypto) = scratch_config("management-other-roles");
+    let pool = migrated_pool().await;
     let report = run_import(import_request(
         &export,
-        migrated_pool().await,
+        pool.clone(),
         config_path.clone(),
         crypto,
     ))
     .await;
     assert_eq!(report.exit.code, ExitCode::Ok, "{}", report.to_json());
 
-    let store = Arc::new(ConfigStore::open(&config_path, test_crypto()).unwrap());
+    let store = Arc::new(settings_store(&pool, &config_path).await);
     let service = LibraryManagementService::new(store);
     let settings = service.get_settings().expect("the section reads").settings;
     let state = |profile_id: &str, field: &str| {

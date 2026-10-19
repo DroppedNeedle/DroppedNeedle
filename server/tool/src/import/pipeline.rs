@@ -1,6 +1,6 @@
 //! v2 → v3 importer: parse → unlock → bundle check → settings → users →
-//! secrets → follows/approvals → concerts cities and seen markers → atomic
-//! commit → config write → section carry ([`super::carry`], one transaction
+//! secrets → follows/approvals → concerts cities and seen markers → settings
+//! rows → atomic commit → section carry ([`super::carry`], one transaction
 //! per section).
 //!
 //! Every run, including dry-run,
@@ -22,13 +22,18 @@
 //! min, and a nulled reviewer keeps its display name as audit residue.
 //! Unknown settings sections are ignored with a validator warning and never
 //! unsealed. The scan-schedule carry from v2's `config.json` refuses on
-//! instance mismatch. The config
-//! write compares secrets decrypted, so idempotent re-imports leave the
-//! config bytes untouched; a post-commit config failure marks its audit row
-//! `FAILED_INTERNAL` after the fact.
+//! instance mismatch. The settings
+//! rows are written in the same transaction as the records, so an import
+//! lands whole or not at all. A row is compared with its stored form
+//! decrypted, so an idempotent re-import writes no row.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+
+use droppedneedle_kernel::runtime_config::ingest::read_legacy;
+use droppedneedle_kernel::runtime_config::sql as settings_sql;
+use droppedneedle_kernel::runtime_config::store::{decode_text, encode_text};
+use droppedneedle_kernel::runtime_config::{ConfigError, LegacyConfig};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -98,8 +103,8 @@ enum ImportError {
     /// A database read or write failed.
     #[error("database failure: {0}")]
     Db(#[from] sqlx::Error),
-    /// The v3 config file cannot be read or written.
-    #[error("config failure: {reason}")]
+    /// The settings cannot be read or staged.
+    #[error("settings failure: {reason}")]
     Config {
         /// What went wrong, without file contents.
         reason: String,
@@ -129,8 +134,10 @@ pub struct ImportRequest {
     pub passphrase: String,
     /// Target v3 database. Tests use scratch pools only.
     pub pool: SqlitePool,
-    /// Target v3 `config.json`.
-    pub config_path: PathBuf,
+    /// Target v3 config folder. While the target stores no settings yet,
+    /// its `config.json` (from before settings moved into the database) is
+    /// what the import starts from, as the server's first start would.
+    pub legacy: LegacyConfig,
     /// v3 data key for re-encryption.
     pub crypto: Crypto,
     /// v2 `config.json` for the one-shot scan-schedule carry, when available.
@@ -145,8 +152,8 @@ pub struct ImportRequest {
     /// Test-only: fail after staging everything, before commit, to
     /// prove the rollback (simulated kill mid-import).
     pub fault_before_commit: bool,
-    /// Test-only: fail after the DB commit but before the config
-    /// write, to prove re-import converges from the split state.
+    /// Test-only: fail right after the DB commit, before the section
+    /// carry, to prove re-import converges from there.
     pub fault_after_commit: bool,
     /// Test-only: fail after this many carried sections, to prove an
     /// interrupted import resumes.
@@ -262,7 +269,7 @@ pub async fn run_import(request: ImportRequest) -> ImportReport {
         ),
         Err(ImportError::FaultAfterCommit) => report.finish(
             ExitCode::FailedInternal,
-            "simulated crash after commit; config not written".to_owned(),
+            "simulated crash after commit".to_owned(),
         ),
         Err(ImportError::ScheduleCarry(
             mismatch @ super::schedule_carry::ScheduleCarryError::InstanceMismatch { .. },
@@ -403,11 +410,11 @@ fn unseal_consumed(root: &Value, opener: &Opener) -> Result<HashMap<String, Stri
     Ok(out)
 }
 
-/// The guarded middle of the pipeline: settings staging, entity merge,
-/// atomic commit, config write, section carry. Any error before
-/// the config write leaves prior state untouched (DB rolls back, config
-/// unwritten). Carried sections commit one by one after that; a failure
-/// there keeps the sections already applied, and a rerun resumes.
+/// The guarded middle of the pipeline: settings staging, entity merge and
+/// settings rows in one atomic commit, then the section carry. Any error
+/// before the commit leaves prior state untouched. Carried sections commit
+/// one by one after that; a failure there keeps the sections already
+/// applied, and a rerun resumes.
 async fn run_guarded(
     request: &ImportRequest,
     root: &Value,
@@ -425,7 +432,7 @@ async fn run_guarded(
         dry_run,
         stop_after: request.fault_after_sections,
     };
-    let current_config = read_current_config(&request.config_path)?;
+    let current_config = current_settings(&request.pool, &request.legacy).await?;
     let secrets_before = report.secrets_counted();
     let staged_config = stage_settings(
         root,
@@ -435,7 +442,7 @@ async fn run_guarded(
         request.v2_config_path.as_deref(),
         report,
     )?;
-    // An unchanged config is not written, so its secrets are not
+    // Unchanged settings are not written, so their secrets are not
     // re-encrypted after all.
     let config_unchanged = configs_equivalent(&current_config, &staged_config, &request.crypto);
     if config_unchanged {
@@ -460,9 +467,10 @@ async fn run_guarded(
     let snapshot = DatabaseSnapshot::load(&mut tx).await?;
     let plan = Plan::decide(root, &snapshot, unsealed, report);
     plan.apply(&mut tx, &request.crypto, unsealed).await?;
-    // A pure re-import (every record identical) writes nothing at all,
-    // not even an audit row: idempotency means zero writes.
-    let run_id = if plan.has_writes() {
+    let settings_written = write_settings(&mut tx, &staged_config, &request.crypto).await?;
+    // A pure re-import (every record and setting identical) writes nothing
+    // at all, not even an audit row: idempotency means zero writes.
+    let run_id = if plan.has_writes() || settings_written > 0 {
         Some(record_import_run(&mut tx, root, report, completed_exit(report)).await?)
     } else {
         None
@@ -476,18 +484,6 @@ async fn run_guarded(
     if request.fault_after_commit {
         // No audit fix-up: a real crash could not run one either.
         return Err(ImportError::FaultAfterCommit);
-    }
-
-    if !config_unchanged
-        && let Err(error) = write_json_atomically(&request.config_path, &staged_config)
-    {
-        // The DB already committed, so correct the audit row instead of
-        // leaving it claiming a success the run never finished. Best
-        // effort: the config failure itself is the report's verdict.
-        if let Some(id) = run_id {
-            mark_import_run_failed(&request.pool, &id).await;
-        }
-        return Err(error);
     }
 
     let carried = super::carry::run(carry(false), report).await;
@@ -519,18 +515,101 @@ async fn run_guarded(
 
 // --- settings staging ------------------------------------------------------
 
-fn read_current_config(path: &std::path::Path) -> Result<Value, ImportError> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text).map_err(|error| ImportError::Config {
-            reason: format!("v3 config is not valid JSON: {error}"),
-        }),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(Value::Object(serde_json::Map::new()))
+/// The target's settings as one object, key by key: its stored rows, or,
+/// while it stores none and has recorded no copy of `config.json`, what a
+/// first start would copy in from that file. A file that does not read
+/// refuses the import before anything is written.
+async fn current_settings(pool: &SqlitePool, legacy: &LegacyConfig) -> Result<Value, ImportError> {
+    let settled: bool = sqlx::query_scalar(settings_sql::ANY_SETTINGS.text())
+        .fetch_one(pool)
+        .await?;
+    let mut current = serde_json::Map::new();
+    if settled {
+        for (key, value) in stored_settings(pool).await? {
+            current.insert(key, value);
         }
-        Err(error) => Err(ImportError::Config {
-            reason: format!("cannot read v3 config: {error}"),
-        }),
+        return Ok(Value::Object(current));
     }
+    let config_failed = |error: ConfigError| ImportError::Config {
+        reason: error.to_string(),
+    };
+    if let Some(file) = read_legacy(legacy).map_err(config_failed)? {
+        for (key, text) in file.rows {
+            current.insert(key, decode_text(&text).map_err(config_failed)?);
+        }
+    }
+    Ok(Value::Object(current))
+}
+
+/// Every stored settings row, decoded.
+async fn stored_settings<'c, E>(executor: E) -> Result<Vec<(String, Value)>, ImportError>
+where
+    E: sqlx::SqliteExecutor<'c>,
+{
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(settings_sql::ALL_SECTIONS.text())
+        .fetch_all(executor)
+        .await?;
+    rows.into_iter()
+        .map(|(key, text, _)| {
+            decode_text(&text)
+                .map(|value| (key, value))
+                .map_err(|error| ImportError::Config {
+                    reason: error.to_string(),
+                })
+        })
+        .collect()
+}
+
+/// Write the staged settings as rows in the import's transaction: a row
+/// whose plaintexts equal the stored row's is left alone, a changed one is
+/// stored at its next revision, and a stored row the staged settings no
+/// longer hold (a replaced section the export lacks) is deleted, so it
+/// reads as its default. Returns how many rows changed.
+async fn write_settings(
+    tx: &mut sqlx::SqliteConnection,
+    staged: &Value,
+    crypto: &Crypto,
+) -> Result<usize, ImportError> {
+    let staged = staged.as_object().ok_or_else(|| ImportError::Config {
+        reason: "staged settings are not a JSON object".to_owned(),
+    })?;
+    let stored: HashMap<String, Value> = stored_settings(&mut *tx).await?.into_iter().collect();
+    let now = unix_millis();
+    let mut changed = 0;
+    for (key, value) in staged {
+        if stored
+            .get(key)
+            .is_some_and(|current| configs_equivalent(current, value, crypto))
+        {
+            continue;
+        }
+        let text = encode_text(value).map_err(|error| ImportError::Config {
+            reason: error.to_string(),
+        })?;
+        sqlx::query(settings_sql::PUT_SECTION.text())
+            .bind(key)
+            .bind(text)
+            .bind(now)
+            .fetch_one(&mut *tx)
+            .await?;
+        changed += 1;
+    }
+    for key in stored.keys().filter(|key| !staged.contains_key(*key)) {
+        sqlx::query(settings_sql::DELETE_SECTION.text())
+            .bind(key)
+            .execute(&mut *tx)
+            .await?;
+        changed += 1;
+    }
+    Ok(changed)
+}
+
+fn unix_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |span| {
+            i64::try_from(span.as_millis()).unwrap_or(i64::MAX)
+        })
 }
 
 fn stage_settings(
@@ -543,7 +622,7 @@ fn stage_settings(
 ) -> Result<Value, ImportError> {
     let mut staged = current.clone();
     let staged_object = staged.as_object_mut().ok_or_else(|| ImportError::Config {
-        reason: "v3 config root must be a JSON object".to_owned(),
+        reason: "v3 settings must be a JSON object".to_owned(),
     })?;
     if let Some(instance_id) = root.get("instance_id").and_then(Value::as_str) {
         staged_object.insert(
@@ -825,52 +904,6 @@ fn rekey_section(
         }
         _ => Ok(section.clone()),
     }
-}
-
-/// Atomic JSON write: temp file in the same directory, fsync, rename,
-/// directory fsync (the `ConfigStore` shape, owned here so the importer
-/// does not need a store handle).
-fn write_json_atomically(path: &std::path::Path, value: &Value) -> Result<(), ImportError> {
-    use std::io::Write as _;
-
-    let failed = |reason: String| ImportError::Config { reason };
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent).map_err(|error| failed(error.to_string()))?;
-    }
-    let bytes = serde_json::to_vec_pretty(value).map_err(|error| failed(error.to_string()))?;
-    let mut tmp_name = path
-        .file_name()
-        .map(|name| name.to_os_string())
-        .unwrap_or_default();
-    tmp_name.push(".tmp");
-    let tmp_path = path.with_file_name(tmp_name);
-    let outcome: Result<(), String> = (|| {
-        let mut file = std::fs::File::create(&tmp_path).map_err(|error| error.to_string())?;
-        file.write_all(&bytes).map_err(|error| error.to_string())?;
-        file.sync_all().map_err(|error| error.to_string())?;
-        drop(file);
-        std::fs::rename(&tmp_path, path).map_err(|error| error.to_string())?;
-        fsync_parent(path).map_err(|error| error.to_string())?;
-        Ok(())
-    })();
-    if let Err(reason) = outcome {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(failed(reason));
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn fsync_parent(path: &std::path::Path) -> std::io::Result<()> {
-    let parent = path.parent().unwrap_or(std::path::Path::new("."));
-    std::fs::File::open(parent)?.sync_all()
-}
-
-#[cfg(not(unix))]
-fn fsync_parent(_path: &std::path::Path) -> std::io::Result<()> {
-    Ok(())
 }
 
 // --- database snapshot -----------------------------------------------------
@@ -2300,21 +2333,8 @@ async fn update_import_run(
     Ok(())
 }
 
-/// Best-effort audit correction after a post-commit config failure. Errors
-/// are swallowed: the config failure itself is already the run's verdict.
-async fn mark_import_run_failed(pool: &SqlitePool, run_id: &str) {
-    if let Err(error) =
-        sqlx::query("UPDATE import_runs SET exit_code = 'FAILED_INTERNAL' WHERE id = ?")
-            .bind(run_id)
-            .execute(pool)
-            .await
-    {
-        tracing::warn!(run_id, %error, "import audit row correction failed");
-    }
-}
-
-/// True when two configs carry the same plaintexts. Staged secrets use
-/// fresh nonces every run, so a byte compare would rewrite the file on
+/// True when two settings values carry the same plaintexts. Staged secrets
+/// use fresh nonces every run, so a byte compare would rewrite the row on
 /// every re-import; decrypting first keeps idempotent re-imports at zero
 /// writes. Undecryptable values fall back to byte compare, which simply
 /// rewrites.

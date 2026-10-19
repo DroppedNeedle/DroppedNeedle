@@ -187,12 +187,7 @@ async fn imported_counts_match_the_fixture() {
     assert_eq!(report.secrets_reencrypted, 16);
     // The v2 instance Last.fm key pair opens under the v3 key, so linking
     // and scrobbling keep working after the move.
-    let config_dir = v3_root.join("config");
-    let store = droppedneedle_kernel::runtime_config::ConfigStore::open(
-        &config_dir.join("config.json"),
-        Crypto::load(&config_dir).expect("v3 key loads"),
-    )
-    .expect("v3 config opens");
+    let store = v3_store(&v3_root);
     let lastfm: droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings =
         store.get_raw().expect("lastfm settings read");
     assert_eq!(lastfm.api_key.expose(), "lastfm-public-key");
@@ -301,8 +296,7 @@ async fn settings_land_with_schedule_carry_and_no_plaintext() {
     run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
     assert_settings_landed(&v3_root, &fixture);
 
-    let config_text = std::fs::read_to_string(v3_root.join("config").join("config.json"))
-        .expect("v3 config reads");
+    let stored = database_bytes(&v3_root);
     for secret in [
         fixture.secrets.slskd_key.as_str(),
         fixture.secrets.audiodb_key.as_str(),
@@ -314,8 +308,8 @@ async fn settings_land_with_schedule_carry_and_no_plaintext() {
         fixture.secrets.bob_legacy_secret.as_str(),
     ] {
         assert!(
-            !config_text.contains(secret),
-            "v3 config leaks a plaintext secret"
+            !stored.contains(secret),
+            "the v3 database leaks a plaintext secret"
         );
     }
 }
@@ -332,16 +326,16 @@ async fn reimport_writes_nothing() {
         .expect("import runs count");
     assert_eq!(runs, 1);
 
-    let config_path = v3_root.join("config").join("config.json");
-    let bytes_before = std::fs::read(&config_path).expect("v3 config reads");
+    let rows_before = settings_revisions(&pool).await;
+    assert!(!rows_before.is_empty());
     let again = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
     for (entity, counts) in &again.entities {
         assert_eq!(counts.imported, 0, "entity {entity} wrote nothing twice");
     }
     assert_eq!(
-        std::fs::read(&config_path).expect("v3 config re-reads"),
-        bytes_before,
-        "config bytes stay stable across re-imports"
+        settings_revisions(&pool).await,
+        rows_before,
+        "no settings row changes on a re-import"
     );
     let runs_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_runs")
         .fetch_one(&pool)
@@ -537,11 +531,8 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
         fixture.secrets.lastfm_session
     );
     // A plugin setting sealed without a v2 manifest reads back plain.
-    let store = droppedneedle_kernel::runtime_config::ConfigStore::open(
-        &v3_root.join("config").join("config.json"),
-        crypto,
-    )
-    .expect("v3 config opens");
+    drop(crypto);
+    let store = v3_store(&v3_root);
     let orphan = store
         .get_plugin_raw("orphan", &std::collections::HashSet::new())
         .expect("plugin reads");
@@ -630,6 +621,58 @@ async fn writable_pool(db_path: &std::path::Path) -> sqlx::SqlitePool {
 }
 
 /// Drive the real import pipeline (dry-run or real) over the scratch pool.
+/// The settings stored in the target database, key by key.
+fn v3_settings(v3_root: &Path) -> serde_json::Value {
+    let db = rusqlite::Connection::open(v3_root.join("cache").join("library.db"))
+        .expect("v3 database opens");
+    let mut statement = db
+        .prepare("SELECT key, value_json FROM config_sections")
+        .expect("settings query prepares");
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("settings rows read");
+    serde_json::Value::Object(
+        rows.map(|row| {
+            let (key, text) = row.expect("settings row reads");
+            (key, serde_json::from_str(&text).expect("a row is JSON"))
+        })
+        .collect(),
+    )
+}
+
+/// A settings store holding the target's settings under its key, for
+/// reads through the store. The rows are copied in from a `config.json`
+/// in a folder of its own, as a first start copies one.
+fn v3_store(v3_root: &Path) -> droppedneedle_kernel::runtime_config::ConfigStore {
+    let dir = v3_root.join("settings-read");
+    std::fs::create_dir_all(&dir).expect("settings folder");
+    std::fs::write(dir.join("config.json"), v3_settings(v3_root).to_string())
+        .expect("settings copy writes");
+    droppedneedle_kernel::runtime_config::ConfigStore::scratch(
+        &dir,
+        Crypto::load(&v3_root.join("config")).expect("v3 key loads"),
+    )
+    .expect("v3 settings open")
+}
+
+/// Every byte of the target database on disk, its WAL included.
+fn database_bytes(v3_root: &Path) -> String {
+    let db = v3_root.join("cache").join("library.db");
+    let mut bytes = std::fs::read(&db).expect("v3 database reads");
+    bytes.extend(std::fs::read(v3_root.join("cache").join("library.db-wal")).unwrap_or_default());
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Every settings row's key, revision and change time.
+async fn settings_revisions(pool: &sqlx::SqlitePool) -> Vec<(String, i64, i64)> {
+    sqlx::query_as("SELECT key, revision, updated_at FROM config_sections ORDER BY key")
+        .fetch_all(pool)
+        .await
+        .expect("settings rows read")
+}
+
 async fn run_pipeline(
     export_text: &str,
     passphrase: &str,
@@ -653,13 +696,15 @@ async fn run_pipeline_with(
     let crypto = if dry_run {
         Crypto::from_key_bytes(&[9u8; 32]).expect("dry key builds")
     } else {
-        Crypto::load_or_generate(&config_dir).expect("v3 key loads")
+        Crypto::load_or_generate(&config_dir)
+            .expect("v3 key loads")
+            .0
     };
     droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {
         export_bytes: export_text.as_bytes().to_vec(),
         passphrase: passphrase.to_owned(),
         pool: pool.clone(),
-        config_path: config_dir.join("config.json"),
+        legacy: droppedneedle_kernel::runtime_config::LegacyConfig::at(&config_dir, false),
         crypto,
         v2_config_path: Some(
             v3_root
@@ -838,9 +883,7 @@ fn assert_settings_landed(
     v3_root: &Path,
     fixture: &droppedneedle_tool::tooling::fixture::V2Fixture,
 ) {
-    let text = std::fs::read_to_string(v3_root.join("config").join("config.json"))
-        .expect("v3 config reads");
-    let config: serde_json::Value = serde_json::from_str(&text).expect("v3 config parses");
+    let config = v3_settings(v3_root);
     assert_eq!(
         config
             .get("instance_id")

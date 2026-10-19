@@ -1,13 +1,14 @@
 //! Safety tests: atomic rollback, kill-mid-import recovery,
 //! dry-run parity, and zero-write failures.
 //!
-//! Scratch state only: in-memory databases, temp-dir configs.
+//! Scratch state only: in-memory databases, temp-dir config folders.
 
 use crate::import_support as support;
 
 use serde_json::json;
 use support::{
-    Fixture, MBID, PASSPHRASE, count, import_request, migrated_pool, scratch_config, test_crypto,
+    Fixture, MBID, PASSPHRASE, count, import_request, migrated_pool, scratch_config, seed_settings,
+    settings_rows, stored_settings, test_crypto,
 };
 
 use droppedneedle_tool::import::{ExitCode, run_import};
@@ -26,14 +27,6 @@ async fn entity_counts(pool: &sqlx::SqlitePool) -> Vec<i64> {
         out.push(count(pool, table).await);
     }
     out
-}
-
-fn staging_leftovers(dir: &std::path::Path) -> usize {
-    std::fs::read_dir(dir)
-        .unwrap()
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
-        .count()
 }
 
 #[tokio::test]
@@ -61,10 +54,11 @@ async fn mid_import_failure_rolls_back_everything() {
     .execute(&pool)
     .await
     .unwrap();
+    seed_settings(&pool, json!({"wanted": {"enabled": false}})).await;
     let before = entity_counts(&pool).await;
+    let settings_before = settings_rows(&pool).await;
 
-    let (dir, config_path, crypto) = scratch_config("rollback");
-    std::fs::write(&config_path, r#"{"wanted": {"enabled": false}}"#).unwrap();
+    let (_dir, config_path, crypto) = scratch_config("rollback");
     let report = run_import(import_request(
         &export,
         pool.clone(),
@@ -76,10 +70,10 @@ async fn mid_import_failure_rolls_back_everything() {
     assert_eq!(report.exit.code, ExitCode::FailedInternal);
     assert_eq!(entity_counts(&pool).await, before);
     assert_eq!(
-        std::fs::read_to_string(&config_path).unwrap(),
-        r#"{"wanted": {"enabled": false}}"#
+        settings_rows(&pool).await,
+        settings_before,
+        "no settings row changed"
     );
-    assert_eq!(staging_leftovers(&dir), 0);
 }
 
 #[tokio::test]
@@ -91,8 +85,9 @@ async fn kill_before_commit_recovers_clean() {
     export["settings"]["wanted"] = json!({"enabled": true});
 
     let pool = migrated_pool().await;
-    let (dir, config_path, crypto) = scratch_config("kill");
-    std::fs::write(&config_path, r#"{"wanted": {"enabled": false}}"#).unwrap();
+    seed_settings(&pool, json!({"wanted": {"enabled": false}})).await;
+    let settings_before = settings_rows(&pool).await;
+    let (_dir, config_path, crypto) = scratch_config("kill");
     let mut crashed = import_request(&export, pool.clone(), config_path.clone(), test_crypto());
     crashed.fault_before_commit = true;
     let report = run_import(crashed).await;
@@ -100,11 +95,10 @@ async fn kill_before_commit_recovers_clean() {
 
     assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0]);
     assert_eq!(
-        std::fs::read_to_string(&config_path).unwrap(),
-        r#"{"wanted": {"enabled": false}}"#,
-        "config bytes must be untouched by the killed run"
+        settings_rows(&pool).await,
+        settings_before,
+        "settings must be untouched by the killed run"
     );
-    assert_eq!(staging_leftovers(&dir), 0);
 
     // The same import retries cleanly after the crash.
     let retry = run_import(import_request(&export, pool.clone(), config_path, crypto)).await;
@@ -112,6 +106,9 @@ async fn kill_before_commit_recovers_clean() {
     assert_eq!(count(&pool, "auth_users").await, 1);
 }
 
+/// The settings commit with the records: a crash right after the commit
+/// leaves the export's settings stored beside its users, and the retry
+/// writes no row and no audit row.
 #[tokio::test]
 async fn crash_after_commit_converges_on_retry() {
     let fixture = Fixture::shared();
@@ -130,10 +127,13 @@ async fn crash_after_commit_converges_on_retry() {
         1,
         "DB committed before the crash"
     );
-    assert!(
-        std::fs::read_to_string(&config_path).is_err(),
-        "config write never happened"
+    assert_eq!(
+        stored_settings(&pool).await["wanted"],
+        json!({"enabled": true}),
+        "the settings committed with the users"
     );
+    let rows = settings_rows(&pool).await;
+    let runs = count(&pool, "import_runs").await;
 
     let retry = run_import(import_request(
         &export,
@@ -144,9 +144,8 @@ async fn crash_after_commit_converges_on_retry() {
     .await;
     assert_eq!(retry.exit.code, ExitCode::Ok);
     assert_eq!(retry.entities["user"].skipped_identical, 1);
-    let stored: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-    assert_eq!(stored["wanted"], json!({"enabled": true}));
+    assert_eq!(settings_rows(&pool).await, rows, "the retry writes no row");
+    assert_eq!(count(&pool, "import_runs").await, runs, "and no audit row");
 }
 
 #[tokio::test]
@@ -167,7 +166,7 @@ async fn dry_run_matches_real_import() {
     assert!(preview.dry_run);
     assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0]);
     assert!(
-        std::fs::read_to_string(&config_path).is_err(),
+        settings_rows(&pool).await.is_empty(),
         "dry-run writes nothing"
     );
 
@@ -224,7 +223,7 @@ async fn wrong_passphrase_writes_nothing() {
 
     assert_eq!(report.exit.code, ExitCode::EnvelopeAuthFailed);
     assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0]);
-    assert!(std::fs::read_to_string(&config_path).is_err());
+    assert!(settings_rows(&pool).await.is_empty());
     assert_ne!(PASSPHRASE, "the wrong passphrase");
 }
 
@@ -236,20 +235,22 @@ async fn wrong_passphrase_preserves_existing_config() {
     export["settings"]["wanted"] = json!({"enabled": true});
 
     let pool = migrated_pool().await;
+    // The target's settings as they stand once its config.json was copied
+    // in.
+    seed_settings(&pool, json!({"wanted": {"enabled": false}})).await;
+    let before = settings_rows(&pool).await;
     let (_dir, config_path, crypto) = scratch_config("passphrase-kept");
-    std::fs::write(&config_path, r#"{"wanted": {"enabled": false}}"#).unwrap();
     let mut request = import_request(&export, pool.clone(), config_path.clone(), crypto);
     request.passphrase = "the wrong passphrase".to_owned();
     let report = run_import(request).await;
 
     assert_eq!(report.exit.code, ExitCode::EnvelopeAuthFailed);
     assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0]);
-    assert_eq!(
-        std::fs::read_to_string(&config_path).unwrap(),
-        r#"{"wanted": {"enabled": false}}"#
-    );
+    assert_eq!(settings_rows(&pool).await, before);
 }
 
+/// A target that stores no settings yet starts from its config.json; one
+/// that does not read refuses the import before anything is written.
 #[tokio::test]
 async fn corrupt_v3_config_refuses_with_zero_db_writes() {
     let fixture = Fixture::shared();
@@ -269,78 +270,8 @@ async fn corrupt_v3_config_refuses_with_zero_db_writes() {
 
     assert_eq!(report.exit.code, ExitCode::FailedInternal);
     assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0]);
+    assert!(settings_rows(&pool).await.is_empty());
     assert_eq!(std::fs::read_to_string(&config_path).unwrap(), "{not json");
-}
-
-#[tokio::test]
-async fn stale_tmp_file_does_not_block_retry() {
-    // A leftover staging file from a killed run is simply overwritten by
-    // the next successful config write.
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1")]);
-    export["settings"]["wanted"] = json!({"enabled": true});
-
-    let pool = migrated_pool().await;
-    let (dir, config_path, crypto) = scratch_config("stale-tmp");
-    std::fs::write(dir.join("config.json.tmp"), b"half a config").unwrap();
-    let report = run_import(import_request(
-        &export,
-        pool.clone(),
-        config_path.clone(),
-        crypto,
-    ))
-    .await;
-
-    assert_eq!(report.exit.code, ExitCode::Ok);
-    assert_eq!(staging_leftovers(&dir), 0);
-    let stored: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-    assert_eq!(stored["wanted"], json!({"enabled": true}));
-}
-
-#[tokio::test]
-async fn failed_config_write_marks_the_audit_row() {
-    // The DB commits before the config write; when the write fails the run
-    // reports FAILED_INTERNAL and corrects its audit row instead of leaving
-    // it claiming success. A retry with a working path then converges.
-    let fixture = Fixture::shared();
-    let mut export = fixture.shell();
-    export["users"] = json!([fixture.user("u1")]);
-    export["settings"]["wanted"] = json!({"enabled": true});
-
-    let pool = migrated_pool().await;
-    let (dir, config_path, _) = scratch_config("audit-unwritable");
-    std::fs::write(&config_path, r#"{"wanted": {"enabled": false}}"#).unwrap();
-    // A directory sitting on the staging path: the config reads fine, but
-    // the atomic write cannot create its temp file.
-    std::fs::create_dir(dir.join("config.json.tmp")).unwrap();
-    let report = run_import(import_request(
-        &export,
-        pool.clone(),
-        config_path.clone(),
-        test_crypto(),
-    ))
-    .await;
-
-    assert_eq!(report.exit.code, ExitCode::FailedInternal);
-    let exit: String = sqlx::query_scalar("SELECT exit_code FROM import_runs")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(exit, "FAILED_INTERNAL");
-    assert_eq!(count(&pool, "auth_users").await, 1);
-
-    std::fs::remove_dir(dir.join("config.json.tmp")).unwrap();
-    let retry = run_import(import_request(
-        &export,
-        pool.clone(),
-        config_path,
-        test_crypto(),
-    ))
-    .await;
-    assert_eq!(retry.exit.code, ExitCode::Ok);
-    assert_eq!(retry.entities["user"].skipped_identical, 1);
 }
 
 #[tokio::test]
@@ -351,8 +282,9 @@ async fn validation_failure_writes_nothing() {
     export["settings"]["_legacy_lidarr"] = json!({"api_key": "must-not-cross"});
 
     let pool = migrated_pool().await;
+    seed_settings(&pool, json!({"wanted": {"enabled": false}})).await;
+    let before = settings_rows(&pool).await;
     let (_dir, config_path, crypto) = scratch_config("no-write");
-    std::fs::write(&config_path, r#"{"wanted": {"enabled": false}}"#).unwrap();
     let report = run_import(import_request(
         &export,
         pool.clone(),
@@ -363,10 +295,7 @@ async fn validation_failure_writes_nothing() {
 
     assert_eq!(report.exit.code, ExitCode::FailedValidation);
     assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0]);
-    assert_eq!(
-        std::fs::read_to_string(&config_path).unwrap(),
-        r#"{"wanted": {"enabled": false}}"#
-    );
+    assert_eq!(settings_rows(&pool).await, before);
 }
 
 // A modified record, or a sealed blob moved to another user, fails the
