@@ -404,6 +404,9 @@ async fn loop_cadence_and_shutdown() {
     until("the second pass", || imported() == 2).await;
 
     supervisor.shutdown(GRACE).await;
+    // Store reads wait for a pooled connection on a tokio timer, which the
+    // paused clock would run out at once while a blocking read holds one.
+    tokio::time::resume();
     let row =
         crate::common::loop_row(runtime.db(), SYNC_JOB, |row| row.state != JobState::Running).await;
     assert_eq!(row.state, JobState::Stopped);
