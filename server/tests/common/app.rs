@@ -16,6 +16,7 @@ use axum::{
 };
 use droppedneedle::{AppState, bootstrap, middleware::request_scope};
 use droppedneedle_kernel::config::AppConfig;
+use droppedneedle_library::scan::models::failure_codes;
 use droppedneedle_testkit::{
     remotes::{MockServer, serve_plex},
     slskd::MockSlskd,
@@ -342,7 +343,7 @@ impl TestApp {
     }
 
     /// Add a library folder as the owner and wait for the scan the app gives
-    /// every new folder. Returns that scan's run id.
+    /// every new folder to end and settle. Returns that scan's run id.
     pub async fn add_library_folder(&self, id: &str, path: &Path) -> String {
         let admin = self.login_admin().await;
         let headers = [("authorization", admin.as_str())];
@@ -356,25 +357,28 @@ impl TestApp {
             )
             .await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
-        self.until("the new folder's first scan", || async {
-            let (status, body) = self
-                .call("GET", "/api/v3/library/scan/runs", &headers, None)
-                .await;
-            assert_eq!(status, StatusCode::OK, "{body}");
-            if body["current"]
-                .as_array()
-                .is_none_or(|runs| !runs.is_empty())
-            {
-                return None;
-            }
-            body["history"]
-                .as_array()?
-                .iter()
-                .filter_map(|run| run["id"].as_str())
-                .find(|run| !before.iter().any(|seen| seen == run))
-                .map(str::to_owned)
-        })
-        .await
+        let run = self
+            .until("the new folder's first scan", || async {
+                let (status, body) = self
+                    .call("GET", "/api/v3/library/scan/runs", &headers, None)
+                    .await;
+                assert_eq!(status, StatusCode::OK, "{body}");
+                if body["current"]
+                    .as_array()
+                    .is_none_or(|runs| !runs.is_empty())
+                {
+                    return None;
+                }
+                body["history"]
+                    .as_array()?
+                    .iter()
+                    .filter_map(|run| run["id"].as_str())
+                    .find(|run| !before.iter().any(|seen| seen == run))
+                    .map(str::to_owned)
+            })
+            .await;
+        self.scan_ended(&run).await;
+        run
     }
 
     /// Ask for a scan of every folder as the owner and wait for it to end.
@@ -391,20 +395,32 @@ impl TestApp {
         run
     }
 
-    /// Wait for one scan run to end.
+    /// Wait for one scan run to end and to settle what it found. A run
+    /// ends before its end passes (track continuation, artist merges and
+    /// the rest) run in later turns, and the run's note that it still owes
+    /// them is the only sign of that, so the wait reads it.
     pub async fn scan_ended(&self, run: &str) {
         let admin = self.login_admin().await;
         let headers = [("authorization", admin.as_str())];
         let uri = format!("/api/v3/library/scan/runs/{run}");
-        self.until("the scan ends", || async {
+        self.until("the scan ends and settles", || async {
             let (status, body) = self.call("GET", &uri, &headers, None).await;
             assert_eq!(status, StatusCode::OK, "{body}");
             let state = body["run"]["state"].as_str()?;
-            matches!(
+            let ended = matches!(
                 state,
                 "completed" | "failed" | "cancelled" | "superseded_policy_changed"
-            )
-            .then_some(())
+            );
+            let owing: bool = self
+                .db()
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM library_scan_failures \
+                     WHERE run_id = ?1 AND failure_code = ?2)",
+                    [run, failure_codes::RUN_END_PENDING],
+                    |row| row.get(0),
+                )
+                .expect("end passes read");
+            (ended && !owing).then_some(())
         })
         .await;
     }

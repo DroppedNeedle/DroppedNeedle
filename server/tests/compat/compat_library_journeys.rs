@@ -1997,6 +1997,27 @@ async fn subsonic_ok(rig: &CompatApp, call: &str) -> Value {
     answer.clone()
 }
 
+/// Every row `sql` reads, one line each, for a failure message.
+fn rows_of(rig: &CompatApp, sql: &str) -> String {
+    let db = rig.app.db();
+    let mut statement = db.prepare(sql).expect("diagnostic query prepares");
+    let width = statement.column_count();
+    let read: Vec<String> = statement
+        .query_map([], |row| {
+            (0..width)
+                .map(|at| {
+                    row.get::<_, rusqlite::types::Value>(at)
+                        .map(|value| format!("{value:?}"))
+                })
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map(|cells| cells.join(" | "))
+        })
+        .expect("diagnostic query runs")
+        .collect::<rusqlite::Result<_>>()
+        .expect("diagnostic rows read");
+    read.join("\n")
+}
+
 /// A player app that saved an album before it was merged into another
 /// still opens it, at the album that holds it now, also after a second
 /// merge and a restart. Subsonic: `getAlbum` answers the surviving album
@@ -2208,7 +2229,18 @@ async fn an_artist_merged_by_its_musicbrainz_id_opens_in_player_apps() {
     rig.app.scan_library().await;
 
     let artist = subsonic_ok(&rig, &format!("getArtist?id=ar-{merged}")).await;
-    assert_eq!(artist["artist"]["id"], json!(format!("ar-{linked}")));
+    assert_eq!(
+        artist["artist"]["id"],
+        json!(format!("ar-{linked}")),
+        "{}",
+        rows_of(
+            &rig,
+            &format!(
+                "SELECT id, display_name, retired_into_artist_id FROM local_artists \
+                 WHERE id IN ('{merged}', '{linked}')"
+            )
+        ),
+    );
     assert_eq!(jellyfin_item(&rig, &saved).await.0, json!(survivor_id));
     let (status, _) = rig
         .app
@@ -2262,7 +2294,32 @@ async fn a_continued_track_opens_by_its_old_id() {
     std::fs::remove_file(music.join("U2/Achtung Baby/03 One.mp3")).expect("original deleted");
     rig.app.scan_library().await;
 
-    let song = subsonic_ok(&rig, &format!("getSong?id=tr-{old}")).await;
+    let (_, answer) = rig
+        .app
+        .call(
+            "GET",
+            &rest(
+                &format!("getSong?id=tr-{old}"),
+                &rig.subsonic_auth("merged"),
+            ),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(
+        answer["subsonic-response"]["status"],
+        json!("ok"),
+        "{answer}\ntracks:\n{}\naliases:\n{}",
+        rows_of(
+            &rig,
+            &format!("SELECT id, availability FROM local_tracks WHERE local_album_id = '{album}'")
+        ),
+        rows_of(
+            &rig,
+            "SELECT alias, local_track_id FROM local_track_aliases"
+        ),
+    );
+    let song = &answer["subsonic-response"];
     assert_eq!(song["song"]["id"], json!(format!("tr-{copy}")), "{song}");
     let auth = rig.subsonic_auth("merged");
     let (status, headers, body) = rig
