@@ -76,8 +76,8 @@ export function v3<const T extends V3Path>(template: T, ...args: V3EndpointArgs<
 
 /**
  * Append a query the contract does not list, for a pass-through route whose
- * server forwards the query unchanged. Serializes like `v3()` and keeps the
- * URL's brand.
+ * server forwards the query unchanged. Serializes the same way as the v3
+ * builder and keeps the URL's brand.
  */
 export function withRawQuery<T extends V3Path>(
 	url: V3Url<T>,
