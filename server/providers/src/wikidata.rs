@@ -146,8 +146,12 @@ pub struct WireQueryResponse {
 }
 
 /// Width Commons scales artist portraits to: big enough for any artist
-/// header, without downloading multi-megabyte originals.
-pub const COMMONS_THUMB_WIDTH: &str = "1200";
+/// header, without downloading multi-megabyte originals. A standard Commons
+/// thumbnail width (https://www.mediawiki.org/wiki/Common_thumbnail_sizes).
+/// Checked 2026-10-19: imageinfo at 1280 for File:RadioheadO2211125
+/// composite.jpg (5940 px original) returned a 1280 px thumburl on
+/// thumb.wikimedia.org. The stored portrait is still shrunk to 1200 px.
+pub const COMMONS_THUMB_WIDTH: &str = "1280";
 
 /// One Commons imageinfo row on the wire.
 #[derive(Debug, Clone, Default, Deserialize)]

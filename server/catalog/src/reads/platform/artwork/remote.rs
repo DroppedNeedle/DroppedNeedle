@@ -88,7 +88,11 @@ pub fn check_image_url(raw: &str) -> Option<reqwest::Url> {
     let allowed = host == "theaudiodb.com"
         || host.ends_with(".theaudiodb.com")
         || host == "upload.wikimedia.org"
-        || host == "commons.wikimedia.org";
+        || host == "commons.wikimedia.org"
+        // Scaled Commons portraits come from this host. Checked 2026-10-19:
+        // the 1280 px thumburl of File:RadioheadO2211125 composite.jpg
+        // answered 200 image/jpeg with no redirect. Exact host only.
+        || host == "thumb.wikimedia.org";
     allowed.then_some(url)
 }
 
@@ -172,5 +176,52 @@ impl HttpImages {
 impl RemoteImages for HttpImages {
     fn fetch<'a>(&'a self, url: &'a str) -> BoxFuture<'a, ImageFetch> {
         Box::pin(self.download(url))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_image_url;
+
+    /// Only the listed hosts, over https on the default port, without
+    /// credentials. A host that merely starts or ends like a listed one is
+    /// refused.
+    #[test]
+    fn allows_listed_hosts_over_https_without_credentials() {
+        let cases = [
+            ("https://r2.theaudiodb.com/images/radiohead.jpg", true),
+            ("https://upload.wikimedia.org/commons/Radiohead.jpg", true),
+            (
+                "https://commons.wikimedia.org/wiki/File:Radiohead.jpg",
+                true,
+            ),
+            (
+                "https://thumb.wikimedia.org/commons/1280px-Radiohead.jpg",
+                true,
+            ),
+            (
+                "https://thumb.wikimedia.org.example.com/commons/1280px-Radiohead.jpg",
+                false,
+            ),
+            (
+                "https://xthumb.wikimedia.org/commons/1280px-Radiohead.jpg",
+                false,
+            ),
+            (
+                "http://thumb.wikimedia.org/commons/1280px-Radiohead.jpg",
+                false,
+            ),
+            (
+                "https://thumb.wikimedia.org:8443/commons/1280px-Radiohead.jpg",
+                false,
+            ),
+            (
+                "https://user@thumb.wikimedia.org/commons/1280px-Radiohead.jpg",
+                false,
+            ),
+        ];
+        for (raw, allowed) in cases {
+            assert_eq!(check_image_url(raw).is_some(), allowed, "{raw}");
+        }
     }
 }
