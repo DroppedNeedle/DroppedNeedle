@@ -75,8 +75,15 @@ pub async fn admin_usernames(dirs: &DataDirs) -> Result<Vec<String>, RecoveryCod
     outcome
 }
 
-/// Take the lock, check the folders hold a v3 instance, open the database.
+/// Check the folders hold a v3 instance, take the lock, open the database.
 async fn open_stopped(dirs: &DataDirs) -> Result<(DataLock, DbRuntime), RecoveryCodeError> {
+    // The lock creates the folder and a `.lock` file, so a folder with no
+    // database, or a v2 one, is refused before it is taken. The same checks
+    // run again under the lock.
+    check_bootable(dirs).map_err(RecoveryCodeError::NotV3)?;
+    if !dirs.db_path.is_file() {
+        return Err(RecoveryCodeError::NoDatabase(dirs.db_path.clone()));
+    }
     let lock = DataLock::exclusive(&dirs.db_path).map_err(|error| match error {
         DataLockError::Held { path } => RecoveryCodeError::ServerRunning(path),
         other @ DataLockError::Io { .. } => RecoveryCodeError::Failed(other.to_string()),

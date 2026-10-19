@@ -60,6 +60,13 @@ pub async fn with_stopped_settings<T>(
     change: impl AsyncFnOnce(&ConfigStore) -> Result<T, ConfigError>,
 ) -> Result<T, HostSettingsError> {
     let failed = |error: &dyn std::fmt::Display| HostSettingsError::Failed(error.to_string());
+    // The lock creates the folder and a `.lock` file, so a folder with no
+    // database, or a v2 one, is refused before it is taken. The same checks
+    // run again under the lock.
+    check_bootable(dirs).map_err(HostSettingsError::NotV3)?;
+    if !dirs.db_path.is_file() {
+        return Err(HostSettingsError::NoInstance(dirs.config_dir.clone()));
+    }
     let _lock = DataLock::exclusive(&dirs.db_path).map_err(|error| match error {
         DataLockError::Held { path } => HostSettingsError::ServerRunning(path),
         other @ DataLockError::Io { .. } => failed(&other),
