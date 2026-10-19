@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Disc3, LoaderCircle, Pause, Play, SkipForward, Volume2, X } from 'lucide-svelte';
+	import { LoaderCircle, Pause, Play, SkipForward, Volume2, X } from 'lucide-svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { deckSampler } from '$lib/stores/deckSampler.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
@@ -66,8 +67,8 @@
 						customUrl={entry.coverUrl || null}
 					/>
 				{:else}
-					<div class="flex h-full w-full items-center justify-center bg-base-100">
-						<Disc3 class="h-7 w-7 text-base-content/30" />
+					<div class="relative h-full w-full overflow-hidden">
+						<CoverPlaceholder id={entry.albumMbid} name={entry.title} />
 					</div>
 				{/if}
 				{#if deckSampler.status === 'loading'}

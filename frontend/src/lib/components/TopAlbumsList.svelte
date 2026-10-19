@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import { onMount } from 'svelte';
-	import { Disc3, Download } from 'lucide-svelte';
+	import { Download } from 'lucide-svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import type { TopAlbum } from '$lib/types';
 	import { libraryStore } from '$lib/stores/library';
 	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
@@ -179,8 +180,8 @@
 						{#if source === 'lastfm'}
 							<LastFmPlaceholder />
 						{:else}
-							<div class="w-12 h-12 shrink-0 bg-base-200 rounded flex items-center justify-center">
-								<Disc3 class="w-6 h-6 text-base-content/20" />
+							<div class="relative w-12 h-12 shrink-0 overflow-hidden rounded">
+								<CoverPlaceholder name={album.title} />
 							</div>
 						{/if}
 

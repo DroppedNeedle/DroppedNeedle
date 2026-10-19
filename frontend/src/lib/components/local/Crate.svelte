@@ -13,9 +13,9 @@
 		ListPlus,
 		GripVertical,
 		RefreshCw,
-		Disc3,
 		ArrowDownToLine
 	} from 'lucide-svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 
@@ -280,8 +280,8 @@
 									className="h-full w-full"
 								/>
 							{:else}
-								<div class="flex h-full w-full items-center justify-center bg-base-300">
-									<Disc3 class="h-5 w-5 text-base-content/30" />
+								<div class="relative h-full w-full overflow-hidden">
+									<CoverPlaceholder name={t.album_name} />
 								</div>
 							{/if}
 						</div>

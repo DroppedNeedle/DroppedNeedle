@@ -7,7 +7,8 @@
 		HomeGenre
 	} from '$lib/types';
 	import type { Snippet } from 'svelte';
-	import { ArrowRight, X, Check, Disc3, Music2, Tv, Sparkles, Search } from 'lucide-svelte';
+	import { ArrowRight, X, Check, Music2, Tv, Sparkles, Search } from 'lucide-svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
 	import {
@@ -296,10 +297,8 @@
 											className="w-full h-full"
 										/>
 									{:else}
-										<div
-											class="w-full h-full flex items-center justify-center text-2xl bg-base-200"
-										>
-											<Disc3 class="h-6 w-6 text-base-content/20" />
+										<div class="relative w-full h-full overflow-hidden">
+											<CoverPlaceholder name={item.album_name || item.name} />
 										</div>
 									{/if}
 								</figure>

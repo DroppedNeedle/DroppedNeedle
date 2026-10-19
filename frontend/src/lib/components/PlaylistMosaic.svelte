@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Disc3 } from 'lucide-svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import AlbumImage from './AlbumImage.svelte';
 
 	interface Props {
@@ -20,8 +20,8 @@
 </script>
 
 {#snippet emptyCell()}
-	<div class="bg-base-200 w-full h-full flex items-center justify-center">
-		<Disc3 class="w-1/3 h-1/3 text-base-content/20" />
+	<div class="relative w-full h-full overflow-hidden">
+		<CoverPlaceholder />
 	</div>
 {/snippet}
 

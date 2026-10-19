@@ -10,6 +10,7 @@
 	} from '$lib/queries/local/LocalV3Adapters';
 	import { fly } from '$lib/ui/motion';
 	import { Search, X, Disc3, Music2, Play, ListPlus, GripVertical, Loader } from 'lucide-svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import Input from '$lib/ui/Input.svelte';
@@ -173,8 +174,8 @@
 									className="h-full w-full"
 								/>
 							{:else}
-								<div class="flex h-full w-full items-center justify-center bg-base-300">
-									<Disc3 class="h-4 w-4 text-base-content/30" />
+								<div class="relative h-full w-full overflow-hidden">
+									<CoverPlaceholder id={a.musicbrainz_id} name={a.name} />
 								</div>
 							{/if}
 						</div>
@@ -232,8 +233,8 @@
 									className="h-full w-full"
 								/>
 							{:else}
-								<div class="flex h-full w-full items-center justify-center bg-base-300">
-									<Music2 class="h-4 w-4 text-base-content/30" />
+								<div class="relative h-full w-full overflow-hidden">
+									<CoverPlaceholder id={t.album_mbid} name={t.album_name} />
 								</div>
 							{/if}
 						</div>

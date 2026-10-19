@@ -4,7 +4,7 @@
 	import ArtistCardDownloadButton from './ArtistCardDownloadButton.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
-	import { Users } from 'lucide-svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 
 	interface Props {
 		name: string;
@@ -48,10 +48,8 @@
 				className="w-full h-full"
 			/>
 		{:else}
-			<div
-				class="flex h-full w-full items-center justify-center rounded-full bg-base-200 text-base-content/20"
-			>
-				<Users class="h-12 w-12" />
+			<div class="relative h-full w-full overflow-hidden rounded-full">
+				<CoverPlaceholder kind="artist" {name} />
 			</div>
 		{/if}
 	</figure>

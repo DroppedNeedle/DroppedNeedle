@@ -22,6 +22,7 @@
 	import TextField from '$lib/ui/TextField.svelte';
 	import { coverPath } from '$lib/api/covers';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 
 	interface Props {
 		groups: EditionGroup[];
@@ -94,7 +95,9 @@
 			retryOnError={false}
 		/>
 	{:else}
-		<span class="h-10 w-10 shrink-0 rounded-md bg-base-200" aria-hidden="true"></span>
+		<div class="relative h-10 w-10 shrink-0 overflow-hidden rounded-md" aria-hidden="true">
+			<CoverPlaceholder name={row.name} />
+		</div>
 	{/if}
 	<span class="min-w-0 flex-1">
 		<span class="flex flex-wrap items-center gap-x-2 gap-y-0.5">

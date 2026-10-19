@@ -4,6 +4,7 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import DiscoveryShelfActions from '$lib/components/discover/DiscoveryShelfActions.svelte';
 	import { ChevronDown, Disc3 } from 'lucide-svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { tilt } from '$lib/actions/tilt';
 	import { slide } from '$lib/ui/motion';
@@ -79,8 +80,8 @@
 					</div>
 				{:else}
 					{#each Array(4) as _, i (i)}
-						<div class="bg-base-200 flex items-center justify-center">
-							<Disc3 class="h-6 w-6 text-base-content/20" />
+						<div class="relative overflow-hidden">
+							<CoverPlaceholder name={`${section.title}-${i}`} />
 						</div>
 					{/each}
 				{/each}

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { albumHref } from '$lib/utils/entityRoutes';
-	import { Play, Disc3 } from 'lucide-svelte';
+	import { Play } from 'lucide-svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import type { TopSong, ResolvedTrack } from '$lib/types';
 	import AlbumImage from './AlbumImage.svelte';
 	import LastFmPlaceholder from './LastFmPlaceholder.svelte';
@@ -129,8 +130,8 @@
 		{#if isLastfmNoAlbum}
 			<LastFmPlaceholder />
 		{:else}
-			<div class="w-12 h-12 shrink-0 bg-base-200 rounded flex items-center justify-center">
-				<Disc3 class="w-6 h-6 text-base-content/20" />
+			<div class="relative w-12 h-12 shrink-0 overflow-hidden rounded">
+				<CoverPlaceholder id={song.release_group_mbid} name={song.title} />
 			</div>
 		{/if}
 

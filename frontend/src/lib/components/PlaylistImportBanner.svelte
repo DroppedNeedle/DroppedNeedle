@@ -5,11 +5,11 @@
 		ArrowRight,
 		CircleCheckBig,
 		CircleAlert,
-		Disc3,
 		Link2,
 		ListMusic,
 		RefreshCw
 	} from 'lucide-svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import { reveal } from '$lib/actions/reveal';
 	import { withBasePath } from '$lib/utils/basePath';
 	import AlbumImage from './AlbumImage.svelte';
@@ -125,14 +125,14 @@
 					{/each}
 				{:else}
 					<div
-						class="flex h-20 w-20 items-center justify-center rounded-2xl border border-base-content/10 bg-base-100/70 shadow-sm"
+						class="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl border border-base-content/10 bg-base-100/70 shadow-sm"
 					>
 						{#if hasError}
 							<CircleAlert class="h-8 w-8 text-warning" />
 						{:else if totalCount === 0 && !loading}
 							<ListMusic class="h-8 w-8 text-base-content/30" />
 						{:else}
-							<Disc3 class="h-8 w-8 text-base-content/20" />
+							<CoverPlaceholder />
 						{/if}
 					</div>
 				{/if}

@@ -8,7 +8,8 @@
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { ChevronDown, Disc3, Radio, RefreshCw } from 'lucide-svelte';
+	import { ChevronDown, Radio, RefreshCw } from 'lucide-svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import DiscoveryShelfActions from '$lib/components/discover/DiscoveryShelfActions.svelte';
 	import { tilt } from '$lib/actions/tilt';
 	import { slide } from '$lib/ui/motion';
@@ -90,8 +91,8 @@
 							className="h-full w-full object-cover"
 						/>
 					{:else}
-						<div class="flex h-full w-full items-center justify-center bg-base-200">
-							<Disc3 class="h-8 w-8 text-base-content/20" />
+						<div class="relative h-full w-full overflow-hidden">
+							<CoverPlaceholder id={seedId} name={section.title} />
 						</div>
 					{/if}
 				</div>

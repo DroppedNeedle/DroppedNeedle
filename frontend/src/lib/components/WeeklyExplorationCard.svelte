@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { WeeklyExplorationTrack } from '$lib/types';
-	import { Music2, Disc3 } from 'lucide-svelte';
+	import { Music2 } from 'lucide-svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import { albumHrefOrNull, artistHrefOrNull } from '$lib/utils/entityRoutes';
 	import { libraryStore } from '$lib/stores/library';
 	import AlbumRequestButton from './AlbumRequestButton.svelte';
@@ -44,8 +45,8 @@
 						className="h-full w-full transition-transform duration-300 group-hover:scale-105"
 					/>
 				{:else}
-					<div class="flex h-full w-full items-center justify-center">
-						<Disc3 class="h-10 w-10 text-base-content/20" />
+					<div class="relative h-full w-full overflow-hidden">
+						<CoverPlaceholder id={albumMbid} name={track.album_name || track.title} />
 					</div>
 				{/if}
 
@@ -69,8 +70,8 @@
 						className="h-full w-full"
 					/>
 				{:else}
-					<div class="flex h-full w-full items-center justify-center">
-						<Disc3 class="h-10 w-10 text-base-content/20" />
+					<div class="relative h-full w-full overflow-hidden">
+						<CoverPlaceholder id={albumMbid} name={track.album_name || track.title} />
 					</div>
 				{/if}
 

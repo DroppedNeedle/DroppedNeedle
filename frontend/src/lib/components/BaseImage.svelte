@@ -2,7 +2,6 @@
 	import { coverSrc, type CoverKind } from '$lib/api/covers';
 	import { imageSettingsStore } from '$lib/stores/imageSettings';
 	import { onDestroy } from 'svelte';
-	import { Disc3, Users } from 'lucide-svelte';
 	import { lazyImage, resetLazyImage } from '$lib/utils/lazyImage';
 	import { API_SIZES } from '$lib/constants';
 	import { isValidMbid } from '$lib/utils/formatting';
@@ -13,6 +12,7 @@
 		watchWarmingCover,
 		type CoverWarmUpdate
 	} from '$lib/utils/coverWarmCoordinator';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 
 	interface Props {
 		mbid: string;
@@ -57,7 +57,6 @@
 	}: Props = $props();
 
 	let imgError = $state(false);
-	let failed = $state(false);
 	let imgLoaded = $state(false);
 	let visualSettled = $state(false);
 	let remoteError = $state(false);
@@ -168,7 +167,6 @@
 			visualSettleTimer = null;
 			warmResolvedUrl = null;
 			visualSettled = false;
-			failed = false;
 			if (imgError) {
 				imgError = false;
 				imgLoaded = false;
@@ -216,7 +214,6 @@
 
 		if (!retryOnError || warmResolvedUrl) {
 			imgError = true;
-			failed = true;
 			visualSettled = true;
 			return;
 		}
@@ -245,12 +242,10 @@
 		if (update.status === 'ready') {
 			warmResolvedUrl = getApiUrl(update.url);
 			imgError = false;
-			failed = false;
 			visualSettled = false;
 			if (visualSettleTimer) clearTimeout(visualSettleTimer);
 			visualSettleTimer = null;
 		} else if (update.status === 'failed') {
-			failed = true;
 			visualSettled = true;
 			if (visualSettleTimer) clearTimeout(visualSettleTimer);
 			visualSettleTimer = null;
@@ -261,7 +256,7 @@
 		const el = e.currentTarget as HTMLImageElement;
 		// The lazy <img> mounts with a 1x1 data-URI gif before the IntersectionObserver swaps in
 		// the real URL; that gif's load event must NOT mark the cover loaded, or imgLoaded flips
-		// true and hides the shimmer skeleton while the cover is still warming (202 + poll).
+		// true and hides the placeholder while the cover is still warming (202 + poll).
 		if (el.currentSrc.startsWith('data:')) return;
 		if (visualSettleTimer) clearTimeout(visualSettleTimer);
 		visualSettleTimer = null;
@@ -292,24 +287,13 @@
 		? 'bg-transparent'
 		: 'bg-base-200'} {sizeClass} {roundedClass} {className}"
 >
-	{#if showPlaceholder && (!imgLoaded || !hasSource)}
-		{#if !hasSource || failed || visualSettled}
-			<div
-				class="absolute inset-0 w-full h-full flex items-center justify-center"
-				data-testid="cover-fallback"
-			>
-				{#if imageType === 'album'}
-					<Disc3 class="h-1/3 w-1/3 text-base-content/20" />
-				{:else}
-					<Users class="h-1/3 w-1/3 text-base-content/20" />
-				{/if}
-			</div>
-		{:else}
-			<div
-				class="skeleton skeleton-shimmer absolute inset-0 w-full h-full"
-				data-testid="cover-skeleton"
-			></div>
-		{/if}
+	{#if showPlaceholder && !transparentFallback}
+		<CoverPlaceholder
+			id={mbid}
+			name={alt}
+			kind={imageType}
+			className={imgLoaded && hasSource ? 'opacity-0' : ''}
+		/>
 	{/if}
 	{#if useRemoteUrl && resolvedRemoteUrl && !remoteError}
 		<img
@@ -318,7 +302,7 @@
 			srcset={displayCoverSrcset}
 			sizes={responsiveSizes}
 			{alt}
-			class="w-full h-full object-cover transition-opacity duration-300"
+			class="relative w-full h-full object-cover transition-opacity duration-300"
 			class:opacity-0={!imgLoaded}
 			referrerpolicy="no-referrer"
 			loading={lazy ? 'lazy' : 'eager'}
@@ -335,7 +319,7 @@
 				data-srcset={displayCoverSrcset}
 				sizes={responsiveSizes}
 				{alt}
-				class="w-full h-full object-cover opacity-0 transition-opacity duration-300"
+				class="relative w-full h-full object-cover opacity-0 transition-opacity duration-300"
 				loading="lazy"
 				decoding="async"
 				use:lazyImage
@@ -350,7 +334,7 @@
 				srcset={displayCoverSrcset}
 				sizes={responsiveSizes}
 				{alt}
-				class="w-full h-full object-cover transition-opacity duration-300"
+				class="relative w-full h-full object-cover transition-opacity duration-300"
 				class:opacity-0={!imgLoaded}
 				loading="lazy"
 				decoding="async"
