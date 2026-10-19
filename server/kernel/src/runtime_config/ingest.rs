@@ -34,8 +34,9 @@ use sha2::{Digest, Sha256};
 use crate::db::{Db, DbError, DurableLane};
 
 use super::error::ConfigError;
-use super::store::{encode_text, now_ms};
+use super::store::encode_text;
 use super::{KNOWN_TOP_LEVEL_KEYS, sql};
+use crate::clock::Clock;
 
 /// The file name settings were kept in before they moved into the database.
 pub const LEGACY_CONFIG_FILE_NAME: &str = "config.json";
@@ -206,7 +207,7 @@ fn parse_file(path: &Path) -> Result<LegacyFile, ConfigError> {
 }
 
 /// Run the one-time copy for a store opening on `db`. See the module doc.
-pub fn run(db: &Db, legacy: &LegacyConfig) -> Result<(), ConfigError> {
+pub fn run(db: &Db, legacy: &LegacyConfig, clock: &dyn Clock) -> Result<(), ConfigError> {
     let LegacyConfig::At {
         config_dir,
         key_minted,
@@ -249,7 +250,7 @@ pub fn run(db: &Db, legacy: &LegacyConfig) -> Result<(), ConfigError> {
         let sha256 = std::fs::read(&path)
             .map(|bytes| sha256_hex(&bytes))
             .unwrap_or_default();
-        let recorded = record(db, IngestOutcome::SkippedNewKey, &sha256, &[], &[])?;
+        let recorded = record(db, clock, IngestOutcome::SkippedNewKey, &sha256, &[], &[])?;
         clear_marker(config_dir);
         if recorded {
             tracing::warn!(
@@ -262,7 +263,7 @@ pub fn run(db: &Db, legacy: &LegacyConfig) -> Result<(), ConfigError> {
     }
     let file = parse_file(&path)?;
     let copied: Vec<String> = file.rows.iter().map(|(key, _)| key.clone()).collect();
-    let now = now_ms();
+    let now = clock.now_ms();
     let wrote = db.write_durable(DurableLane::Background, "config.ingest", |tx| {
         if tx
             .query_row(sql::ANY_SETTINGS.text(), [], |row| row.get::<_, bool>(0))
@@ -312,12 +313,13 @@ fn holds_accounts(db: &Db) -> Result<bool, ConfigError> {
 /// written.
 fn record(
     db: &Db,
+    clock: &dyn Clock,
     outcome: IngestOutcome,
     sha256: &str,
     copied: &[String],
     left: &[String],
 ) -> Result<bool, ConfigError> {
-    let now = now_ms();
+    let now = clock.now_ms();
     db.write_durable(DurableLane::Background, "config.ingest_record", |tx| {
         if tx
             .query_row(sql::ANY_SETTINGS.text(), [], |row| row.get::<_, bool>(0))

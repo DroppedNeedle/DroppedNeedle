@@ -31,7 +31,7 @@ use droppedneedle_compat::shared::path_case::is_compat_path;
 use droppedneedle_kernel::{
     config::TrustedProxies,
     runtime_config::{
-        ConfigStore,
+        Live, Plain,
         sections::{ContentSecurityPolicyMode, HSTS_MAX_AGE_LIMIT, SecuritySettings},
     },
 };
@@ -187,26 +187,26 @@ fn shell_policy(script_hashes: &[String], framing: &[String]) -> String {
 /// What the content-security layer needs: the live settings.
 #[derive(Debug, Clone)]
 pub struct ContentSecurity {
-    config: Arc<ConfigStore>,
+    settings: Live<SecuritySettings>,
 }
 
 impl ContentSecurity {
-    /// Follow the settings in `config`.
-    pub fn new(config: Arc<ConfigStore>) -> Self {
-        Self { config }
+    /// Follow the saved security settings.
+    pub fn new(settings: Live<SecuritySettings>) -> Self {
+        Self { settings }
     }
 
     /// Follow the settings the rest of the server reads.
     pub fn from_state(state: &AppState) -> Self {
-        Self::new(state.auth.config_store.clone())
+        Self::new(state.auth.security.clone())
     }
 
     /// The saved settings. Unreadable ones give the default mode and no
     /// framing, never a missing policy.
-    fn settings(&self) -> SecuritySettings {
-        self.config.get::<SecuritySettings>().unwrap_or_else(|error| {
+    fn settings(&self) -> Arc<Plain<SecuritySettings>> {
+        self.settings.get().unwrap_or_else(|error| {
             tracing::debug!(%error, "security settings unreadable; default content-security policy");
-            SecuritySettings::default()
+            Arc::default()
         })
     }
 }
@@ -347,7 +347,7 @@ pub async fn content_security(
 /// forwarded scheme counts.
 #[derive(Debug, Clone)]
 pub struct TransportSecurity {
-    config: Arc<ConfigStore>,
+    settings: Live<SecuritySettings>,
     trusted_proxies: TrustedProxies,
 }
 
@@ -355,7 +355,7 @@ impl TransportSecurity {
     /// Read the settings and the trusted proxies the session gate uses.
     pub fn from_state(state: &AppState) -> Self {
         Self {
-            config: state.auth.config_store.clone(),
+            settings: state.auth.security.clone(),
             trusted_proxies: state.auth.session_auth.trusted_proxies.clone(),
         }
     }
@@ -379,7 +379,7 @@ pub async fn strict_transport_security(
     if !https {
         return response;
     }
-    match security.config.get::<SecuritySettings>() {
+    match security.settings.get() {
         Ok(settings) => {
             if let Some(value) = hsts_value(&settings) {
                 response

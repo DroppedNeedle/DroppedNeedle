@@ -40,10 +40,10 @@ use droppedneedle_kernel::jobs::queue::{self, Handlers, JobHandler, JobQueue, Ki
 use droppedneedle_kernel::jobs::{
     AlreadyRunning, BoxFuture, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
 };
-use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, EventsSettings, NavidromeConnection,
 };
+use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 use droppedneedle_media::remotes::playlist_sync::{self as playlist_route, PlaylistSyncState};
 use droppedneedle_media::remotes::presence_feed::{MediaJobs, RegistryFeed, RemoteSessionPollers};
 
@@ -75,13 +75,13 @@ impl PersonalMixer for UnwiredMixer {
 /// path) means skip quietly.
 #[derive(Clone, Debug)]
 pub struct NavidromeSyncSettings {
-    store: Arc<ConfigStore>,
+    connection: Live<NavidromeConnection>,
 }
 
 impl PlaylistSyncSettings for NavidromeSyncSettings {
     fn sync_config(&self) -> BoxFuture<'_, Option<PlaylistSyncConfig>> {
         Box::pin(async move {
-            let Ok(connection) = self.store.get_raw::<NavidromeConnection>() else {
+            let Ok(connection) = self.connection.get() else {
                 return None;
             };
             if !connection.enabled
@@ -91,8 +91,8 @@ impl PlaylistSyncSettings for NavidromeSyncSettings {
                 return None;
             }
             Some(PlaylistSyncConfig {
-                target_dir: connection.playlist_sync_path,
-                scope: connection.playlist_sync_scope,
+                target_dir: connection.playlist_sync_path.clone(),
+                scope: connection.playlist_sync_scope.clone(),
                 remove_deleted: connection.playlist_sync_remove_deleted,
             })
         })
@@ -127,7 +127,7 @@ pub const SCAN_PRECACHE_DEBOUNCE: Duration = Duration::from_secs(120);
 #[derive(Clone)]
 pub struct PrecacheTrigger {
     supervisor: Supervisor,
-    config: Arc<ConfigStore>,
+    advanced: Live<AdvancedSettings>,
     status: CacheSyncStatus,
     sources: Option<Arc<dyn PrecacheSources>>,
     scans: Arc<watch::Sender<u64>>,
@@ -191,8 +191,8 @@ impl PrecacheTrigger {
     fn limits(&self) -> PrecacheLimits {
         let fallback = AdvancedSettings::default();
         let (stall_minutes, max_hours) = self
-            .config
-            .get_raw::<AdvancedSettings>()
+            .advanced
+            .get()
             .map(|settings| {
                 (
                     settings.sync_stall_timeout_minutes,
@@ -266,14 +266,14 @@ impl Tick for AfterScanTick {
 /// garbage values.
 #[derive(Clone, Debug)]
 pub struct EventsPollTime {
-    store: Arc<ConfigStore>,
+    events: Live<EventsSettings>,
 }
 
 impl PollTimeSource for EventsPollTime {
     fn poll_time(&self) -> String {
-        self.store
-            .get_raw::<EventsSettings>()
-            .map(|settings| settings.poll_time)
+        self.events
+            .get()
+            .map(|settings| settings.poll_time.clone())
             .unwrap_or_else(|_| "06:00".to_owned())
     }
 }
@@ -355,13 +355,13 @@ impl JobsSetup {
             },
             playlist: PlaylistSyncState {
                 settings: NavidromeSyncSettings {
-                    store: Arc::clone(&config),
+                    connection: config.live(),
                 },
                 exporter: media.exporter(),
             },
             presence: (media.feed(), media.pollers()),
             poll_time: EventsPollTime {
-                store: Arc::clone(&config),
+                events: config.live(),
             },
             watcher,
             config,
@@ -461,7 +461,7 @@ impl JobsSetup {
     pub fn precache_trigger(&self) -> PrecacheTrigger {
         PrecacheTrigger {
             supervisor: self.supervisor.clone(),
-            config: Arc::clone(&self.config),
+            advanced: self.config.live(),
             status: self.cache_sync.clone(),
             sources: self.precache_sources.clone(),
             scans: Arc::clone(&self.scans),

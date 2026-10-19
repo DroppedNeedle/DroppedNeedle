@@ -35,7 +35,7 @@ use crate::reads::discover::models::{
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure, QueueStore, QueueTrigger};
 use build::{Builder, PageSettings};
-use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::AdvancedSettings};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Plain, secret_sections::AdvancedSettings};
 use library::LibraryReads;
 use memo::BuildMemo;
 use sources::PageSources;
@@ -427,7 +427,7 @@ impl LiveDiscover {
             .get_raw::<AdvancedSettings>()
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "cannot read advanced settings; discover uses defaults");
-                AdvancedSettings::default()
+                Plain::default()
             });
         PageSettings {
             picks_count: advanced.discover_picks_count.clamp(4, 30) as usize,

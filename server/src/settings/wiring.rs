@@ -21,7 +21,7 @@ use axum::{
 };
 
 use crate::bootstrap::Outbound;
-use crate::settings::effects::SaveEffects;
+use crate::settings::effects::Effects;
 use crate::settings::library_policy_service::LibraryPolicyService;
 use crate::settings::musicbrainz::MusicBrainzLifecycle;
 use crate::settings::section_prefs::{LinkStatus, SectionPrefsStore};
@@ -61,7 +61,7 @@ impl SettingsSetup {
     /// the outbound HTTP client, and the deployment timezone name.
     pub fn build(
         store: Arc<ConfigStore>,
-        effects: Arc<dyn SaveEffects>,
+        effects: Effects,
         ids: Arc<dyn IdGenerator>,
         http: reqwest::Client,
         timezone: Option<String>,
@@ -79,7 +79,7 @@ impl SettingsSetup {
 
     fn assemble(
         store: Arc<ConfigStore>,
-        effects: Arc<dyn SaveEffects>,
+        effects: Effects,
         ids: Arc<dyn IdGenerator>,
         probes: Arc<dyn VerifyProbes>,
         timezone: Option<String>,
@@ -135,9 +135,9 @@ impl SettingsSetup {
         self
     }
 
-    /// Test bundle: scratch store, a live fan-out over a memory cache
-    /// and a no-op kick (saves invalidate only their own scratch
-    /// entries), live probes, and memory prefs. Tests that verify
+    /// Test bundle: scratch store, no save effects (the bundle shares no
+    /// cache, sweep or worker with anything), live probes, and memory
+    /// prefs. Tests that verify
     /// connections use [`SettingsSetup::for_tests_with_probes`] with a
     /// scripted fake instead, so no test touches live networks.
     #[cfg(any(test, feature = "test-support"))]
@@ -159,7 +159,6 @@ impl SettingsSetup {
         use droppedneedle_kernel::jobs::events_kick::NoopKick;
         use droppedneedle_kernel::runtime_config::Crypto;
         use droppedneedle_providers::InMemoryProviderCache;
-        use droppedneedle_providers::cache::ProviderCache;
 
         /// Scratch-dir sequence so parallel test states never share a store.
         static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -171,9 +170,14 @@ impl SettingsSetup {
         )));
         let crypto = Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?;
         let store = Arc::new(ConfigStore::scratch(&scratch.0, crypto)?);
-        let cache: Arc<dyn ProviderCache> = Arc::new(InMemoryProviderCache::new());
-        let effects: Arc<dyn SaveEffects> =
-            Arc::new(LiveSaveEffects::new(cache, Arc::new(NoopKick)));
+        // No runner: a save answers at once and its effects never run.
+        let (effects, _) = Effects::new(
+            store.clone(),
+            Arc::new(LiveSaveEffects::new(
+                Arc::new(InMemoryProviderCache::new()),
+                Arc::new(NoopKick),
+            )),
+        );
         let mut setup = Self::assemble(store, effects, ids, probes, None, Outbound::live());
         setup.prefs = Some(Arc::new(SectionPrefsDeps {
             store: Arc::new(MemorySectionPrefsStore::new()),

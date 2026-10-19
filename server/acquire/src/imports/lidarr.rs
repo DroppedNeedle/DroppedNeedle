@@ -15,12 +15,12 @@ use futures_util::future::BoxFuture;
 
 use serde::{Deserialize, Serialize};
 
-#[cfg(any(test, feature = "test-support"))]
-use super::models::LIDARR_API_KEY_MASK;
 use super::models::{
     LidarrArtistCandidate, LidarrArtistListResponse, LidarrConnectionSettings, LidarrImportResponse,
 };
 use droppedneedle_kernel::http_client::{BodyError, read_capped, transport_error};
+#[cfg(any(test, feature = "test-support"))]
+use droppedneedle_kernel::runtime_config::SECRET_MASK;
 
 /// Largest Lidarr answer read. `/artist` is one unpaged list of every
 /// artist with its overview and images, so a large library runs to tens
@@ -397,7 +397,7 @@ impl LidarrSettingsStore for MemoryLidarrSettings {
             api_key: if inner.api_key.is_empty() {
                 String::new()
             } else {
-                LIDARR_API_KEY_MASK.to_owned()
+                SECRET_MASK.to_owned()
             },
         }
     }
@@ -416,7 +416,7 @@ impl LidarrSettingsStore for MemoryLidarrSettings {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             inner.url = normalize_lidarr_url(&settings.url);
-            if settings.api_key != LIDARR_API_KEY_MASK {
+            if settings.api_key != SECRET_MASK {
                 inner.api_key = settings.api_key.clone();
             }
         })

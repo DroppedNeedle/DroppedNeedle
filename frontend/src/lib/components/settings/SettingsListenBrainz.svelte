@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { AudioLines, ExternalLink } from 'lucide-svelte';
 	import {
 		getListenBrainzConnectionQuery,
@@ -31,7 +32,6 @@
 	let connDirty = $state(false);
 	let targetsDraft = $state<ScrobbleSettings | null>(null);
 	let targetsDirty = $state(false);
-	const TOKEN_MASK = 'listenbrainz****';
 	let verdict = $state<VerifyConnectionResponse | null>(null);
 
 	interface FormMessage {
@@ -151,7 +151,7 @@
 
 				<SecretField
 					label="User token"
-					mask={TOKEN_MASK}
+					mask={SECRET_MASK}
 					placeholder="User token"
 					help="Once saved, the token shows as a placeholder. Saving with the placeholder keeps the stored token."
 					bind:value={() => connDraft!.user_token, (v) => editConn('user_token', v)}

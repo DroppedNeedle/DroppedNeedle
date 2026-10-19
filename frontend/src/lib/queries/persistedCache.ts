@@ -17,7 +17,7 @@ import {
  * IDs, so stale rows would corrupt rather than help). Bump the suffix to
  * force a clean cache in a future release.
  */
-export const PERSISTED_CACHE_BUSTER = 'droppedneedle-v3-1';
+export const PERSISTED_CACHE_BUSTER = 'droppedneedle-v3-2';
 
 /** Maximum age for persisted queries (7 days). */
 export const PERSISTED_CACHE_MAX_AGE = 1000 * 60 * 60 * 24 * 7;

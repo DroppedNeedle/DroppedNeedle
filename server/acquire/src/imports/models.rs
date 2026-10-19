@@ -7,12 +7,6 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// Masked sentinel for the Lidarr API key on read. A PUT carrying it back
-/// keeps the stored key (v2 `LIDARR_IMPORT_API_KEY_MASK`).
-pub const LIDARR_API_KEY_MASK: &str = "lidarr****";
-/// Masked sentinel for the Spotify client secret on read.
-pub const SPOTIFY_SECRET_MASK: &str = "spotify****";
-
 /// Admin-configured read-only Lidarr import connection (v2
 /// `LidarrImportConnectionSettings`). Not a management integration.
 // Debug is hand-written below: the API key never appears in debug output.

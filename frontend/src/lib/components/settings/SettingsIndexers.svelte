@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import {
 		ChevronDown,
 		CircleCheck,
@@ -32,7 +33,6 @@
 	import SettingsProwlarr from './SettingsProwlarr.svelte';
 	import SettingsSectionCollapse from './SettingsSectionCollapse.svelte';
 
-	const INDEXER_KEY_MASK = 'indexer****';
 	// The common audio categories; 3000 (Audio) expands to all subcats on most indexers.
 	const AUDIO_CATEGORIES = [
 		{ id: 3000, label: 'Audio' },
@@ -180,7 +180,7 @@
 
 	async function toggleEnabled(indexer: IndexerSettings) {
 		try {
-			await save.mutateAsync({ ...indexer, api_key: INDEXER_KEY_MASK, enabled: !indexer.enabled });
+			await save.mutateAsync({ ...indexer, api_key: SECRET_MASK, enabled: !indexer.enabled });
 		} catch {
 			toastStore.show({ message: 'Could not update the indexer', type: 'error' });
 		}
@@ -469,7 +469,7 @@
 		<TextField label="URL" mono placeholder="https://indexer.example/api" bind:value={draft!.url} />
 		<SecretField
 			label="API key"
-			mask={editingId !== NEW ? INDEXER_KEY_MASK : undefined}
+			mask={editingId !== NEW ? SECRET_MASK : undefined}
 			placeholder="your indexer API key"
 			bind:value={draft!.api_key}
 		/>

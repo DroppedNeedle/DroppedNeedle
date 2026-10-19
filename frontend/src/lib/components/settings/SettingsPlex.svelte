@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { onDestroy } from 'svelte';
 	import { api } from '$lib/api/client';
@@ -41,7 +42,6 @@
 		}
 	}) as PlexSettingsForm;
 
-	const TOKEN_MASK = 'plex****';
 	let oauthPending = $state(false);
 	let oauthUrl = $state<string | null>(null);
 	let libraries = $state<PlexLibrarySection[]>([]);
@@ -155,7 +155,7 @@
 
 			<SecretField
 				label="Plex Token"
-				mask={TOKEN_MASK}
+				mask={SECRET_MASK}
 				placeholder="Paste your Plex token"
 				help="Sign in with Plex below, or paste a token here."
 				bind:value={form.data.plex_token}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { CircleCheck, CircleX, Radar } from 'lucide-svelte';
 
 	import {
@@ -12,8 +13,6 @@
 	import Card from '$lib/ui/Card.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
-
-	const API_KEY_MASK = 'prowlarr****';
 
 	const configQuery = getProwlarrConfigQuery();
 	const save = saveProwlarrConfigMutation();
@@ -49,8 +48,8 @@
 			await save.mutateAsync({ ...draft });
 			toastStore.show({ message: 'Prowlarr connection saved', type: 'success' });
 			// Re-mask the key in the form so it isn't shown after a save.
-			if (draft.api_key && draft.api_key !== API_KEY_MASK) {
-				draft = { ...draft, api_key: API_KEY_MASK };
+			if (draft.api_key && draft.api_key !== SECRET_MASK) {
+				draft = { ...draft, api_key: SECRET_MASK };
 			}
 			testResult = null;
 		} catch (e: unknown) {
@@ -94,7 +93,7 @@
 
 				<SecretField
 					label="API key"
-					mask={API_KEY_MASK}
+					mask={SECRET_MASK}
 					placeholder="Prowlarr → Settings → General → Security → API Key"
 					bind:value={draft.api_key}
 				/>

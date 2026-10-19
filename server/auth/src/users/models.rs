@@ -329,7 +329,7 @@ pub struct LastFmStatusResponse {
 }
 
 /// Store per-user Last.fm API credentials. Either field may be the
-/// `lastfm****` mask sentinel, meaning keep the stored value.
+/// `********` mask, meaning keep the stored value.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct LastFmCredentialsSet {
     /// Last.fm API key, or the mask sentinel to keep it.

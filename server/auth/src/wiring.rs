@@ -17,13 +17,12 @@ use super::federated::oidc::{EXCHANGE_TTL_SECS, OidcExchangeStore, OidcLogin};
 use super::federated::oidc_http::OidcHttp;
 use super::federated::plex::PlexServerIdentity;
 use super::federated::plex_http::PlexTv;
+use super::federated::settings::SignInSettings;
 use super::federated::{FederatedError, MediaLinks};
 use super::prod::{
     ProdAuth, SqliteFederatedStore, SqliteOidcStateStore, SqliteSessionIssuer, SqliteSessionStore,
 };
-use super::routes::federated::{
-    JellyfinRouteState, OidcRouteState, PlexRouteState, StoreOidcConfig,
-};
+use super::routes::federated::{JellyfinRouteState, OidcRouteState, PlexRouteState};
 use super::routes::native::NativeAuthState;
 use super::session::middleware::SessionAuth;
 use super::session::rate_limit::RateLimiter;
@@ -37,7 +36,7 @@ use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
-use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Live};
 
 /// One stored exchange code: owning user, sealed token, expiry.
 type StoredExchange = (String, String, SystemTime);
@@ -94,26 +93,26 @@ impl OidcExchangeStore for MemoryOidcExchangeStore {
     }
 }
 
-/// Live-read HIBP knobs from the config store. An unreadable section
-/// disables screening (advisory only; auth itself never depends on it).
+/// Live-read HIBP knobs. An unreadable section disables screening
+/// (advisory only; auth itself never depends on it).
 #[derive(Debug, Clone)]
 pub struct StoreSecurityPolicy {
-    store: Arc<ConfigStore>,
+    settings: Live<SecuritySettings>,
 }
 
 impl StoreSecurityPolicy {
-    pub fn new(store: Arc<ConfigStore>) -> Self {
-        Self { store }
+    pub fn new(settings: Live<SecuritySettings>) -> Self {
+        Self { settings }
     }
 }
 
 impl SecurityPolicy for StoreSecurityPolicy {
     fn hibp(&self) -> HibpPolicy {
-        self.store
-            .get::<SecuritySettings>()
+        self.settings
+            .get()
             .map(|section| HibpPolicy {
                 check: section.hibp_check,
-                local_path: section.hibp_local_path,
+                local_path: section.hibp_local_path.clone(),
             })
             .unwrap_or(HibpPolicy {
                 check: false,
@@ -122,15 +121,15 @@ impl SecurityPolicy for StoreSecurityPolicy {
     }
 }
 
-/// Live-read Last.fm master switch from the config store.
+/// Live-read Last.fm switch and instance key pair.
 #[derive(Debug, Clone)]
 pub struct StoreLastFmSwitch {
-    store: Arc<ConfigStore>,
+    settings: Live<LastFmSettings>,
 }
 
 impl StoreLastFmSwitch {
-    pub fn new(store: Arc<ConfigStore>) -> Self {
-        Self { store }
+    pub fn new(settings: Live<LastFmSettings>) -> Self {
+        Self { settings }
     }
 }
 
@@ -139,14 +138,14 @@ impl LastFmSwitch for StoreLastFmSwitch {
         // Fail closed: an unreadable section disables fan-out. Last.fm is
         // optional enrichment, never auth-critical, so a broken read must
         // degrade to off rather than guess at enabled.
-        self.store
-            .get::<LastFmSettings>()
+        self.settings
+            .get()
             .map(|section| section.enabled)
             .unwrap_or(false)
     }
 
     fn instance_keys(&self) -> Option<LastFmKeys> {
-        let section = match self.store.get_raw::<LastFmSettings>() {
+        let section = match self.settings.get() {
             Ok(section) => section,
             Err(error) => {
                 tracing::warn!(%error, "cannot read the Last.fm app key pair");
@@ -182,7 +181,7 @@ pub type ProdOidcRoutes = OidcRouteState<
     SqliteOidcStateStore,
     MemoryOidcExchangeStore,
     SqliteSessionIssuer,
-    StoreOidcConfig,
+    SignInSettings,
 >;
 /// Production Jellyfin route state.
 pub type ProdJellyfinRoutes =
@@ -212,16 +211,18 @@ pub struct AuthSetup {
     pub jellyfin: ProdJellyfinRoutes,
     /// Plex journey routes.
     pub plex: ProdPlexRoutes,
-    /// Live settings, read by the provider list.
-    pub config_store: Arc<ConfigStore>,
+    /// The sign-in sections, read by the provider list.
+    pub sign_in: SignInSettings,
+    /// The security section, read by the response security headers.
+    pub security: Live<SecuritySettings>,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
 }
 
 /// Warn at boot when OIDC is on with a plain-http issuer on a public
 /// address: v2 accepted that, v3 refuses it at login.
-fn warn_on_public_http_oidc(store: &ConfigStore) {
-    let config = super::federated::settings::oidc_config(store);
+fn warn_on_public_http_oidc(sign_in: &SignInSettings) {
+    let config = sign_in.oidc_config();
     if config.enabled && super::federated::transport::looks_public_http(&config.issuer) {
         tracing::warn!(
             issuer = %config.issuer,
@@ -257,7 +258,8 @@ impl AuthSetup {
     ) -> Self {
         use super::users::hibp::{HibpScreen, PwnedPasswordsHttp};
 
-        warn_on_public_http_oidc(&config_store);
+        let sign_in = SignInSettings::new(&config_store);
+        warn_on_public_http_oidc(&sign_in);
         let no_redirect = http.no_redirect().clone();
         let http = http.shared().clone();
         let plex_tv = PlexTv::with_base(
@@ -283,16 +285,16 @@ impl AuthSetup {
             ids: ids.clone(),
             crypto: crypto.clone(),
             lastfm_client: Arc::new(LastFmAuthHttp::with_base(http.clone(), &upstreams.lastfm)),
-            lastfm_switch: Arc::new(StoreLastFmSwitch::new(config_store.clone())),
+            lastfm_switch: Arc::new(StoreLastFmSwitch::new(config_store.live())),
             lastfm_pending: Arc::default(),
-            security: Arc::new(StoreSecurityPolicy::new(config_store.clone())),
+            security: Arc::new(StoreSecurityPolicy::new(config_store.live())),
             jellyfin_directory: Arc::new(jellyfin_http.clone()),
             plex_directory: Arc::new(plex_tv.clone()),
         };
         let limits = Arc::new(RateLimiter::new());
         // One handle for the gate and every sign-in route: they read the
         // same saved list and share its one warning.
-        let stated = StatedAddresses::from_config(config_store.clone());
+        let stated = StatedAddresses::new(config_store.live());
         let native = NativeAuthState::new(
             auth.sessions.clone(),
             auth.hasher.clone(),
@@ -310,7 +312,7 @@ impl AuthSetup {
                 MemoryOidcExchangeStore::default(),
                 auth.issuer.clone(),
             ),
-            StoreOidcConfig(config_store.clone()),
+            sign_in.clone(),
             base_path,
         )
         .with_stated_addresses(stated.clone());
@@ -341,7 +343,8 @@ impl AuthSetup {
             oidc,
             jellyfin,
             plex,
-            config_store,
+            sign_in,
+            security: config_store.live(),
             base_path: base_path.to_owned(),
         }
     }
@@ -384,7 +387,7 @@ impl AuthSetup {
             .merge(users_router(self.users.clone()))
             .merge(admin_router(self.users.clone()))
             .merge(public_router(self.users.clone()))
-            .merge(providers_router(self.config_store.clone()))
+            .merge(providers_router(self.sign_in.clone()))
             .merge(oidc_router(self.oidc.clone()))
             .merge(jellyfin_router(self.jellyfin.clone()))
             .merge(plex_router(self.plex.clone()))

@@ -16,7 +16,7 @@ vi.mock('$lib/queries/downloads/DownloadClientQueries.svelte', () => ({
 			enabled: false,
 			client_type: 'slskd',
 			url: 'http://slskd:5030',
-			api_key: 'slskd****',
+			api_key: '********',
 			verify_downloads: true,
 			min_bitrate_kbps: 128,
 			preflight_score_auto_accept: 0.7,
@@ -70,7 +70,7 @@ describe('SettingsDownloadClient.svelte', () => {
 		await page.getByRole('button', { name: 'Test connection' }).click();
 		// Test sends the form config, not an empty body, so the backend validates what's typed.
 		expect(testMutate).toHaveBeenCalledWith(
-			expect.objectContaining({ url: 'http://slskd:5030', api_key: 'slskd****' })
+			expect.objectContaining({ url: 'http://slskd:5030', api_key: '********' })
 		);
 		await expect.element(page.getByText(/Connected/)).toBeInTheDocument();
 	});

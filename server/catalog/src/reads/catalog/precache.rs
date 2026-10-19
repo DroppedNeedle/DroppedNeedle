@@ -15,8 +15,8 @@ use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::precache_phases::{
     LibraryAlbum, LibraryArtist, PrecacheLibrary, PrecacheSources, PrecacheTuning,
 };
-use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_kernel::runtime_config::{ConfigStore, Plain};
 
 use super::Catalog;
 
@@ -205,7 +205,7 @@ impl PrecacheSources for CatalogPrecache {
             .get_raw::<AdvancedSettings>()
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "cannot read advanced settings; precache uses defaults");
-                AdvancedSettings::default()
+                Plain::default()
             });
         PrecacheTuning {
             artist_batch: clamp_batch(settings.batch_artist_images),

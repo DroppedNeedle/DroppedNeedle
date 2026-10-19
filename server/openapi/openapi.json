@@ -42455,7 +42455,7 @@
       },
       "LastFmCredentialsSet": {
         "type": "object",
-        "description": "Store per-user Last.fm API credentials. Either field may be the\n`lastfm****` mask sentinel, meaning keep the stored value.",
+        "description": "Store per-user Last.fm API credentials. Either field may be the\n`********` mask, meaning keep the stored value.",
         "required": [
           "api_key",
           "shared_secret"

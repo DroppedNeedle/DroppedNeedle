@@ -38,6 +38,9 @@ pub trait Section: Default + serde::Serialize + serde::de::DeserializeOwned {
     /// Row key, kept byte-identical to v2's config key for import fidelity.
     const KEY: &'static str;
 
+    /// What a committed change to this section sets off.
+    const EFFECTS: &'static [super::effects::Effect] = &[];
+
     /// Reject bad submitted values with typed errors. Secret fields are
     /// never validated here: on the save path they may hold the mask.
     fn validate(&self) -> Result<(), ConfigError> {
@@ -57,28 +60,9 @@ pub trait Section: Default + serde::Serialize + serde::de::DeserializeOwned {
 /// indexers/plugins through their dedicated methods), so storing a secret
 /// as plaintext is a compile error rather than a code-review catch.
 /// `Plugins` is not plain, on purpose: its secret-flagged values need the
-/// manifest's secret-key set at save time.
+/// manifest's secret-key set at save time. The impls come from the
+/// section list ([`registry`](super::registry)).
 pub trait PlainSection: Section {}
-
-impl PlainSection for UserPreferences {}
-impl PlainSection for HomeSettings {}
-impl PlainSection for LibraryScanSchedule {}
-impl PlainSection for FilesystemWatcher {}
-impl PlainSection for WantedWatcher {}
-impl PlainSection for SourcePriority {}
-impl PlainSection for UsenetBackendSetting {}
-impl PlainSection for ScrobbleSettings {}
-impl PlainSection for PrimaryMusicSource {}
-impl PlainSection for GetIt {}
-impl PlainSection for SecuritySettings {}
-impl PlainSection for PublicAddress {}
-impl PlainSection for ConnectApps {}
-impl PlainSection for DownloadPolicy {}
-impl PlainSection for MusicBrainzSettings {}
-impl PlainSection for LyricsSettings {}
-impl PlainSection for InternalState {}
-impl PlainSection for LibraryManagement {}
-impl PlainSection for EditionPreferences {}
 
 /// Reject `value` outside `min..=max` with a typed validation error.
 pub fn check_range<T>(

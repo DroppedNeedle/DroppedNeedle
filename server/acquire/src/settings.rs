@@ -39,7 +39,9 @@ use droppedneedle_catalog::reads::collections::store::FollowStore as Collections
 use droppedneedle_kernel::runtime_config::secret_sections::{
     LidarrImportConnection, SpotifySettings,
 };
-use droppedneedle_kernel::runtime_config::{ConfigError, ConfigStore, Masked, Secret, UpdateError};
+use droppedneedle_kernel::runtime_config::{
+    ConfigError, ConfigStore, Masked, Plain, Secret, UpdateError,
+};
 
 use super::imports::error::ImportsError;
 
@@ -78,7 +80,7 @@ impl LidarrSettingsStore for ConfigLidarrSettings {
     fn get_raw(&self) -> LidarrConnectionSettings {
         match self.store.get_raw::<LidarrImportConnection>() {
             Ok(section) => LidarrConnectionSettings {
-                url: section.url,
+                url: section.url.clone(),
                 api_key: section.api_key.expose().to_owned(),
             },
             Err(error) => {
@@ -115,12 +117,12 @@ impl ConfigSpotifySettings {
     }
 
     /// The stored section, or defaults (logged) when it does not read.
-    fn stored(&self) -> SpotifySettings {
+    fn stored(&self) -> Plain<SpotifySettings> {
         self.store
             .get_raw::<SpotifySettings>()
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "spotify settings read failed; treating as unconfigured");
-                SpotifySettings::default()
+                Plain::default()
             })
     }
 }
@@ -152,10 +154,10 @@ impl SpotifySettingsStore for ConfigSpotifySettings {
     fn get_raw(&self) -> ImportsSpotifySettings {
         match self.store.get_raw::<SpotifySettings>() {
             Ok(section) => ImportsSpotifySettings {
-                client_id: section.client_id,
+                client_id: section.client_id.clone(),
                 client_secret: section.client_secret.expose().to_owned(),
                 enabled: section.enabled,
-                spotify_redirect_origin: section.spotify_redirect_origin,
+                spotify_redirect_origin: section.spotify_redirect_origin.clone(),
             },
             Err(error) => {
                 tracing::warn!(%error, "spotify settings read failed; treating as unconfigured");

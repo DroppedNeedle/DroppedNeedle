@@ -482,12 +482,12 @@ impl PluginDownloadSource {
             .iter()
             .any(|field| field.key == "downloads_dir")
         {
-            // Read as the plugin itself gets it: a value sealed at rest
-            // (an import from v2 seals them all) is opened.
+            // A value sealed at rest (an import from v2 seals them all) is
+            // opened; the folder is never a secret.
             match self
                 .host
                 .config()
-                .get_plugin_raw(name, &plugin.manifest.secret_keys())
+                .get_plugin_masked(name, &plugin.manifest.secret_keys())
             {
                 Ok(stored) => {
                     if let Some(dir) = stored

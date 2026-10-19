@@ -372,9 +372,9 @@ async fn lastfm_link_flow_keeps_secrets_sealed() {
 
     // The mask and an identical resubmit keep the link; a new key unlinks.
     for (key, secret, linked) in [
-        ("lastfm****", "lastfm****", true),
+        ("********", "********", true),
         ("user-api-key", "user-shared-secret", true),
-        ("rotated-key", "lastfm****", false),
+        ("rotated-key", "********", false),
     ] {
         let (status, body) = call(
             app(),

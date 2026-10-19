@@ -289,6 +289,7 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
         ConfigStore::open_blocking(
             handle.clone(),
             Crypto::load(&config_dir).expect("v3 key loads"),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
             &droppedneedle_kernel::runtime_config::LegacyConfig::None,
         )
         .expect("settings open"),

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import type { WrappedSettingsResponse } from '$lib/types';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
@@ -8,8 +9,6 @@
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
-
-	const API_KEY_MASK = 'wrapped****';
 
 	const form = createSettingsForm<WrappedSettingsResponse>({
 		loadEndpoint: SETTINGS_ENDPOINTS.wrapped(),
@@ -63,7 +62,7 @@
 		{:else if form.data}
 			<SecretField
 				label="API key"
-				mask={API_KEY_MASK}
+				mask={SECRET_MASK}
 				placeholder="No key set"
 				bind:value={form.data.api_key}
 			/>

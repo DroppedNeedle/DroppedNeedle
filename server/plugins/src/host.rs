@@ -22,8 +22,9 @@ use std::sync::{Arc, Mutex, Weak};
 
 use serde_json::Value;
 
-use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_kernel::runtime_config::sections::PluginConfig;
+use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 
 use super::capabilities::events::EventState;
 use super::manifest::{PluginManifest, active_capabilities, load_manifest};
@@ -136,6 +137,8 @@ pub struct PluginHost {
     me: Weak<PluginHost>,
     dir: PathBuf,
     pub(super) config: Arc<ConfigStore>,
+    /// The library section, for plugin library writes.
+    pub(super) library: Live<TypedLibrary>,
     launcher: Arc<dyn PluginLauncher>,
     plugins: Mutex<HashMap<String, LoadedPlugin>>,
     running: Mutex<HashMap<String, Running>>,
@@ -162,6 +165,7 @@ impl PluginHost {
         Arc::new_cyclic(|me| Self {
             me: me.clone(),
             dir: plugins_dir,
+            library: config.live(),
             config,
             launcher,
             plugins: Mutex::new(HashMap::new()),
@@ -329,7 +333,7 @@ impl PluginHost {
             .config
             .get_plugin_raw(&manifest.name, &manifest.secret_keys())
         {
-            Ok(stored) => stored.settings,
+            Ok(stored) => stored.into_settings(),
             Err(error) => {
                 tracing::error!(plugin = %manifest.name, %error, "plugin settings unreadable");
                 let reason = "Saved settings could not be read; save them again".to_owned();

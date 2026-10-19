@@ -46,8 +46,7 @@ use super::models::{
     OidcExchangeBody, PlexConnectPollResult, PlexLinkPollResult, PlexLoginPollBody,
     PlexLoginPollResult, PlexPinBody, PlexStartBody, TransportDto,
 };
-use crate::federated::settings::{enabled_providers, oidc_config};
-use droppedneedle_kernel::runtime_config::ConfigStore;
+use crate::federated::settings::SignInSettings;
 
 /// Jellyfin rejection, v2 message verbatim.
 pub const JELLYFIN_INVALID: &str = "Invalid credentials";
@@ -67,22 +66,18 @@ pub trait OidcConfigSource: Clone + Send + Sync + 'static {
     fn current(&self) -> impl Future<Output = OidcConfig> + Send;
 }
 
-/// OIDC settings read from the config store on every request.
-#[derive(Clone)]
-pub struct StoreOidcConfig(pub Arc<ConfigStore>);
-
-impl OidcConfigSource for StoreOidcConfig {
+impl OidcConfigSource for SignInSettings {
     async fn current(&self) -> OidcConfig {
-        oidc_config(&self.0)
+        self.oidc_config()
     }
 }
 
 /// The sign-in methods the login page offers. Public: the page asks before
 /// anyone is signed in.
-pub fn providers_router(store: Arc<ConfigStore>) -> Router {
+pub fn providers_router(settings: SignInSettings) -> Router {
     Router::new()
         .route("/auth/providers", get(providers_handler))
-        .with_state(store)
+        .with_state(settings)
 }
 
 /// Which sign-in methods are switched on (v2 `GET /auth/providers`).
@@ -92,8 +87,8 @@ pub fn providers_router(store: Arc<ConfigStore>) -> Router {
     path = "/api/v3/auth/providers",
     responses((status = 200, description = "Enabled sign-in methods", body = AuthProvidersBody))
 )]
-pub async fn providers_handler(State(store): State<Arc<ConfigStore>>) -> Json<AuthProvidersBody> {
-    let providers = enabled_providers(&store);
+pub async fn providers_handler(State(settings): State<SignInSettings>) -> Json<AuthProvidersBody> {
+    let providers = settings.enabled_providers();
     Json(AuthProvidersBody {
         local: providers.local,
         plex: providers.plex,

@@ -82,6 +82,7 @@ pub async fn with_stopped_settings<T>(
         let store = ConfigStore::open(
             runtime.db().clone(),
             crypto,
+            std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
             LegacyConfig::at(&dirs.config_dir, false),
         )
         .await

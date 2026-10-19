@@ -4,8 +4,8 @@
 //! sections as they are, secret sections as [`Masked`] (secrets swapped
 //! for their mask on read; a mask that comes back keeps the stored
 //! secret). Reads never mutate the store. Saves run on the blocking pool
-//! (the store writes and fsyncs the config file) and then fan out
-//! through [`SaveEffects`] (provider-cache invalidation, events kick).
+//! (one durable write on the settings database) and answer once the
+//! section's effects have run (see [`Effects`]).
 //!
 //! Verify methods test the submitted values, not the stored config, so
 //! Test works before the first save and reflects edits. A secret that
@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use super::effects::{SaveEffects, SavedSection};
+use super::effects::Effects;
 use super::models::{
     AdvancedSettingsForm, DownloadPolicyView, FrontendCacheTTLs, IndexerSavedResponse,
     IndexerTestResponse, JellyfinUserInfo, JellyfinVerifyResponse, LibraryScanScheduleResponse,
@@ -39,7 +39,7 @@ use droppedneedle_kernel::runtime_config::sections::{
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_kernel::runtime_config::{
-    ConfigError, ConfigStore, Masked, SecretSection, Section, UpdateError,
+    ConfigError, ConfigStore, Masked, Plain, SecretSection, Section, UpdateError,
 };
 use droppedneedle_library::policy as library_policy;
 use droppedneedle_library::settings_models::LibrarySettingsResponse;
@@ -49,8 +49,8 @@ use droppedneedle_library::settings_models::LibrarySettingsResponse;
 pub struct SettingsService {
     /// Config store.
     pub store: Arc<ConfigStore>,
-    /// Post-save fan-out.
-    pub effects: Arc<dyn SaveEffects>,
+    /// Tells when a save's effects have run.
+    pub effects: Effects,
     /// Id mint for new library roots.
     pub ids: Arc<dyn IdGenerator>,
     /// `TZ` from the deployment config, when set.
@@ -66,7 +66,7 @@ impl SettingsService {
     /// says where the probes of services with a fixed address are sent.
     pub fn new(
         store: Arc<ConfigStore>,
-        effects: Arc<dyn SaveEffects>,
+        effects: Effects,
         ids: Arc<dyn IdGenerator>,
         probes: Arc<dyn VerifyProbes>,
         outbound: Outbound,
@@ -122,10 +122,11 @@ impl SettingsService {
         &self,
         section: S,
     ) -> Result<S, SettingsError> {
+        let mark = self.effects.mark(S::KEY);
         let saved = self
             .write(move |store| store.save_blocking(section))
             .await?;
-        self.effects.after_save(SavedSection::for_key(S::KEY)).await;
+        self.effects.saved(mark).await;
         Ok(saved)
     }
 
@@ -149,14 +150,15 @@ impl SettingsService {
         &self,
         incoming: S,
     ) -> Result<Masked<S>, SettingsError> {
+        let mark = self.effects.mark(S::KEY);
         let saved = self
             .write(move |store| store.save_secret_blocking(incoming))
             .await?;
-        self.effects.after_save(SavedSection::for_key(S::KEY)).await;
+        self.effects.saved(mark).await;
         Ok(saved)
     }
 
-    fn unmask<S: SecretSection>(&self, incoming: Masked<S>) -> Result<S, SettingsError> {
+    fn unmask<S: SecretSection>(&self, incoming: Masked<S>) -> Result<Plain<S>, SettingsError> {
         self.store
             .unmask(incoming)
             .map_err(|error| self.config(error))
@@ -229,6 +231,7 @@ impl SettingsService {
     ) -> Result<Masked<SabnzbdConnection>, SettingsError> {
         let incoming = incoming.into_inner();
         let store = self.store.clone();
+        let mark = self.effects.mark(DownloadClients::KEY);
         let saved = self
             .write(move |_| {
                 store
@@ -242,9 +245,7 @@ impl SettingsService {
                     })
             })
             .await?;
-        self.effects
-            .after_save(SavedSection::for_key(DownloadClients::KEY))
-            .await;
+        self.effects.saved(mark).await;
         Ok(saved.map(|clients| clients.sabnzbd))
     }
 
@@ -403,6 +404,7 @@ impl SettingsService {
         F: FnOnce(TypedLibrary) -> Result<TypedLibrary, SettingsError> + Send + 'static,
     {
         let store = self.store.clone();
+        let mark = self.effects.mark(TypedLibrary::KEY);
         let response = self
             .library_blocking(move || {
                 let saved = store
@@ -417,9 +419,7 @@ impl SettingsService {
                 Ok(library_policy::settings_response(resolved))
             })
             .await?;
-        self.effects
-            .after_save(SavedSection::for_key(TypedLibrary::KEY))
-            .await;
+        self.effects.saved(mark).await;
         Ok(response)
     }
 
@@ -589,7 +589,6 @@ impl SettingsService {
         let id = self
             .write(move |store| store.save_indexer_blocking(indexer))
             .await?;
-        self.effects.after_save(SavedSection::Other).await;
         Ok(IndexerSavedResponse { id })
     }
 
@@ -598,7 +597,6 @@ impl SettingsService {
         let indexer_id = indexer_id.to_owned();
         self.write(move |store| store.delete_indexer_blocking(&indexer_id))
             .await?;
-        self.effects.after_save(SavedSection::Other).await;
         Ok(())
     }
 
@@ -606,7 +604,6 @@ impl SettingsService {
     pub async fn reorder_indexers(&self, ordered_ids: Vec<String>) -> Result<(), SettingsError> {
         self.write(move |store| store.reorder_indexers_blocking(&ordered_ids))
             .await?;
-        self.effects.after_save(SavedSection::Other).await;
         Ok(())
     }
 
@@ -665,7 +662,10 @@ impl SettingsService {
     /// List Plex music libraries over the stored connection. Unconfigured
     /// is a 400; an unreachable Plex is a 502.
     pub async fn plex_libraries(&self) -> Result<Vec<PlexLibrarySectionInfo>, SettingsError> {
-        let stored: PlexConnection = self.store.get_raw().map_err(|error| self.config(error))?;
+        let stored = self
+            .store
+            .get_raw::<PlexConnection>()
+            .map_err(|error| self.config(error))?;
         let libraries = self
             .probes
             .plex_libraries(&stored.plex_url, stored.plex_token.expose())
@@ -794,7 +794,8 @@ impl SettingsService {
     ) -> Result<SabnzbdTestResponse, SettingsError> {
         let url = require_service_url(&incoming.url, "SABnzbd URL")?;
         let clients = incoming.map(|sabnzbd| DownloadClients { sabnzbd });
-        let resolved = self.unmask(clients)?.sabnzbd;
+        let unmasked = self.unmask(clients)?;
+        let resolved = &unmasked.sabnzbd;
         let verdict = self
             .probes
             .sabnzbd(&url, resolved.api_key.expose(), &resolved.downloads_mount)

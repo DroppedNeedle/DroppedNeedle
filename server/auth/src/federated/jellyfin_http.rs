@@ -1,6 +1,6 @@
 //! The live Jellyfin client for sign-in and the admin user import.
 //!
-//! Settings are read per call. Passwords and tokens never reach a log line;
+//! Settings are read live on each call. Passwords and tokens never reach a log line;
 //! transport errors are logged without their URL.
 
 use std::sync::Arc;
@@ -9,12 +9,12 @@ use std::time::Duration;
 use super::FederatedError;
 use super::jellyfin_login::{JellyfinIdp, JellyfinProfile, emby_auth_header};
 use super::jellyfin_models::{AuthenticationResultWire, UserWire};
-use super::settings::{InstallIds, jellyfin_login_server};
+use super::settings::{InstallIds, SignInSettings};
 use super::users::PROVIDER_JELLYFIN;
 use crate::users::stores::{BoxFuture, DirectoryError, DirectoryUser, UserDirectory};
 use droppedneedle_kernel::http_client::read_capped;
-use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::JellyfinConnection;
+use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 
 /// Request timeout (v2 parity).
 const TIMEOUT: Duration = Duration::from_secs(15);
@@ -25,7 +25,8 @@ const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 #[derive(Clone)]
 pub struct JellyfinHttp {
     http: reqwest::Client,
-    store: Arc<ConfigStore>,
+    sign_in: SignInSettings,
+    connection: Live<JellyfinConnection>,
     ids: InstallIds,
 }
 
@@ -33,9 +34,10 @@ impl JellyfinHttp {
     /// Build over the shared outbound client and the live settings.
     pub fn new(http: reqwest::Client, store: Arc<ConfigStore>) -> Self {
         Self {
-            ids: InstallIds::new(store.clone()),
+            sign_in: SignInSettings::new(&store),
+            connection: store.live(),
+            ids: InstallIds::new(store),
             http,
-            store,
         }
     }
 }
@@ -47,7 +49,7 @@ fn avatar_url(base_url: &str, user: &UserWire) -> Option<String> {
 
 impl JellyfinIdp for JellyfinHttp {
     fn is_configured(&self) -> bool {
-        jellyfin_login_server(&self.store).is_some()
+        self.sign_in.jellyfin_login_server().is_some()
     }
 
     async fn authenticate_by_name(
@@ -55,7 +57,7 @@ impl JellyfinIdp for JellyfinHttp {
         username: &str,
         password: &str,
     ) -> Result<JellyfinProfile, FederatedError> {
-        let Some(base_url) = jellyfin_login_server(&self.store) else {
+        let Some(base_url) = self.sign_in.jellyfin_login_server() else {
             return Err(FederatedError::Authentication(
                 "Jellyfin is not configured on this server".to_owned(),
             ));
@@ -136,13 +138,10 @@ impl UserDirectory for JellyfinHttp {
 
     fn list_users(&self) -> BoxFuture<'_, Result<Vec<DirectoryUser>, DirectoryError>> {
         Box::pin(async move {
-            let section = self
-                .store
-                .get_raw::<JellyfinConnection>()
-                .map_err(|error| {
-                    tracing::warn!(%error, "cannot read jellyfin settings for user import");
-                    DirectoryError::NotConfigured
-                })?;
+            let section = self.connection.get().map_err(|error| {
+                tracing::warn!(%error, "cannot read jellyfin settings for user import");
+                DirectoryError::NotConfigured
+            })?;
             let base_url = section.jellyfin_url.trim_end_matches('/');
             let api_key = section.api_key.expose();
             if !section.enabled || base_url.is_empty() || api_key.is_empty() {

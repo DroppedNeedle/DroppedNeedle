@@ -1,4 +1,4 @@
-//! Runtime config secrets: per-section masks that keep the stored value,
+//! Runtime config secrets: the mask that keeps the stored value,
 //! ciphertext at rest, fail-closed decryption, no secret in Debug output
 //! or logs, typed errors instead of panics on bad sections, and the
 //! YouTube quota file.
@@ -9,13 +9,7 @@ use std::sync::{Arc, Mutex};
 use crate::common::ScratchDir;
 use crate::common::logs::capture_logs;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
-use droppedneedle_kernel::runtime_config::mask::{
-    ACOUSTID_KEY_MASK, AUDIODB_API_KEY_MASK, INDEXER_API_KEY_MASK, JELLYFIN_API_KEY_MASK,
-    LIDARR_API_KEY_MASK, LISTENBRAINZ_TOKEN_MASK, NAVIDROME_PASSWORD_MASK, OIDC_SECRET_MASK,
-    PLEX_TOKEN_MASK, PLUGIN_SECRET_MASK, PROWLARR_API_KEY_MASK, SABNZBD_API_KEY_MASK,
-    SKIDDLE_KEY_MASK, SLSKD_API_KEY_MASK, SPOTIFY_SECRET_MASK, TICKETMASTER_KEY_MASK,
-    WRAPPED_API_KEY_MASK, YOUTUBE_API_KEY_MASK,
-};
+use droppedneedle_kernel::runtime_config::mask::SECRET_MASK;
 use droppedneedle_kernel::runtime_config::quota::{QuotaError, QuotaStore};
 use droppedneedle_kernel::runtime_config::secret::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::{
@@ -93,83 +87,47 @@ fn every_secret_section_masks_and_keeps() {
             store.save_secret_blocking(incoming).unwrap();
             let masked: $ty = store.get_masked::<$ty>().unwrap().into_inner();
             assert_eq!(masked.$($field).+.expose(), $mask, "{label} masked");
-            let raw: $ty = store.get_raw().unwrap();
+            let raw = store.get_raw::<$ty>().unwrap();
             assert_eq!(raw.$($field).+.expose(), "live-secret-1", "{label} raw");
             let mut incoming = <$ty>::default();
             *incoming.$($field).+.expose_mut() = $mask.to_owned();
             store.save_secret_blocking(incoming).unwrap();
-            let raw: $ty = store.get_raw().unwrap();
+            let raw = store.get_raw::<$ty>().unwrap();
             assert_eq!(raw.$($field).+.expose(), "live-secret-1", "{label} mask keeps");
             let decoy = format!("{0}{0}-tail", $mask);
             let mut incoming = <$ty>::default();
             *incoming.$($field).+.expose_mut() = decoy.clone();
             store.save_secret_blocking(incoming).unwrap();
-            let raw: $ty = store.get_raw().unwrap();
+            let raw = store.get_raw::<$ty>().unwrap();
             assert_eq!(raw.$($field).+.expose(), decoy, "{label} prefix is new");
             let padded = format!("  {}  ", $mask);
             let mut incoming = <$ty>::default();
             *incoming.$($field).+.expose_mut() = padded.clone();
             store.save_secret_blocking(incoming).unwrap();
-            let raw: $ty = store.get_raw().unwrap();
+            let raw = store.get_raw::<$ty>().unwrap();
             let expected = if $strip { decoy } else { padded };
             assert_eq!(raw.$($field).+.expose(), expected, "{label} padded mask");
         }};
     }
-    check!(SlskdConnection, api_key, SLSKD_API_KEY_MASK, true, "");
-    check!(
-        DownloadClients,
-        sabnzbd.api_key,
-        SABNZBD_API_KEY_MASK,
-        true,
-        ""
-    );
-    check!(ProwlarrConnection, api_key, PROWLARR_API_KEY_MASK, true, "");
-    check!(
-        LidarrImportConnection,
-        api_key,
-        LIDARR_API_KEY_MASK,
-        true,
-        ""
-    );
-    check!(
-        JellyfinConnection,
-        api_key,
-        JELLYFIN_API_KEY_MASK,
-        false,
-        ""
-    );
-    check!(
-        NavidromeConnection,
-        password,
-        NAVIDROME_PASSWORD_MASK,
-        false,
-        ""
-    );
-    check!(PlexConnection, plex_token, PLEX_TOKEN_MASK, false, "");
-    check!(
-        ListenBrainzConnection,
-        user_token,
-        LISTENBRAINZ_TOKEN_MASK,
-        false,
-        ""
-    );
-    check!(YouTubeConnection, api_key, YOUTUBE_API_KEY_MASK, true, "");
-    check!(
-        SpotifySettings,
-        client_secret,
-        SPOTIFY_SECRET_MASK,
-        false,
-        ""
-    );
-    check!(WrappedSettings, api_key, WRAPPED_API_KEY_MASK, true, "");
-    check!(OidcConnection, client_secret, OIDC_SECRET_MASK, false, "");
-    check!(TypedLibrary, acoustid_api_key, ACOUSTID_KEY_MASK, false, "");
+    check!(SlskdConnection, api_key, SECRET_MASK, true, "");
+    check!(DownloadClients, sabnzbd.api_key, SECRET_MASK, true, "");
+    check!(ProwlarrConnection, api_key, SECRET_MASK, true, "");
+    check!(LidarrImportConnection, api_key, SECRET_MASK, true, "");
+    check!(JellyfinConnection, api_key, SECRET_MASK, false, "");
+    check!(NavidromeConnection, password, SECRET_MASK, false, "");
+    check!(PlexConnection, plex_token, SECRET_MASK, false, "");
+    check!(ListenBrainzConnection, user_token, SECRET_MASK, false, "");
+    check!(YouTubeConnection, api_key, SECRET_MASK, true, "");
+    check!(SpotifySettings, client_secret, SECRET_MASK, false, "");
+    check!(WrappedSettings, api_key, SECRET_MASK, true, "");
+    check!(OidcConnection, client_secret, SECRET_MASK, false, "");
+    check!(TypedLibrary, acoustid_api_key, SECRET_MASK, false, "");
     check!(
         AdvancedSettings,
         audiodb_api_key,
-        AUDIODB_API_KEY_MASK,
+        SECRET_MASK,
         false,
-        AUDIODB_API_KEY_MASK
+        SECRET_MASK
     );
 }
 
@@ -181,15 +139,15 @@ fn events_masks_resolve_each_key_independently() {
     *incoming.skiddle_api_key.expose_mut() = "sk-live".to_owned();
     store.save_secret_blocking(incoming).unwrap();
     let mut incoming = EventsSettings::default();
-    *incoming.ticketmaster_api_key.expose_mut() = TICKETMASTER_KEY_MASK.to_owned();
+    *incoming.ticketmaster_api_key.expose_mut() = SECRET_MASK.to_owned();
     *incoming.skiddle_api_key.expose_mut() = "sk-next".to_owned();
     store.save_secret_blocking(incoming).unwrap();
-    let raw: EventsSettings = store.get_raw().unwrap();
+    let raw = store.get_raw::<EventsSettings>().unwrap();
     assert_eq!(raw.ticketmaster_api_key.expose(), "tm-live");
     assert_eq!(raw.skiddle_api_key.expose(), "sk-next");
     let masked: EventsSettings = store.get_masked::<EventsSettings>().unwrap().into_inner();
-    assert_eq!(masked.ticketmaster_api_key.expose(), TICKETMASTER_KEY_MASK);
-    assert_eq!(masked.skiddle_api_key.expose(), SKIDDLE_KEY_MASK);
+    assert_eq!(masked.ticketmaster_api_key.expose(), SECRET_MASK);
+    assert_eq!(masked.skiddle_api_key.expose(), SECRET_MASK);
 }
 
 #[test]
@@ -228,15 +186,18 @@ fn secrets_rest_encrypted_and_never_plaintext_in_the_database() {
     assert!(!body.contains("plugin-live-plaintext"));
     assert!(!body.contains("indexer-live-plaintext"));
     assert!(body.contains("v3:"));
-    let raw_slskd: SlskdConnection = store.get_raw().unwrap();
+    let raw_slskd = store.get_raw::<SlskdConnection>().unwrap();
     assert_eq!(raw_slskd.api_key.expose(), "slskd-live-plaintext");
-    let raw_advanced: AdvancedSettings = store.get_raw().unwrap();
+    let raw_advanced = store.get_raw::<AdvancedSettings>().unwrap();
     assert_eq!(
         raw_advanced.audiodb_api_key.expose(),
         "audiodb-live-plaintext"
     );
-    let raw_plugin = store.get_plugin_raw("demo", &secrets).unwrap();
-    assert_eq!(raw_plugin.settings["token"], "plugin-live-plaintext");
+    let raw_plugin = store
+        .get_plugin_raw("demo", &secrets)
+        .unwrap()
+        .into_settings();
+    assert_eq!(raw_plugin["token"], "plugin-live-plaintext");
     let raw_indexers = store.get_indexers_raw().unwrap();
     assert_eq!(raw_indexers[0].api_key.expose(), "indexer-live-plaintext");
 }
@@ -251,7 +212,7 @@ fn empty_secret_stays_empty_and_clears() {
     store.save_secret_blocking(cleared).unwrap();
     let masked: PlexConnection = store.get_masked::<PlexConnection>().unwrap().into_inner();
     assert_eq!(masked.plex_token.expose(), "");
-    let raw: PlexConnection = store.get_raw().unwrap();
+    let raw = store.get_raw::<PlexConnection>().unwrap();
     assert_eq!(raw.plex_token.expose(), "");
 }
 
@@ -263,7 +224,7 @@ fn wrong_key_fails_closed_never_legacy_passthrough() {
     store.save_secret_blocking(incoming).unwrap();
     drop(store);
     let store = open_store(&dir, [9u8; 32]);
-    let result: Result<SlskdConnection, ConfigError> = store.get_raw();
+    let result = store.get_raw::<SlskdConnection>();
     assert!(matches!(
         result,
         Err(ConfigError::Crypto(
@@ -281,9 +242,9 @@ fn secrets_never_appear_in_debug_output() {
     let mut events = EventsSettings::default();
     *events.ticketmaster_api_key.expose_mut() = "debug-live-tm".to_owned();
     store.save_secret_blocking(events).unwrap();
-    let raw_slskd: SlskdConnection = store.get_raw().unwrap();
+    let raw_slskd = store.get_raw::<SlskdConnection>().unwrap();
     let masked_slskd: SlskdConnection = store.get_masked::<SlskdConnection>().unwrap().into_inner();
-    let raw_events: EventsSettings = store.get_raw().unwrap();
+    let raw_events = store.get_raw::<EventsSettings>().unwrap();
     let crypto = Crypto::from_key_bytes(&[1u8; 32]).unwrap();
     for shown in [
         format!("{raw_slskd:?}"),
@@ -294,11 +255,7 @@ fn secrets_never_appear_in_debug_output() {
     ] {
         assert!(!shown.contains("debug-live-slskd"), "leaked: {shown}");
         assert!(!shown.contains("debug-live-tm"), "leaked: {shown}");
-        assert!(!shown.contains(SLSKD_API_KEY_MASK), "mask leaked: {shown}");
-        assert!(
-            !shown.contains(TICKETMASTER_KEY_MASK),
-            "mask leaked: {shown}"
-        );
+        assert!(!shown.contains(SECRET_MASK), "mask leaked: {shown}");
     }
 }
 
@@ -309,13 +266,13 @@ fn secrets_never_reach_structured_logs() {
         let mut slskd = SlskdConnection::default();
         *slskd.api_key.expose_mut() = "log-live-slskd-secret".to_owned();
         store.save_secret_blocking(slskd).unwrap();
-        let _: SlskdConnection = store.get_raw().unwrap();
+        let _ = store.get_raw::<SlskdConnection>().unwrap();
         let _: SlskdConnection = store.get_masked::<SlskdConnection>().unwrap().into_inner();
         tracing::info!("round-trip done");
     });
     assert!(text.contains("round-trip done"));
     assert!(!text.contains("log-live-slskd-secret"), "leaked: {text}");
-    assert!(!text.contains(SLSKD_API_KEY_MASK), "mask leaked: {text}");
+    assert!(!text.contains(SECRET_MASK), "mask leaked: {text}");
 }
 
 #[test]
@@ -329,7 +286,7 @@ fn wrong_shapes_fail_typed_not_panics() {
     )
     .unwrap();
     let store = open_store(&dir, [42u8; 32]);
-    let result: Result<YouTubeConnection, ConfigError> = store.get_raw();
+    let result = store.get_raw::<YouTubeConnection>();
     assert!(matches!(
         result,
         Err(ConfigError::SectionDecode {
@@ -361,7 +318,7 @@ fn indexer_crud_matches_masks_by_id() {
     assert_eq!(id.len(), 32);
     let masked = store.get_indexers().unwrap();
     assert_eq!(masked.len(), 1);
-    assert_eq!(masked[0].api_key.expose(), INDEXER_API_KEY_MASK);
+    assert_eq!(masked[0].api_key.expose(), SECRET_MASK);
     assert_eq!(masked[0].url, "https://example.com");
     let raw = store.get_indexers_raw().unwrap();
     assert_eq!(raw[0].api_key.expose(), "indexer-live-1");
@@ -370,7 +327,7 @@ fn indexer_crud_matches_masks_by_id() {
             id: id.clone(),
             name: "renamed".to_owned(),
             url: "https://example.com".to_owned(),
-            api_key: Secret::new(INDEXER_API_KEY_MASK),
+            api_key: Secret::new(SECRET_MASK),
             ..NewznabIndexer::default()
         })
         .unwrap();
@@ -418,12 +375,15 @@ fn plugin_secrets_encrypted_and_mask_resolved() {
         )
         .unwrap();
     let masked = store.get_plugin_masked("demo", &secrets).unwrap();
-    assert_eq!(masked.settings["token"], PLUGIN_SECRET_MASK);
+    assert_eq!(masked.settings["token"], SECRET_MASK);
     assert_eq!(masked.settings["nick"], "plain");
-    let raw = store.get_plugin_raw("demo", &secrets).unwrap();
-    assert_eq!(raw.settings["token"], "plugin-live-token");
+    let raw = store
+        .get_plugin_raw("demo", &secrets)
+        .unwrap()
+        .into_settings();
+    assert_eq!(raw["token"], "plugin-live-token");
     let mut settings = std::collections::HashMap::new();
-    settings.insert("token".to_owned(), PLUGIN_SECRET_MASK.to_owned());
+    settings.insert("token".to_owned(), SECRET_MASK.to_owned());
     settings.insert("nick".to_owned(), "renamed".to_owned());
     store
         .save_plugin_blocking(
@@ -435,9 +395,12 @@ fn plugin_secrets_encrypted_and_mask_resolved() {
             &secrets,
         )
         .unwrap();
-    let raw = store.get_plugin_raw("demo", &secrets).unwrap();
-    assert_eq!(raw.settings["token"], "plugin-live-token");
-    assert_eq!(raw.settings["nick"], "renamed");
+    let raw = store
+        .get_plugin_raw("demo", &secrets)
+        .unwrap()
+        .into_settings();
+    assert_eq!(raw["token"], "plugin-live-token");
+    assert_eq!(raw["nick"], "renamed");
 }
 
 #[test]

@@ -83,7 +83,8 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     ProwlarrConnection, SecretSection, SlskdConnection, TypedLibrary,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy, Section, SourcePriority, UsenetBackendSetting, UserPreferences, WantedWatcher,
+    DownloadPolicy, PlainSection, SourcePriority, UsenetBackendSetting, UserPreferences,
+    WantedWatcher,
 };
 
 /// Spotify Web API root (v2 `spotify_client.py`).
@@ -134,7 +135,7 @@ fn clamp_usize(value: i64) -> usize {
 
 /// Read one plain section, logging and falling back to the defaults when
 /// the stored value cannot be read.
-fn plain<S: Section>(store: &ConfigStore) -> S {
+fn plain<S: PlainSection>(store: &ConfigStore) -> S {
     store.get::<S>().unwrap_or_else(|error| {
         tracing::warn!(section = S::KEY, %error, "settings read failed; using defaults");
         S::default()
@@ -143,8 +144,8 @@ fn plain<S: Section>(store: &ConfigStore) -> S {
 
 /// Read one secret section with its real secrets, logging and falling back
 /// to the defaults (unconfigured) when it cannot be read.
-fn secret<S: SecretSection>(store: &ConfigStore) -> S {
-    store.get_raw::<S>().unwrap_or_else(|error| {
+fn secret<S: SecretSection + Clone>(store: &ConfigStore) -> S {
+    store.get_raw::<S>().map(|plain| (*plain).clone()).unwrap_or_else(|error| {
         tracing::warn!(section = S::KEY, %error, "settings read failed; treating as unconfigured");
         S::default()
     })
@@ -174,10 +175,13 @@ pub struct ClientSettings {
 impl ClientSettings {
     /// Current settings from the config store.
     pub fn read(store: &ConfigStore) -> Self {
-        let indexers = store.get_indexers_raw().unwrap_or_else(|error| {
-            tracing::warn!(%error, "indexer settings read failed; treating as none");
-            Vec::new()
-        });
+        let indexers = store
+            .get_indexers_raw()
+            .map(|indexers| indexers.iter().map(|indexer| (**indexer).clone()).collect())
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "indexer settings read failed; treating as none");
+                Vec::new()
+            });
         Self {
             slskd: secret(store),
             sabnzbd: secret(store),
@@ -186,7 +190,7 @@ impl ClientSettings {
             lidarr: secret(store),
             policy: plain(store),
             backend: plain(store),
-            library_roots: plain::<TypedLibrary>(store)
+            library_roots: secret::<TypedLibrary>(store)
                 .library_roots
                 .into_iter()
                 .map(|root| PathBuf::from(root.path))
@@ -694,7 +698,7 @@ impl AcquireSetup {
         let prune_store = config_store.clone();
         let prune = Arc::new(PruneDeps {
             settings: Arc::new(move || {
-                let section: AdvancedSettings = plain(&prune_store);
+                let section: AdvancedSettings = secret(&prune_store);
                 PruneSettings {
                     retention_days: clamp_u64(section.request_history_retention_days),
                     interval_hours: clamp_u64(section.store_prune_interval_hours),
@@ -811,7 +815,7 @@ impl AcquireSetup {
                     let sab: DownloadClients = secret(&worker_store);
                     let sab_mount = (!sab.sabnzbd.url.is_empty())
                         .then(|| PathBuf::from(sab.sabnzbd.downloads_mount.clone()));
-                    let library: TypedLibrary = plain(&worker_store);
+                    let library: TypedLibrary = secret(&worker_store);
                     let library_roots: Vec<PathBuf> = library
                         .library_roots
                         .iter()

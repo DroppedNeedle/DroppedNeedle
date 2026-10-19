@@ -20,7 +20,9 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 use droppedneedle_kernel::runtime_config::sections::{
     FilesystemWatcher, InternalState, PluginConfig, Plugins, UserPreferences,
 };
-use droppedneedle_kernel::runtime_config::{ConfigError, Crypto, Secret, UpdateError};
+use droppedneedle_kernel::runtime_config::{
+    ConfigError, Crypto, Secret, Section as _, UpdateError,
+};
 
 /// Every settings row's key, revision and change time, in key order.
 fn revisions(config: &AppConfig) -> Vec<(String, i64, i64)> {
@@ -101,7 +103,9 @@ fn two_saves_at_once_both_land() {
         }
     }
     assert_eq!(store.get_indexers_raw().unwrap().len(), 2 * rounds);
-    assert_eq!(store.get::<Plugins>().unwrap().0.len(), 2 * rounds);
+    let plugins: serde_json::Value =
+        serde_json::from_str(&store.stored_text(Plugins::KEY).unwrap()).unwrap();
+    assert_eq!(plugins.as_object().unwrap().len(), 2 * rounds);
 }
 
 /// A stored number reads back exactly: from the snapshot, inside a write
@@ -209,16 +213,19 @@ async fn config_json_is_copied_in_once() {
             let preferences: UserPreferences = store.get().unwrap();
             assert_eq!(preferences.primary_types, ["album"]);
             assert_eq!(preferences.secondary_types, ["studio"]);
-            let lidarr: LidarrImportConnection = store.get_raw().unwrap();
+            let lidarr = store.get_raw::<LidarrImportConnection>().unwrap();
             assert_eq!(lidarr.url, "http://lidarr.lan:8686");
             assert_eq!(lidarr.api_key.expose(), "lidarr-plaintext");
             let indexers = store.get_indexers_raw().unwrap();
             assert_eq!(indexers.len(), 1);
             assert_eq!(indexers[0].api_key.expose(), "indexer-plaintext");
             let secret = HashSet::from(["token".to_owned()]);
-            let plugin = store.get_plugin_raw("toy", &secret).unwrap();
-            assert_eq!(plugin.settings["token"], "plugin-plaintext");
-            assert_eq!(plugin.settings["nick"], "toybrick");
+            let plugin = store
+                .get_plugin_raw("toy", &secret)
+                .unwrap()
+                .into_settings();
+            assert_eq!(plugin["token"], "plugin-plaintext");
+            assert_eq!(plugin["nick"], "toybrick");
             let internal: InternalState = store.get().unwrap();
             assert_eq!(
                 internal.plex_client_id.as_deref(),
@@ -295,7 +302,7 @@ fn the_copy_logs_no_secret() {
         .to_owned();
     std::fs::write(dir.join("config.json"), config.to_string()).unwrap();
     let (store, text) = capture_logs(|| config_store(&dir));
-    let lidarr: LidarrImportConnection = store.get_raw().unwrap();
+    let lidarr = store.get_raw::<LidarrImportConnection>().unwrap();
     assert_eq!(lidarr.api_key.expose(), "lidarr-plaintext");
     assert!(text.contains("future_section"), "{text}");
     for secret in ["lidarr-plaintext", "indexer-plaintext", "plugin-plaintext"] {

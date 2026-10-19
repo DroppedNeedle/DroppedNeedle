@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::{AudioFormat, Section, check_range};
-use crate::runtime_config::ConfigStore;
+use crate::runtime_config::Live;
 use crate::runtime_config::error::ConfigError;
 use crate::runtime_config::origin::Origin;
 
@@ -163,9 +163,9 @@ impl SecuritySettings {
 /// every ancestor up to the top, so a dashboard that frames the app has to
 /// be named here too or the inner frame stays empty. Unreadable settings
 /// leave the app alone.
-pub fn framed_page_ancestors(config: &ConfigStore) -> String {
+pub fn framed_page_ancestors(settings: &Live<SecuritySettings>) -> String {
     let mut sources = vec!["'self'".to_owned()];
-    match config.get::<SecuritySettings>() {
+    match settings.get() {
         Ok(settings) => sources.extend(settings.framing_sources()),
         Err(error) => {
             tracing::debug!(%error, "security settings unreadable; framing by the app only")

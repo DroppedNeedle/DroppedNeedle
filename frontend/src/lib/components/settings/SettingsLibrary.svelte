@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import '$lib/components/library/library-management.css';
 	import { TriangleAlert, ArrowRight, CircleCheckBig, FolderCog, ScanSearch } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/client';
@@ -37,8 +38,6 @@
 		TargetLibrarySettingsResponse,
 		TypedLibrarySettings
 	} from '$lib/queries/library/LibraryOperationsTypes';
-
-	const ACOUSTID_KEY_MASK = 'acoustid****';
 
 	const settingsQuery = getTargetLibrarySettingsQuery(() => authStore.isAdmin);
 	const restorableQuery = getLibraryRestorableRootsQuery(() => authStore.isAdmin);
@@ -365,7 +364,7 @@
 
 				<SecretField
 					label="AcoustID API key"
-					mask={ACOUSTID_KEY_MASK}
+					mask={SECRET_MASK}
 					placeholder="Enter AcoustID API key"
 					help="Used to identify files that do not contain MusicBrainz tags."
 					bind:value={acoustidKey}

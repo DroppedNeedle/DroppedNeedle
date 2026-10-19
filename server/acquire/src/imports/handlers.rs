@@ -41,10 +41,10 @@ use super::lidarr::{
     LidarrImportService, LidarrSettingsStore, ServiceError, normalize_lidarr_url,
 };
 use super::models::{
-    AcquireHealth, LIDARR_API_KEY_MASK, LidarrArtistListResponse, LidarrConnectionSettings,
-    LidarrImportRequest, LidarrImportResponse, LidarrTestResponse, SabnzbdStatusResponse,
-    SlskdStatusResponse, SpotifyAuthUrlResponse, SpotifyImportRequest, SpotifyImportResponse,
-    SpotifyJobStatus, SpotifyPlaylistListResponse, SpotifyRedirectUri, SpotifySettings,
+    AcquireHealth, LidarrArtistListResponse, LidarrConnectionSettings, LidarrImportRequest,
+    LidarrImportResponse, LidarrTestResponse, SabnzbdStatusResponse, SlskdStatusResponse,
+    SpotifyAuthUrlResponse, SpotifyImportRequest, SpotifyImportResponse, SpotifyJobStatus,
+    SpotifyPlaylistListResponse, SpotifyRedirectUri, SpotifySettings,
 };
 use super::spotify::{
     AlbumMbidResolver, MAX_API_BODY_BYTES, PendingAuth, PlaylistIndex, PlaylistTrackSink,
@@ -236,7 +236,7 @@ pub async fn test_lidarr(
     ValidJson(body): ValidJson<LidarrConnectionSettings>,
 ) -> Json<LidarrTestResponse> {
     let mut api_key = body.api_key;
-    if api_key == LIDARR_API_KEY_MASK {
+    if api_key == droppedneedle_kernel::runtime_config::SECRET_MASK {
         api_key = deps.lidarr_settings.get_raw().api_key;
     }
     let url = normalize_lidarr_url(&body.url);

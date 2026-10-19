@@ -188,8 +188,9 @@ async fn imported_counts_match_the_fixture() {
     // The v2 instance Last.fm key pair opens under the v3 key, so linking
     // and scrobbling keep working after the move.
     let store = v3_store(&v3_root);
-    let lastfm: droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings =
-        store.get_raw().expect("lastfm settings read");
+    let lastfm = store
+        .get_raw::<droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings>()
+        .expect("lastfm settings read");
     assert_eq!(lastfm.api_key.expose(), "lastfm-public-key");
     assert_eq!(lastfm.shared_secret.expose(), "lastfm-shared-plaintext");
 
@@ -535,9 +536,10 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
     let store = v3_store(&v3_root);
     let orphan = store
         .get_plugin_raw("orphan", &std::collections::HashSet::new())
-        .expect("plugin reads");
+        .expect("plugin reads")
+        .into_settings();
     assert_eq!(
-        orphan.settings.get("mode").map(String::as_str),
+        orphan.get("mode").map(String::as_str),
         Some(fixture.secrets.orphan_plugin_mode.as_str())
     );
 

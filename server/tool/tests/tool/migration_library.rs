@@ -340,6 +340,7 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
         ConfigStore::open_blocking(
             handle.clone(),
             Crypto::load(&config_dir).expect("v3 key loads"),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
             &droppedneedle_kernel::runtime_config::LegacyConfig::None,
         )
         .expect("settings open"),

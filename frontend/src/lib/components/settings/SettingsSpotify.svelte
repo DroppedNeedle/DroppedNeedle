@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { api } from '$lib/api/client';
 	import { SPOTIFY_ENDPOINTS } from '$lib/queries/spotify/endpoints';
@@ -33,8 +34,6 @@
 		loadEndpoint: SPOTIFY_ENDPOINTS.settings(),
 		saveEndpoint: SPOTIFY_ENDPOINTS.settings()
 	});
-
-	const SECRET_MASK = 'spotify****';
 
 	// The server builds the address from the request when no origin is saved,
 	// so behind a proxy it does not know about it can name the wrong one.

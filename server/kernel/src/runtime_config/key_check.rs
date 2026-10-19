@@ -19,7 +19,8 @@ use crate::db::{Db, DbError, DurableLane};
 use super::crypto::{CIPHER_PREFIX, Crypto, CryptoError};
 use super::error::ConfigError;
 use super::sql;
-use super::store::{decode_text, encode_text, now_ms};
+use super::store::{decode_text, encode_text};
+use crate::clock::Clock;
 
 /// The settings row that holds the check value.
 pub const KEY_CHECK_KEY: &str = "key_check";
@@ -89,7 +90,7 @@ pub fn assess(conn: &Connection, crypto: &Crypto) -> Result<Assessment, ConfigEr
 /// none is stored and the key is accepted. Run after the one-time
 /// `config.json` copy, so the row never makes the settings look stored to
 /// it. A normal start only reads.
-pub fn enforce(db: &Db, crypto: &Crypto) -> Result<KeyCheck, ConfigError> {
+pub fn enforce(db: &Db, crypto: &Crypto, clock: &dyn Clock) -> Result<KeyCheck, ConfigError> {
     let assessment = db.read_blocking("config.key_check", |conn| assess(conn, crypto))?;
     let Assessment::Unchecked { opened, unopened } = assessment else {
         return Ok(match assessment {
@@ -103,9 +104,10 @@ pub fn enforce(db: &Db, crypto: &Crypto) -> Result<KeyCheck, ConfigError> {
             "some stored secrets do not open under the data key; they read as unset"
         );
     }
+    let now = clock.now_ms();
     db.write_durable(DurableLane::Background, "config.key_check_record", |tx| {
         if stored_check(tx)?.is_none() {
-            record(tx, crypto)?;
+            record(tx, crypto, now)?;
         }
         Ok::<_, ConfigError>(())
     })?;
@@ -116,12 +118,13 @@ pub fn enforce(db: &Db, crypto: &Crypto) -> Result<KeyCheck, ConfigError> {
     Ok(KeyCheck::Recorded)
 }
 
-/// Store the check value of `crypto`, replacing any earlier one.
-pub fn record(conn: &Connection, crypto: &Crypto) -> Result<(), ConfigError> {
+/// Store the check value of `crypto` at `now` (unix milliseconds),
+/// replacing any earlier one.
+pub fn record(conn: &Connection, crypto: &Crypto, now: i64) -> Result<(), ConfigError> {
     let text = encode_text(&Value::String(crypto.check_value()))?;
     conn.query_row(
         sql::PUT_SECTION.text(),
-        rusqlite::params![KEY_CHECK_KEY, text, now_ms()],
+        rusqlite::params![KEY_CHECK_KEY, text, now],
         |row| row.get::<_, i64>(0),
     )
     .map_err(DbError::from)?;
@@ -153,7 +156,8 @@ pub fn stored_check(conn: &Connection) -> Result<Option<String>, ConfigError> {
 /// Empty every sealed string in every settings row, whatever the section
 /// or a plugin's manifest says, each changed row at its next revision.
 /// Answers the path of each value cleared (`section.field`, never a value).
-pub fn forget_sealed_settings(conn: &Connection) -> Result<Vec<String>, ConfigError> {
+/// `now` (unix milliseconds) stamps each changed row.
+pub fn forget_sealed_settings(conn: &Connection, now: i64) -> Result<Vec<String>, ConfigError> {
     let rows = {
         let mut statement = conn
             .prepare(sql::ALL_SECTIONS.text())
@@ -166,7 +170,6 @@ pub fn forget_sealed_settings(conn: &Connection) -> Result<Vec<String>, ConfigEr
             .collect::<Result<Vec<_>, _>>()
             .map_err(DbError::from)?
     };
-    let now = now_ms();
     let mut cleared = Vec::new();
     for (key, text) in rows {
         let mut value = decode_text(&text)?;

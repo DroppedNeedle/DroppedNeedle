@@ -271,6 +271,7 @@ impl Default for AdvancedSettings {
 
 impl Section for AdvancedSettings {
     const KEY: &'static str = "advanced_settings";
+    const EFFECTS: &'static [Effect] = &[Effect::Invalidate(&[CacheRoot::AudioDb])];
 
     fn validate(&self) -> Result<(), ConfigError> {
         let key = Self::KEY;
@@ -656,7 +657,6 @@ impl SecretSection for AdvancedSettings {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
         vec![SecretField {
             value: &mut self.audiodb_api_key,
-            mask: AUDIODB_API_KEY_MASK,
             strip: false,
         }]
     }

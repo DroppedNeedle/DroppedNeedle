@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import { api } from '$lib/api/client';
 	import type { EventsSettings } from '$lib/types';
@@ -31,9 +32,6 @@
 			});
 		}
 	});
-
-	const TICKETMASTER_KEY_MASK = 'ticketmaster****';
-	const SKIDDLE_KEY_MASK = 'skiddle****';
 
 	// two sources = two independent test buttons (the shared form util only
 	// supports one testEndpoint)
@@ -144,7 +142,7 @@
 					</div>
 					<SecretField
 						label="Consumer key"
-						mask={TICKETMASTER_KEY_MASK}
+						mask={SECRET_MASK}
 						placeholder="Consumer Key from developer.ticketmaster.com"
 						bind:value={form.data.ticketmaster_api_key}
 					/>
@@ -197,7 +195,7 @@
 					</div>
 					<SecretField
 						label="API key"
-						mask={SKIDDLE_KEY_MASK}
+						mask={SECRET_MASK}
 						placeholder="API key from skiddle.com/api"
 						bind:value={form.data.skiddle_api_key}
 					/>

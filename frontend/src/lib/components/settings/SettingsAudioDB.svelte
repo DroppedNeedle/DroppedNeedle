@@ -1,10 +1,9 @@
 <script lang="ts">
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import type { AdvancedSettingsForm } from './advanced-settings-types';
 	import NumberField from '$lib/ui/NumberField.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
-
-	const API_KEY_MASK = 'audiodb****';
 
 	let { data = $bindable() }: { data: AdvancedSettingsForm } = $props();
 </script>
@@ -25,7 +24,7 @@
 
 	<SecretField
 		label="API Key"
-		mask={API_KEY_MASK}
+		mask={SECRET_MASK}
 		placeholder="Enter API key"
 		help="Default: 123 (free tier, 30 req/min). Premium keys available at theaudiodb.com"
 		bind:value={data.audiodb_api_key}

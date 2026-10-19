@@ -145,7 +145,7 @@ fn clear(db: &Db, config_dir: &Path) -> Result<Option<Forgotten>, ResetKeyError>
         Err(error) => return Err(failed(&error)),
     }
     let new_key = Crypto::mint_file(&new_path).map_err(|error| failed(&error))?;
-    forget_secrets(db, &new_key)
+    forget_secrets(db, &new_key, &droppedneedle_kernel::clock::SystemClock)
         .map(Some)
         .map_err(|error| failed(&error))
 }

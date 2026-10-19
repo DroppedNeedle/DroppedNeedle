@@ -12,7 +12,7 @@ const testMutate = vi.fn().mockResolvedValue({
 
 vi.mock('$lib/queries/downloads/ProwlarrQueries.svelte', () => ({
 	getProwlarrConfigQuery: () => ({
-		data: { enabled: false, url: 'http://prowlarr:9696', api_key: 'prowlarr****' },
+		data: { enabled: false, url: 'http://prowlarr:9696', api_key: '********' },
 		isLoading: false,
 		isError: false
 	}),
@@ -32,13 +32,13 @@ describe('SettingsProwlarr.svelte', () => {
 		const url = page.getByLabelText('URL');
 		await expect.element(url).toHaveValue('http://prowlarr:9696');
 		const key = page.getByLabelText('API key', { exact: true });
-		await expect.element(key).toHaveValue('prowlarr****');
+		await expect.element(key).toHaveValue('********');
 	});
 
 	it('shows the untouched masked sentinel is preserved (save sends the sentinel back)', async () => {
 		await render(SettingsProwlarr);
 		await page.getByRole('button', { name: 'Save' }).click();
-		expect(saveMutate).toHaveBeenCalledWith(expect.objectContaining({ api_key: 'prowlarr****' }));
+		expect(saveMutate).toHaveBeenCalledWith(expect.objectContaining({ api_key: '********' }));
 	});
 
 	it('runs Test pre-save and renders the indexer count', async () => {

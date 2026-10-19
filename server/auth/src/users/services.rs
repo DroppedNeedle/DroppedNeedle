@@ -1139,7 +1139,7 @@ pub async fn lastfm_status(
 
 /// PUT /me/connections/lastfm: store the user's own API credentials, which
 /// override the instance pair for this user.
-/// The `lastfm****` mask sentinel keeps the stored value per field; storing
+/// The `********` mask keeps the stored value per field; storing
 /// a new key unlinks the old session.
 pub async fn lastfm_set_credentials(
     deps: &UsersDeps,
@@ -1148,7 +1148,7 @@ pub async fn lastfm_set_credentials(
     shared_secret: &str,
 ) -> Result<LastFmConnection, UsersError> {
     require_lastfm_enabled(deps)?;
-    let mask = droppedneedle_kernel::runtime_config::mask::LASTFM_SECRET_MASK;
+    let mask = droppedneedle_kernel::runtime_config::SECRET_MASK;
     let current = deps.lastfm.get(user_id).await.map_err(store_internal)?;
     // Resolves one field to its stored ciphertext plus whether the plaintext
     // changed. The comparison decrypts first: ciphertext never compares

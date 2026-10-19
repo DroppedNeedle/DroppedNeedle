@@ -67,7 +67,11 @@ impl CatalogSettings for ConfigStore {
     }
 
     fn advanced(&self) -> AdvancedSettings {
-        or_default("advanced_settings", self.get_raw::<AdvancedSettings>())
+        or_default(
+            "advanced_settings",
+            self.get_raw::<AdvancedSettings>()
+                .map(|plain| (*plain).clone()),
+        )
     }
 
     fn listenbrainz_enabled(&self) -> bool {

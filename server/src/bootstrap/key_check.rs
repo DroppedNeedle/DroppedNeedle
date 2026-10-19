@@ -10,6 +10,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::{Db, DbError, DurableLane};
 use droppedneedle_kernel::runtime_config::key_check::{
     self, KeyCheck, enforce, forget_sealed_settings,
@@ -25,13 +26,14 @@ use super::data_dirs::key_refusal;
 pub(super) async fn verify(
     db: &Db,
     crypto: &Arc<Crypto>,
+    clock: &Arc<dyn Clock>,
     config_dir: &Path,
     db_path: &Path,
 ) -> Result<(), BootError> {
     let outcome = super::wait_out_busy("key check", ConfigError::is_busy, || {
-        let (db, crypto) = (db.clone(), crypto.clone());
+        let (db, crypto, clock) = (db.clone(), crypto.clone(), clock.clone());
         async move {
-            tokio::task::spawn_blocking(move || enforce(&db, &crypto))
+            tokio::task::spawn_blocking(move || enforce(&db, &crypto, clock.as_ref()))
                 .await
                 .map_err(|error| ConfigError::Database(error.to_string()))?
         }
@@ -57,15 +59,21 @@ pub struct Forgotten {
 }
 
 /// In one transaction, clear every value sealed under the old key and
-/// store the check value of `new_key`. The places cleared are the ones
-/// `runtime_config::key_check::assess` probes; keep the two in step.
-pub fn forget_secrets(db: &Db, new_key: &Crypto) -> Result<Forgotten, ConfigError> {
+/// store the check value of `new_key`, stamped with `clock`'s time. The
+/// places cleared are the ones `runtime_config::key_check::assess`
+/// probes; keep the two in step.
+pub fn forget_secrets(
+    db: &Db,
+    new_key: &Crypto,
+    clock: &dyn Clock,
+) -> Result<Forgotten, ConfigError> {
+    let now = clock.now_ms();
     db.write_durable(DurableLane::Foreground, "key.forget_secrets", |tx| {
-        let settings = forget_sealed_settings(tx)?;
+        let settings = forget_sealed_settings(tx, now)?;
         let auth = droppedneedle_auth::sqlite::forget_sealed(tx).map_err(DbError::from)?;
         let connections =
             droppedneedle_media::remotes::connections::forget_sealed(tx).map_err(DbError::from)?;
-        key_check::record(tx, new_key)?;
+        key_check::record(tx, new_key, now)?;
         Ok(Forgotten {
             settings,
             app_passwords: auth.app_passwords,

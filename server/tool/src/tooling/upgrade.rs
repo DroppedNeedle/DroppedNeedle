@@ -1089,15 +1089,20 @@ async fn prepare_target(
             && config_dir.join(LEGACY_CONFIG_FILE_NAME).exists()
         {
             let crypto = Crypto::load(config_dir)?;
-            ConfigStore::open(runtime.db().clone(), crypto, legacy.clone())
-                .await
-                .map_err(|error| failed(&error))?;
+            ConfigStore::open(
+                runtime.db().clone(),
+                crypto,
+                std::sync::Arc::new(droppedneedle_kernel::clock::SystemClock),
+                legacy.clone(),
+            )
+            .await
+            .map_err(|error| failed(&error))?;
         }
         let (db, dir) = (runtime.db().clone(), config_dir.to_path_buf());
         let belongs = tokio::task::spawn_blocking(move || {
             let crypto = Crypto::load(&dir)?;
             if record {
-                enforce(&db, &crypto)
+                enforce(&db, &crypto, &droppedneedle_kernel::clock::SystemClock)
                     .map(|outcome| outcome != KeyCheck::Mismatch)
                     .map_err(|error| failed(&error))
             } else {

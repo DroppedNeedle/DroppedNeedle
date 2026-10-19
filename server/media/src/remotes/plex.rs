@@ -1487,7 +1487,7 @@ impl PlexServerIdentity for ConfiguredPlexServer {
             }
             let server = PlexAdapter::new(
                 self.http.clone(),
-                section.plex_url,
+                section.plex_url.clone(),
                 section.plex_token.expose().to_owned(),
                 self.ids.plex_client_id(),
                 Vec::new(),

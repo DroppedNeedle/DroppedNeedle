@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::{Section, check_range};
+use crate::runtime_config::effects::{CacheRoot, Effect};
 use crate::runtime_config::error::ConfigError;
 
 // --- user_preferences -----------------------------------------------------
@@ -66,6 +67,10 @@ impl Default for HomeSettings {
 
 impl Section for HomeSettings {
     const KEY: &'static str = "home_settings";
+    const EFFECTS: &'static [Effect] = &[
+        Effect::Invalidate(&[CacheRoot::ListenBrainz, CacheRoot::LastFm]),
+        Effect::ClearPrefixes(&["home_response:", "discover_response:"]),
+    ];
 
     fn validate(&self) -> Result<(), ConfigError> {
         check_range(

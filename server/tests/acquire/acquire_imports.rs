@@ -387,21 +387,21 @@ async fn lidarr_config_round_trip_masks_and_normalizes() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["url"], server.base_url);
-    assert_eq!(body["api_key"], "lidarr****");
+    assert_eq!(body["api_key"], "********");
 
     // Saving the masked sentinel preserves the stored key: the probe still
     // authenticates afterwards.
     let (status, _) = put_json(
         authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
         "/acquire/lidarr-import/config",
-        json!({"url": server.base_url, "api_key": "lidarr****"}),
+        json!({"url": server.base_url, "api_key": "********"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     let (status, body) = post_json(
         authed_app(bundle.deps, &admin_id, Role::Admin),
         "/acquire/lidarr-import/test",
-        json!({"url": server.base_url, "api_key": "lidarr****"}),
+        json!({"url": server.base_url, "api_key": "********"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -495,7 +495,7 @@ async fn seed_spotify_app(bundle_deps: ImportsDeps, admin_id: &str) {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["client_id"], "test-client");
-    assert_eq!(body["client_secret"], "spotify****");
+    assert_eq!(body["client_secret"], "********");
 }
 
 /// Pull the `state` token out of an authorize URL.
@@ -616,7 +616,7 @@ async fn spotify_settings_round_trip_and_reject_bad_origin() {
         "/acquire/spotify/settings",
         json!({
             "client_id": "test-client",
-            "client_secret": "spotify****",
+            "client_secret": "********",
             "enabled": true,
             "spotify_redirect_origin": "not-a-url",
         }),
@@ -730,7 +730,7 @@ async fn spotify_callback_address_follows_a_trusted_proxy_only() {
         "/acquire/spotify/settings",
         json!({
             "client_id": "test-client",
-            "client_secret": "spotify****",
+            "client_secret": "********",
             "enabled": true,
             "spotify_redirect_origin": "https://stated.example",
         }),

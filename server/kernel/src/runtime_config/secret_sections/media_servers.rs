@@ -60,7 +60,6 @@ impl SecretSection for JellyfinConnection {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
         vec![SecretField {
             value: &mut self.api_key,
-            mask: JELLYFIN_API_KEY_MASK,
             strip: false,
         }]
     }
@@ -125,7 +124,6 @@ impl SecretSection for NavidromeConnection {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
         vec![SecretField {
             value: &mut self.password,
-            mask: NAVIDROME_PASSWORD_MASK,
             strip: false,
         }]
     }
@@ -180,7 +178,6 @@ impl SecretSection for PlexConnection {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
         vec![SecretField {
             value: &mut self.plex_token,
-            mask: PLEX_TOKEN_MASK,
             strip: false,
         }]
     }

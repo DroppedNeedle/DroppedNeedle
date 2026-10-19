@@ -35,7 +35,7 @@ use axum::Router;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
-use droppedneedle_kernel::runtime_config::{ConfigStore, Secret};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Plain, Secret};
 
 pub use events::{ConcertsEvents, ConcertsNew, NoEventStream};
 pub use service::ConcertsService;
@@ -159,8 +159,11 @@ impl ActiveSources {
         }
         let keyed = |on: bool, key: Secret| (on && !key.is_empty()).then_some(key);
         let active = Self {
-            ticketmaster: keyed(settings.ticketmaster_enabled, settings.ticketmaster_api_key),
-            skiddle: keyed(settings.skiddle_enabled, settings.skiddle_api_key),
+            ticketmaster: keyed(
+                settings.ticketmaster_enabled,
+                settings.ticketmaster_api_key.clone(),
+            ),
+            skiddle: keyed(settings.skiddle_enabled, settings.skiddle_api_key.clone()),
             scope: settings.sweep_scope,
         };
         (active.ticketmaster.is_some() || active.skiddle.is_some()).then_some(active)
@@ -174,7 +177,7 @@ impl ActiveSources {
     }
 }
 
-fn read_settings(config: &ConfigStore) -> Option<EventsSettings> {
+fn read_settings(config: &ConfigStore) -> Option<Plain<EventsSettings>> {
     config
         .get_raw::<EventsSettings>()
         .inspect_err(|error| tracing::debug!(%error, "cannot read events settings; concerts off"))

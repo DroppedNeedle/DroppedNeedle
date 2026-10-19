@@ -23,8 +23,8 @@ pub struct PluginConfig {
 
 impl std::fmt::Debug for PluginConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The map can hold decrypted secrets in the get_plugin_raw form,
-        // and this struct cannot tell secret keys from plain ones without
+        // A value may be a submitted secret on its way to a save, and this
+        // struct cannot tell secret keys from plain ones without
         // the plugin manifest, so every value redacts; only keys print.
         let redacted: std::collections::BTreeMap<&str, &str> = self
             .settings

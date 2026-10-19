@@ -15,7 +15,7 @@
 	interface Props {
 		label: string;
 		value: string;
-		/** The server's placeholder for a stored secret, e.g. "prowlarr****". */
+		/** The server's placeholder for a stored secret (`SECRET_MASK`). */
 		mask?: string;
 		help?: string;
 		error?: string | null;

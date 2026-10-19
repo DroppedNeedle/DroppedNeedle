@@ -203,7 +203,7 @@ impl LibrarySetup {
         let template = self
             .config
             .get_raw::<TypedLibrary>()
-            .map(|settings| settings.naming_template)
+            .map(|settings| settings.naming_template.clone())
             .ok()
             .filter(|template| !template.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_NAMING_TEMPLATE.to_owned());

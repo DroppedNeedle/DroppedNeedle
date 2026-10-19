@@ -31,7 +31,7 @@ use crate::reads::discover::{
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::Db;
-use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::AdvancedSettings};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Plain, secret_sections::AdvancedSettings};
 use droppedneedle_media::remotes::connections::{
     ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
 };
@@ -226,7 +226,7 @@ fn queue_settings(config: Arc<ConfigStore>) -> queue::SettingsFn {
             .get_raw::<AdvancedSettings>()
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "cannot read advanced settings; the queue uses defaults");
-                AdvancedSettings::default()
+                Plain::default()
             });
         queue::QueueSettings::from_advanced(&advanced)
     })

@@ -1,9 +1,7 @@
 //! The addresses an admin stated as this server's own: the saved
 //! `public_address` setting, read where a request is judged against it.
 
-use std::sync::Arc;
-
-use droppedneedle_kernel::runtime_config::{ConfigStore, sections::PublicAddress};
+use droppedneedle_kernel::runtime_config::{Live, sections::PublicAddress};
 
 use super::middleware::WarnOnce;
 use droppedneedle_kernel::runtime_config::origin::Origin;
@@ -12,16 +10,16 @@ use droppedneedle_kernel::runtime_config::origin::Origin;
 /// and the one warning. The default states no address.
 #[derive(Debug, Clone, Default)]
 pub struct StatedAddresses {
-    /// The runtime settings. `None` means no address is stated.
-    config: Option<Arc<ConfigStore>>,
+    /// The saved list. `None` means no address is stated.
+    config: Option<Live<PublicAddress>>,
     /// Spent by the first read that finds the section unreadable.
     unreadable_warned: WarnOnce,
 }
 
 impl StatedAddresses {
-    /// Read the list from `config`, afresh on every call to
-    /// [`StatedAddresses::origins`], so a save applies to the next request.
-    pub fn from_config(config: Arc<ConfigStore>) -> Self {
+    /// Read the list live on every call to [`StatedAddresses::origins`],
+    /// so a save applies to the next request.
+    pub fn new(config: Live<PublicAddress>) -> Self {
         Self {
             config: Some(config),
             unreadable_warned: WarnOnce::default(),
@@ -34,7 +32,7 @@ impl StatedAddresses {
         let Some(config) = &self.config else {
             return Vec::new();
         };
-        match config.get::<PublicAddress>() {
+        match config.get() {
             Ok(section) => section.stated(),
             Err(error) => {
                 if self.unreadable_warned.claim() {

@@ -304,6 +304,17 @@ pub fn digest_key(prefix: &str, parts: &[&str], suffix: &str) -> String {
 mod tests {
     use super::*;
 
+    /// A cache root a settings section names has cached reads to drop, so a
+    /// save never invalidates nothing by a misspelt name.
+    #[test]
+    fn every_settings_cache_root_has_prefixes() {
+        use droppedneedle_kernel::runtime_config::effects::CacheRoot;
+
+        for root in CacheRoot::ALL {
+            assert!(!prefixes_for(root.as_str()).is_empty(), "{root:?}");
+        }
+    }
+
     #[tokio::test]
     async fn aside_serves_miss_then_hit() {
         let cache = InMemoryProviderCache::new();

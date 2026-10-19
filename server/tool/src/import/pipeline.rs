@@ -49,9 +49,9 @@ use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Sections the export may carry (kept whole or in part). Present
 /// sections replace the v3 config wholesale; absent ones reset to v3
-/// defaults. v3-only keys outside this set (today: `lyrics_settings` and
-/// `public_address`) are left untouched: the export cannot speak for state
-/// v2 never had.
+/// defaults. The settings keys outside this set are left untouched: the
+/// export cannot speak for them. A test names those and holds both lists
+/// to the kernel's section list.
 /// Shared with the validator, which warns on anything outside it.
 pub(crate) const REPLACE_UNIVERSE: &[&str] = &[
     "user_preferences",
@@ -2375,6 +2375,30 @@ fn with_plaintexts(value: &Value, crypto: &Crypto) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every settings key the server stores is either replaced by an
+    /// import or named as left alone, and nothing else is.
+    #[test]
+    fn replace_list_covers_the_section_list() {
+        use droppedneedle_kernel::runtime_config::KNOWN_TOP_LEVEL_KEYS;
+
+        /// The keys an import leaves as they are.
+        const LEFT_ALONE: &[&str] = &[
+            // v3 only.
+            "lyrics_settings",
+            "public_address",
+            "edition_preferences",
+            // Not in the v2 export.
+            "home_settings",
+            // This install's own id.
+            "instance_id",
+        ];
+        let mut named: Vec<&str> = REPLACE_UNIVERSE.iter().chain(LEFT_ALONE).copied().collect();
+        named.sort_unstable();
+        let mut known = KNOWN_TOP_LEVEL_KEYS.to_vec();
+        known.sort_unstable();
+        assert_eq!(named, known);
+    }
 
     fn empty_snapshot() -> DatabaseSnapshot {
         DatabaseSnapshot {

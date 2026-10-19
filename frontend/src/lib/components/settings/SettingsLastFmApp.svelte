@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import type { LastFmConnectionSettingsResponse } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -20,8 +21,6 @@
 		loadEndpoint: SETTINGS_ENDPOINTS.lastfm(),
 		saveEndpoint: SETTINGS_ENDPOINTS.lastfm()
 	});
-
-	const SECRET_MASK = 'lastfm****';
 
 	onMount(() => {
 		form.load();

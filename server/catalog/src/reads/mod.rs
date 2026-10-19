@@ -361,7 +361,7 @@ fn platform_state(
     let config = inputs.config.clone();
     let prefer_local: platform::artwork::PreferLocal = Arc::new(move || {
         match config
-            .get::<droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings>()
+            .get_raw::<droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings>()
         {
             Ok(settings) => settings.prefer_local_cover_art,
             Err(error) => {

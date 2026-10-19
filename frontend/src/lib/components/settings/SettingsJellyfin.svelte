@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { onDestroy } from 'svelte';
@@ -32,7 +33,6 @@
 		}
 	}) as JellyfinSettingsForm;
 
-	const API_KEY_MASK = 'jellyfin****';
 	let availableUsers: JellyfinUser[] = $state([]);
 
 	export async function load() {
@@ -75,7 +75,7 @@
 
 			<SecretField
 				label="API Key"
-				mask={API_KEY_MASK}
+				mask={SECRET_MASK}
 				placeholder="Your Jellyfin API key"
 				help="Dashboard → API Keys → Create"
 				bind:value={form.data.api_key}

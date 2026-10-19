@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import { AUTH_ENDPOINTS } from '$lib/queries/auth/endpoints';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
@@ -45,7 +46,6 @@
 	};
 
 	const MAX_FRAMING_ADDRESSES = 8;
-	const OIDC_SECRET_MASK = 'oidc****';
 
 	const POLICY_MODES: { value: PolicyMode; label: string }[] = [
 		{ value: 'enforce', label: 'Enforce' },
@@ -500,7 +500,7 @@
 
 					<SecretField
 						label="Client Secret"
-						mask={OIDC_SECRET_MASK}
+						mask={SECRET_MASK}
 						help="Optional - leave blank for public/PKCE clients"
 						bind:value={oidcForm.data.client_secret}
 					/>

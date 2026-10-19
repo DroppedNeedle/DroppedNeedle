@@ -20,13 +20,13 @@ pub struct ListenBrainzConnection {
 
 impl Section for ListenBrainzConnection {
     const KEY: &'static str = "listenbrainz_settings";
+    const EFFECTS: &'static [Effect] = &[Effect::Invalidate(&[CacheRoot::ListenBrainz])];
 }
 
 impl SecretSection for ListenBrainzConnection {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
         vec![SecretField {
             value: &mut self.user_token,
-            mask: LISTENBRAINZ_TOKEN_MASK,
             strip: false,
         }]
     }
@@ -78,7 +78,6 @@ impl SecretSection for YouTubeConnection {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
         vec![SecretField {
             value: &mut self.api_key,
-            mask: YOUTUBE_API_KEY_MASK,
             strip: true,
         }]
     }
@@ -163,7 +162,6 @@ impl SecretSection for SpotifySettings {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
         vec![SecretField {
             value: &mut self.client_secret,
-            mask: SPOTIFY_SECRET_MASK,
             strip: false,
         }]
     }
@@ -220,6 +218,7 @@ impl Default for EventsSettings {
 
 impl Section for EventsSettings {
     const KEY: &'static str = "events";
+    const EFFECTS: &'static [Effect] = &[Effect::KickEventsSweep];
 
     fn validate(&self) -> Result<(), ConfigError> {
         if !is_valid_hhmm(&self.poll_time) {
@@ -238,12 +237,10 @@ impl SecretSection for EventsSettings {
         vec![
             SecretField {
                 value: &mut self.ticketmaster_api_key,
-                mask: TICKETMASTER_KEY_MASK,
                 strip: true,
             },
             SecretField {
                 value: &mut self.skiddle_api_key,
-                mask: SKIDDLE_KEY_MASK,
                 strip: true,
             },
         ]
@@ -269,7 +266,6 @@ impl SecretSection for WrappedSettings {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
         vec![SecretField {
             value: &mut self.api_key,
-            mask: WRAPPED_API_KEY_MASK,
             strip: true,
         }]
     }
@@ -317,7 +313,6 @@ impl SecretSection for OidcConnection {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
         vec![SecretField {
             value: &mut self.client_secret,
-            mask: OIDC_SECRET_MASK,
             strip: false,
         }]
     }
@@ -350,12 +345,10 @@ impl SecretSection for LastFmSettings {
         vec![
             SecretField {
                 value: &mut self.api_key,
-                mask: LASTFM_SECRET_MASK,
                 strip: true,
             },
             SecretField {
                 value: &mut self.shared_secret,
-                mask: LASTFM_SECRET_MASK,
                 strip: true,
             },
         ]

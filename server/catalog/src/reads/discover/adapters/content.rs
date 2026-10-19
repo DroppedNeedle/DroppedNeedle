@@ -40,7 +40,9 @@ fn read<T: Default>(
 /// and a key.
 pub fn download_client_ready(config: &ConfigStore) -> bool {
     let slskd = read("slskd", config.get_raw::<SlskdConnection>());
-    let sabnzbd = read("download_clients", config.get_raw::<DownloadClients>()).sabnzbd;
+    let sabnzbd = read("download_clients", config.get_raw::<DownloadClients>())
+        .sabnzbd
+        .clone();
     (slskd.enabled && !slskd.url.is_empty() && !slskd.api_key.is_empty())
         || (sabnzbd.enabled && !sabnzbd.url.is_empty() && !sabnzbd.api_key.is_empty())
 }
@@ -49,7 +51,7 @@ pub fn download_client_ready(config: &ConfigStore) -> bool {
 /// that cannot be read counts as off, with a log line.
 pub fn integration_status(config: &ConfigStore) -> IntegrationStatus {
     let lb = read("listenbrainz", config.get_raw::<ListenBrainzConnection>());
-    let lastfm = read("lastfm", config.get::<LastFmSettings>());
+    let lastfm = read("lastfm", config.get_raw::<LastFmSettings>());
     let youtube = read("youtube", config.get_raw::<YouTubeConnection>());
     let jellyfin = read("jellyfin", config.get_raw::<JellyfinConnection>());
     let navidrome = read("navidrome", config.get_raw::<NavidromeConnection>());

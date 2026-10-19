@@ -82,6 +82,7 @@ impl Default for SlskdConnection {
 
 impl Section for SlskdConnection {
     const KEY: &'static str = "download_client";
+    const EFFECTS: &'static [Effect] = &[Effect::WakeDownloads];
 
     fn validate(&self) -> Result<(), ConfigError> {
         let key = Self::KEY;
@@ -159,7 +160,6 @@ impl SecretSection for SlskdConnection {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
         vec![SecretField {
             value: &mut self.api_key,
-            mask: SLSKD_API_KEY_MASK,
             strip: true,
         }]
     }
@@ -216,6 +216,7 @@ pub struct DownloadClients {
 
 impl Section for DownloadClients {
     const KEY: &'static str = "download_clients";
+    const EFFECTS: &'static [Effect] = &[Effect::WakeDownloads];
 
     fn normalize(&mut self) {
         normalize_http_url(&mut self.sabnzbd.url, "https://");
@@ -226,7 +227,6 @@ impl SecretSection for DownloadClients {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
         vec![SecretField {
             value: &mut self.sabnzbd.api_key,
-            mask: SABNZBD_API_KEY_MASK,
             strip: true,
         }]
     }
@@ -323,7 +323,6 @@ impl SecretSection for ProwlarrConnection {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
         vec![SecretField {
             value: &mut self.api_key,
-            mask: PROWLARR_API_KEY_MASK,
             strip: true,
         }]
     }
@@ -355,7 +354,6 @@ impl SecretSection for LidarrImportConnection {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
         vec![SecretField {
             value: &mut self.api_key,
-            mask: LIDARR_API_KEY_MASK,
             strip: true,
         }]
     }

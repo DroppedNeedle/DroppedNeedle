@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { onDestroy } from 'svelte';
@@ -29,7 +30,6 @@
 		refreshIntegration: true
 	}) as YouTubeSettingsForm;
 
-	const API_KEY_MASK = 'youtube****';
 	let wasApiAlreadyEnabled = $state(false);
 
 	export async function load() {
@@ -96,7 +96,7 @@
 
 				<SecretField
 					label="API Key"
-					mask={API_KEY_MASK}
+					mask={SECRET_MASK}
 					placeholder="Your YouTube Data API v3 key"
 					help="Enable YouTube Data API v3, then create an API key in Credentials"
 					bind:value={form.data.api_key}

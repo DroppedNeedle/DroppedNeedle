@@ -1,8 +1,8 @@
 //! Live reads of the sign-in settings: which providers are on, the OIDC
 //! connection, and the stable install ids sent to Plex and Jellyfin.
 //!
-//! Every read goes to the config store at call time, so an admin's change
-//! applies to the next login without a restart.
+//! Every read goes through a live handle, so an admin's change applies to
+//! the next login without a restart.
 
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     JellyfinConnection, OidcConnection, PlexConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::InternalState;
-use droppedneedle_kernel::runtime_config::{ConfigError, ConfigStore, UpdateError};
+use droppedneedle_kernel::runtime_config::{ConfigError, ConfigStore, Live, UpdateError};
 
 /// Which sign-in methods the login page offers (v2 `AuthProvidersResponse`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,69 +27,94 @@ pub struct EnabledProviders {
     pub oidc: bool,
 }
 
-/// Read the sign-in switches. An unreadable section reads as off.
-pub fn enabled_providers(store: &ConfigStore) -> EnabledProviders {
-    EnabledProviders {
-        local: true,
-        plex: plex_login_enabled(store),
-        jellyfin: jellyfin_login_server(store).is_some(),
-        oidc: oidc_config(store).is_usable(),
-    }
+/// The sign-in sections, read live: an admin's change applies to the next
+/// login without a restart.
+#[derive(Clone, Debug)]
+pub struct SignInSettings {
+    plex: Live<PlexConnection>,
+    jellyfin: Live<JellyfinConnection>,
+    oidc: Live<OidcConnection>,
 }
 
-/// True when the admin turned Plex login on. Plex login works without a
-/// configured server (anyone with access to the shared server gets in
-/// when there is one; v2 parity), so only the switch counts.
-pub fn plex_login_enabled(store: &ConfigStore) -> bool {
-    match store.get_raw::<PlexConnection>() {
-        Ok(section) => section.login_enabled,
-        Err(error) => {
-            tracing::warn!(%error, "cannot read plex settings; plex login is off");
-            false
+impl SignInSettings {
+    /// Handles on the Plex, Jellyfin and OIDC sections.
+    #[must_use]
+    pub fn new(store: &ConfigStore) -> Self {
+        Self {
+            plex: store.live(),
+            jellyfin: store.live(),
+            oidc: store.live(),
         }
     }
-}
 
-/// The Jellyfin base URL when Jellyfin login is on and the server is set
-/// up, else `None`.
-pub fn jellyfin_login_server(store: &ConfigStore) -> Option<String> {
-    match store.get_raw::<JellyfinConnection>() {
-        Ok(section) if section.enabled && section.login_enabled => {
-            let url = section.jellyfin_url.trim_end_matches('/');
-            (!url.is_empty()).then(|| url.to_owned())
-        }
-        Ok(_) => None,
-        Err(error) => {
-            tracing::warn!(%error, "cannot read jellyfin settings; jellyfin login is off");
-            None
+    /// Read the sign-in switches. An unreadable section reads as off.
+    #[must_use]
+    pub fn enabled_providers(&self) -> EnabledProviders {
+        EnabledProviders {
+            local: true,
+            plex: self.plex_login_enabled(),
+            jellyfin: self.jellyfin_login_server().is_some(),
+            oidc: self.oidc_config().is_usable(),
         }
     }
-}
 
-/// The OIDC connection with the client secret decrypted. Never log it.
-/// An unreadable section reads as disabled.
-pub fn oidc_config(store: &ConfigStore) -> OidcConfig {
-    match store.get_raw::<OidcConnection>() {
-        Ok(connection) => {
-            let secret = connection.client_secret.expose();
-            OidcConfig {
-                enabled: connection.enabled,
-                issuer: connection.issuer,
-                client_id: connection.client_id,
-                client_secret: (!secret.is_empty()).then(|| secret.to_owned()),
-                redirect_uri: connection.redirect_uri,
-                scopes: connection.scopes,
+    /// True when the admin turned Plex login on. Plex login works without
+    /// a configured server (anyone with access to the shared server gets
+    /// in when there is one; v2 parity), so only the switch counts.
+    #[must_use]
+    pub fn plex_login_enabled(&self) -> bool {
+        match self.plex.get() {
+            Ok(section) => section.login_enabled,
+            Err(error) => {
+                tracing::warn!(%error, "cannot read plex settings; plex login is off");
+                false
             }
         }
-        Err(error) => {
-            tracing::warn!(%error, "cannot read oidc settings; oidc login is off");
-            OidcConfig {
-                enabled: false,
-                issuer: String::new(),
-                client_id: String::new(),
-                client_secret: None,
-                redirect_uri: String::new(),
-                scopes: String::new(),
+    }
+
+    /// The Jellyfin base URL when Jellyfin login is on and the server is
+    /// set up, else `None`.
+    #[must_use]
+    pub fn jellyfin_login_server(&self) -> Option<String> {
+        match self.jellyfin.get() {
+            Ok(section) if section.enabled && section.login_enabled => {
+                let url = section.jellyfin_url.trim_end_matches('/');
+                (!url.is_empty()).then(|| url.to_owned())
+            }
+            Ok(_) => None,
+            Err(error) => {
+                tracing::warn!(%error, "cannot read jellyfin settings; jellyfin login is off");
+                None
+            }
+        }
+    }
+
+    /// The OIDC connection with the client secret decrypted. Never log it.
+    /// An unreadable section reads as disabled.
+    #[must_use]
+    pub fn oidc_config(&self) -> OidcConfig {
+        match self.oidc.get() {
+            Ok(connection) => {
+                let secret = connection.client_secret.expose();
+                OidcConfig {
+                    enabled: connection.enabled,
+                    issuer: connection.issuer.clone(),
+                    client_id: connection.client_id.clone(),
+                    client_secret: (!secret.is_empty()).then(|| secret.to_owned()),
+                    redirect_uri: connection.redirect_uri.clone(),
+                    scopes: connection.scopes.clone(),
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "cannot read oidc settings; oidc login is off");
+                OidcConfig {
+                    enabled: false,
+                    issuer: String::new(),
+                    client_id: String::new(),
+                    client_secret: None,
+                    redirect_uri: String::new(),
+                    scopes: String::new(),
+                }
             }
         }
     }

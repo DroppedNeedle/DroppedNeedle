@@ -172,8 +172,8 @@ from DroppedNeedle v2 load unchanged.
 
 Settings are what the admin types into the plugin's card. The plugin gets the
 current values when it starts and again every time they are saved, secrets
-decrypted. Secret values are encrypted in the config file and shown as
-`plugin****`; saving the mask back keeps the stored value.
+decrypted. Secret values are encrypted in the settings database and shown as
+`********`; saving the mask back keeps the stored value.
 
 ### Running something other than Python
 

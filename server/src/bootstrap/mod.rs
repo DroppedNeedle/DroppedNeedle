@@ -30,7 +30,7 @@ use crate::{
     admin::{AdminDb, AdminSetup, quota::reload_overrides},
     app::create_app_with_web,
     settings::{
-        effects::{LiveSaveEffects, SaveEffects},
+        effects::{Effects, LiveSaveEffects},
         library_catalog::SqliteLibraryPolicyCatalog,
         section_prefs::{SqliteLinkStatus, SqliteSectionPrefsStore},
         services::SqliteImpactBuckets,
@@ -76,7 +76,7 @@ use droppedneedle_kernel::{
         ingest::mark_skip,
         quota::QUOTA_FILE_NAME,
         secret_sections::ListenBrainzConnection,
-        sections::LyricsSettings,
+        sections::{LyricsSettings, MusicBrainzSettings},
     },
 };
 use droppedneedle_library::wiring::LibrarySetup;
@@ -264,10 +264,11 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let queues = jobs::QueueSetup::new(db.clone(), &config);
     let web = prepare_web(&config).await?;
 
-    let config_store = Arc::new(open_settings(&db, &config_dir, key_origin).await?);
-    key_check::verify(&db, &crypto, &config_dir, &config.library_db_path).await?;
-    let ids = Arc::new(UuidGenerator);
     let clock = Arc::new(droppedneedle_kernel::clock::SystemClock);
+    let config_store = Arc::new(open_settings(&db, &config_dir, key_origin, clock.clone()).await?);
+    let wall: Arc<dyn droppedneedle_kernel::clock::Clock> = clock.clone();
+    key_check::verify(&db, &crypto, &wall, &config_dir, &config.library_db_path).await?;
+    let ids = Arc::new(UuidGenerator);
     // One live event hub for the process. Bundles built below publish into
     // it once the state attaches it; the revision loops feed it after
     // each commit.
@@ -308,25 +309,25 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // cache stays shared with the admin stats and clear routes.
     let provider_cache = Arc::new(InMemoryProviderCache::new());
     let providers = Arc::new(Providers::new(provider_cache.clone()));
-    // Read per call so turning ListenBrainz on or off takes effect at once.
-    let listenbrainz_store = config_store.clone();
+    // Read live so turning ListenBrainz on or off takes effect at once.
+    let listenbrainz = config_store.live::<ListenBrainzConnection>();
     let listenbrainz_enabled: droppedneedle_catalog::reads::enrichment::live::Switch = Arc::new(
         move || {
-            listenbrainz_store
-            .get_raw::<ListenBrainzConnection>()
-            .map(|settings| settings.enabled)
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "cannot read listenbrainz settings; popularity enrichment off");
-                false
-            })
+            listenbrainz
+                .get()
+                .map(|settings| settings.enabled)
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "cannot read listenbrainz settings; popularity enrichment off");
+                    false
+                })
         },
     );
-    // Read per call so turning lyrics on or off takes effect at once.
-    let lyrics_store = config_store.clone();
+    // Read live so turning lyrics on or off takes effect at once.
+    let lyrics = config_store.live::<LyricsSettings>();
     let lyrics_enabled: droppedneedle_catalog::reads::enrichment::live::Switch =
         Arc::new(move || {
-            lyrics_store
-                .get::<LyricsSettings>()
+            lyrics
+                .get()
                 .map(|settings| settings.enabled)
                 .unwrap_or_else(|error| {
                     tracing::warn!(%error, "cannot read lyrics settings; lyrics enrichment off");
@@ -378,17 +379,17 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         .with_purchase_links(Arc::new(PluginPurchaseLinks(plugin_host.clone())))
         .with_details(Arc::new(PluginDetailsSource(plugin_host.clone()))),
     );
-    // Read per request, so a source switch in Settings reaches the
-    // long-lived clients without a restart.
+    // Read live, so a source switch in Settings reaches the long-lived
+    // clients without a restart.
     let mb_source: droppedneedle_providers::musicbrainz::SourceFn = {
-        let settings = config_store.clone();
+        let settings = config_store.live::<MusicBrainzSettings>();
         let outbound = outbound.clone();
         Arc::new(move || {
-            outbound.musicbrainz_source(
-                &droppedneedle_catalog::reads::catalog::upstream::CatalogSettings::musicbrainz(
-                    settings.as_ref(),
-                ),
-            )
+            let current = settings.get().unwrap_or_else(|error| {
+                tracing::warn!(%error, "cannot read musicbrainz settings; using the defaults");
+                Arc::default()
+            });
+            outbound.musicbrainz_source(&current)
         })
     };
     let library = LibrarySetup::build(
@@ -651,10 +652,24 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         tracing::warn!("scan completion hook was already set");
     }
     let download_worker = acquire.worker.clone();
-    let effects: Arc<dyn SaveEffects> = Arc::new(
-        LiveSaveEffects::new(provider_cache.clone(), jobs.events_kick())
-            .with_download_wake(Arc::new(move || download_worker.wake())),
+    // Each section's declared effects run after every committed change to
+    // it, whoever saved it; settings routes wait for them before answering.
+    let (effects, effects_runner) = Effects::new(
+        config_store.clone(),
+        Arc::new(
+            LiveSaveEffects::new(provider_cache.clone(), jobs.events_kick())
+                .with_download_wake(Arc::new(move || download_worker.wake())),
+        ),
     );
+    if supervisor
+        .one_shot("settings_effects", move |ctx| async move {
+            effects_runner.run(ctx.token().clone()).await;
+            Ok(())
+        })
+        .is_err()
+    {
+        tracing::warn!("the settings effects loop was already running");
+    }
     let settings = SettingsSetup::build(
         config_store.clone(),
         effects,
@@ -765,18 +780,18 @@ async fn open_settings(
     db: &droppedneedle_kernel::db::Db,
     config_dir: &std::path::Path,
     key_origin: KeyOrigin,
+    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
 ) -> Result<ConfigStore, BootError> {
     let legacy = LegacyConfig::at(config_dir, key_origin == KeyOrigin::Minted);
     let store = wait_out_busy("settings", ConfigError::is_busy, || async {
         let store = ConfigStore::open(
             db.clone(),
             Crypto::load(config_dir).map_err(|error| ConfigError::Database(error.to_string()))?,
+            clock.clone(),
             legacy.clone(),
         )
         .await?;
-        store
-            .seed_default::<droppedneedle_kernel::runtime_config::sections::MusicBrainzSettings>()
-            .await?;
+        store.seed_default::<MusicBrainzSettings>().await?;
         // A busy database is waited out; any other failure (an install id
         // section that does not read) leaves the ids to their per-process
         // fallback rather than blocking every start.

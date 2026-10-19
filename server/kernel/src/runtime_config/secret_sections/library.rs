@@ -90,13 +90,13 @@ impl Default for TypedLibrary {
 
 impl Section for TypedLibrary {
     const KEY: &'static str = "library_settings";
+    const EFFECTS: &'static [Effect] = &[Effect::Invalidate(&[CacheRoot::AcoustId])];
 }
 
 impl SecretSection for TypedLibrary {
     fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
         vec![SecretField {
             value: &mut self.acoustid_api_key,
-            mask: ACOUSTID_KEY_MASK,
             strip: false,
         }]
     }

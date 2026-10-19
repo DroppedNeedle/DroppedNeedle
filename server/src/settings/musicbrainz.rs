@@ -13,7 +13,7 @@
 
 use std::sync::Mutex;
 
-use super::effects::{SaveEffects, SavedSection};
+use super::effects::Effects;
 use super::models::{
     BrainzmashPendingProposal, MusicBrainzBindingRequest, MusicBrainzSettingsUpdate,
     MusicBrainzSettingsView, MusicBrainzVerifyRequest,
@@ -27,7 +27,7 @@ use droppedneedle_kernel::runtime_config::sections::{
     OFFICIAL_MB_RATE_LIMIT, exact_nonblank,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
-use droppedneedle_kernel::runtime_config::{ConfigStore, UpdateError};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Section as _, UpdateError};
 
 /// BrainzMash disclosure version. A proposal carrying any other version
 /// is outdated and cannot proceed.
@@ -99,8 +99,8 @@ pub struct MusicBrainzLifecycle {
     pub op: tokio::sync::Mutex<()>,
     /// Transient pending proposal.
     pub pending: Mutex<Option<PendingProposal>>,
-    /// Post-save fan-out (source changes invalidate the cache root).
-    pub effects: std::sync::Arc<dyn SaveEffects>,
+    /// Tells when a save's effects (the MusicBrainz cache root) have run.
+    pub effects: Effects,
     /// Where the two built-in sources are probed.
     outbound: Outbound,
 }
@@ -108,11 +108,7 @@ pub struct MusicBrainzLifecycle {
 impl MusicBrainzLifecycle {
     /// Build over the shared store and save fan-out. `outbound`
     /// says where the two built-in sources are probed.
-    pub fn new(
-        store: std::sync::Arc<ConfigStore>,
-        effects: std::sync::Arc<dyn SaveEffects>,
-        outbound: Outbound,
-    ) -> Self {
+    pub fn new(store: std::sync::Arc<ConfigStore>, effects: Effects, outbound: Outbound) -> Self {
         Self {
             store,
             op: tokio::sync::Mutex::new(()),
@@ -195,10 +191,11 @@ impl MusicBrainzLifecycle {
                         .to_owned(),
             });
         }
+        let mark = self.effects.mark(MusicBrainzSettings::KEY);
         if mode == MbSourceMode::Official {
             let view = self.save_official().await?;
             drop(_op);
-            self.effects.after_save(SavedSection::MusicBrainz).await;
+            self.effects.saved(mark).await;
             return Ok(view);
         }
         let api_url = update.api_url.clone().unwrap_or_default();
@@ -248,7 +245,7 @@ impl MusicBrainzLifecycle {
             .await?;
         let view = self.view(saved);
         drop(_op);
-        self.effects.after_save(SavedSection::MusicBrainz).await;
+        self.effects.saved(mark).await;
         Ok(view)
     }
 
@@ -289,6 +286,7 @@ impl MusicBrainzLifecycle {
     /// The save invalidates the MusicBrainz cache root.
     pub async fn stage(&self) -> Result<(MusicBrainzSettingsView, PendingProposal), SettingsError> {
         let _op = self.begin_op().await;
+        let mark = self.effects.mark(MusicBrainzSettings::KEY);
         let saved = self
             .update_settings(|previous| {
                 let source_changed = previous.source_mode != MbSourceMode::Brainzmash;
@@ -324,7 +322,7 @@ impl MusicBrainzLifecycle {
         *self.pending_mut()? = Some(proposal.clone());
         let view = self.view(saved);
         drop(_op);
-        self.effects.after_save(SavedSection::MusicBrainz).await;
+        self.effects.saved(mark).await;
         Ok((view, proposal))
     }
 
@@ -475,8 +473,9 @@ impl MusicBrainzLifecycle {
         &self,
         binding: &MusicBrainzBindingRequest,
     ) -> Result<MusicBrainzSettingsView, SettingsError> {
+        let mark = self.effects.mark(MusicBrainzSettings::KEY);
         let view = self.promote_verified(binding).await?;
-        self.effects.after_save(SavedSection::MusicBrainz).await;
+        self.effects.saved(mark).await;
         Ok(view)
     }
 

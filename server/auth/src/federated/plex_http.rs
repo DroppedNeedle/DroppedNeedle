@@ -15,12 +15,12 @@ use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
 use super::FederatedError;
 use super::plex::{PRODUCT, PlexAccount, PlexPin, PlexPinClient, PlexServerIdentity};
 use super::plex_models::{AccountListWire, AccountWire, PinPollWire, PinWire};
-use super::settings::{InstallIds, plex_login_enabled};
+use super::settings::{InstallIds, SignInSettings};
 use super::users::PROVIDER_PLEX;
 use crate::users::stores::{BoxFuture, DirectoryError, DirectoryUser, UserDirectory};
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
-use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::PlexConnection;
+use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 use droppedneedle_providers::plextv::Resource;
 
 /// PIN create and account calls (v2 parity).
@@ -34,7 +34,8 @@ const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 #[derive(Clone)]
 pub struct PlexTv {
     http: reqwest::Client,
-    store: Arc<ConfigStore>,
+    sign_in: SignInSettings,
+    connection: Live<PlexConnection>,
     ids: InstallIds,
     base: String,
     server: Arc<dyn PlexServerIdentity>,
@@ -50,9 +51,10 @@ impl PlexTv {
         server: Arc<dyn PlexServerIdentity>,
     ) -> Self {
         Self {
-            ids: InstallIds::new(store.clone()),
+            sign_in: SignInSettings::new(&store),
+            connection: store.live(),
+            ids: InstallIds::new(store),
             http,
-            store,
             base: base.trim_end_matches('/').to_owned(),
             server,
         }
@@ -171,7 +173,7 @@ impl PlexPinClient for PlexTv {
     }
 
     fn login_enabled(&self) -> bool {
-        plex_login_enabled(&self.store)
+        self.sign_in.plex_login_enabled()
     }
 
     async fn create_pin(&self) -> Result<PlexPin, FederatedError> {
@@ -289,7 +291,7 @@ impl UserDirectory for PlexTv {
     /// failing is an outage.
     fn list_users(&self) -> BoxFuture<'_, Result<Vec<DirectoryUser>, DirectoryError>> {
         Box::pin(async move {
-            let section = self.store.get_raw::<PlexConnection>().map_err(|error| {
+            let section = self.connection.get().map_err(|error| {
                 tracing::warn!(%error, "cannot read plex settings for user import");
                 DirectoryError::NotConfigured
             })?;

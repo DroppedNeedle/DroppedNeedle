@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { onDestroy } from 'svelte';
@@ -26,7 +27,6 @@
 		refreshIntegration: true
 	}) as NavidromeSettingsForm;
 
-	const PASSWORD_MASK = '********';
 	let syncing = $state(false);
 	let syncResult = $state<NavidromePlaylistSyncResult | null>(null);
 
@@ -104,7 +104,7 @@
 
 			<SecretField
 				label="Password"
-				mask={PASSWORD_MASK}
+				mask={SECRET_MASK}
 				placeholder="Your Navidrome password"
 				bind:value={form.data.password}
 			/>

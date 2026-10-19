@@ -222,12 +222,15 @@ async fn secrets_seal_at_rest_and_saves_reach_the_running_plugin() {
     let keys = rig.host.get("toy").unwrap().manifest.secret_keys();
     assert_eq!(
         rig.config.get_plugin_masked("toy", &keys).unwrap().settings["api_key"],
-        "plugin****"
+        "********"
     );
-    let keep = HashMap::from([("api_key".to_owned(), "plugin****".to_owned())]);
+    let keep = HashMap::from([("api_key".to_owned(), "********".to_owned())]);
     rig.host.update_settings("toy", true, keep).unwrap();
     assert_eq!(
-        rig.config.get_plugin_raw("toy", &keys).unwrap().settings["api_key"],
+        rig.config
+            .get_plugin_raw("toy", &keys)
+            .unwrap()
+            .into_settings()["api_key"],
         "live-secret"
     );
 }
@@ -632,7 +635,7 @@ async fn the_panel_page_is_sealed_on_every_answer() {
         }
         router_as(&rig, "admin-1")
             .layer(axum::middleware::from_fn_with_state(
-                ContentSecurity::new(Arc::clone(&rig.config)),
+                ContentSecurity::new(rig.config.live()),
                 content_security,
             ))
             .oneshot(request.body(Body::empty()).unwrap())

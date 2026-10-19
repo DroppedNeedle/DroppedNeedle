@@ -20,12 +20,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 
-#[cfg(any(test, feature = "test-support"))]
-use super::models::SPOTIFY_SECRET_MASK;
 use super::models::{
     SpotifyAuthUrlResponse, SpotifyPlaylistItem, SpotifyPlaylistListResponse, SpotifySettings,
 };
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
+#[cfg(any(test, feature = "test-support"))]
+use droppedneedle_kernel::runtime_config::SECRET_MASK;
 
 /// OAuth scopes (v2 `_SPOTIFY_SCOPES`, verbatim).
 pub const SPOTIFY_SCOPES: &str =
@@ -325,7 +325,7 @@ impl SpotifySettingsStore for MemorySpotifySettings {
             client_secret: if inner.client_secret.is_empty() {
                 String::new()
             } else {
-                SPOTIFY_SECRET_MASK.to_owned()
+                SECRET_MASK.to_owned()
             },
             enabled: inner.enabled,
             spotify_redirect_origin: inner.spotify_redirect_origin.clone(),
@@ -369,7 +369,7 @@ impl MemorySpotifySettings {
             self.set_legacy_callback(false);
         }
         inner.client_id = settings.client_id.clone();
-        if settings.client_secret != SPOTIFY_SECRET_MASK {
+        if settings.client_secret != SECRET_MASK {
             inner.client_secret = settings.client_secret.clone();
         }
         inner.enabled = settings.enabled;

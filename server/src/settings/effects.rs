@@ -1,81 +1,41 @@
 //! Settings-save side effects.
 //!
-//! v2 cleared memoized provider graphs and kicked the events sweep on
-//! save. v3 builds clients per request from stored config, so there is no
-//! graph to rebuild; what remains is cache invalidation per section, the
-//! single-flight events kick and waking the download worker when a
-//! download source is saved. They ride behind ports so tests observe them
-//! through a recorder and production wires the real cache, the jobs-owned
-//! sweep and the worker.
+//! Each section declares on its type what a change to it sets off
+//! ([`Section::EFFECTS`](droppedneedle_kernel::runtime_config::Section::EFFECTS)):
+//! provider caches to drop, cached responses to clear, the events sweep to
+//! kick, the download worker to wake. The [`EffectsRunner`] runs them on
+//! the section's change notice, so every committed save runs them, whoever
+//! made it. A settings route marks the section before its save and
+//! waits in [`Effects::saved`] before it answers, so the next read after a
+//! save never sees a stale cache. A route save that left the row as it was
+//! runs the section's effects itself, as an explicit save always has.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use futures_util::future::BoxFuture;
+use droppedneedle_kernel::jobs::CancellationToken;
+use futures_util::future::{BoxFuture, select_all};
+use tokio::sync::watch;
 
 use droppedneedle_kernel::jobs::events_kick::EventsKick;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::effects::Effect;
+use droppedneedle_kernel::runtime_config::registry;
 use droppedneedle_providers::cache::{ProviderCache, invalidate_source};
 
-/// Sections whose save invalidates provider caches, the events section,
-/// which kicks the sweep, and the download sources, which wake the
-/// download worker. Only sources with registered cache roots invalidate;
-/// connection sections without cached reads (Jellyfin, Navidrome, Plex,
-/// YouTube, OIDC, download clients) need no invalidation because their
-/// clients build per request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SavedSection {
-    /// ListenBrainz connection.
-    ListenBrainz,
-    /// Events sources (kicks the sweep; no cached reads to invalidate).
-    Events,
-    /// MusicBrainz connection.
-    MusicBrainz,
-    /// Advanced tunables (AudioDB key and TTLs).
-    Advanced,
-    /// Library settings (AcoustID key).
-    Library,
-    /// Home page settings (cached home and discover rows, plus the
-    /// ListenBrainz and Last.fm reads they are built from).
-    Home,
-    /// A download source (slskd or SABnzbd). Requests held for want of a
-    /// source start on the worker's next pass, so the save asks for one.
-    DownloadSource,
-    /// Anything else (no cache roots).
-    Other,
-}
-
-impl SavedSection {
-    /// The fan-out for one config-file section key.
-    #[must_use]
-    pub fn for_key(key: &str) -> Self {
-        match key {
-            "listenbrainz_settings" => Self::ListenBrainz,
-            "events" => Self::Events,
-            "musicbrainz_settings" => Self::MusicBrainz,
-            "advanced_settings" => Self::Advanced,
-            "library_settings" => Self::Library,
-            "home_settings" => Self::Home,
-            "download_client" | "download_clients" => Self::DownloadSource,
-            _ => Self::Other,
-        }
-    }
-}
-
-/// Composite home and discover responses a home settings save makes stale
-/// (v2 `clear_home_cache`).
-const HOME_RESPONSE_PREFIXES: &[&str] = &["home_response:", "discover_response:"];
-
-/// Post-save fan-out. Called after a section persists; failures are
-/// impossible by construction (invalidation counts, kicks collapse).
+/// Carries out one effect. Production wires the shared cache, the events
+/// sweep and the download worker; tests record.
 pub trait SaveEffects: Send + Sync {
-    /// Run the post-save fan-out for one section.
-    fn after_save<'a>(&'a self, section: SavedSection) -> BoxFuture<'a, ()>;
+    /// Carry out `effect`. It cannot fail: invalidation counts, kicks
+    /// collapse, a wake only signals.
+    fn run(&self, effect: Effect) -> BoxFuture<'_, ()>;
 }
 
 /// Asks the download worker for a pass now. It only signals: it never
 /// waits for the pass and cannot fail.
 pub type DownloadWake = Arc<dyn Fn() + Send + Sync>;
 
-/// Production fan-out: provider-cache invalidation, the events kick and
+/// Production effects: provider-cache invalidation, the events kick and
 /// the download worker's wake.
 pub struct LiveSaveEffects {
     /// Provider cache to invalidate.
@@ -105,32 +65,178 @@ impl LiveSaveEffects {
 }
 
 impl SaveEffects for LiveSaveEffects {
-    fn after_save<'a>(&'a self, section: SavedSection) -> BoxFuture<'a, ()> {
+    fn run(&self, effect: Effect) -> BoxFuture<'_, ()> {
         Box::pin(async move {
-            let roots: &[&str] = match section {
-                SavedSection::ListenBrainz => &["listenbrainz"],
-                SavedSection::MusicBrainz => &["musicbrainz"],
-                SavedSection::Advanced => &["audiodb"],
-                SavedSection::Library => &["acoustid"],
-                SavedSection::Home => &["listenbrainz", "lastfm"],
-                SavedSection::Events | SavedSection::DownloadSource | SavedSection::Other => &[],
-            };
-            for root in roots {
-                invalidate_source(self.cache.as_ref(), root).await;
-            }
-            if section == SavedSection::Home {
-                for prefix in HOME_RESPONSE_PREFIXES {
-                    self.cache.clear_prefix(prefix).await;
+            match effect {
+                Effect::Invalidate(roots) => {
+                    for root in roots {
+                        invalidate_source(self.cache.as_ref(), root.as_str()).await;
+                    }
+                }
+                Effect::ClearPrefixes(prefixes) => {
+                    for prefix in prefixes {
+                        self.cache.clear_prefix(prefix).await;
+                    }
+                }
+                Effect::KickEventsSweep => self.kick.kick(),
+                Effect::WakeDownloads => {
+                    if let Some(wake) = &self.download_wake {
+                        wake();
+                    }
                 }
             }
-            if section == SavedSection::Events {
-                self.kick.kick();
-            }
-            if section == SavedSection::DownloadSource
-                && let Some(wake) = &self.download_wake
-            {
-                wake();
-            }
         })
+    }
+}
+
+/// The revision of each section whose effects have run.
+type Applied = HashMap<&'static str, i64>;
+
+/// Says when a section's effects have run. Cheap to clone.
+#[derive(Clone)]
+pub struct Effects {
+    store: Arc<ConfigStore>,
+    sink: Arc<dyn SaveEffects>,
+    declared: Arc<HashMap<&'static str, &'static [Effect]>>,
+    applied: watch::Receiver<Applied>,
+}
+
+/// A section's revision just before a route saved it.
+#[derive(Debug, Clone, Copy)]
+pub struct SaveMark {
+    key: &'static str,
+    revision: i64,
+}
+
+impl Effects {
+    /// Watch every section that declares effects. The runner must be
+    /// started for them to run; while none runs, [`Effects::settled`]
+    /// returns at once.
+    pub fn new(store: Arc<ConfigStore>, sink: Arc<dyn SaveEffects>) -> (Self, EffectsRunner) {
+        let mut watched = Vec::new();
+        let mut applied = Applied::new();
+        let declared = Arc::new(registry::effects().into_iter().collect());
+        for (key, effects) in registry::effects() {
+            let notice = store.subscribe(key);
+            applied.insert(key, *notice.borrow());
+            watched.push(Watched {
+                key,
+                effects,
+                notice,
+            });
+        }
+        let (sender, receiver) = watch::channel(applied);
+        (
+            Self {
+                store,
+                sink: sink.clone(),
+                declared,
+                applied: receiver,
+            },
+            EffectsRunner {
+                sink,
+                watched,
+                applied: sender,
+            },
+        )
+    }
+
+    /// Mark the section under `key` before a route saves it.
+    #[must_use]
+    pub fn mark(&self, key: &'static str) -> SaveMark {
+        SaveMark {
+            key,
+            revision: self.store.revision(key),
+        }
+    }
+
+    /// After a route's save: when the row moved, wait for its effects to
+    /// run; when the save left it as it was, run them here, since no notice
+    /// fires for an unchanged row.
+    pub async fn saved(&self, mark: SaveMark) {
+        if self.store.revision(mark.key) != mark.revision {
+            self.settled(mark.key).await;
+            return;
+        }
+        let effects = self.declared.get(mark.key).copied().unwrap_or_default();
+        for effect in effects {
+            self.sink.run(*effect).await;
+        }
+    }
+
+    /// Wait until the effects of every committed change to the section
+    /// under `key` have run. Returns at once for a section without
+    /// effects, or when the runner has stopped.
+    async fn settled(&self, key: &str) {
+        if !self.applied.borrow().contains_key(key) {
+            return;
+        }
+        let target = self.store.revision(key);
+        let mut applied = self.applied.clone();
+        let _ = applied
+            .wait_for(|applied| applied.get(key).is_none_or(|revision| *revision >= target))
+            .await;
+    }
+}
+
+/// One section the runner follows.
+struct Watched {
+    key: &'static str,
+    effects: &'static [Effect],
+    notice: watch::Receiver<i64>,
+}
+
+/// Runs each section's effects after each committed change to it.
+pub struct EffectsRunner {
+    sink: Arc<dyn SaveEffects>,
+    watched: Vec<Watched>,
+    applied: watch::Sender<Applied>,
+}
+
+impl EffectsRunner {
+    /// Run until `stop` is cancelled or the store is gone.
+    pub async fn run(mut self, stop: CancellationToken) {
+        if self.watched.is_empty() {
+            return;
+        }
+        loop {
+            self.catch_up().await;
+            let changed = select_all(
+                self.watched
+                    .iter_mut()
+                    .map(|watched| Box::pin(watched.notice.changed())),
+            );
+            tokio::select! {
+                biased;
+                () = stop.cancelled() => return,
+                (changed, _, _) = changed => {
+                    if changed.is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Run the effects of every section that changed since its effects
+    /// last ran.
+    async fn catch_up(&mut self) {
+        for watched in &self.watched {
+            let revision = *watched.notice.borrow();
+            let done = self
+                .applied
+                .borrow()
+                .get(watched.key)
+                .is_some_and(|applied| *applied >= revision);
+            if done {
+                continue;
+            }
+            for effect in watched.effects {
+                self.sink.run(*effect).await;
+            }
+            self.applied.send_modify(|applied| {
+                applied.insert(watched.key, revision);
+            });
+        }
     }
 }

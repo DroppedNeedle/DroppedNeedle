@@ -14,12 +14,15 @@
 //! `providers::youtube` the client around [`QuotaStore`](quota::QuotaStore).
 
 pub mod crypto;
+pub mod effects;
 pub mod error;
 pub mod ingest;
 pub mod key_check;
 pub mod mask;
 pub mod origin;
+pub mod plain;
 pub mod quota;
+pub mod registry;
 pub mod secret;
 pub mod secret_sections;
 pub mod sections;
@@ -30,56 +33,14 @@ pub mod store;
 pub use crypto::{Crypto, KeyOrigin};
 pub use error::ConfigError;
 pub use ingest::LegacyConfig;
-pub use mask::Masked;
+pub use mask::{Masked, SECRET_MASK};
+pub use plain::{Plain, PluginValues};
 pub use quota::{QuotaStatus, QuotaStore};
+pub use registry::{KNOWN_TOP_LEVEL_KEYS, Listed};
 pub use secret::Secret;
 pub use secret_sections::SecretSection;
 pub use sections::Section;
-pub use store::{ConfigStore, UpdateError};
-
-/// Every settings key v3 stores: kept sections plus the instance id. The
-/// one-time copy of `config.json` ([`ingest`]) copies only these and names
-/// any other key it leaves behind.
-pub const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
-    "user_preferences",
-    "home_settings",
-    "library_scan_schedule",
-    "library_scan_filesystem_watcher",
-    "advanced_settings",
-    "download_client",
-    "download_clients",
-    "download_policy",
-    "wanted",
-    "source_priority",
-    "usenet_search_backend",
-    "indexers",
-    "prowlarr",
-    "lidarr_import",
-    "jellyfin_settings",
-    "navidrome_settings",
-    "plex_settings",
-    "listenbrainz_settings",
-    "youtube_settings",
-    "lastfm_settings",
-    "lyrics_settings",
-    "spotify_settings",
-    "events",
-    "wrapped_settings",
-    "oidc_settings",
-    "security_settings",
-    "public_address",
-    "connect_apps",
-    "library_settings",
-    "library_management",
-    "musicbrainz_settings",
-    "scrobble_settings",
-    "primary_music_source",
-    "get_it",
-    "edition_preferences",
-    "plugins",
-    "instance_id",
-    "_internal",
-];
+pub use store::{ConfigStore, Live, UpdateError};
 
 /// One dropped section with the reason it is gone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -15,7 +15,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use common::{FIXED_ID, FixedIdGenerator};
-use droppedneedle::settings::effects::{SaveEffects, SavedSection};
+use droppedneedle::settings::effects::{Effects, SaveEffects};
 use droppedneedle::settings::models::{AdvancedSettingsForm, LibrarySettingsSaveRequest};
 use droppedneedle::settings::musicbrainz::BRAINZMASH_DISCLOSURE_VERSION;
 use droppedneedle::settings::services::SettingsService;
@@ -25,7 +25,8 @@ use droppedneedle::settings::verify::{
 };
 use droppedneedle::settings::wiring::SettingsSetup;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
-use droppedneedle_kernel::runtime_config::mask::{INDEXER_API_KEY_MASK, JELLYFIN_API_KEY_MASK};
+use droppedneedle_kernel::runtime_config::effects::{CacheRoot, Effect};
+use droppedneedle_kernel::runtime_config::mask::SECRET_MASK;
 use droppedneedle_kernel::runtime_config::secret_sections::{JellyfinConnection, TypedLibrary};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use futures_util::future::BoxFuture;
@@ -35,19 +36,19 @@ use tower::ServiceExt as _;
 /// Post-save fan-out recorder: which sections fired, in order.
 #[derive(Default)]
 struct RecorderEffects {
-    calls: Mutex<Vec<SavedSection>>,
+    calls: Mutex<Vec<Effect>>,
 }
 
 impl RecorderEffects {
-    fn calls(&self) -> Vec<SavedSection> {
+    fn calls(&self) -> Vec<Effect> {
         self.calls.lock().expect("recorder reads").clone()
     }
 }
 
 impl SaveEffects for RecorderEffects {
-    fn after_save<'a>(&'a self, section: SavedSection) -> BoxFuture<'a, ()> {
+    fn run(&self, effect: Effect) -> BoxFuture<'_, ()> {
         Box::pin(async move {
-            self.calls.lock().expect("recorder writes").push(section);
+            self.calls.lock().expect("recorder writes").push(effect);
         })
     }
 }
@@ -56,13 +57,15 @@ impl SaveEffects for RecorderEffects {
 fn scratch_service() -> (SettingsService, Arc<RecorderEffects>, ScratchDir) {
     let dir = ScratchDir::new("settings-sections");
     let crypto = Crypto::from_key_bytes(&[7u8; 32]).expect("test crypto builds");
-    let store = ConfigStore::scratch(&dir, crypto).expect("store opens");
+    let store = Arc::new(ConfigStore::scratch(&dir, crypto).expect("store opens"));
     let effects = Arc::new(RecorderEffects::default());
+    let (settled, runner) = Effects::new(store.clone(), effects.clone());
+    tokio::spawn(runner.run(droppedneedle_kernel::jobs::CancellationToken::new()));
     let ids = Arc::new(FixedIdGenerator::new(FIXED_ID));
     (
         SettingsService::new(
-            Arc::new(store),
-            effects.clone(),
+            store,
+            settled,
             ids,
             Arc::new(FakeProbes::passing()),
             droppedneedle::bootstrap::Outbound::live(),
@@ -282,7 +285,7 @@ impl VerifyProbes for FakeProbes {
 /// AudioDB key, and fire the Advanced fan-out.
 #[tokio::test]
 async fn advanced_round_trip_scales_and_masks() {
-    use droppedneedle_kernel::runtime_config::mask::AUDIODB_API_KEY_MASK;
+    use droppedneedle_kernel::runtime_config::Section as _;
     use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 
     let (service, effects, _scratch) = scratch_service();
@@ -296,19 +299,32 @@ async fn advanced_round_trip_scales_and_masks() {
     };
     let echoed = service.save_advanced(form).await.expect("saves");
     assert_eq!(echoed.cache_ttl_album_library, 48);
-    assert_eq!(echoed.audiodb_api_key, AUDIODB_API_KEY_MASK);
-    assert_eq!(effects.calls(), vec![SavedSection::Advanced]);
+    assert_eq!(echoed.audiodb_api_key, SECRET_MASK);
+    assert_eq!(
+        effects.calls(),
+        vec![Effect::Invalidate(&[CacheRoot::AudioDb])]
+    );
 
-    let stored: AdvancedSettings = service.store.get_raw().expect("raw reads");
+    let stored = service
+        .store
+        .get_raw::<AdvancedSettings>()
+        .expect("raw reads");
     assert_eq!(stored.cache_ttl_album_library, 48 * 3600);
     assert_eq!(stored.cache_ttl_search, 30 * 60);
     assert_eq!(stored.frontend_ttl_home, 10 * 60000);
     assert_eq!(stored.discover_queue_polling_interval, 8 * 1000);
     assert_eq!(stored.audiodb_api_key.expose(), "audiodb-secret");
 
-    // The echo re-saves cleanly: the mask keeps the stored key.
+    // The echo re-saves cleanly: the mask keeps the stored key, the row is
+    // left as it was, and the save still runs the section's effects.
+    let revision = service.store.revision(AdvancedSettings::KEY);
     service.save_advanced(echoed).await.expect("resaves");
-    let stored: AdvancedSettings = service.store.get_raw().expect("raw reads");
+    assert_eq!(service.store.revision(AdvancedSettings::KEY), revision);
+    assert_eq!(effects.calls().len(), 2);
+    let stored = service
+        .store
+        .get_raw::<AdvancedSettings>()
+        .expect("raw reads");
     assert_eq!(stored.audiodb_api_key.expose(), "audiodb-secret");
 
     let ttls = service.get_cache_ttls().expect("reads ttls");
@@ -319,8 +335,6 @@ async fn advanced_round_trip_scales_and_masks() {
 /// path add/remove normalize through the same save.
 #[tokio::test]
 async fn library_round_trip_cas_and_paths() {
-    use droppedneedle_kernel::runtime_config::mask::ACOUSTID_KEY_MASK;
-
     let (service, effects, _scratch) = scratch_service();
     let view = service.get_library().await.expect("reads default");
     assert!(!view.policy_revision.is_empty());
@@ -359,9 +373,12 @@ async fn library_round_trip_cas_and_paths() {
         )
         .await
         .expect("saves");
-    assert_eq!(saved.settings.acoustid_api_key.expose(), ACOUSTID_KEY_MASK);
-    assert_eq!(effects.calls(), vec![SavedSection::Library]);
-    let stored: TypedLibrary = service.store.get_raw().expect("raw reads");
+    assert_eq!(saved.settings.acoustid_api_key.expose(), SECRET_MASK);
+    assert_eq!(
+        effects.calls(),
+        vec![Effect::Invalidate(&[CacheRoot::AcoustId])]
+    );
+    let stored = service.store.get_raw::<TypedLibrary>().expect("raw reads");
     assert_eq!(stored.acoustid_api_key.expose(), "acoustid-secret");
 
     let added = service.add_library_path(&root).await.expect("adds path");
@@ -370,8 +387,8 @@ async fn library_round_trip_cas_and_paths() {
     // Re-adding is a silent no-op; the key survives path edits.
     let again = service.add_library_path(&root).await.expect("re-adds");
     assert_eq!(again.settings.library_roots.len(), 1);
-    assert_eq!(again.settings.acoustid_api_key.expose(), ACOUSTID_KEY_MASK);
-    let stored: TypedLibrary = service.store.get_raw().expect("raw reads");
+    assert_eq!(again.settings.acoustid_api_key.expose(), SECRET_MASK);
+    let stored = service.store.get_raw::<TypedLibrary>().expect("raw reads");
     assert_eq!(stored.acoustid_api_key.expose(), "acoustid-secret");
 
     let missing = service.add_library_path("").await.expect_err("blank fails");
@@ -559,14 +576,19 @@ async fn verify_resolves_masks_and_maps_verdicts() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(saved["api_key"], JELLYFIN_API_KEY_MASK);
+    assert_eq!(saved["api_key"], SECRET_MASK);
     let (status, read) = call(rig.admin_app(), "GET", "/settings/jellyfin", None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(read["api_key"], JELLYFIN_API_KEY_MASK);
+    assert_eq!(read["api_key"], SECRET_MASK);
     // Re-saving the masked read keeps the stored key.
     let (status, _) = call(rig.admin_app(), "PUT", "/settings/jellyfin", Some(read)).await;
     assert_eq!(status, StatusCode::OK);
-    let stored: JellyfinConnection = rig.settings.service().store.get_raw().expect("raw reads");
+    let stored = rig
+        .settings
+        .service()
+        .store
+        .get_raw::<JellyfinConnection>()
+        .expect("raw reads");
     assert_eq!(stored.api_key.expose(), "jellyfin-live");
     let (status, verdict) = call(
         rig.admin_app(),
@@ -598,7 +620,7 @@ async fn verify_resolves_masks_and_maps_verdicts() {
     assert_eq!(status, StatusCode::OK);
     let (_, listed) = call(rig.admin_app(), "GET", "/settings/indexers", None).await;
     assert_eq!(listed[0]["id"], created["id"]);
-    assert_eq!(listed[0]["api_key"], INDEXER_API_KEY_MASK);
+    assert_eq!(listed[0]["api_key"], SECRET_MASK);
     let (status, _) = call(
         rig.admin_app(),
         "POST",
@@ -1133,6 +1155,11 @@ async fn live_save_effects_sweep_only_the_saved_section() {
 
     use droppedneedle::settings::effects::LiveSaveEffects;
     use droppedneedle_kernel::jobs::events_kick::FnKick;
+    use droppedneedle_kernel::runtime_config::Section;
+    use droppedneedle_kernel::runtime_config::secret_sections::{
+        AdvancedSettings, EventsSettings, ListenBrainzConnection,
+    };
+    use droppedneedle_kernel::runtime_config::sections::{MusicBrainzSettings, UserPreferences};
     use droppedneedle_providers::InMemoryProviderCache;
     use droppedneedle_providers::ProviderCache as _;
 
@@ -1155,20 +1182,26 @@ async fn live_save_effects_sweep_only_the_saved_section() {
         }),
     );
 
-    effects.after_save(SavedSection::MusicBrainz).await;
+    async fn saved<S: Section>(effects: &LiveSaveEffects) {
+        for effect in S::EFFECTS {
+            effects.run(*effect).await;
+        }
+    }
+
+    saved::<MusicBrainzSettings>(&effects).await;
     assert_eq!(cache.len().await, 4);
     assert!(!kicked.load(Ordering::SeqCst));
 
-    effects.after_save(SavedSection::ListenBrainz).await;
-    effects.after_save(SavedSection::Advanced).await;
-    effects.after_save(SavedSection::Library).await;
+    saved::<ListenBrainzConnection>(&effects).await;
+    saved::<AdvancedSettings>(&effects).await;
+    saved::<TypedLibrary>(&effects).await;
     assert_eq!(cache.len().await, 1);
     assert!(!kicked.load(Ordering::SeqCst));
 
-    effects.after_save(SavedSection::Events).await;
+    saved::<EventsSettings>(&effects).await;
     assert!(kicked.load(Ordering::SeqCst));
     assert_eq!(cache.len().await, 1);
 
-    effects.after_save(SavedSection::Other).await;
+    saved::<UserPreferences>(&effects).await;
     assert_eq!(cache.len().await, 1);
 }

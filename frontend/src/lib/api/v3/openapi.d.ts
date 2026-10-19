@@ -15291,7 +15291,7 @@ export interface components {
         };
         /**
          * @description Store per-user Last.fm API credentials. Either field may be the
-         *     `lastfm****` mask sentinel, meaning keep the stored value.
+         *     `********` mask, meaning keep the stored value.
          */
         LastFmCredentialsSet: {
             /** @description Last.fm API key, or the mask sentinel to keep it. */

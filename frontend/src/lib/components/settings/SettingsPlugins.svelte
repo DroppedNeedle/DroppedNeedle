@@ -7,7 +7,8 @@
 		updatePluginMutation
 	} from '$lib/queries/plugins/PluginMutations.svelte';
 	import { updatePluginFromSourceMutation } from '$lib/queries/plugins/PluginInstallMutations.svelte';
-	import { PLUGIN_SECRET_MASK, type PluginInfo } from '$lib/queries/plugins/types';
+	import type { PluginInfo } from '$lib/queries/plugins/types';
+	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -198,7 +199,7 @@
 										{#if field.secret}
 											<SecretField
 												label={field.label}
-												mask={PLUGIN_SECRET_MASK}
+												mask={SECRET_MASK}
 												help={field.help ?? undefined}
 												bind:value={draft.settings[field.key]}
 											/>

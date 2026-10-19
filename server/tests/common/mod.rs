@@ -279,7 +279,13 @@ pub fn app_settings(
     let (crypto, _) = Crypto::load_or_generate(&config.config_dir()).expect("key loads");
     let db = droppedneedle_kernel::db::Db::open_for_tests(&config.library_db_path)
         .expect("database opens");
-    ConfigStore::open_blocking(db, crypto, &LegacyConfig::None).expect("settings open")
+    ConfigStore::open_blocking(
+        db,
+        crypto,
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        &LegacyConfig::None,
+    )
+    .expect("settings open")
 }
 
 /// A settings store over its own database in `dir`, with a fixed test key.

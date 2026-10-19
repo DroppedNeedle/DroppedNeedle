@@ -26,7 +26,6 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use super::super::host::PluginHost;
-use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_library::publish::HIDDEN_PREFIX;
 use droppedneedle_library::publish::paths::{Root, Sandbox};
 use droppedneedle_library::publish::plugin_files::{TEMP_TAG, write_new_file};
@@ -184,7 +183,7 @@ impl PluginHost {
                 ),
             ));
         }
-        let library = self.config.get_raw::<TypedLibrary>().map_err(|error| {
+        let library = self.library.get().map_err(|error| {
             writes.refuse(plugin, format!("library settings unreadable: {error}"))
         })?;
         let roots: Vec<Root> = library

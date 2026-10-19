@@ -28,27 +28,19 @@ pub use downloads::*;
 pub use library::*;
 pub use media_servers::*;
 
+use crate::runtime_config::effects::{CacheRoot, Effect};
 use crate::runtime_config::error::ConfigError;
-use crate::runtime_config::mask::{
-    ACOUSTID_KEY_MASK, AUDIODB_API_KEY_MASK, JELLYFIN_API_KEY_MASK, LASTFM_SECRET_MASK,
-    LIDARR_API_KEY_MASK, LISTENBRAINZ_TOKEN_MASK, NAVIDROME_PASSWORD_MASK, OIDC_SECRET_MASK,
-    PLEX_TOKEN_MASK, PROWLARR_API_KEY_MASK, SABNZBD_API_KEY_MASK, SKIDDLE_KEY_MASK,
-    SLSKD_API_KEY_MASK, SPOTIFY_SECRET_MASK, TICKETMASTER_KEY_MASK, WRAPPED_API_KEY_MASK,
-    YOUTUBE_API_KEY_MASK,
-};
 use crate::runtime_config::secret::Secret;
 use crate::runtime_config::sections::{
     DEFAULT_NAMING_TEMPLATE, Section, check_range, is_valid_hhmm, normalize_http_url,
     sanitize_absolute_mount, sanitize_subpath, strip_api_suffix, tier_rank,
 };
 
-/// One mutable secret field plus its mask sentinel.
+/// One mutable secret field.
 pub struct SecretField<'a> {
     /// The secret value (ciphertext on load, plaintext after decrypt,
     /// mask or new value on save).
     pub value: &'a mut Secret,
-    /// This field's exact-match mask.
-    pub mask: &'static str,
     /// Whether v2 strips paste whitespace for this secret. True for API
     /// keys (a stray space earns a 403); false for passwords and
     /// verbatim-saved tokens, where edge whitespace may be meaningful.
@@ -60,5 +52,7 @@ pub trait SecretSection: Section {
     /// Every secret field in struct order. Order is part of the contract:
     /// the store pairs incoming and stored fields positionally, which is
     /// why variable-length lists (indexers) do not implement this trait.
+    /// A test over the section list finds every `Secret` field by type and
+    /// fails when one is left out here.
     fn secret_fields(&mut self) -> Vec<SecretField<'_>>;
 }
