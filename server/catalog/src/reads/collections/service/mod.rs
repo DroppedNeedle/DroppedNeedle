@@ -13,6 +13,7 @@ mod play_marks;
 mod playlists;
 mod ratings;
 
+pub use follows::follow_status;
 pub use playlists::{LOCAL_SOURCE, Visible};
 
 use super::state::CollectionsState;

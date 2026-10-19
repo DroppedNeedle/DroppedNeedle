@@ -170,7 +170,7 @@ impl HeldImports {
     fn library(&self) -> Result<Arc<dyn LandingLibrary>, HeldError> {
         self.worker
             .landing()
-            .and_then(|landing| landing.library_slot().get().cloned())
+            .and_then(|landing| landing.library().cloned())
             .ok_or_else(|| {
                 HeldError::Refused(
                     "Imports are not set up yet. Add a library folder in settings, then try again."

@@ -711,7 +711,7 @@ impl MixSources for FakeMix {
 // refresh route needs a ListenBrainz link.
 #[tokio::test]
 async fn personal_mix_grant_build_and_refresh() {
-    let (state, db, dispatch) = setup().await;
+    let (mut state, db, dispatch) = setup().await;
     let prefs = Arc::new(MemoryScrobblePrefsStore::new());
     let playlists = PlaylistStore::new(CollectionsDb::new(db.db().clone()));
     let builder = Arc::new(PersonalMixBuilder::new(
@@ -721,7 +721,7 @@ async fn personal_mix_grant_build_and_refresh() {
         state.clone(),
         EventHub::new(),
     ));
-    assert!(state.mixer.set(builder.clone()).is_ok());
+    state.mixer = Some(builder.clone());
     let hooks = MixGrantHooks::new(state.mixer.clone());
 
     prefs
@@ -1032,27 +1032,17 @@ async fn seed_edition_album(db: &AcquireDb) {
 /// A state whose library plans album "al1" (see [`PlannedEdition`]), with
 /// upgrades below lossless on.
 async fn edition_setup() -> (RequestsState, AcquireDb, Arc<ScriptedDispatch>) {
-    let (state, db, dispatch) = setup().await;
+    let (mut state, db, dispatch) = setup().await;
     seed_edition_album(&db).await;
-    assert!(
-        state
-            .edition_plans
-            .set(Arc::new(PlannedEdition { complete: false }))
-            .is_ok()
-    );
-    assert!(
-        state
-            .upgrade_policy
-            .set(saved_policy(
-                &db,
-                DownloadPolicy {
-                    upgrade_allowed: true,
-                    quality_cutoff: "lossless".into(),
-                    ..DownloadPolicy::default()
-                },
-            ))
-            .is_ok()
-    );
+    state.edition_plans = Some(Arc::new(PlannedEdition { complete: false }));
+    state.upgrade_policy = Some(saved_policy(
+        &db,
+        DownloadPolicy {
+            upgrade_allowed: true,
+            quality_cutoff: "lossless".into(),
+            ..DownloadPolicy::default()
+        },
+    ));
     (state, db, dispatch)
 }
 
@@ -1144,14 +1134,9 @@ async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
     assert_eq!(dispatch.take_calls()[0].wanted, vec![(1, 2), (1, 3)]);
 
     // Only a version left, not asked for (upgrades off).
-    let (state, db, dispatch) = setup().await;
+    let (mut state, db, dispatch) = setup().await;
     seed_edition_album(&db).await;
-    assert!(
-        state
-            .edition_plans
-            .set(Arc::new(PlannedEdition { complete: true }))
-            .is_ok()
-    );
+    state.edition_plans = Some(Arc::new(PlannedEdition { complete: true }));
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], "already_complete", "{body}");
@@ -1191,7 +1176,7 @@ impl droppedneedle_library::operations::port::EditionPlans for NoPlan {
 // asked about, on the release its identity names.
 #[tokio::test]
 async fn edition_acquire_without_a_plan_fetches_for_the_named_copy() {
-    let (state, db, dispatch) = setup().await;
+    let (mut state, db, dispatch) = setup().await;
     let seed = format!(
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
            VALUES ('ar1', 'A', 'a', 'person', 0, 0);
@@ -1209,7 +1194,7 @@ async fn edition_acquire_without_a_plan_fetches_for_the_named_copy() {
     })
     .await
     .unwrap();
-    assert!(state.edition_plans.set(Arc::new(NoPlan)).is_ok());
+    state.edition_plans = Some(Arc::new(NoPlan));
     let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire?album_id=al1");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -1231,24 +1216,14 @@ async fn edition_acquire_without_a_plan_fetches_for_the_named_copy() {
 // and the answer says so. It is not refused.
 #[tokio::test]
 async fn edition_acquire_is_held_while_no_source_is_ready() {
-    let (state, db, dispatch) = setup().await;
+    let (mut state, db, dispatch) = setup().await;
     seed_edition_album(&db).await;
-    assert!(
-        state
-            .edition_plans
-            .set(Arc::new(PlannedEdition { complete: false }))
-            .is_ok()
-    );
+    state.edition_plans = Some(Arc::new(PlannedEdition { complete: false }));
     let staging = crate::common::ScratchDir::new("edition-held");
-    assert!(
-        state
-            .readiness
-            .set(AcquireReadiness {
-                sources_ready: Arc::new(|| false),
-                staging_root: staging.to_path_buf(),
-            })
-            .is_ok()
-    );
+    state.readiness = Some(AcquireReadiness {
+        sources_ready: Arc::new(|| false),
+        staging_root: staging.to_path_buf(),
+    });
     let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire?album_id=al1");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");

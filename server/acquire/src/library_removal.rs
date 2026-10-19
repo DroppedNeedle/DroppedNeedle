@@ -19,14 +19,12 @@ pub struct AcquireAlbumCleanup {
 }
 
 impl AcquireAlbumCleanup {
-    /// Cleanup over the download journal and the wanted watches in `db`.
-    /// Both stores keep nothing in memory, so this works on the same rows
-    /// as the acquisition bundle built over the same database later.
-    pub fn open(db: &droppedneedle_kernel::db::Db) -> Self {
-        let db = super::db::AcquireDb::new(db.clone());
+    /// Cleanup over the download journal and the wanted watches the
+    /// acquisition bundle is built on.
+    pub fn new(stores: &super::wiring::AcquireStores) -> Self {
         Self {
-            journal: Arc::new(Journal::new(db.clone())),
-            wanted: WantedStore::new(db),
+            journal: stores.journal.clone(),
+            wanted: stores.wanted.clone(),
         }
     }
 }

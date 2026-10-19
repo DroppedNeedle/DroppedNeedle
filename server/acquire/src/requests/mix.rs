@@ -217,7 +217,8 @@ pub struct PersonalMixBuilder {
 
 impl PersonalMixBuilder {
     /// Builder over its ports. `requests` supplies the library database,
-    /// the approval rows and album intake.
+    /// the approval rows and album intake; it is the state as built before
+    /// the builder, so it holds no mixer of its own.
     pub fn new(
         sources: Arc<dyn MixSources>,
         prefs: Arc<dyn ScrobblePrefsStore>,
@@ -814,17 +815,17 @@ fn now_epoch() -> u64 {
         .unwrap_or(0)
 }
 
-/// The scrobble-settings hooks over the mix slot: the toggle feeds the
+/// The scrobble-settings hooks over the mix builder: the toggle feeds the
 /// approval queue and the prefs response reads the real grant state.
-/// Before boot fills the slot both fall back to the role-only answer.
+/// Without a builder both fall back to the role-only answer.
 pub struct MixGrantHooks {
-    slot: super::state::MixSlot,
+    mixer: Option<Arc<PersonalMixBuilder>>,
 }
 
 impl MixGrantHooks {
-    /// Hooks over the requests state's mix slot.
-    pub fn new(slot: super::state::MixSlot) -> Self {
-        Self { slot }
+    /// Hooks over the requests state's mix builder.
+    pub fn new(mixer: Option<Arc<PersonalMixBuilder>>) -> Self {
+        Self { mixer }
     }
 }
 
@@ -836,7 +837,7 @@ impl droppedneedle_plugins::scrobble::MixApprovalHook for MixGrantHooks {
         enabled: bool,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            if let Some(builder) = self.slot.get() {
+            if let Some(builder) = &self.mixer {
                 let role = Role::from_stored(role);
                 builder.on_toggle(user_id, role, enabled).await;
             }
@@ -853,7 +854,7 @@ impl droppedneedle_plugins::scrobble::MixStateReader for MixGrantHooks {
     ) -> BoxFuture<'a, String> {
         Box::pin(async move {
             let role = Role::from_stored(role);
-            match self.slot.get() {
+            match &self.mixer {
                 Some(builder) => builder.auto_request_state(user_id, role, toggle_on).await,
                 None if toggle_on && role == Role::Admin => "approved".to_owned(),
                 None => "none".to_owned(),
@@ -862,12 +863,12 @@ impl droppedneedle_plugins::scrobble::MixStateReader for MixGrantHooks {
     }
 }
 
-/// The daily sweep drives the builder in the slot; before boot fills it
-/// the sweep has nothing to do.
+/// The daily sweep drives the builder; without one the sweep has nothing
+/// to do.
 impl droppedneedle_kernel::jobs::personal_mix::PersonalMixer for MixGrantHooks {
     fn run_for_all_users(&self) -> droppedneedle_kernel::jobs::BoxFuture<'_, Result<(), String>> {
         Box::pin(async move {
-            match self.slot.get() {
+            match &self.mixer {
                 Some(builder) => builder.run_for_all_users().await.map(|_| ()),
                 None => Ok(()),
             }

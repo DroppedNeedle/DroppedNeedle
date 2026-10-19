@@ -8,9 +8,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::downloads::state::TaskStatus;
 use droppedneedle_acquire::downloads::store::NewTask;
 use droppedneedle_acquire::landing::library::LibraryLanding;
+use droppedneedle_acquire::landing::ports::LandingLibrary;
 use droppedneedle_acquire::landing::specs::{Disposition, Rejection};
 use droppedneedle_acquire::landing::{
     Landed, LandingReport, LandingResult, OUTSIDE_DOWNLOADS, Reported,
@@ -19,7 +21,7 @@ use droppedneedle_acquire::wiring::settled_hook;
 use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, Source, WorkerConfig};
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
-use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
+use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::identify::sources::{ReleaseHit, ReleaseSource, SourceError};
 use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
@@ -173,31 +175,14 @@ fn new_task(id: &str, group: &str) -> NewTask {
 
 #[tokio::test]
 async fn finished_downloads_land_in_the_library_or_wait_for_review() {
-    let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
-    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        ids.clone(),
-        &mut reads.collections,
-        droppedneedle_kernel::events::EventHub::new(),
-    )
-    .expect("acquire bundle");
-    acquire
-        .db
-        .add_user("u-ada", "Ada", "user")
-        .await
-        .expect("user");
-    let dir = acquire
-        .db
-        .path()
-        .parent()
-        .expect("scratch dir")
-        .to_path_buf();
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
     let config = Arc::new(
         ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("config"),
     );
-    let platform = TestPlatform::on(acquire.db.db(), &dir)
+    let platform = TestPlatform::on(db.db(), &dir)
         .settings(config)
         .build()
         .await;
@@ -260,12 +245,15 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
             &lengths,
         ),
     ]));
-    let pool = acquire.db.pool().clone();
-    let acquire = acquire.with_library(Arc::new(LibraryLanding::new(
-        library.clone(),
-        releases,
-        pool,
-    )));
+    let pool = db.pool().clone();
+    let acquire = acquire_over(
+        &db,
+        Some(Arc::new(LibraryLanding::new(
+            library.clone(),
+            releases,
+            pool,
+        ))),
+    );
     let worker = |paths: Vec<PathBuf>| {
         Arc::new(
             DownloadWorker::fixed(
@@ -461,31 +449,14 @@ fn files_under(dir: &Path, extension: &str) -> Vec<PathBuf> {
 // answers 404; a discarded file is deleted and leaves the list.
 #[tokio::test]
 async fn held_files_import_as_upgrades_or_discard() {
-    let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
-    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        ids.clone(),
-        &mut reads.collections,
-        droppedneedle_kernel::events::EventHub::new(),
-    )
-    .expect("acquire bundle");
-    acquire
-        .db
-        .add_user("u-ada", "Ada", "user")
-        .await
-        .expect("user");
-    let dir = acquire
-        .db
-        .path()
-        .parent()
-        .expect("scratch dir")
-        .to_path_buf();
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
     let config = Arc::new(
         ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("config"),
     );
-    let platform = TestPlatform::on(acquire.db.db(), &dir)
+    let platform = TestPlatform::on(db.db(), &dir)
         .settings(config)
         .build()
         .await;
@@ -507,12 +478,15 @@ async fn held_files_import_as_upgrades_or_discard() {
     );
     let first = release.tracks[0].clone();
     let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release]));
-    let pool = acquire.db.pool().clone();
-    let acquire = acquire.with_library(Arc::new(LibraryLanding::new(
-        library.clone(),
-        releases,
-        pool,
-    )));
+    let pool = db.pool().clone();
+    let acquire = acquire_over(
+        &db,
+        Some(Arc::new(LibraryLanding::new(
+            library.clone(),
+            releases,
+            pool,
+        ))),
+    );
     let worker = |paths: Vec<PathBuf>| {
         Arc::new(
             DownloadWorker::fixed(
@@ -655,31 +629,36 @@ async fn held_files_import_as_upgrades_or_discard() {
     assert_eq!(left, vec![seeded[3]], "{body}");
 }
 
-/// An acquire bundle with no library attached, its scratch folder, and
-/// the auth rig its users live on.
-async fn bare_acquire() -> (droppedneedle_acquire::AcquireSetup, PathBuf, AuthRig) {
-    let auth = AuthRig::new("landing-bare").await;
-    let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
-    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        ids,
-        &mut reads.collections,
+/// The test acquire bundle over `db`, finished downloads landing in
+/// `library` when there is one.
+fn acquire_over(
+    db: &AcquireDb,
+    library: Option<Arc<dyn LandingLibrary>>,
+) -> droppedneedle_acquire::AcquireSetup {
+    droppedneedle_acquire::AcquireSetup::for_tests(
+        db.clone(),
+        Arc::new(UuidGenerator),
         droppedneedle_kernel::events::EventHub::new(),
+        library,
     )
-    .expect("acquire bundle");
-    acquire
-        .db
-        .add_user("u-ada", "Ada", "user")
-        .await
-        .expect("user");
-    let dir = acquire
-        .db
-        .path()
-        .parent()
-        .expect("scratch dir")
-        .to_path_buf();
-    (acquire, dir, auth)
+    .expect("acquire bundle")
+}
+
+/// A scratch database with the test user, its folder, and the auth rig its
+/// users live on.
+async fn bare_db() -> (AcquireDb, PathBuf, AuthRig) {
+    let auth = AuthRig::new("landing-bare").await;
+    let db = AcquireDb::scratch().expect("scratch db");
+    db.add_user("u-ada", "Ada", "user").await.expect("user");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
+    (db, dir, auth)
+}
+
+/// An acquire bundle with no library, its scratch folder, and the auth rig
+/// its users live on.
+async fn bare_acquire() -> (droppedneedle_acquire::AcquireSetup, PathBuf, AuthRig) {
+    let (db, dir, auth) = bare_db().await;
+    (acquire_over(&db, None), dir, auth)
 }
 
 /// Land `landed` for a fresh task and return the rejection code, if any.
@@ -799,7 +778,7 @@ async fn a_landing_waits_while_the_download_policy_does_not_read() {
     let store = crate::acquire_requests::unreadable_policy_store(&dir.join("broken-settings"));
     let landing = droppedneedle_acquire::landing::LandingService::new(
         acquire.journal.clone(),
-        droppedneedle_acquire::landing::LibrarySlot::default(),
+        None,
         store.live(),
         dir.join("held"),
     );
@@ -984,26 +963,13 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
 
     const TASK: &str = "0123456789abcdef0123456789abcdef";
 
-    let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
-    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        ids.clone(),
-        &mut reads.collections,
-        droppedneedle_kernel::events::EventHub::new(),
-    )
-    .expect("acquire bundle");
-    let dir = acquire
-        .db
-        .path()
-        .parent()
-        .expect("scratch dir")
-        .to_path_buf();
+    let db = AcquireDb::scratch().expect("scratch db");
+    let dir = db.path().parent().expect("scratch dir").to_path_buf();
     let config = Arc::new(
         ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("config"),
     );
-    let platform = TestPlatform::on(acquire.db.db(), &dir)
+    let platform = TestPlatform::on(db.db(), &dir)
         .settings(config)
         .build()
         .await;
@@ -1035,9 +1001,9 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
     let port: Arc<dyn LandingLibrary> = Arc::new(LibraryLanding::new(
         library.clone(),
         Arc::new(Releases(vec![release.clone()])),
-        acquire.db.pool().clone(),
+        db.pool().clone(),
     ));
-    let acquire = acquire.with_library(port.clone());
+    let acquire = acquire_over(&db, Some(port.clone()));
     let receipt = port
         .import(ImportRequest {
             task_id: TASK.to_owned(),
@@ -1290,12 +1256,12 @@ struct JoinRig {
 }
 
 async fn join_rig(releases: Vec<Release>) -> JoinRig {
-    let (acquire, dir, auth) = bare_acquire().await;
+    let (db, dir, auth) = bare_db().await;
     let config = Arc::new(
         ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("config"),
     );
-    let platform = TestPlatform::on(acquire.db.db(), &dir)
+    let platform = TestPlatform::on(db.db(), &dir)
         .settings(config)
         .build()
         .await;
@@ -1309,22 +1275,19 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
             EffectivePolicy::Automatic,
         )
         .expect("root adds");
+    let acquire = acquire_over(
+        &db,
+        Some(Arc::new(LibraryLanding::new(
+            library.clone(),
+            Arc::new(Releases(releases.clone())),
+            db.pool().clone(),
+        ))),
+    );
     let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
         acquire.journal.clone(),
         acquire.staging_root.clone(),
+        Some(Arc::new(Lookup(releases))),
     ));
-    assert!(
-        targets
-            .lookup_slot()
-            .set(Arc::new(Lookup(releases.clone())))
-            .is_ok()
-    );
-    let pool = acquire.db.pool().clone();
-    let acquire = acquire.with_library(Arc::new(LibraryLanding::new(
-        library.clone(),
-        Arc::new(Releases(releases)),
-        pool,
-    )));
     JoinRig {
         acquire,
         library,

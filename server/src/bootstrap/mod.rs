@@ -40,22 +40,30 @@ use crate::{
     },
     web::{WebError, WebUi},
 };
-use droppedneedle_acquire::AcquireSetup;
+use droppedneedle_acquire::{
+    AcquireSetup,
+    library_removal::AcquireAlbumCleanup,
+    requests::discovery::DiscoveryBatchRequests,
+    wiring::{AcquirePorts, AcquireStores},
+};
 use droppedneedle_auth::{
     federated::{MediaLinks, settings::InstallIds},
     prod::ProdAuth,
     wiring::AuthSetup,
 };
 use droppedneedle_catalog::reads::{
-    ReadsInputs, ReadsSetup,
+    ReadsInputs, ReadsPorts, ReadsSetup,
     catalog::{
         Catalog,
         library::LocalCatalog,
         plugin_sources::{PluginDetailsSource, PluginPurchaseLinks},
         upstream::{LiveCatalogSettings, Upstream},
     },
-    collections::{db::CollectionsDb, remote_import::PlaylistImportSink},
+    collections::{
+        CollectionsState, db::CollectionsDb, remote_import::PlaylistImportSink, store::Stores,
+    },
     enrichment::{library::LiveEnrichment, live::production_enrichment},
+    platform::artwork::ArtworkService,
 };
 use droppedneedle_compat::{CompatSetup, setup::CompatDeps};
 use droppedneedle_kernel::{
@@ -75,6 +83,7 @@ use droppedneedle_media::{
         plex::ConfiguredPlexServer,
         presence_feed::MediaJobs,
     },
+    stream::local_files::LibraryFiles,
 };
 use droppedneedle_plugins::{scrobble::SqliteListenBrainzLinkStore, wiring::PluginsSetup};
 use droppedneedle_providers::{InMemoryProviderCache, Providers};
@@ -250,40 +259,36 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         config_store.live(),
         config_store.live(),
     );
-    let mut reads = ReadsSetup::build(
-        p,
-        auth.users.clone(),
-        ReadsInputs {
-            covers_dir: config.cache_dir.join("covers"),
-            cover_cache_max_bytes: config.cover_cache_max_bytes,
-            http: http.shared().clone(),
-            no_redirect: http.no_redirect().clone(),
-            providers: providers.clone(),
-            listenbrainz_links: Arc::new(SqliteListenBrainzLinkStore::new(
-                db.clone(),
-                crypto.clone(),
-            )),
-            youtube_quota_path: config.cache_dir.join(QUOTA_FILE_NAME),
-            discover_warmer: config.discover_warmer,
-            endpoints: endpoints.clone(),
-        },
-        Some(enrichment),
+    let reads_inputs = ReadsInputs {
+        covers_dir: config.cache_dir.join("covers"),
+        cover_cache_max_bytes: config.cover_cache_max_bytes,
+        http: http.shared().clone(),
+        no_redirect: http.no_redirect().clone(),
+        providers: providers.clone(),
+        listenbrainz_links: Arc::new(SqliteListenBrainzLinkStore::new(db.clone(), crypto.clone())),
+        youtube_quota_path: config.cache_dir.join(QUOTA_FILE_NAME),
+        discover_warmer: config.discover_warmer,
+        endpoints: endpoints.clone(),
+    };
+    // The artist and album pages, with plugin purchase links and details.
+    // The artwork service names artist images through it, and the library
+    // plans covers through that service.
+    let catalog = Catalog::new(
+        Upstream::new(
+            http,
+            providers.clone(),
+            Arc::new(LiveCatalogSettings::new(config_store)),
+            auth.users.clone(),
+            endpoints,
+        ),
+        LocalCatalog::new(db.sqlx().clone()),
     )
-    .with_collections(CollectionsDb::new(db.clone()))
-    .with_catalog(
-        Catalog::new(
-            Upstream::new(
-                http,
-                providers.clone(),
-                Arc::new(LiveCatalogSettings::new(config_store)),
-                auth.users.clone(),
-                endpoints,
-            ),
-            LocalCatalog::new(db.sqlx().clone()),
-        )
-        .with_purchase_links(Arc::new(PluginPurchaseLinks(plugin_host.clone())))
-        .with_details(Arc::new(PluginDetailsSource(plugin_host.clone()))),
-    );
+    .with_purchase_links(Arc::new(PluginPurchaseLinks(plugin_host.clone())))
+    .with_details(Arc::new(PluginDetailsSource(plugin_host.clone())));
+    let artwork = droppedneedle_catalog::reads::artwork(p, &reads_inputs, catalog.clone());
+    let collections_db = CollectionsDb::new(db.clone());
+    let collections = Stores::new(&collections_db);
+    let acquire_stores = AcquireStores::open(db);
     // Read live, so a source switch in Settings reaches the long-lived
     // clients without a restart.
     let mb_source = outbound.musicbrainz_source(config_store.live());
@@ -294,13 +299,57 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         mb_source.clone(),
         queues.queue().clone(),
         outbound.library(),
-        library_ports(p, &outbound, &providers, &auth, &reads, &scans, library_fs)?,
+        library_ports(
+            p,
+            &outbound,
+            &providers,
+            &auth,
+            &artwork,
+            &scans,
+            library_fs,
+            &acquire_stores,
+        )?,
     )
     .map_err(stage("library setup"))?;
-    reads = reads.with_library_files(droppedneedle_media::stream::local_files::LibraryFiles::new(
-        db.sqlx().clone(),
-        library.root_source(),
-    ));
+    let acquire = AcquireSetup::build(
+        p,
+        auth.users.clone(),
+        acquire_stores,
+        acquire_ports(
+            p,
+            &library,
+            &providers,
+            mb_source,
+            &plugin_host,
+            &collections,
+            &outbound,
+        ),
+        &outbound.spotify(),
+    )
+    .map_err(stage("acquire setup"))?;
+    let reads = ReadsSetup::build(
+        p,
+        auth.users.clone(),
+        reads_inputs,
+        Some(enrichment),
+        ReadsPorts {
+            collections: CollectionsState::wired(
+                collections_db,
+                collections,
+                acquire.pending_approvals(),
+                acquire.approval_seeds(),
+            ),
+            catalog,
+            artwork,
+            library_files: LibraryFiles::new(db.sqlx().clone(), library.root_source()),
+            // Discovery batches file their albums through the requests
+            // service.
+            batch_requests: Arc::new(DiscoveryBatchRequests::new(
+                acquire.requests.clone(),
+                Some(library.clone()),
+            )),
+        },
+    );
     let (media, media_workers) = MediaSetup::build(
         p,
         auth.users.clone(),
@@ -312,55 +361,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         outbound.scrobbles(),
     )
     .map_err(stage("media setup"))?;
-    let acquire = AcquireSetup::build(
-        p,
-        auth.users.clone(),
-        &mut reads.collections,
-        &outbound.spotify(),
-    )
-    .map_err(stage("acquire setup"))?
-    .with_plugins(plugin_host.clone())
-    .with_release_poll(Arc::new(droppedneedle_acquire::search::live_release_poll(
-        http,
-        providers.clone(),
-        mb_source.clone(),
-    )))
-    .with_album_lookup(Arc::new(
-        droppedneedle_acquire::target::lookup::live_albums(http, providers.clone(), mb_source),
-    ));
-    // Finished downloads reach the library through its import seam.
-    let acquire = acquire.with_library(Arc::new(
-        droppedneedle_acquire::landing::library::LibraryLanding::new(
-            library.clone(),
-            library.releases.clone(),
-            db.sqlx().clone(),
-        ),
-    ));
-    // "Get missing tracks" asks the library which tracks the chosen
-    // edition lacks.
-    if acquire
-        .requests
-        .edition_plans
-        .set(Arc::new(
-            droppedneedle_library::operations::service::Operations::new(&library),
-        ))
-        .is_err()
-    {
-        tracing::warn!("edition plans were already attached");
-    }
-    // Discovery batches file their albums through the requests service.
-    if reads
-        .discover_requests
-        .set(Arc::new(
-            droppedneedle_acquire::requests::discovery::DiscoveryBatchRequests::new(
-                acquire.requests.clone(),
-                Some(library.clone()),
-            ),
-        ))
-        .is_err()
-    {
-        tracing::warn!("discovery batch requests were already attached");
-    }
     // Startup recovery before serving traffic. Re-running after a clean
     // shutdown is a no-op: nothing destructive repeats.
     let recovery = wait_out_busy(
@@ -418,19 +418,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         droppedneedle_catalog::concerts::ConcertsSetup::from_platform(p, outbound.concerts());
     // Your Weekly Mix: one builder behind the refresh route, the daily
     // loop and the scrobble-settings toggle.
-    if let Some(builder) = droppedneedle_acquire::requests::mix_sources::live_builder(
-        &acquire.requests,
-        providers.clone(),
-        http.shared().clone(),
-        Arc::new(SqliteListenBrainzLinkStore::new(db.clone(), crypto.clone())),
-        Arc::new(droppedneedle_plugins::scrobble::SqliteScrobblePrefsStore::new(db.clone())),
-        reads.collections.stores.playlists.clone(),
-        events.clone(),
-        &outbound.listenbrainz,
-    ) && acquire.requests.mixer.set(builder).is_err()
-    {
-        tracing::warn!("personal mix builder was already set");
-    }
     let mix_hooks = Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
         acquire.requests.mixer.clone(),
     ));
@@ -523,11 +510,9 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // and the ones started below publish reaches open streams.
     let state = AppState::new(
         p.ids.clone(),
-        http.clone(),
         config.clone(),
         auth,
         reads,
-        providers,
         media,
         acquire,
         library,
@@ -573,14 +558,16 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
 /// images, as v2 did after a sync. Library Management plans genres, lyrics
 /// and covers through the same clients and artwork cache the pages use, and
 /// AcoustID ids on identification's shared rate limit.
+#[allow(clippy::too_many_arguments)]
 fn library_ports(
     p: &Platform,
     outbound: &Outbound,
     providers: &Arc<Providers>,
     auth: &AuthSetup,
-    reads: &ReadsSetup,
+    artwork: &ArtworkService,
     scans: &jobs::ScansEnded,
     fs: droppedneedle_library::scan::fs::FsCoordinator,
+    acquire: &AcquireStores,
 ) -> Result<droppedneedle_library::wiring::LibraryPorts, BootError> {
     let acoustid_pacer =
         droppedneedle_providers::adapters::CorePacer::for_source(providers.clone(), "acoustid")
@@ -602,16 +589,58 @@ fn library_ports(
             outbound.catalog(),
         ),
         http: p.http.shared().clone(),
-        artwork: reads.artwork.clone(),
+        artwork: Some(artwork.clone()),
         lrclib: Default::default(),
     };
     let scans = scans.clone();
     Ok(droppedneedle_library::wiring::LibraryPorts {
-        removal: Arc::new(droppedneedle_acquire::library_removal::AcquireAlbumCleanup::open(&p.db)),
+        removal: Arc::new(AcquireAlbumCleanup::new(acquire)),
         enrichment: Some(Arc::new(enrichment)),
         scan_completed: Arc::new(move || scans.bump()),
         fs,
     })
+}
+
+/// What acquisition calls outside itself. Finished downloads land through
+/// the library's import seam, and "get missing tracks" asks the library
+/// which tracks the chosen edition lacks. Release polls and album lookups
+/// pace through the shared limiters. Plugins act as download sources, feed
+/// usenet and hear acquisition events.
+fn acquire_ports(
+    p: &Platform,
+    library: &LibrarySetup,
+    providers: &Arc<Providers>,
+    mb_source: droppedneedle_providers::musicbrainz::LiveSource,
+    plugin_host: &Arc<droppedneedle_plugins::host::PluginHost>,
+    collections: &Stores,
+    outbound: &Outbound,
+) -> AcquirePorts {
+    AcquirePorts {
+        library: Arc::new(
+            droppedneedle_acquire::landing::library::LibraryLanding::new(
+                library.clone(),
+                library.releases.clone(),
+                p.db.sqlx().clone(),
+            ),
+        ),
+        edition_plans: Arc::new(droppedneedle_library::operations::service::Operations::new(
+            library,
+        )),
+        album_lookup: Arc::new(droppedneedle_acquire::target::lookup::live_albums(
+            &p.http,
+            providers.clone(),
+            mb_source.clone(),
+        )),
+        release_poll: Arc::new(droppedneedle_acquire::search::live_release_poll(
+            &p.http,
+            providers.clone(),
+            mb_source,
+        )),
+        plugins: plugin_host.clone(),
+        collections: collections.clone(),
+        providers: providers.clone(),
+        listenbrainz: outbound.listenbrainz.clone(),
+    }
 }
 
 /// Stamp the shipped web UI into the cache, off the async workers.

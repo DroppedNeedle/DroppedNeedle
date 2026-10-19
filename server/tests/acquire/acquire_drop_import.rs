@@ -13,10 +13,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::drop_import::Viewer;
 use droppedneedle_acquire::drop_import::store::JobRecord;
 use droppedneedle_acquire::landing::library::LibraryLanding;
-use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
+use droppedneedle_acquire::landing::ports::LandingLibrary;
+use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::identify::sources::{
     Edition, EditionPage, EditionQuery, ReleaseHit, ReleaseSource, SourceError,
@@ -149,36 +151,22 @@ fn length_ms(bytes: &[u8], scratch: &Path) -> Option<u64> {
         .map(|seconds| (seconds * 1000.0) as u64)
 }
 
-/// The acquire and library bundles over one scratch database, with the
-/// curator and asker users and a `music` root, and the scratch folder.
-/// The reads bundle and the auth rig are returned only to live as long as
-/// the others.
-async fn bundles() -> (
-    droppedneedle_acquire::AcquireSetup,
-    LibrarySetup,
-    PathBuf,
-    droppedneedle_catalog::reads::ReadsSetup,
-    AuthRig,
-) {
+/// The scratch database the acquire bundle is built on, the library bundle
+/// over it, with the curator and asker users and a `music` root, and the
+/// scratch folder. The auth rig is returned only to live as long as the
+/// others.
+async fn bundles() -> (AcquireDb, LibrarySetup, PathBuf, AuthRig) {
     let auth = AuthRig::new("drop-import").await;
-    let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
-    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
-        ids.clone(),
-        &mut reads.collections,
-        droppedneedle_kernel::events::EventHub::new(),
-    )
-    .expect("acquire bundle");
+    let db = AcquireDb::scratch().expect("scratch db");
     for (id, name) in [("u-curator", "Cora"), ("u-asker", "Asa")] {
-        acquire.db.add_user(id, name, "user").await.expect("user");
+        db.add_user(id, name, "user").await.expect("user");
     }
-    let dir = acquire.db.path().parent().expect("scratch").to_path_buf();
+    let dir = db.path().parent().expect("scratch").to_path_buf();
     let config = Arc::new(
         ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("config"),
     );
-    let platform = crate::common::TestPlatform::on(acquire.db.db(), &dir)
+    let platform = crate::common::TestPlatform::on(db.db(), &dir)
         .settings(config)
         .build()
         .await;
@@ -192,12 +180,26 @@ async fn bundles() -> (
             EffectivePolicy::Automatic,
         )
         .expect("root adds");
-    (acquire, library, dir, reads, auth)
+    (db, library, dir, auth)
+}
+
+/// The acquire bundle over `db`, finished downloads landing in `library`.
+fn acquire_over(
+    db: &AcquireDb,
+    library: Arc<dyn LandingLibrary>,
+) -> droppedneedle_acquire::AcquireSetup {
+    droppedneedle_acquire::AcquireSetup::for_tests(
+        db.clone(),
+        Arc::new(UuidGenerator),
+        droppedneedle_kernel::events::EventHub::new(),
+        Some(library),
+    )
+    .expect("acquire bundle")
 }
 
 #[tokio::test]
 async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
-    let (acquire, library, dir, _reads, _auth) = bundles().await;
+    let (db, library, dir, _auth) = bundles().await;
     let music = dir.join("music");
     let work = dir.join("work");
     std::fs::create_dir_all(&work).expect("work dir");
@@ -210,12 +212,15 @@ async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
     let mysterons = tagged(&work, "flac_full_01.flac", "Dummy", "Mysterons", 1);
     let impostor = tagged(&work, "flac_full_01.flac", "Dummy", "Glory Box", 1);
     let lengths = [None, length_ms(&sour_times, &work)];
-    let pool = acquire.db.pool().clone();
-    let acquire = acquire.with_library(Arc::new(LibraryLanding::new(
-        library.clone(),
-        Arc::new(OneRelease(release(&["Mysterons", "Sour Times"], &lengths))),
-        pool,
-    )));
+    let pool = db.pool().clone();
+    let acquire = acquire_over(
+        &db,
+        Arc::new(LibraryLanding::new(
+            library.clone(),
+            Arc::new(OneRelease(release(&["Mysterons", "Sour Times"], &lengths))),
+            pool,
+        )),
+    );
 
     // Somebody else asked for the album.
     acquire
@@ -437,15 +442,18 @@ async fn a_hand_match_finds_the_edition_in_a_large_group() {
             })
             .collect()
     };
-    let (acquire, library, dir, _reads, _auth) = bundles().await;
+    let (db, library, dir, _auth) = bundles().await;
     let mut known = editions(1);
     known.extend(editions(2));
-    let pool = acquire.db.pool().clone();
-    let acquire = acquire.with_library(Arc::new(LibraryLanding::new(
-        library.clone(),
-        Arc::new(LargeGroups(known)),
-        pool,
-    )));
+    let pool = db.pool().clone();
+    let acquire = acquire_over(
+        &db,
+        Arc::new(LibraryLanding::new(
+            library.clone(),
+            Arc::new(LargeGroups(known)),
+            pool,
+        )),
+    );
     let curator = Viewer {
         user_id: "u-curator".to_owned(),
         admin: false,
@@ -554,13 +562,16 @@ async fn upload_and_settle(
 /// of it stays in staging and nothing from it reaches the library.
 #[tokio::test]
 async fn an_entry_longer_than_its_header_leaves_nothing_behind() {
-    let (acquire, library, _dir, _reads, _auth) = bundles().await;
-    let pool = acquire.db.pool().clone();
-    let acquire = acquire.with_library(Arc::new(LibraryLanding::new(
-        library,
-        Arc::new(OneRelease(release(&["Big"], &[None]))),
-        pool,
-    )));
+    let (db, library, _dir, _auth) = bundles().await;
+    let pool = db.pool().clone();
+    let acquire = acquire_over(
+        &db,
+        Arc::new(LibraryLanding::new(
+            library,
+            Arc::new(OneRelease(release(&["Big"], &[None]))),
+            pool,
+        )),
+    );
     let curator = Viewer {
         user_id: "u-curator".to_owned(),
         admin: false,
@@ -633,15 +644,13 @@ async fn a_cut_off_upload_survives_a_sweep_that_cannot_read_its_jobs() {
         .build()
         .await;
     let auth = AuthRig::on(&platform);
-    let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let mut reads = droppedneedle_catalog::reads::ReadsSetup::for_tests(ids).expect("reads bundle");
-    let acquire = droppedneedle_acquire::AcquireSetup::build(
+    let (library, _) = library_at(&platform);
+    let acquire = crate::common::bundles::acquire_at(
         &platform,
         auth.deps.clone(),
-        &mut reads.collections,
-        &crate::common::closed_outbound().spotify(),
-    )
-    .expect("acquire bundle");
+        &library,
+        &crate::common::bundles::collections_at(&platform).stores,
+    );
     acquire
         .db
         .add_user("u-ada", "Ada", "user")

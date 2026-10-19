@@ -15,12 +15,10 @@ use std::{
 
 use axum::{body::Body, routing::get};
 use droppedneedle::bootstrap;
-use droppedneedle_acquire::{AcquireSetup, wiring::RecoveryError};
-use droppedneedle_catalog::reads::ReadsSetup;
+use droppedneedle_acquire::wiring::RecoveryError;
 use droppedneedle_kernel::{
     config::AppConfig,
     db::{DbConfig, Lane, open_runtime},
-    ids::{IdGenerator, UuidGenerator},
     runtime_config::{
         ConfigStore, Crypto, Section,
         sections::{PublicAddress, SecuritySettings},
@@ -265,15 +263,13 @@ async fn acquire_recovery_waits_out_a_busy_reader_and_stops_on_a_real_failure() 
         .build()
         .await;
     let auth = AuthRig::on(&platform);
-    let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let mut reads = ReadsSetup::for_tests(ids).unwrap();
-    let acquire = AcquireSetup::build(
+    let (library, _) = crate::common::library::library_at(&platform);
+    let acquire = crate::common::bundles::acquire_at(
         &platform,
         auth.deps.clone(),
-        &mut reads.collections,
-        &closed_outbound().spotify(),
-    )
-    .unwrap();
+        &library,
+        &crate::common::bundles::collections_at(&platform).stores,
+    );
     // The test holds the only reader through the first run, as a swapping
     // host would, and gives it back once that run has answered.
     let held = Mutex::new(Some(runtime.db().sqlx().acquire().await.unwrap()));

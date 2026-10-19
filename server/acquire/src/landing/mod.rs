@@ -39,7 +39,7 @@ pub mod specs;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 pub use self::confine::Landed;
 use self::confine::{Place, place};
@@ -56,9 +56,6 @@ use super::downloads::store::{TaskDetails, TaskRow};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 use droppedneedle_library::import::ImportJoin;
-
-/// The library port, set once the library bundle exists.
-pub type LibrarySlot = Arc<OnceLock<Arc<dyn LandingLibrary>>>;
 
 /// Hold code for better files of an album the library already holds.
 /// Landings no longer write it (an upgrade replaces the old file at
@@ -183,7 +180,9 @@ struct Versions {
 /// The landing service the worker calls.
 pub struct LandingService {
     journal: Arc<Journal>,
-    library: LibrarySlot,
+    /// The library files land in; `None` on test bundles that import
+    /// nothing.
+    library: Option<Arc<dyn LandingLibrary>>,
     /// The quality band landed files must sit in, read per landing.
     policy: Live<DownloadPolicy>,
     held_dir: PathBuf,
@@ -225,7 +224,7 @@ struct Held<'a> {
 impl LandingService {
     pub fn new(
         journal: Arc<Journal>,
-        library: LibrarySlot,
+        library: Option<Arc<dyn LandingLibrary>>,
         policy: Live<DownloadPolicy>,
         held_dir: PathBuf,
     ) -> Self {
@@ -237,9 +236,9 @@ impl LandingService {
         }
     }
 
-    /// The library slot, for boot to fill.
-    pub fn library_slot(&self) -> &LibrarySlot {
-        &self.library
+    /// The library files land in.
+    pub fn library(&self) -> Option<&Arc<dyn LandingLibrary>> {
+        self.library.as_ref()
     }
 
     /// Land one task's files: confine, probe, check, match, then import,
@@ -255,7 +254,7 @@ impl LandingService {
         landed: Landed,
         patient: bool,
     ) -> LandingReport {
-        let library = self.library.get().cloned();
+        let library = self.library.clone();
         let library_dirs = library
             .as_ref()
             .map(|library| library.library_dirs())

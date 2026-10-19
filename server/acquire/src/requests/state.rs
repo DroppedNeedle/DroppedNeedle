@@ -36,35 +36,25 @@ pub struct RequestsState {
     /// Verdict sink into the collections follow rows. `None` in tests that
     /// run the routes alone; wiring connects the collections store.
     pub follow_sink: Option<Arc<dyn FollowDecisionSink>>,
-    /// The plugin host, once boot attached it: new requests are announced
-    /// to `subscriber` plugins.
-    pub plugins: crate::wiring::PluginSlot,
-    /// The personal-mix builder, once boot has built it. It needs this
-    /// state for album intake, so it is set after construction.
-    pub mixer: MixSlot,
-    /// The library's edition plans, once boot has built the library seam:
-    /// "get missing tracks" fetches only what the chosen edition lacks.
-    pub edition_plans: EditionPlanSlot,
-    /// The upgrade policy, set when the flows are built: "get missing
+    /// The plugin host: new requests are announced to `subscriber`
+    /// plugins. `None` in tests that run the routes alone.
+    pub plugins: Option<Arc<droppedneedle_plugins::host::PluginHost>>,
+    /// The personal-mix builder. `None` when ListenBrainz has no rate
+    /// limit row, and in tests that run the routes alone.
+    pub mixer: Option<Arc<super::mix::PersonalMixBuilder>>,
+    /// The library's edition plans: "get missing tracks" fetches only what
+    /// the chosen edition lacks. `None` in tests that run the routes alone.
+    pub edition_plans: Option<Arc<dyn droppedneedle_library::operations::port::EditionPlans>>,
+    /// The download policy the upgrade cutoff comes from: "get missing
     /// tracks" also asks for the edition's owned tracks below the cutoff.
-    pub upgrade_policy: UpgradePolicySlot,
-    /// Whether a download source is set up and where downloads land, set
-    /// when the download worker is built.
-    pub readiness: ReadinessSlot,
-}
-
-/// The slot the library's edition plans go into.
-pub type EditionPlanSlot =
-    Arc<std::sync::OnceLock<Arc<dyn droppedneedle_library::operations::port::EditionPlans>>>;
-
-/// The slot the download policy the upgrade cutoff comes from goes into.
-pub type UpgradePolicySlot = Arc<
-    std::sync::OnceLock<
+    pub upgrade_policy: Option<
         droppedneedle_kernel::runtime_config::Live<
             droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
         >,
     >,
->;
+    /// Whether a download source is set up and where downloads land.
+    pub readiness: Option<AcquireReadiness>,
+}
 
 /// What "get missing tracks" checks before it asks for anything (v2
 /// checked a source was set up and the staging disk had room).
@@ -77,14 +67,10 @@ pub struct AcquireReadiness {
     pub staging_root: std::path::PathBuf,
 }
 
-/// The slot the readiness checks go into.
-pub type ReadinessSlot = Arc<std::sync::OnceLock<AcquireReadiness>>;
-
-/// The slot the personal-mix builder goes into.
-pub type MixSlot = Arc<std::sync::OnceLock<Arc<super::mix::PersonalMixBuilder>>>;
-
 impl RequestsState {
-    /// State over one database, one quota ledger and one dispatch.
+    /// State over one database, one quota ledger and one dispatch, with no
+    /// ports: the routes alone. Production fills the ports in
+    /// [`crate::wiring`] before anything holds the state.
     pub fn new(
         db: &AcquireDb,
         quota: Arc<QuotaLedger>,
@@ -100,11 +86,11 @@ impl RequestsState {
             editions: EditionStore::new(db.clone()),
             library: db.clone(),
             follow_sink: None,
-            plugins: Default::default(),
-            mixer: Default::default(),
-            edition_plans: Default::default(),
-            upgrade_policy: Default::default(),
-            readiness: Default::default(),
+            plugins: None,
+            mixer: None,
+            edition_plans: None,
+            upgrade_policy: None,
+            readiness: None,
         }
     }
 

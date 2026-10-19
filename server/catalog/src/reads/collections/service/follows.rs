@@ -13,6 +13,7 @@ use crate::reads::collections::models::{
     NewReleaseListResponse, NewReleasePageQuery, RecentReleasesQuery, UnseenCountResponse,
 };
 use crate::reads::collections::state::AutoDownloadState;
+use crate::reads::collections::store::FollowStore;
 use crate::reads::collections::store::follows::{FollowRow, ReleaseFilter, ReleaseRow};
 use droppedneedle_auth::{Principal, Role};
 
@@ -116,6 +117,16 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     (yoe + era * 400 + i64::from(month <= 2), month, day)
 }
 
+/// One artist's follow status for `user_id`, read from `follows` alone.
+pub async fn follow_status(
+    follows: &FollowStore,
+    user_id: &str,
+    artist_mbid: &str,
+) -> Result<FollowStatusResponse, CollectionsError> {
+    let row = follows.get(user_id, artist_mbid).await?;
+    Ok(status(artist_mbid, row.as_ref()))
+}
+
 impl CollectionsService<'_> {
     /// One artist's follow status for the caller.
     pub async fn follow_status(
@@ -123,8 +134,7 @@ impl CollectionsService<'_> {
         user_id: &str,
         artist_mbid: &str,
     ) -> Result<FollowStatusResponse, CollectionsError> {
-        let row = self.state.stores.follows.get(user_id, artist_mbid).await?;
-        Ok(status(artist_mbid, row.as_ref()))
+        follow_status(&self.state.stores.follows, user_id, artist_mbid).await
     }
 
     /// Follow or unfollow one artist.

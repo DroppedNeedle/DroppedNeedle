@@ -261,7 +261,7 @@ impl RequestsService {
         // which starts it once a source is saved.
         let waiting = self
             .readiness
-            .get()
+            .as_ref()
             .is_some_and(|readiness| !(readiness.sources_ready)());
         let request = DispatchRequest {
             user_id: curator.user_id().to_owned(),
@@ -379,7 +379,7 @@ impl RequestsService {
         release_group_mbid: &str,
         replace_versions: bool,
     ) -> Result<Option<Gap>, RequestsError> {
-        let Some(plans) = self.edition_plans.get() else {
+        let Some(plans) = &self.edition_plans else {
             return Ok(None);
         };
         let plan = match plans.group_plan(album_id, release_group_mbid).await {
@@ -421,7 +421,7 @@ impl RequestsService {
     /// The plan's kept files below the upgrade cutoff; none while upgrades
     /// are off or the qualities cannot be read.
     async fn below_cutoff(&self, plan: &EditionPlan) -> Vec<String> {
-        let Some(policy) = self.upgrade_policy.get().map(|live| {
+        let Some(policy) = self.upgrade_policy.as_ref().map(|live| {
             crate::flows::stores::UpgradePolicy::from_policy(&live.read().unwrap_or_default())
         }) else {
             return Vec::new();
@@ -448,7 +448,7 @@ impl RequestsService {
     /// Refuse when the disk downloads land on lacks room for them (v2
     /// checked the same before a conversion).
     async fn check_disk(&self, estimate: u64) -> Result<(), RequestsError> {
-        let Some(readiness) = self.readiness.get() else {
+        let Some(readiness) = &self.readiness else {
             return Ok(());
         };
         let root = readiness.staging_root.clone();

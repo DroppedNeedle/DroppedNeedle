@@ -122,15 +122,36 @@ pub struct CollectionsState {
 impl CollectionsState {
     /// State over one database, with the acquisition seams unwired.
     pub fn new(db: CollectionsDb) -> Self {
+        let stores = Stores::new(&db);
+        Self::over(db, stores, None, None)
+    }
+
+    /// The production state: the stores acquisition was built with, and
+    /// its approval list and seed sink.
+    pub fn wired(
+        db: CollectionsDb,
+        stores: Stores,
+        approvals: Arc<dyn PendingApprovalsSource>,
+        seeds: Arc<dyn ApprovalSeedSink>,
+    ) -> Self {
+        Self::over(db, stores, Some(approvals), Some(seeds))
+    }
+
+    fn over(
+        db: CollectionsDb,
+        stores: Stores,
+        acquire_approvals: Option<Arc<dyn PendingApprovalsSource>>,
+        approval_seeds: Option<Arc<dyn ApprovalSeedSink>>,
+    ) -> Self {
         let library = db
             .pool()
             .map_or_else(|_| LibraryDb::unwired(), LibraryDb::new);
         Self {
-            stores: Stores::new(&db),
+            stores,
             items: SqlitePlayerCatalog::new(&library),
             db,
-            acquire_approvals: None,
-            approval_seeds: None,
+            acquire_approvals,
+            approval_seeds,
         }
     }
 

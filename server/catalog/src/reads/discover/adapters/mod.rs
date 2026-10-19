@@ -67,9 +67,8 @@ pub struct DiscoverInputs {
     pub endpoints: crate::reads::catalog::upstream::Endpoints,
     /// The cover and artist image cache, which genre pages warm.
     pub artwork: Option<crate::reads::platform::artwork::ArtworkService>,
-    /// Where boot puts the requests side of discovery batches, once the
-    /// acquisition setup exists.
-    pub batch_requests: batches::RequestsSlot,
+    /// The requests side of discovery batches.
+    pub batch_requests: Arc<dyn batches::BatchRequests>,
 }
 
 /// Build the production discover deps, each holding live handles from
@@ -137,21 +136,20 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
         catalog: Catalog::new(upstream, LocalCatalog::new(inputs.db.sqlx().clone())),
         previews: ReqwestGet::new(inputs.http.clone()),
     });
-    let batches = batches::LiveBatches::new(inputs.db.clone(), inputs.batch_requests.clone());
-    let page = page::LiveDiscover::new(page::PageInputs {
-        sources: sources.clone(),
-        queue_db: queue::store::QueueDb::new(inputs.db.clone()),
-        db: page::store::PageDb::new(inputs.db.clone()),
-        advanced: config.live(),
-        integrations: content::IntegrationSettings::new(config),
-        queues: queues.clone(),
-        warmer_enabled: inputs.discover_warmer,
-    });
-    let (home, genre_art, charts) = home::wire(home::HomeWiring {
+    let batches = batches::LiveBatches::new(inputs.db.clone(), Some(inputs.batch_requests.clone()));
+    let (home, page, genre_art, charts) = home::wire(home::HomeWiring {
         pool: inputs.db.sqlx().clone(),
         integrations: content::IntegrationSettings::new(config),
         sources: sources.clone(),
-        discover: page.clone(),
+        discover: page::PageInputs {
+            sources: sources.clone(),
+            queue_db: queue::store::QueueDb::new(inputs.db.clone()),
+            db: page::store::PageDb::new(inputs.db.clone()),
+            advanced: config.live(),
+            integrations: content::IntegrationSettings::new(config),
+            queues: queues.clone(),
+            warmer_enabled: inputs.discover_warmer,
+        },
         charts,
         artwork: inputs.artwork.clone(),
     });

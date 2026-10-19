@@ -16,7 +16,7 @@
 //! on every view, never copied into the batch.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::discover::models::{
@@ -83,9 +83,6 @@ pub trait BatchRequests: Send + Sync {
     ) -> BoxFuture<'a, Result<bool, String>>;
 }
 
-/// Where boot puts the acquisition side once it exists.
-pub type RequestsSlot = Arc<OnceLock<Arc<dyn BatchRequests>>>;
-
 /// One stored batch row.
 struct BatchHead {
     id: String,
@@ -107,7 +104,8 @@ struct BatchItem {
 /// Batches over the catalog database.
 pub struct LiveBatches {
     db: Db,
-    requests: RequestsSlot,
+    /// The acquisition side; `None` where no download system runs.
+    requests: Option<Arc<dyn BatchRequests>>,
     /// Idempotency keys of creates in progress, so a retried "Download
     /// all" never files the same batch twice at once.
     creating: Mutex<HashSet<String>>,
@@ -142,9 +140,8 @@ fn placeholders(count: usize) -> String {
 }
 
 impl LiveBatches {
-    /// Batches over this database, filing through `requests` once boot
-    /// fills the slot.
-    pub fn new(db: Db, requests: RequestsSlot) -> Self {
+    /// Batches over this database, filing through `requests`.
+    pub fn new(db: Db, requests: Option<Arc<dyn BatchRequests>>) -> Self {
         Self {
             db,
             requests,
@@ -153,7 +150,7 @@ impl LiveBatches {
     }
 
     fn requests(&self) -> Result<&Arc<dyn BatchRequests>, BatchFailure> {
-        self.requests.get().ok_or_else(|| {
+        self.requests.as_ref().ok_or_else(|| {
             BatchFailure::Provider(ProviderFailure::not_built(
                 "Discovery batches need the download system, which is not running.",
             ))

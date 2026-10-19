@@ -11,31 +11,23 @@ use droppedneedle_acquire::AcquireSetup;
 use droppedneedle_auth::wiring::AuthSetup;
 use droppedneedle_catalog::{concerts::ConcertsSetup, reads::ReadsSetup};
 use droppedneedle_compat::CompatSetup;
-use droppedneedle_kernel::{
-    config::AppConfig, events::EventHub, http_client::HttpClientFactory, ids::IdGenerator,
-};
+use droppedneedle_kernel::{config::AppConfig, events::EventHub, ids::IdGenerator};
 use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_media::MediaSetup;
 use droppedneedle_plugins::wiring::PluginsSetup;
-use droppedneedle_providers::Providers;
 
-/// All long-lived server dependencies.
+/// What the router and the outer layers serve from: one bundle per area,
+/// the request ids, the deployment config and the event hub.
 #[derive(Clone)]
 pub struct AppState {
     /// Fresh request and error ids.
     pub ids: Arc<dyn IdGenerator>,
-    /// Factory for outbound HTTP clients.
-    pub http: HttpClientFactory,
     /// Deployment configuration.
     pub config: AppConfig,
     /// Auth bundle: stores, gates, and route states for `/api/v3`.
     pub auth: AuthSetup,
     /// Reads bundle: library, search, discover, collections, platform.
     pub reads: ReadsSetup,
-    /// Shared provider deps: verified limiters, slot lanes, byte cache.
-    /// Built once at boot (in-memory cache) and shared with the reads
-    /// enrichment pair so production pacing runs through one limiter set.
-    pub providers: Arc<Providers>,
     /// Remote sources, stream gateway, playback reporting.
     pub media: MediaSetup,
     /// Acquisition: requests, downloads, flows, imports.
@@ -66,11 +58,9 @@ impl AppState {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         ids: Arc<dyn IdGenerator>,
-        http: HttpClientFactory,
         config: AppConfig,
         auth: AuthSetup,
         reads: ReadsSetup,
-        providers: Arc<Providers>,
         media: MediaSetup,
         acquire: AcquireSetup,
         library: LibrarySetup,
@@ -84,11 +74,9 @@ impl AppState {
     ) -> Self {
         Self {
             ids,
-            http,
             config,
             auth,
             reads,
-            providers,
             media,
             acquire,
             library,

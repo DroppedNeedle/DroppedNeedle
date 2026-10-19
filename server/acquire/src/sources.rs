@@ -31,7 +31,7 @@ use super::downloads::sources::{
     DownloadSource, Materialization, OrphanOwnership, SourceError, SourceHandle, TransferProgress,
 };
 use super::downloads::store::TaskRow;
-use super::landing::LibrarySlot;
+use super::landing::ports::LandingLibrary;
 use super::search_jobs::candidates::{Candidate, MAX_PER_SOURCE, Pin};
 use super::search_jobs::pinned;
 use super::slskd::folders::{RankRequest, rank_folders};
@@ -442,7 +442,7 @@ pub struct SabnzbdSource {
     journal: Arc<Journal>,
     category: Option<String>,
     timeout: Duration,
-    plugins: super::wiring::PluginSlot,
+    plugins: Option<Arc<droppedneedle_plugins::host::PluginHost>>,
     targets: Option<Arc<Targets>>,
 }
 
@@ -468,7 +468,7 @@ impl SabnzbdSource {
             journal,
             category,
             timeout,
-            plugins: Default::default(),
+            plugins: None,
             targets: None,
         }
     }
@@ -481,7 +481,10 @@ impl SabnzbdSource {
     }
 
     /// Pool releases from plugin indexers that target `usenet`.
-    pub fn with_plugins(mut self, plugins: super::wiring::PluginSlot) -> Self {
+    pub fn with_plugins(
+        mut self,
+        plugins: Option<Arc<droppedneedle_plugins::host::PluginHost>>,
+    ) -> Self {
         self.plugins = plugins;
         self
     }
@@ -489,7 +492,7 @@ impl SabnzbdSource {
     /// Releases from plugin indexers that target `usenet`, as NZB hits.
     /// Results without an NZB URL cannot go to SABnzbd and are skipped.
     async fn plugin_hits(&self, query: &Query<'_>) -> Vec<IndexerResult> {
-        let Some(host) = self.plugins.get() else {
+        let Some(host) = &self.plugins else {
             return Vec::new();
         };
         let found = match query {
@@ -857,23 +860,15 @@ impl DownloadSource for SabnzbdSource {
 /// state of the writes that put a task's files in place.
 pub struct JournalOwnership {
     journal: Arc<Journal>,
-    library: LibrarySlot,
+    library: Option<Arc<dyn LandingLibrary>>,
 }
 
 impl JournalOwnership {
-    /// Ownership lookups over the shared journal. Until a library is
-    /// given, no task's writes count as settled.
-    pub fn new(journal: Arc<Journal>) -> Self {
-        Self {
-            journal,
-            library: LibrarySlot::default(),
-        }
-    }
-
-    /// Ask this library about the writes behind a task.
-    pub fn with_library(mut self, library: LibrarySlot) -> Self {
-        self.library = library;
-        self
+    /// Ownership lookups over the shared journal, asking `library` about
+    /// the writes behind a task. Without a library no task's writes count
+    /// as settled.
+    pub fn new(journal: Arc<Journal>, library: Option<Arc<dyn LandingLibrary>>) -> Self {
+        Self { journal, library }
     }
 }
 
@@ -911,7 +906,7 @@ impl OrphanOwnership for JournalOwnership {
 
     /// A journal that cannot be asked is not settled: the folder stays.
     async fn bundles_settled(&self, task_id: &str) -> Result<bool, SourceError> {
-        let Some(library) = self.library.get() else {
+        let Some(library) = &self.library else {
             tracing::warn!(
                 task_id,
                 "no library to ask about this download's writes; its folder is kept"

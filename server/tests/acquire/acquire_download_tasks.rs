@@ -16,7 +16,7 @@ use droppedneedle_acquire::downloads::{
     state::{AttemptState, TaskStatus},
     store::NewTask,
 };
-use droppedneedle_acquire::landing::{LandingService, LibrarySlot};
+use droppedneedle_acquire::landing::LandingService;
 use droppedneedle_acquire::requests::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DownloadDispatch as _,
 };
@@ -101,7 +101,7 @@ fn worker_over(journal: &Arc<Journal>) -> Arc<DownloadWorker> {
     let staging = staging_for(journal);
     let landing = Arc::new(LandingService::new(
         journal.clone(),
-        LibrarySlot::default(),
+        None,
         settings_beside(journal).live(),
         staging.join("held"),
     ));

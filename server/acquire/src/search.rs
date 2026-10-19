@@ -6,7 +6,7 @@
 //! erroring source never fails the fan-out. [`MusicBrainzReleasePoll`] reads a
 //! followed artist's release groups for the follow poll.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
@@ -125,39 +125,18 @@ const RELEASE_PAGE: u32 = 100;
 /// handful of artists, and bounds one poll's provider work.
 const MAX_RELEASE_PAGES: u32 = 10;
 
-/// Slot boot puts the live release poll into (it needs the provider
-/// limiter, which exists only after acquisition is built).
-pub type ReleasePollSlot = Arc<OnceLock<Arc<dyn ReleasePoll>>>;
+/// The follow poll of a test bundle with no MusicBrainz: every poll
+/// fails, so no artist is baselined against an empty page.
+#[cfg(any(test, feature = "test-support"))]
+pub struct NoReleasePoll;
 
-/// The follow poll's provider page, read through [`ReleasePollSlot`].
-/// Until boot attaches the live poll every poll fails, so no artist is
-/// baselined against an empty page.
-#[derive(Default)]
-pub struct SlotPoll {
-    slot: ReleasePollSlot,
-}
-
-impl SlotPoll {
-    /// Poll over an empty slot.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// The slot boot fills.
-    pub fn slot(&self) -> &ReleasePollSlot {
-        &self.slot
-    }
-}
-
-impl ReleasePoll for SlotPoll {
+#[cfg(any(test, feature = "test-support"))]
+impl ReleasePoll for NoReleasePoll {
     fn poll_releases<'a>(
         &'a self,
-        artist_mbid: &'a str,
+        _artist_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Vec<ObservedRelease>, String>> {
-        match self.slot.get() {
-            Some(poll) => poll.poll_releases(artist_mbid),
-            None => Box::pin(async { Err("MusicBrainz is not attached yet".to_owned()) }),
-        }
+        Box::pin(async { Err("MusicBrainz is not available".to_owned()) })
     }
 }
 

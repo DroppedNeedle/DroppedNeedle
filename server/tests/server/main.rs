@@ -40,3 +40,4 @@ mod settings_sections;
 mod settings_store;
 mod source_gates;
 mod web;
+mod wiring_gate;

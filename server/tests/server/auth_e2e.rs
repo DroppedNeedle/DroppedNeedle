@@ -29,12 +29,6 @@ use droppedneedle_auth::compat_auth::subsonic::{
 use droppedneedle_auth::prod::ProdAuth;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::wiring::{AuthSetup, Upstreams};
-use droppedneedle_catalog::reads::ReadsSetup;
-use droppedneedle_catalog::reads::catalog::{
-    Catalog,
-    library::LocalCatalog,
-    upstream::{CatalogSettings, LiveCatalogSettings, Upstream},
-};
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::config::DEFAULT_PORT;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, open_runtime};
@@ -160,7 +154,15 @@ impl E2e {
     pub(crate) fn state(&self) -> AppState {
         let p = &self.platform;
         let auth = self.auth_setup();
-        let reads = ReadsSetup::build(
+        let (library, _) = crate::common::library::library_at(p);
+        let collections = crate::common::bundles::collections_at(p);
+        let acquire = crate::common::bundles::acquire_at(
+            p,
+            auth.users.clone(),
+            &library,
+            &collections.stores,
+        );
+        let reads = crate::common::bundles::reads_at(
             p,
             auth.users.clone(),
             droppedneedle_catalog::reads::ReadsInputs {
@@ -170,22 +172,10 @@ impl E2e {
                 providers: Arc::new(Providers::unpaced()),
                 ..crate::common::reads_inputs(&p.config.root_app_dir)
             },
-            None,
-        )
-        .with_collections(
-            droppedneedle_catalog::reads::collections::db::CollectionsDb::new(p.db.clone()),
-        )
-        .with_catalog(Catalog::new(
-            Upstream::new(
-                &p.http,
-                Arc::new(Providers::unpaced()),
-                Arc::new(LiveCatalogSettings::new(&self.store)) as Arc<dyn CatalogSettings>,
-                auth.users.clone(),
-                droppedneedle::bootstrap::Outbound::live().catalog(),
-            ),
-            LocalCatalog::new(p.db.sqlx().clone()),
-        ));
-        let (library, _) = crate::common::library::library_at(p);
+            &library,
+            collections.wired(&acquire),
+            Some(&acquire),
+        );
         let (media, _worker) = droppedneedle_media::MediaSetup::build(
             p,
             auth.users.clone(),
@@ -195,23 +185,11 @@ impl E2e {
                     reads.collections.clone(),
                 ),
             ),
-            droppedneedle_plugins::wiring::new_host(
-                p,
-                &droppedneedle_plugins::wiring::tick_store(p),
-                library.fs.clone(),
-            ),
+            crate::common::bundles::idle_host(p, library.fs.clone()),
             droppedneedle::bootstrap::Outbound::live().plex_tv,
             droppedneedle::bootstrap::Outbound::live().scrobbles(),
         )
         .expect("media bundle builds");
-        let mut reads = reads;
-        let acquire = droppedneedle_acquire::AcquireSetup::build(
-            p,
-            auth.users.clone(),
-            &mut reads.collections,
-            &droppedneedle::bootstrap::Outbound::live().spotify(),
-        )
-        .expect("acquire bundle builds");
         let compat = droppedneedle_compat::CompatSetup::build(
             droppedneedle_compat::setup::CompatDeps::over_reads(
                 p,
@@ -272,11 +250,9 @@ impl E2e {
                 ));
         AppState::new(
             Arc::clone(&p.ids),
-            p.http.clone(),
             p.config.clone(),
             auth,
             reads,
-            providers,
             media,
             acquire,
             library,

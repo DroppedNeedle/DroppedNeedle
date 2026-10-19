@@ -108,7 +108,7 @@ impl IntegrationSettings {
     }
 }
 
-/// The live discover page and, once attached, the live home page, with
+/// The live discover page and, when given, the live home page, with
 /// the real integration status.
 pub struct LiveContent {
     settings: IntegrationSettings,
@@ -197,7 +197,7 @@ impl DiscoverContent for LiveContent {
                         tracing::warn!(%error, "could not record home activity");
                     }
                 });
-                return Ok(home.page(user_id).await);
+                return Ok(home.page(user_id, Some(&self.page)).await);
             }
             Ok(HomeResponse {
                 recently_added: None,

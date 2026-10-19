@@ -99,8 +99,11 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
     let journal = Arc::new(Journal::new(db.clone()));
     let mut albums = FixedAlbums::default();
     albums.releases.insert(RELEASE.to_owned(), album());
-    let targets = Arc::new(Targets::new(journal.clone(), staging.to_path_buf()));
-    assert!(targets.lookup_slot().set(Arc::new(albums)).is_ok());
+    let targets = Arc::new(Targets::new(
+        journal.clone(),
+        staging.to_path_buf(),
+        Some(Arc::new(albums)),
+    ));
     let http = ReqwestSlskdHttp::new(reqwest::Client::new(), &mock.base_url(), MOCK_API_KEY);
     let repo = SlskdRepository::new(
         SlskdClient::new(http),

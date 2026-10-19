@@ -41,7 +41,7 @@ pub mod local;
 pub mod remote;
 pub mod resize;
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
@@ -105,10 +105,6 @@ pub trait ArtistImageSource: Send + Sync {
     fn candidates<'a>(&'a self, artist_mbid: &'a str) -> BoxFuture<'a, ArtistImageCandidates>;
 }
 
-/// The slot the catalog fills once it exists (the artwork service is built
-/// first).
-pub type ArtistSourceSlot = Arc<OnceLock<Arc<dyn ArtistImageSource>>>;
-
 /// Whether `prefer_local_cover_art` is on now, so a settings change applies
 /// to the next request. Local art wins when the section cannot be read.
 fn prefers_local(settings: &Live<AdvancedSettings>) -> bool {
@@ -132,7 +128,7 @@ pub struct ArtworkService {
     resizes: Singleflight<Option<Rendition>>,
     resize_permits: Arc<tokio::sync::Semaphore>,
     images: Option<Arc<dyn RemoteImages>>,
-    artist_source: ArtistSourceSlot,
+    artist_source: Option<Arc<dyn ArtistImageSource>>,
     artist_flights: Singleflight<Option<CoverBytes>>,
     artist_permits: Arc<tokio::sync::Semaphore>,
 }
@@ -164,7 +160,7 @@ impl ArtworkService {
             resizes: Singleflight::new(),
             resize_permits: Arc::new(tokio::sync::Semaphore::new(RESIZE_PERMITS)),
             images: None,
-            artist_source: Arc::new(OnceLock::new()),
+            artist_source: None,
             artist_flights: Singleflight::new(),
             artist_permits: Arc::new(tokio::sync::Semaphore::new(ARTIST_RESOLVE_PERMITS)),
         }
@@ -177,9 +173,11 @@ impl ArtworkService {
         self
     }
 
-    /// The slot the artist image source goes into once the catalog exists.
-    pub fn artist_source_slot(&self) -> ArtistSourceSlot {
-        Arc::clone(&self.artist_source)
+    /// Name artist images through `source` (the catalog).
+    #[must_use]
+    pub fn with_artist_source(mut self, source: Arc<dyn ArtistImageSource>) -> Self {
+        self.artist_source = Some(source);
+        self
     }
 
     /// The disk cache, for the admin stats and clears.
@@ -316,8 +314,7 @@ impl ArtworkService {
             Some(KeyEntry::Miss { until }) if until > unix_now() => return CoverLookup::Missing,
             _ => {}
         }
-        let (Some(source), Some(images)) = (self.artist_source.get().cloned(), self.images.clone())
-        else {
+        let (Some(source), Some(images)) = (self.artist_source.clone(), self.images.clone()) else {
             return CoverLookup::Missing;
         };
         let flights = self.artist_flights.clone();

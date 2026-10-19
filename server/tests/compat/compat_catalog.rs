@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use axum::http::StatusCode;
 use droppedneedle_catalog::reads::ReadsSetup;
+use droppedneedle_catalog::reads::collections::CollectionsState;
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 use droppedneedle_catalog::reads::collections::models::{
     AddTracksBody, CreatePlaylistBody, TrackInput,
@@ -454,13 +455,15 @@ impl Rig {
             .build()
             .await;
         let auth = AuthRig::on(&platform);
-        let reads = ReadsSetup::build(
+        let (library, _) = crate::common::library::library_at(&platform);
+        let reads = crate::common::bundles::reads_at(
             &platform,
             auth.deps.clone(),
             crate::common::reads_inputs(&dir),
+            &library,
+            CollectionsState::new(CollectionsDb::new(runtime.db().clone())),
             None,
-        )
-        .with_collections(CollectionsDb::new(runtime.db().clone()));
+        );
         Self {
             _dir: dir,
             runtime,

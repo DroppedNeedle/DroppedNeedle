@@ -70,16 +70,20 @@ pub struct RequestsService {
     library: AcquireDb,
     /// Verdict sink into the collections follow rows, when wired.
     follow_sink: Option<Arc<dyn FollowDecisionSink>>,
-    /// Plugin host for `request_created` events, when attached.
-    plugins: crate::wiring::PluginSlot,
-    /// The personal-mix builder, when boot wired one.
-    mixer: super::state::MixSlot,
-    /// The library's edition plans, when boot wired them.
-    edition_plans: super::state::EditionPlanSlot,
-    /// The upgrade policy reader, when the flows are built.
-    upgrade_policy: super::state::UpgradePolicySlot,
-    /// Source and disk checks, when the download worker is built.
-    readiness: super::state::ReadinessSlot,
+    /// Plugin host for `request_created` events, when there is one.
+    plugins: Option<Arc<droppedneedle_plugins::host::PluginHost>>,
+    /// The personal-mix builder, when there is one.
+    mixer: Option<Arc<super::mix::PersonalMixBuilder>>,
+    /// The library's edition plans, when wired.
+    edition_plans: Option<Arc<dyn droppedneedle_library::operations::port::EditionPlans>>,
+    /// The upgrade policy reader, when wired.
+    upgrade_policy: Option<
+        droppedneedle_kernel::runtime_config::Live<
+            droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
+        >,
+    >,
+    /// Source and disk checks, when wired.
+    readiness: Option<super::state::AcquireReadiness>,
 }
 
 impl RequestsService {
@@ -1533,7 +1537,7 @@ impl RequestsService {
             return Ok(no_match());
         }
         // A rejection also turns the user's toggle off (v2).
-        if let Some(mixer) = self.mixer.get() {
+        if let Some(mixer) = &self.mixer {
             mixer.clear_intent(user_id).await;
         }
         Ok(ActionResponse {
@@ -1555,7 +1559,7 @@ impl RequestsService {
         {
             return Ok(no_match());
         }
-        if let Some(mixer) = self.mixer.get() {
+        if let Some(mixer) = &self.mixer {
             mixer.clear_intent(user_id).await;
         }
         Ok(ActionResponse {
@@ -1572,7 +1576,7 @@ impl RequestsService {
         &self,
         principal: &Principal,
     ) -> Result<RefreshResponse, RequestsError> {
-        let Some(mixer) = self.mixer.get() else {
+        let Some(mixer) = &self.mixer else {
             return Err(RequestsError::Conflict {
                 message: "Weekly Mix is not available on this server.".to_owned(),
             });
@@ -2124,7 +2128,7 @@ impl RequestsService {
                     .total_size_bytes
                     .map(|total| (total - snapshot.downloaded_bytes).max(0) as f64);
                 if snapshot.status == "queued"
-                    && let Some(readiness) = self.readiness.get()
+                    && let Some(readiness) = &self.readiness
                     && !(readiness.sources_ready)()
                 {
                     item.waiting_reason = Some(WAITING_NO_SOURCE.to_owned());

@@ -3,20 +3,22 @@
 //! The download worker reports `download_started`, `download_completed`
 //! and `download_failed`; request intake reports `request_created`; the
 //! flow ticks report `request_fulfilled` and `import_finished`. Each goes
-//! to the plugin host when boot attached one, in the background: a slow
+//! to the plugin host, when the bundle has one, in the background: a slow
 //! plugin never delays the flow that raised the event. Flow notices for a
 //! user (`wanted_*`, `auto_download_enqueued`, `request_imported`) go to
-//! the event hub once one is attached.
+//! the event hub.
+
+use std::sync::Arc;
 
 use super::flows::seams::{FlowEvent, TickSink};
-use super::wiring::PluginSlot;
+use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_plugins::runtime::{
     DownloadTaskEvent, EventKind, EventPayload, ImportEvent, PluginEvent, RequestEvent,
 };
 
-/// Send one event when a plugin host is attached.
-pub fn announce(plugins: &PluginSlot, kind: EventKind, payload: EventPayload) {
-    if let Some(host) = plugins.get() {
+/// Send one event to the plugin host, when there is one.
+pub fn announce(plugins: &Option<Arc<PluginHost>>, kind: EventKind, payload: EventPayload) {
+    if let Some(host) = plugins {
         host.dispatch_event(PluginEvent {
             kind,
             payload,
@@ -27,7 +29,7 @@ pub fn announce(plugins: &PluginSlot, kind: EventKind, payload: EventPayload) {
 
 /// A download lifecycle event.
 pub fn download_event(
-    plugins: &PluginSlot,
+    plugins: &Option<Arc<PluginHost>>,
     kind: EventKind,
     task: &super::downloads::store::TaskRow,
     source: &str,
@@ -49,13 +51,17 @@ pub fn download_event(
 /// Flow ticks: logged as before, the outcomes plugins care about go to
 /// them, and user notices go to the live event stream.
 pub struct FlowTicks {
-    plugins: PluginSlot,
+    plugins: Option<Arc<PluginHost>>,
     events: droppedneedle_kernel::events::EventHub,
 }
 
 impl FlowTicks {
-    /// Tick sink over the plugin slot and the event hub handle.
-    pub fn new(plugins: PluginSlot, events: droppedneedle_kernel::events::EventHub) -> Self {
+    /// Tick sink over the plugin host, when there is one, and the event
+    /// hub.
+    pub fn new(
+        plugins: Option<Arc<PluginHost>>,
+        events: droppedneedle_kernel::events::EventHub,
+    ) -> Self {
         Self { plugins, events }
     }
 }

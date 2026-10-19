@@ -463,11 +463,11 @@ pub type SourceSet = Arc<Vec<Source>>;
 /// Where the worker's sources and tuning come from, read once per pass.
 enum Inputs {
     /// The saved settings.
-    Live(super::wiring::WorkerSettings),
+    Live(Arc<super::wiring::WorkerSettings>),
     /// A fixed set, for tests that script the sources.
     Fixed {
         sources: SourceSet,
-        config: WorkerConfig,
+        config: Box<WorkerConfig>,
     },
 }
 
@@ -483,7 +483,7 @@ impl Inputs {
     fn config(&self) -> Option<WorkerConfig> {
         match self {
             Self::Live(settings) => settings.config(),
-            Self::Fixed { config, .. } => Some(config.clone()),
+            Self::Fixed { config, .. } => Some(WorkerConfig::clone(config)),
         }
     }
 
@@ -568,7 +568,7 @@ pub struct DownloadWorker {
     poll_cache: Mutex<HashMap<String, PollMemory>>,
     enqueue_not_before: Mutex<HashMap<String, f64>>,
     unsearchable_warned: Mutex<HashSet<String>>,
-    plugins: super::wiring::PluginSlot,
+    plugins: Option<Arc<droppedneedle_plugins::host::PluginHost>>,
     landing: Option<Arc<LandingService>>,
     landing_waits: Mutex<HashMap<String, u32>>,
     settled: Option<SettledHook>,
@@ -598,7 +598,7 @@ impl DownloadWorker {
     /// sending live progress to `events`.
     pub fn new(
         journal: Arc<Journal>,
-        settings: super::wiring::WorkerSettings,
+        settings: Arc<super::wiring::WorkerSettings>,
         events: droppedneedle_kernel::events::EventHub,
     ) -> Self {
         Self::over(journal, Inputs::Live(settings), events)
@@ -609,7 +609,7 @@ impl DownloadWorker {
         inputs: Inputs,
         events: droppedneedle_kernel::events::EventHub,
     ) -> Self {
-        let ownership = JournalOwnership::new(journal.clone());
+        let ownership = JournalOwnership::new(journal.clone(), None);
         Self {
             journal,
             inputs,
@@ -617,7 +617,7 @@ impl DownloadWorker {
             poll_cache: Mutex::new(HashMap::new()),
             enqueue_not_before: Mutex::new(HashMap::new()),
             unsearchable_warned: Mutex::new(HashSet::new()),
-            plugins: Default::default(),
+            plugins: None,
             landing: None,
             landing_waits: Mutex::new(HashMap::new()),
             settled: None,
@@ -681,7 +681,7 @@ impl DownloadWorker {
     /// Import finished downloads through the landing instead of settling
     /// them as completed unseen.
     pub fn with_landing(mut self, landing: Arc<LandingService>) -> Self {
-        self.ownership = self.ownership.with_library(landing.library_slot().clone());
+        self.ownership = JournalOwnership::new(self.journal.clone(), landing.library().cloned());
         self.landing = Some(landing);
         self
     }
@@ -698,9 +698,12 @@ impl DownloadWorker {
     }
 
     /// Announce download starts, completions and failures to `subscriber`
-    /// plugins through this slot.
-    pub fn with_plugin_events(mut self, plugins: super::wiring::PluginSlot) -> Self {
-        self.plugins = plugins;
+    /// plugins through this host.
+    pub fn with_plugin_events(
+        mut self,
+        host: Arc<droppedneedle_plugins::host::PluginHost>,
+    ) -> Self {
+        self.plugins = Some(host);
         self
     }
 
@@ -715,7 +718,7 @@ impl DownloadWorker {
             journal,
             Inputs::Fixed {
                 sources: Arc::new(sources),
-                config,
+                config: Box::new(config),
             },
             events,
         )

@@ -9,6 +9,7 @@ mod app;
 pub mod app_passwords;
 pub mod auth;
 pub mod auth_fakes;
+pub mod bundles;
 pub mod compat;
 pub mod library;
 pub mod logs;

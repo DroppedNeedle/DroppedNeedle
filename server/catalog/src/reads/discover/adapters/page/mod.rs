@@ -25,7 +25,7 @@ pub mod sources;
 pub mod store;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::reads::discover::adapters::content::IntegrationSettings;
@@ -130,11 +130,11 @@ struct Cached {
     meaningful: bool,
 }
 
-/// Another page the warm cycle keeps fresh (home), attached after both
-/// pages exist.
+/// Another page the warm cycle keeps fresh (home). It is handed the
+/// discover page, for what it shows from it.
 pub trait FeatureWarmer: Send + Sync {
     /// Build the user's page now; true when a new one was published.
-    fn warm<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, bool>;
+    fn warm<'a>(&'a self, user_id: &'a str, discover: &'a LiveDiscover) -> BoxFuture<'a, bool>;
 }
 
 /// What the page keeps between requests.
@@ -163,7 +163,7 @@ struct Inner {
     integrations: IntegrationSettings,
     queues: Arc<dyn QueueStore>,
     warmer_enabled: bool,
-    home: OnceLock<Arc<dyn FeatureWarmer>>,
+    home: Option<Arc<dyn FeatureWarmer>>,
     state: Mutex<State>,
 }
 
@@ -226,6 +226,15 @@ impl Drop for WarmGuard {
 impl LiveDiscover {
     /// Build the page over its inputs.
     pub fn new(inputs: PageInputs) -> Self {
+        Self::over(inputs, None)
+    }
+
+    /// Build the page over its inputs; its warm cycle rebuilds `home` too.
+    pub fn with_home(inputs: PageInputs, home: Arc<dyn FeatureWarmer>) -> Self {
+        Self::over(inputs, Some(home))
+    }
+
+    fn over(inputs: PageInputs, home: Option<Arc<dyn FeatureWarmer>>) -> Self {
         let library = LibraryReads::new(inputs.db.pool().clone());
         Self {
             inner: Arc::new(Inner {
@@ -238,16 +247,9 @@ impl LiveDiscover {
                 integrations: inputs.integrations,
                 queues: inputs.queues,
                 warmer_enabled: inputs.warmer_enabled,
-                home: OnceLock::new(),
+                home,
                 state: Mutex::new(State::default()),
             }),
-        }
-    }
-
-    /// Let the warm cycle rebuild the home page too.
-    pub fn attach_home(&self, home: Arc<dyn FeatureWarmer>) {
-        if self.inner.home.set(home).is_err() {
-            tracing::warn!("home warmer attached twice; keeping the first");
         }
     }
 
@@ -650,8 +652,8 @@ impl LiveDiscover {
                 }
                 tokio::time::timeout(FEATURE_TIMEOUT, self.warm_queue(user_id)).await
             }
-            "home" => match self.inner.home.get() {
-                Some(home) => tokio::time::timeout(FEATURE_TIMEOUT, home.warm(user_id)).await,
+            "home" => match &self.inner.home {
+                Some(home) => tokio::time::timeout(FEATURE_TIMEOUT, home.warm(user_id, self)).await,
                 None => return (false, WARM_AGAIN_SECS),
             },
             // Artist pages have no background warmer in this version;

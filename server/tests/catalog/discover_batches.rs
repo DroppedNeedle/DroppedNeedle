@@ -11,7 +11,7 @@ use droppedneedle_acquire::requests::discovery::DiscoveryBatchRequests;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Admin, Principal, Role};
 use droppedneedle_catalog::reads::discover::adapters::batches::{
-    BatchAlbum, BatchRequests, LiveBatches, RequestsSlot,
+    BatchAlbum, BatchRequests, LiveBatches,
 };
 use droppedneedle_catalog::reads::discover::models::{DiscoveryBatchCreate, DiscoveryBatchItemIn};
 use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BatchStore, BoxFuture};
@@ -85,9 +85,7 @@ async fn batch_files_requests_and_removal_cancels_only_its_own() {
         inner: DiscoveryBatchRequests::new(requests, None),
         recycles: AtomicUsize::new(0),
     });
-    let slot = RequestsSlot::default();
-    assert!(slot.set(counting.clone()).is_ok());
-    let batches = LiveBatches::new(db.db().clone(), slot);
+    let batches = LiveBatches::new(db.db().clone(), Some(counting.clone()));
 
     // Bob asks for C first; Ada's batch then skips it as a duplicate.
     let bobs = batches

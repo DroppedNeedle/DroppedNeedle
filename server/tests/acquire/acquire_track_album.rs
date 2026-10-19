@@ -175,8 +175,11 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
         ],
     );
     albums.releases.insert(ALBUM_RELEASE.to_owned(), album());
-    let targets = Arc::new(Targets::new(journal.clone(), staging.to_path_buf()));
-    assert!(targets.lookup_slot().set(Arc::new(albums)).is_ok());
+    let targets = Arc::new(Targets::new(
+        journal.clone(),
+        staging.to_path_buf(),
+        Some(Arc::new(albums)),
+    ));
 
     let http = ReqwestSlskdHttp::new(reqwest::Client::new(), &mock.base_url(), MOCK_API_KEY);
     let repo = SlskdRepository::new(

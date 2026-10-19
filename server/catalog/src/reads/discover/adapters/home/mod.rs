@@ -213,7 +213,6 @@ struct Inner {
     library: HomeLibrary,
     pool: SqlitePool,
     art: Arc<GenreArt>,
-    discover: Option<LiveDiscover>,
     integrations: IntegrationSettings,
     state: Mutex<State>,
 }
@@ -251,14 +250,11 @@ fn key_for(user_id: &str, music: &UserMusic) -> String {
 impl LiveHome {
     /// Home over the provider reads in `sources`, the library in `pool`
     /// and the integration flags in `integrations`, with genre art from `art`.
-    /// `discover`, when given, supplies the discover teaser from its last
-    /// built page.
     pub fn new(
         sources: Arc<dyn HomeSources>,
         pool: SqlitePool,
         integrations: IntegrationSettings,
         art: Arc<GenreArt>,
-        discover: Option<LiveDiscover>,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -266,7 +262,6 @@ impl LiveHome {
                 library: HomeLibrary::new(pool.clone()),
                 pool,
                 art,
-                discover,
                 integrations,
                 state: Mutex::new(State::default()),
             }),
@@ -283,8 +278,9 @@ impl LiveHome {
         }
     }
 
-    /// The user's home page.
-    pub async fn page(&self, user_id: &str) -> HomeResponse {
+    /// The user's home page. `discover`, when given, supplies the discover
+    /// teaser from its last built page.
+    pub async fn page(&self, user_id: &str, discover: Option<&LiveDiscover>) -> HomeResponse {
         let music = self.inner.sources.user_music(user_id).await;
         let key = key_for(user_id, &music);
         let now = now_secs();
@@ -304,7 +300,7 @@ impl LiveHome {
             Some(page) => {
                 let built_at = attempt.map_or(0.0, |(at, _)| at);
                 if !building && now - built_at > STALE_SECS {
-                    self.trigger_build(user_id);
+                    self.trigger_build(user_id, discover);
                     building = true;
                 }
                 page
@@ -312,11 +308,11 @@ impl LiveHome {
             None => {
                 let failed_recently = attempt.is_some_and(|(at, ok)| !ok && now - at <= STALE_SECS);
                 if !building && !failed_recently {
-                    self.trigger_build(user_id);
+                    self.trigger_build(user_id, discover);
                     building = true;
                 }
                 let status = self.inner.integrations.status();
-                self.build_local(user_id, &music, status).await
+                self.build_local(user_id, &music, status, discover).await
             }
         };
         page.refreshing = building;
@@ -325,17 +321,18 @@ impl LiveHome {
     }
 
     /// Start a background build for the user unless one is running.
-    fn trigger_build(&self, user_id: &str) {
+    fn trigger_build(&self, user_id: &str, discover: Option<&LiveDiscover>) {
         let home = self.clone();
         let user_id = user_id.to_owned();
+        let discover = discover.cloned();
         tokio::spawn(async move {
-            home.build(&user_id).await;
+            home.build(&user_id, discover.as_ref()).await;
         });
     }
 
     /// Build the user's full page now and keep it. Returns whether a page
     /// was kept.
-    pub async fn build(&self, user_id: &str) -> bool {
+    pub async fn build(&self, user_id: &str, discover: Option<&LiveDiscover>) -> bool {
         {
             let Some(mut state) = self.lock() else {
                 return false;
@@ -352,7 +349,7 @@ impl LiveHome {
         let music = self.inner.sources.user_music(user_id).await;
         let key = key_for(user_id, &music);
         let status = self.inner.integrations.status();
-        let page = self.build_full(user_id, &music, status).await;
+        let page = self.build_full(user_id, &music, status, discover).await;
         let ok = self.inner.sources.source_key() == source;
         if !ok {
             tracing::info!("MusicBrainz source changed during a home build; dropping it");
@@ -379,6 +376,7 @@ impl LiveHome {
         user_id: &str,
         music: &UserMusic,
         status: IntegrationStatus,
+        discover: Option<&LiveDiscover>,
     ) -> HomeResponse {
         let status = user_status(status, music);
         let library = &self.inner.library;
@@ -395,7 +393,7 @@ impl LiveHome {
         page.genre_list = genre_list(None);
         page.service_prompts =
             shelves::service_prompts(status.listenbrainz, status.download_client, status.lastfm);
-        page.discover_preview = self.discover_preview(user_id).await;
+        page.discover_preview = Self::discover_preview(user_id, discover).await;
         mark_page(&self.inner.pool, &mut page).await;
         page
     }
@@ -407,6 +405,7 @@ impl LiveHome {
         user_id: &str,
         music: &UserMusic,
         status: IntegrationStatus,
+        discover: Option<&LiveDiscover>,
     ) -> HomeResponse {
         let sources = self.inner.sources.as_ref();
         let lastfm_primary = music.resolved_source() == MusicSource::LastFm;
@@ -497,7 +496,7 @@ impl LiveHome {
             }
         };
         let (local, (trending, popular), (top, favorites), (genres, weekly)) = tokio::join!(
-            self.build_local(user_id, music, status),
+            self.build_local(user_id, music, status, discover),
             charts,
             personal,
             listenbrainz_extras,
@@ -515,8 +514,11 @@ impl LiveHome {
 
     /// The discover teaser: the first "because you listen to" shelf of the
     /// user's last discover page.
-    async fn discover_preview(&self, user_id: &str) -> Option<DiscoverPreview> {
-        let page = self.inner.discover.as_ref()?.cached_page(user_id).await?;
+    async fn discover_preview(
+        user_id: &str,
+        discover: Option<&LiveDiscover>,
+    ) -> Option<DiscoverPreview> {
+        let page = discover?.cached_page(user_id).await?;
         let first = page.because_you_listen_to.into_iter().next()?;
         Some(DiscoverPreview {
             seed_artist: first.seed_artist,
@@ -570,8 +572,8 @@ fn user_status(mut status: IntegrationStatus, music: &UserMusic) -> IntegrationS
 }
 
 impl FeatureWarmer for LiveHome {
-    fn warm<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, bool> {
-        Box::pin(self.build(user_id))
+    fn warm<'a>(&'a self, user_id: &'a str, discover: &'a LiveDiscover) -> BoxFuture<'a, bool> {
+        Box::pin(self.build(user_id, Some(discover)))
     }
 }
 
@@ -583,20 +585,23 @@ pub struct HomeWiring {
     pub integrations: IntegrationSettings,
     /// The live provider reads the discover page also uses.
     pub sources: Arc<dyn HomeSources>,
-    /// The discover page (teaser source, and its warm cycle warms home).
-    pub discover: LiveDiscover,
+    /// What the discover page is built from. Home shows its teaser, and
+    /// its warm cycle warms home.
+    pub discover: super::page::PageInputs,
     /// The chart source genre pages are added to.
     pub charts: Arc<dyn crate::reads::discover::ports::ChartsSource>,
     /// The image cache genre pages warm, when there is one.
     pub artwork: Option<crate::reads::platform::artwork::ArtworkService>,
 }
 
-/// Production home: the page, the genre artwork shared with discover, and
-/// the chart source with genre pages.
+/// Production home: the page, the discover page whose warm cycle warms it,
+/// the genre artwork shared with discover, and the chart source with genre
+/// pages.
 pub fn wire(
     wiring: HomeWiring,
 ) -> (
     LiveHome,
+    LiveDiscover,
     Arc<GenreArt>,
     Arc<dyn crate::reads::discover::ports::ChartsSource>,
 ) {
@@ -606,9 +611,8 @@ pub fn wire(
         wiring.pool.clone(),
         wiring.integrations,
         art.clone(),
-        Some(wiring.discover.clone()),
     );
-    wiring.discover.attach_home(Arc::new(home.clone()));
+    let discover = LiveDiscover::with_home(wiring.discover, Arc::new(home.clone()));
     let pages = Arc::new(genre::GenrePages::new(
         wiring.pool,
         wiring.sources,
@@ -616,5 +620,5 @@ pub fn wire(
         wiring.artwork,
     ));
     let charts = Arc::new(genre::WithGenrePages::new(wiring.charts, pages));
-    (home, art, charts)
+    (home, discover, art, charts)
 }

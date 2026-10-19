@@ -84,13 +84,6 @@ impl YouTubeLinks {
         Self { store, search, ids }
     }
 
-    /// The same service over another store.
-    #[must_use]
-    pub fn with_store(mut self, store: LinkStore) -> Self {
-        self.store = store;
-        self
-    }
-
     /// Today's search budget. While search is switched off or has no key
     /// there is nothing to spend, which reads as a zero budget.
     pub async fn quota(&self) -> YouTubeQuotaStatus {

@@ -33,13 +33,13 @@ use self::identify::Outcome;
 use self::reasons::Reason;
 use self::store::{DropStore, ItemRecord, JobRecord, item_status, job_status};
 use crate::flows::seams::{FlowEvent, TickSink};
+use crate::landing::canonical_dirs;
 use crate::landing::matching::{MatchSummary, plan};
 use crate::landing::ports::{
     ExtraFile, ImportFailure, ImportFile, ImportOrigin, ImportRequest, LandingLibrary, Recycled,
 };
 use crate::landing::probe::{Landing, probe};
 use crate::landing::specs::Target;
-use crate::landing::{LibrarySlot, canonical_dirs};
 use crate::landing::{quality, specs};
 use crate::requests::models::RequestKind;
 use crate::requests::sqlite::{RequestStore, WantedStore};
@@ -104,7 +104,7 @@ struct Organised {
 /// The drop-import service.
 pub struct DropImports {
     store: DropStore,
-    library: LibrarySlot,
+    library: Option<Arc<dyn LandingLibrary>>,
     root: PathBuf,
     events: EventHub,
     ticks: Arc<dyn TickSink>,
@@ -117,7 +117,7 @@ impl DropImports {
     /// own, the event sink, and the request stores it resolves.
     pub fn new(
         store: DropStore,
-        library: LibrarySlot,
+        library: Option<Arc<dyn LandingLibrary>>,
         root: PathBuf,
         events: EventHub,
         ticks: Arc<dyn TickSink>,
@@ -142,7 +142,7 @@ impl DropImports {
     }
 
     fn library(&self) -> Result<Arc<dyn LandingLibrary>, DropError> {
-        self.library.get().cloned().ok_or_else(|| {
+        self.library.clone().ok_or_else(|| {
             DropError::Invalid("The library isn't ready yet. Try again shortly.".into())
         })
     }

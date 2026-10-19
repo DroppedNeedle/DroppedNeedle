@@ -23,7 +23,7 @@ pub mod soulseek;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use self::lookup::{AlbumLookup, AlbumRelease};
 use self::reasons::TrackReason;
@@ -33,9 +33,6 @@ use super::downloads::manifest::{
 };
 use super::downloads::store::{TaskDetails, TaskRow, TrackAlbumColumns};
 use super::edition::chosen_edition;
-
-/// The MusicBrainz port, set once boot has built the client.
-pub type LookupSlot = Arc<OnceLock<Arc<dyn AlbumLookup>>>;
 
 /// Release lookups tried for one recording before giving up on an album.
 const MAX_RELEASES_TRIED: usize = 4;
@@ -90,23 +87,24 @@ pub enum TargetError {
 pub struct Targets {
     journal: Arc<Journal>,
     staging_root: PathBuf,
-    lookup: LookupSlot,
+    /// MusicBrainz reads; `None` on test bundles, where every lookup
+    /// waits as unavailable.
+    lookup: Option<Arc<dyn AlbumLookup>>,
 }
 
 impl Targets {
-    /// Targets over the shared journal; manifests live under
-    /// `staging_root`.
-    pub fn new(journal: Arc<Journal>, staging_root: PathBuf) -> Self {
+    /// Targets over the shared journal, reading MusicBrainz through
+    /// `lookup`; manifests live under `staging_root`.
+    pub fn new(
+        journal: Arc<Journal>,
+        staging_root: PathBuf,
+        lookup: Option<Arc<dyn AlbumLookup>>,
+    ) -> Self {
         Self {
             journal,
             staging_root,
-            lookup: LookupSlot::default(),
+            lookup,
         }
-    }
-
-    /// The slot boot puts the MusicBrainz port into.
-    pub fn lookup_slot(&self) -> &LookupSlot {
-        &self.lookup
     }
 
     /// The task's target, resolved now or read back from its manifest.
@@ -132,7 +130,7 @@ impl Targets {
     /// when MusicBrainz is not wired, down, or does not know the release;
     /// folders are then judged on their file counts.
     pub async fn edition_tracklist(&self, release_mbid: &str) -> Vec<ExpectedTrack> {
-        let Some(lookup) = self.lookup.get() else {
+        let Some(lookup) = self.lookup.as_ref() else {
             return Vec::new();
         };
         match lookup.release(release_mbid).await {
@@ -200,7 +198,7 @@ impl Targets {
             .unwrap_or_default();
         if tracklist.is_empty()
             && let Some(release_mbid) = release.as_deref()
-            && let Some(lookup) = self.lookup.get()
+            && let Some(lookup) = self.lookup.as_ref()
         {
             // An album still downloads when MusicBrainz is down; it is only
             // ranked on file counts until the tracklist can be read.
@@ -287,7 +285,7 @@ impl Targets {
                 }),
             });
         }
-        let lookup = self.lookup.get().cloned().ok_or(TargetError::Unavailable(
+        let lookup = self.lookup.clone().ok_or(TargetError::Unavailable(
             TrackReason::AlbumLookupUnavailable,
         ))?;
         let recording = task

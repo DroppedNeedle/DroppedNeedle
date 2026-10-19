@@ -215,11 +215,10 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
             &crate::common::config_store(&dir),
         ),
         art.clone(),
-        None,
     );
 
     // First visit: library shelves at once, the rest building.
-    let first = home.page("user-1").await;
+    let first = home.page("user-1", None).await;
     assert!(first.refreshing);
     let Some(SectionItem::Album(recent)) = first
         .recently_added
@@ -242,7 +241,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
-        page = home.page("user-1").await;
+        page = home.page("user-1", None).await;
     }
     assert!(!page.refreshing, "the build finished");
     assert!(page.trending_artists.is_some());

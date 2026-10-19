@@ -28,6 +28,7 @@ use super::flows::loops::{
     WANTED_JOB, WantedDeps, spawn_follow_loop, spawn_prune_loop, spawn_sweep_loop, spawn_sync_loop,
     spawn_wanted_loop,
 };
+use super::flows::seams::ReleasePoll;
 use super::flows::seams::{Candidate, CandidateSearch, TickSink};
 use super::flows::stores::{
     AdminDirectory, FollowStore as FlowsFollowStore, LibraryPresence, UpgradeWorklist,
@@ -45,14 +46,15 @@ use super::imports::spotify::{
 use super::imports::spotify_store::{
     CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates,
 };
+use super::landing::LandingService;
 use super::landing::ports::LandingLibrary;
-use super::landing::{LandingService, LibrarySlot};
 use super::probes::{LiveProbes, ProbeCache, ProbeInputs, refresh_probes};
+use super::requests::bridges::FollowDecisionSink;
 use super::requests::error::RequestsError;
 use super::requests::quota::QuotaLedger;
 use super::requests::sqlite::{RequestStore, WantedStore};
-use super::requests::state::RequestsState;
-use super::search::{FanoutSearch, ReleasePollSlot, SlotPoll};
+use super::requests::state::{AcquireReadiness, RequestsState};
+use super::search::FanoutSearch;
 use super::search_jobs::SearchJobs;
 use super::search_jobs::store::JobStore;
 use super::settings::{
@@ -70,7 +72,8 @@ use super::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
 use super::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
 use super::worker::{DownloadWorker, Source, SourceSet, WorkerConfig, run_startup_recovery};
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_catalog::reads::collections::state::CollectionsState;
+use droppedneedle_catalog::reads::collections::state::{ApprovalSeedSink, PendingApprovalsSource};
+use droppedneedle_catalog::reads::collections::store::Stores as CollectionsStores;
 use droppedneedle_kernel::events::{EventHub, PlaylistImported, UserNotice, new_event_id};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::{AlreadyRunning, FnTick, Next, Schedule, Supervisor};
@@ -83,6 +86,10 @@ use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, MusicBrainzSettings, SourcePriority, UsenetBackendSetting,
 };
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, Section};
+use droppedneedle_library::operations::port::EditionPlans;
+use droppedneedle_plugins::host::PluginHost;
+use droppedneedle_plugins::scrobble::{ListenBrainzLinkStore, ScrobblePrefsStore};
+use droppedneedle_providers::Providers;
 use tokio::sync::watch;
 
 /// Spotify Web API root (v2 `spotify_client.py`).
@@ -234,13 +241,11 @@ pub struct LiveClients {
     slskd_downloads: PathBuf,
     journal: Arc<Journal>,
     built: Mutex<Option<Built>>,
-    plugins: PluginSlot,
+    /// Plugin sources and usenet-targeting plugin indexers join the
+    /// pipeline through the host. `None` on the test bundle.
+    plugins: Option<Arc<PluginHost>>,
     targets: Arc<Targets>,
 }
-
-/// The plugin host, set once boot has built it. Plugin sources and
-/// usenet-targeting plugin indexers join the pipeline through it.
-pub type PluginSlot = Arc<std::sync::OnceLock<Arc<droppedneedle_plugins::host::PluginHost>>>;
 
 impl LiveClients {
     /// Clients over the live sections. `slskd_downloads` is the slskd
@@ -251,6 +256,7 @@ impl LiveClients {
         slskd_downloads: PathBuf,
         journal: Arc<Journal>,
         targets: Arc<Targets>,
+        plugins: Option<Arc<PluginHost>>,
     ) -> Self {
         Self {
             http,
@@ -258,7 +264,7 @@ impl LiveClients {
             slskd_downloads,
             journal,
             built: Mutex::new(None),
-            plugins: Arc::new(std::sync::OnceLock::new()),
+            plugins,
             targets,
         }
     }
@@ -268,16 +274,11 @@ impl LiveClients {
         &self.targets
     }
 
-    /// The slot the plugin host goes into.
-    pub fn plugins(&self) -> &PluginSlot {
-        &self.plugins
-    }
-
     /// The built-in sources for the current settings plus one source per
     /// enabled plugin download client.
     pub fn sources_with_plugins(&self, policy: &DownloadPolicy) -> super::worker::SourceSet {
         let built = self.current().sources.clone();
-        let Some(host) = self.plugins.get() else {
+        let Some(host) = &self.plugins else {
             return built;
         };
         let keys = host.download_source_keys();
@@ -499,8 +500,6 @@ pub struct FlowsBundle {
     pub wanted_deps: Arc<WantedDeps>,
     /// Follow-poll deps.
     pub follow_deps: Arc<FollowDeps>,
-    /// Where boot attaches the follow poll's MusicBrainz reader.
-    pub release_poll: ReleasePollSlot,
     /// Upgrade-sweep deps.
     pub sweep_deps: Arc<SweepDeps>,
     /// Status-sync deps.
@@ -518,7 +517,7 @@ fn drop_imports(
 ) -> Arc<DropImports> {
     Arc::new(DropImports::new(
         DropStore::new(db.clone()),
-        landing.library_slot().clone(),
+        landing.library().cloned(),
         staging_root.join("drop"),
         events.clone(),
         flows.ticks.clone(),
@@ -549,6 +548,79 @@ pub fn settled_hook(flows: Arc<FlowsBundle>) -> super::worker::SettledHook {
     })
 }
 
+/// The acquisition stores, opened once over the platform's database. The
+/// library's album cleanup is built on them before this bundle is, and the
+/// bundle then takes them.
+#[derive(Clone)]
+pub struct AcquireStores {
+    /// The database every acquisition store wraps.
+    pub db: AcquireDb,
+    /// The download journal.
+    pub journal: Arc<Journal>,
+    /// Wanted watches.
+    pub wanted: WantedStore,
+}
+
+impl AcquireStores {
+    /// The stores over the platform's database.
+    pub fn open(db: &droppedneedle_kernel::db::Db) -> Self {
+        Self::over(AcquireDb::new(db.clone()))
+    }
+
+    fn over(db: AcquireDb) -> Self {
+        Self {
+            journal: Arc::new(Journal::new(db.clone())),
+            wanted: WantedStore::new(db.clone()),
+            db,
+        }
+    }
+}
+
+/// What acquisition reaches in other areas, handed in when it is built.
+pub struct AcquirePorts {
+    /// Finished downloads land in the library through this.
+    pub library: Arc<dyn LandingLibrary>,
+    /// "Get missing tracks" asks the library which tracks the chosen
+    /// edition lacks.
+    pub edition_plans: Arc<dyn EditionPlans>,
+    /// MusicBrainz reads: edition tracklists, and the album a single track
+    /// is on.
+    pub album_lookup: Arc<dyn AlbumLookup>,
+    /// The follow poll's MusicBrainz reader.
+    pub release_poll: Arc<dyn ReleasePoll>,
+    /// Plugin download sources, plugin indexers that feed usenet, and
+    /// plugin events.
+    pub plugins: Arc<PluginHost>,
+    /// The collections stores: follow verdicts, imported playlists and the
+    /// Weekly Mix playlist are written to them.
+    pub collections: CollectionsStores,
+    /// The shared provider limiters the Weekly Mix paces ListenBrainz on.
+    pub providers: Arc<Providers>,
+    /// The ListenBrainz API base the Weekly Mix reads.
+    pub listenbrainz: String,
+}
+
+/// What the Weekly Mix builder is made from.
+struct MixInputs {
+    providers: Arc<Providers>,
+    http: reqwest::Client,
+    links: Arc<dyn ListenBrainzLinkStore>,
+    prefs: Arc<dyn ScrobblePrefsStore>,
+    playlists: droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore,
+    listenbrainz: String,
+}
+
+/// What the durable core reaches outside acquisition. The test bundle
+/// leaves most of it out.
+struct CorePorts {
+    follow_sink: Option<Arc<dyn FollowDecisionSink>>,
+    plugins: Option<Arc<PluginHost>>,
+    edition_plans: Option<Arc<dyn EditionPlans>>,
+    readiness: Option<AcquireReadiness>,
+    release_poll: Arc<dyn ReleasePoll>,
+    mix: Option<MixInputs>,
+}
+
 /// The pieces shared by the production and test bundles.
 struct Core {
     requests: RequestsState,
@@ -557,41 +629,55 @@ struct Core {
     flows: Arc<FlowsBundle>,
 }
 
-/// Build the durable core: journal, dispatch, requests state and the flows
-/// bundle, all over one database, with the bridges into collections
-/// connected both ways.
+/// Build the durable core: dispatch, requests state and the flows bundle,
+/// all over the shared stores.
 #[allow(clippy::too_many_arguments)]
 fn core(
-    db: &AcquireDb,
+    stores: &AcquireStores,
     ids: Arc<dyn IdGenerator>,
     staging_root: &Path,
     settings: &ConfigStore,
     quota: Arc<QuotaLedger>,
     search: Arc<dyn CandidateSearch>,
-    collections: &mut CollectionsState,
-    plugins: PluginSlot,
+    ports: CorePorts,
     events: EventHub,
 ) -> Core {
-    let journal = Arc::new(Journal::new(db.clone()));
+    let db = &stores.db;
+    let journal = stores.journal.clone();
     let dispatch = Arc::new(UnifiedDispatch::new(
         journal.clone(),
         ids,
         staging_root.to_owned(),
         settings.live(),
     ));
-    let mut requests = RequestsState::new(db, quota, dispatch.clone());
-    requests.follow_sink = Some(Arc::new(FollowDecisionBridge::new(
-        collections.stores.follows.clone(),
-    ))
-        as Arc<dyn super::requests::bridges::FollowDecisionSink>);
-    collections.acquire_approvals = Some(Arc::new(RequestsPendingSource::new(
-        requests.follows.clone(),
-    ))
-        as Arc<dyn droppedneedle_catalog::reads::collections::state::PendingApprovalsSource>);
-    collections.approval_seeds = Some(Arc::new(ApprovalSeedBridge::new(requests.follows.clone()))
-        as Arc<dyn droppedneedle_catalog::reads::collections::state::ApprovalSeedSink>);
-    requests.plugins = plugins.clone();
-    let ticks: Arc<dyn TickSink> = Arc::new(super::plugin_events::FlowTicks::new(plugins, events));
+    // Album intake as the Weekly Mix builder files it: everything but the
+    // builder itself, which intake never reaches.
+    let intake = RequestsState {
+        wanted: stores.wanted.clone(),
+        follow_sink: ports.follow_sink,
+        plugins: ports.plugins.clone(),
+        edition_plans: ports.edition_plans,
+        // "Get missing tracks" also asks for the edition's tracks below
+        // the upgrade cutoff, under the policy the upgrade sweep reads.
+        upgrade_policy: Some(settings.live()),
+        readiness: ports.readiness,
+        ..RequestsState::new(db, quota, dispatch.clone())
+    };
+    let mixer = ports.mix.and_then(|mix| {
+        super::requests::mix_sources::live_builder(
+            &intake,
+            mix.providers,
+            mix.http,
+            mix.links,
+            mix.prefs,
+            mix.playlists,
+            events.clone(),
+            &mix.listenbrainz,
+        )
+    });
+    let requests = RequestsState { mixer, ..intake };
+    let ticks: Arc<dyn TickSink> =
+        Arc::new(super::plugin_events::FlowTicks::new(ports.plugins, events));
     let flows = Arc::new(flows_bundle(
         db,
         &requests,
@@ -599,16 +685,8 @@ fn core(
         dispatch.clone(),
         settings,
         ticks,
+        ports.release_poll,
     ));
-    // "Get missing tracks" also asks for the edition's tracks below the
-    // upgrade cutoff, under the policy the upgrade sweep reads.
-    if requests
-        .upgrade_policy
-        .set(flows.sweep_deps.policy.clone())
-        .is_err()
-    {
-        tracing::warn!("the edition upgrade policy was already attached");
-    }
     Core {
         requests,
         dispatch,
@@ -618,16 +696,19 @@ fn core(
 }
 
 impl AcquireSetup {
-    /// Build the production bundle over the platform's database. Credentials
-    /// and tuning are read from its settings on use (decrypted in memory
-    /// only); notices and import completions go to its event hub.
+    /// Build the production bundle over the platform's database and the
+    /// stores already opened on it. Credentials and tuning are read from
+    /// its settings on use (decrypted in memory only); notices and import
+    /// completions go to its event hub. `ports` are the other areas it
+    /// reaches.
     pub fn build(
         platform: &Platform,
         users: UsersDeps,
-        collections: &mut CollectionsState,
+        stores: AcquireStores,
+        ports: AcquirePorts,
         spotify: &SpotifyEndpoints,
     ) -> Result<Self, String> {
-        let db = AcquireDb::new(platform.db.clone());
+        let db = stores.db.clone();
         let (config, ids, config_store) = (
             &platform.config,
             platform.ids.clone(),
@@ -637,28 +718,66 @@ impl AcquireSetup {
         let (http, no_redirect) = (http.shared().clone(), http.no_redirect().clone());
         let staging_root = config.imports_dir();
         let quota = Arc::new(QuotaLedger::new(config_store.live(), db.clone()));
-        let journal_for_clients = Arc::new(Journal::new(db.clone()));
         let clients = Arc::new(LiveClients::new(
             http.clone(),
             ClientLives::new(&config_store),
             config.slskd_downloads_path.clone(),
-            journal_for_clients.clone(),
-            Arc::new(Targets::new(journal_for_clients, staging_root.clone())),
+            stores.journal.clone(),
+            Arc::new(Targets::new(
+                stores.journal.clone(),
+                staging_root.clone(),
+                Some(ports.album_lookup),
+            )),
+            Some(ports.plugins.clone()),
         ));
         let search: Arc<dyn CandidateSearch> = Arc::new(LiveSearch {
             clients: clients.clone(),
         });
         let events = platform.events.clone();
         let search_quota = quota.clone();
+        let worker_settings = Arc::new(WorkerSettings::new(
+            &config_store,
+            clients.clone(),
+            staging_root.clone(),
+        ));
+        let ready = worker_settings.clone();
+        let collections = ports.collections;
         let core = core(
-            &db,
+            &stores,
             ids.clone(),
             &staging_root,
             &config_store,
             quota,
             search,
-            collections,
-            clients.plugins().clone(),
+            CorePorts {
+                follow_sink: Some(Arc::new(FollowDecisionBridge::new(
+                    collections.follows.clone(),
+                ))),
+                plugins: Some(ports.plugins.clone()),
+                edition_plans: Some(ports.edition_plans),
+                readiness: Some(AcquireReadiness {
+                    sources_ready: Arc::new(move || ready.has_source()),
+                    staging_root: staging_root.clone(),
+                }),
+                release_poll: ports.release_poll,
+                mix: Some(MixInputs {
+                    providers: ports.providers,
+                    http: http.clone(),
+                    links: Arc::new(
+                        droppedneedle_plugins::scrobble::SqliteListenBrainzLinkStore::new(
+                            platform.db.clone(),
+                            platform.crypto.clone(),
+                        ),
+                    ),
+                    prefs: Arc::new(
+                        droppedneedle_plugins::scrobble::SqliteScrobblePrefsStore::new(
+                            platform.db.clone(),
+                        ),
+                    ),
+                    playlists: collections.playlists.clone(),
+                    listenbrainz: ports.listenbrainz,
+                }),
+            },
             events.clone(),
         );
         let prune = Arc::new(PruneDeps {
@@ -674,7 +793,7 @@ impl AcquireSetup {
         let spotify_states = Arc::new(SqliteSpotifyStates::new(db.clone()));
         let spotify_links = Arc::new(SqliteSpotifyLinks::new(db.clone(), users.crypto.clone()));
         let spotify_playlists = Arc::new(CollectionsPlaylistBridge::new(
-            collections.stores.playlists.clone(),
+            collections.playlists.clone(),
             db.clone(),
         ));
         let playlists: Arc<dyn PlaylistIndex> = spotify_playlists.clone();
@@ -721,9 +840,7 @@ impl AcquireSetup {
             http: http.clone(),
             lidarr: LidarrClient::new(http.clone()),
             lidarr_settings,
-            follows: Arc::new(CollectionsFollowBridge::new(
-                collections.stores.follows.clone(),
-            )),
+            follows: Arc::new(CollectionsFollowBridge::new(collections.follows.clone())),
             approvals: Arc::new(RequestsApprovalBridge::new(core.requests.follows.clone())),
             spotify: spotify_client,
             spotify_settings,
@@ -740,25 +857,21 @@ impl AcquireSetup {
             trusted_proxies: config.trusted_proxies.clone(),
         };
 
+        // Finished downloads reach the library through its import seam.
         let landing = Arc::new(LandingService::new(
             core.journal.clone(),
-            LibrarySlot::default(),
+            Some(ports.library),
             config_store.live(),
             config.cache_dir.join("held"),
         ));
 
         // Worker over the live sources and tuning.
-        let worker_plugins = clients.plugins().clone();
         let worker = Arc::new(
-            DownloadWorker::new(
-                core.journal.clone(),
-                WorkerSettings::new(&config_store, clients.clone(), staging_root.clone()),
-                events.clone(),
-            )
-            .with_plugin_events(worker_plugins)
-            .with_targets(clients.targets().clone())
-            .with_landing(landing.clone())
-            .with_settled(settled_hook(core.flows.clone())),
+            DownloadWorker::new(core.journal.clone(), worker_settings, events.clone())
+                .with_plugin_events(ports.plugins)
+                .with_targets(clients.targets().clone())
+                .with_landing(landing.clone())
+                .with_settled(settled_hook(core.flows.clone())),
         );
         let search_jobs = Arc::new(SearchJobs::new(
             JobStore::new(db.clone()),
@@ -768,14 +881,6 @@ impl AcquireSetup {
             events.clone(),
         ));
         let drops = drop_imports(&db, &landing, &staging_root, &events, &core.flows);
-        let ready_worker = worker.clone();
-        let readiness = super::requests::state::AcquireReadiness {
-            sources_ready: Arc::new(move || !ready_worker.sources_now().is_empty()),
-            staging_root: staging_root.clone(),
-        };
-        if core.requests.readiness.set(readiness).is_err() {
-            tracing::warn!("acquire readiness was already attached");
-        }
 
         Ok(Self {
             db,
@@ -797,61 +902,37 @@ impl AcquireSetup {
         })
     }
 
-    /// Let finished downloads reach the library: the landing looks
-    /// releases up, checks what the library holds, and publishes through
-    /// this port. Boot calls this once the library bundle exists.
-    pub fn with_library(self, library: Arc<dyn LandingLibrary>) -> Self {
-        if self.landing.library_slot().set(library).is_err() {
-            tracing::warn!("library port was already attached to acquisition");
-        }
-        self
+    /// The pending auto-download approvals, read by the collections
+    /// approval list from the store the approval mutations write.
+    pub fn pending_approvals(&self) -> Arc<dyn PendingApprovalsSource> {
+        Arc::new(RequestsPendingSource::new(self.requests.follows.clone()))
     }
 
-    /// Let acquisition read MusicBrainz: edition tracklists, and the album
-    /// a single track is on. Boot calls this once with the live client.
-    pub fn with_album_lookup(self, lookup: Arc<dyn AlbumLookup>) -> Self {
-        if self.clients.targets().lookup_slot().set(lookup).is_err() {
-            tracing::warn!("MusicBrainz lookups were already attached to acquisition");
-        }
-        self
+    /// Where follow toggles that land pending file the approval the admin
+    /// mutations decide.
+    pub fn approval_seeds(&self) -> Arc<dyn ApprovalSeedSink> {
+        Arc::new(ApprovalSeedBridge::new(self.requests.follows.clone()))
     }
 
-    /// Let the follow poll read followed artists' releases from
-    /// MusicBrainz. Boot calls this once with the live poll; until then
-    /// the follow poll records each attempt as failed and retries later.
-    pub fn with_release_poll(self, poll: Arc<dyn super::flows::seams::ReleasePoll>) -> Self {
-        if self.flows.release_poll.set(poll).is_err() {
-            tracing::warn!("follow release poll was already attached to acquisition");
-        }
-        self
-    }
-
-    /// Let enabled plugins act as download sources and feed usenet. Boot
-    /// calls this once with the plugin host.
-    pub fn with_plugins(self, host: Arc<droppedneedle_plugins::host::PluginHost>) -> Self {
-        if self.clients.plugins().set(host).is_err() {
-            tracing::warn!("plugin host was already attached to acquisition");
-        }
-        self
-    }
-
-    /// Test bundle over a scratch database, default settings and the
-    /// memory import stores. Bridges stay connected (collections reads
-    /// share the requests approval store) so hooked-state apps behave like
-    /// production. Call inside a tokio runtime.
+    /// Test bundle over `db` (a scratch database), default settings and
+    /// the memory import stores. Finished downloads land in `library` when
+    /// there is one. The follow verdicts go to an unwired collections
+    /// store. Call inside a tokio runtime.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(
+        db: AcquireDb,
         ids: Arc<dyn IdGenerator>,
-        collections: &mut CollectionsState,
         events: EventHub,
+        library: Option<Arc<dyn LandingLibrary>>,
     ) -> Result<Self, String> {
         use super::imports::health::{
             HealthProbes, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd, ScriptedSlskd,
         };
         use super::imports::lidarr::{MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings};
         use super::imports::spotify::MemorySpotifySettings;
+        use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 
-        let db = AcquireDb::scratch()?;
+        let stores = AcquireStores::over(db.clone());
         // Under the scratch database's directory, so it goes with it.
         let staging_root = db
             .path()
@@ -866,14 +947,17 @@ impl AcquireSetup {
             http.clone(),
             ClientLives::new(&settings),
             staging_root.clone(),
-            Arc::new(Journal::new(db.clone())),
+            stores.journal.clone(),
             Arc::new(Targets::new(
-                Arc::new(Journal::new(db.clone())),
+                stores.journal.clone(),
                 staging_root.clone(),
+                None,
             )),
+            None,
         ));
+        let unwired = CollectionsStores::new(&CollectionsDb::unwired());
         let core = core(
-            &db,
+            &stores,
             ids.clone(),
             &staging_root,
             &settings,
@@ -881,8 +965,14 @@ impl AcquireSetup {
             Arc::new(LiveSearch {
                 clients: clients.clone(),
             }),
-            collections,
-            clients.plugins().clone(),
+            CorePorts {
+                follow_sink: Some(Arc::new(FollowDecisionBridge::new(unwired.follows))),
+                plugins: None,
+                edition_plans: None,
+                readiness: None,
+                release_poll: Arc::new(super::search::NoReleasePoll),
+                mix: None,
+            },
             events.clone(),
         );
         let spotify_client = SpotifyClient::new(
@@ -955,7 +1045,7 @@ impl AcquireSetup {
             .ok_or_else(|| "scratch database has no directory".to_owned())?;
         let landing = Arc::new(LandingService::new(
             core.journal.clone(),
-            LibrarySlot::default(),
+            library,
             settings.live(),
             held_dir,
         ));
@@ -1097,6 +1187,7 @@ fn flows_bundle(
     dispatch: Arc<UnifiedDispatch>,
     settings: &ConfigStore,
     ticks: Arc<dyn TickSink>,
+    release_poll: Arc<dyn ReleasePoll>,
 ) -> FlowsBundle {
     let watches = requests.wanted.clone();
     let ledger = requests.store.clone();
@@ -1113,11 +1204,9 @@ fn flows_bundle(
         library: library.clone(),
         ticks: ticks.clone(),
     });
-    let poll = SlotPoll::new();
-    let release_poll = poll.slot().clone();
     let follow_deps = Arc::new(FollowDeps {
         follows: follows.clone(),
-        poll: Arc::new(poll),
+        poll: release_poll,
         downloads: dispatch.clone(),
         library: library.clone(),
         ticks: ticks.clone(),
@@ -1154,7 +1243,6 @@ fn flows_bundle(
         ticks,
         wanted_deps,
         follow_deps,
-        release_poll,
         sweep_deps,
         sync_deps,
     }
@@ -1351,6 +1439,13 @@ impl WorkerSettings {
             .read()
             .map(|policy| self.clients.sources_with_plugins(&policy))
             .unwrap_or_default()
+    }
+
+    /// Whether a download source is on now: "get missing tracks" checks
+    /// this before it asks for anything, and queued downloads wait while
+    /// it is false.
+    pub(crate) fn has_source(&self) -> bool {
+        self.config().is_some() && !self.sources().is_empty()
     }
 
     /// Whether every section the worker cannot stand in for reads. While

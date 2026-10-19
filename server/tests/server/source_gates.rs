@@ -10,7 +10,7 @@
 
 use regex::Regex;
 
-use crate::common::sources::{Source, workspace_sources};
+use crate::common::sources::workspace_sources;
 
 /// A place under `server/`, a file or a folder ending in `/`.
 struct Place {
@@ -151,22 +151,6 @@ const RULES: &[Rule] = &[
     },
 ];
 
-/// The file's code with comment lines blanked, so docs may name the rules.
-fn code_of(source: &Source) -> String {
-    source
-        .text
-        .lines()
-        .map(|line| {
-            if line.trim_start().starts_with("//") {
-                ""
-            } else {
-                line
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 #[test]
 fn the_database_is_reached_one_way() {
     let sources = workspace_sources();
@@ -185,7 +169,7 @@ fn the_database_is_reached_one_way() {
             .collect();
         let mut used = vec![false; rule.allowed.len()];
         for source in &sources {
-            let code = code_of(source);
+            let code = source.code();
             for pattern in &patterns {
                 for found in pattern.find_iter(&code) {
                     let place = rule
@@ -239,7 +223,7 @@ fn the_library_waits_through_the_database_runtime() {
         if !source.path.starts_with("library/src/") {
             continue;
         }
-        let code = code_of(&source);
+        let code = source.code();
         for found in pattern.find_iter(&code) {
             let line = code[..found.start()].matches('\n').count() + 1;
             wrong.push(format!("{}:{line}", source.path));
@@ -410,16 +394,6 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("tool/src/tooling/upgrade.rs", 1, OFFLINE_TOOL),
 ];
 
-/// The code before the file's unit tests, comment lines blanked.
-fn shipping_code(source: &Source) -> String {
-    let code = code_of(source);
-    let lines: Vec<&str> = code.lines().collect();
-    let tests = lines.windows(2).position(|pair| {
-        pair[0].trim() == "#[cfg(test)]" && pair[1].trim_start().starts_with("mod ")
-    });
-    lines[..tests.unwrap_or(lines.len())].join("\n")
-}
-
 /// Every long-lived task runs on the supervisor, so it stops on the one
 /// token and shows in the admin jobs view. A spawn anywhere else is one of
 /// the listed sites, and a listed count that no longer matches fails too.
@@ -437,7 +411,7 @@ fn every_spawn_is_supervised_or_listed() {
         {
             continue;
         }
-        let spawns = pattern.find_iter(&shipping_code(&source)).count();
+        let spawns = pattern.find_iter(&source.shipping_code()).count();
         if spawns > 0 {
             found.insert(source.path.clone(), spawns);
         }
@@ -528,7 +502,7 @@ fn settings_are_read_through_live_handles() {
     let mut used = vec![false; SETTINGS_STORE.len()];
     let mut wrong = Vec::new();
     for source in workspace_sources() {
-        let code = shipping_code(&source);
+        let code = source.shipping_code();
         for pattern in &patterns {
             for found in pattern.find_iter(&code) {
                 match SETTINGS_STORE
@@ -581,7 +555,7 @@ fn the_platform_is_borrowed_never_kept() {
     let mut used = vec![false; PLATFORM_HOLDERS.len()];
     let mut wrong = Vec::new();
     for source in workspace_sources() {
-        let code = shipping_code(&source);
+        let code = source.shipping_code();
         let mut in_use = false;
         for (at, line) in code.lines().enumerate() {
             let trimmed = line.trim_start();
@@ -631,7 +605,7 @@ fn no_loop_has_its_own_stop_or_time_seam() {
     .unwrap();
     let mut wrong = Vec::new();
     for source in workspace_sources() {
-        let code = code_of(&source);
+        let code = source.code();
         for found in pattern.find_iter(&code) {
             let line = code[..found.start()].matches('\n').count() + 1;
             wrong.push(format!("{}:{line}: {}", source.path, found.as_str()));
