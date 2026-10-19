@@ -350,7 +350,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             content_type_for_extension(&extension).ok_or_else(|| StreamFault::InvalidInput {
                 message: "Unsupported audio format".to_owned(),
             })?;
-        let plan = self.plan_for(&extension, None, request);
+        let plan = self.plan_for(&extension, None, request)?;
         Ok(LocalRead {
             path,
             content_type,
@@ -360,7 +360,12 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
 
     /// The transcode plan for a source in `format` (a file extension),
     /// with its length when known.
-    fn plan_for(&self, format: &str, duration: Option<f64>, request: &StreamOpen) -> StreamPlan {
+    fn plan_for(
+        &self,
+        format: &str,
+        duration: Option<f64>,
+        request: &StreamOpen,
+    ) -> Result<StreamPlan, StreamFault> {
         // Track facts for decide(): the format is exact; bitrate is unknown
         // at this layer, so a client cap alone never triggers a transcode
         // here; only a codec mismatch does.
@@ -375,10 +380,12 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             .as_deref()
             .is_some_and(|format| format.eq_ignore_ascii_case("raw"));
         let start_seconds = request.params.start_seconds;
-        let settings = self
-            .settings
-            .as_ref()
-            .map_or_else(|| self.fixed.clone(), crate::transcode_policy);
+        let settings = match &self.settings {
+            Some(live) => crate::transcode_policy(live).ok_or_else(|| StreamFault::Internal {
+                cause: "connect_apps settings cannot be read".to_owned(),
+            })?,
+            None => self.fixed.clone(),
+        };
         // Compat verdict carry: the protocol modules decide with real source
         // bitrate facts, while this re-run sees `bitrate_kbps: None`, so a
         // bitrate-triggered same-codec plan would land direct here. When the
@@ -391,9 +398,9 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             && self.ffmpeg_present
             && !force_original
         {
-            return forced_plan(&request.params, &settings, start_seconds);
+            return Ok(forced_plan(&request.params, &settings, start_seconds));
         }
-        decide(
+        Ok(decide(
             &track,
             request.params.format.as_deref(),
             request.params.max_bitrate_kbps,
@@ -401,7 +408,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             start_seconds,
             &settings,
             self.ffmpeg_present,
-        )
+        ))
     }
 
     /// Every library root a plugin path may point into.
@@ -448,7 +455,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                 duration_seconds,
             } => {
                 let format = plugin_url::url_format(&url, &content_type);
-                let plan = self.plan_for(&format, duration_seconds, request);
+                let plan = self.plan_for(&format, duration_seconds, request)?;
                 if plan.is_transcode() {
                     return self
                         .transcode_plugin_url(

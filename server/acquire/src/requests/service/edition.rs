@@ -422,7 +422,7 @@ impl RequestsService {
     /// are off or the qualities cannot be read.
     async fn below_cutoff(&self, plan: &EditionPlan) -> Vec<String> {
         let Some(policy) = self.upgrade_policy.get().map(|live| {
-            crate::flows::stores::UpgradePolicy::from_policy(&crate::settings::current(live))
+            crate::flows::stores::UpgradePolicy::from_policy(&live.read().unwrap_or_default())
         }) else {
             return Vec::new();
         };

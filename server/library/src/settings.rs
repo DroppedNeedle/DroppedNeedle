@@ -21,7 +21,8 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     IdentificationPolicy, JellyfinConnection, LibraryRoot as StoredRoot, TypedLibrary,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy, FilesystemWatcher, LibraryManagement, LibraryScanSchedule, ScanFrequency,
+    DownloadPolicy, FilesystemWatcher, LibraryManagement, LibraryScanSchedule, MusicBrainzSettings,
+    ScanFrequency,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, UpdateError};
@@ -44,6 +45,8 @@ pub struct LibrarySettings {
     pub editions: LivePreferences,
     /// The Jellyfin server refreshed after a management run.
     pub jellyfin: Live<JellyfinConnection>,
+    /// The MusicBrainz source identification asks.
+    pub musicbrainz: Live<MusicBrainzSettings>,
     /// Adding a root and Library Management's settings write here, and
     /// correction previews are signed with its data key.
     store: ConfigStore,
@@ -60,8 +63,17 @@ impl LibrarySettings {
             download_policy: config.live(),
             editions: LivePreferences::new(config),
             jellyfin: config.live(),
+            musicbrainz: config.live(),
             store: config.clone(),
         }
+    }
+
+    /// Whether every section identification decides with reads. While one
+    /// does not, no identify job is claimed: a default edition preference
+    /// would accept another edition, and an unreadable MusicBrainz source
+    /// would send every job to review.
+    pub fn identification_readable(&self) -> bool {
+        self.editions.current().is_some() && self.musicbrainz.read().is_some()
     }
 
     /// The store, for tests that save a section the library then reads.

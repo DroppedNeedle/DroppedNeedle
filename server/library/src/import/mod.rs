@@ -199,14 +199,19 @@ impl LibrarySetup {
             .find(|root| root.policy != EffectivePolicy::Excluded)
             .cloned()
             .ok_or_else(|| fault("no library root takes imports".to_owned()))?;
+        // Settings that do not read never mean the default layout.
         let template = self
             .settings
             .library
-            .get()
-            .map(|settings| settings.naming_template.clone())
-            .ok()
-            .filter(|template| !template.trim().is_empty())
-            .unwrap_or_else(|| DEFAULT_NAMING_TEMPLATE.to_owned());
+            .read()
+            .ok_or_else(|| fault("the library settings cannot be read".to_owned()))?
+            .naming_template
+            .clone();
+        let template = if template.trim().is_empty() {
+            DEFAULT_NAMING_TEMPLATE.to_owned()
+        } else {
+            template
+        };
         let task_dir = staging_rel(import.staging.as_deref().unwrap_or(&import.task_id));
         let mut sources = Vec::with_capacity(import.files.len() + import.extras.len());
         for file in &import.files {

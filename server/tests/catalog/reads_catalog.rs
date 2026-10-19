@@ -263,15 +263,15 @@ struct TestSettings {
 }
 
 impl CatalogSettings for TestSettings {
-    fn musicbrainz(&self) -> MusicBrainzSettings {
-        MusicBrainzSettings {
+    fn musicbrainz(&self) -> Option<MusicBrainzSettings> {
+        Some(MusicBrainzSettings {
             source_mode: MbSourceMode::Mirror,
             api_url: self.mb_url.clone(),
             rate_limit: 0.0,
             source_id: "test-source".to_owned(),
             generation: 1,
             ..MusicBrainzSettings::default()
-        }
+        })
     }
 
     fn preferences(&self) -> UserPreferences {
@@ -290,8 +290,8 @@ impl CatalogSettings for TestSettings {
         MusicSource::Listenbrainz
     }
 
-    fn store_region(&self) -> String {
-        "US".to_owned()
+    fn store_region(&self) -> Option<String> {
+        Some("US".to_owned())
     }
 }
 

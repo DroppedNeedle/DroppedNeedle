@@ -480,10 +480,25 @@ impl Inputs {
         }
     }
 
-    fn config(&self) -> WorkerConfig {
+    /// `None` while a section the worker needs does not read.
+    fn config(&self) -> Option<WorkerConfig> {
         match self {
             Self::Live(settings) => settings.config(),
-            Self::Fixed { config, .. } => config.clone(),
+            Self::Fixed { config, .. } => Some(config.clone()),
+        }
+    }
+
+    fn readable(&self) -> bool {
+        match self {
+            Self::Live(settings) => settings.readable(),
+            Self::Fixed { .. } => true,
+        }
+    }
+
+    fn staging_root(&self) -> PathBuf {
+        match self {
+            Self::Live(settings) => settings.staging_root().to_owned(),
+            Self::Fixed { config, .. } => config.staging_root.clone(),
         }
     }
 }
@@ -625,15 +640,30 @@ impl DownloadWorker {
         &self.journal
     }
 
-    /// The worker tuning as saved right now.
-    pub fn current_config(&self) -> WorkerConfig {
+    /// The worker tuning as saved right now, or `None` while the download
+    /// settings do not read.
+    pub fn current_config(&self) -> Option<WorkerConfig> {
         self.inputs.config()
+    }
+
+    /// Whether the download settings read. While they do not, no pass runs
+    /// and [`Self::sources_now`] is empty.
+    pub fn settings_readable(&self) -> bool {
+        self.inputs.readable()
+    }
+
+    /// Where landings stage files.
+    pub fn staging_root(&self) -> PathBuf {
+        self.inputs.staging_root()
     }
 
     /// The sources turned on right now, in the configured try order.
     pub fn sources_now(&self) -> Vec<Source> {
+        let Some(config) = self.inputs.config() else {
+            return Vec::new();
+        };
         let sources = self.inputs.sources();
-        let order = self.inputs.config().source_order;
+        let order = config.source_order;
         in_try_order(&sources, &order)
             .into_iter()
             .cloned()
@@ -688,7 +718,11 @@ impl DownloadWorker {
     /// starts run on their own tasks; [`Self::wait_for_landings`] awaits
     /// them.
     pub async fn run_once(self: &Arc<Self>, pass: u64) {
-        let config = self.inputs.config();
+        // Settings that do not read stop the whole pass: nothing starts,
+        // lands or fails over until they are saved again.
+        let Some(config) = self.inputs.config() else {
+            return;
+        };
         let pass_ctx = Pass {
             watchdog: Watchdog::new(config.watchdog.clone()),
             sources: self.inputs.sources(),

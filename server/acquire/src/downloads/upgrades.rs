@@ -74,9 +74,10 @@ impl Upgrades {
         }
     }
 
-    /// The upgrade policy as saved right now.
+    /// The upgrade policy as saved right now; upgrades off when it does
+    /// not read.
     fn policy(&self) -> UpgradePolicy {
-        UpgradePolicy::from_policy(&crate::settings::current(&self.policy))
+        UpgradePolicy::from_policy(&self.policy.read().unwrap_or_default())
     }
 
     /// Albums below the cutoff, worst first. Empty while upgrades are off:

@@ -1135,6 +1135,7 @@ impl LibrarySetup {
         token: &str,
         applied_by: Option<&str>,
     ) -> Result<AppliedBundle, ServiceError> {
+        let retention = self.undo_retention_days().map_err(publish_error)?;
         let token_hash = sha256_hex(token.as_bytes());
         let entry = {
             let mut previews = self
@@ -1158,8 +1159,7 @@ impl LibrarySetup {
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         let live = self.seal_live(&open.sandbox, &entry.sealed.bundle, &token_hash)?;
-        open.publisher
-            .set_undo_retention_days(self.undo_retention_days());
+        open.publisher.set_undo_retention_days(retention);
         let outcome = open
             .publisher
             .publish_as(&entry.sealed, &live, &entry.docs, applied_by)
@@ -1254,14 +1254,15 @@ impl LibrarySetup {
     }
 
     /// How long undo keeps before-states, read from the settings per call.
-    fn undo_retention_days(&self) -> i64 {
+    /// A section that does not read refuses the publish: a default window
+    /// could expire before-states the admin chose to keep.
+    fn undo_retention_days(&self) -> Result<i64, PublishError> {
         self.settings
             .management
-            .get()
+            .read()
             .map(|settings| settings.undo_retention_days)
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "management settings unreadable; default undo retention");
-                super::publish::DEFAULT_UNDO_RETENTION_DAYS as i64
+            .ok_or_else(|| {
+                PublishError::Store("library management settings cannot be read".to_owned())
             })
     }
 
@@ -1355,6 +1356,7 @@ impl LibrarySetup {
         pins: SealPins,
         override_of: &dyn Fn(&str) -> u64,
     ) -> Result<AppliedBundle, PublishError> {
+        let retention = self.undo_retention_days()?;
         let mut cell = self
             .publish
             .lock()
@@ -1373,8 +1375,7 @@ impl LibrarySetup {
                 super::publish::staging::document_for_write(&path, &item.managed_updates)?,
             );
         }
-        open.publisher
-            .set_undo_retention_days(self.undo_retention_days());
+        open.publisher.set_undo_retention_days(retention);
         let mut bundle = PlanBundle {
             id: bundle_id.to_owned(),
             items: plan_items,
@@ -2021,6 +2022,7 @@ impl LibrarySetup {
         plan_items: Vec<PlanItem>,
         docs: BTreeMap<String, TagDocument>,
     ) -> Result<AppliedBundle, ServiceError> {
+        let retention = self.undo_retention_days().map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         let mut bundle = PlanBundle {
             id: self.ids.new_id(),
@@ -2044,8 +2046,7 @@ impl LibrarySetup {
             today_day() + PREVIEW_TTL_DAYS,
         );
         let live = self.seal_live(&open.sandbox, &sealed.bundle, &token_hash)?;
-        open.publisher
-            .set_undo_retention_days(self.undo_retention_days());
+        open.publisher.set_undo_retention_days(retention);
         let outcome = open
             .publisher
             .publish(&sealed, &live, &docs)

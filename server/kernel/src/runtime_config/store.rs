@@ -39,13 +39,16 @@
 //! server never deletes a row (a row deleted and stored again would restart
 //! its revision).
 //!
-//! The store logs nothing, so no code path can carry a secret to the log.
+//! The store logs one line only: [`Live::read`] warns once per revision of
+//! a section that does not read, with the section key and the error (which
+//! quotes at most a stored non-secret value or ciphertext, never a secret).
 //! The one-time copy of `config.json` ([`super::ingest`]) logs key names
 //! and counts only.
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, PoisonError, RwLock};
 
 use tokio::sync::watch;
@@ -91,6 +94,8 @@ struct Entry {
     value: serde_json::Value,
     revision: i64,
     opened: OnceLock<Arc<dyn Any + Send + Sync>>,
+    /// Set once a failed read of this revision has been logged.
+    failure_logged: AtomicBool,
 }
 
 impl Entry {
@@ -99,6 +104,7 @@ impl Entry {
             value,
             revision,
             opened: OnceLock::new(),
+            failure_logged: AtomicBool::new(false),
         })
     }
 }
@@ -194,6 +200,30 @@ impl<S: Listed> Live<S> {
             let _ = entry.opened.set(shared);
         }
         Ok(opened)
+    }
+
+    /// The section as [`Live::get`] reads it, or `None` when it does not
+    /// read. A section that does not read is never its defaults: the work
+    /// it controls waits until it is saved again. The failure is logged
+    /// once per revision.
+    pub fn read(&self) -> Option<Arc<Plain<S>>> {
+        match self.get() {
+            Ok(section) => Some(section),
+            Err(error) => {
+                let first = self
+                    .store
+                    .entry(S::KEY)
+                    .is_none_or(|entry| !entry.failure_logged.swap(true, Ordering::Relaxed));
+                if first {
+                    tracing::warn!(
+                        section = S::KEY,
+                        %error,
+                        "settings section cannot be read; the work it controls waits until it is saved again in Settings"
+                    );
+                }
+                None
+            }
+        }
     }
 
     /// Wakes after each committed change to this section.

@@ -504,7 +504,9 @@ impl Operations {
         if recall.releases.is_empty() {
             return Err(OperationError::NotFound(reasons::EDITION_NOT_FOUND));
         }
-        let ranking = self.identify.rank(&facts, &recall);
+        let ranking = self.identify.rank(&facts, &recall).ok_or_else(|| {
+            OperationError::Store("edition preferences cannot be read".to_owned())
+        })?;
         let candidate = evaluation(&facts, &recall, &ranking, true)
             .candidates
             .into_iter()

@@ -73,6 +73,9 @@ pub enum MbSource {
         /// False until the active binding validates; requests fail closed.
         binding_valid: bool,
     },
+    /// The saved MusicBrainz settings do not read. Never a default source:
+    /// every request fails as misconfigured and nothing is sent.
+    Unreadable,
 }
 
 impl MbSource {
@@ -89,6 +92,7 @@ impl MbSource {
             Self::Official { base_url }
             | Self::Mirror { base_url, .. }
             | Self::BrainzMash { base_url, .. } => base_url,
+            Self::Unreadable => "",
         }
     }
 
@@ -159,13 +163,14 @@ impl LiveSource {
         }
     }
 
-    /// The source now. Unreadable settings fall back to the defaults.
+    /// The source now; [`MbSource::Unreadable`] while the settings do not
+    /// read.
     pub fn current(&self) -> MbSource {
-        let settings = self.settings.get().unwrap_or_else(|error| {
-            tracing::warn!(%error, "cannot read musicbrainz settings; using the defaults");
-            std::sync::Arc::default()
-        });
-        MbSource::from_settings(&settings, &self.official, &self.brainzmash)
+        self.settings
+            .read()
+            .map_or(MbSource::Unreadable, |settings| {
+                MbSource::from_settings(&settings, &self.official, &self.brainzmash)
+            })
     }
 }
 

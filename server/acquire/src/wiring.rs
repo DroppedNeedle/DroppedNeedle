@@ -60,7 +60,7 @@ use super::search_jobs::store::JobStore;
 use super::settings::{
     ApprovalSeedBridge, CollectionsFollowBridge, ConfigLidarrSettings, ConfigSpotifySettings,
     FollowDecisionBridge, RequestsApprovalBridge, RequestsPendingSource, clamp_u32, clamp_u64,
-    clamp_usize, current,
+    clamp_usize,
 };
 use super::slskd::{DownloadPolicy as SlskdPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository};
 use super::sources::{SabnzbdSource, SlskdSource};
@@ -82,7 +82,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     NewznabIndexer as ConfigIndexer, ProwlarrConnection, SlskdConnection, TypedLibrary,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy, SourcePriority, UsenetBackendSetting,
+    DownloadPolicy, MusicBrainzSettings, SourcePriority, UsenetBackendSetting,
 };
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, Section};
 use tokio::sync::watch;
@@ -172,15 +172,21 @@ impl ClientLives {
                 tracing::warn!(%error, "indexer settings read failed; treating as none");
                 Vec::new()
             });
+        // A client section that does not read is an unconfigured client.
+        // The download policy is never its defaults: without it nothing
+        // searches or downloads.
         ClientSettings {
-            slskd: (**current(&self.slskd)).clone(),
-            sabnzbd: (**current(&self.sabnzbd)).clone(),
+            slskd: (**self.slskd.read().unwrap_or_default()).clone(),
+            sabnzbd: (**self.sabnzbd.read().unwrap_or_default()).clone(),
             indexers,
-            prowlarr: (**current(&self.prowlarr)).clone(),
-            lidarr: (**current(&self.lidarr)).clone(),
-            policy: (**current(&self.policy)).clone(),
-            backend: **current(&self.backend),
-            library_roots: current(&self.library)
+            prowlarr: (**self.prowlarr.read().unwrap_or_default()).clone(),
+            lidarr: (**self.lidarr.read().unwrap_or_default()).clone(),
+            policy: self.policy.read().map(|policy| (**policy).clone()),
+            backend: **self.backend.read().unwrap_or_default(),
+            library_roots: self
+                .library
+                .read()
+                .unwrap_or_default()
                 .library_roots
                 .iter()
                 .map(|root| PathBuf::from(&root.path))
@@ -196,7 +202,8 @@ struct ClientSettings {
     indexers: Vec<ConfigIndexer>,
     prowlarr: ProwlarrConnection,
     lidarr: LidarrImportConnection,
-    policy: DownloadPolicy,
+    /// `None` when the download policy does not read.
+    policy: Option<DownloadPolicy>,
     backend: UsenetBackendSetting,
     /// Library root folders (the mount probe compares filesystems).
     library_roots: Vec<PathBuf>,
@@ -204,8 +211,9 @@ struct ClientSettings {
 
 /// One built set of clients for the current settings.
 pub struct ClientSet {
-    /// Candidate search for the flows loops.
-    pub search: Arc<FanoutSearch>,
+    /// Candidate search for the flows loops; `None` while the download
+    /// policy does not read.
+    pub search: Option<Arc<FanoutSearch>>,
     /// Download sources for the worker.
     pub sources: SourceSet,
     /// Health probe inputs.
@@ -325,20 +333,26 @@ impl LiveClients {
 
     fn build(&self, settings: &ClientSettings) -> ClientSet {
         let http = &self.http;
-        let usenet_policy = usenet_policy_from(&settings.policy);
+        // The probes still see the saved clients while the download policy
+        // does not read; nothing searches or downloads.
+        let readable = settings.policy.is_some();
+        let usenet_policy = usenet_policy_from(&settings.policy.clone().unwrap_or_default());
         let slskd_repo = slskd_repository(http, &settings.slskd, &self.slskd_downloads);
         let sab_queue = sabnzbd_queue(http, &settings.sabnzbd, &usenet_policy);
         let newznab = Arc::new(newznab_indexer(http, &settings.indexers));
         let prowlarr = Arc::new(prowlarr_indexer(http, &settings.prowlarr));
-        let search = Arc::new(FanoutSearch::new(
-            slskd_repo.clone(),
-            newznab.clone(),
-            prowlarr.clone(),
-            settings.backend,
-            usenet_policy.indexer_timeout,
-        ));
+        let search = readable.then(|| {
+            Arc::new(FanoutSearch::new(
+                slskd_repo.clone(),
+                newznab.clone(),
+                prowlarr.clone(),
+                settings.backend,
+                usenet_policy.indexer_timeout,
+            ))
+        });
         let mut sources = Vec::new();
         if let Some(repo) = slskd_repo.clone()
+            && readable
             && settings.slskd.enabled
         {
             sources.push(Source::Slskd(Arc::new(
@@ -346,6 +360,7 @@ impl LiveClients {
             )));
         }
         if let Some(queue) = sab_queue.clone()
+            && readable
             && settings.sabnzbd.sabnzbd.enabled
         {
             sources.push(Source::Sab(Arc::new(
@@ -398,7 +413,9 @@ impl CandidateSearch for LiveSearch {
         title: &'a str,
     ) -> BoxFuture<'a, Result<Vec<Candidate>, String>> {
         Box::pin(async move {
-            let search = self.clients.current().search.clone();
+            let Some(search) = self.clients.current().search.clone() else {
+                return Err("the download settings cannot be read".to_owned());
+            };
             search.search_album(artist, title).await
         })
     }
@@ -1326,6 +1343,7 @@ pub struct WorkerSettings {
     source_priority: Live<SourcePriority>,
     sabnzbd: Live<DownloadClients>,
     library: Live<TypedLibrary>,
+    musicbrainz: Live<MusicBrainzSettings>,
     staging_root: PathBuf,
 }
 
@@ -1338,34 +1356,67 @@ impl WorkerSettings {
             source_priority: store.live(),
             sabnzbd: store.live(),
             library: store.live(),
+            musicbrainz: store.live(),
             staging_root,
         }
     }
 
     /// The sources turned on right now, plugin download clients included.
+    /// None while the download settings do not read.
     pub(crate) fn sources(&self) -> SourceSet {
-        self.clients.sources_with_plugins(&current(&self.policy))
+        if !self.readable() {
+            return SourceSet::default();
+        }
+        self.policy
+            .read()
+            .map(|policy| self.clients.sources_with_plugins(&policy))
+            .unwrap_or_default()
     }
 
-    /// The worker tuning as saved right now.
-    pub(crate) fn config(&self) -> WorkerConfig {
-        let sab = current(&self.sabnzbd);
+    /// Whether every section the worker cannot stand in for reads. While
+    /// one does not, no pass runs: a default quality band would land the
+    /// wrong files, and an unreadable MusicBrainz source would fail every
+    /// landing's match.
+    pub(crate) fn readable(&self) -> bool {
+        self.policy.read().is_some()
+            && self.source_priority.read().is_some()
+            && self.library.read().is_some()
+            && self.musicbrainz.read().is_some()
+    }
+
+    /// Where landings stage files. Not a setting, so it never waits.
+    pub(crate) fn staging_root(&self) -> &Path {
+        &self.staging_root
+    }
+
+    /// The worker tuning as saved right now, or `None` while a section it
+    /// needs does not read. An unreadable SABnzbd section is an
+    /// unconfigured one, as in the client set, so slskd keeps working.
+    pub(crate) fn config(&self) -> Option<WorkerConfig> {
+        if !self.readable() {
+            return None;
+        }
+        let policy = self.policy.read()?;
+        let source_priority = self.source_priority.read()?;
+        let sab = self.sabnzbd.read().unwrap_or_default();
         let sab_mount = (!sab.sabnzbd.url.is_empty())
             .then(|| PathBuf::from(sab.sabnzbd.downloads_mount.clone()));
-        let library_roots: Vec<PathBuf> = current(&self.library)
+        let library_roots: Vec<PathBuf> = self
+            .library
+            .read()?
             .library_roots
             .iter()
             .map(|root| root.path.trim())
             .filter(|path| !path.is_empty())
             .map(PathBuf::from)
             .collect();
-        worker_config(
-            &current(&self.policy),
-            &current(&self.source_priority),
+        Some(worker_config(
+            &policy,
+            &source_priority,
             &self.staging_root,
             sab_mount,
             &library_roots,
-        )
+        ))
     }
 }
 

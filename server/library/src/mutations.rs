@@ -433,9 +433,10 @@ impl<'a> Mutations<'a> {
         Ok(self.put_back(&moves, actor))
     }
 
-    /// The recycle bin a file of this library folder goes to.
+    /// The recycle bin a file of this library folder goes to. None while
+    /// the download settings do not read, so nothing is recycled.
     pub fn bin_for(&self, root_id: &str) -> Option<PathBuf> {
-        self.configured_bin().or_else(|| {
+        self.configured_bin().ok()?.or_else(|| {
             self.setup
                 .live_registry()
                 .resolve(root_id)
@@ -643,7 +644,7 @@ impl<'a> Mutations<'a> {
         let mut guards = Vec::new();
         if recycle {
             let registry = self.setup.live_registry();
-            let configured = self.configured_bin();
+            let configured = self.configured_bin()?;
             let mut planned = Vec::new();
             for track in tracks {
                 let root = registry
@@ -711,24 +712,25 @@ impl<'a> Mutations<'a> {
         }
     }
 
-    /// The configured recycle bin, when it is an absolute path.
-    fn configured_bin(&self) -> Option<PathBuf> {
-        let configured = match self.setup.settings.download_policy.get() {
-            Ok(section) => section.recycle_bin_path.clone(),
-            Err(error) => {
-                tracing::warn!(%error, "download settings unreadable; using root bins");
-                return None;
-            }
+    /// The configured recycle bin, when it is an absolute path. `Err`
+    /// while the download settings do not read: removals then wait rather
+    /// than pick another bin.
+    fn configured_bin(&self) -> Result<Option<PathBuf>, MutationError> {
+        let Some(section) = self.setup.settings.download_policy.read() else {
+            return Err(MutationError::Store(
+                "download settings cannot be read".to_owned(),
+            ));
         };
+        let configured = section.recycle_bin_path.clone();
         let path = PathBuf::from(configured.trim());
         if configured.trim().is_empty() {
-            return None;
+            return Ok(None);
         }
         if !path.is_absolute() {
             tracing::warn!("recycle_bin_path is not absolute; using the root's .recycle");
-            return None;
+            return Ok(None);
         }
-        Some(path)
+        Ok(Some(path))
     }
 
     /// Resolve a local album id (following merges) or a release-group

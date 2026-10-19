@@ -590,6 +590,11 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         criticality: Criticality,
     ) -> Result<WireOutcome, MbError> {
         let source = self.source();
+        if matches!(source, MbSource::Unreadable) {
+            return Err(MbError::Misconfigured(
+                "the musicbrainz settings cannot be read".to_owned(),
+            ));
+        }
         if let MbSource::BrainzMash { binding_valid, .. } = &source
             && !binding_valid
         {

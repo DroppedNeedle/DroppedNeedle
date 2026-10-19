@@ -10,6 +10,7 @@ use super::sources::{
     LastFmChartAlbum, PageSources, PlayedArtist, PlaylistTrack, RankedAlbum, ScoredArtist,
     SourceContext, WeeklyPlaylist,
 };
+use crate::reads::catalog::upstream::UNREADABLE_NAMESPACE;
 use crate::reads::discover::adapters::queue::live_sources::{
     ARTIST_TTL, LiveSources, USER_STATS_TTL, lastfm_result,
 };
@@ -52,7 +53,13 @@ fn chart_album(row: droppedneedle_providers::lastfm::TopItem) -> LastFmChartAlbu
 
 impl PageSources for LiveSources {
     fn source_context(&self) -> SourceContext {
-        let settings = self.upstream.settings().musicbrainz();
+        let Some(settings) = self.upstream.settings().musicbrainz() else {
+            return SourceContext {
+                mode: "unreadable".to_owned(),
+                id: UNREADABLE_NAMESPACE.to_owned(),
+                generation: 0,
+            };
+        };
         let mode = serde_json::to_value(settings.source_mode)
             .ok()
             .and_then(|value| value.as_str().map(str::to_owned))

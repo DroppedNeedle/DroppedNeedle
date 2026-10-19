@@ -150,6 +150,13 @@ impl IdentifyService {
                 review_id: None,
             }));
         }
+        // Preferences that do not read put the job back as it was, with no
+        // attempt spent; the loop claims nothing until they read again.
+        let Some(preferences) = self.preferences() else {
+            job.state = JobState::Queued;
+            self.deps.store.update(job)?;
+            return Ok(None);
+        };
         let RecallOutcome {
             result: mut recall, ..
         } = self.deps.providers.recall_candidates(&facts).await;
@@ -188,7 +195,7 @@ impl IdentifyService {
         // Every candidate's document stays on file: the identity's release
         // for tagging, the others because a curator may approve them.
         keep_releases(&self.deps.store, recall.releases.clone(), Lane::Background).await?;
-        let (ranking, decision) = self.ranked(&facts, &recall, held.as_deref());
+        let (ranking, decision) = self.ranked(&facts, &recall, held.as_deref(), &preferences);
         let report = self.apply_decision(&mut job, &facts, &ranking, decision, now_ms)?;
         self.deps.store.update(job)?;
         Ok(Some(report))
@@ -283,10 +290,21 @@ impl IdentifyService {
     }
 
     /// Score every recalled release and decide, the way a queued attempt
-    /// does, without sealing anything.
-    pub fn rank(&self, facts: &LocalAlbumFacts, recall: &RecallResult) -> Ranking {
-        let (ranking, _) = self.ranked(facts, recall, None);
-        ranking
+    /// does, without sealing anything. `None` while the edition
+    /// preferences do not read.
+    pub fn rank(&self, facts: &LocalAlbumFacts, recall: &RecallResult) -> Option<Ranking> {
+        let preferences = self.preferences()?;
+        let (ranking, _) = self.ranked(facts, recall, None, &preferences);
+        Some(ranking)
+    }
+
+    /// The edition preferences now; the defaults only when none are wired
+    /// (tests), `None` while the saved ones do not read.
+    fn preferences(&self) -> Option<Preferences> {
+        match &self.preferences {
+            Some(live) => live.current(),
+            None => Some(Preferences::default()),
+        }
     }
 
     /// Score every recalled release and decide. Candidates come back
@@ -298,6 +316,7 @@ impl IdentifyService {
         facts: &LocalAlbumFacts,
         recall: &RecallResult,
         held: Option<&str>,
+        preferences: &Preferences,
     ) -> (Ranking, Decision) {
         let local = local_album(facts, &recall.fingerprint_support);
         let matches: Vec<_> = recall
@@ -306,17 +325,13 @@ impl IdentifyService {
             .map(|release| match_release(&local, release, &recall.recording_aliases))
             .collect();
         let tagged = local.tagged_release();
-        let preferences = self
-            .preferences
-            .as_ref()
-            .map_or_else(Preferences::default, LivePreferences::current);
         let verdict = decide(
             &local,
             &recall.releases,
             &matches,
             EditionPrefs {
                 tagged: tagged.as_deref(),
-                preferences: Some(&preferences),
+                preferences: Some(preferences),
             },
         );
         let keep = |index: usize| -> usize {

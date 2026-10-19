@@ -252,7 +252,7 @@ impl LibrarySetup {
             }
             // An administrator's pause stops new claims; a job already
             // running finishes.
-            if self.identification_paused() {
+            if self.identification_paused() || !self.settings.identification_readable() {
                 break;
             }
             let claimed = self
@@ -321,7 +321,7 @@ impl LibrarySetup {
                         );
                     }
                     Ok(None) => {
-                        tracing::warn!(job_id = job.id, "identify job vanished mid-claim");
+                        tracing::warn!(job_id = job.id, "identify job vanished or went back to the queue mid-claim");
                     }
                     Err(error) => {
                         // The loop backs off before it claims again.

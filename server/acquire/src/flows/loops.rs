@@ -153,7 +153,10 @@ fn epoch(now: i64) -> u64 {
 /// check due watches. Disabled reads as an empty pass. One bad watch never
 /// kills the sweep (v2 `run_sweep` isolation).
 pub async fn wanted_tick(now: i64, deps: &WantedDeps) -> WantedSummary {
-    let settings = WantedSettings::from_section(&crate::settings::current(&deps.settings));
+    let Some(section) = deps.settings.read() else {
+        return WantedSummary::default();
+    };
+    let settings = WantedSettings::from_section(&section);
     if !settings.enabled {
         return WantedSummary::default();
     }
@@ -498,7 +501,12 @@ pub struct FollowDeps {
 pub async fn follow_tick(now: i64, deps: &FollowDeps) -> FollowSummary {
     let mut summary = FollowSummary::default();
     let today = (deps.today)();
-    let types = ReleaseTypes::from_preferences(&crate::settings::current(&deps.preferences));
+    // Unreadable release-type preferences skip the pass: cursors stay due
+    // and no release is recorded or marked known.
+    let Some(preferences) = deps.preferences.read() else {
+        return summary;
+    };
+    let types = ReleaseTypes::from_preferences(&preferences);
     let due = match deps
         .follows
         .list_due(now, FOLLOW_MAX_ARTISTS_PER_TICK)
@@ -810,7 +818,10 @@ pub struct SweepDeps {
 /// `AlreadyInLibrary` answers never count as enqueued; a poison item never
 /// starves its siblings (v2 `run_background_upgrade_sweep`).
 pub async fn sweep_tick(now: i64, deps: &SweepDeps) -> SweepSummary {
-    let policy = UpgradePolicy::from_policy(&crate::settings::current(&deps.policy));
+    let Some(policy) = deps.policy.read() else {
+        return SweepSummary::default();
+    };
+    let policy = UpgradePolicy::from_policy(&policy);
     if !(policy.upgrade_allowed && policy.scan_enabled) {
         return SweepSummary::default();
     }
@@ -921,7 +932,12 @@ pub struct PruneSummary {
 /// window is clamped to the settings' 30..3650 days. Manual search jobs
 /// keep their own, shorter window (see [`JobStore::prune`]).
 pub async fn prune_tick(now: i64, deps: &PruneDeps) -> Result<PruneSummary, RequestsError> {
-    let days = PruneSettings::from_section(&crate::settings::current(&deps.settings))
+    // Unreadable retention prunes nothing: a default window could delete
+    // history the admin chose to keep.
+    let Some(section) = deps.settings.read() else {
+        return Ok(PruneSummary::default());
+    };
+    let days = PruneSettings::from_section(&section)
         .retention_days
         .clamp(30, 3650);
     let cutoff = u64::try_from(now)
@@ -1187,7 +1203,10 @@ impl<D> IntervalTick<D> {
 
 impl Tick for IntervalTick<PruneDeps> {
     async fn tick(&mut self, _ctx: &TickCtx) -> TickResult {
-        let hours = PruneSettings::from_section(&crate::settings::current(&self.deps.settings))
+        let Some(section) = self.deps.settings.read() else {
+            return Ok(Next::Continue);
+        };
+        let hours = PruneSettings::from_section(&section)
             .interval_hours
             .clamp(1, 168);
         let Some(now) = self.due(hours) else {
@@ -1204,9 +1223,10 @@ impl Tick for IntervalTick<PruneDeps> {
 
 impl Tick for IntervalTick<SweepDeps> {
     async fn tick(&mut self, _ctx: &TickCtx) -> TickResult {
-        let hours = UpgradePolicy::from_policy(&crate::settings::current(&self.deps.policy))
-            .interval_hours
-            .max(1);
+        let Some(policy) = self.deps.policy.read() else {
+            return Ok(Next::Continue);
+        };
+        let hours = UpgradePolicy::from_policy(&policy).interval_hours.max(1);
         let Some(now) = self.due(hours) else {
             return Ok(Next::Continue);
         };

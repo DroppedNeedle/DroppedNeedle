@@ -96,8 +96,9 @@ impl MbPacing {
                 let limiter = self.providers.musicbrainz.mirror_limiter(*rate_per_sec);
                 take(Some(&limiter), priority).await;
             }
-            // Rate 0 is the owner's "unlimited" for their own mirror.
-            MbSource::Mirror { .. } => {}
+            // Rate 0 is the owner's "unlimited" for their own mirror. An
+            // unreadable source never sends, so it takes no slot.
+            MbSource::Mirror { .. } | MbSource::Unreadable => {}
         }
         Ok(())
     }

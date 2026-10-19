@@ -252,6 +252,11 @@ impl SearchJobs {
                 "Give the artist and the album title to search for.".to_owned(),
             ));
         }
+        if !self.worker.settings_readable() {
+            return Err(SearchJobError::Conflict(
+                crate::downloads::queue::SETTINGS_UNREADABLE.to_owned(),
+            ));
+        }
         if self.worker.sources_now().is_empty() {
             let reason = SearchReason::NoSources;
             return Err(SearchJobError::Conflict(format!(

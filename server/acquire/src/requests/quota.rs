@@ -124,13 +124,15 @@ impl QuotaLedger {
         }
     }
 
-    /// The limits as saved right now.
-    fn policy(&self) -> QuotaPolicy {
-        self.policy
-            .as_ref()
-            .map_or_else(QuotaPolicy::default, |live| {
-                QuotaPolicy::from_policy(&crate::settings::current(live))
-            })
+    /// The limits as saved right now. A download policy that does not read
+    /// is never "unlimited": every check fails until it is saved again.
+    fn policy(&self) -> Result<QuotaPolicy, RequestsError> {
+        let Some(live) = self.policy.as_ref() else {
+            return Ok(QuotaPolicy::default());
+        };
+        live.read()
+            .map(|policy| QuotaPolicy::from_policy(&policy))
+            .ok_or_else(|| RequestsError::internal(&"download settings cannot be read"))
     }
 
     /// Set one user's override row. Bounds mirror v2 (`set_override`).
@@ -168,7 +170,7 @@ impl QuotaLedger {
 
     /// One user's effective limits: override where set, else policy default.
     pub fn effective_quota(&self, user_id: &str) -> Result<EffectiveQuota, RequestsError> {
-        let policy = self.policy();
+        let policy = self.policy()?;
         let row = self
             .overrides
             .read()
@@ -250,7 +252,7 @@ impl QuotaLedger {
         ) {
             return Ok(());
         }
-        let policy = self.policy();
+        let policy = self.policy()?;
         if policy.max_library_gb > 0 {
             let total = self.library_bytes().await?;
             if total >= policy.max_library_gb * gib() {

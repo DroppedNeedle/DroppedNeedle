@@ -30,8 +30,8 @@ use droppedneedle_providers::{ProviderCache, Providers, RequestPriority};
 
 /// The settings the catalog reads, once per call.
 pub trait CatalogSettings: Send + Sync {
-    /// MusicBrainz source selection.
-    fn musicbrainz(&self) -> MusicBrainzSettings;
+    /// MusicBrainz source selection; `None` while it does not read.
+    fn musicbrainz(&self) -> Option<MusicBrainzSettings>;
     /// Release-type filters.
     fn preferences(&self) -> UserPreferences;
     /// Cache lifetimes and the AudioDB switch and key.
@@ -40,11 +40,13 @@ pub trait CatalogSettings: Send + Sync {
     fn listenbrainz_enabled(&self) -> bool;
     /// Which provider answers discovery sections by default.
     fn primary_source(&self) -> MusicSource;
-    /// Two-letter store region for purchase lookups.
-    fn store_region(&self) -> String;
-    /// How to pick an edition of an album the library does not hold.
-    fn edition_preferences(&self) -> droppedneedle_library::edition_prefs::Preferences {
-        droppedneedle_library::edition_prefs::Preferences::default()
+    /// Two-letter store region for purchase lookups; `None` while it does
+    /// not read.
+    fn store_region(&self) -> Option<String>;
+    /// How to pick an edition of an album the library does not hold;
+    /// `None` while the preferences do not read.
+    fn edition_preferences(&self) -> Option<droppedneedle_library::edition_prefs::Preferences> {
+        Some(droppedneedle_library::edition_prefs::Preferences::default())
     }
 }
 
@@ -58,6 +60,18 @@ fn or_default<S: Listed + Default + Clone>(settings: &Live<S>) -> S {
         },
         |section| S::clone(&section),
     )
+}
+
+/// The cache namespace while the MusicBrainz settings do not read.
+pub const UNREADABLE_NAMESPACE: &str = "unreadable:g0";
+
+/// The advanced section's defaults with AudioDB switched off, for when the
+/// saved section does not read.
+pub fn audiodb_off() -> AdvancedSettings {
+    AdvancedSettings {
+        audiodb_enabled: false,
+        ..AdvancedSettings::default()
+    }
 }
 
 /// The catalog's settings, each a live handle read per call.
@@ -85,16 +99,20 @@ impl LiveCatalogSettings {
 }
 
 impl CatalogSettings for LiveCatalogSettings {
-    fn musicbrainz(&self) -> MusicBrainzSettings {
-        or_default(&self.musicbrainz)
+    fn musicbrainz(&self) -> Option<MusicBrainzSettings> {
+        self.musicbrainz.read().map(|settings| (**settings).clone())
     }
 
     fn preferences(&self) -> UserPreferences {
         or_default(&self.preferences)
     }
 
+    /// Unreadable advanced settings keep the default tuning but never
+    /// call AudioDB: its switch and key are in this section.
     fn advanced(&self) -> AdvancedSettings {
-        or_default(&self.advanced)
+        self.advanced
+            .read()
+            .map_or_else(audiodb_off, |settings| (**settings).clone())
     }
 
     fn listenbrainz_enabled(&self) -> bool {
@@ -105,11 +123,11 @@ impl CatalogSettings for LiveCatalogSettings {
         or_default(&self.primary).source
     }
 
-    fn store_region(&self) -> String {
+    fn store_region(&self) -> Option<String> {
         self.editions.store_region()
     }
 
-    fn edition_preferences(&self) -> droppedneedle_library::edition_prefs::Preferences {
+    fn edition_preferences(&self) -> Option<droppedneedle_library::edition_prefs::Preferences> {
         self.editions.current()
     }
 }
@@ -279,13 +297,19 @@ impl Upstream {
     /// generation) starts a fresh namespace, so one source's answers are
     /// never served as another's.
     pub fn musicbrainz(&self, priority: RequestPriority) -> (CatalogMusicBrainz, String) {
-        let settings = self.settings.musicbrainz();
-        let source = MbSource::from_settings(
-            &settings,
-            &self.endpoints.musicbrainz,
-            &self.endpoints.brainzmash,
-        );
-        let namespace = format!("{}:g{}", settings.source_id, settings.generation);
+        // Settings that do not read get a source that sends nothing and a
+        // fixed namespace that no real source shares.
+        let (source, namespace) = match self.settings.musicbrainz() {
+            Some(settings) => (
+                MbSource::from_settings(
+                    &settings,
+                    &self.endpoints.musicbrainz,
+                    &self.endpoints.brainzmash,
+                ),
+                format!("{}:g{}", settings.source_id, settings.generation),
+            ),
+            None => (MbSource::Unreadable, UNREADABLE_NAMESPACE.to_owned()),
+        };
         let client = MusicBrainzClient::new(
             ReqwestMbTransport::new(self.no_redirect.clone()),
             source,

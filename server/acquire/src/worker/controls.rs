@@ -163,7 +163,7 @@ impl DownloadWorker {
             ));
         };
         if spawned {
-            let staging_root = self.current_config().staging_root;
+            let staging_root = self.staging_root();
             super::write_successor_manifest(&staging_root, &task.id, &next).await;
         }
         tracing::info!(task_id = %task.id, %successor, "download retried by hand");
@@ -205,7 +205,9 @@ impl DownloadWorker {
                 "The download finished and is being imported.",
             ));
         }
-        let config = self.inputs.config();
+        let config = self.inputs.config().ok_or(NextSourceError::Conflict(
+            crate::downloads::queue::SETTINGS_UNREADABLE,
+        ))?;
         let pass = Pass {
             watchdog: Watchdog::new(config.watchdog.clone()),
             sources: self.inputs.sources(),

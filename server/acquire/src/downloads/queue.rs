@@ -36,6 +36,10 @@ pub enum QueueError {
     Unavailable(String),
 }
 
+/// What a queue action answers while the download settings do not read.
+pub const SETTINGS_UNREADABLE: &str =
+    "Download settings can't be read. Save Settings, Downloads again.";
+
 fn unavailable(error: impl std::fmt::Display) -> QueueError {
     QueueError::Unavailable(error.to_string())
 }
@@ -225,7 +229,11 @@ impl DownloadQueue {
     /// downloads. Failures that will not retry by themselves stay, for
     /// "retry all failed".
     pub async fn stop_all_retries(&self, viewer: &Viewer) -> Result<i64, QueueError> {
-        let policy = self.worker.current_config().retry;
+        let policy = self
+            .worker
+            .current_config()
+            .ok_or_else(|| QueueError::Conflict(SETTINGS_UNREADABLE.to_owned()))?
+            .retry;
         let (tasks, held) = self.unsettled(viewer).await?;
         let mut stopped = 0;
         for task in tasks {
@@ -244,7 +252,11 @@ impl DownloadQueue {
     /// once per album or track: older failures superseded by a newer task
     /// for the same target are skipped.
     pub async fn retry_all_failed(&self, viewer: &Viewer) -> Result<i64, QueueError> {
-        let policy = self.worker.current_config().retry;
+        let policy = self
+            .worker
+            .current_config()
+            .ok_or_else(|| QueueError::Conflict(SETTINGS_UNREADABLE.to_owned()))?
+            .retry;
         let (tasks, held) = self.unsettled(viewer).await?;
         let mut retried = 0;
         for task in tasks {
@@ -344,9 +356,20 @@ impl DownloadQueue {
         let mut facts: HashMap<String, TaskFacts> = queue_rows::task_facts(self.pool(), &ids)
             .await
             .map_err(unavailable)?;
+        // While the download settings do not read, the views leave the
+        // retry schedule out instead of failing the page.
         let config = self.worker.current_config();
-        let retry_max = i64::from(config.retry.auto_retry_max());
-        let ladder = config.retry.ladder_minutes();
+        let retry_max = config
+            .as_ref()
+            .map_or(0, |config| i64::from(config.retry.auto_retry_max()));
+        let ladder = config
+            .as_ref()
+            .map(|config| config.retry.ladder_minutes())
+            .unwrap_or_default();
+        let attempt_total = config
+            .as_ref()
+            .map(|config| config.max_failover_attempts)
+            .unwrap_or_default();
         Ok(rows
             .into_iter()
             .map(|row| {
@@ -365,15 +388,16 @@ impl DownloadQueue {
                 );
                 // Tasks paused on a held-file review show no countdown: it
                 // would never fire.
-                let next_retry_at =
-                    will_auto_retry(&config.retry, &row.task, facts.held_for_review);
+                let next_retry_at = config.as_ref().and_then(|config| {
+                    will_auto_retry(&config.retry, &row.task, facts.held_for_review)
+                });
                 TaskView {
                     row,
                     facts,
                     next_retry_at,
                     retry_max,
                     retry_ladder_minutes: ladder.clone(),
-                    attempt_total: config.max_failover_attempts,
+                    attempt_total,
                     reason,
                 }
             })

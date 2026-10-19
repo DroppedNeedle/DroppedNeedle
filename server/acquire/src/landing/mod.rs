@@ -73,6 +73,10 @@ pub const UPGRADE_BLOCKED: &str = "upgrade_blocked";
 /// could not be put back either: the old copy is in the recycle bin.
 pub const UPGRADE_RESTORE_FAILED: &str = "upgrade_restore_failed";
 
+/// Rejection code for a landing whose download settings cannot be read:
+/// it waits for them to be saved again, and the source is not blamed.
+pub const SETTINGS_UNREADABLE: &str = "settings_unreadable";
+
 /// Hold code for this edition's version of a track that came in lower
 /// quality than the person's own version, which stays.
 pub const VERSION_LOWER_QUALITY: &str = "version_lower_quality";
@@ -306,6 +310,17 @@ impl LandingService {
             .iter()
             .filter_map(|file| Some((file.path.clone(), file.size.filter(|size| *size > 0)?)))
             .collect();
+        // A band that does not read is never the default band: the landing
+        // waits, the files stay and the source is not blamed.
+        let Some(settings) = self.policy.read() else {
+            let rejection = Rejection {
+                code: SETTINGS_UNREADABLE,
+                disposition: Disposition::Temporary,
+                quarantine: None,
+                detail: "the download settings cannot be read".to_owned(),
+            };
+            return self.reject_unprobed(task, attempt_id, rejection).await;
+        };
         let paths: Vec<PathBuf> = reported.into_iter().map(|file| file.path).collect();
         let probed = tokio::task::spawn_blocking(move || probe::probe(&paths, &libraries)).await;
         let landing = match probed {
@@ -320,7 +335,6 @@ impl LandingService {
         {
             return report;
         }
-        let settings = crate::settings::current(&self.policy);
         let mut policy = QualityPolicy {
             quality_min: settings.quality_min.clone(),
             quality_max: settings.quality_max.clone(),

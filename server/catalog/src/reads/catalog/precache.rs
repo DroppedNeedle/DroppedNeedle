@@ -7,7 +7,6 @@
 //! the catalog's own caches and provider pacing, so a precache run fills
 //! exactly what a page visit would, at the pace the providers allow.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use crate::reads::platform::artwork::{ArtistImageCandidates, ArtistImageSource, ArtworkService};
@@ -15,8 +14,8 @@ use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::precache_phases::{
     LibraryAlbum, LibraryArtist, PrecacheLibrary, PrecacheSources, PrecacheTuning,
 };
+use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
-use droppedneedle_kernel::runtime_config::{Live, Plain};
 
 use super::Catalog;
 
@@ -205,10 +204,14 @@ fn seconds(value: f64) -> Duration {
 
 impl PrecacheSources for CatalogPrecache {
     fn tuning(&self) -> PrecacheTuning {
-        let settings = self.settings.get().unwrap_or_else(|error| {
-            tracing::warn!(%error, "cannot read advanced settings; precache uses defaults");
-            Arc::new(Plain::default())
-        });
+        // Unreadable settings keep the default pacing but never prewarm
+        // AudioDB, whose switch and key live in this section.
+        let settings = self
+            .settings
+            .read()
+            .map_or_else(super::upstream::audiodb_off, |settings| {
+                (**settings).clone()
+            });
         PrecacheTuning {
             artist_batch: clamp_batch(settings.batch_artist_images),
             artist_delay: seconds(settings.delay_artist),

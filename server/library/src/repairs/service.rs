@@ -889,7 +889,9 @@ impl Repairs {
         if recall.provider_deferred {
             return Ok(Checked::Deferred);
         }
-        let ranking = self.identify.rank(&facts, &recall);
+        let Some(ranking) = self.identify.rank(&facts, &recall) else {
+            return Ok(Checked::Deferred);
+        };
         let candidates = evaluation(&facts, &recall, &ranking, false).candidates;
         let identity = identity.unwrap_or_default();
         let verdict = match release {

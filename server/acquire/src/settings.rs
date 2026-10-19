@@ -1,9 +1,9 @@
 //! Settings reads and the follow bridges between modules.
 //!
 //! Acquire reads every settings section through a [`Live`] handle, so a
-//! saved setting reaches the next use without a restart. [`current`]
-//! reads one and falls back to the defaults when the stored value does
-//! not read.
+//! saved setting reaches the next use without a restart. A section that
+//! does not read ([`Live::read`] answers `None`) stops the work it
+//! controls; only the client connection sections read as unconfigured.
 //!
 //! Credentials and URLs live in the config store (encrypted at rest,
 //! never in plaintext): [`ConfigLidarrSettings`] and
@@ -44,21 +44,9 @@ use droppedneedle_kernel::runtime_config::mask::display_mask;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     LidarrImportConnection, SpotifySettings,
 };
-use droppedneedle_kernel::runtime_config::{
-    ConfigError, ConfigStore, Listed, Live, Plain, Secret, UpdateError,
-};
+use droppedneedle_kernel::runtime_config::{ConfigError, ConfigStore, Live, Secret, UpdateError};
 
 use super::imports::error::ImportsError;
-
-/// The section as last saved, or its defaults (logged) when the stored
-/// value does not read. A secret section that does not read therefore
-/// reads as unconfigured.
-pub fn current<S: Listed>(live: &Live<S>) -> Arc<Plain<S>> {
-    live.get().unwrap_or_else(|error| {
-        tracing::warn!(section = S::KEY, %error, "settings read failed; using defaults");
-        Arc::new(Plain::default())
-    })
-}
 
 /// Clamp a settings integer to a non-negative `u32` (0 = unlimited).
 pub(crate) fn clamp_u32(value: i64) -> u32 {
@@ -104,7 +92,7 @@ impl ConfigLidarrSettings {
 
 impl LidarrSettingsStore for ConfigLidarrSettings {
     fn get(&self) -> LidarrConnectionSettings {
-        let section = current(&self.live);
+        let section = self.live.read().unwrap_or_default();
         LidarrConnectionSettings {
             url: section.url.clone(),
             api_key: display_mask(section.api_key.expose()).to_owned(),
@@ -112,7 +100,7 @@ impl LidarrSettingsStore for ConfigLidarrSettings {
     }
 
     fn get_raw(&self) -> LidarrImportConnection {
-        (**current(&self.live)).clone()
+        (**self.live.read().unwrap_or_default()).clone()
     }
 
     fn save<'a>(&'a self, settings: &'a LidarrConnectionSettings) -> BoxFuture<'a, ()> {
@@ -148,11 +136,11 @@ impl ConfigSpotifySettings {
 
 impl SpotifySettingsStore for ConfigSpotifySettings {
     fn legacy_callback(&self) -> bool {
-        current(&self.live).legacy_callback
+        self.live.read().unwrap_or_default().legacy_callback
     }
 
     fn get(&self) -> ImportsSpotifySettings {
-        let section = current(&self.live);
+        let section = self.live.read().unwrap_or_default();
         ImportsSpotifySettings {
             client_id: section.client_id.clone(),
             client_secret: display_mask(section.client_secret.expose()).to_owned(),
@@ -162,7 +150,7 @@ impl SpotifySettingsStore for ConfigSpotifySettings {
     }
 
     fn get_raw(&self) -> SpotifySettings {
-        (**current(&self.live)).clone()
+        (**self.live.read().unwrap_or_default()).clone()
     }
 
     fn save<'a>(

@@ -541,7 +541,10 @@ impl requests::DownloadDispatch for UnifiedDispatch {
         task_id: &'a str,
     ) -> BoxFuture<'a, Result<Option<requests::RetrySchedule>, requests::DispatchError>> {
         Box::pin(async move {
-            let policy = RetryPolicy::from_policy(&crate::settings::current(&self.policy));
+            let Some(policy) = self.policy.read() else {
+                return Ok(None);
+            };
+            let policy = RetryPolicy::from_policy(&policy);
             if policy.auto_retry_max() == 0 {
                 return Ok(None);
             }

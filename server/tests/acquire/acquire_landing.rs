@@ -769,6 +769,61 @@ async fn a_download_outside_its_clients_folder_is_refused() {
     );
 }
 
+/// A download policy that does not read is never the default quality band:
+/// the landing waits with a temporary rejection, the files stay where they
+/// are, and nothing is said against the source.
+#[tokio::test]
+async fn a_landing_waits_while_the_download_policy_does_not_read() {
+    let (acquire, dir, _auth) = bare_acquire().await;
+    let store = crate::acquire_requests::unreadable_policy_store(&dir.join("broken-settings"));
+    let landing = droppedneedle_acquire::landing::LandingService::new(
+        acquire.journal.clone(),
+        droppedneedle_acquire::landing::LibrarySlot::default(),
+        store.live(),
+        dir.join("held"),
+    );
+    let mount = dir.join("downloads");
+    let file = land_file(
+        &mount.join("job"),
+        "01.mp3",
+        "mp3_full_01.mp3",
+        "Mysterons",
+        1,
+    );
+    acquire
+        .journal
+        .run("test.seed", |store| {
+            store.insert_task(&new_task("t-unreadable", GOOD_GROUP), 1.0)
+        })
+        .await
+        .expect("task");
+    let task = acquire
+        .journal
+        .read_task("t-unreadable")
+        .await
+        .unwrap()
+        .unwrap();
+    let landed = Landed {
+        mounts: vec![mount],
+        files: vec![Reported::path(file.clone())],
+    };
+    let LandingResult::Rejected(rejection) =
+        landing.land(&task, None, None, landed, false).await.result
+    else {
+        panic!("the landing went ahead under unreadable settings");
+    };
+    assert_eq!(
+        (rejection.code, rejection.disposition),
+        ("settings_unreadable", Disposition::Temporary)
+    );
+    assert!(file.exists());
+    let quarantined: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM download_quarantine")
+        .fetch_one(acquire.db.pool())
+        .await
+        .expect("quarantine count");
+    assert_eq!(quarantined, 0);
+}
+
 /// A plugin's finished download is confined to the plugin's own folders
 /// (its data folder and its `downloads_dir` setting), whatever workspace
 /// the plugin itself names.

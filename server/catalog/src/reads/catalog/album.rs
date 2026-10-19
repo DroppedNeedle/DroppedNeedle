@@ -502,7 +502,9 @@ impl Catalog {
     /// breaking ties: what the page shows, and what a request fetches, for
     /// an album the library does not hold.
     fn preferred(&self, ranked: &[&ReleaseSummary]) -> Option<String> {
-        let prefs = self.upstream().settings().edition_preferences();
+        // No pick while the preferences do not read: a default pick is
+        // not the admin's choice.
+        let prefs = self.upstream().settings().edition_preferences()?;
         ranked
             .iter()
             .enumerate()
@@ -852,11 +854,9 @@ impl Catalog {
     /// MusicBrainz, artwork and store answers, then rebuild the header.
     pub async fn album_refresh(&self, raw_id: &str) -> Result<AlbumBasicInfo, CatalogError> {
         let id = self.album_id(raw_id).await?;
-        let mut keys = vec![
-            self.group_key(&id),
-            audiodb_album_key(&id),
-            self.purchase_key(&id),
-        ];
+        let region = self.upstream().settings().store_region();
+        let mut keys = vec![self.group_key(&id), audiodb_album_key(&id)];
+        keys.extend(region.iter().map(|region| self.purchase_key(&id, region)));
         if let Ok(Some(group)) = self.group_detail(&id).await {
             keys.push(self.group_key(&group.mbid));
             keys.push(audiodb_album_key(&group.mbid));
@@ -866,7 +866,11 @@ impl Catalog {
                     .iter()
                     .map(|release| self.release_key(&release.id)),
             );
-            keys.push(self.purchase_key(&group.mbid));
+            keys.extend(
+                region
+                    .iter()
+                    .map(|region| self.purchase_key(&group.mbid, region)),
+            );
         }
         self.forget(&keys).await;
         self.album_basic(&id).await
@@ -874,9 +878,8 @@ impl Catalog {
 
     /// The purchase cache key: per MusicBrainz source, store region and set
     /// of extra link providers.
-    fn purchase_key(&self, mbid: &str) -> String {
+    fn purchase_key(&self, mbid: &str, region: &str) -> String {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        let region = self.upstream().settings().store_region();
         droppedneedle_providers::digest_key(
             "getit:",
             &[
@@ -903,9 +906,16 @@ impl Catalog {
         // Keyed by the resolved group, so refresh and pin changes (which
         // drop the group's key) reach answers asked for by a release id.
         let group = self.group_detail(&id).await?;
-        let region = self.upstream().settings().store_region();
+        let region = self
+            .upstream()
+            .settings()
+            .store_region()
+            .ok_or_else(|| CatalogError::Internal("store region cannot be read".to_owned()))?;
         let catalog = self.clone();
-        let key = self.purchase_key(group.as_ref().map_or(id.as_str(), |group| &group.mbid));
+        let key = self.purchase_key(
+            group.as_ref().map_or(id.as_str(), |group| &group.mbid),
+            &region,
+        );
         let value = self
             .cached(&self.inner.flights.other, key, move || async move {
                 let (options, complete) = catalog.build_purchase_options(group, &region).await?;

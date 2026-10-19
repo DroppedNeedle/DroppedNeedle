@@ -62,37 +62,27 @@ impl LivePreferences {
         }
     }
 
-    /// The preferences now. An unreadable section falls back to its
-    /// defaults with a log line.
-    pub fn current(&self) -> Preferences {
-        let saved = self.saved.get().unwrap_or_else(|error| {
-            tracing::warn!(%error, "edition preferences unreadable; using the defaults");
-            std::sync::Arc::default()
-        });
-        Preferences::from_settings(&saved, &self.store_region())
+    /// The preferences now, or `None` while either section does not read.
+    /// They decide which edition is accepted, so they are never the
+    /// defaults: identification waits instead.
+    pub fn current(&self) -> Option<Preferences> {
+        let saved = self.saved.read()?;
+        Some(Preferences::from_settings(&saved, &self.store_region()?))
     }
 
     /// Whether management may touch unconfirmed matches now. No when the
     /// section cannot be read.
     pub fn manage_unconfirmed(&self) -> bool {
         self.saved
-            .get()
-            .map(|prefs| prefs.manage_unconfirmed)
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "edition preferences unreadable; unconfirmed albums wait");
-                false
-            })
+            .read()
+            .is_some_and(|prefs| prefs.manage_unconfirmed)
     }
 
-    /// The saved store region now, or the default one.
-    pub fn store_region(&self) -> String {
-        self.get_it.get().map_or_else(
-            |error| {
-                tracing::warn!(%error, "store region unreadable; using the default");
-                GetIt::default().store_region
-            },
-            |section| section.store_region.clone(),
-        )
+    /// The saved store region now, or `None` while it does not read.
+    pub fn store_region(&self) -> Option<String> {
+        self.get_it
+            .read()
+            .map(|section| section.store_region.clone())
     }
 }
 

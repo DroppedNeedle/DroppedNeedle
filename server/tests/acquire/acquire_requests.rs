@@ -14,8 +14,8 @@ use droppedneedle_acquire::requests::mix::{
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 use droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore;
 use droppedneedle_kernel::events::EventSink;
-use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
+use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 use droppedneedle_plugins::scrobble::{
     MemoryScrobblePrefsStore, MixApprovalHook as _, MixStateReader as _, ScrobblePrefsPatch,
     ScrobblePrefsStore as _,
@@ -328,6 +328,59 @@ async fn request_quota_survives_a_restart() {
     assert_eq!(body["error"]["details"]["used"], 1);
     // Curators are exempt.
     assert_eq!(ask(&state, TRUSTED, MBID_B).await.0, StatusCode::ACCEPTED);
+}
+
+/// A settings store in `dir` whose download policy was copied in from a
+/// `config.json` unvalidated and does not decode: a quota of one, FLAC
+/// only, and a recipe entry with a key the section does not know.
+pub(crate) fn unreadable_policy_store(dir: &std::path::Path) -> ConfigStore {
+    std::fs::create_dir_all(dir).expect("settings dir");
+    let stored = json!({
+        "download_policy": {
+            "default_request_quota_count": 1,
+            "quality_min": "flac",
+            "quality_max": "flac",
+            "quality_recipe": [{"format": "flac", "quality": "lossless", "preset": "x"}],
+        }
+    });
+    std::fs::write(dir.join("config.json"), stored.to_string()).expect("config.json");
+    let store = droppedneedle_acquire::settings::scratch_settings(dir).expect("settings open");
+    assert!(store.live::<DownloadPolicy>().get().is_err());
+    store
+}
+
+// A download policy that does not read is never "unlimited": a request
+// answers 500 and leaves no request or task behind. Saving the policy again
+// brings the quota back without a restart.
+#[tokio::test]
+async fn an_unreadable_download_policy_refuses_requests_until_saved() {
+    let (_, db, dispatch) = setup().await;
+    let dir = db
+        .path()
+        .parent()
+        .expect("scratch dir")
+        .join("broken-settings");
+    let store = unreadable_policy_store(&dir);
+    let quota = Arc::new(QuotaLedger::new(store.live(), db.clone()));
+    let state = RequestsState::new(&db, quota, dispatch.clone());
+
+    let (status, _) = ask(&state, ADA, MBID_A).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let (_, history) = call(&state, Method::GET, "/requests/history", Some(ADA), None).await;
+    assert_eq!(history["items"], json!([]));
+    assert!(dispatch.take_calls().is_empty());
+
+    store
+        .save_blocking(DownloadPolicy {
+            default_request_quota_count: 1,
+            ..DownloadPolicy::default()
+        })
+        .expect("policy saves");
+    assert_eq!(ask(&state, ADA, MBID_A).await.0, StatusCode::ACCEPTED);
+    assert_eq!(
+        ask(&state, ADA, MBID_B).await.0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
 }
 
 // The library cap reads the real library size.

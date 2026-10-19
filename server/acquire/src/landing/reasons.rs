@@ -163,6 +163,11 @@ pub const CATALOG: &[Reason] = &[
         "Nothing to do: DroppedNeedle asks other sources for the missing tracks. You can also search for them yourself.",
     ),
     reason(
+        "settings_unreadable",
+        "The download settings cannot be read, so the files wait where they are.",
+        "Save Settings, Downloads again. The import then goes ahead by itself.",
+    ),
+    reason(
         "local_fault",
         "Something on this server stopped the import (for example a full disk or a folder it cannot write).",
         "Check free space and folder permissions, then retry import.",

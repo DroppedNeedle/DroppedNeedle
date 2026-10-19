@@ -548,11 +548,17 @@ impl ServerConfig for ConfigServers {
                 user_id,
             })
         };
-        let internal = || self.internal.get().unwrap_or_default();
+        // Install ids are never defaults: a made-up client id would sign in
+        // as another device.
+        let internal = || {
+            self.internal
+                .read()
+                .ok_or_else(|| "internal settings cannot be read".to_owned())
+        };
         let settings = match source {
             SourceName::Jellyfin => {
                 let section = self.jellyfin.get().map_err(|error| error.to_string())?;
-                let device_id = internal()
+                let device_id = internal()?
                     .droppedneedle_device_id
                     .clone()
                     .unwrap_or_else(|| "droppedneedle".to_owned());
@@ -586,7 +592,7 @@ impl ServerConfig for ConfigServers {
             }
             SourceName::Plex => {
                 let section = self.plex.get().map_err(|error| error.to_string())?;
-                let client_id = internal().plex_client_id.clone().unwrap_or_default();
+                let client_id = internal()?.plex_client_id.clone().unwrap_or_default();
                 (section.enabled && !section.plex_url.is_empty()).then(|| ServerSettings {
                     base_url: section.plex_url.trim_end_matches('/').to_owned(),
                     shared: shared(

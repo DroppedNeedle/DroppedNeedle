@@ -21,7 +21,7 @@ use super::sources::{
     QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
 };
 use crate::reads::catalog::mapping::should_include_release;
-use crate::reads::catalog::upstream::{CatalogLastFm, Upstream, user_lastfm};
+use crate::reads::catalog::upstream::{CatalogLastFm, UNREADABLE_NAMESPACE, Upstream, user_lastfm};
 use crate::reads::discover::ports::BoxFuture;
 use droppedneedle_media::remotes::connections::{ConnectionResolver, ResolveError};
 use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
@@ -242,8 +242,10 @@ fn lastfm_artist_key(artist: &ArtistRow) -> String {
 
 impl QueueSources for LiveSources {
     fn source_key(&self) -> String {
-        let settings = self.upstream.settings().musicbrainz();
-        format!("{}:g{}", settings.source_id, settings.generation)
+        self.upstream.settings().musicbrainz().map_or_else(
+            || UNREADABLE_NAMESPACE.to_owned(),
+            |settings| format!("{}:g{}", settings.source_id, settings.generation),
+        )
     }
 
     fn user_music<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, UserMusic> {

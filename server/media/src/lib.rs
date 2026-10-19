@@ -232,15 +232,10 @@ impl MediaSetup {
 }
 
 /// The transcode policy in the `connect_apps` section now, read on every
-/// stream open. An unreadable section falls back to the defaults.
-pub(crate) fn transcode_policy(settings: &Live<ConnectApps>) -> TranscodeSettings {
-    match settings.get() {
-        Ok(section) => transcode_settings(&section),
-        Err(error) => {
-            tracing::warn!(%error, "cannot read connect_apps settings; transcode defaults apply");
-            TranscodeSettings::default()
-        }
-    }
+/// stream open; `None` while the section does not read, and the stream is
+/// refused rather than served under the defaults.
+pub(crate) fn transcode_policy(settings: &Live<ConnectApps>) -> Option<TranscodeSettings> {
+    settings.read().map(|section| transcode_settings(&section))
 }
 
 /// Map the `connect_apps` section onto the transcode policy. `Flac` cannot
