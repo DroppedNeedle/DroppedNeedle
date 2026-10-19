@@ -53,6 +53,9 @@ tower-http = { version = "0.6", features = ["cors", "compression-br", "compressi
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 utoipa = "5"
+# Registers each route and its document entry from one `#[utoipa::path]`.
+# 0.3 needs utoipa 6.
+utoipa-axum = "=0.2.0"
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 aes = "0.8"

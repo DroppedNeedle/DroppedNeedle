@@ -18,6 +18,7 @@ pub mod extract;
 pub mod http_client;
 pub mod ids;
 pub mod jobs;
+pub mod mount;
 pub mod observability;
 pub mod provider_policy;
 pub mod runtime_config;

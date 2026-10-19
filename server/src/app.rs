@@ -32,9 +32,15 @@
 //! Inside the router, matching does not follow registration order (an
 //! overlap panics at build). What is load-bearing is which layers wrap
 //! which routes:
-//! - The `/api/v3` router carries the rate limiter, then the
-//!   deny-by-default session gate outside it, so the limiter keys signed-in
-//!   callers by user and everyone else by client address.
+//! - Areas declare their routes as [`Routes`], in posture groups (public,
+//!   user, curator, admin), and [`mount`] lists them once. Each group is
+//!   layered on its own and merged at the root: the user, curator and
+//!   admin groups get the rate limiter, then the session gate outside it,
+//!   so the limiter keys signed-in callers by user; the public group gets
+//!   the limiter alone. The API document comes from the same list.
+//! - The areas not yet declared as [`Routes`] nest under one `/api/v3`
+//!   router with the same two layers, the deny-by-default session gate
+//!   outermost.
 //! - The wrapped trio nests under `/api/v3` on its own router outside the
 //!   session gate: its `X-Wrapped-API-Key` extractor is the only credential,
 //!   and allowlisting those paths would wrongly make them public. It keeps
@@ -43,7 +49,7 @@
 //!   own app-password auth plus the compat layers (CORS, limits), and never
 //!   inherit `/api` session auth.
 
-use axum::{Router, extract::Request, middleware, response::IntoResponse, routing::get};
+use axum::{Router, extract::Request, middleware, response::IntoResponse};
 use tower::{Layer as _, ServiceExt as _};
 use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 
@@ -61,6 +67,8 @@ use droppedneedle_compat::{
     http::{canonicalize_case, preflight, stamp_cors},
     shared::path_case::is_compat_path,
 };
+use droppedneedle_kernel::mount::{Postures, Routes, routes};
+use utoipa::openapi::OpenApi;
 
 /// Build the application router without a web UI.
 pub fn create_app(state: AppState) -> Router {
@@ -156,8 +164,107 @@ fn answer(
     }
 }
 
+/// Every area mounted through [`Routes`], listed once. Serving and the API
+/// document both read this list.
+fn mount(m: Mount<'_>) -> Mount<'_> {
+    m.area(server_routes(), |_| ())
+        .area(crate::admin::routes(), |state| state.admin.clone())
+        .area(crate::settings::wiring::routes(), |state| {
+            state.settings.clone()
+        })
+        .area(droppedneedle_plugins::wiring::routes(), |state| {
+            state.plugins.clone()
+        })
+}
+
+/// The server crate's own routes.
+fn server_routes() -> Routes {
+    Routes::new()
+        .public(routes!(handlers::health))
+        .public(routes!(handlers::openapi_json))
+}
+
+/// The document entries of every mounted area, built without state.
+pub(crate) fn document() -> OpenApi {
+    mount(Mount::document()).document
+}
+
+/// Collects the areas: their routes when serving, their document always.
+struct Mount<'a> {
+    state: Option<&'a AppState>,
+    routes: Routes,
+    document: OpenApi,
+}
+
+impl<'a> Mount<'a> {
+    fn serve(state: &'a AppState) -> Self {
+        Self {
+            state: Some(state),
+            routes: Routes::new(),
+            document: OpenApi::default(),
+        }
+    }
+
+    fn document() -> Self {
+        Self {
+            state: None,
+            routes: Routes::new(),
+            document: OpenApi::default(),
+        }
+    }
+
+    fn area<S: Clone + Send + Sync + 'static>(
+        mut self,
+        routes: Routes<S>,
+        state: impl FnOnce(&AppState) -> S,
+    ) -> Self {
+        self.document.merge(routes.openapi());
+        if let Some(app) = self.state {
+            self.routes = self.routes.merge(routes.with_state(state(app)));
+        }
+        self
+    }
+}
+
+/// Each posture group with its own layers, merged at the root. User,
+/// curator and admin routes get the rate limiter inside the session gate,
+/// so the limiter keys signed-in callers by user; public routes get the
+/// limiter alone. A group with no routes is left out: `route_layer`
+/// refuses an empty router.
+fn layered(state: &AppState, routes: Routes) -> Router {
+    let Postures {
+        public,
+        user,
+        curator,
+        admin,
+    } = routes.into_postures();
+    let limited = |group: Router| {
+        group.route_layer(middleware::from_fn_with_state(
+            state.auth.limits.clone(),
+            rate_limit,
+        ))
+    };
+    let mut app = Router::new();
+    let public = Router::from(public);
+    if public.has_routes() {
+        app = app.merge(limited(public));
+    }
+    for group in [user, curator, admin] {
+        let group = Router::from(group);
+        if group.has_routes() {
+            app = app.merge(limited(group).route_layer(middleware::from_fn_with_state(
+                state.auth.session_auth.clone(),
+                require_session,
+            )));
+        }
+    }
+    app
+}
+
 /// Every route and the 404 and 405 fallbacks, at base-relative paths.
 fn routes(state: &AppState, web: Option<WebUi>) -> Router {
+    let mounted = layered(state, mount(Mount::serve(state)).routes);
+    // The areas below are not mounted through `Routes` yet.
     let v3 = Router::new()
         .nest(
             "/api/v3",
@@ -168,10 +275,6 @@ fn routes(state: &AppState, web: Option<WebUi>) -> Router {
                 .merge(state.media.gated_router())
                 .merge(state.acquire.gated_router())
                 .merge(state.library.gated_router())
-                .merge(state.admin.gated_router())
-                .merge(state.plugins.gated_router())
-                .merge(state.settings.gated_router())
-                .merge(state.settings.me_router())
                 .merge(state.jobs.settings_router())
                 .merge(state.concerts.gated_router())
                 .merge(droppedneedle_auth::session::event_stream::router(
@@ -216,9 +319,7 @@ fn routes(state: &AppState, web: Option<WebUi>) -> Router {
             state.auth.limits.clone(),
             rate_limit,
         ));
-    let app = Router::new()
-        .route("/health", get(handlers::health))
-        .route("/openapi.json", get(handlers::openapi_json))
+    let app = mounted
         .merge(v3)
         .merge(wrapped)
         .merge(acquire_public)
@@ -243,25 +344,31 @@ fn routes(state: &AppState, web: Option<WebUi>) -> Router {
     let app = if state.config.test_hooks {
         app.route(
             "/__test__/typed-error",
-            get(handlers::test_hooks::typed_error),
+            axum::routing::get(handlers::test_hooks::typed_error),
         )
         .route(
             "/__test__/panic",
-            get(handlers::test_hooks::panicking_handler),
+            axum::routing::get(handlers::test_hooks::panicking_handler),
         )
-        .route("/__test__/raw-500", get(handlers::test_hooks::raw_500))
-        .route("/__test__/raw-503", get(handlers::test_hooks::raw_503))
+        .route(
+            "/__test__/raw-500",
+            axum::routing::get(handlers::test_hooks::raw_500),
+        )
+        .route(
+            "/__test__/raw-503",
+            axum::routing::get(handlers::test_hooks::raw_503),
+        )
         .route(
             "/__test__/unavailable/{code}",
-            get(handlers::test_hooks::unavailable),
+            axum::routing::get(handlers::test_hooks::unavailable),
         )
         .route(
             "/subsonic/rest/__test__/raw-503",
-            get(handlers::test_hooks::raw_503),
+            axum::routing::get(handlers::test_hooks::raw_503),
         )
         .route(
             "/jellyfin/__test__/raw-503",
-            get(handlers::test_hooks::raw_503),
+            axum::routing::get(handlers::test_hooks::raw_503),
         )
     } else {
         app

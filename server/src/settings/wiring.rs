@@ -8,17 +8,11 @@
 //! probes behind the verify endpoints, the MusicBrainz lifecycle and the
 //! Library Management service over the same store.
 //!
-//! [`SettingsSetup::gated_router`] serves `/api/v3/settings/*`; every
-//! handler there takes `Admin`, like v2's whole-router guard.
-//! [`SettingsSetup::me_router`] serves the per-user section prefs
-//! (`/me/section-prefs`) to any signed-in user.
+//! [`routes`] declares `/api/v3/settings/*`, every handler there taking
+//! `Admin` like v2's whole-router guard, and the per-user section prefs
+//! (`/me/section-prefs`) for any signed-in user.
 
 use std::sync::Arc;
-
-use axum::{
-    Router,
-    routing::{get, post, put},
-};
 
 use crate::bootstrap::Outbound;
 use crate::settings::effects::Effects;
@@ -28,6 +22,7 @@ use crate::settings::section_prefs::{LinkStatus, SectionPrefsStore};
 use crate::settings::services::{PolicyImpactBuckets, SettingsService};
 use crate::settings::verify::{LiveProbes, VerifyProbes};
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::management::settings::service::LibraryManagementService;
@@ -236,256 +231,101 @@ impl SettingsSetup {
     pub fn buckets(&self) -> Option<&Arc<dyn PolicyImpactBuckets>> {
         self.buckets.as_ref()
     }
+}
 
-    /// Mount the admin-only settings routes. Layers are applied by
-    /// `create_app`; every handler takes `Admin` and
-    /// `State<SettingsSetup>`.
-    pub fn gated_router(&self) -> Router {
-        use super::handlers as h;
-        Router::new()
-            .route(
-                "/settings/preferences",
-                get(h::get_preferences).put(h::put_preferences),
-            )
-            .route(
-                "/settings/library/schedule",
-                get(h::get_schedule).put(h::put_schedule),
-            )
-            .route(
-                "/settings/library/watcher",
-                get(h::get_watcher).put(h::put_watcher),
-            )
-            .route("/settings/library", get(h::get_library).put(h::put_library))
-            .route(
-                "/settings/library/paths",
-                post(h::add_library_path).delete(h::remove_library_path),
-            )
-            .route(
-                "/settings/library/policy-tree",
-                get(h::get_library_policy_tree),
-            )
-            .route(
-                "/settings/library/policy-impact",
-                post(h::preview_library_policy_impact),
-            )
-            .route(
-                "/settings/library/policy-apply-preview",
-                post(h::preview_library_policy_apply),
-            )
-            .route(
-                "/settings/library/restorable-roots",
-                get(h::get_restorable_library_roots),
-            )
-            .route(
-                "/settings/library/restore-roots",
-                post(h::restore_library_roots),
-            )
-            .route(
-                "/settings/library/path-mapping",
-                get(h::get_library_path_mapping),
-            )
-            .route(
-                "/settings/advanced",
-                get(h::get_advanced).put(h::put_advanced),
-            )
-            .route("/settings/cache-ttls", get(h::get_cache_ttls))
-            .route(
-                "/settings/jellyfin",
-                get(h::get_jellyfin).put(h::put_jellyfin),
-            )
-            .route("/settings/jellyfin/verify", post(h::verify_jellyfin))
-            .route(
-                "/settings/navidrome",
-                get(h::get_navidrome).put(h::put_navidrome),
-            )
-            .route("/settings/navidrome/verify", post(h::verify_navidrome))
-            .route("/settings/plex", get(h::get_plex).put(h::put_plex))
-            .route("/settings/plex/verify", post(h::verify_plex))
-            .route("/settings/plex/libraries", get(h::get_plex_libraries))
-            .route(
-                "/settings/listenbrainz",
-                get(h::get_listenbrainz).put(h::put_listenbrainz),
-            )
-            .route(
-                "/settings/listenbrainz/verify",
-                post(h::verify_listenbrainz),
-            )
-            .route("/settings/youtube", get(h::get_youtube).put(h::put_youtube))
-            .route("/settings/youtube/verify", post(h::verify_youtube))
-            .route("/settings/get-it", get(h::get_get_it).put(h::put_get_it))
-            .route(
-                "/settings/edition-preferences",
-                get(h::get_edition_preferences).put(h::put_edition_preferences),
-            )
-            .route("/settings/events", get(h::get_events).put(h::put_events))
-            .route(
-                "/settings/events/test-ticketmaster",
-                post(h::test_ticketmaster),
-            )
-            .route("/settings/events/test-skiddle", post(h::test_skiddle))
-            .route("/settings/wrapped", get(h::get_wrapped).put(h::put_wrapped))
-            .route(
-                "/settings/scrobble",
-                get(h::get_scrobble).put(h::put_scrobble),
-            )
-            .route(
-                "/settings/lyrics",
-                get(h::get_lyrics_settings).put(h::put_lyrics_settings),
-            )
-            .route(
-                "/settings/primary-source",
-                get(h::get_primary_source).put(h::put_primary_source),
-            )
-            .route(
-                "/settings/security",
-                get(h::get_security).put(h::put_security),
-            )
-            .route("/settings/security/verify-hibp", post(h::verify_hibp))
-            .route(
-                "/settings/public-address",
-                get(h::get_public_address).put(h::put_public_address),
-            )
-            .route("/settings/oidc", get(h::get_oidc).put(h::put_oidc))
-            .route("/settings/oidc/verify", post(h::verify_oidc))
-            .route("/settings/lastfm", get(h::get_lastfm).put(h::put_lastfm))
-            .route(
-                "/settings/connect-apps",
-                get(h::get_connect_apps).put(h::put_connect_apps),
-            )
-            .route(
-                "/settings/musicbrainz",
-                get(h::get_musicbrainz).put(h::put_musicbrainz),
-            )
-            .route(
-                "/settings/musicbrainz/brainzmash/stage",
-                post(h::stage_brainzmash),
-            )
-            .route(
-                "/settings/musicbrainz/brainzmash/consent",
-                post(h::consent_brainzmash),
-            )
-            .route("/settings/musicbrainz/verify", post(h::verify_musicbrainz))
-            .route(
-                "/settings/musicbrainz/activate",
-                post(h::activate_brainzmash),
-            )
-            .route(
-                "/settings/download-client/config",
-                get(h::get_slskd).put(h::put_slskd),
-            )
-            .route("/settings/download-client/test", post(h::test_slskd))
-            .route(
-                "/settings/download-clients/sabnzbd",
-                get(h::get_sabnzbd).put(h::put_sabnzbd),
-            )
-            .route(
-                "/settings/download-clients/sabnzbd/test",
-                post(h::test_sabnzbd),
-            )
-            .route(
-                "/settings/download-clients/source-priority",
-                get(h::get_source_priority).put(h::put_source_priority),
-            )
-            .route(
-                "/settings/download-clients/policy",
-                get(h::get_policy).put(h::put_policy),
-            )
-            .route(
-                "/settings/download-clients/policy-summary",
-                get(h::get_policy_summary),
-            )
-            .route(
-                "/settings/download-clients/policy/impact",
-                post(h::post_policy_impact),
-            )
-            .route(
-                "/settings/download-clients/wanted",
-                get(h::get_wanted).put(h::put_wanted),
-            )
-            .route(
-                "/settings/indexers",
-                get(h::list_indexers).post(h::create_indexer),
-            )
-            .route(
-                "/settings/indexers/search-backend",
-                get(h::get_search_backend).put(h::put_search_backend),
-            )
-            .route(
-                "/settings/indexers/{id}",
-                put(h::update_indexer).delete(h::delete_indexer),
-            )
-            .route("/settings/indexers/reorder", post(h::reorder_indexers))
-            .route("/settings/indexers/test", post(h::test_indexer))
-            .route(
-                "/settings/prowlarr/config",
-                get(h::get_prowlarr).put(h::put_prowlarr),
-            )
-            .route("/settings/prowlarr/test", post(h::test_prowlarr))
-            .route(
-                "/settings/library/sync",
-                get(h::dropped_library_sync).put(h::dropped_library_sync_put),
-            )
-            .route("/settings/home", get(h::get_home).put(h::put_home))
-            .route(
-                "/settings/library-management",
-                get(h::get_library_management).put(h::put_library_management),
-            )
-            .route(
-                "/settings/library-management/activation-health",
-                get(h::get_library_management_activation_health),
-            )
-            .route(
-                "/settings/library-management/impact",
-                post(h::preview_library_management_impact),
-            )
-            .route(
-                "/settings/library-management/validate",
-                post(h::validate_library_management),
-            )
-            .route(
-                "/settings/library-management/profiles",
-                post(h::create_library_management_profile),
-            )
-            .route(
-                "/settings/library-management/profiles/{profile_id}",
-                get(h::get_library_management_profile)
-                    .put(h::update_library_management_profile)
-                    .delete(h::delete_library_management_profile),
-            )
-            .route(
-                "/settings/library-management/profiles/{profile_id}/copy",
-                post(h::copy_library_management_profile),
-            )
-            .route(
-                "/settings/library-management/profiles/{profile_id}/preset-diff",
-                get(h::get_library_management_preset_diff),
-            )
-            .route(
-                "/settings/library-management/profiles/{profile_id}/export",
-                post(h::export_library_management_profile),
-            )
-            .route(
-                "/settings/library-management/profile-imports/preview",
-                post(h::preview_library_management_profile_import),
-            )
-            .route(
-                "/settings/library-management/profile-imports",
-                post(h::import_library_management_profile),
-            )
-            .with_state(self.clone())
-    }
-
-    /// Mount the per-user section-prefs routes inside the session gate
-    /// (no admin gate: every signed-in user owns their own toggles).
-    pub fn me_router(&self) -> Router {
-        use super::handlers as h;
-        Router::new()
-            .route(
-                "/me/section-prefs",
-                get(h::get_section_prefs).put(h::put_section_prefs),
-            )
-            .with_state(self.clone())
-    }
+/// Every settings route: the admin-only `/settings/*` sections, like v2's
+/// whole-router guard, and the per-user section prefs.
+pub fn routes() -> Routes<SettingsSetup> {
+    use super::handlers as h;
+    Routes::new()
+        .admin(routes!(h::get_preferences, h::put_preferences))
+        .admin(routes!(h::get_schedule, h::put_schedule))
+        .admin(routes!(h::get_watcher, h::put_watcher))
+        .admin(routes!(h::get_library, h::put_library))
+        .admin(routes!(h::add_library_path, h::remove_library_path))
+        .admin(routes!(h::get_library_policy_tree))
+        .admin(routes!(h::preview_library_policy_impact))
+        .admin(routes!(h::preview_library_policy_apply))
+        .admin(routes!(h::get_restorable_library_roots))
+        .admin(routes!(h::restore_library_roots))
+        .admin(routes!(h::get_library_path_mapping))
+        .admin(routes!(h::get_advanced, h::put_advanced))
+        .admin(routes!(h::get_cache_ttls))
+        .admin(routes!(h::get_jellyfin, h::put_jellyfin))
+        .admin(routes!(h::verify_jellyfin))
+        .admin(routes!(h::get_navidrome, h::put_navidrome))
+        .admin(routes!(h::verify_navidrome))
+        .admin(routes!(h::get_plex, h::put_plex))
+        .admin(routes!(h::verify_plex))
+        .admin(routes!(h::get_plex_libraries))
+        .admin(routes!(h::get_listenbrainz, h::put_listenbrainz))
+        .admin(routes!(h::verify_listenbrainz))
+        .admin(routes!(h::get_youtube, h::put_youtube))
+        .admin(routes!(h::verify_youtube))
+        .admin(routes!(h::get_get_it, h::put_get_it))
+        .admin(routes!(
+            h::get_edition_preferences,
+            h::put_edition_preferences
+        ))
+        .admin(routes!(h::get_events, h::put_events))
+        .admin(routes!(h::test_ticketmaster))
+        .admin(routes!(h::test_skiddle))
+        .admin(routes!(h::get_wrapped, h::put_wrapped))
+        .admin(routes!(h::get_scrobble, h::put_scrobble))
+        .admin(routes!(h::get_lyrics_settings, h::put_lyrics_settings))
+        .admin(routes!(h::get_primary_source, h::put_primary_source))
+        .admin(routes!(h::get_security, h::put_security))
+        .admin(routes!(h::verify_hibp))
+        .admin(routes!(h::get_public_address, h::put_public_address))
+        .admin(routes!(h::get_oidc, h::put_oidc))
+        .admin(routes!(h::verify_oidc))
+        .admin(routes!(h::get_lastfm, h::put_lastfm))
+        .admin(routes!(h::get_connect_apps, h::put_connect_apps))
+        .admin(routes!(h::get_musicbrainz, h::put_musicbrainz))
+        .admin(routes!(h::stage_brainzmash))
+        .admin(routes!(h::consent_brainzmash))
+        .admin(routes!(h::verify_musicbrainz))
+        .admin(routes!(h::activate_brainzmash))
+        .admin(routes!(h::get_slskd, h::put_slskd))
+        .admin(routes!(h::test_slskd))
+        .admin(routes!(h::get_sabnzbd, h::put_sabnzbd))
+        .admin(routes!(h::test_sabnzbd))
+        .admin(routes!(h::get_source_priority, h::put_source_priority))
+        .admin(routes!(h::get_policy, h::put_policy))
+        .admin(routes!(h::get_policy_summary))
+        .admin(routes!(h::post_policy_impact))
+        .admin(routes!(h::get_wanted, h::put_wanted))
+        .admin(routes!(h::list_indexers, h::create_indexer))
+        .admin(routes!(h::get_search_backend, h::put_search_backend))
+        .admin(routes!(h::update_indexer, h::delete_indexer))
+        .admin(routes!(h::reorder_indexers))
+        .admin(routes!(h::test_indexer))
+        .admin(routes!(h::get_prowlarr, h::put_prowlarr))
+        .admin(routes!(h::test_prowlarr))
+        .admin(routes!(
+            h::dropped_library_sync,
+            h::dropped_library_sync_put
+        ))
+        .admin(routes!(h::get_home, h::put_home))
+        .admin(routes!(
+            h::get_library_management,
+            h::put_library_management
+        ))
+        .admin(routes!(h::get_library_management_activation_health))
+        .admin(routes!(h::preview_library_management_impact))
+        .admin(routes!(h::validate_library_management))
+        .admin(routes!(h::create_library_management_profile))
+        .admin(routes!(
+            h::get_library_management_profile,
+            h::update_library_management_profile,
+            h::delete_library_management_profile
+        ))
+        .admin(routes!(h::copy_library_management_profile))
+        .admin(routes!(h::get_library_management_preset_diff))
+        .admin(routes!(h::export_library_management_profile))
+        .admin(routes!(h::preview_library_management_profile_import))
+        .admin(routes!(h::import_library_management_profile))
+        .user(routes!(h::get_section_prefs, h::put_section_prefs))
 }
 
 /// A scratch directory removed on drop (test bundles only).

@@ -27,7 +27,7 @@ use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_plugins::fakes::{
     FakeConnection, FakeFetcher, FakeLauncher, FakeUnpacker, scrobble_plugin_event,
 };
-use droppedneedle_plugins::handlers::{ExtRateLimiter, PluginsDeps, plugins_router};
+use droppedneedle_plugins::handlers::{ExtRateLimiter, PluginsDeps, plugin_routes};
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_plugins::install::{Fetched, InstallError, parse_source, resolve};
 use droppedneedle_plugins::models::PluginRefKind;
@@ -97,7 +97,10 @@ fn router_as(rig: &Rig, user: &str) -> axum::Router {
         Arc::new(FakeFetcher::new()),
         Arc::new(FakeUnpacker::new(Vec::new())),
     );
-    with_test_principal(plugins_router(deps), session(user))
+    with_test_principal(
+        plugin_routes().with_state(deps).into_router(),
+        session(user),
+    )
 }
 
 async fn send(
@@ -136,6 +139,10 @@ const TOY_MANIFEST: &str = "[plugin]\n\
      run_on_load = true\n\
      [[route]]\n\
      path = \"status\"\n\
+     method = \"GET\"\n\
+     auth = \"user\"\n\
+     [[route]]\n\
+     path = \"status/deep\"\n\
      method = \"GET\"\n\
      auth = \"user\"\n\
      [[route]]\n\
@@ -284,13 +291,16 @@ async fn install_previews_permissions_then_pins_the_previewed_commit() {
         FakeUnpacker::file("toy-0123456/plugin.py", b"# code"),
     ]));
     let deps = deps_for(&rig, Arc::clone(&fetcher), unpacker);
-    let admin = with_test_principal(plugins_router(deps), session("admin-1"));
+    let admin = with_test_principal(
+        plugin_routes().with_state(deps).into_router(),
+        session("admin-1"),
+    );
     let body = json!({"repository_url": "https://github.com/acme/toy"});
 
     let (status, preview) = send(
         admin.clone(),
         "POST",
-        "/plugins/install/preview",
+        "/api/v3/plugins/install/preview",
         Some(body.clone()),
     )
     .await;
@@ -314,11 +324,23 @@ async fn install_previews_permissions_then_pins_the_previewed_commit() {
     );
 
     let stale = json!({"repository_url": "https://github.com/acme/toy", "commit": "f".repeat(40)});
-    let (status, _) = send(admin.clone(), "POST", "/plugins/install", Some(stale)).await;
+    let (status, _) = send(
+        admin.clone(),
+        "POST",
+        "/api/v3/plugins/install",
+        Some(stale),
+    )
+    .await;
     assert_eq!(status, StatusCode::CONFLICT);
 
     let pinned = json!({"repository_url": "https://github.com/acme/toy", "commit": SHA});
-    let (status, installed) = send(admin.clone(), "POST", "/plugins/install", Some(pinned)).await;
+    let (status, installed) = send(
+        admin.clone(),
+        "POST",
+        "/api/v3/plugins/install",
+        Some(pinned),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(installed["enabled"], false, "installs arrive disabled");
     assert_eq!(installed["install"]["commit"], SHA);
@@ -326,7 +348,7 @@ async fn install_previews_permissions_then_pins_the_previewed_commit() {
     assert!(rig.launcher.launched.lock().unwrap().is_empty());
 
     // Same release again: nothing to update.
-    let (status, update) = send(admin, "POST", "/plugins/toy/update", Some(json!({}))).await;
+    let (status, update) = send(admin, "POST", "/api/v3/plugins/toy/update", Some(json!({}))).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(update["updated"], false);
 }
@@ -358,7 +380,7 @@ fn toy_archive() -> Arc<FakeUnpacker> {
 /// every 5xx body with the fixed one.
 fn admin_app(scope: &TestApp, deps: PluginsDeps) -> axum::Router {
     scope.request_scope(with_test_principal(
-        plugins_router(deps),
+        plugin_routes().with_state(deps).into_router(),
         session("admin-1"),
     ))
 }
@@ -474,7 +496,7 @@ async fn a_github_refusal_never_falls_back_to_the_default_branch() {
 
         let admin = admin_app(&scope, deps_for(&rig, Arc::clone(&fetcher), toy_archive()));
         let body = json!({"repository_url": "https://github.com/acme/toy"});
-        for uri in ["/plugins/install/preview", "/plugins/install"] {
+        for uri in ["/api/v3/plugins/install/preview", "/api/v3/plugins/install"] {
             let got = post_for_refusal(admin.clone(), uri, body.clone()).await;
             assert_eq!(got, expected, "{uri}");
         }
@@ -482,10 +504,10 @@ async fn a_github_refusal_never_falls_back_to_the_default_branch() {
 
         // An installed release must not start following the branch either.
         github(&fetcher);
-        let (got, _) = send(admin.clone(), "POST", "/plugins/install", Some(body)).await;
+        let (got, _) = send(admin.clone(), "POST", "/api/v3/plugins/install", Some(body)).await;
         assert_eq!(got, StatusCode::CREATED);
         fetcher.answer(LATEST_RELEASE, answer);
-        let got = post_for_refusal(admin, "/plugins/toy/update", json!({})).await;
+        let got = post_for_refusal(admin, "/api/v3/plugins/toy/update", json!({})).await;
         assert_eq!(got, expected, "update");
         let record = rig.host.install_record("toy").unwrap();
         assert_eq!(
@@ -509,7 +531,7 @@ async fn a_repository_without_releases_installs_its_default_branch() {
     let (status, installed) = send(
         admin,
         "POST",
-        "/plugins/install",
+        "/api/v3/plugins/install",
         Some(json!({"repository_url": "https://github.com/acme/toy"})),
     )
     .await;
@@ -532,7 +554,7 @@ async fn a_ref_github_does_not_know_is_the_admins_mistake_not_an_outage() {
     let (status, error) = send(
         admin,
         "POST",
-        "/plugins/install",
+        "/api/v3/plugins/install",
         Some(json!({"repository_url": "https://github.com/acme/toy/tree/mian"})),
     )
     .await;
@@ -556,13 +578,15 @@ async fn unsafe_archives_never_reach_the_plugins_folder() {
         link,
     ]));
     let admin = with_test_principal(
-        plugins_router(deps_for(&rig, fetcher, unpacker)),
+        plugin_routes()
+            .with_state(deps_for(&rig, fetcher, unpacker))
+            .into_router(),
         session("admin-1"),
     );
     let (status, body) = send(
         admin,
         "POST",
-        "/plugins/install",
+        "/api/v3/plugins/install",
         Some(json!({"repository_url": "https://github.com/acme/toy"})),
     )
     .await;
@@ -574,21 +598,23 @@ async fn unsafe_archives_never_reach_the_plugins_folder() {
 #[tokio::test]
 async fn plugin_routes_need_sessions_and_admins() {
     let rig = rig("auth");
-    let bare = plugins_router(deps_for(
-        &rig,
-        Arc::new(FakeFetcher::new()),
-        Arc::new(FakeUnpacker::new(Vec::new())),
-    ));
-    let (status, _) = send(bare, "GET", "/plugins", None).await;
+    let bare = plugin_routes()
+        .with_state(deps_for(
+            &rig,
+            Arc::new(FakeFetcher::new()),
+            Arc::new(FakeUnpacker::new(Vec::new())),
+        ))
+        .into_router();
+    let (status, _) = send(bare, "GET", "/api/v3/plugins", None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     for (method, uri) in [
-        ("GET", "/plugins"),
-        ("POST", "/plugins/install/preview"),
-        ("POST", "/plugins/install"),
-        ("POST", "/plugins/toy/update"),
-        ("PUT", "/plugins/toy"),
-        ("DELETE", "/plugins/toy"),
-        ("GET", "/plugins/toy/ui/panel"),
+        ("GET", "/api/v3/plugins"),
+        ("POST", "/api/v3/plugins/install/preview"),
+        ("POST", "/api/v3/plugins/install"),
+        ("POST", "/api/v3/plugins/toy/update"),
+        ("PUT", "/api/v3/plugins/toy"),
+        ("DELETE", "/api/v3/plugins/toy"),
+        ("GET", "/api/v3/plugins/toy/ui/panel"),
     ] {
         let (status, _) = send(router_as(&rig, "user-1"), method, uri, Some(json!({}))).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
@@ -629,7 +655,7 @@ async fn the_panel_page_is_sealed_on_every_answer() {
     rig.host.load_all();
 
     let get = |etag: Option<String>| {
-        let mut request = Request::builder().uri("/plugins/toy/ui/panel");
+        let mut request = Request::builder().uri("/api/v3/plugins/toy/ui/panel");
         if let Some(etag) = etag {
             request = request.header("if-none-match", etag);
         }
@@ -699,7 +725,7 @@ async fn the_panel_page_is_sealed_on_every_answer() {
     let (status, _) = send(
         router_as(&rig, "admin-1"),
         "GET",
-        "/plugins/ghost/ui/panel",
+        "/api/v3/plugins/ghost/ui/panel",
         None,
     )
     .await;
@@ -718,7 +744,7 @@ async fn ext_proxy_serves_declared_routes_and_gates_the_rest() {
     let (status, body) = send(
         router_as(&rig, "user-1"),
         "GET",
-        "/plugins/ext/toy/status",
+        "/api/v3/plugins/ext/toy/status",
         None,
     )
     .await;
@@ -727,10 +753,22 @@ async fn ext_proxy_serves_declared_routes_and_gates_the_rest() {
     let call = runtime.calls_to(methods::ROUTE).pop().unwrap();
     assert_eq!(call["subpath"], "status");
 
+    // A declared route's path may hold slashes.
     let (status, _) = send(
         router_as(&rig, "user-1"),
         "GET",
-        "/plugins/ext/toy/missing",
+        "/api/v3/plugins/ext/toy/status/deep",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let call = runtime.calls_to(methods::ROUTE).pop().unwrap();
+    assert_eq!(call["subpath"], "status/deep");
+
+    let (status, _) = send(
+        router_as(&rig, "user-1"),
+        "GET",
+        "/api/v3/plugins/ext/toy/missing",
         None,
     )
     .await;
@@ -738,7 +776,7 @@ async fn ext_proxy_serves_declared_routes_and_gates_the_rest() {
     let (status, _) = send(
         router_as(&rig, "user-1"),
         "GET",
-        "/plugins/ext/ghost/status",
+        "/api/v3/plugins/ext/ghost/status",
         None,
     )
     .await;
@@ -746,15 +784,15 @@ async fn ext_proxy_serves_declared_routes_and_gates_the_rest() {
     let (status, _) = send(
         router_as(&rig, "user-1"),
         "GET",
-        "/plugins/ext/toy/admin-only",
+        "/api/v3/plugins/ext/toy/admin-only",
         None,
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
     let paced = router_as(&rig, "user-1");
-    let (first, _) = send(paced.clone(), "GET", "/plugins/ext/toy/tight", None).await;
-    let (second, _) = send(paced, "GET", "/plugins/ext/toy/tight", None).await;
+    let (first, _) = send(paced.clone(), "GET", "/api/v3/plugins/ext/toy/tight", None).await;
+    let (second, _) = send(paced, "GET", "/api/v3/plugins/ext/toy/tight", None).await;
     assert_eq!(
         (first, second),
         (StatusCode::OK, StatusCode::TOO_MANY_REQUESTS)
@@ -770,7 +808,7 @@ async fn ext_proxy_serves_declared_routes_and_gates_the_rest() {
     let (status, body) = send(
         router_as(&rig, "user-1"),
         "GET",
-        "/plugins/ext/toy/status",
+        "/api/v3/plugins/ext/toy/status",
         None,
     )
     .await;

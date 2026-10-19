@@ -5,10 +5,11 @@
 targets = ["x86_64-unknown-linux-gnu"]
 
 [advisories]
-# RUSTSEC-2024-0436: `paste` unmaintained, via lofty (tag reading and writing).
-# Build-time proc-macro only, no runtime exposure; the advisory lists no
-# safe upgrade (pastey is not a drop-in for lofty's use). Re-check on
-# lofty upgrades.
+# RUSTSEC-2024-0436: `paste` unmaintained, via lofty (tag reading and writing)
+# and utoipa-axum 0.2 (route registration). Build-time proc-macro only, no
+# runtime exposure; the advisory lists no safe upgrade (pastey is not a
+# drop-in for lofty's use, and utoipa-axum 0.3, which uses pastey, needs
+# utoipa 6). Re-check on lofty or utoipa upgrades.
 ignore = ["RUSTSEC-2024-0436"]
 
 [licenses]

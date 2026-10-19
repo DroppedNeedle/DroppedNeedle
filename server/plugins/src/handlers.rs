@@ -14,7 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use axum::{
     Json,
     body::Body,
-    extract::{Path, Request, State},
+    extract::{FromRef, Path, Request, State},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -22,6 +22,7 @@ use axum::{
 use droppedneedle_auth::{Admin, Principal, Role, User};
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
+use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 
 use super::capabilities::routes::ROUTE_BODY_MAX_BYTES;
@@ -1183,48 +1184,41 @@ pub async fn disconnect_listenbrainz_route(
 // Routers
 // ---------------------------------------------------------------------------
 
-/// Every plugin route. Mount under `/api/v3` behind the
-/// session gate; see `mod.rs` for the wiring note.
-pub fn plugins_router(deps: PluginsDeps) -> axum::Router {
-    use axum::routing::{get, post, put};
-
-    axum::Router::new()
-        .route("/plugins", get(list_plugins))
-        .route("/plugins/install", post(install_plugin))
-        .route("/plugins/install/preview", post(preview_plugin_install))
-        .route("/plugins/{name}/update", post(update_plugin_from_source))
-        .route("/plugins/sources", get(list_plugin_sources))
-        .route(
-            "/plugins/{name}",
-            put(update_plugin).delete(uninstall_plugin),
-        )
-        .route("/plugins/{name}/ui/panel", get(plugin_panel_page))
-        .route(
-            "/plugins/ext/{name}/{*subpath}",
-            get(plugin_ext_get)
-                .post(plugin_ext_post)
-                .delete(plugin_ext_delete),
-        )
-        .with_state(deps)
+/// Every plugin route. Installing and managing plugins takes an admin;
+/// listing sources and calling a plugin's own routes takes any user. A
+/// plugin route's subpath may hold slashes.
+pub fn plugin_routes<S>() -> Routes<S>
+where
+    S: Clone + Send + Sync + 'static,
+    PluginsDeps: FromRef<S>,
+{
+    Routes::new()
+        .admin(routes!(list_plugins))
+        .admin(routes!(install_plugin))
+        .admin(routes!(preview_plugin_install))
+        .admin(routes!(update_plugin_from_source))
+        .user(routes!(list_plugin_sources))
+        .admin(routes!(update_plugin, uninstall_plugin))
+        .admin(routes!(plugin_panel_page))
+        .user_at(routes!(plugin_ext_get, plugin_ext_post, plugin_ext_delete))
 }
 
-/// Every scrobble-settings route. Mount under `/api/v3`
-/// behind the session gate.
-pub fn scrobble_router(deps: ScrobbleHttpDeps) -> axum::Router {
-    use axum::routing::get;
-
-    axum::Router::new()
-        .route(
-            "/me/scrobble-preferences",
-            get(get_scrobble_preferences).put(update_scrobble_preferences),
-        )
-        .route(
-            "/me/connections/listenbrainz",
-            get(listenbrainz_status)
-                .put(connect_listenbrainz_route)
-                .delete(disconnect_listenbrainz_route),
-        )
-        .with_state(deps)
+/// Every scrobble-settings route, for any signed-in user.
+pub fn scrobble_routes<S>() -> Routes<S>
+where
+    S: Clone + Send + Sync + 'static,
+    ScrobbleHttpDeps: FromRef<S>,
+{
+    Routes::new()
+        .user(routes!(
+            get_scrobble_preferences,
+            update_scrobble_preferences
+        ))
+        .user(routes!(
+            listenbrainz_status,
+            connect_listenbrainz_route,
+            disconnect_listenbrainz_route
+        ))
 }
 
 #[cfg(test)]

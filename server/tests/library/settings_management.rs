@@ -406,7 +406,9 @@ async fn profile_create_export_preview_import_round_trip() {
     let settings = SettingsSetup::for_tests(Arc::new(FixedIdGenerator::new(common::FIXED_ID)))
         .expect("settings bundle builds");
     let app = with_test_principal(
-        settings.gated_router(),
+        droppedneedle::settings::wiring::routes()
+            .with_state(settings)
+            .into_router(),
         test_principal(&admin.id, Role::Admin, "sess-1", SessionKind::Standard),
     );
     let call = |method: &'static str, uri: String, body: Option<Value>| {
@@ -428,7 +430,7 @@ async fn profile_create_export_preview_import_round_trip() {
             (status, json)
         }
     };
-    let base = "/settings/library-management";
+    let base = "/api/v3/settings/library-management";
 
     // First read seeds the presets.
     let (status, seeded) = call("GET", base.to_owned(), None).await;

@@ -96,7 +96,9 @@ impl Rig {
 
     /// Router signed in as `user_id` with `role`, or anonymous.
     fn app(&self, caller: Option<(&str, Role)>) -> Router {
-        let router = self.admin.gated_router();
+        let router = droppedneedle::admin::routes()
+            .with_state(self.admin.clone())
+            .into_router();
         match caller {
             Some((user_id, role)) => with_test_principal(
                 router,
@@ -137,24 +139,28 @@ async fn call(app: Router, method: &str, uri: &str, body: Option<Value>) -> (Sta
 /// Every admin route with concrete ids.
 fn routes(user_id: &str) -> Vec<(&'static str, String, Option<Value>)> {
     vec![
-        ("GET", "/admin/backups".to_owned(), None),
-        ("POST", "/admin/backups".to_owned(), None),
+        ("GET", "/api/v3/admin/backups".to_owned(), None),
+        ("POST", "/api/v3/admin/backups".to_owned(), None),
         (
             "GET",
-            "/admin/backups/library-0-0.db/restore-report".to_owned(),
+            "/api/v3/admin/backups/library-0-0.db/restore-report".to_owned(),
             None,
         ),
-        ("GET", "/admin/cache/stats".to_owned(), None),
-        ("POST", "/admin/cache/clear".to_owned(), Some(json!({}))),
-        ("GET", "/admin/queue-stats".to_owned(), None),
-        ("GET", "/admin/provider-stats".to_owned(), None),
-        ("GET", format!("/admin/users/{user_id}/quota"), None),
+        ("GET", "/api/v3/admin/cache/stats".to_owned(), None),
         (
-            "PUT",
-            format!("/admin/users/{user_id}/quota"),
+            "POST",
+            "/api/v3/admin/cache/clear".to_owned(),
             Some(json!({})),
         ),
-        ("POST", "/admin/precache/run".to_owned(), None),
+        ("GET", "/api/v3/admin/queue-stats".to_owned(), None),
+        ("GET", "/api/v3/admin/provider-stats".to_owned(), None),
+        ("GET", format!("/api/v3/admin/users/{user_id}/quota"), None),
+        (
+            "PUT",
+            format!("/api/v3/admin/users/{user_id}/quota"),
+            Some(json!({})),
+        ),
+        ("POST", "/api/v3/admin/precache/run".to_owned(), None),
     ]
 }
 
@@ -185,7 +191,7 @@ async fn admin_gate_posts_its_posture_on_every_route() {
 #[tokio::test]
 async fn system_health_lists_degraded_services_for_any_user() {
     let rig = Rig::open("system-health").await;
-    let (status, payload) = call(rig.user_app(), "GET", "/system/health", None).await;
+    let (status, payload) = call(rig.user_app(), "GET", "/api/v3/system/health", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(payload, json!({"degraded": []}));
 
@@ -193,7 +199,7 @@ async fn system_health_lists_degraded_services_for_any_user() {
     for _ in 0..5 {
         rig.admin.providers.health.record_failure("lastfm", now);
     }
-    let (status, payload) = call(rig.user_app(), "GET", "/system/health", None).await;
+    let (status, payload) = call(rig.user_app(), "GET", "/api/v3/system/health", None).await;
     assert_eq!(status, StatusCode::OK);
     let entry = &payload["degraded"][0];
     assert_eq!(entry["service"], "lastfm");
@@ -220,7 +226,7 @@ async fn queue_stats_reports_a_failed_checkpoint_as_a_code() {
     assert!(failing.run_once().error.is_some());
     rig.admin = rig.admin.clone().with_checkpoint(failing);
 
-    let (status, payload) = call(rig.admin_app(), "GET", "/admin/queue-stats", None).await;
+    let (status, payload) = call(rig.admin_app(), "GET", "/api/v3/admin/queue-stats", None).await;
     assert_eq!(status, StatusCode::OK, "{payload}");
     assert_eq!(payload["checkpoint"]["error"], "CHECKPOINT_FAILED");
     assert!(
@@ -245,7 +251,7 @@ async fn cache_clear_all_and_per_source() {
     let (status, body) = call(
         rig.admin_app(),
         "POST",
-        "/admin/cache/clear",
+        "/api/v3/admin/cache/clear",
         Some(json!({"scope": "source", "source": "musicbrainz"})),
     )
     .await;
@@ -256,7 +262,7 @@ async fn cache_clear_all_and_per_source() {
     let (status, body) = call(
         rig.admin_app(),
         "POST",
-        "/admin/cache/clear",
+        "/api/v3/admin/cache/clear",
         Some(json!({})),
     )
     .await;
@@ -292,7 +298,7 @@ async fn precache_second_run_is_409_while_live() {
         |_| {},
     )
     .expect("held run starts");
-    let (status, body) = call(rig.admin_app(), "POST", "/admin/precache/run", None).await;
+    let (status, body) = call(rig.admin_app(), "POST", "/api/v3/admin/precache/run", None).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"]["code"], Value::from("CONFLICT"));
 
@@ -304,7 +310,7 @@ async fn precache_second_run_is_409_while_live() {
             Duration::from_secs(5),
         )
         .await;
-    let (status, _) = call(rig.admin_app(), "POST", "/admin/precache/run", None).await;
+    let (status, _) = call(rig.admin_app(), "POST", "/api/v3/admin/precache/run", None).await;
     assert_eq!(status, StatusCode::ACCEPTED);
 }
 
@@ -494,7 +500,7 @@ async fn a_burst_of_scans_starts_one_image_refresh() {
 /// Poll the status route until `done` holds.
 async fn wait_for_status(rig: &Rig, done: impl Fn(&Value) -> bool) -> Value {
     for _ in 0..500 {
-        let (status, body) = call(rig.user_app(), "GET", "/cache/sync/status", None).await;
+        let (status, body) = call(rig.user_app(), "GET", "/api/v3/cache/sync/status", None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         if done(&body) {
             return body;
@@ -518,7 +524,7 @@ async fn library_image_refresh_reports_progress_and_cancels() {
     let idle = wait_for_status(&rig, |_| true).await;
     assert_eq!(idle["is_syncing"], Value::Bool(false));
 
-    let (status, _) = call(rig.admin_app(), "POST", "/admin/precache/run", None).await;
+    let (status, _) = call(rig.admin_app(), "POST", "/api/v3/admin/precache/run", None).await;
     assert_eq!(status, StatusCode::ACCEPTED);
     let live = wait_for_status(&rig, |body| body["phase"] == "albums").await;
     assert_eq!(live["is_syncing"], Value::Bool(true));
@@ -527,9 +533,9 @@ async fn library_image_refresh_reports_progress_and_cancels() {
     assert!(library.called(&format!("artist:{BETA}")));
     assert!(library.called(&format!("discovery:{}:{ALPHA}", rig.admin_id)));
 
-    let (status, _) = call(rig.user_app(), "POST", "/cache/sync/cancel", None).await;
+    let (status, _) = call(rig.user_app(), "POST", "/api/v3/cache/sync/cancel", None).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    let (status, body) = call(rig.admin_app(), "POST", "/cache/sync/cancel", None).await;
+    let (status, body) = call(rig.admin_app(), "POST", "/api/v3/cache/sync/cancel", None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], Value::from("cancelled"));
     let stopped = wait_for_status(&rig, |_| true).await;
@@ -538,7 +544,7 @@ async fn library_image_refresh_reports_progress_and_cancels() {
     assert!(!library.called(&format!("album:{FIRST}")));
 
     library.album_gate.add_permits(8);
-    let (status, _) = call(rig.admin_app(), "POST", "/admin/precache/run", None).await;
+    let (status, _) = call(rig.admin_app(), "POST", "/api/v3/admin/precache/run", None).await;
     assert_eq!(
         status,
         StatusCode::ACCEPTED,
@@ -563,7 +569,7 @@ async fn library_image_refresh_reports_progress_and_cancels() {
 async fn quota_round_trip_set_and_clear() {
     let rig = Rig::open("quota").await;
 
-    let uri = format!("/admin/users/{}/quota", rig.user_id);
+    let uri = format!("/api/v3/admin/users/{}/quota", rig.user_id);
     let (status, body) = call(rig.admin_app(), "GET", &uri, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["quota_override"]["request_quota_count"], Value::Null);
@@ -619,7 +625,7 @@ async fn quota_round_trip_set_and_clear() {
 #[tokio::test]
 async fn quota_rejects_out_of_bounds_overrides() {
     let rig = Rig::open("quota-bounds").await;
-    let uri = format!("/admin/users/{}/quota", rig.user_id);
+    let uri = format!("/api/v3/admin/users/{}/quota", rig.user_id);
     for (body, field) in [
         (json!({"request_quota_days": 0}), "request_quota_days"),
         (
@@ -690,7 +696,7 @@ async fn quota_usage_counts_asks_and_bytes() {
     )
     .await;
 
-    let uri = format!("/admin/users/{}/quota", rig.user_id);
+    let uri = format!("/api/v3/admin/users/{}/quota", rig.user_id);
     let (status, body) = call(rig.admin_app(), "GET", &uri, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["requests_in_window"], Value::from(3));
@@ -708,7 +714,7 @@ async fn quota_marks_curators_exempt() {
         (&rig.user_id, false),
     ] {
         let user_id = user_id.clone();
-        let uri = format!("/admin/users/{user_id}/quota");
+        let uri = format!("/api/v3/admin/users/{user_id}/quota");
         let (status, body) = call(rig.admin_app(), "GET", &uri, None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["exempt"], Value::from(exempt), "{user_id}");
@@ -731,10 +737,12 @@ async fn quota_override_for_an_unmirrored_user_is_not_found() {
     )
     .with_db(AdminDb::new(rig.runtime.db().clone()));
     let app = with_test_principal(
-        admin.gated_router(),
+        droppedneedle::admin::routes()
+            .with_state(admin)
+            .into_router(),
         test_principal(&rig.admin_id, Role::Admin, "sess-1", SessionKind::Standard),
     );
-    let uri = format!("/admin/users/{}/quota", user.id);
+    let uri = format!("/api/v3/admin/users/{}/quota", user.id);
     let (status, body) = call(app, "PUT", &uri, Some(json!({"request_quota_count": 3}))).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(body["error"]["code"], Value::from("NOT_FOUND"));

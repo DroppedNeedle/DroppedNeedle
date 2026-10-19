@@ -30062,6 +30062,27 @@
           }
         }
       }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "The generated OpenAPI document feeding the TypeScript pipeline.",
+        "operationId": "openapi_json",
+        "responses": {
+          "200": {
+            "description": "This API document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

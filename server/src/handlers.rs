@@ -34,6 +34,12 @@ pub async fn health() -> Json<HealthResponse> {
 }
 
 /// The generated OpenAPI document feeding the TypeScript pipeline.
+#[utoipa::path(
+    get,
+    tag = "health",
+    path = "/openapi.json",
+    responses((status = 200, description = "This API document", body = Object))
+)]
 pub async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
     Json(ApiDoc::openapi())
 }

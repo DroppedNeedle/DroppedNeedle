@@ -22,13 +22,9 @@ pub mod system;
 
 use std::sync::Arc;
 
-use axum::{
-    Router,
-    routing::{get, post},
-};
-
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::{BackupService, CheckpointService, Db};
+use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_providers::{InMemoryProviderCache, Providers};
 
 pub use error::AdminError;
@@ -151,31 +147,21 @@ impl AdminSetup {
     ) -> Self {
         Self::new(users, quota, cache, providers)
     }
+}
 
-    /// Mount the admin routes and the system health read. Layers are
-    /// applied by `create_app`; each handler takes the caller it admits.
-    pub fn gated_router(&self) -> Router {
-        Router::new()
-            .route("/system/health", get(system::system_health))
-            .route("/cache/sync/status", get(handlers::cache_sync_status))
-            .route("/cache/sync/cancel", post(handlers::cancel_cache_sync))
-            .route(
-                "/admin/backups",
-                get(handlers::list_backups).post(handlers::run_backup),
-            )
-            .route(
-                "/admin/backups/{name}/restore-report",
-                get(handlers::restore_report),
-            )
-            .route("/admin/cache/stats", get(handlers::cache_stats))
-            .route("/admin/cache/clear", post(handlers::clear_cache))
-            .route("/admin/queue-stats", get(handlers::queue_stats))
-            .route("/admin/provider-stats", get(handlers::provider_stats))
-            .route(
-                "/admin/users/{id}/quota",
-                get(handlers::get_quota).put(handlers::set_quota),
-            )
-            .route("/admin/precache/run", post(handlers::run_precache))
-            .with_state(self.clone())
-    }
+/// The admin routes and the system health read. Each handler also takes
+/// the caller it admits.
+pub fn routes() -> Routes<AdminSetup> {
+    Routes::new()
+        .user(routes!(system::system_health))
+        .user(routes!(handlers::cache_sync_status))
+        .curator(routes!(handlers::cancel_cache_sync))
+        .admin(routes!(handlers::list_backups, handlers::run_backup))
+        .admin(routes!(handlers::restore_report))
+        .admin(routes!(handlers::cache_stats))
+        .admin(routes!(handlers::clear_cache))
+        .admin(routes!(handlers::queue_stats))
+        .admin(routes!(handlers::provider_stats))
+        .admin(routes!(handlers::get_quota, handlers::set_quota))
+        .admin(routes!(handlers::run_precache))
 }

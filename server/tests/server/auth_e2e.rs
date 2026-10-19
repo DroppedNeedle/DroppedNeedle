@@ -1121,6 +1121,7 @@ enum Posture {
 /// a dummy before the request goes out.
 const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/health", Posture::Public),
+    ("GET", "/openapi.json", Posture::Public),
     // Native auth: all four public.
     ("POST", "/api/v3/auth/login", Posture::Public),
     ("POST", "/api/v3/auth/logout", Posture::Public),

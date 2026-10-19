@@ -478,10 +478,9 @@ impl Rig {
 
     /// Both routers signed in as `user_id` with `role`, or anonymous.
     fn app(&self, caller: Option<(&str, Role)>) -> Router {
-        let router = self
-            .settings
-            .gated_router()
-            .merge(self.settings.me_router());
+        let router = droppedneedle::settings::wiring::routes()
+            .with_state(self.settings.clone())
+            .into_router();
         match caller {
             Some((user_id, role)) => with_test_principal(
                 router,
@@ -524,20 +523,20 @@ async fn call(app: Router, method: &str, uri: &str, body: Option<Value>) -> (Sta
 async fn settings_routes_are_admin_gated() {
     let rig = Rig::open(true).await;
     for (method, uri) in [
-        ("GET", "/settings/preferences"),
-        ("PUT", "/settings/preferences"),
-        ("GET", "/settings/jellyfin"),
-        ("POST", "/settings/jellyfin/verify"),
-        ("GET", "/settings/indexers"),
-        ("POST", "/settings/indexers/test"),
-        ("GET", "/settings/musicbrainz"),
-        ("POST", "/settings/musicbrainz/brainzmash/stage"),
-        ("GET", "/settings/library/sync"),
-        ("GET", "/settings/home"),
-        ("GET", "/settings/library-management"),
+        ("GET", "/api/v3/settings/preferences"),
+        ("PUT", "/api/v3/settings/preferences"),
+        ("GET", "/api/v3/settings/jellyfin"),
+        ("POST", "/api/v3/settings/jellyfin/verify"),
+        ("GET", "/api/v3/settings/indexers"),
+        ("POST", "/api/v3/settings/indexers/test"),
+        ("GET", "/api/v3/settings/musicbrainz"),
+        ("POST", "/api/v3/settings/musicbrainz/brainzmash/stage"),
+        ("GET", "/api/v3/settings/library/sync"),
+        ("GET", "/api/v3/settings/home"),
+        ("GET", "/api/v3/settings/library-management"),
         (
             "POST",
-            "/settings/library-management/profile-imports/preview",
+            "/api/v3/settings/library-management/profile-imports/preview",
         ),
     ] {
         let body = (method == "PUT" || method == "POST").then(|| json!({}));
@@ -548,9 +547,9 @@ async fn settings_routes_are_admin_gated() {
         assert_eq!(denied["error"]["code"], "FORBIDDEN");
     }
     // Section prefs are per-user: a plain user passes.
-    let (status, _) = call(rig.user_app(), "GET", "/me/section-prefs", None).await;
+    let (status, _) = call(rig.user_app(), "GET", "/api/v3/me/section-prefs", None).await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _) = call(rig.app(None), "GET", "/me/section-prefs", None).await;
+    let (status, _) = call(rig.app(None), "GET", "/api/v3/me/section-prefs", None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
@@ -565,7 +564,7 @@ async fn verify_resolves_masks_and_maps_verdicts() {
     let (status, saved) = call(
         rig.admin_app(),
         "PUT",
-        "/settings/jellyfin",
+        "/api/v3/settings/jellyfin",
         Some(json!({
             "jellyfin_url": "http://jellyfin:8096",
             "api_key": "jellyfin-live",
@@ -577,11 +576,17 @@ async fn verify_resolves_masks_and_maps_verdicts() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(saved["api_key"], SECRET_MASK);
-    let (status, read) = call(rig.admin_app(), "GET", "/settings/jellyfin", None).await;
+    let (status, read) = call(rig.admin_app(), "GET", "/api/v3/settings/jellyfin", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(read["api_key"], SECRET_MASK);
     // Re-saving the masked read keeps the stored key.
-    let (status, _) = call(rig.admin_app(), "PUT", "/settings/jellyfin", Some(read)).await;
+    let (status, _) = call(
+        rig.admin_app(),
+        "PUT",
+        "/api/v3/settings/jellyfin",
+        Some(read),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let stored = rig
         .settings
@@ -593,7 +598,7 @@ async fn verify_resolves_masks_and_maps_verdicts() {
     let (status, verdict) = call(
         rig.admin_app(),
         "POST",
-        "/settings/jellyfin/verify",
+        "/api/v3/settings/jellyfin/verify",
         Some(saved.clone()),
     )
     .await;
@@ -613,18 +618,18 @@ async fn verify_resolves_masks_and_maps_verdicts() {
     let (status, created) = call(
         rig.admin_app(),
         "POST",
-        "/settings/indexers",
+        "/api/v3/settings/indexers",
         Some(json!({"name": "Stub", "url": "http://stub:8080/api", "api_key": "indexer-live"})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let (_, listed) = call(rig.admin_app(), "GET", "/settings/indexers", None).await;
+    let (_, listed) = call(rig.admin_app(), "GET", "/api/v3/settings/indexers", None).await;
     assert_eq!(listed[0]["id"], created["id"]);
     assert_eq!(listed[0]["api_key"], SECRET_MASK);
     let (status, _) = call(
         rig.admin_app(),
         "POST",
-        "/settings/indexers/test",
+        "/api/v3/settings/indexers/test",
         Some(listed[0].clone()),
     )
     .await;
@@ -643,7 +648,7 @@ async fn verify_resolves_masks_and_maps_verdicts() {
     let (status, verdict) = call(
         rig.admin_app(),
         "POST",
-        "/settings/navidrome/verify",
+        "/api/v3/settings/navidrome/verify",
         Some(json!({
             "navidrome_url": "http://navidrome:4533",
             "username": "ada",
@@ -671,13 +676,15 @@ async fn verify_resolves_masks_and_maps_verdicts() {
         SettingsSetup::for_tests_with_probes(Arc::new(FixedIdGenerator::new(FIXED_ID)), probes)
             .expect("settings bundle builds");
     let app = with_test_principal(
-        settings.gated_router(),
+        droppedneedle::settings::wiring::routes()
+            .with_state(settings)
+            .into_router(),
         test_principal(&admin.id, Role::Admin, "sess-1", SessionKind::Standard),
     );
     let (status, limited) = call(
         app,
         "POST",
-        "/settings/listenbrainz/verify",
+        "/api/v3/settings/listenbrainz/verify",
         Some(json!({"username": "ada", "user_token": "tok", "enabled": true})),
     )
     .await;
@@ -693,13 +700,19 @@ async fn schedule_manual_round_trips() {
     let (status, saved) = call(
         rig.admin_app(),
         "PUT",
-        "/settings/library/schedule",
+        "/api/v3/settings/library/schedule",
         Some(json!({"scan_frequency": "manual", "daily_scan_time": "03:00"})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{saved}");
     assert_eq!(saved["scan_frequency"], "manual");
-    let (status, read) = call(rig.admin_app(), "GET", "/settings/library/schedule", None).await;
+    let (status, read) = call(
+        rig.admin_app(),
+        "GET",
+        "/api/v3/settings/library/schedule",
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(read["scan_frequency"], "manual");
 }
@@ -709,19 +722,19 @@ async fn schedule_manual_round_trips() {
 #[tokio::test]
 async fn lyrics_lookup_on_by_default_off_stays_off() {
     let rig = Rig::open(true).await;
-    let (status, read) = call(rig.admin_app(), "GET", "/settings/lyrics", None).await;
+    let (status, read) = call(rig.admin_app(), "GET", "/api/v3/settings/lyrics", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(read["enabled"], true);
     let (status, saved) = call(
         rig.admin_app(),
         "PUT",
-        "/settings/lyrics",
+        "/api/v3/settings/lyrics",
         Some(json!({"enabled": false})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{saved}");
     assert_eq!(saved["enabled"], false);
-    let (status, read) = call(rig.admin_app(), "GET", "/settings/lyrics", None).await;
+    let (status, read) = call(rig.admin_app(), "GET", "/api/v3/settings/lyrics", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(read["enabled"], false);
 }
@@ -731,20 +744,20 @@ async fn lyrics_lookup_on_by_default_off_stays_off() {
 #[tokio::test]
 async fn dropped_routes_answer_gone() {
     let rig = Rig::open(true).await;
-    let (status, home) = call(rig.admin_app(), "GET", "/settings/home", None).await;
+    let (status, home) = call(rig.admin_app(), "GET", "/api/v3/settings/home", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(home["cache_ttl_trending"], 3600);
     let (status, _) = call(
         rig.admin_app(),
         "PUT",
-        "/settings/home",
+        "/api/v3/settings/home",
         Some(json!({"cache_ttl_trending": 10})),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     for (method, uri) in [
-        ("GET", "/settings/library/sync"),
-        ("PUT", "/settings/library/sync"),
+        ("GET", "/api/v3/settings/library/sync"),
+        ("PUT", "/api/v3/settings/library/sync"),
     ] {
         let body = (method == "PUT").then(|| json!({}));
         let (status, gone) = call(rig.admin_app(), method, uri, body).await;
@@ -761,7 +774,7 @@ async fn brainzmash_ceremony_http() {
     let (status, staged) = call(
         rig.admin_app(),
         "POST",
-        "/settings/musicbrainz/brainzmash/stage",
+        "/api/v3/settings/musicbrainz/brainzmash/stage",
         None,
     )
     .await;
@@ -778,7 +791,7 @@ async fn brainzmash_ceremony_http() {
     let (status, _) = call(
         rig.admin_app(),
         "POST",
-        "/settings/musicbrainz/brainzmash/consent",
+        "/api/v3/settings/musicbrainz/brainzmash/consent",
         Some(binding.clone()),
     )
     .await;
@@ -787,7 +800,7 @@ async fn brainzmash_ceremony_http() {
     let (status, verified) = call(
         rig.admin_app(),
         "POST",
-        "/settings/musicbrainz/verify",
+        "/api/v3/settings/musicbrainz/verify",
         Some(binding.clone()),
     )
     .await;
@@ -797,7 +810,7 @@ async fn brainzmash_ceremony_http() {
     let (status, active) = call(
         rig.admin_app(),
         "POST",
-        "/settings/musicbrainz/activate",
+        "/api/v3/settings/musicbrainz/activate",
         Some(binding),
     )
     .await;
@@ -809,7 +822,7 @@ async fn brainzmash_ceremony_http() {
     let (status, stale) = call(
         rig.admin_app(),
         "POST",
-        "/settings/musicbrainz/activate",
+        "/api/v3/settings/musicbrainz/activate",
         Some(json!({
             "access_revision": "stale",
             "source_id": "stale",
@@ -826,7 +839,7 @@ async fn brainzmash_ceremony_http() {
 #[tokio::test]
 async fn section_prefs_http() {
     let rig = Rig::open(true).await;
-    let (status, full) = call(rig.user_app(), "GET", "/me/section-prefs", None).await;
+    let (status, full) = call(rig.user_app(), "GET", "/api/v3/me/section-prefs", None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(full["pages"]["home"].is_array());
     assert!(full["pages"]["discover"].is_array());
@@ -835,7 +848,7 @@ async fn section_prefs_http() {
     let (status, updated) = call(
         rig.user_app(),
         "PUT",
-        "/me/section-prefs",
+        "/api/v3/me/section-prefs",
         Some(json!({
             "page": "home",
             "sections": [{"key": "trending_artists", "enabled": false}],
@@ -862,7 +875,7 @@ async fn section_prefs_http() {
     let (status, _) = call(
         rig.user_app(),
         "PUT",
-        "/me/section-prefs",
+        "/api/v3/me/section-prefs",
         Some(json!({"page": "nope", "sections": []})),
     )
     .await;
@@ -871,7 +884,7 @@ async fn section_prefs_http() {
     let (status, bad) = call(
         rig.user_app(),
         "PUT",
-        "/me/section-prefs",
+        "/api/v3/me/section-prefs",
         Some(json!({
             "page": "home",
             "sections": [{"key": "bogus", "enabled": false}],

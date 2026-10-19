@@ -16,7 +16,7 @@ use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, Lane, open_runtime};
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_plugins::fakes::FakeVerifier;
-use droppedneedle_plugins::handlers::{ScrobbleHttpDeps, scrobble_router};
+use droppedneedle_plugins::handlers::{ScrobbleHttpDeps, scrobble_routes};
 use droppedneedle_plugins::scrobble::{
     ListenBrainzLinkStore, MemoryListenBrainzLinkStore, MemoryScrobblePrefsStore,
     NoopConnectionChangedHook, NoopMixApprovalHook, ScrobbleDeps, ScrobblePrefsPatch,
@@ -96,12 +96,15 @@ async fn rejected_credentials_store_nothing() {
         message: "Token invalid or expired".to_owned(),
         rate_limited: false,
     };
-    let router = with_test_principal(scrobble_router(rig.http), user_session("user-1"));
+    let router = with_test_principal(
+        scrobble_routes().with_state(rig.http).into_router(),
+        user_session("user-1"),
+    );
     let response = router
         .oneshot(
             Request::builder()
                 .method("PUT")
-                .uri("/me/connections/listenbrainz")
+                .uri("/api/v3/me/connections/listenbrainz")
                 .header("content-type", "application/json")
                 .body(Body::from(
                     serde_json::json!({"user_token": "bad", "username": "melody"}).to_string(),
@@ -117,13 +120,16 @@ async fn rejected_credentials_store_nothing() {
 #[tokio::test]
 async fn link_lifecycle_over_http() {
     let rig = rig();
-    let router = with_test_principal(scrobble_router(rig.http), user_session("user-1"));
+    let router = with_test_principal(
+        scrobble_routes().with_state(rig.http).into_router(),
+        user_session("user-1"),
+    );
     let response = router
         .clone()
         .oneshot(
             Request::builder()
                 .method("PUT")
-                .uri("/me/connections/listenbrainz")
+                .uri("/api/v3/me/connections/listenbrainz")
                 .header("content-type", "application/json")
                 .body(Body::from(
                     serde_json::json!({"user_token": "lb-token-9", "username": "melody"})
@@ -145,7 +151,7 @@ async fn link_lifecycle_over_http() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/me/connections/listenbrainz")
+                .uri("/api/v3/me/connections/listenbrainz")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -159,7 +165,7 @@ async fn link_lifecycle_over_http() {
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri("/me/connections/listenbrainz")
+                .uri("/api/v3/me/connections/listenbrainz")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -170,7 +176,7 @@ async fn link_lifecycle_over_http() {
     let response = router
         .oneshot(
             Request::builder()
-                .uri("/me/connections/listenbrainz")
+                .uri("/api/v3/me/connections/listenbrainz")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -182,10 +188,12 @@ async fn link_lifecycle_over_http() {
 #[tokio::test]
 async fn scrobble_routes_need_a_session() {
     let rig = rig();
-    let response = scrobble_router(rig.http)
+    let response = scrobble_routes()
+        .with_state(rig.http)
+        .into_router()
         .oneshot(
             Request::builder()
-                .uri("/me/scrobble-preferences")
+                .uri("/api/v3/me/scrobble-preferences")
                 .body(Body::empty())
                 .unwrap(),
         )

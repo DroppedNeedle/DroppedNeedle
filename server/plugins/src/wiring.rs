@@ -15,16 +15,17 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use axum::Router;
+use axum::extract::FromRef;
 
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::jobs::Supervisor;
 use droppedneedle_kernel::jobs::plugin_ticks::SqliteTickStore;
+use droppedneedle_kernel::mount::Routes;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_providers::cache::{ProviderCache, invalidate_source};
 
 use super::handlers::{
-    ExtRateLimiter, PluginsDeps, ScrobbleHttpDeps, plugins_router, scrobble_router,
+    ExtRateLimiter, PluginsDeps, ScrobbleHttpDeps, plugin_routes, scrobble_routes,
 };
 use super::host::PluginHost;
 use super::install::{GitHubHosts, ReqwestFetcher, ZipUnpacker};
@@ -277,19 +278,28 @@ impl PluginsSetup {
         &self.host
     }
 
-    /// Mount the plugin and scrobble routes. Layers come from `create_app`
-    /// (the session gate plus rate limiting); admin-only routes self-gate
-    /// through the `Admin` extractor inside the handlers.
-    pub fn gated_router(&self) -> Router {
-        Router::new()
-            .merge(plugins_router(self.plugins.clone()))
-            .merge(scrobble_router(self.scrobble.clone()))
-    }
-
     /// Rebuild tick loops to match the host's enabled scheduler plugins.
     /// Boot calls this once after building; installs, updates, and
     /// uninstalls re-sync through the handlers' shared loops.
     pub async fn sync_ticks(&self) {
         self.ticks.sync_host(&self.host).await;
+    }
+}
+
+/// The plugin and scrobble routes. Admin-only routes are in the admin
+/// group and also take the `Admin` extractor.
+pub fn routes() -> Routes<PluginsSetup> {
+    plugin_routes().merge(scrobble_routes())
+}
+
+impl FromRef<PluginsSetup> for PluginsDeps {
+    fn from_ref(setup: &PluginsSetup) -> Self {
+        setup.plugins.clone()
+    }
+}
+
+impl FromRef<PluginsSetup> for ScrobbleHttpDeps {
+    fn from_ref(setup: &PluginsSetup) -> Self {
+        setup.scrobble.clone()
     }
 }

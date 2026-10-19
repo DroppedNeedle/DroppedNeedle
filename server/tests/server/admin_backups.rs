@@ -66,7 +66,9 @@ impl Rig {
     /// Router signed in as the admin.
     fn admin_app(&self) -> Router {
         with_test_principal(
-            self.admin.gated_router(),
+            droppedneedle::admin::routes()
+                .with_state(self.admin.clone())
+                .into_router(),
             test_principal(
                 &self.admin_id,
                 Role::Admin,
@@ -99,7 +101,7 @@ async fn call(app: Router, method: &str, uri: &str, body: Option<Value>) -> (Sta
 #[tokio::test]
 async fn backup_run_then_list_then_report() {
     let rig = Rig::open("journey").await;
-    let (status, run) = call(rig.admin_app(), "POST", "/admin/backups", None).await;
+    let (status, run) = call(rig.admin_app(), "POST", "/api/v3/admin/backups", None).await;
     assert_eq!(status, StatusCode::CREATED, "{run}");
     let name = run["name"].as_str().expect("run names the backup");
     assert!(name.ends_with(".db"), "{name}");
@@ -117,14 +119,14 @@ async fn backup_run_then_list_then_report() {
         .join(format!("{name}.manifest.json"));
     assert!(sidecar.is_file(), "manifest sidecar exists");
 
-    let (status, list) = call(rig.admin_app(), "GET", "/admin/backups", None).await;
+    let (status, list) = call(rig.admin_app(), "GET", "/api/v3/admin/backups", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(list["backups"].as_array().expect("list").len(), 1);
     assert_eq!(list["backups"][0]["name"], run["name"]);
     assert_eq!(list["backups"][0]["sha256"], run["sha256"]);
     assert!(list["backups"][0]["created_at_unix"].as_u64().is_some());
 
-    let uri = format!("/admin/backups/{name}/restore-report");
+    let uri = format!("/api/v3/admin/backups/{name}/restore-report");
     let (status, report) = call(rig.admin_app(), "GET", &uri, None).await;
     assert_eq!(status, StatusCode::OK, "{report}");
     assert_eq!(report["backup"], run["name"]);
@@ -172,11 +174,11 @@ async fn next_millisecond() {
 async fn backup_rotation_keeps_five() {
     let rig = Rig::open("rotation").await;
     for _ in 0..BACKUP_KEEP + 1 {
-        let (status, _) = call(rig.admin_app(), "POST", "/admin/backups", None).await;
+        let (status, _) = call(rig.admin_app(), "POST", "/api/v3/admin/backups", None).await;
         assert_eq!(status, StatusCode::CREATED);
         next_millisecond().await;
     }
-    let (status, list) = call(rig.admin_app(), "GET", "/admin/backups", None).await;
+    let (status, list) = call(rig.admin_app(), "GET", "/api/v3/admin/backups", None).await;
     assert_eq!(status, StatusCode::OK);
     let backups = list["backups"].as_array().expect("list");
     assert_eq!(backups.len(), BACKUP_KEEP);
@@ -207,7 +209,7 @@ async fn backup_rotation_keeps_five() {
 async fn restore_report_rejects_unsafe_names() {
     let rig = Rig::open("names").await;
     for name in ["no-suffix", "..%2Fapp.db", "sub%2Flibrary.db", ".hidden.db"] {
-        let uri = format!("/admin/backups/{name}/restore-report");
+        let uri = format!("/api/v3/admin/backups/{name}/restore-report");
         let (status, body) = call(rig.admin_app(), "GET", &uri, None).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {body}");
         assert_eq!(body["error"]["code"], Value::from("INVALID_INPUT"));
@@ -217,7 +219,7 @@ async fn restore_report_rejects_unsafe_names() {
 #[tokio::test]
 async fn restore_report_catches_a_tampered_backup() {
     let rig = Rig::open("tamper").await;
-    let (status, run) = call(rig.admin_app(), "POST", "/admin/backups", None).await;
+    let (status, run) = call(rig.admin_app(), "POST", "/api/v3/admin/backups", None).await;
     assert_eq!(status, StatusCode::CREATED);
     let name = run["name"].as_str().expect("run names the backup");
     let path = rig.dir.join("backups").join(name);
@@ -227,7 +229,7 @@ async fn restore_report_catches_a_tampered_backup() {
     bytes[0] ^= 0xff;
     std::fs::write(&path, bytes).expect("tamper writes");
 
-    let uri = format!("/admin/backups/{name}/restore-report");
+    let uri = format!("/api/v3/admin/backups/{name}/restore-report");
     let (status, report) = call(rig.admin_app(), "GET", &uri, None).await;
     assert_eq!(status, StatusCode::OK, "{report}");
     assert_eq!(report["ok"], Value::Bool(false));
