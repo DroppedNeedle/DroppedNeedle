@@ -37,6 +37,7 @@
 		)
 	);
 	const jobs = $derived(queueQuery.data?.jobs ?? []);
+	const queues = $derived(queueQuery.data?.queues ?? []);
 
 	function heartbeatText(at: number | null | undefined): string {
 		if (!at) return 'never';
@@ -163,4 +164,36 @@
 			</div>
 		{/if}
 	</section>
+
+	{#if queueQuery.data}
+		<section class="space-y-3" aria-label="Job queues">
+			<h3 class="font-semibold">Job queues</h3>
+			{#if queues.length === 0}
+				<p class="text-sm text-base-content/50">No queued work.</p>
+			{:else}
+				<div class="overflow-x-auto">
+					<table class="table table-sm">
+						<thead>
+							<tr>
+								<th scope="col">Kind</th>
+								<th scope="col">Queued</th>
+								<th scope="col">Running</th>
+								<th scope="col">Failed</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each queues as queue (queue.kind)}
+								<tr>
+									<td>{queue.kind}</td>
+									<td>{formatCount(queue.queued)}</td>
+									<td>{formatCount(queue.running)}</td>
+									<td>{formatCount(queue.failed)}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</section>
+	{/if}
 </Card>

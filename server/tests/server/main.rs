@@ -20,6 +20,7 @@ mod http_gate;
 mod jobs_events;
 mod jobs_loops;
 mod jobs_plugin_ticks;
+mod jobs_queue;
 mod jobs_supervisor;
 mod leak;
 mod persist_runtime;

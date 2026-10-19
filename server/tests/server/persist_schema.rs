@@ -68,7 +68,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 160);
+    assert_eq!(table_names(&pool).await.len(), 161);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -3489,6 +3489,53 @@ async fn job_registry_gives_way_to_loop_rows() {
     ] {
         assert!(
             sqlx::query(refused).execute(&pool).await.is_err(),
+            "{refused}"
+        );
+    }
+}
+
+/// Migration 0070 adds the jobs table. It is STRICT and checks its state;
+/// a key holds at most one queued row, while a running row and finished
+/// rows never block one.
+#[tokio::test]
+async fn jobs_table_holds_one_queued_row_per_key() {
+    let pool = scratch_pool().await;
+    migrator_through(69).run(&pool).await.unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 70 && stamped == latest_version(), "{stamped}");
+    let insert = |state: &str, finished: &str| {
+        format!(
+            "INSERT INTO durable_jobs (kind, idempotency_key, state, not_before_at, lease_owner, \
+             lease_expires_at, payload_json, created_at, updated_at, finished_at) \
+             VALUES ('k', 'key', '{state}', 1, 'o', 2, '{{}}', 1, 1, {finished})"
+        )
+    };
+    for allowed in [
+        insert("queued", "NULL"),
+        insert("running", "NULL"),
+        insert("done", "3"),
+        insert("done", "4"),
+        insert("failed", "5"),
+    ] {
+        sqlx::query(&allowed).execute(&pool).await.unwrap();
+    }
+    for refused in [
+        insert("queued", "NULL"),
+        insert("paused", "NULL"),
+        insert("done", "NULL"),
+        "INSERT INTO durable_jobs (kind, idempotency_key, state, not_before_at, payload_json, \
+         created_at, updated_at) VALUES ('k', 'other', 'queued', 'soon', '{}', 1, 1)"
+            .to_owned(),
+    ] {
+        assert!(
+            sqlx::query(&refused).execute(&pool).await.is_err(),
             "{refused}"
         );
     }

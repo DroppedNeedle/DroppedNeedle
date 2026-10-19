@@ -240,6 +240,9 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         },
     )
     .await?;
+    // The jobs table areas enqueue through; its kinds' runners start with
+    // the other loops.
+    let queues = jobs::QueueSetup::new(db.clone(), &config);
     let web = prepare_web(&config).await?;
 
     let crypto = Arc::new(Crypto::load_or_generate(&config.config_dir())?);
@@ -582,6 +585,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         },
         concerts.sweep(),
     )
+    .with_queue(queues)
     .with_mixer(mix_hooks.clone())
     .with_precache_sources_from(&reads, &config_store)
     .with_discovery_demand(Arc::new(

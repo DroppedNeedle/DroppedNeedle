@@ -1,8 +1,8 @@
 //! Queue and provider stats.
 //!
 //! Queue stats port v2's lane-occupancy gauge: the loop liveness rows,
-//! read through [`droppedneedle_kernel::db::list_loops`], and the latest
-//! checkpoint pass.
+//! read through [`droppedneedle_kernel::db::list_loops`], the depth of each
+//! job kind on the jobs table, and the latest checkpoint pass.
 //!
 //! Provider stats port v2's provider-counters snapshot onto the v3 pacing
 //! primitives: per-provider limiter posture (verified row plus live bucket)
@@ -15,14 +15,14 @@ use super::{
     AdminDb,
     error::AdminError,
     models::{
-        CheckpointView, JobView, ProviderLimiterView, ProviderStatsResponse, QueueStatsResponse,
-        SlotView,
+        CheckpointView, JobView, ProviderLimiterView, ProviderStatsResponse, QueueDepthView,
+        QueueStatsResponse, SlotView,
     },
 };
 use droppedneedle_kernel::db::{CheckpointMode, CheckpointOutcome, CheckpointService, list_loops};
 use droppedneedle_providers::Providers;
 
-/// Loop rows and the latest checkpoint pass.
+/// Loop rows, job queue depths and the latest checkpoint pass.
 pub async fn queue_stats(
     db: &AdminDb,
     checkpoint: Option<&CheckpointService>,
@@ -30,6 +30,9 @@ pub async fn queue_stats(
     let jobs = list_loops(&db.db)
         .await
         .map_err(|error| AdminError::internal(&format_args!("loop rows read failed: {error}")))?;
+    let queues = droppedneedle_kernel::jobs::queue::counts(&db.db)
+        .await
+        .map_err(|error| AdminError::internal(&format_args!("job counts read failed: {error}")))?;
     Ok(QueueStatsResponse {
         jobs: jobs
             .into_iter()
@@ -38,6 +41,15 @@ pub async fn queue_stats(
                 state: job.state.as_str().to_owned(),
                 last_heartbeat_at: job.last_heartbeat_at,
                 last_error: job.last_error,
+            })
+            .collect(),
+        queues: queues
+            .into_iter()
+            .map(|counts| QueueDepthView {
+                kind: counts.kind,
+                queued: counts.queued,
+                running: counts.running,
+                failed: counts.failed,
             })
             .collect(),
         checkpoint: checkpoint

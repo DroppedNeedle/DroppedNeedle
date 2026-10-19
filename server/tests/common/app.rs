@@ -177,6 +177,13 @@ impl TestApp {
         self
     }
 
+    /// The running app's state, for a test that reaches a bundle directly.
+    // Only some test binaries use it.
+    #[allow(dead_code)]
+    pub fn state(&self) -> &AppState {
+        self.state.as_deref().expect("the app is running")
+    }
+
     /// `router` under this app's request wrapper: request ids from its
     /// generator and the 5xx boundary, for a test that serves its own
     /// routes. Drop the router before [`TestApp::stop`].

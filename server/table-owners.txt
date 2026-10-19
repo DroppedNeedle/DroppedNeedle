@@ -52,6 +52,7 @@
 
 [kernel]
 db_planner_stats
+durable_jobs
 durable_loops
 
 [auth]

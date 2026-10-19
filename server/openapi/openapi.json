@@ -51122,6 +51122,40 @@
           }
         }
       },
+      "QueueDepthView": {
+        "type": "object",
+        "description": "How deep one job kind's queue is.",
+        "required": [
+          "kind",
+          "queued",
+          "running",
+          "failed"
+        ],
+        "properties": {
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs that failed for good and are still kept.",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "description": "Job kind, such as `scrobble.lastfm`."
+          },
+          "queued": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs waiting to run.",
+            "minimum": 0
+          },
+          "running": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs running now.",
+            "minimum": 0
+          }
+        }
+      },
       "QueueEnrichment": {
         "type": "object",
         "description": "Enrichment behind one queue card.",
@@ -51401,9 +51435,10 @@
       },
       "QueueStatsResponse": {
         "type": "object",
-        "description": "Background loops and the latest checkpoint pass.",
+        "description": "Background loops, job queues and the latest checkpoint pass.",
         "required": [
-          "jobs"
+          "jobs",
+          "queues"
         ],
         "properties": {
           "checkpoint": {
@@ -51423,6 +51458,13 @@
               "$ref": "#/components/schemas/JobView"
             },
             "description": "Background loops in name order."
+          },
+          "queues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueueDepthView"
+            },
+            "description": "Job kinds with queued, running or failed jobs, in kind order."
           }
         }
       },

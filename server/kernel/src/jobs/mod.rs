@@ -47,6 +47,7 @@ pub mod plugin_ticks;
 pub mod precache;
 pub mod precache_phases;
 pub mod presence;
+pub mod queue;
 pub mod schedule;
 pub mod supervisor;
 

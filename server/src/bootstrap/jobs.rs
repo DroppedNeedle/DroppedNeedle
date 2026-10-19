@@ -7,6 +7,10 @@
 //! supervisor). One supervisor, one rebuild choke point (`sync_ticks`), no
 //! duplicate loop mechanics.
 //!
+//! The jobs table's runners start here too: [`QueueSetup`] builds the one
+//! [`JobQueue`] beside the supervisor, areas take it to enqueue, and each
+//! registered kind's handler gets a supervised runner at boot.
+//!
 //! Loop backends are real where they exist (checkpoint passes, the
 //! now-playing feed and its upstream session pollers, the Navidrome playlist
 //! export, events settings reads, the concerts sweep, the personal mix);
@@ -19,7 +23,8 @@ use axum::Router;
 use tokio::sync::watch;
 
 use droppedneedle_catalog::concerts::ConcertsSweep;
-use droppedneedle_kernel::db::CheckpointService;
+use droppedneedle_kernel::config::AppConfig;
+use droppedneedle_kernel::db::{CheckpointService, Db};
 use droppedneedle_kernel::jobs::cache_sync::CacheSyncStatus;
 use droppedneedle_kernel::jobs::checkpoint::{self, CheckpointRunner};
 use droppedneedle_kernel::jobs::discovery_demand::{self, DemandTick, NoDemand};
@@ -31,6 +36,7 @@ use droppedneedle_kernel::jobs::playlist_sync::{self, PlaylistSyncConfig, Playli
 use droppedneedle_kernel::jobs::precache::{self, PrecacheLimits, PrecacheWork};
 use droppedneedle_kernel::jobs::precache_phases::{LibraryPrecache, PrecacheSources};
 use droppedneedle_kernel::jobs::presence;
+use droppedneedle_kernel::jobs::queue::{self, Handlers, JobHandler, JobQueue, KindSpec};
 use droppedneedle_kernel::jobs::{
     AlreadyRunning, BoxFuture, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
 };
@@ -288,6 +294,44 @@ pub struct JobsSetup {
     cache_sync: CacheSyncStatus,
     precache_sources: Option<Arc<dyn PrecacheSources>>,
     scans: Arc<watch::Sender<u64>>,
+    queues: Option<QueueSetup>,
+    handlers: Handlers,
+}
+
+/// The jobs table handle the areas enqueue through, built once beside the
+/// supervisor. Under test hooks its clock is a manual one and it carries
+/// the scripted test kind.
+#[derive(Clone, Debug)]
+pub struct QueueSetup {
+    queue: JobQueue,
+    #[cfg(any(test, feature = "test-support"))]
+    scripted: Option<scripted::ScriptedJobs>,
+}
+
+impl QueueSetup {
+    /// The jobs table on `db`, on the system clock.
+    #[cfg_attr(not(any(test, feature = "test-support")), allow(unused_variables))]
+    pub fn new(db: Db, config: &AppConfig) -> Self {
+        #[cfg(any(test, feature = "test-support"))]
+        if config.test_hooks {
+            use droppedneedle_kernel::clock::{Clock, ManualClock, SystemClock};
+            let clock = ManualClock::at(SystemClock.now_ms());
+            return Self {
+                queue: JobQueue::new(db, Arc::new(clock.clone())),
+                scripted: Some(scripted::ScriptedJobs::new(clock)),
+            };
+        }
+        Self {
+            queue: JobQueue::new(db, Arc::new(droppedneedle_kernel::clock::SystemClock)),
+            #[cfg(any(test, feature = "test-support"))]
+            scripted: None,
+        }
+    }
+
+    /// The jobs table.
+    pub fn queue(&self) -> &JobQueue {
+        &self.queue
+    }
 }
 
 impl JobsSetup {
@@ -324,7 +368,35 @@ impl JobsSetup {
             cache_sync: CacheSyncStatus::default(),
             precache_sources: None,
             scans: Arc::new(watch::channel(0).0),
+            queues: None,
+            handlers: Handlers::default(),
         }
+    }
+
+    /// The jobs table whose registered kinds get runners at boot.
+    pub fn with_queue(mut self, queues: QueueSetup) -> Self {
+        self.queues = Some(queues);
+        self
+    }
+
+    /// Register one job kind's handler. Every kind that can be enqueued is
+    /// registered, so none waits with nothing to run it.
+    pub fn with_job(mut self, spec: KindSpec, handler: Arc<dyn JobHandler>) -> Self {
+        self.handlers = self.handlers.with(spec, handler);
+        self
+    }
+
+    /// The jobs table, once [`JobsSetup::with_queue`] gave it one.
+    pub fn queue(&self) -> Option<&JobQueue> {
+        self.queues.as_ref().map(QueueSetup::queue)
+    }
+
+    /// The scripted test kind, when the app was built with test hooks.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn scripted(&self) -> Option<&scripted::ScriptedJobs> {
+        self.queues
+            .as_ref()
+            .and_then(|queues| queues.scripted.as_ref())
     }
     /// The catalog and artwork lookups library precache runs warm.
     pub fn with_precache_sources(mut self, sources: Arc<dyn PrecacheSources>) -> Self {
@@ -463,7 +535,134 @@ impl JobsSetup {
                 .spawn_after_scan()
                 .map_err(already_running(precache::AFTER_SCAN_JOB))?;
         }
+        if let Some(queues) = &self.queues {
+            #[cfg_attr(not(any(test, feature = "test-support")), allow(unused_mut))]
+            let mut handlers = self.handlers.clone();
+            #[cfg(any(test, feature = "test-support"))]
+            if let Some(kit) = &queues.scripted {
+                handlers = handlers.with(scripted::ScriptedJobs::spec(), Arc::new(kit.clone()));
+            }
+            queue::start_runners(&queues.queue, &self.supervisor, handlers)
+                .map_err(|_| "a job runner is already running".to_owned())?;
+        }
         Ok(())
+    }
+}
+
+/// The test kind the builder registers under test hooks: its payload says
+/// how each run answers, and the kit counts runs per key.
+#[cfg(any(test, feature = "test-support"))]
+pub mod scripted {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use droppedneedle_kernel::clock::ManualClock;
+    use droppedneedle_kernel::jobs::BoxFuture;
+    use droppedneedle_kernel::jobs::queue::{
+        JobCtx, JobHandler, JobKind, KindSpec, Outcome, PAYLOAD_INVALID,
+    };
+    use serde::Deserialize;
+    use tokio::sync::Semaphore;
+
+    /// The scripted kind.
+    pub const SCRIPTED: JobKind = JobKind::new("test.scripted");
+    /// The code a scripted retry answers with.
+    pub const RETRY_CODE: &str = "TEST_RETRY";
+    /// The code a scripted failure answers with.
+    pub const FAIL_CODE: &str = "TEST_FAILED";
+
+    /// How one run answers.
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Answer {
+        Done,
+        Retry,
+        Fail,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Script {
+        answer: Answer,
+        #[serde(default)]
+        gate: bool,
+        #[serde(default)]
+        at: Option<i64>,
+    }
+
+    /// The jobs table's manual clock, the run counts and the gate.
+    #[derive(Clone, Debug)]
+    pub struct ScriptedJobs {
+        clock: ManualClock,
+        runs: Arc<Mutex<HashMap<String, u32>>>,
+        gate: Arc<Semaphore>,
+    }
+
+    impl ScriptedJobs {
+        pub(super) fn new(clock: ManualClock) -> Self {
+            Self {
+                clock,
+                runs: Arc::default(),
+                gate: Arc::new(Semaphore::new(0)),
+            }
+        }
+
+        /// How the scripted kind runs: three attempts, the other defaults.
+        pub const fn spec() -> KindSpec {
+            KindSpec::new(SCRIPTED).max_attempts(3)
+        }
+
+        /// The jobs table's clock.
+        pub fn clock(&self) -> &ManualClock {
+            &self.clock
+        }
+
+        /// Runs started for `key` since this boot.
+        pub fn runs(&self, key: &str) -> u32 {
+            self.lock().get(key).copied().unwrap_or(0)
+        }
+
+        /// Let one gated run through.
+        pub fn open_gate(&self) {
+            self.gate.add_permits(1);
+        }
+
+        fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, u32>> {
+            self.runs
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        }
+    }
+
+    impl JobHandler for ScriptedJobs {
+        fn run(&self, job: JobCtx) -> BoxFuture<'static, Outcome> {
+            let kit = self.clone();
+            Box::pin(async move {
+                let Ok(script) = job.payload::<Script>() else {
+                    return Outcome::Fail {
+                        code: PAYLOAD_INVALID,
+                    };
+                };
+                *kit.lock().entry(job.key().to_owned()).or_default() += 1;
+                if script.gate {
+                    tokio::select! {
+                        permit = kit.gate.acquire() => {
+                            if let Ok(permit) = permit {
+                                permit.forget();
+                            }
+                        }
+                        () = job.token().cancelled() => return Outcome::Busy,
+                    }
+                }
+                match script.answer {
+                    Answer::Done => Outcome::Done,
+                    Answer::Retry => Outcome::Retry {
+                        code: RETRY_CODE,
+                        at: script.at,
+                    },
+                    Answer::Fail => Outcome::Fail { code: FAIL_CODE },
+                }
+            })
+        }
     }
 }
 

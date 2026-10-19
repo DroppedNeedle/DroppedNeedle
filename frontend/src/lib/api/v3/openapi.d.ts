@@ -19366,6 +19366,26 @@ export interface components {
             /** Format: int64 */
             page: number;
         };
+        /** @description How deep one job kind's queue is. */
+        QueueDepthView: {
+            /**
+             * Format: int64
+             * @description Jobs that failed for good and are still kept.
+             */
+            failed: number;
+            /** @description Job kind, such as `scrobble.lastfm`. */
+            kind: string;
+            /**
+             * Format: int64
+             * @description Jobs waiting to run.
+             */
+            queued: number;
+            /**
+             * Format: int64
+             * @description Jobs running now.
+             */
+            running: number;
+        };
         /** @description Enrichment behind one queue card. */
         QueueEnrichment: {
             /** @description Artist biography snippet, when known. */
@@ -19470,11 +19490,13 @@ export interface components {
             /** @description MusicBrainz release-group id. */
             release_group_mbid: string;
         };
-        /** @description Background loops and the latest checkpoint pass. */
+        /** @description Background loops, job queues and the latest checkpoint pass. */
         QueueStatsResponse: {
             checkpoint?: null | components["schemas"]["CheckpointView"];
             /** @description Background loops in name order. */
             jobs: components["schemas"]["JobView"][];
+            /** @description Job kinds with queued, running or failed jobs, in kind order. */
+            queues: components["schemas"]["QueueDepthView"][];
         };
         /** @description Body checking which cards already landed in the library. */
         QueueValidateRequest: {

@@ -13,9 +13,9 @@ use crate::{
     admin::{
         BackupListResponse, BackupRunResponse, BackupView, CacheClearBody, CacheClearResponse,
         CacheStatsResponse, CacheSyncCancelResponse, CheckpointView, JobView, PrecacheRunResponse,
-        ProviderLimiterView, ProviderStatsResponse, QueueStatsResponse, QuotaOverrideBody,
-        QuotaOverrideView, QuotaResponse, RestoreCheck, RestoreReport, ServiceHealthItem, SlotView,
-        SystemHealthResponse,
+        ProviderLimiterView, ProviderStatsResponse, QueueDepthView, QueueStatsResponse,
+        QuotaOverrideBody, QuotaOverrideView, QuotaResponse, RestoreCheck, RestoreReport,
+        ServiceHealthItem, SlotView, SystemHealthResponse,
     },
     handlers::HealthResponse,
     settings::models::{
@@ -1233,6 +1233,7 @@ use droppedneedle_plugins::{
         CacheClearResponse,
         QueueStatsResponse,
         JobView,
+        QueueDepthView,
         ProviderStatsResponse,
         ProviderLimiterView,
         SlotView,

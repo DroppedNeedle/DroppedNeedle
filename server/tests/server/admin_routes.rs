@@ -795,6 +795,7 @@ async fn queue_stats_shows_every_boot_loop_running() {
             .call("GET", "/api/v3/admin/queue-stats", &headers, None)
             .await;
         let jobs = stats["jobs"].as_array()?;
+        stats["queues"].as_array()?;
         droppedneedle_kernel::jobs::BOOT_JOBS
             .iter()
             .chain(droppedneedle_acquire::wiring::ACQUIRE_LOOPS)

@@ -133,11 +133,26 @@ pub struct JobView {
     pub last_error: Option<String>,
 }
 
-/// Background loops and the latest checkpoint pass.
+/// How deep one job kind's queue is.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct QueueDepthView {
+    /// Job kind, such as `scrobble.lastfm`.
+    pub kind: String,
+    /// Jobs waiting to run.
+    pub queued: u64,
+    /// Jobs running now.
+    pub running: u64,
+    /// Jobs that failed for good and are still kept.
+    pub failed: u64,
+}
+
+/// Background loops, job queues and the latest checkpoint pass.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct QueueStatsResponse {
     /// Background loops in name order.
     pub jobs: Vec<JobView>,
+    /// Job kinds with queued, running or failed jobs, in kind order.
+    pub queues: Vec<QueueDepthView>,
     /// Latest database checkpoint pass, once the checkpoint loop has
     /// recorded one.
     #[serde(skip_serializing_if = "Option::is_none")]
