@@ -18,7 +18,7 @@
 //!   the curator back to the callback route - no live provider writes, ever.
 //! - State lives in SQLite ([`sqlite::SqliteContributions`]), which also
 //!   reads the album identification context from the catalog.
-//! - [`worker::spawn_verification_worker`] runs the background loop;
+//! - [`worker::start_verification`] runs the background loop;
 //!   `LibrarySetup::spawn_loops` starts it.
 
 pub mod error;

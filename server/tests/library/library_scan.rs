@@ -15,6 +15,7 @@ use crate::common::library::TestSql as _;
 use crate::common::library::library_at;
 use crate::common::{ScratchDir, config_store, migrated_db};
 use droppedneedle_kernel::db::{Budget, Db, LaneLimits};
+use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_library::identify::models::RecallResult;
 use droppedneedle_library::identify::providers::FakeProviders;
 use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService};
@@ -30,7 +31,6 @@ use droppedneedle_library::scan::{
 };
 use droppedneedle_library::wiring::LibrarySetup;
 use sha2::{Digest, Sha256};
-use tokio::sync::watch;
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -408,7 +408,7 @@ async fn a_held_back_folder_is_held_until_a_scan_finds_it_again() {
 /// Tag reader that signals shutdown on one nominated read, and holds that
 /// read until the test has seen the drive abandoned.
 struct ShutdownOnRead {
-    shutdown: watch::Sender<bool>,
+    shutdown: CancellationToken,
     signal_at: u64,
     reads: AtomicU64,
     abandoned: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
@@ -417,7 +417,7 @@ struct ShutdownOnRead {
 impl TagReader for ShutdownOnRead {
     fn read_tags(&self, _path: &Path) -> Result<ScannedTags, TagReadError> {
         if self.reads.fetch_add(1, Ordering::SeqCst) + 1 == self.signal_at {
-            let _ = self.shutdown.send(true);
+            self.shutdown.cancel();
             if let Ok(abandoned) = self.abandoned.lock() {
                 let _ = abandoned.recv();
             }
@@ -483,10 +483,10 @@ async fn shutdown_mid_index_resumes_without_double_counting() {
     for n in 0..600 {
         std::fs::write(root.join(format!("t{n:04}.flac")), b"junk").expect("plant");
     }
-    let (shutdown, signal) = watch::channel(false);
+    let signal = CancellationToken::new();
     let (resume, abandoned) = std::sync::mpsc::channel();
     let reader = Arc::new(ShutdownOnRead {
-        shutdown,
+        shutdown: signal.clone(),
         signal_at: 300,
         reads: AtomicU64::new(0),
         abandoned: std::sync::Mutex::new(abandoned),
@@ -523,7 +523,7 @@ async fn shutdown_mid_index_resumes_without_double_counting() {
 /// then signals shutdown before the read returns, so nothing after it
 /// commits.
 struct HoldOnRead {
-    shutdown: watch::Sender<bool>,
+    shutdown: CancellationToken,
     hold_at: u64,
     reads: AtomicU64,
     reached: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
@@ -539,7 +539,7 @@ impl TagReader for HoldOnRead {
             if let Ok(release) = self.release.lock() {
                 let _ = release.recv();
             }
-            let _ = self.shutdown.send(true);
+            self.shutdown.cancel();
         }
         Ok(ScannedTags::default())
     }
@@ -575,14 +575,20 @@ async fn a_scan_moves_the_catalog_revision_as_it_goes() {
 
     let hub = EventHub::new();
     let mut listener = hub.subscribe("listener");
-    let (stop_tx, stop_rx) = watch::channel(false);
-    let events = tokio::spawn(revisions::run(hub.clone(), db.clone(), stop_rx));
+    let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
+        db.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("supervisor starts");
+    revisions::start(&supervisor, hub.clone(), db.clone()).expect("event loop starts");
 
-    let (shutdown, signal) = watch::channel(false);
+    let signal = CancellationToken::new();
     let (reached_tx, reached) = std::sync::mpsc::channel();
     let (release, release_rx) = std::sync::mpsc::channel();
     let reader = Arc::new(HoldOnRead {
-        shutdown,
+        shutdown: signal.clone(),
         hold_at: 257,
         reads: AtomicU64::new(0),
         reached: std::sync::Mutex::new(reached_tx),
@@ -631,13 +637,17 @@ async fn a_scan_moves_the_catalog_revision_as_it_goes() {
     assert_eq!(run.state, ScanState::Indexing, "the run never ended");
     drop(coordinator);
 
-    // A closed lane ends the event loop, with `stop` never flipped.
+    // A closed lane ends the event loop, with the supervisor never stopped.
     runtime.shutdown().await;
-    tokio::time::timeout(Duration::from_secs(5), events)
-        .await
-        .expect("the event loop ends with the lane")
-        .expect("the event loop ran");
-    drop(stop_tx);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while supervisor.is_running(revisions::JOB_NAME) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the event loop ends with the lane"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    supervisor.shutdown(Duration::from_secs(5)).await;
 
     let runtime = open_runtime(&DbConfig::new(&path))
         .await

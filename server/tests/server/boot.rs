@@ -73,7 +73,7 @@ async fn build(
 struct Running {
     address: SocketAddr,
     stop: oneshot::Sender<()>,
-    server: JoinHandle<Result<(), bootstrap::ServeError>>,
+    server: JoinHandle<bootstrap::Stopped>,
 }
 
 async fn start(router: axum::Router, background: bootstrap::Background) -> Running {
@@ -93,11 +93,11 @@ async fn start(router: axum::Router, background: bootstrap::Background) -> Runni
 impl Running {
     async fn shut_down(self) {
         let _ = self.stop.send(());
-        let outcome = tokio::time::timeout(Duration::from_secs(30), self.server)
+        let stopped = tokio::time::timeout(Duration::from_secs(30), self.server)
             .await
             .expect("shutdown is bounded")
             .unwrap();
-        assert!(outcome.is_ok(), "{outcome:?}");
+        assert!(stopped.outcome.is_ok(), "{:?}", stopped.outcome);
     }
 }
 
@@ -439,21 +439,67 @@ async fn the_answer_to_a_login_from_a_stated_https_address_sets_a_secure_cookie(
     running.shut_down().await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn held_open_stream_does_not_keep_background_loops_running() {
+/// One stop and one budget: with a loop whose turn blocks and ignores its
+/// stop, a database write that holds the lane, and a stream a client keeps
+/// open, the loops still hear the stop at once and the whole shutdown takes
+/// one grace plus the last-writes floor, never a grace per step.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stuck_shutdown_takes_one_grace() {
+    use droppedneedle_kernel::jobs::{Next, Schedule};
+
     let dir = scratch("shutdown");
     let mut config = config_in(&dir);
-    config.shutdown_grace = Duration::from_secs(2);
-    let (router, mut background) = build(config).await.unwrap();
-    let mut stop = background.stop_signal();
-    let (stopped_tx, stopped_rx) = oneshot::channel();
-    background.push(
-        "probe",
-        tokio::spawn(async move {
-            let _ = stop.wait_for(|stopped| *stopped).await;
-            let _ = stopped_tx.send(Instant::now());
-        }),
-    );
+    let grace = Duration::from_secs(3);
+    config.shutdown_grace = grace;
+    let built = bootstrap::build_with(config, closed_outbound())
+        .await
+        .unwrap();
+    let supervisor = built.state.jobs.supervisor().clone();
+    let db = built.state.library.db.clone();
+
+    // The senders stay on this stack, so a failing assertion unblocks both.
+    let (release_tick, tick_waits) = std::sync::mpsc::channel::<()>();
+    let (tick_entered, tick_running) = std::sync::mpsc::channel::<()>();
+    supervisor
+        .periodic_blocking(
+            "test-stuck-turn",
+            Schedule::new(Duration::from_secs(3600)),
+            move |_ctx| {
+                let _ = tick_entered.send(());
+                let _ = tick_waits.recv();
+                Ok(Next::Continue)
+            },
+        )
+        .unwrap();
+    let (heard_tx, heard_rx) = oneshot::channel();
+    supervisor
+        .one_shot("test-probe", move |ctx| async move {
+            ctx.token().cancelled().await;
+            let _ = heard_tx.send(Instant::now());
+            Ok(())
+        })
+        .unwrap();
+    let (release_write, write_waits) = std::sync::mpsc::channel::<()>();
+    let (write_entered, write_held) = std::sync::mpsc::channel::<()>();
+    let held = tokio::spawn(async move {
+        db.write(Lane::Background, "test.held", move |_tx| {
+            let _ = write_entered.send(());
+            let _ = write_waits.recv();
+            Ok::<_, droppedneedle_kernel::db::DbError>(())
+        })
+        .await
+    });
+    tokio::task::spawn_blocking(move || {
+        tick_running
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the stuck turn runs");
+        write_held
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the write holds the lane");
+    })
+    .await
+    .unwrap();
+
     // One chunk, then a body that never ends.
     let endless = || async {
         let first = futures_util::stream::once(async {
@@ -464,21 +510,40 @@ async fn held_open_stream_does_not_keep_background_loops_running() {
             futures_util::stream::pending(),
         ))
     };
-    let running = start(router.route("/endless", get(endless)), background).await;
+    let router = built.router.route("/endless", get(endless));
+    drop(built.state);
+    let running = start(router, built.background).await;
     let mut stream = reqwest::get(format!("http://{}/endless", running.address))
         .await
         .unwrap();
     assert!(stream.chunk().await.unwrap().is_some());
 
     let signalled = Instant::now();
-    let shutdown = tokio::spawn(running.shut_down());
-    let stopped_at = tokio::time::timeout(Duration::from_secs(1), stopped_rx)
+    let _ = running.stop.send(());
+    let heard = tokio::time::timeout(Duration::from_secs(1), heard_rx)
         .await
-        .expect("loops hear the signal while the stream is still open")
+        .expect("loops hear the stop while the stream is still open")
         .unwrap();
-    assert!(stopped_at.duration_since(signalled) < Duration::from_secs(1));
-    shutdown.await.unwrap();
+    assert!(heard.duration_since(signalled) < Duration::from_secs(1));
+    let stopped = tokio::time::timeout(Duration::from_secs(30), running.server)
+        .await
+        .expect("shutdown is bounded")
+        .unwrap();
+    let took = signalled.elapsed();
+    assert!(stopped.outcome.is_ok(), "{:?}", stopped.outcome);
+    // One grace plus the 1 s last-writes floor is about 4 s; a grace per
+    // step is two graces plus the floor. The bound sits between, with room
+    // for a loaded runner.
+    assert!(
+        took < grace * 2,
+        "shutdown took {took:?}, more than one grace of {grace:?} plus the floor"
+    );
+
+    drop(release_tick);
+    drop(release_write);
+    let _ = tokio::time::timeout(Duration::from_secs(10), held).await;
     drop(stream);
+    drop(stopped);
 }
 
 /// A listed reverse proxy (loopback is trusted by default).

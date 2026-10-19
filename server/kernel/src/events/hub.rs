@@ -21,7 +21,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-use tokio::sync::{broadcast, watch};
+use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 
 use super::model::{Audience, Event, Frame, Replay, UserNotice};
 
@@ -44,7 +45,7 @@ pub struct EventHub {
 struct Inner {
     sender: broadcast::Sender<Arc<Frame>>,
     retained: Mutex<Retained>,
-    closed: watch::Sender<bool>,
+    closed: CancellationToken,
 }
 
 impl Default for EventHub {
@@ -65,7 +66,7 @@ impl EventHub {
     /// An empty hub with no streams.
     pub fn new() -> Self {
         let (sender, _) = broadcast::channel(CAPACITY);
-        let (closed, _) = watch::channel(false);
+        let closed = CancellationToken::new();
         Self {
             inner: Arc::new(Inner {
                 sender,
@@ -114,7 +115,7 @@ impl EventHub {
             user_id: user_id.to_owned(),
             replay,
             receiver,
-            closed: self.inner.closed.subscribe(),
+            closed: self.inner.closed.clone(),
             hub: self.clone(),
         }
     }
@@ -122,7 +123,7 @@ impl EventHub {
     /// End every open stream (server shutdown), so connection draining
     /// does not wait on them.
     pub fn close(&self) {
-        self.inner.closed.send_replace(true);
+        self.inner.closed.cancel();
     }
 
     fn lock_retained(&self) -> std::sync::MutexGuard<'_, Retained> {
@@ -153,7 +154,7 @@ pub struct Subscription {
     user_id: String,
     replay: VecDeque<Arc<Frame>>,
     receiver: broadcast::Receiver<Arc<Frame>>,
-    closed: watch::Receiver<bool>,
+    closed: CancellationToken,
     hub: EventHub,
 }
 
@@ -165,7 +166,7 @@ impl Subscription {
             if let Some(frame) = self.replay.pop_front() {
                 return Some(frame);
             }
-            if *self.closed.borrow() {
+            if self.closed.is_cancelled() {
                 return None;
             }
             tokio::select! {
@@ -182,11 +183,7 @@ impl Subscription {
                     }
                     Err(broadcast::error::RecvError::Closed) => return None,
                 },
-                changed = self.closed.changed() => {
-                    if changed.is_err() {
-                        return None;
-                    }
-                }
+                () = self.closed.cancelled() => return None,
             }
         }
     }

@@ -8,7 +8,7 @@
 //! are v2's, so the web UI's listeners work as they did.
 //!
 //! Who publishes what:
-//! - `activity.changed`: [`revisions::run`], from the durable library
+//! - `activity.changed`: [`revisions::start`], from the durable library
 //!   revisions (scans bump `scan`, identification bumps `identification`,
 //!   catalog writes bump `catalog`), read after the database commits.
 //! - `snapshot`: the presence registry, on every presence change.
@@ -17,7 +17,7 @@
 //! - `playlist_imported`: the Spotify playlist import.
 //! - `download_progress`: the download worker, after each poll of a live
 //!   transfer.
-//! - `downloads.changed`: [`downloads::run`], from the durable download
+//! - `downloads.changed`: [`downloads::start`], from the durable download
 //!   activity revision.
 //! - `cache.sync`: the library image precache, as it moves.
 //! - `concerts_new`, `personal_mix_refreshed`, `drop_import_updated`:
@@ -34,6 +34,9 @@ pub mod model;
 pub mod revisions;
 
 pub use hub::{EventHub, EventSink, Subscription};
+
+/// The event loops on the supervisor, always on from boot.
+pub const LOOPS: &[&str] = &[revisions::JOB_NAME, downloads::JOB_NAME];
 pub use model::{
     ActivityChanged, AutoDownloadEnqueued, CacheSyncProgress, ConcertsNew, DownloadProgress,
     DownloadsChanged, DropImportUpdated, Event, NowPlayingEntry, NowPlayingSnapshot,

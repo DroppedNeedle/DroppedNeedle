@@ -106,7 +106,7 @@ pub use checkpoint::{
     CHECKPOINT_READER_BLOCKED_BOUND, CheckpointMode, CheckpointOutcome, CheckpointService,
     Observation, TRUNCATE_MIN_INTERVAL,
 };
-pub use durable::{JobRegistryRows, JobState, LoopRecord, list_loops};
+pub use durable::{JobState, LoopRecord, list_loops};
 pub use error::{ChunkedError, DbError, map_sqlx_busy, rusqlite_is_busy, sqlx_is_busy};
 pub use factory::{
     ACQUIRE_TIMEOUT, BOOT_WAIT, BUSY_TIMEOUT, CACHE_SIZE_KIB, DbConfig, DbRuntime, IDLE_TIMEOUT,

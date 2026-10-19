@@ -36,9 +36,8 @@
 //! Mounted as `playback` under `/api/v3` inside the session gate (next to
 //! the reads nest). `GET /now-playing` serves the live presence registry
 //! here, not the static snapshot in `reads::discover`. Utoipa paths are
-//! registered in `docs.rs`, and the warmup loops spawn in `main.rs` beside
-//! the discover refresh loops over the same shutdown watch (handles
-//! awaited after axum serves).
+//! registered in `docs.rs`. The warmup loops run on the loop supervisor
+//! once something starts them.
 //!
 //! The 4s presence poll loop (v2 `run_now_playing_presence_loop`) lives in
 //! `jobs::presence`; `remotes::presence_feed` feeds it this registry and the
@@ -62,4 +61,4 @@ pub mod warmup;
 
 pub use handlers::playback_router;
 pub use services::PlaybackDeps;
-pub use warmup::{TokioSleeper, WarmupScope, WarmupStats};
+pub use warmup::{WarmupScope, WarmupStats};

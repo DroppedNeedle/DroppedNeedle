@@ -13,15 +13,6 @@ crate::sql! {
                      last_heartbeat_at = excluded.last_heartbeat_at,
                      last_error = excluded.last_error,
                      updated_at = excluded.updated_at";
-    /// Register a loop that starts idle, keeping a row already there.
-    pub(super) REGISTER_LOOP = "INSERT INTO durable_loops (name, state, updated_at)
-                 VALUES (?1, 'idle', ?2)
-                 ON CONFLICT (name) DO UPDATE SET updated_at = excluded.updated_at";
-    /// Move a loop to a new state.
-    pub(super) SET_LOOP_STATE = "UPDATE durable_loops SET state = ?1, updated_at = ?2 WHERE name = ?3";
-    /// Beat a loop's heart.
-    pub(super) BEAT_LOOP = "UPDATE durable_loops
-                 SET last_heartbeat_at = ?1, updated_at = ?1 WHERE name = ?2";
     /// Every loop row in name order.
     pub(super) ALL_LOOPS = "SELECT name, state, last_heartbeat_at, last_error, updated_at
                  FROM durable_loops ORDER BY name";

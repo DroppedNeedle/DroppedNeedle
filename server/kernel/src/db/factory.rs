@@ -347,9 +347,18 @@ impl DbRuntime {
     /// own: a read still running when it ends is named in the log and left,
     /// the reclaim then fails fast and the WAL stays for the next start.
     pub async fn shutdown(self) {
+        let grace = self.shutdown_grace;
+        self.shutdown_within(grace).await;
+    }
+
+    /// [`DbRuntime::shutdown`] bounded by `grace` instead of the configured
+    /// grace: the server gives it what is left of its one shutdown budget.
+    /// Closing the sqlx pool waits for connections still checked out, so it
+    /// gets what is left of the same bound and is left behind past it.
+    pub async fn shutdown_within(self, grace: Duration) {
         // A grace too long to add to the clock is no bound at all.
-        let deadline = Instant::now().checked_add(self.shutdown_grace);
-        self.db.lane().shutdown(self.shutdown_grace).await;
+        let deadline = Instant::now().checked_add(grace);
+        self.db.lane().shutdown(grace).await;
         let (watch, checkpoint) = (self.watch, self.checkpoint.clone());
         let pools = Arc::clone(self.db.reads());
         // Stopping the watch can wait out a relief pass in flight, so it
@@ -364,7 +373,16 @@ impl DbRuntime {
             checkpoint.shutdown_truncate()
         })
         .await;
-        self.db.sqlx().close().await;
+        let close = self.db.sqlx().close();
+        match deadline {
+            Some(deadline) => {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if tokio::time::timeout(left, close).await.is_err() {
+                    tracing::warn!("database connections still checked out at the shutdown bound");
+                }
+            }
+            None => close.await,
+        }
     }
 }
 

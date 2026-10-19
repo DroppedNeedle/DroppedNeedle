@@ -11,13 +11,15 @@
 //! Byte progress does not move the revision; the worker sends it to the
 //! task's owner as `download_progress`.
 
-use rusqlite::{Connection, OptionalExtension as _};
-use sha2::{Digest, Sha256};
-use tokio::sync::watch;
-
 use super::hub::EventHub;
 use super::model::{DownloadsChanged, Event};
 use crate::db::{Db, DbError};
+use crate::jobs::{AlreadyRunning, Supervisor};
+use rusqlite::{Connection, OptionalExtension as _};
+use sha2::{Digest, Sha256};
+
+/// The loop's name on the supervisor.
+pub const JOB_NAME: &str = "event-downloads";
 
 /// Opaque event id for one revision value.
 fn event_id(revision: i64) -> String {
@@ -42,18 +44,18 @@ fn read_revision(conn: &Connection) -> Result<i64, DbError> {
     Ok(revision.unwrap_or(0))
 }
 
-/// Follow the database until `stop` flips or it shuts down.
-pub async fn run(hub: EventHub, db: Db, stop: watch::Receiver<bool>) {
-    super::follow::follow(
+/// Follow the database on the supervisor until it stops or the database
+/// shuts down.
+pub fn start(supervisor: &Supervisor, hub: EventHub, db: Db) -> Result<(), AlreadyRunning> {
+    super::follow::start(
+        supervisor,
+        JOB_NAME,
         db,
-        stop,
-        "events.downloads",
-        |db| async move { db.read("events.downloads", read_revision).await },
-        |revision: &i64| {
+        |db: Db| async move { db.read("events.downloads", read_revision).await },
+        move |revision: &i64| {
             hub.publish(Event::DownloadsChanged(DownloadsChanged {
                 id: event_id(*revision),
             }));
         },
     )
-    .await;
 }

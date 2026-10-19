@@ -18,13 +18,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_library::identify::models::{
     IdentifyKind, JobState, LocalAlbumFacts, RecallResult,
 };
 use droppedneedle_library::identify::providers::{IdentifyProviders, RecallOutcome};
 use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_providers::musicbrainz::Criticality;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::oneshot;
 
 use crate::common::library::TestSql as _;
 use crate::common::library::library_asking;
@@ -50,12 +51,12 @@ impl IdentifyProviders for EmptyRecall {
 /// Signals shutdown once, on the first recall: a deterministic
 /// SIGTERM landing mid-drain.
 struct SignalOnFirstRecall {
-    shutdown_tx: watch::Sender<bool>,
+    shutdown_tx: CancellationToken,
     signalled: AtomicBool,
 }
 
 impl SignalOnFirstRecall {
-    fn new(shutdown_tx: watch::Sender<bool>) -> Self {
+    fn new(shutdown_tx: CancellationToken) -> Self {
         Self {
             shutdown_tx,
             signalled: AtomicBool::new(false),
@@ -69,7 +70,7 @@ impl IdentifyProviders for SignalOnFirstRecall {
         _facts: &LocalAlbumFacts,
     ) -> Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         if !self.signalled.swap(true, Ordering::SeqCst) {
-            let _ = self.shutdown_tx.send(true);
+            self.shutdown_tx.cancel();
         }
         Box::pin(async move {
             RecallOutcome {
@@ -182,10 +183,10 @@ fn job_state(library: &LibrarySetup, job_id: &str) -> JobState {
 
 #[tokio::test]
 async fn identify_tick_pre_signalled_shutdown_attempts_nothing() {
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let shutdown_rx = CancellationToken::new();
     let lib = Lib::open(Arc::new(EmptyRecall)).await;
     seed_jobs(&lib.library, 3);
-    shutdown_tx.send(true).expect("shutdown sends");
+    shutdown_rx.cancel();
     let attempted = lib.library.identify_tick_with_shutdown(&shutdown_rx).await;
     assert_eq!(attempted, 0, "pre-signalled shutdown attempts nothing");
     for n in 0..3 {
@@ -198,8 +199,8 @@ async fn identify_tick_pre_signalled_shutdown_attempts_nothing() {
 
 #[tokio::test]
 async fn identify_tick_abandons_drain_after_mid_attempt_shutdown() {
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let lib = Lib::open(Arc::new(SignalOnFirstRecall::new(shutdown_tx))).await;
+    let shutdown_rx = CancellationToken::new();
+    let lib = Lib::open(Arc::new(SignalOnFirstRecall::new(shutdown_rx.clone()))).await;
     seed_jobs(&lib.library, 5);
     let attempted = lib.library.identify_tick_with_shutdown(&shutdown_rx).await;
     assert_eq!(
@@ -222,14 +223,15 @@ async fn identify_tick_abandons_drain_after_mid_attempt_shutdown() {
 #[tokio::test]
 async fn identify_tick_abandons_in_flight_gate_wait_on_shutdown() {
     let (entered_tx, entered_rx) = oneshot::channel();
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let shutdown_tx = CancellationToken::new();
+    let shutdown_rx = shutdown_tx.clone();
     let lib = Lib::open(Arc::new(GateWait::new(entered_tx))).await;
     seed_jobs(&lib.library, 3);
     let library = lib.library.clone();
     let tick = tokio::spawn(async move { library.identify_tick_with_shutdown(&shutdown_rx).await });
     entered_rx.await.expect("recall entered its gate wait");
     let start = std::time::Instant::now();
-    shutdown_tx.send(true).expect("shutdown sends");
+    shutdown_tx.cancel();
     let attempted = tokio::time::timeout(Duration::from_secs(5), tick)
         .await
         .expect("tick yields instead of waiting out the gate")

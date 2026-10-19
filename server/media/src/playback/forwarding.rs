@@ -27,6 +27,7 @@ use tokio::time::Instant;
 
 use droppedneedle_auth::users::stores::{LastFmStore, LastFmSwitch};
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
+use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
 
@@ -371,12 +372,14 @@ impl ForwardWorker {
         }
     }
 
-    /// Deliver both services' jobs side by side, each paced on its own.
-    pub async fn run(self) {
+    /// Deliver both services' jobs side by side, each paced on its own,
+    /// until the queues close or `stop` is cancelled; what was queued before
+    /// the stop is still delivered.
+    pub async fn run(self, stop: CancellationToken) {
         let Self { queues, courier } = self;
         tokio::join!(
-            lane(&courier, Service::LastFm, queues.lastfm),
-            lane(&courier, Service::ListenBrainz, queues.listenbrainz),
+            lane(&courier, Service::LastFm, queues.lastfm, &stop),
+            lane(&courier, Service::ListenBrainz, queues.listenbrainz, &stop),
         );
     }
 }
@@ -387,13 +390,14 @@ async fn lane(
     courier: &Courier,
     service: Service,
     mut rx: tokio::sync::mpsc::Receiver<ForwardJob>,
+    stop: &CancellationToken,
 ) {
     let mut retries: Vec<(Instant, ForwardJob)> = Vec::new();
     let mut next_slot = Instant::now();
     loop {
         let next_due = retries.iter().map(|(due, _)| *due).min();
         let job = tokio::select! {
-            received = rx.recv() => match received {
+            received = super::reports::next_queued(&mut rx, stop) => match received {
                 Some(job) => job,
                 None => break,
             },

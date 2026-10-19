@@ -1,7 +1,8 @@
 //! The loop supervisor's promises, on a real database: a stop mid-sleep
 //! returns within the grace, a failing tick backs off and recovers, a panic
 //! fails the row and the name starts clean again, and a second one-shot
-//! under a live name is refused.
+//! under a live name is refused. A loop that follows the commit counter
+//! does not wake itself with its own rows.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -165,5 +166,50 @@ async fn a_second_one_shot_under_a_live_name_is_refused() {
 
     supervisor.shutdown(GRACE).await;
     assert!(!supervisor.is_running("once"));
+    runtime.shutdown().await;
+}
+
+/// A loop woken by the database's commits never wakes itself: a heartbeat
+/// alone is written at most once a minute, so on an idle database the
+/// commit counter stays put across its turns.
+#[tokio::test]
+async fn a_commit_follower_does_not_wake_itself() {
+    let (supervisor, runtime, _dir) = scratch_supervisor("loop-quiet").await;
+    let (turns, mut ticked) = tokio::sync::mpsc::unbounded_channel();
+    let mut commits = runtime.db().commits();
+    commits.mark_changed();
+    supervisor
+        .on_wakeup(
+            "follower",
+            commits,
+            Schedule::new(Duration::from_millis(100)),
+            FnTick(move |_| {
+                let turns = turns.clone();
+                async move {
+                    let _ = turns.send(());
+                    Ok(Next::Continue)
+                }
+            }),
+        )
+        .unwrap();
+    // The start and the first heartbeat are written, then the loop settles.
+    loop_row(runtime.db(), "follower", |row| {
+        row.last_heartbeat_at.is_some()
+    })
+    .await;
+    for _ in 0..3 {
+        ticked.recv().await.unwrap();
+    }
+    let counter = runtime.db().commits();
+    let before = *counter.borrow();
+    for _ in 0..10 {
+        ticked.recv().await.unwrap();
+    }
+    assert_eq!(
+        *counter.borrow(),
+        before,
+        "the loop's own rows moved the commit counter"
+    );
+    supervisor.shutdown(GRACE).await;
     runtime.shutdown().await;
 }

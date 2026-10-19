@@ -73,7 +73,7 @@ pub struct TestApp {
     state: Option<Box<AppState>>,
     admin: tokio::sync::OnceCell<String>,
     stop: Option<oneshot::Sender<()>>,
-    server: Option<JoinHandle<Result<(), bootstrap::ServeError>>>,
+    server: Option<JoinHandle<bootstrap::Stopped>>,
     sabnzbd_server: JoinHandle<()>,
     // Last, so the directory goes after everything that writes to it.
     _dir: ScratchDir,
@@ -139,9 +139,8 @@ impl TestApp {
 
     /// Build the app on the data directory and serve it.
     async fn boot(&mut self) {
-        // `halt` drops the state before the stop signal: workers that stop
-        // when their queue's last handle drops would otherwise sit out the
-        // shutdown grace.
+        // `halt` drops the state before the stop signal, so no handle on
+        // the app outlives the shutdown.
         let bootstrap::Built {
             router,
             state,
@@ -488,11 +487,11 @@ impl TestApp {
             let _ = stop.send(());
         }
         let server = self.server.take().expect("the app is running");
-        let outcome = tokio::time::timeout(grace + Duration::from_secs(20), server)
+        let stopped = tokio::time::timeout(grace + Duration::from_secs(20), server)
             .await
             .expect("shutdown is bounded")
             .expect("the server task joins");
-        assert!(outcome.is_ok(), "{outcome:?}");
+        assert!(stopped.outcome.is_ok(), "{:?}", stopped.outcome);
         assert!(
             started.elapsed() < grace,
             "shutdown waited out its grace: something still held the app"

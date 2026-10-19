@@ -174,7 +174,7 @@ async fn precache_stall_trips_the_watchdog() {
     tokio::time::pause();
     let limits = PrecacheLimits::new(Duration::from_secs(60), Duration::from_secs(600))
         .with_watchdog_tick(Duration::from_secs(5));
-    let handle = precache::spawn_run(&supervisor, HangingWork, limits).expect("run starts");
+    let handle = precache::spawn_run(&supervisor, HangingWork, limits, |_| {}).expect("run starts");
 
     let outcome = handle.wait().await;
     assert!(

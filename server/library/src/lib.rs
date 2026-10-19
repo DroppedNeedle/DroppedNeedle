@@ -32,6 +32,7 @@ pub mod http;
 pub mod identify;
 pub mod import;
 mod loops;
+pub use loops::{LEFTOVERS_JOB, LOOPS};
 pub mod manage;
 pub mod management;
 pub mod matching;

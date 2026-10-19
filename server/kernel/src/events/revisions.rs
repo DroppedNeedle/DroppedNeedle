@@ -9,13 +9,15 @@
 
 use std::collections::BTreeMap;
 
-use rusqlite::{Connection, OptionalExtension as _};
-use sha2::{Digest, Sha256};
-use tokio::sync::watch;
-
 use super::hub::EventHub;
 use super::model::{ActivityChanged, Event};
 use crate::db::{Db, DbError};
+use crate::jobs::{AlreadyRunning, Supervisor};
+use rusqlite::{Connection, OptionalExtension as _};
+use sha2::{Digest, Sha256};
+
+/// The loop's name on the supervisor.
+pub const JOB_NAME: &str = "event-revisions";
 
 /// The streams every revision map carries, even before their first bump.
 const STREAMS: [&str; 3] = ["scan", "identification", "operation"];
@@ -61,19 +63,19 @@ fn read_revisions(conn: &Connection) -> Result<BTreeMap<String, u64>, DbError> {
     Ok(revisions)
 }
 
-/// Follow the database until `stop` flips or it shuts down.
-pub async fn run(hub: EventHub, db: Db, stop: watch::Receiver<bool>) {
-    super::follow::follow(
+/// Follow the database on the supervisor until it stops or the database
+/// shuts down.
+pub fn start(supervisor: &Supervisor, hub: EventHub, db: Db) -> Result<(), AlreadyRunning> {
+    super::follow::start(
+        supervisor,
+        JOB_NAME,
         db,
-        stop,
-        "events.revisions",
-        |db| async move { db.read("events.revisions", read_revisions).await },
-        |revisions: &BTreeMap<String, u64>| {
+        |db: Db| async move { db.read("events.revisions", read_revisions).await },
+        move |revisions: &BTreeMap<String, u64>| {
             hub.publish(Event::ActivityChanged(ActivityChanged {
                 id: revision_event_id(revisions),
                 revisions: revisions.clone(),
             }));
         },
     )
-    .await;
 }

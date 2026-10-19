@@ -6,24 +6,19 @@
 //! the rows are cleared and rebuilt at every start. Writes go through the
 //! writer lane's background class, reads through [`Db::read`].
 
-use std::fmt;
-use std::sync::Arc;
-
 use rusqlite::types::Type;
 
 use super::{error::DbError, handle::Db, sql, writer::Lane};
-use crate::clock::Clock;
 
-/// Liveness of a loop row.
+/// Liveness of a loop row. The table's CHECK still allows `idle`, which
+/// nothing writes since every loop runs on the supervisor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobState {
-    /// Registered, not running.
-    Idle,
     /// Running now.
     Running,
     /// Stopped cleanly.
     Stopped,
-    /// Ended on a panic or an abort; `last_error` says which.
+    /// Ended on a panic or a failed one-shot; `last_error` says which.
     Failed,
 }
 
@@ -31,7 +26,6 @@ impl JobState {
     /// Row value in `durable_loops`.
     pub fn as_str(self) -> &'static str {
         match self {
-            JobState::Idle => "idle",
             JobState::Running => "running",
             JobState::Stopped => "stopped",
             JobState::Failed => "failed",
@@ -41,7 +35,6 @@ impl JobState {
     /// Parse a row value back into a state.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
-            "idle" => Some(JobState::Idle),
             "running" => Some(JobState::Running),
             "stopped" => Some(JobState::Stopped),
             "failed" => Some(JobState::Failed),
@@ -116,74 +109,4 @@ pub async fn list_loops(db: &Db) -> Result<Vec<LoopRecord>, DbError> {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     })
     .await
-}
-
-/// Rows for loops that run outside the supervisor and write their own
-/// liveness. Made only by a started supervisor, so no row can be written
-/// before the start clears the table.
-#[derive(Clone)]
-pub struct JobRegistryRows {
-    clock: Arc<dyn Clock>,
-}
-
-impl fmt::Debug for JobRegistryRows {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("JobRegistryRows")
-            .finish_non_exhaustive()
-    }
-}
-
-impl JobRegistryRows {
-    pub(crate) fn new(clock: Arc<dyn Clock>) -> Self {
-        Self { clock }
-    }
-
-    /// Register a loop as idle, keeping the state of a row already there.
-    pub async fn register_job(&self, db: &Db, name: &str) -> Result<(), DbError> {
-        let name = name.to_owned();
-        let now = self.clock.now_ms();
-        db.write(Lane::Background, "durable-loop-register", move |tx| {
-            tx.execute(sql::REGISTER_LOOP.text(), rusqlite::params![name, now])?;
-            Ok(())
-        })
-        .await
-    }
-
-    /// Move a registered loop to a new state.
-    pub async fn set_job_state(&self, db: &Db, name: &str, state: JobState) -> Result<(), DbError> {
-        let name = name.to_owned();
-        let now = self.clock.now_ms();
-        db.write(Lane::Background, "durable-loop-state", move |tx| {
-            let changed = tx.execute(
-                sql::SET_LOOP_STATE.text(),
-                rusqlite::params![state.as_str(), now, name],
-            )?;
-            if changed == 0 {
-                return Err(DbError::WriteFailed {
-                    operation: "durable-loop-state".to_owned(),
-                    cause: "unknown loop".to_owned(),
-                });
-            }
-            Ok(())
-        })
-        .await
-    }
-
-    /// Beat a registered loop's heart without changing its state.
-    pub async fn heartbeat(&self, db: &Db, name: &str) -> Result<(), DbError> {
-        let name = name.to_owned();
-        let now = self.clock.now_ms();
-        db.write(Lane::Background, "durable-loop-heartbeat", move |tx| {
-            let changed = tx.execute(sql::BEAT_LOOP.text(), rusqlite::params![now, name])?;
-            if changed == 0 {
-                return Err(DbError::WriteFailed {
-                    operation: "durable-loop-heartbeat".to_owned(),
-                    cause: "unknown loop".to_owned(),
-                });
-            }
-            Ok(())
-        })
-        .await
-    }
 }

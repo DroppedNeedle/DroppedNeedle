@@ -5,13 +5,16 @@
 //! [`RequestPriority::BackgroundSync`] lane (never the user lane), runs the
 //! identify-owned evidence decision, and finishes the job as linked or
 //! needs-review. Shutdown is a `watch` flag; `LibrarySetup::spawn_loops`
-//! starts the worker through [`spawn_verification_worker`].
+//! starts the worker through [`start_verification`].
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
+use droppedneedle_kernel::jobs::{
+    AlreadyRunning, Next, Schedule, Supervisor, Tick, TickCtx, TickError, TickResult,
+};
 use droppedneedle_providers::slots::RequestPriority;
 
 use super::error::ContribError;
@@ -372,57 +375,53 @@ impl VerificationWorker {
     }
 }
 
-/// Shutdown flag channel: send `true` (or drop the sender) to stop the loop.
-pub fn shutdown_channel() -> (
-    tokio::sync::watch::Sender<bool>,
-    tokio::sync::watch::Receiver<bool>,
-) {
-    tokio::sync::watch::channel(false)
+/// The verification loop's name on the supervisor.
+pub const VERIFICATION_JOB: &str = "library-contrib";
+
+/// Row code of a pass whose lease recovery failed.
+const RECOVER_FAILED: &str = "CONTRIB_RECOVER_FAILED";
+
+/// Start the verification loop on `supervisor`. Each pass, one poll interval
+/// apart, recovers expired leases and drains every due job; a single job's
+/// error is logged and the pass moves on.
+pub fn start_verification(
+    supervisor: &Supervisor,
+    worker: Arc<VerificationWorker>,
+) -> Result<(), AlreadyRunning> {
+    let poll = worker.config.poll_interval;
+    supervisor.periodic(
+        VERIFICATION_JOB,
+        Schedule::new(poll).with_initial_delay(poll),
+        VerificationTick(worker),
+    )
 }
 
-/// Spawn the background verification loop. Each tick recovers expired leases
-/// and drains every due job; any single-job error is logged and the loop
-/// moves on. Returns the join handle; the caller owns supervision.
-pub fn spawn_verification_worker(
-    worker: Arc<VerificationWorker>,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
-) -> tokio::task::JoinHandle<()> {
-    let poll_interval = worker.config.poll_interval;
-    tokio::spawn(async move {
-        let mut shutting_down = *shutdown.borrow_and_update();
-        while !shutting_down {
-            tokio::select! {
-                biased;
-                changed = shutdown.changed() => {
-                    match changed {
-                        Ok(()) => shutting_down = *shutdown.borrow_and_update(),
-                        // Sender dropped: treat as shutdown (v2 executor exit).
-                        Err(_) => shutting_down = true,
-                    }
-                }
-                () = tokio::time::sleep(poll_interval) => {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs_f64())
-                        .unwrap_or(0.0);
-                    if let Err(error) = worker.recover(now).await {
-                        tracing::warn!(%error, "contribution verification leases not recovered");
-                    }
-                    loop {
-                        match worker.run_once(now).await {
-                            Ok(Some(_)) => {}
-                            Ok(None) => break,
-                            Err(error) => {
-                                tracing::warn!(
-                                    error = %error,
-                                    "contribution verification job failed; continuing"
-                                );
-                                break;
-                            }
-                        }
-                    }
+struct VerificationTick(Arc<VerificationWorker>);
+
+impl Tick for VerificationTick {
+    async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
+        let worker = &self.0;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        let recovered = worker.recover(now).await;
+        while !ctx.token().is_cancelled() {
+            match worker.run_once(now).await {
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "contribution verification job failed; continuing"
+                    );
+                    break;
                 }
             }
         }
-    })
+        match recovered {
+            Ok(_) => Ok(Next::Continue),
+            Err(error) => Err(TickError::new(RECOVER_FAILED, error)),
+        }
+    }
 }

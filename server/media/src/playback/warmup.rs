@@ -2,22 +2,17 @@
 //!
 //! Remote catalogs resolve faster when their MusicBrainz id index is warm,
 //! so each integration rebuilds its index off-request: one loop per source
-//! wakes on its interval, rebuilds through the single-flight
-//! registry (so a manual trigger and the loop never rebuild the same index
-//! twice), logs failures and continues. Time and sleep are injected so
-//! tests drive loops with no real waits.
+//! on the loop supervisor, whose name keeps any scope from rebuilding twice
+//! at once. A failed pass is logged and the loop carries on.
 //!
 //! Cadences match v2's task schedule: Jellyfin builds once after a short
 //! startup delay; Navidrome and Plex rebuild every four hours after
-//! theirs. Production wiring: `main` spawns the three
-//! loops with [`TokioSleeper`] over a shutdown watch (see the wiring block
-//! in `mod.rs`), flips the watch after axum serves, and awaits the tasks.
+//! theirs. Nothing starts these loops yet.
 
-use std::{
-    collections::HashSet,
-    future::Future,
-    sync::{Arc, Mutex},
-    time::Duration,
+use std::{future::Future, time::Duration};
+
+use droppedneedle_kernel::jobs::{
+    AlreadyRunning, Next, Schedule, Supervisor, Tick, TickCtx, TickError, TickResult,
 };
 
 /// Jellyfin startup delay in seconds (v2 `warm_jellyfin_mbid_index`).
@@ -28,6 +23,9 @@ pub const NAVIDROME_STARTUP_DELAY: Duration = Duration::from_secs(12);
 pub const PLEX_STARTUP_DELAY: Duration = Duration::from_secs(15);
 /// Navidrome and Plex rebuild cadence (v2 sleeps `14400`, four hours).
 pub const WARMUP_INTERVAL: Duration = Duration::from_secs(14_400);
+
+/// Row code of a failed warmup pass.
+const WARMUP_FAILED: &str = "WARMUP_FAILED";
 
 /// Catalog scopes the loops warm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,12 +39,21 @@ pub enum WarmupScope {
 }
 
 impl WarmupScope {
-    /// Registry key.
+    /// Scope key.
     pub fn key(self) -> &'static str {
         match self {
             Self::Jellyfin => "jellyfin",
             Self::Navidrome => "navidrome",
             Self::Plex => "plex",
+        }
+    }
+
+    /// The scope's loop name on the supervisor.
+    pub fn job_name(self) -> &'static str {
+        match self {
+            Self::Jellyfin => "playback-warmup:jellyfin",
+            Self::Navidrome => "playback-warmup:navidrome",
+            Self::Plex => "playback-warmup:plex",
         }
     }
 
@@ -81,318 +88,59 @@ pub struct WarmupStats {
     pub pruned: usize,
 }
 
-/// Single-flight registry: one live warmup per scope key. `begin` returns
-/// false when the scope already warms; holders must call `finish`.
-#[derive(Debug, Default)]
-pub struct WarmupRegistry {
-    live: Mutex<HashSet<String>>,
-}
-
-impl WarmupRegistry {
-    /// Build an empty registry.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Claim the scope. False means another warmup holds it.
-    pub fn begin(&self, scope: WarmupScope) -> bool {
-        self.live
-            .lock()
-            .map(|mut live| live.insert(scope.key().to_owned()))
-            .unwrap_or(false)
-    }
-
-    /// Release the scope.
-    pub fn finish(&self, scope: WarmupScope) {
-        if let Ok(mut live) = self.live.lock() {
-            live.remove(scope.key());
-        }
-    }
-
-    /// True while the scope warms.
-    pub fn is_live(&self, scope: WarmupScope) -> bool {
-        self.live
-            .lock()
-            .map(|live| live.contains(scope.key()))
-            .unwrap_or(false)
-    }
-}
-
-/// Sleep seam so loops test without real waits. (The discover refresh
-/// loops carry an identical seam; the two could share one sleeper.)
-pub trait Sleeper: Send + Sync {
-    /// Sleep `duration`, returning false when shutdown won the race.
-    fn sleep(&self, duration: Duration) -> impl Future<Output = bool> + Send;
-}
-
-/// Production sleeper over tokio time and a shutdown watch.
-#[derive(Debug, Clone)]
-pub struct TokioSleeper {
-    shutdown: tokio::sync::watch::Receiver<bool>,
-}
-
-impl TokioSleeper {
-    /// Build a sleeper that wakes when `shutdown` flips true.
-    pub fn new(shutdown: tokio::sync::watch::Receiver<bool>) -> Self {
-        Self { shutdown }
-    }
-}
-
-impl Sleeper for TokioSleeper {
-    async fn sleep(&self, duration: Duration) -> bool {
-        let mut shutdown = self.shutdown.clone();
-        tokio::select! {
-            () = tokio::time::sleep(duration) => !*shutdown.borrow(),
-            _ = shutdown.changed() => false,
-        }
-    }
-}
-
-/// Manual sleeper for tests: `wake` releases one waiter, `shut_down`
-/// releases all with false. Requested durations are recorded so tests
-/// can assert the intervals.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone)]
-pub struct ManualSleeper {
-    inner: Arc<ManualSleeperInner>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug)]
-struct ManualSleeperInner {
-    state: Mutex<ManualSleepState>,
-    wake: tokio::sync::Notify,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-struct ManualSleepState {
-    waits: usize,
-    shutdown: bool,
-    requested: Vec<Duration>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ManualSleeper {
-    /// Build a fresh manual sleeper.
-    pub fn new() -> Self {
-        Self {
-            inner: Arc::new(ManualSleeperInner {
-                state: Mutex::new(ManualSleepState::default()),
-                wake: tokio::sync::Notify::new(),
-            }),
-        }
-    }
-
-    /// Release one waiter to continue the loop.
-    pub fn wake(&self) {
-        self.inner.wake.notify_one();
-    }
-
-    /// Shut the loop down: waiters return false.
-    pub fn shut_down(&self) {
-        if let Ok(mut state) = self.inner.state.lock() {
-            state.shutdown = true;
-        }
-        self.inner.wake.notify_waiters();
-    }
-
-    /// Durations the loop requested, in order.
-    pub fn requested(&self) -> Vec<Duration> {
-        self.inner
-            .state
-            .lock()
-            .map(|state| state.requested.clone())
-            .unwrap_or_default()
-    }
-
-    /// Waiters currently parked in `sleep`.
-    pub fn waits(&self) -> usize {
-        self.inner
-            .state
-            .lock()
-            .map(|state| state.waits)
-            .unwrap_or(0)
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Default for ManualSleeper {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Sleeper for ManualSleeper {
-    async fn sleep(&self, duration: Duration) -> bool {
-        if let Ok(mut state) = self.inner.state.lock() {
-            if state.shutdown {
-                return false;
-            }
-            state.requested.push(duration);
-            state.waits += 1;
-        }
-        self.inner.wake.notified().await;
-        if let Ok(mut state) = self.inner.state.lock() {
-            state.waits = state.waits.saturating_sub(1);
-            if state.shutdown {
-                return false;
-            }
-        }
-        true
-    }
-}
-
-/// Run one guarded warmup: skip when the scope already warms, else run
-/// `work`, log failures and continue, always release the claim.
-/// Returns true when the work ran.
-pub async fn warmup_guarded<F, Fut>(registry: &WarmupRegistry, scope: WarmupScope, work: F) -> bool
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<WarmupStats, String>>,
-{
-    if !registry.begin(scope) {
-        return false;
-    }
-    let outcome = work().await;
-    registry.finish(scope);
-    match outcome {
-        Ok(stats) => {
-            tracing::debug!(
-                scope = scope.key(),
-                warmed = stats.warmed,
-                pruned = stats.pruned,
-                "mbid warmup pass done"
-            );
-        }
-        Err(cause) => {
-            tracing::error!(scope = scope.key(), %cause, "mbid warmup failed; continuing");
-        }
-    }
-    true
-}
-
-/// Run the warmup loop for `scope` until the sleeper reports shutdown.
-/// Each loop sleeps its startup delay first (so boot never warms
-/// synchronously), runs one guarded pass, then repeats on the
-/// interval; the one-shot Jellyfin scope returns after its first pass.
-pub async fn run_warmup_loop<S, F, Fut>(
-    registry: Arc<WarmupRegistry>,
-    sleeper: S,
+/// Start the warmup for `scope` on `supervisor`: after the startup delay,
+/// one pass, then one every interval for the scopes that rebuild.
+pub fn start<F, Fut>(
+    supervisor: &Supervisor,
     scope: WarmupScope,
-    mut work: F,
-) where
-    S: Sleeper,
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<WarmupStats, String>>,
-{
-    if !sleeper.sleep(scope.startup_delay()).await {
-        return;
-    }
-    warmup_once(&registry, scope, &mut work).await;
-    let Some(interval) = scope.interval() else {
-        return;
-    };
-    loop {
-        if !sleeper.sleep(interval).await {
-            break;
-        }
-        warmup_once(&registry, scope, &mut work).await;
-    }
-}
-
-/// One guarded loop iteration over borrowed work (the loop body factored
-/// for direct test coverage).
-pub async fn warmup_once<F, Fut>(registry: &WarmupRegistry, scope: WarmupScope, work: F) -> bool
+    work: F,
+) -> Result<(), AlreadyRunning>
 where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<WarmupStats, String>>,
+    F: FnMut() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<WarmupStats, String>> + Send,
 {
-    warmup_guarded(registry, scope, work).await
+    let schedule = Schedule::new(scope.interval().unwrap_or(Duration::ZERO))
+        .with_initial_delay(scope.startup_delay());
+    supervisor.periodic(scope.job_name(), schedule, WarmupTick { scope, work })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+/// One warmup pass.
+struct WarmupTick<F> {
+    scope: WarmupScope,
+    work: F,
+}
 
-    #[tokio::test]
-    async fn concurrent_warmups_single_flight() {
-        let registry = WarmupRegistry::new();
-        let runs = Arc::new(AtomicUsize::new(0));
-        assert!(registry.begin(WarmupScope::Navidrome));
-        let second = warmup_once(&registry, WarmupScope::Navidrome, || {
-            let runs = runs.clone();
-            async move {
-                runs.fetch_add(1, Ordering::SeqCst);
-                Ok(WarmupStats {
-                    scope: "navidrome",
-                    warmed: 0,
-                    pruned: 0,
-                })
+impl<F, Fut> Tick for WarmupTick<F>
+where
+    F: FnMut() -> Fut + Send + 'static,
+    Fut: Future<Output = Result<WarmupStats, String>> + Send,
+{
+    async fn tick(&mut self, _ctx: &TickCtx) -> TickResult {
+        let scope = self.scope;
+        let outcome = (self.work)().await;
+        let next = match scope.interval() {
+            Some(_) => Next::Continue,
+            None => Next::Finish,
+        };
+        match outcome {
+            Ok(stats) => {
+                tracing::debug!(
+                    scope = scope.key(),
+                    warmed = stats.warmed,
+                    pruned = stats.pruned,
+                    "mbid warmup pass done"
+                );
+                Ok(next)
             }
-        })
-        .await;
-        assert!(!second);
-        assert_eq!(runs.load(Ordering::SeqCst), 0);
-        registry.finish(WarmupScope::Navidrome);
-        let third = warmup_once(&registry, WarmupScope::Navidrome, || {
-            let runs = runs.clone();
-            async move {
-                runs.fetch_add(1, Ordering::SeqCst);
-                Ok(WarmupStats {
-                    scope: "navidrome",
-                    warmed: 0,
-                    pruned: 0,
-                })
+            // A one-time warmup that failed is not tried again.
+            Err(cause) if next == Next::Finish => {
+                tracing::error!(scope = scope.key(), %cause, "mbid warmup failed");
+                Ok(next)
             }
-        })
-        .await;
-        assert!(third);
-        assert_eq!(runs.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn failures_log_and_continue() {
-        let registry = WarmupRegistry::new();
-        let runs = Arc::new(AtomicUsize::new(0));
-        let first = warmup_once(&registry, WarmupScope::Plex, || {
-            let runs = runs.clone();
-            async move {
-                runs.fetch_add(1, Ordering::SeqCst);
-                Err("plex down".to_owned())
-            }
-        })
-        .await;
-        assert!(first);
-        assert!(!registry.is_live(WarmupScope::Plex));
-        let second = warmup_once(&registry, WarmupScope::Plex, || {
-            let runs = runs.clone();
-            async move {
-                runs.fetch_add(1, Ordering::SeqCst);
-                Ok(WarmupStats {
-                    scope: "plex",
-                    warmed: 3,
-                    pruned: 1,
-                })
-            }
-        })
-        .await;
-        assert!(second);
-        assert_eq!(runs.load(Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test]
-    async fn jellyfin_is_one_shot() {
-        assert_eq!(WarmupScope::Jellyfin.interval(), None);
-        assert_eq!(
-            WarmupScope::Navidrome.interval(),
-            Some(Duration::from_secs(14_400))
-        );
-        assert_eq!(
-            WarmupScope::Plex.interval(),
-            Some(Duration::from_secs(14_400))
-        );
+            Err(cause) => Err(TickError::new(
+                WARMUP_FAILED,
+                format!("{}: {cause}", scope.key()),
+            )),
+        }
     }
 }

@@ -52,7 +52,7 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-fn rig(tag: &str, examples: &[&str]) -> Rig {
+async fn rig(tag: &str, examples: &[&str]) -> Rig {
     let dir = ScratchDir::new(&format!("plugin-ex-{tag}"));
     for example in examples {
         copy_dir(
@@ -62,7 +62,15 @@ fn rig(tag: &str, examples: &[&str]) -> Rig {
     }
     let crypto = Crypto::from_key_bytes(&[7u8; 32]).unwrap();
     let config = Arc::new(ConfigStore::open(&dir.join("config.json"), crypto).unwrap());
-    let launcher = ProcessLauncher::new(repo().join("sdk/python"));
+    crate::common::migrated_db(&dir.join("app.db"));
+    let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
+        droppedneedle_kernel::db::Db::open_for_tests(&dir.join("app.db")).unwrap(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        droppedneedle_kernel::jobs::CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let launcher = ProcessLauncher::new(repo().join("sdk/python"), supervisor);
     let host = PluginHost::new(dir.join("plugins"), config, Arc::new(launcher));
     host.load_all();
     Rig { dir, host }
@@ -156,7 +164,7 @@ async fn capture_one_request() -> (String, tokio::task::JoinHandle<String>) {
 
 #[tokio::test]
 async fn scrobbler_posts_each_play_to_its_webhook() {
-    let rig = rig("scrobbler", &["webhook-scrobbler"]);
+    let rig = rig("scrobbler", &["webhook-scrobbler"]).await;
     let (url, served) = capture_one_request().await;
     enable(&rig, "webhook-scrobbler", &[("webhook_url", &url)]).await;
     rig.host.dispatch_scrobble(&ScrobbleEvent {
@@ -180,7 +188,7 @@ async fn scrobbler_posts_each_play_to_its_webhook() {
 
 #[tokio::test]
 async fn metadata_and_purchase_links_fill_only_their_own_artist() {
-    let rig = rig("metadata", &["metadata-joke-toy"]);
+    let rig = rig("metadata", &["metadata-joke-toy"]).await;
     enable(&rig, "metadata-joke-toy", &[]).await;
     let found = rig.host.enrich_artist("Test Artist", None).await;
     assert_eq!(found.len(), 1);
@@ -205,7 +213,7 @@ async fn metadata_and_purchase_links_fill_only_their_own_artist() {
 
 #[tokio::test]
 async fn subscriber_publisher_and_routes_round_trip() {
-    let rig = rig("events", &["events-echo-toy"]);
+    let rig = rig("events", &["events-echo-toy"]).await;
     enable(&rig, "events-echo-toy", &[]).await;
     rig.host.dispatch_event(PluginEvent {
         kind: EventKind::DownloadStarted,
@@ -253,7 +261,7 @@ async fn subscriber_publisher_and_routes_round_trip() {
 
 #[tokio::test]
 async fn indexer_and_download_client_pair_across_plugins() {
-    let rig = rig("acquire", &["local-folder-client", "local-folder-indexer"]);
+    let rig = rig("acquire", &["local-folder-client", "local-folder-indexer"]).await;
     let source = rig.dir.join("music-source");
     std::fs::create_dir_all(&source).unwrap();
     std::fs::write(source.join("Test Artist - Fixtures.flac"), b"fLaC").unwrap();
@@ -317,7 +325,7 @@ async fn indexer_and_download_client_pair_across_plugins() {
 
 #[tokio::test]
 async fn scheduler_ticks_and_reports_health() {
-    let rig = rig("scheduler", &["http-catalog"]);
+    let rig = rig("scheduler", &["http-catalog"]).await;
     enable(&rig, "http-catalog", &[]).await;
     assert_eq!(rig.host.desired_ticks()[0].interval_minutes, 60);
     rig.host
@@ -332,7 +340,7 @@ async fn scheduler_ticks_and_reports_health() {
 
 #[tokio::test]
 async fn streaming_source_resolves_inside_its_own_folder() {
-    let rig = rig("stream", &["stream-toy"]);
+    let rig = rig("stream", &["stream-toy"]).await;
     enable(&rig, "stream-toy", &[]).await;
     let stream = rig
         .host
@@ -385,7 +393,7 @@ class Probe:
 
 #[tokio::test]
 async fn crashes_restart_hangs_time_out_and_the_environment_is_scrubbed() {
-    let rig = rig("probe", &[]);
+    let rig = rig("probe", &[]).await;
     let dir = rig.dir.join("plugins").join("probe");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("plugin.toml"), PROBE_MANIFEST).unwrap();

@@ -16,7 +16,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
-use tokio::sync::watch;
 
 use super::adapters::LoftyTagReader;
 use super::clock::now_unix;
@@ -25,7 +24,6 @@ use super::contrib::service::ContributionService;
 use super::contrib::worker::VerificationWorker;
 use super::identify::service::{IdentifyDeps, IdentifyService};
 use super::identify::sqlite::SqliteIdentifyStore;
-use super::loops::{identify_loop, publish_loop, scan_loop, watcher_loop};
 use super::manage::{PreviewEntry, PublishCell};
 use super::scan::coordinator::{
     LibraryScanCoordinator, ResolverSource, ScanEventPublisher, SharedResolver,
@@ -534,64 +532,13 @@ impl LibrarySetup {
         }
     }
 
-    /// Spawn the library background loops over one shutdown watch.
-    /// Returns named handles the caller awaits after serve.
-    pub fn spawn_loops(
+    /// Start the library background loops on `supervisor`. Called after
+    /// startup recovery, from inside the runtime.
+    pub fn start_loops(
         &self,
-        shutdown: watch::Receiver<bool>,
-    ) -> Vec<(&'static str, tokio::task::JoinHandle<()>)> {
-        vec![
-            (
-                "library-scan",
-                tokio::spawn(scan_loop(self.clone(), shutdown.clone())),
-            ),
-            (
-                "library-watcher",
-                tokio::spawn(watcher_loop(self.clone(), shutdown.clone())),
-            ),
-            (
-                "library-identify",
-                tokio::spawn(identify_loop(self.clone(), shutdown.clone())),
-            ),
-            (
-                "library-contrib",
-                super::contrib::worker::spawn_verification_worker(
-                    self.contrib_worker.clone(),
-                    shutdown.clone(),
-                ),
-            ),
-            super::operations::spawn_loop(self, shutdown.clone()),
-            super::management::spawn_loop(self, shutdown.clone()),
-            (
-                "library-leftovers",
-                tokio::spawn(leftover_pass(self.clone(), shutdown.clone())),
-            ),
-            (
-                "library-publish",
-                tokio::spawn(publish_loop(self.clone(), shutdown)),
-            ),
-        ]
-    }
-}
-
-/// Look once, after startup recovery, for hidden files no journal row
-/// names. The walk runs off the async runtime and gives up between two
-/// folders once shutdown starts.
-async fn leftover_pass(setup: LibrarySetup, shutdown: watch::Receiver<bool>) {
-    let walk = tokio::task::spawn_blocking(move || {
-        let registry = setup.live_registry();
-        setup
-            .leftover_files
-            .refresh(&registry, &|| *shutdown.borrow())
-    });
-    match walk.await {
-        Ok(Ok(Some(report))) if report.count > 0 => tracing::warn!(
-            count = report.count,
-            "hidden files no publish journal row names were found; nothing was removed"
-        ),
-        Ok(Ok(_)) => {}
-        Ok(Err(error)) => tracing::warn!(%error, "leftover pass failed"),
-        Err(error) => tracing::warn!(%error, "leftover pass panicked"),
+        supervisor: &droppedneedle_kernel::jobs::Supervisor,
+    ) -> Result<(), droppedneedle_kernel::jobs::AlreadyRunning> {
+        super::loops::start_loops(self, supervisor)
     }
 }
 

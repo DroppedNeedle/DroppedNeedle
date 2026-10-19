@@ -7,7 +7,7 @@
 //! servers are read from the config store on every call. Playback catalog,
 //! history, prefs, and display names read the SQLite schema through a
 //! dedicated rusqlite handle. Remote attribution and scrobble forwarding
-//! drain through the [`MediaWorkers`] boot spawns beside the other loops.
+//! drain through [`MediaWorkers`], one job on the loop supervisor.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
@@ -49,6 +49,7 @@ use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_kernel::runtime_config::sections::{AudioFormat, ConnectApps};
@@ -73,9 +74,16 @@ pub struct MediaSetup {
     pub playback: PlaybackDeps,
 }
 
+/// The media drains' name on the supervisor.
+pub const MEDIA_WORKERS: &str = "media-workers";
+
+/// Every always-on media loop, by name.
+pub const LOOPS: &[&str] = &[MEDIA_WORKERS];
+
 /// The media background drains: remote attribution and scrobble
-/// forwarding. Boot spawns [`MediaWorkers::run`] and awaits it after
-/// serve; both drains exit once every queue handle in the app drops.
+/// forwarding, one [`MEDIA_WORKERS`] job on the supervisor. Both end on the
+/// stop after delivering what was queued, or once every queue handle in
+/// the app drops.
 pub struct MediaWorkers {
     reports: tokio::sync::mpsc::Receiver<crate::playback::reports::QueuedReport>,
     http: reqwest::Client,
@@ -84,11 +92,12 @@ pub struct MediaWorkers {
 }
 
 impl MediaWorkers {
-    /// Drain both queues until the app drops its handles.
-    pub async fn run(self) {
+    /// Drain both queues until `stop` is cancelled or the app drops its
+    /// handles.
+    pub async fn run(self, stop: CancellationToken) {
         tokio::join!(
-            run_report_worker(self.reports, self.http, self.resolver),
-            self.forwards.run(),
+            run_report_worker(self.reports, self.http, self.resolver, stop.clone()),
+            self.forwards.run(stop),
         );
     }
 }

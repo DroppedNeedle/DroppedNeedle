@@ -10,6 +10,8 @@
 
 use std::sync::Arc;
 
+use droppedneedle_kernel::jobs::CancellationToken;
+
 use crate::remotes::adapter::AdapterError;
 use crate::remotes::connections::{ConnectionResolver, ResolveError};
 use crate::remotes::jellyfin::JellyfinAdapter;
@@ -102,7 +104,25 @@ impl RemoteReporters for ReportQueue {
     }
 }
 
-/// Drain attribution reports until every queue handle drops. Each report
+/// The next queued item. Once `stop` is cancelled the queue is closed:
+/// what is already in it still comes out, then `None`, so a clean stop
+/// delivers everything that was queued.
+pub(crate) async fn next_queued<T>(
+    rx: &mut tokio::sync::mpsc::Receiver<T>,
+    stop: &CancellationToken,
+) -> Option<T> {
+    tokio::select! {
+        biased;
+        item = rx.recv() => item,
+        () = stop.cancelled() => {
+            rx.close();
+            rx.recv().await
+        }
+    }
+}
+
+/// Drain attribution reports until every queue handle drops or `stop` is
+/// cancelled, delivering what was queued before the stop. Each report
 /// resolves like v2 `_repo_for`: the reporter's own linked account, else
 /// the shared app account when there is no usable link. A linked account
 /// the upstream rejects is not retried with the shared one; every failure
@@ -111,8 +131,9 @@ pub async fn run_report_worker(
     mut rx: tokio::sync::mpsc::Receiver<QueuedReport>,
     http: reqwest::Client,
     resolver: Arc<ConnectionResolver>,
+    stop: CancellationToken,
 ) {
-    while let Some(queued) = rx.recv().await {
+    while let Some(queued) = next_queued(&mut rx, &stop).await {
         deliver(&queued, &http, resolver.as_ref()).await;
     }
 }

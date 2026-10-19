@@ -92,14 +92,29 @@ fn main() {
         }
     };
     let grace = config.shutdown_grace;
-    let outcome = runtime.block_on(run(config));
+    let stopped = match runtime.block_on(run(config)) {
+        Ok(stopped) => stopped,
+        Err(message) => {
+            // Nothing was serving, so no shutdown spent the grace.
+            runtime.shutdown_timeout(grace);
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+    };
     // Tasks still running (an open stream's connection task, a stuck
-    // blocking call) get the same grace, then the process exits anyway.
-    runtime.shutdown_timeout(grace);
-    if let Err(message) = outcome {
-        eprintln!("{message}");
-        std::process::exit(1);
-    }
+    // blocking call) get what is left of the shutdown's one budget.
+    runtime.shutdown_timeout(stopped.left);
+    // Exit with the data lock still held: a write or file move the shutdown
+    // gave up on may be running until the process ends.
+    let code = match &stopped.outcome {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("{error}");
+            1
+        }
+    };
+    let _held = stopped.data_lock;
+    std::process::exit(code);
 }
 
 /// Print the OpenAPI document as JSON. Logging stays on stderr.
@@ -116,7 +131,7 @@ fn print_openapi() {
 /// Bind, boot, and serve until SIGTERM or Ctrl-C. Binding comes first so
 /// a taken port fails before recovery runs or any loop starts; clients
 /// that connect during boot wait in the listen backlog.
-async fn run(config: AppConfig) -> Result<(), String> {
+async fn run(config: AppConfig) -> Result<bootstrap::Stopped, String> {
     let listener = bootstrap::bind(config.bind_host, config.port)
         .await
         .map_err(|error| error.to_string())?;
@@ -126,9 +141,7 @@ async fn run(config: AppConfig) -> Result<(), String> {
     if let Ok(address) = listener.local_addr() {
         tracing::info!(%address, "listening");
     }
-    bootstrap::serve(listener, router, background, shutdown_signal())
-        .await
-        .map_err(|error| error.to_string())
+    Ok(bootstrap::serve(listener, router, background, shutdown_signal()).await)
 }
 
 /// Resolve when the process should stop: SIGTERM or Ctrl-C.

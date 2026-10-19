@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use tokio::sync::watch;
+use droppedneedle_kernel::jobs::CancellationToken;
 
 use super::fs::FsCoordinator;
 use super::models::{
@@ -762,16 +762,15 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     pub async fn run_once_with_shutdown(
         &self,
         root_paths: &HashMap<String, PathBuf>,
-        shutdown: &watch::Receiver<bool>,
+        shutdown: &CancellationToken,
     ) -> Option<ScanRun> {
-        if *shutdown.borrow() {
+        if shutdown.is_cancelled() {
             return None;
         }
-        let mut shutdown = shutdown.clone();
         let stop = RunStop::default();
         tokio::select! {
             biased;
-            _ = shutdown.changed() => {
+            () = shutdown.cancelled() => {
                 stop.trip();
                 tracing::info!("shutdown: the active scan resumes on the next start");
                 None

@@ -1206,12 +1206,12 @@ async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
     let limit = Duration::from_secs(10);
     tokio::time::timeout(
         limit,
-        supervisor
-            .job_rows()
-            .heartbeat(runtime.db(), checkpoint::JOB_NAME),
+        runtime
+            .db()
+            .write(Lane::Background, "brief-job", |tx| insert_label(tx, "job")),
     )
     .await
-    .expect("a job heartbeat is not held")
+    .expect("a job write is not held")
     .unwrap();
     tokio::time::timeout(
         limit,
@@ -1234,14 +1234,14 @@ async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
         runtime.checkpoint().bulk_held(),
         "a pass that cannot shrink the WAL leaves the hold on"
     );
-    assert_eq!(labels(&lane), ["request"]);
+    assert_eq!(labels(&lane), ["job", "request"]);
 
     drop(reader);
     tokio::time::timeout(Duration::from_secs(5), bulk)
         .await
         .expect("the hold ends once the WAL can shrink, without the loop's next pass")
         .unwrap();
-    assert_eq!(labels(&lane), ["request", "bulk"]);
+    assert_eq!(labels(&lane), ["job", "request", "bulk"]);
     supervisor.shutdown(Duration::from_secs(5)).await;
     runtime.shutdown().await;
 }

@@ -14,16 +14,16 @@
 //! invisible to a stat-only snapshot and surface only through the rolling
 //! schedule or a manual scan.
 //!
-//! This module also owns [`WorkWakeups`] (durable-work revision signals
-//! the supervisor sleeps on) and [`DirtyScopes`] (Hook B marks left by
+//! This module also owns [`WorkWakeups`] (the work revisions the loops
+//! wake on) and [`DirtyScopes`] (Hook B marks left by
 //! settings saves).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
-use tokio::sync::{Notify, watch};
+use droppedneedle_kernel::jobs::CancellationToken;
+use tokio::sync::watch;
 
 use super::fs::is_management_artifact;
 use super::models::{ScanKind, ScanRequest, ScanTrigger};
@@ -135,17 +135,11 @@ pub fn snapshot_tree(root: &Path, stop: &dyn Fn() -> bool) -> std::io::Result<Sn
     Ok(snapshot)
 }
 
-/// Durable-work wakeup revisions (v2 `DurableWorkWakeups`, reduced).
-/// Supervisors sleep on a revision and wake early when notified.
+/// Work wakeups: one revision per kind of work ("scan", "identification")
+/// that the loops wake on. `notify` moves it, from any thread.
 #[derive(Debug, Clone, Default)]
 pub struct WorkWakeups {
-    inner: Arc<WorkWakeupsInner>,
-}
-
-#[derive(Debug, Default)]
-struct WorkWakeupsInner {
-    revisions: Mutex<HashMap<String, u64>>,
-    notify: Notify,
+    kinds: Arc<Mutex<HashMap<String, watch::Sender<u64>>>>,
 }
 
 impl WorkWakeups {
@@ -153,41 +147,30 @@ impl WorkWakeups {
         Self::default()
     }
 
-    pub fn notify(&self, kind: &str) {
-        *self
-            .inner
-            .revisions
+    fn sender(&self, kind: &str) -> watch::Sender<u64> {
+        self.kinds
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .entry(kind.to_owned())
-            .or_insert(0) += 1;
-        self.inner.notify.notify_waiters();
+            .or_insert_with(|| watch::channel(0).0)
+            .clone()
     }
 
+    /// Say that work of `kind` arrived.
+    pub fn notify(&self, kind: &str) {
+        self.sender(kind)
+            .send_modify(|revision| *revision = revision.wrapping_add(1));
+    }
+
+    /// The current revision of `kind`.
     pub fn revision(&self, kind: &str) -> u64 {
-        self.inner
-            .revisions
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(kind)
-            .copied()
-            .unwrap_or(0)
+        *self.sender(kind).borrow()
     }
 
-    /// Wait until `kind` moves past `after_revision` or the timeout
-    /// elapses. Returns true when work arrived.
-    pub async fn wait(&self, kind: &str, after_revision: u64, timeout: Duration) -> bool {
-        let deadline = tokio::time::Instant::now() + timeout;
-        loop {
-            if self.revision(kind) != after_revision {
-                return true;
-            }
-            let now = tokio::time::Instant::now();
-            if now >= deadline {
-                return false;
-            }
-            let _ = tokio::time::timeout_at(deadline, self.inner.notify.notified()).await;
-        }
+    /// A receiver that changes whenever work of `kind` arrives, for a loop
+    /// to wake on.
+    pub fn subscribe(&self, kind: &str) -> watch::Receiver<u64> {
+        self.sender(kind).subscribe()
     }
 }
 
@@ -284,21 +267,21 @@ pub async fn poll_once(
     root_paths: &HashMap<String, PathBuf>,
     pool: &BlockingPool,
     now: f64,
-    shutdown: &watch::Receiver<bool>,
+    stop: &CancellationToken,
 ) -> WatcherAction {
     let poll_interval = settings.poll_interval_seconds.max(MIN_POLL_INTERVAL_SECS);
     let window = settings.batch_window_seconds.max(0.0);
     let enabled = settings.enabled && registry.enabled();
     if enabled {
         for (root_id, root_path) in root_paths {
-            if *shutdown.borrow() {
+            if stop.is_cancelled() {
                 break;
             }
             let path = root_path.clone();
             let pool = pool.clone();
-            let stop = shutdown.clone();
+            let stop = stop.clone();
             let snapshot = pool
-                .run(move || snapshot_tree(&path, &|| *stop.borrow()))
+                .run(move || snapshot_tree(&path, &|| stop.is_cancelled()))
                 .await
                 .unwrap_or_else(|error| Err(std::io::Error::other(error)));
             let snapshot = match snapshot {
@@ -390,18 +373,6 @@ pub fn clear_pending(state: &mut WatcherState) {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn wait_returns_true_on_notify() {
-        let wakeups = WorkWakeups::new();
-        let moved = wakeups.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            moved.notify("scan");
-        });
-        assert!(wakeups.wait("scan", 0, Duration::from_secs(5)).await);
-        assert!(!wakeups.wait("scan", 1, Duration::from_millis(10)).await);
-    }
-
     #[test]
     fn snapshot_records_nested_files_recursively() {
         let scratch =
@@ -419,7 +390,7 @@ mod tests {
 
     #[tokio::test]
     async fn poll_batches_mutation_into_due() {
-        let (_live, quiet) = watch::channel(false);
+        let quiet = CancellationToken::new();
         let scratch =
             droppedneedle_kernel::db::scratch::ScratchDir::new("scan-watch").expect("scratch");
         let root = scratch.to_path_buf();
@@ -472,7 +443,7 @@ mod tests {
 
     #[tokio::test]
     async fn staging_temps_do_not_trip_the_watcher() {
-        let (_live, quiet) = watch::channel(false);
+        let quiet = CancellationToken::new();
         let scratch = droppedneedle_kernel::db::scratch::ScratchDir::new("scan-watch-sidecar")
             .expect("scratch");
         let root = scratch.to_path_buf();

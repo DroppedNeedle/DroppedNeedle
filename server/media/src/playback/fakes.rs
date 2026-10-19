@@ -450,7 +450,7 @@ impl FakeWarmup {
     }
 }
 
-/// Boxed loop work over a shared fake (the shape `spawn_warmup_loops`
+/// Boxed loop work over a shared fake (the shape `warmup::start`
 /// takes).
 pub fn fake_work(
     fake: Arc<FakeWarmup>,

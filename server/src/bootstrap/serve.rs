@@ -1,12 +1,14 @@
 //! Listening, serving and the shutdown order.
 //!
-//! On the stop signal, [`serve`] first tells every background loop to stop
-//! (one watch channel) and ends open event streams, then drains HTTP
-//! connections, stops the supervisor's loops and joins the rest at the same
-//! time, each bounded by `SHUTDOWN_GRACE_PERIOD`. A long stream held open
-//! by a client therefore never keeps scans or downloads running. Whatever
-//! is still running at the bound is aborted with a warning. The database
-//! closes last.
+//! On the stop signal, [`serve`] sets one deadline, `SHUTDOWN_GRACE_PERIOD`
+//! away, and everything after shares it. It cancels the supervisor's token,
+//! the one stop every background loop and plugin process hears, and ends
+//! open event streams. Then it drains HTTP connections while the supervisor
+//! stops its loops, both until the deadline. A long stream held open by a
+//! client therefore never keeps scans or downloads running. Whatever is
+//! still running at the deadline is aborted with a warning. The database
+//! closes last with what is left, and the caller gets the rest for its own
+//! runtime and the data lock to hold until the process exits.
 
 use std::{
     future::{Future, IntoFuture as _},
@@ -16,7 +18,7 @@ use std::{
 
 use axum::Router;
 use thiserror::Error;
-use tokio::{net::TcpListener, sync::watch, task::JoinHandle};
+use tokio::{net::TcpListener, time::Instant};
 
 use droppedneedle_kernel::{
     config::BindHost, db::DbRuntime, db::datalock::DataLock, events::EventHub, jobs::Supervisor,
@@ -24,6 +26,10 @@ use droppedneedle_kernel::{
 
 /// Listen backlog, the usual server default.
 const BACKLOG: i32 = 1024;
+
+/// Past the deadline, the least time the database still gets, the same the
+/// loops' last rows get.
+const LAST_WRITES_FLOOR: Duration = Duration::from_secs(1);
 
 /// Why serving stopped with an error.
 #[derive(Debug, Error)]
@@ -83,137 +89,84 @@ fn dual_stack_listener(address: SocketAddr) -> std::io::Result<TcpListener> {
 /// Background work started at boot, stopped by [`serve`].
 pub struct Background {
     grace: Duration,
-    stop: watch::Sender<bool>,
-    loops: Vec<(&'static str, JoinHandle<()>)>,
-    supervisor: Option<Supervisor>,
-    events: Option<EventHub>,
-    runtime: Option<DbRuntime>,
-    data_lock: Option<DataLock>,
+    supervisor: Supervisor,
+    events: EventHub,
+    runtime: DbRuntime,
+    data_lock: DataLock,
 }
 
 impl Background {
-    /// Empty set with the shutdown bound.
-    pub fn new(grace: Duration) -> Self {
-        let (stop, _) = watch::channel(false);
+    /// The supervisor every loop runs on, whose token is the one stop; the
+    /// hub whose streams end at shutdown; the database, closed last; and
+    /// the data lock, handed back to the caller at the end.
+    pub fn new(
+        grace: Duration,
+        supervisor: Supervisor,
+        events: EventHub,
+        runtime: DbRuntime,
+        data_lock: DataLock,
+    ) -> Self {
         Self {
             grace,
-            stop,
-            loops: Vec::new(),
-            supervisor: None,
-            events: None,
-            runtime: None,
-            data_lock: None,
+            supervisor,
+            events,
+            runtime,
+            data_lock,
         }
-    }
-
-    /// The stop signal loops watch: flips to `true` once, at shutdown.
-    pub fn stop_signal(&self) -> watch::Receiver<bool> {
-        self.stop.subscribe()
-    }
-
-    /// Track one loop task under `name`.
-    pub fn push(&mut self, name: &'static str, task: JoinHandle<()>) {
-        self.loops.push((name, task));
-    }
-
-    /// Track several loop tasks.
-    pub fn extend(&mut self, tasks: impl IntoIterator<Item = (&'static str, JoinHandle<()>)>) {
-        self.loops.extend(tasks);
-    }
-
-    /// Stop this supervisor's loops at shutdown.
-    #[must_use]
-    pub fn with_supervisor(mut self, supervisor: Supervisor) -> Self {
-        self.supervisor = Some(supervisor);
-        self
-    }
-
-    /// End this hub's open event streams the moment shutdown starts, so
-    /// connection draining never waits on them.
-    #[must_use]
-    pub fn with_events(mut self, hub: EventHub) -> Self {
-        self.events = Some(hub);
-        self
-    }
-
-    /// Close this database last at shutdown.
-    #[must_use]
-    pub fn with_runtime(mut self, runtime: DbRuntime) -> Self {
-        self.runtime = Some(runtime);
-        self
-    }
-
-    /// Release the shared data lock only after the database has closed.
-    #[must_use]
-    pub fn with_data_lock(mut self, lock: DataLock) -> Self {
-        self.data_lock = Some(lock);
-        self
-    }
-
-    /// Stop the supervisor's loops and join the other loops, both bounded
-    /// by the grace period. A loop still running at the bound is aborted.
-    async fn stop_work(&mut self) {
-        let grace = self.grace;
-        let supervisor = self.supervisor.clone();
-        let cancel_jobs = async move {
-            if let Some(supervisor) = supervisor {
-                supervisor.shutdown(grace).await;
-            }
-        };
-        let loops = std::mem::take(&mut self.loops);
-        let join_loops =
-            futures_util::future::join_all(loops.into_iter().map(|(name, mut task)| async move {
-                match tokio::time::timeout(grace, &mut task).await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => tracing::warn!(name, %error, "background loop ended early"),
-                    Err(_) => {
-                        tracing::warn!(
-                            name,
-                            ?grace,
-                            "background loop did not stop in time; aborting it"
-                        );
-                        task.abort();
-                    }
-                }
-            }));
-        tokio::join!(cancel_jobs, join_loops);
     }
 }
 
+/// How serving ended.
+#[derive(Debug)]
+pub struct Stopped {
+    /// Whether the HTTP server stopped cleanly.
+    pub outcome: Result<(), ServeError>,
+    /// What is left of the shutdown budget, for the threads still running.
+    pub left: Duration,
+    /// The shared data lock. A write or file move the shutdown gave up on
+    /// may still be running, so the caller holds this until the process
+    /// exits.
+    pub data_lock: DataLock,
+}
+
 /// Serve `router` on `listener` until `signal` resolves (or the server
-/// fails), then shut down in order. Peers reach handlers as
-/// `ConnectInfo<SocketAddr>`.
+/// fails), then shut down in order under one budget of the configured
+/// grace. Peers reach handlers as `ConnectInfo<SocketAddr>`.
 pub async fn serve(
     listener: TcpListener,
     router: Router,
-    mut background: Background,
+    background: Background,
     signal: impl Future<Output = ()> + Send,
-) -> Result<(), ServeError> {
-    let mut draining = background.stop_signal();
+) -> Stopped {
+    let Background {
+        grace,
+        supervisor,
+        events,
+        runtime,
+        data_lock,
+    } = background;
+    let stop = supervisor.token().clone();
     let server = axum::serve(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(async move {
-        let _ = draining.wait_for(|stopped| *stopped).await;
-    });
+    .with_graceful_shutdown(stop.clone().cancelled_owned());
     let mut server = tokio::spawn(server.into_future());
     let ended_early = tokio::select! {
         () = signal => None,
         outcome = &mut server => Some(outcome),
     };
-    // Loops and the HTTP drain hear the signal together. Event streams
-    // never end on their own, so they close here, before draining starts.
-    background.stop.send_replace(true);
-    if let Some(events) = &background.events {
-        events.close();
-    }
-    let grace = background.grace;
+    // One deadline for everything below. Loops, plugin processes and the
+    // HTTP drain hear the stop together. Event streams never end on their
+    // own, so they close here, before draining starts.
+    let deadline = Instant::now() + grace;
+    stop.cancel();
+    events.close();
     let drain = async {
         if let Some(outcome) = ended_early {
             return outcome;
         }
-        match tokio::time::timeout(grace, &mut server).await {
+        match tokio::time::timeout_at(deadline, &mut server).await {
             Ok(outcome) => outcome,
             Err(_) => {
                 tracing::warn!(
@@ -225,15 +178,24 @@ pub async fn serve(
             }
         }
     };
-    let (served, ()) = tokio::join!(drain, background.stop_work());
-    if let Some(runtime) = background.runtime.take() {
-        runtime.shutdown().await;
-    }
-    drop(background.data_lock.take());
+    let (served, ()) = tokio::join!(
+        drain,
+        supervisor.shutdown(deadline.saturating_duration_since(Instant::now()))
+    );
+    // The database gets what is left, with the same floor the loops' last
+    // rows get, so a write queued at the deadline still has a moment.
+    let last = deadline + LAST_WRITES_FLOOR;
+    runtime
+        .shutdown_within(last.saturating_duration_since(Instant::now()))
+        .await;
     tracing::info!("shutdown complete");
-    match served {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(error)) => Err(ServeError::Io(error)),
-        Err(error) => Err(ServeError::Task(error.to_string())),
+    Stopped {
+        outcome: match served {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(ServeError::Io(error)),
+            Err(error) => Err(ServeError::Task(error.to_string())),
+        },
+        left: last.saturating_duration_since(Instant::now()),
+        data_lock,
     }
 }

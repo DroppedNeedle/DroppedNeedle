@@ -5,7 +5,11 @@ use std::time::Duration;
 
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
-use tokio::sync::watch;
+use droppedneedle_kernel::jobs::{
+    AlreadyRunning, CancellationToken, Next, Schedule, Supervisor, Tick, TickCtx, TickError,
+    TickResult,
+};
+use tokio::runtime::Handle;
 
 use super::clock::{now_ms, now_unix, today_day};
 use super::publish::PublishError;
@@ -19,17 +23,54 @@ use super::scan::watcher::{
 };
 use super::wiring::LibrarySetup;
 
-/// Scan supervisor idle ceiling. The supervisor's 47s recovery ceiling
-/// cannot wait on shutdown, so the wired loop re-checks the watch
-/// every 5s; operator-visible behavior is identical.
+/// The library's always-on loops on the supervisor.
+pub const SCAN_JOB: &str = "library-scan";
+/// The filesystem watcher.
+pub const WATCHER_JOB: &str = "library-watcher";
+/// The identification queue.
+pub const IDENTIFY_JOB: &str = "library-identify";
+/// Publish maintenance.
+pub const PUBLISH_JOB: &str = "library-publish";
+/// The one look for leftover hidden files after startup recovery.
+pub const LEFTOVERS_JOB: &str = "library-leftovers";
+
+/// Every always-on library loop, by name.
+pub const LOOPS: &[&str] = &[
+    SCAN_JOB,
+    WATCHER_JOB,
+    IDENTIFY_JOB,
+    super::contrib::worker::VERIFICATION_JOB,
+    super::operations::JOB_NAME,
+    super::management::JOB_NAME,
+    PUBLISH_JOB,
+];
+
+/// Scan idle ceiling: how often the scan loop looks for scheduled work
+/// when nothing wakes it.
 const SUPERVISOR_IDLE_CEILING: Duration = Duration::from_secs(5);
+
+/// Longest backoff after failed scan turns, short so a failing run never
+/// keeps a requested scan waiting for long.
+const SCAN_BACKOFF_CAP: Duration = Duration::from_secs(30);
 
 /// Identify queue poll cadence.
 const IDENTIFY_POLL: Duration = Duration::from_secs(2);
 
-/// After a tick that hit a store error the loop waits from
-/// [`IDENTIFY_POLL`], doubling up to this, plus up to a fifth more.
+/// After a drain that hit a store error the loop backs off from 2 s,
+/// doubling up to this, plus up to [`IDENTIFY_JITTER`].
 const IDENTIFY_BACKOFF_CAP: Duration = Duration::from_secs(60);
+const IDENTIFY_JITTER: Duration = Duration::from_secs(2);
+
+/// Row code of a drain that hit a store error.
+const IDENTIFY_STORE_FAILED: &str = "IDENTIFY_STORE_FAILED";
+/// Row code of a publish maintenance tick that failed.
+const PUBLISH_FAILED: &str = "PUBLISH_MAINTENANCE_FAILED";
+/// Row code of a watcher tick that did not run.
+const WATCHER_FAILED: &str = "WATCHER_TICK_FAILED";
+/// Row code of a turn the database runtime refused to wait in.
+const TICK_REFUSED: &str = "LIBRARY_TICK_REFUSED";
+/// Row code of a turn that panicked.
+const TICK_PANICKED: &str = "LIBRARY_TICK_PANICKED";
 
 /// A job the database was too busy to run waits this long, plus up to as
 /// much again, keeping its attempts.
@@ -91,28 +132,23 @@ impl LibrarySetup {
 
     /// One shutdown-aware supervisor iteration: same Hook B, schedule,
     /// and worker semantics as [`supervisor_tick`](Self::supervisor_tick),
-    /// but a signalled shutdown stops the in-flight scan instead of
-    /// waiting it out. The stop goes through the regular control latch,
-    /// so the walk and index checkpoints settle the run to cancelled
-    /// on their next check and the next start resumes cleanly. A
-    /// pre-signalled shutdown claims no new work.
-    pub async fn supervisor_tick_with_shutdown(&self, shutdown: &watch::Receiver<bool>) -> bool {
+    /// but a cancelled `stop` ends the in-flight scan instead of waiting
+    /// it out. The run keeps its state and the next start resumes it. A
+    /// stop already cancelled claims no new work.
+    pub async fn supervisor_tick_with_shutdown(&self, stop: &CancellationToken) -> bool {
         self.refresh_registry();
-        supervise_once_with_shutdown(&self.coordinator, &self.supervisor_inputs(), shutdown).await
+        supervise_once_with_shutdown(&self.coordinator, &self.supervisor_inputs(), stop).await
     }
 
     /// One watcher tick over the persistent watcher state.
     pub async fn watcher_tick(&self) -> WatcherAction {
-        let (_live, quiet) = watch::channel(false);
-        self.watcher_tick_with_shutdown(&quiet).await
+        self.watcher_tick_with_shutdown(&CancellationToken::new())
+            .await
     }
 
-    /// One watcher tick that stops its tree snapshot once `shutdown` is
-    /// signalled; an interrupted root keeps its previous baseline.
-    pub async fn watcher_tick_with_shutdown(
-        &self,
-        shutdown: &watch::Receiver<bool>,
-    ) -> WatcherAction {
+    /// One watcher tick that stops its tree snapshot once `stop` is
+    /// cancelled; an interrupted root keeps its previous baseline.
+    pub async fn watcher_tick_with_shutdown(&self, stop: &CancellationToken) -> WatcherAction {
         // The state swaps out and back so no mutex guard crosses the
         // snapshot await.
         let mut state = {
@@ -131,7 +167,7 @@ impl LibrarySetup {
             &(self.root_dirs)(),
             &self.pool,
             now_unix(),
-            shutdown,
+            stop,
         )
         .await;
         if matches!(action, WatcherAction::Due) {
@@ -184,32 +220,28 @@ impl LibrarySetup {
     /// from the scan catalog plus disk tag reads, and run each
     /// attempt. Returns jobs attempted.
     pub async fn identify_tick(&self) -> usize {
-        // No signal: the sender stays alive so the watch never fires
-        // and the drain runs exactly as before.
-        let (_live, quiet) = watch::channel(false);
-        self.identify_tick_with_shutdown(&quiet).await
+        self.identify_tick_with_shutdown(&CancellationToken::new())
+            .await
     }
 
     /// Shutdown-aware drain: same claim order and per-attempt
     /// semantics as [`identify_tick`](Self::identify_tick), but a
-    /// signalled shutdown abandons the drain instead of pacing out
-    /// the whole queue at one MusicBrainz gate slot per attempt. The
-    /// signal is checked before each claim, before each gated
-    /// attempt, and across the attempt itself, so SIGTERM mid-drain
-    /// yields promptly. A claimed-but-unfinished job keeps its lease;
+    /// cancelled `stop` abandons the drain instead of pacing out the
+    /// whole queue at one MusicBrainz gate slot per attempt. The stop is
+    /// checked before each claim, before each gated attempt, and across
+    /// the attempt itself, so a shutdown mid-drain yields promptly. A claimed-but-unfinished job keeps its lease;
     /// boot recovery (or the lease running out) puts it back in the
     /// queue.
-    pub async fn identify_tick_with_shutdown(&self, shutdown: &watch::Receiver<bool>) -> usize {
-        self.identify_drain(shutdown).await.attempted
+    pub async fn identify_tick_with_shutdown(&self, stop: &CancellationToken) -> usize {
+        self.identify_drain(stop).await.attempted
     }
 
     /// [`identify_tick_with_shutdown`](Self::identify_tick_with_shutdown),
     /// also saying whether a store call failed, so the loop backs off.
-    async fn identify_drain(&self, shutdown: &watch::Receiver<bool>) -> Drain {
+    async fn identify_drain(&self, stop: &CancellationToken) -> Drain {
         let mut drain = Drain::default();
-        let mut shutdown = shutdown.clone();
         loop {
-            if *shutdown.borrow() {
+            if stop.is_cancelled() {
                 break;
             }
             // Artist links follow every change of a match, whoever made it,
@@ -229,7 +261,7 @@ impl LibrarySetup {
             let job = match claimed {
                 Ok(Some(job)) => job,
                 Ok(None) => {
-                    self.resolve_merged_artist_ids(IDLE_ARTIST_LOOKUPS, &mut shutdown)
+                    self.resolve_merged_artist_ids(IDLE_ARTIST_LOOKUPS, stop)
                         .await;
                     break;
                 }
@@ -242,7 +274,7 @@ impl LibrarySetup {
             let attempt = self.identify.run_claimed_job(&job.id, now_ms());
             tokio::select! {
                 biased;
-                _ = shutdown.changed() => break,
+                () = stop.cancelled() => break,
                 report = attempt => match report {
                     Ok(Some(report)) => {
                         drain.attempted += 1;
@@ -261,7 +293,7 @@ impl LibrarySetup {
                         // An artist id the pass found disagreeing may be one
                         // MusicBrainz merged; asking now lets the answer land
                         // before a managed run writes the current id.
-                        self.resolve_merged_artist_ids(ATTEMPT_ARTIST_LOOKUPS, &mut shutdown)
+                        self.resolve_merged_artist_ids(ATTEMPT_ARTIST_LOOKUPS, stop)
                             .await;
                         // A settled match is what automatic management
                         // waits for after a scan finds an album.
@@ -353,13 +385,13 @@ impl LibrarySetup {
     /// Ask MusicBrainz about up to `limit` artist ids the passes found
     /// disagreeing, unless identification is paused. Shutdown stops the
     /// lookups; an id not answered stays pending.
-    async fn resolve_merged_artist_ids(&self, limit: usize, shutdown: &mut watch::Receiver<bool>) {
-        if *shutdown.borrow() || self.identification_paused() {
+    async fn resolve_merged_artist_ids(&self, limit: usize, stop: &CancellationToken) {
+        if stop.is_cancelled() || self.identification_paused() {
             return;
         }
         tokio::select! {
             biased;
-            _ = shutdown.changed() => {}
+            () = stop.cancelled() => {}
             resolved = self.identify.resolve_merged_artist_ids(limit) => {
                 if let Err(error) = resolved {
                     tracing::warn!(%error, "artist id lookups stopped on a store error");
@@ -419,184 +451,233 @@ impl LibrarySetup {
 }
 
 // ---------------------------------------------------------------------------
-// Background loops. Thin shutdown-aware shells over the tick methods.
+// Background loops on the supervisor, over the tick methods above.
 // ---------------------------------------------------------------------------
 
-/// Scan supervisor loop: Hook A preamble, then drive-until-idle with
-/// a shutdown-checked ceiling. The tick itself is shutdown-aware, so a
-/// SIGTERM landing mid-scan stops the run instead of waiting it out.
-pub(crate) async fn scan_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
-    {
-        let setup = setup.clone();
-        drive_blocking(move || async move { setup.scan_startup_recovery().await }).await;
-    }
+/// Start the library's loops on `supervisor`: the always-on [`LOOPS`] and
+/// the one [`LEFTOVERS_JOB`] look. Called from inside the runtime, after
+/// startup recovery.
+pub(crate) fn start_loops(
+    setup: &LibrarySetup,
+    supervisor: &Supervisor,
+) -> Result<(), AlreadyRunning> {
+    let handle = Handle::current();
+    let mut scans = setup.wakeups.subscribe("scan");
+    // The first turn runs at once: startup recovery, then any work queued.
+    scans.mark_changed();
+    supervisor.on_wakeup_blocking(
+        SCAN_JOB,
+        scans,
+        Schedule::new(SUPERVISOR_IDLE_CEILING)
+            .with_backoff(Duration::from_secs(1), SCAN_BACKOFF_CAP),
+        scan_tick(setup.clone(), handle.clone()),
+    )?;
+    supervisor.periodic(
+        WATCHER_JOB,
+        Schedule::new(Duration::ZERO).with_backoff(Duration::from_secs(1), Duration::from_secs(60)),
+        WatcherTick {
+            setup: setup.clone(),
+            handle: handle.clone(),
+        },
+    )?;
+    let mut identification = setup.wakeups.subscribe("identification");
+    identification.mark_changed();
+    supervisor.on_wakeup_blocking(
+        IDENTIFY_JOB,
+        identification,
+        Schedule::new(IDENTIFY_POLL)
+            .with_jitter(IDENTIFY_JITTER)
+            .with_backoff(Duration::from_secs(1), IDENTIFY_BACKOFF_CAP),
+        identify_tick(setup.clone(), handle),
+    )?;
+    super::contrib::worker::start_verification(supervisor, setup.contrib_worker.clone())?;
+    super::operations::start(setup, supervisor)?;
+    super::management::start(setup, supervisor)?;
+    let leftovers = setup.clone();
+    supervisor.one_shot(LEFTOVERS_JOB, move |ctx| leftover_pass(leftovers, ctx))?;
+    let publish = setup.clone();
+    supervisor.periodic_blocking(
+        PUBLISH_JOB,
+        Schedule::new(PUBLISH_MAINTENANCE).with_initial_delay(PUBLISH_MAINTENANCE),
+        move |_ctx| match caught("publish maintenance", || publish.publish_tick())? {
+            Ok(_) => Ok(Next::Continue),
+            Err(error) => Err(TickError::new(PUBLISH_FAILED, error)),
+        },
+    )
+}
+
+/// Run `work`, a panic turned into a failed turn: the loop backs off and
+/// carries on, as a panicked turn always has.
+fn caught<T>(what: &'static str, work: impl FnOnce() -> T) -> Result<T, TickError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+        .map_err(|_| TickError::new(TICK_PANICKED, format!("{what} panicked")))
+}
+
+/// Drive one async turn to completion on this blocking thread. The scan
+/// and identify stores are synchronous SQLite, so their turns run on a
+/// blocking thread and never stall the async workers that serve requests.
+fn drive<F: std::future::Future>(
+    handle: &Handle,
+    what: &'static str,
+    turn: F,
+) -> Result<F::Output, TickError> {
+    caught(what, || {
+        droppedneedle_kernel::db::block_on(handle, what, turn)
+    })?
+    .map_err(|error| TickError::new(TICK_REFUSED, format!("{what}: {error}")))
+}
+
+/// The scan loop's turn: startup recovery once, then every run that is
+/// due until none is left, then the album art and lyrics sweeps when a run
+/// changed something. A cancelled stop ends the run in flight; the next
+/// start resumes it.
+fn scan_tick(
+    setup: LibrarySetup,
+    handle: Handle,
+) -> impl FnMut(&TickCtx) -> TickResult + Send + 'static {
+    let mut recovered = false;
     // Album art and the lyrics marks are refreshed once the scans go idle,
     // and once at boot.
     let mut sweeps_due = true;
-    loop {
-        if *shutdown.borrow() {
-            break;
+    move |ctx| {
+        let stop = ctx.token();
+        if !recovered {
+            recovered = true;
+            if let Err(error) = drive(
+                &handle,
+                "library_scan_recovery",
+                setup.scan_startup_recovery(),
+            ) {
+                tracing::error!(%error, "scan startup recovery did not run");
+            }
         }
-        let revision = setup.wakeups.revision("scan");
-        let tick = {
-            let (setup, shutdown) = (setup.clone(), shutdown.clone());
-            drive_blocking(
-                move || async move { setup.supervisor_tick_with_shutdown(&shutdown).await },
-            )
-            .await
-        };
-        if tick == Some(true) {
+        let mut revision = setup.wakeups.revision("scan");
+        while !stop.is_cancelled() {
+            revision = setup.wakeups.revision("scan");
+            if !drive(
+                &handle,
+                "library_scan_tick",
+                setup.supervisor_tick_with_shutdown(stop),
+            )? {
+                break;
+            }
             sweeps_due = true;
-            continue;
+            ctx.heartbeat();
         }
-        if sweeps_due {
-            // The sweeps give way to shutdown and to any scan request (a
-            // wakeup, or a queued run), and resume on a later pass.
-            let (sweep_setup, shutdown) = (setup.clone(), shutdown.clone());
-            let swept = drive_blocking(move || async move {
-                let wakeups = sweep_setup.wakeups.clone();
-                let coordinator = sweep_setup.coordinator.clone();
-                let polls = std::cell::Cell::new(0u32);
-                let stop = || {
-                    polls.set(polls.get().wrapping_add(1));
-                    *shutdown.borrow()
-                        || wakeups.revision("scan") != revision
-                        || (polls.get() % 32 == 0 && !coordinator.current().is_empty())
-                };
-                // A catalog that cannot be read is logged and leaves the
-                // sweep due, so a later pass runs it again.
-                let artwork = sweep_setup.scan_store.refresh_album_artwork(&stop);
-                let lyrics = sweep_setup.scan_store.refresh_track_lyrics(&stop);
-                match (artwork, lyrics) {
-                    (Ok(artwork), Ok(lyrics)) => artwork.complete && lyrics.complete,
-                    (artwork, lyrics) => {
-                        for error in [artwork.err(), lyrics.err()].into_iter().flatten() {
-                            tracing::warn!(%error, "library sweep could not read the catalog");
-                        }
-                        false
-                    }
+        if sweeps_due && !stop.is_cancelled() {
+            // A sweep of its own: a panic there waits for the next scan and
+            // never holds up the runs.
+            sweeps_due = match caught("library sweep", || setup.sweep(revision, stop)) {
+                Ok(complete) => !complete,
+                Err(error) => {
+                    tracing::error!(%error, "library sweep panicked; it waits for the next scan");
+                    false
                 }
-            })
-            .await;
-            // A panicked sweep (already logged) waits for the next scan.
-            sweeps_due = swept.is_some_and(|complete| !complete);
+            };
         }
-        tokio::select! {
-            _ = shutdown.changed() => break,
-            _ = setup.wakeups.wait("scan", revision, SUPERVISOR_IDLE_CEILING) => {}
+        Ok(Next::Continue)
+    }
+}
+
+impl LibrarySetup {
+    /// Refresh album art and the lyrics marks, giving way to a stop and to
+    /// any scan request (a wakeup past `revision`, or a queued run). True
+    /// when both finished; a catalog that cannot be read is logged and
+    /// leaves the sweep due.
+    fn sweep(&self, revision: u64, stop: &CancellationToken) -> bool {
+        let polls = std::cell::Cell::new(0u32);
+        let give_way = || {
+            polls.set(polls.get().wrapping_add(1));
+            stop.is_cancelled()
+                || self.wakeups.revision("scan") != revision
+                || (polls.get() % 32 == 0 && !self.coordinator.current().is_empty())
+        };
+        let artwork = self.scan_store.refresh_album_artwork(&give_way);
+        let lyrics = self.scan_store.refresh_track_lyrics(&give_way);
+        match (artwork, lyrics) {
+            (Ok(artwork), Ok(lyrics)) => artwork.complete && lyrics.complete,
+            (artwork, lyrics) => {
+                for error in [artwork.err(), lyrics.err()].into_iter().flatten() {
+                    tracing::warn!(%error, "library sweep could not read the catalog");
+                }
+                false
+            }
         }
     }
 }
 
-/// Filesystem watcher loop: snapshot, batch, request on due.
-pub(crate) async fn watcher_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
-    loop {
-        if *shutdown.borrow() {
-            break;
+/// The identify loop's turn: drain every due job. A store error backs the
+/// loop off; a resume wakes it at once.
+fn identify_tick(
+    setup: LibrarySetup,
+    handle: Handle,
+) -> impl FnMut(&TickCtx) -> TickResult + Send + 'static {
+    move |ctx| {
+        let drain = drive(
+            &handle,
+            "library_identify_tick",
+            setup.identify_drain(ctx.token()),
+        )?;
+        if drain.store_failed {
+            return Err(TickError::new(
+                IDENTIFY_STORE_FAILED,
+                "a store call failed during the drain",
+            ));
         }
-        // A snapshot of a large tree takes a while; shutdown does not wait
+        Ok(Next::Continue)
+    }
+}
+
+/// The filesystem watcher's turn: snapshot, batch, request on due, then
+/// wait as long as the saved settings say.
+struct WatcherTick {
+    setup: LibrarySetup,
+    handle: Handle,
+}
+
+impl Tick for WatcherTick {
+    async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
+        let (setup, handle, stop) = (self.setup.clone(), self.handle.clone(), ctx.token().clone());
+        // A snapshot of a large tree takes a while; the stop does not wait
         // for it.
-        let tick = {
-            let (setup, shutdown) = (setup.clone(), shutdown.clone());
-            drive_blocking(move || async move { setup.watcher_tick_with_shutdown(&shutdown).await })
-        };
-        let action = tokio::select! {
-            _ = shutdown.changed() => break,
-            action = tick => action.unwrap_or(WatcherAction::Idle {
-                sleep_secs: setup.watcher_settings().poll_interval_seconds,
-            }),
-        };
+        let action = tokio::task::spawn_blocking(move || {
+            drive(
+                &handle,
+                "library_watcher_tick",
+                setup.watcher_tick_with_shutdown(&stop),
+            )
+        })
+        .await
+        .map_err(|error| TickError::new(WATCHER_FAILED, error))??;
         let sleep_secs = match action {
             WatcherAction::Idle { sleep_secs } | WatcherAction::Batching { sleep_secs } => {
                 sleep_secs.max(0.0)
             }
-            WatcherAction::Due => setup.watcher_settings().poll_interval_seconds.max(1.0),
+            WatcherAction::Due => self.setup.watcher_settings().poll_interval_seconds.max(1.0),
         };
-        tokio::select! {
-            _ = shutdown.changed() => break,
-            _ = tokio::time::sleep(Duration::from_secs_f64(sleep_secs)) => {}
-        }
+        ctx.sleep(Duration::from_secs_f64(sleep_secs)).await;
+        Ok(Next::Continue)
     }
 }
 
-/// Identify queue loop: drain every due job each tick.
-pub(crate) async fn identify_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
-    let mut rng = SplitMix64::new(SplitMix64::seed_from_time());
-    let mut failures: u32 = 0;
-    loop {
-        if *shutdown.borrow() {
-            break;
-        }
-        let revision = setup.wakeups.revision("identification");
-        let drain = {
-            let (setup, shutdown) = (setup.clone(), shutdown.clone());
-            drive_blocking(move || async move { setup.identify_drain(&shutdown).await }).await
-        };
-        if drain.is_some_and(|drain| drain.store_failed) {
-            failures = failures.saturating_add(1);
-            let wait = IDENTIFY_POLL
-                .saturating_mul(1 << (failures - 1).min(5))
-                .min(IDENTIFY_BACKOFF_CAP);
-            let wait = wait + rng.below_duration(wait / 5);
-            tokio::select! {
-                _ = shutdown.changed() => break,
-                _ = tokio::time::sleep(wait) => {}
-            }
-            continue;
-        }
-        failures = 0;
-        // Resume wakes the loop at once; otherwise it polls.
-        tokio::select! {
-            _ = shutdown.changed() => break,
-            _ = setup.wakeups.wait("identification", revision, IDENTIFY_POLL) => {}
-        }
-    }
-}
-
-/// Drive one loop tick to completion on a blocking thread. The scan and
-/// identify stores are synchronous SQLite (their calls can wait out the
-/// busy timeout), so their ticks run here and never stall the async
-/// workers that serve requests. `None` when the tick panicked.
-async fn drive_blocking<F, Fut>(tick: F) -> Option<Fut::Output>
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: std::future::Future,
-    Fut::Output: Send + 'static,
-{
-    let handle = tokio::runtime::Handle::current();
-    let driven = tokio::task::spawn_blocking(move || {
-        droppedneedle_kernel::db::block_on(&handle, "library_loop_tick", tick())
+/// Look once for hidden files no journal row names. The walk runs off the
+/// async runtime and gives up between two folders once the stop comes.
+async fn leftover_pass(setup: LibrarySetup, ctx: TickCtx) -> Result<(), TickError> {
+    let stop = ctx.token().clone();
+    let walk = tokio::task::spawn_blocking(move || {
+        let registry = setup.live_registry();
+        setup
+            .leftover_files
+            .refresh(&registry, &|| stop.is_cancelled())
     });
-    match driven.await {
-        Ok(Ok(output)) => Some(output),
-        Ok(Err(error)) => {
-            tracing::error!(%error, "library loop tick refused");
-            None
-        }
-        Err(error) => {
-            tracing::error!(%error, "library loop tick panicked");
-            None
-        }
+    match walk.await {
+        Ok(Ok(Some(report))) if report.count > 0 => tracing::warn!(
+            count = report.count,
+            "hidden files no publish journal row names were found; nothing was removed"
+        ),
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => tracing::warn!(%error, "leftover pass failed"),
+        Err(error) => tracing::warn!(%error, "leftover pass panicked"),
     }
-}
-
-/// Publish maintenance loop: snapshot purge plus preview sweep.
-pub(crate) async fn publish_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
-    loop {
-        tokio::select! {
-            _ = shutdown.changed() => break,
-            _ = tokio::time::sleep(PUBLISH_MAINTENANCE) => {}
-        }
-        if *shutdown.borrow() {
-            break;
-        }
-        // The tick is sync blocking work (mutexes, spin-guards, sqlite):
-        // keep it off the async runtime.
-        let tick_setup = setup.clone();
-        match tokio::task::spawn_blocking(move || tick_setup.publish_tick()).await {
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => tracing::warn!(%error, "publish maintenance tick failed"),
-            Err(error) => tracing::warn!(%error, "publish maintenance tick panicked"),
-        }
-    }
+    Ok(())
 }

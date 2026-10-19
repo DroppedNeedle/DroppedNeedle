@@ -289,6 +289,7 @@ async fn precache_second_run_is_409_while_live() {
             Duration::from_secs(60),
             Duration::from_secs(600),
         ),
+        |_| {},
     )
     .expect("held run starts");
     let (status, body) = call(rig.admin_app(), "POST", "/admin/precache/run", None).await;
@@ -797,6 +798,9 @@ async fn queue_stats_shows_every_boot_loop_running() {
         droppedneedle_kernel::jobs::BOOT_JOBS
             .iter()
             .chain(droppedneedle_acquire::wiring::ACQUIRE_LOOPS)
+            .chain(droppedneedle_kernel::events::LOOPS)
+            .chain(droppedneedle_library::LOOPS)
+            .chain(droppedneedle_media::LOOPS)
             .all(|name| {
                 jobs.iter()
                     .any(|job| job["name"] == *name && job["state"] == "running")

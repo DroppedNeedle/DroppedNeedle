@@ -20,7 +20,7 @@ use contrib::seams::*;
 use contrib::service::ContributionService;
 use contrib::sqlite::SqliteContributions;
 use contrib::worker::{
-    VerificationWorker, VerificationWorkerConfig, shutdown_channel, spawn_verification_worker,
+    VERIFICATION_JOB, VerificationWorker, VerificationWorkerConfig, start_verification,
 };
 use droppedneedle_library::adapters::MatchingAttachmentEvidence;
 use droppedneedle_providers::slots::RequestPriority;
@@ -1666,8 +1666,14 @@ async fn brief_worker_spawn_loop_links_then_shuts_down() {
             lease_seconds: 90.0,
         },
     ));
-    let (shutdown_tx, shutdown_rx) = shutdown_channel();
-    let handle = spawn_verification_worker(worker, shutdown_rx);
+    let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
+        droppedneedle_kernel::db::Db::open_for_tests(&rig._dir.join("app.db")).unwrap(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        droppedneedle_kernel::jobs::CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    start_verification(&supervisor, worker).unwrap();
     // Each sleep lets the loop pass its interval. The pass's store calls run
     // on blocking threads, and the paused clock jumps ahead while they run,
     // so the bound is wall-clock time, not a count of virtual sleeps.
@@ -1682,19 +1688,21 @@ async fn brief_worker_spawn_loop_links_then_shuts_down() {
         ContributionState::Linked,
         "worker loop should link the contribution"
     );
-    shutdown_tx.send(true).unwrap();
     // A pass already running finishes its store calls on blocking threads
     // first. The paused clock jumps ahead while they run, so the bound is
     // wall-clock time, not virtual time.
+    supervisor.token().cancel();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while !handle.is_finished() {
+    while supervisor.is_running(VERIFICATION_JOB) {
         assert!(
             std::time::Instant::now() < deadline,
             "worker loop should shut down"
         );
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    handle.await.unwrap();
+    supervisor
+        .shutdown(std::time::Duration::from_secs(30))
+        .await;
 }
 
 // ---------------------------------------------------------------------------

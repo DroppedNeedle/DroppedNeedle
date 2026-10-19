@@ -136,17 +136,18 @@ impl PrecacheTrigger {
         user_id: Option<String>,
     ) -> Result<precache::PrecacheHandle, AlreadyRunning> {
         let Some(sources) = self.sources.clone() else {
-            return precache::spawn_run(&self.supervisor, UnwiredPrecacheWork, self.limits());
+            return precache::spawn_run(
+                &self.supervisor,
+                UnwiredPrecacheWork,
+                self.limits(),
+                |_| {},
+            );
         };
         let work = LibraryPrecache::new(sources, self.status.clone(), user_id);
         let settler = work.settler();
-        let handle = precache::spawn_run(&self.supervisor, work, self.limits())?;
-        let waiter = handle.clone();
-        tokio::spawn(async move {
-            let outcome = waiter.wait().await;
-            settler.settle(&outcome);
-        });
-        Ok(handle)
+        precache::spawn_run(&self.supervisor, work, self.limits(), move |outcome| {
+            settler.settle(outcome);
+        })
     }
 
     /// The hook completed scans call, as v2 refreshed after every library

@@ -65,16 +65,23 @@ pub fn write_python_sdk(plugins_dir: &Path) {
 }
 
 /// The production host: subprocess plugins over the deployment's plugins
-/// directory. Nothing starts until [`PluginsSetup::build`] loads it.
-pub fn new_host(plugins_dir: PathBuf, config: Arc<ConfigStore>) -> Arc<PluginHost> {
+/// directory, each process supervised on `supervisor`. Nothing starts until
+/// [`PluginsSetup::build`] loads it.
+pub fn new_host(
+    plugins_dir: PathBuf,
+    config: Arc<ConfigStore>,
+    supervisor: Supervisor,
+) -> Arc<PluginHost> {
     // Best-effort: the host reads a missing directory as empty and the
     // install path creates it, so a failure here must not fail the boot.
     if let Err(error) = std::fs::create_dir_all(&plugins_dir) {
         tracing::warn!(%error, "plugins directory could not be created");
     }
     write_python_sdk(&plugins_dir);
-    let launcher: Arc<dyn PluginLauncher> =
-        Arc::new(ProcessLauncher::new(python_sdk_dir(&plugins_dir)));
+    let launcher: Arc<dyn PluginLauncher> = Arc::new(ProcessLauncher::new(
+        python_sdk_dir(&plugins_dir),
+        supervisor,
+    ));
     PluginHost::new(plugins_dir, config, launcher)
 }
 

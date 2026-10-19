@@ -76,9 +76,9 @@ pub struct ApplyRequest {
 #[derive(Clone)]
 pub struct Management {
     pub(super) setup: LibrarySetup,
-    /// Turns true when the server shuts down; the worker then hands its
+    /// Cancelled when the server shuts down; the worker then hands its
     /// job back to the queue between albums.
-    shutdown: Option<tokio::sync::watch::Receiver<bool>>,
+    shutdown: Option<droppedneedle_kernel::jobs::CancellationToken>,
 }
 
 pub(super) fn stale(message: &str) -> ManagementError {
@@ -93,8 +93,11 @@ impl Management {
         }
     }
 
-    /// Hand running jobs back to the queue once `shutdown` turns true.
-    pub fn stopping_with(mut self, shutdown: tokio::sync::watch::Receiver<bool>) -> Self {
+    /// Hand running jobs back to the queue once `shutdown` is cancelled.
+    pub fn stopping_with(
+        mut self,
+        shutdown: droppedneedle_kernel::jobs::CancellationToken,
+    ) -> Self {
         self.shutdown = Some(shutdown);
         self
     }
@@ -965,7 +968,7 @@ impl Management {
         if self
             .shutdown
             .as_ref()
-            .is_some_and(|shutdown| *shutdown.borrow())
+            .is_some_and(|shutdown| shutdown.is_cancelled())
         {
             self.setup
                 .db

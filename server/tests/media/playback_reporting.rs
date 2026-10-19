@@ -27,7 +27,7 @@ use playback::services::{
     meets_subsonic_threshold, presence_key, should_scrobble_native, submit_session_scrobble,
     subsonic_scrobble_threshold_ms,
 };
-use playback::warmup::{ManualSleeper, WarmupRegistry, WarmupScope, run_warmup_loop};
+use playback::warmup::{self, WarmupScope};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -463,74 +463,72 @@ async fn reporting_requires_session() {
 }
 
 // ---------------------------------------------------------------------------
-// Warmup loops (manual sleeper: no real sleeps)
+// Warmup loops (paused time on the loop supervisor)
 // ---------------------------------------------------------------------------
 
-async fn wait_for_parks(sleeper: &ManualSleeper, count: usize) {
-    for _ in 0..200 {
-        if sleeper.waits() == count {
-            return;
-        }
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(sleeper.waits(), count);
-}
-
-async fn wait_for_passes(fake: &FakeWarmup, count: usize) {
-    for _ in 0..200 {
-        if fake.passes().len() >= count {
-            return;
-        }
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(fake.passes().len(), count);
-}
-
-#[tokio::test]
+/// Each scope waits its startup delay, warms, and the rebuilding scopes
+/// warm again every four hours; Jellyfin's loop ends after its one pass.
+#[tokio::test(start_paused = true)]
 async fn warmup_loops_use_honest_cadences() {
+    use droppedneedle_kernel::jobs::{CancellationToken, Supervisor};
+    use tokio::time::Instant;
+
+    let scratch = crate::common::ScratchDir::new("warmup");
+    let path = scratch.join("app.db");
+    crate::common::migrated_db(&path);
+    let supervisor = Supervisor::start(
+        droppedneedle_kernel::db::Db::open_for_tests(&path).expect("database opens"),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("supervisor starts");
     for (scope, delay) in [
         (WarmupScope::Jellyfin, Duration::from_secs(8)),
         (WarmupScope::Navidrome, Duration::from_secs(12)),
         (WarmupScope::Plex, Duration::from_secs(15)),
     ] {
-        let registry = Arc::new(WarmupRegistry::new());
-        let sleeper = ManualSleeper::new();
         let fake = Arc::new(FakeWarmup::default());
-        let task_registry = registry.clone();
-        let task_sleeper = sleeper.clone();
-        let task_fake = fake.clone();
-        let task = tokio::spawn(async move {
-            run_warmup_loop(task_registry, task_sleeper, scope, move || {
-                let task_fake = task_fake.clone();
-                async move { task_fake.run(scope) }
-            })
-            .await;
-        });
-
-        wait_for_parks(&sleeper, 1).await;
-        assert_eq!(sleeper.requested(), vec![delay]);
-        sleeper.wake();
-        wait_for_passes(&fake, 1).await;
-        assert_eq!(fake.passes(), vec![scope.key().to_owned()]);
-
-        if scope == WarmupScope::Jellyfin {
-            // One-shot: the loop returns after its first pass.
-            task.await.unwrap();
-            assert_eq!(sleeper.requested(), vec![delay]);
-        } else {
-            // Periodic: the loop parks on the four-hour interval next.
-            wait_for_parks(&sleeper, 1).await;
-            assert_eq!(
-                sleeper.requested(),
-                vec![delay, Duration::from_secs(14_400)]
-            );
-            sleeper.wake();
-            wait_for_passes(&fake, 2).await;
-            sleeper.shut_down();
-            task.await.unwrap();
+        let passes: Arc<std::sync::Mutex<Vec<Instant>>> = Arc::default();
+        let started = Instant::now();
+        let (work_fake, work_passes) = (fake.clone(), passes.clone());
+        warmup::start(&supervisor, scope, move || {
+            let (fake, passes) = (work_fake.clone(), work_passes.clone());
+            async move {
+                passes.lock().expect("lock").push(Instant::now());
+                fake.run(scope)
+            }
+        })
+        .expect("warmup starts");
+        let wanted = if scope == WarmupScope::Jellyfin { 1 } else { 2 };
+        // Row writes run on blocking threads while the paused clock jumps,
+        // so the bound is wall-clock time.
+        let bound = std::time::Instant::now() + Duration::from_secs(30);
+        while passes.lock().expect("lock").len() < wanted {
+            assert!(std::time::Instant::now() < bound, "{scope:?} warms");
+            tokio::time::sleep(Duration::from_secs(60)).await;
         }
-        assert!(!registry.is_live(scope));
+        let at = passes.lock().expect("lock").clone();
+        let first = at[0].duration_since(started);
+        assert!(
+            first >= delay && first < delay + Duration::from_secs(1),
+            "{scope:?} first pass after {first:?}"
+        );
+        if scope == WarmupScope::Jellyfin {
+            while supervisor.is_running(scope.job_name()) {
+                assert!(std::time::Instant::now() < bound, "Jellyfin warms once");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert_eq!(fake.passes(), vec![scope.key().to_owned()]);
+        } else {
+            let gap = at[1].duration_since(at[0]);
+            assert!(
+                gap >= Duration::from_secs(14_400) && gap < Duration::from_secs(14_401),
+                "{scope:?} rebuilds after {gap:?}"
+            );
+        }
     }
+    supervisor.shutdown(Duration::from_secs(5)).await;
 }
 
 /// `track_hidden` users stay out of the Subsonic now-playing list.
@@ -633,7 +631,7 @@ async fn a_scrobble_reaches_listenbrainz_once() {
             lastfm: "http://127.0.0.1:9/unused".to_owned(),
         },
     );
-    let worker = tokio::spawn(worker.run());
+    let worker = tokio::spawn(worker.run(droppedneedle_kernel::jobs::CancellationToken::new()));
     let mut rig = rig();
     rig.deps.sinks = Arc::new(forwarder);
     let request = ScrobbleSubmitRequest {

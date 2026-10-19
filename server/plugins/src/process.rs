@@ -1,12 +1,13 @@
 //! One plugin as a supervised subprocess speaking the JSON-RPC protocol
 //! over stdin and stdout.
 //!
-//! [`ProcessLauncher`] starts a supervisor task per enabled plugin. The
-//! supervisor spawns the child, runs the `initialize` handshake, serves
+//! [`ProcessLauncher`] runs a supervisor per enabled plugin, as the
+//! `plugin-process:{name}` job on the loop supervisor. It spawns the child, runs the `initialize` handshake, serves
 //! calls until the child exits or stops answering, and starts it again
 //! with a growing backoff (1 s doubling to 5 min, reset after 5 min of
-//! healthy running). Stopping asks the plugin to exit, then kills its
-//! whole process group.
+//! healthy running). Stopping (the host's stop, a relaunch, or the server
+//! shutting down) asks the plugin to exit, then kills its whole process
+//! group.
 //!
 //! What the child gets, and what that does and does not prevent:
 //! - A scrubbed environment: only `PATH`, `HOME`, `TMPDIR`, `LANG`, `TZ`,
@@ -25,10 +26,11 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use droppedneedle_kernel::jobs::{CancellationToken, Supervisor, TickError};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Notify, Semaphore, mpsc, oneshot, watch};
@@ -66,6 +68,14 @@ const HOST_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Longest stderr line kept in the server log.
 const STDERR_LINE_MAX: usize = 2048;
 
+/// Row code of a plugin that cannot run (a protocol mismatch).
+const PLUGIN_FATAL: &str = "PLUGIN_CANNOT_RUN";
+
+/// The loop name of one plugin's process supervisor.
+pub fn process_job_name(plugin: &str) -> String {
+    format!("plugin-process:{plugin}")
+}
+
 /// How to run plugins as subprocesses.
 #[derive(Debug, Clone)]
 pub struct ProcessLauncher {
@@ -75,15 +85,19 @@ pub struct ProcessLauncher {
     pub sdk_dir: PathBuf,
     /// Address-space cap per plugin process.
     pub memory_limit_bytes: u64,
+    /// Where each plugin's process supervisor runs.
+    supervisor: Supervisor,
 }
 
 impl ProcessLauncher {
-    /// Launcher with the default interpreter and memory cap.
-    pub fn new(sdk_dir: PathBuf) -> Self {
+    /// Launcher with the default interpreter and memory cap, running each
+    /// plugin's process supervisor on `supervisor`.
+    pub fn new(sdk_dir: PathBuf, supervisor: Supervisor) -> Self {
         Self {
             python: "python3".to_owned(),
             sdk_dir,
             memory_limit_bytes: DEFAULT_MEMORY_LIMIT_BYTES,
+            supervisor,
         }
     }
 }
@@ -197,7 +211,7 @@ impl PluginLauncher for ProcessLauncher {
         let command = plugin_command(&spec.manifest, &spec.plugin_dir, &self.python)?;
         std::fs::create_dir_all(spec.data_dir.join("tmp"))
             .map_err(|error| format!("cannot create the plugin data folder: {error}"))?;
-        let runtime = tokio::runtime::Handle::try_current()
+        tokio::runtime::Handle::try_current()
             .map_err(|_| "plugins start only inside the server runtime".to_owned())?;
         let env = plugin_env(&spec, &self.sdk_dir);
         let (state_tx, _) = watch::channel(0u64);
@@ -211,8 +225,7 @@ impl PluginLauncher for ProcessLauncher {
             }),
             session: Mutex::new(None),
             changed: state_tx,
-            stopping: AtomicBool::new(false),
-            stop_now: Notify::new(),
+            stop: self.supervisor.token().child_token(),
             restart_now: Notify::new(),
             timeouts_in_row: AtomicU32::new(0),
             settings: Mutex::new(spec.settings.clone()),
@@ -226,7 +239,25 @@ impl PluginLauncher for ProcessLauncher {
             manifest: spec.manifest,
             services: spec.services,
         };
-        runtime.spawn(supervise(Arc::clone(&shared), child));
+        let job = Arc::clone(&shared);
+        // A relaunch takes the name over from the run still stopping.
+        self.supervisor
+            .replace_one_shot(process_job_name(&shared.name), move |ctx| async move {
+                let stop = job.stop.clone();
+                let supervised = supervise(job, child);
+                tokio::pin!(supervised);
+                tokio::select! {
+                    biased;
+                    end = &mut supervised => end,
+                    // The job cancelled (the shutdown, or a replacement):
+                    // the process stops the way the host stops it.
+                    () = ctx.token().cancelled() => {
+                        stop.cancel();
+                        supervised.await
+                    }
+                }
+            })
+            .map_err(|_| "the server is stopping".to_owned())?;
         Ok(Arc::new(ProcessConnection { shared }))
     }
 }
@@ -249,8 +280,9 @@ struct Shared {
     session: Mutex<Option<Arc<Session>>>,
     /// Bumped on every state change so waiting calls re-check.
     changed: watch::Sender<u64>,
-    stopping: AtomicBool,
-    stop_now: Notify,
+    /// Cancelled to stop the plugin for good: the host's stop, a dropped
+    /// handle, a replacement or the server's shutdown.
+    stop: CancellationToken,
     restart_now: Notify,
     timeouts_in_row: AtomicU32,
     /// Latest settings, sent again in `initialize` after a restart.
@@ -392,8 +424,7 @@ impl Drop for ProcessConnection {
     fn drop(&mut self) {
         // The host always stops a connection it replaces; this covers a
         // handle dropped any other way so no supervisor outlives it.
-        self.shared.stopping.store(true, Ordering::Relaxed);
-        self.shared.stop_now.notify_one();
+        self.shared.stop.cancel();
     }
 }
 
@@ -482,8 +513,7 @@ impl PluginConnection for ProcessConnection {
 
     fn stop(&self) -> BoxFuture<'_, ()> {
         Box::pin(async move {
-            self.shared.stopping.store(true, Ordering::Relaxed);
-            self.shared.stop_now.notify_one();
+            self.shared.stop.cancel();
             let mut changes = self.shared.changed.subscribe();
             let wait = async {
                 while self.shared.state() != RuntimeState::Stopped
@@ -510,10 +540,11 @@ enum RunEnd {
 }
 
 /// The supervisor loop: start, serve, restart with backoff, until stopped.
-async fn supervise(shared: Arc<Shared>, spec: ChildSpec) {
+/// A plugin that cannot run ends it as a failure.
+async fn supervise(shared: Arc<Shared>, spec: ChildSpec) -> Result<(), TickError> {
     let mut backoff = BACKOFF_START;
     loop {
-        if shared.stopping.load(Ordering::Relaxed) {
+        if shared.stop.is_cancelled() {
             break;
         }
         shared.set_state(RuntimeState::Starting, None);
@@ -531,11 +562,11 @@ async fn supervise(shared: Arc<Shared>, spec: ChildSpec) {
             RunEnd::Stopped => break,
             RunEnd::Fatal(reason) => {
                 tracing::error!(plugin = %shared.name, %reason, "plugin cannot run");
-                shared.set_state(RuntimeState::Failed, Some(reason));
-                return;
+                shared.set_state(RuntimeState::Failed, Some(reason.clone()));
+                return Err(TickError::new(PLUGIN_FATAL, reason));
             }
             RunEnd::Crashed(reason) => {
-                if shared.stopping.load(Ordering::Relaxed) {
+                if shared.stop.is_cancelled() {
                     break;
                 }
                 if started.elapsed() >= HEALTHY_UPTIME {
@@ -553,13 +584,14 @@ async fn supervise(shared: Arc<Shared>, spec: ChildSpec) {
                 shared.set_state(RuntimeState::Restarting, Some(reason));
                 tokio::select! {
                     _ = tokio::time::sleep(backoff) => {}
-                    _ = shared.stop_now.notified() => {}
+                    () = shared.stop.cancelled() => {}
                 }
                 backoff = (backoff * 2).min(BACKOFF_MAX);
             }
         }
     }
     shared.set_state(RuntimeState::Stopped, None);
+    Ok(())
 }
 
 /// Spawn one child, handshake, serve until it ends.
@@ -610,10 +642,13 @@ async fn run_child(shared: &Arc<Shared>, spec: &ChildSpec) -> RunEnd {
             return RunEnd::Crashed(format!("could not start {}: {error}", spec.command.program));
         }
     };
+    // Kills the group if this run is dropped before it reaps the child (the
+    // job aborted past the shutdown bound).
+    let mut group = GroupGuard(child.id().and_then(|pid| i32::try_from(pid).ok()));
     let (Some(stdin), Some(stdout), Some(stderr)) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())
     else {
-        kill_group(&mut child).await;
+        kill_group(&mut child, &mut group).await;
         return RunEnd::Crashed("child pipes were not available".to_owned());
     };
     tokio::spawn(pump_stderr(shared.name.clone(), stderr));
@@ -638,13 +673,13 @@ async fn run_child(shared: &Arc<Shared>, spec: &ChildSpec) -> RunEnd {
             "plugin exited during the handshake ({})",
             ended.unwrap_or_else(|error| error.to_string())
         ))),
-        _ = shared.stop_now.notified() => Err(RunEnd::Stopped),
+        () = shared.stop.cancelled() => Err(RunEnd::Stopped),
     };
     let implemented = match handshake {
         Ok(implemented) => implemented,
         Err(end) => {
             reader.abort();
-            kill_group(&mut child).await;
+            kill_group(&mut child, &mut group).await;
             return end;
         }
     };
@@ -687,21 +722,21 @@ async fn run_child(shared: &Arc<Shared>, spec: &ChildSpec) -> RunEnd {
             let status = match tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await {
                 Ok(Ok(status)) => status.to_string(),
                 _ => {
-                    kill_group(&mut child).await;
+                    kill_group(&mut child, &mut group).await;
                     "killed".to_owned()
                 }
             };
             RunEnd::Crashed(format!("{reason} ({status})"))
         }
         _ = shared.restart_now.notified() => RunEnd::Crashed("plugin stopped answering".to_owned()),
-        _ = shared.stop_now.notified() => {
+        () = shared.stop.cancelled() => {
             session.send(protocol::request_line(0, methods::SHUTDOWN, &Value::Null));
             let _ = tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await;
             RunEnd::Stopped
         }
     };
     reader.abort();
-    kill_group(&mut child).await;
+    kill_group(&mut child, &mut group).await;
     end
 }
 
@@ -776,17 +811,34 @@ async fn handshake(
 }
 
 /// Kill the child's whole process group, then reap it.
-async fn kill_group(child: &mut tokio::process::Child) {
+async fn kill_group(child: &mut tokio::process::Child, group: &mut GroupGuard) {
     if let Some(pid) = child.id()
         && let Ok(pid) = i32::try_from(pid)
     {
-        // SAFETY: killpg only sends a signal. The group id is the child's
-        // pid because the child called setsid before exec.
-        unsafe {
-            libc::killpg(pid, libc::SIGKILL);
-        }
+        kill_process_group(pid);
     }
     let _ = child.kill().await;
+    // Reaped: the id may be reused, so the guard must not signal it again.
+    group.0 = None;
+}
+
+/// The child's process group, killed on drop unless the child was reaped.
+struct GroupGuard(Option<i32>);
+
+impl Drop for GroupGuard {
+    fn drop(&mut self) {
+        if let Some(pid) = self.0.take() {
+            kill_process_group(pid);
+        }
+    }
+}
+
+fn kill_process_group(pid: i32) {
+    // SAFETY: killpg only sends a signal. The group id is the child's pid
+    // because the child called setsid before exec.
+    unsafe {
+        libc::killpg(pid, libc::SIGKILL);
+    }
 }
 
 /// Feed queued lines to the child's stdin until the queue or pipe closes.

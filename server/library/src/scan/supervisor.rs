@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::watch;
+use droppedneedle_kernel::jobs::CancellationToken;
 
 use super::coordinator::LibraryScanCoordinator;
 use super::models::{Disposition, ScanKind, ScanRequest, ScanScope, ScanTrigger};
@@ -129,24 +129,24 @@ where
 }
 
 /// One shutdown-aware supervisor iteration: Hook B, schedule, and worker
-/// exactly like [`supervise_once`], but a signalled shutdown stops the
-/// in-flight run instead of waiting it out. A pre-signalled shutdown
+/// exactly like [`supervise_once`], but a cancelled stop ends the
+/// in-flight run instead of waiting it out. A stop already cancelled
 /// claims no new work. Returns true when a run was driven.
 pub async fn supervise_once_with_shutdown<T>(
     coordinator: &LibraryScanCoordinator<T>,
     inputs: &SupervisorInputs,
-    shutdown: &watch::Receiver<bool>,
+    stop: &CancellationToken,
 ) -> bool
 where
     T: TagReader + 'static,
 {
-    supervise_once_inner(coordinator, inputs, Some(shutdown)).await
+    supervise_once_inner(coordinator, inputs, Some(stop)).await
 }
 
 async fn supervise_once_inner<T>(
     coordinator: &LibraryScanCoordinator<T>,
     inputs: &SupervisorInputs,
-    shutdown: Option<&watch::Receiver<bool>>,
+    stop: Option<&CancellationToken>,
 ) -> bool
 where
     T: TagReader + 'static,
@@ -213,9 +213,9 @@ where
         }
     }
     if enabled {
-        return match shutdown {
-            Some(signal) => coordinator
-                .run_once_with_shutdown(&(inputs.root_paths)(), signal)
+        return match stop {
+            Some(stop) => coordinator
+                .run_once_with_shutdown(&(inputs.root_paths)(), stop)
                 .await
                 .is_some(),
             None => coordinator.run_once(&(inputs.root_paths)()).await.is_some(),
@@ -291,9 +291,9 @@ mod tests {
         let dirty = DirtyScopes::new();
         dirty.mark("r1");
         let inputs = inputs(dirty.clone());
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        shutdown_tx.send(true).expect("shutdown sends");
-        let processed = supervise_once_with_shutdown(&coordinator, &inputs, &shutdown_rx).await;
+        let stop = CancellationToken::new();
+        stop.cancel();
+        let processed = supervise_once_with_shutdown(&coordinator, &inputs, &stop).await;
         assert!(!processed, "pre-signalled shutdown drives no run");
         let current = coordinator.current_runs().unwrap();
         assert!(

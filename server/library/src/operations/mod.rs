@@ -29,7 +29,9 @@ pub mod store;
 
 use std::time::Duration;
 
-use tokio::sync::watch;
+use droppedneedle_kernel::jobs::{
+    AlreadyRunning, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
+};
 
 use crate::wiring::LibrarySetup;
 use service::Operations;
@@ -37,38 +39,44 @@ use service::Operations;
 /// How often the worker looks for due jobs.
 const POLL: Duration = Duration::from_secs(2);
 
-/// Spawn the operations worker loop (re-identifications, then repairs,
-/// then edition remaps): one job at a time, never while a scan runs (the
-/// scan may be changing the very files a job reads).
-pub fn spawn_loop(
-    setup: &LibrarySetup,
-    shutdown: watch::Receiver<bool>,
-) -> (&'static str, tokio::task::JoinHandle<()>) {
-    let setup = setup.clone();
-    (
-        "library-operations",
-        tokio::spawn(run_loop(setup, shutdown)),
+/// The operations worker's name on the supervisor.
+pub const JOB_NAME: &str = "library-operations";
+
+/// Start the operations worker (re-identifications, then repairs, then
+/// edition remaps): one job at a time, never while a scan runs (the scan
+/// may be changing the very files a job reads).
+pub(crate) fn start(setup: &LibrarySetup, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
+    supervisor.periodic(
+        JOB_NAME,
+        Schedule::new(POLL),
+        OperationsTick {
+            ops: Operations::new(setup),
+            repairs: crate::repairs::service::Repairs::new(setup),
+            worker: uuid::Uuid::new_v4().to_string(),
+            setup: setup.clone(),
+        },
     )
 }
 
-async fn run_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
-    let ops = Operations::new(&setup);
-    let repairs = crate::repairs::service::Repairs::new(&setup);
-    let worker = uuid::Uuid::new_v4().to_string();
-    loop {
-        if *shutdown.borrow() {
-            break;
+/// One turn: work steps until none is due.
+struct OperationsTick {
+    setup: LibrarySetup,
+    ops: Operations,
+    repairs: crate::repairs::service::Repairs,
+    worker: String,
+}
+
+impl Tick for OperationsTick {
+    async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
+        while !ctx.token().is_cancelled() {
+            if !(tick(&self.setup, &self.ops, &self.worker).await
+                || crate::repairs::tick(&self.setup, &self.repairs, &self.worker).await
+                || remap_tick(&self.setup, &self.ops).await)
+            {
+                break;
+            }
         }
-        if tick(&setup, &ops, &worker).await
-            || crate::repairs::tick(&setup, &repairs, &worker).await
-            || remap_tick(&setup, &ops).await
-        {
-            continue;
-        }
-        tokio::select! {
-            _ = shutdown.changed() => break,
-            _ = tokio::time::sleep(POLL) => {}
-        }
+        Ok(Next::Continue)
     }
 }
 

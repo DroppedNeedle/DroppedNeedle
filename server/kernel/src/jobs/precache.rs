@@ -144,22 +144,28 @@ impl PrecacheLimits {
 }
 
 /// Start one supervised run. Rejected while a run is live, like any duplicate
-/// job name; the name frees when the run lands.
+/// job name; the name frees when the run lands. `on_end` is called once
+/// with the outcome however the run ends: finished, cancelled, aborted at
+/// its grace (as [`PrecacheOutcome::Cancelled`]) or panicked (as
+/// [`PrecacheOutcome::Failed`]).
 pub fn spawn_run<W: PrecacheWork>(
     supervisor: &Supervisor,
     work: W,
     limits: PrecacheLimits,
+    on_end: impl FnOnce(&PrecacheOutcome) + Send + 'static,
 ) -> Result<PrecacheHandle, AlreadyRunning> {
     let outcome: Arc<Mutex<Option<PrecacheOutcome>>> = Arc::new(Mutex::new(None));
     let done = Arc::new(Notify::new());
-    let outcome_task = Arc::clone(&outcome);
-    let done_task = Arc::clone(&done);
+    // Built before the start, so a run aborted before its first poll still
+    // lands.
+    let mut landing = Landing {
+        outcome: Arc::clone(&outcome),
+        done: Arc::clone(&done),
+        on_end: Some(Box::new(on_end)),
+    };
     supervisor.one_shot(JOB_NAME, move |ctx| async move {
         let result = supervise(&ctx, &work, &limits).await;
-        *outcome_task
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(result.clone());
-        done_task.notify_one();
+        landing.land(result.clone());
         match result {
             PrecacheOutcome::Done | PrecacheOutcome::Cancelled => Ok(()),
             PrecacheOutcome::Watchdog(cause) => Err(TickError::new(WATCHDOG, cause)),
@@ -167,6 +173,42 @@ pub fn spawn_run<W: PrecacheWork>(
         }
     })?;
     Ok(PrecacheHandle { outcome, done })
+}
+
+/// What runs once with a run's outcome.
+type OnEnd = Box<dyn FnOnce(&PrecacheOutcome) + Send>;
+
+/// Where a run's outcome lands. Dropped without one (the run was aborted
+/// or panicked), it lands an outcome of its own, so waiters always return.
+struct Landing {
+    outcome: Arc<Mutex<Option<PrecacheOutcome>>>,
+    done: Arc<Notify>,
+    on_end: Option<OnEnd>,
+}
+
+impl Landing {
+    fn land(&mut self, outcome: PrecacheOutcome) {
+        let Some(on_end) = self.on_end.take() else {
+            return;
+        };
+        on_end(&outcome);
+        *self
+            .outcome
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(outcome);
+        self.done.notify_one();
+    }
+}
+
+impl Drop for Landing {
+    fn drop(&mut self) {
+        let outcome = if std::thread::panicking() {
+            PrecacheOutcome::Failed("the precache run panicked".to_owned())
+        } else {
+            PrecacheOutcome::Cancelled
+        };
+        self.land(outcome);
+    }
 }
 
 /// Handle to a live run: waits for the outcome without polling.

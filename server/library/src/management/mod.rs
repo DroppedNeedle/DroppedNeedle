@@ -45,7 +45,9 @@ pub mod takeover;
 use std::time::Duration;
 
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
-use tokio::sync::watch;
+use droppedneedle_kernel::jobs::{
+    AlreadyRunning, CancellationToken, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
+};
 
 use crate::wiring::LibrarySetup;
 use models::ManagementError;
@@ -67,51 +69,62 @@ enum Step {
     Busy,
 }
 
-/// Spawn the management worker: plans and applies jobs, starts automatic
+/// The management worker's name on the supervisor.
+pub const JOB_NAME: &str = "library-management";
+
+/// Start the management worker: plans and applies jobs, starts automatic
 /// management, and tells media servers to rescan. It has its own loop so
 /// a long preview never holds up re-identification jobs.
-pub fn spawn_loop(
-    setup: &LibrarySetup,
-    shutdown: watch::Receiver<bool>,
-) -> (&'static str, tokio::task::JoinHandle<()>) {
-    let setup = setup.clone();
-    (
-        "library-management",
-        tokio::spawn(run_loop(setup, shutdown)),
+pub(crate) fn start(setup: &LibrarySetup, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
+    supervisor.periodic(
+        JOB_NAME,
+        Schedule::new(POLL),
+        ManagementTick {
+            setup: setup.clone(),
+            worker: uuid::Uuid::new_v4().to_string(),
+            settle: automatic::Settle::default(),
+            rng: SplitMix64::new(SplitMix64::seed_from_time()),
+        },
     )
 }
 
-async fn run_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
-    let worker = uuid::Uuid::new_v4().to_string();
-    let mut settle = automatic::Settle::default();
-    let mut rng = SplitMix64::new(SplitMix64::seed_from_time());
-    loop {
-        if *shutdown.borrow() {
-            break;
+/// One turn: work steps until none is due. A busy database waits a few
+/// seconds and is not a failed turn.
+struct ManagementTick {
+    setup: LibrarySetup,
+    worker: String,
+    settle: automatic::Settle,
+    rng: SplitMix64,
+}
+
+impl Tick for ManagementTick {
+    async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
+        while !ctx.token().is_cancelled() {
+            let mut step = tick(&self.setup, &self.worker, ctx.token()).await;
+            if step == Step::Idle {
+                step = automatic_tick(&self.setup, &mut self.settle).await;
+            }
+            if step == Step::Idle {
+                step = refresh_tick(&self.setup, &self.worker).await;
+            }
+            match step {
+                Step::Worked => {}
+                Step::Idle => break,
+                Step::Busy => {
+                    ctx.sleep(BUSY_RETRY + self.rng.below_duration(BUSY_RETRY))
+                        .await;
+                    break;
+                }
+            }
         }
-        let mut step = tick(&setup, &worker, &shutdown).await;
-        if step == Step::Idle {
-            step = automatic_tick(&setup, &mut settle).await;
-        }
-        if step == Step::Idle {
-            step = refresh_tick(&setup, &worker).await;
-        }
-        let wait = match step {
-            Step::Worked => continue,
-            Step::Idle => POLL,
-            Step::Busy => BUSY_RETRY + rng.below_duration(BUSY_RETRY),
-        };
-        tokio::select! {
-            _ = shutdown.changed() => break,
-            _ = tokio::time::sleep(wait) => {}
-        }
+        Ok(Next::Continue)
     }
 }
 
 /// One worker step on a blocking thread: plan or apply the next queued
 /// management job. A shutdown hands the job back to the queue between
 /// albums, so the next start picks it up.
-async fn tick(setup: &LibrarySetup, worker: &str, shutdown: &watch::Receiver<bool>) -> Step {
+async fn tick(setup: &LibrarySetup, worker: &str, shutdown: &CancellationToken) -> Step {
     let management = Management::new(setup).stopping_with(shutdown.clone());
     let worker = worker.to_owned();
     blocking("library management step", move || {

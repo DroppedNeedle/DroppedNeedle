@@ -19,7 +19,7 @@ use axum::Router;
 use thiserror::Error;
 
 pub use outbound::{Outbound, Port};
-pub use serve::{Background, ServeError, bind, serve};
+pub use serve::{Background, ServeError, Stopped, bind, serve};
 
 use data_dirs::{BootRefusal, DataDirs, check_bootable};
 use jobs::JobsSetup;
@@ -189,12 +189,8 @@ pub fn sign_in_links(
     ))))
 }
 
-/// What [`build_with`] hands back.
-///
-/// Some workers stop when the last handle on their queue is dropped, not
-/// on the stop signal, and `state` holds those handles. Drop `state`, and
-/// any clone of the router, before stopping: while one is alive, [`serve`]
-/// waits out the whole shutdown grace and then aborts those workers.
+/// What [`build_with`] hands back. Every background loop stops on the one
+/// stop [`serve`] gives at shutdown.
 pub struct Built {
     /// The app, ready to serve.
     pub router: Router,
@@ -229,6 +225,21 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .await?;
     // The one database handle every area is given.
     let db = runtime.db().clone();
+    // The one supervisor every background loop runs on, and its token the
+    // one stop. Starting it clears the last start's loop rows, so it comes
+    // before anything writes one.
+    let supervisor = wait_out_busy(
+        "loop supervisor",
+        |error: &DbError| matches!(error, DbError::Busy { .. }),
+        || {
+            Supervisor::start(
+                db.clone(),
+                Arc::new(droppedneedle_kernel::clock::SystemClock),
+                CancellationToken::new(),
+            )
+        },
+    )
+    .await?;
     let web = prepare_web(&config).await?;
 
     let crypto = Arc::new(Crypto::load_or_generate(&config.config_dir())?);
@@ -250,8 +261,11 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let events = EventHub::new();
     // The plugin host exists early so playback, acquisition and streaming
     // can hold it; no plugin starts until `PluginsSetup::build` loads it.
-    let plugin_host =
-        droppedneedle_plugins::wiring::new_host(config.plugins_dir(), config_store.clone());
+    let plugin_host = droppedneedle_plugins::wiring::new_host(
+        config.plugins_dir(),
+        config_store.clone(),
+        supervisor.clone(),
+    );
     let auth_bundle = ProdAuth::new(
         &db,
         crypto.clone(),
@@ -556,20 +570,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let mix_hooks = Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
         acquire.requests.mixer.clone(),
     ));
-    // The one supervisor every background loop runs on. Starting it clears
-    // the last start's loop rows, so it comes before anything writes one.
-    let supervisor = wait_out_busy(
-        "loop supervisor",
-        |error: &DbError| matches!(error, DbError::Busy { .. }),
-        || {
-            Supervisor::start(
-                db.clone(),
-                Arc::new(droppedneedle_kernel::clock::SystemClock),
-                CancellationToken::new(),
-            )
-        },
-    )
-    .await?;
     let jobs = JobsSetup::build(
         supervisor.clone(),
         runtime.checkpoint().clone(),
@@ -681,24 +681,16 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .with_mix_grants(mix_hooks.clone(), mix_hooks);
     plugins.sync_ticks().await;
 
-    let mut background = Background::new(config.shutdown_grace);
-    let stop = background.stop_signal();
-    // Plugin processes get `shutdown`, then a kill, when the server stops.
-    let plugin_host = plugins.host().clone();
-    let mut plugin_stop = background.stop_signal();
-    background.push(
-        "plugins",
-        tokio::spawn(async move {
-            let _ = plugin_stop.wait_for(|stopping| *stopping).await;
-            plugin_host.stop_all().await;
-        }),
-    );
-    // Attribution and scrobble drains: exit once the app drops its queue handles.
-    background.push(
-        "media-workers",
-        tokio::spawn(async move { media_workers.run().await }),
-    );
+    // Attribution and scrobble drains: they deliver what is queued and end
+    // on the stop, or once the app drops its queue handles.
+    supervisor
+        .one_shot(droppedneedle_media::MEDIA_WORKERS, move |ctx| async move {
+            media_workers.run(ctx.token().clone()).await;
+            Ok(())
+        })
+        .map_err(|error| stage("media workers")(error.to_string()))?;
 
+    let grace = config.shutdown_grace;
     // The state attaches the hub to every publishing bundle (presence,
     // acquisition, library), so it is built before any loop starts: the
     // first wanted sweep, scan or presence poll already reaches the hub.
@@ -724,37 +716,22 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         .acquire
         .spawn_loops(&supervisor)
         .map_err(|error| stage("acquire loops")(error.to_string()))?;
-    background.extend(state.library.spawn_loops(stop.clone()));
-    // `activity.changed` for every open stream.
-    background.push(
-        "event-revisions",
-        tokio::spawn(droppedneedle_kernel::events::revisions::run(
-            events.clone(),
-            db.clone(),
-            stop.clone(),
-        )),
-    );
-    // `downloads.changed` for every open stream.
-    background.push(
-        "event-downloads",
-        tokio::spawn(droppedneedle_kernel::events::downloads::run(
-            events.clone(),
-            db.clone(),
-            stop,
-        )),
-    );
-    // Supervised loops stop through the supervisor at shutdown, not the watch.
+    state
+        .library
+        .start_loops(&supervisor)
+        .map_err(|error| stage("library loops")(error.to_string()))?;
+    // `activity.changed` and `downloads.changed` for every open stream.
+    droppedneedle_kernel::events::revisions::start(&supervisor, events.clone(), db.clone())
+        .map_err(|error| stage("event loops")(error.to_string()))?;
+    droppedneedle_kernel::events::downloads::start(&supervisor, events.clone(), db.clone())
+        .map_err(|error| stage("event loops")(error.to_string()))?;
     jobs.spawn_loops().map_err(stage("jobs loops"))?;
 
     let router = create_app_with_web(state.clone(), web);
     Ok(Built {
         router,
         state,
-        background: background
-            .with_events(events)
-            .with_supervisor(supervisor)
-            .with_runtime(runtime)
-            .with_data_lock(data_lock),
+        background: Background::new(grace, supervisor, events, runtime, data_lock),
     })
 }
 
