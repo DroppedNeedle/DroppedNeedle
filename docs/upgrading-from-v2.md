@@ -394,6 +394,14 @@ Then check:
   the old one. Mount your music at the same path v2 used. Then let the first
   scan run. Files that did not change since v2 last saw them are not even
   read again, and a song keeps its album while its tags still name it.
+- Your v2 naming template becomes the import naming script under
+  Settings > Library, rewritten so new downloads land where v2 put them,
+  and the example under it shows where a track goes. Names are now cut at
+  240 bytes rather than 252. A template with a folder made only of a value
+  that can be missing, such as `{year}/`, now stops an import for an album
+  without that value instead of leaving the folder out: the upgrade
+  report names any such folder. See
+  [Import naming script](downloads.md#import-naming-script).
 - If you import Spotify playlists: your Spotify app keeps working with no
   change in the Spotify dashboard. v3 goes on sending the redirect address
   v2 registered (Settings > Spotify shows it). Linked Spotify accounts carry

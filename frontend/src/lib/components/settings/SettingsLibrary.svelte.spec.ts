@@ -13,7 +13,7 @@ const baseSettings = {
 		}
 	],
 	staging_path: '/staging',
-	naming_template: '{albumartist}/{album}/{track} {title}',
+	naming_script: '{albumartist}/{album}/{track} {title}.{ext}',
 	acoustid_api_key: '••••',
 	enabled: true,
 	policy_revision: 'policy-1',
@@ -22,7 +22,8 @@ const baseSettings = {
 	pending_policy_revision: null,
 	affected_scope_ids: [],
 	actions_applied: [],
-	warnings: []
+	warnings: [],
+	naming_example: 'Radiohead/OK Computer/2 Paranoid Android.flac'
 };
 
 const h = vi.hoisted(() => ({
@@ -187,6 +188,9 @@ describe('SettingsLibrary target policy UI', () => {
 
 	it('previews consequences, saves without starting work, and leaves reconciliation explicit', async () => {
 		await render(SettingsLibrary);
+		await expect
+			.element(page.getByText('Radiohead/OK Computer/2 Paranoid Android.flac'))
+			.toBeVisible();
 		await page.getByRole('combobox').first().selectOptions('excluded');
 		const opener = page.getByRole('button', { name: 'Preview and save settings' });
 		await opener.click();

@@ -22,7 +22,7 @@ use super::queue_rows::Viewer;
 use super::state::TaskStatus;
 use crate::landing::ports::{ImportFailure, ImportFile, ImportRequest, LandingLibrary};
 use crate::landing::reasons::explain;
-use crate::landing::{is_local_hold, probe, quality, specs};
+use crate::landing::{NAMING_SCRIPT_FAILED, is_local_hold, probe, quality, specs};
 use crate::worker::DownloadWorker;
 use droppedneedle_library::matching::Release;
 
@@ -480,6 +480,7 @@ impl HeldImports {
                 _ if !restored => explain("upgrade_restore_failed"),
                 ImportFailure::Occupied(_) => explain("target_occupied"),
                 ImportFailure::LocalFault(_) => explain("local_fault"),
+                ImportFailure::NamingScript(_) => explain(NAMING_SCRIPT_FAILED),
             };
             return Err(HeldError::Refused(format!(
                 "{} {}",

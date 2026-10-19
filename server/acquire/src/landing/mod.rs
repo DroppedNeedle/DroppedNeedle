@@ -77,6 +77,11 @@ pub const UPGRADE_RESTORE_FAILED: &str = "upgrade_restore_failed";
 /// it waits for them to be saved again, and the source is not blamed.
 pub const SETTINGS_UNREADABLE: &str = "settings_unreadable";
 
+/// Rejection code for a landing the import naming script gave no usable
+/// path: the files wait for the script to be fixed, and the source is not
+/// blamed.
+pub const NAMING_SCRIPT_FAILED: &str = "naming_script_failed";
+
 /// Hold code for this edition's version of a track that came in lower
 /// quality than the person's own version, which stays.
 pub const VERSION_LOWER_QUALITY: &str = "version_lower_quality";
@@ -654,7 +659,7 @@ impl LandingService {
                         "download imported into the library"
                     );
                 }
-                Err(ImportFailure::LocalFault(detail)) => {
+                Err(failure @ (ImportFailure::LocalFault(_) | ImportFailure::NamingScript(_))) => {
                     // A better file whose old copy could not be put back is
                     // held, so neither copy is lost from view; the rest of
                     // the landing fails as a local fault.
@@ -664,8 +669,15 @@ impl LandingService {
                             stranded.push(file);
                         }
                     }
+                    let detail = failure.detail().to_owned();
                     if stranded.is_empty() {
-                        decision.outcome = Outcome::Reject(local_fault(detail));
+                        decision.outcome = Outcome::Reject(match failure {
+                            ImportFailure::NamingScript(_) => Rejection {
+                                code: NAMING_SCRIPT_FAILED,
+                                ..local_fault(detail)
+                            },
+                            _ => local_fault(detail),
+                        });
                         return Acted::decided(decision, 0);
                     }
                     for (file, track) in &plan.import {

@@ -311,7 +311,7 @@ pub fn normalize(settings: &TypedLibrary) -> Result<TypedLibrary, SettingsError>
     Ok(TypedLibrary {
         library_roots: roots,
         staging_path: settings.staging_path.clone(),
-        naming_template: settings.naming_template.clone(),
+        naming_script: settings.naming_script.clone(),
         acoustid_api_key: settings.acoustid_api_key.clone(),
         enabled: settings.enabled,
     })
@@ -1066,6 +1066,7 @@ pub fn path_mapping(
 pub fn settings_response(resolved: Masked<ResolvedLibraryPolicy>) -> LibrarySettingsResponse {
     let policy_revision = resolved.policy_revision.clone();
     let warnings = resolved.warnings.clone();
+    let naming_example = crate::import::naming::example(&resolved.settings.naming_script).ok();
     LibrarySettingsResponse {
         settings: resolved.map(|resolved| resolved.settings),
         policy_revision,
@@ -1075,6 +1076,7 @@ pub fn settings_response(resolved: Masked<ResolvedLibraryPolicy>) -> LibrarySett
         affected_scope_ids: Vec::new(),
         actions_applied: Vec::new(),
         warnings,
+        naming_example,
     }
 }
 

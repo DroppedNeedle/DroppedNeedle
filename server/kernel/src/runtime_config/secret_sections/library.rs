@@ -1,7 +1,11 @@
-//! Typed library settings: roots, path policies, staging, naming, and
-//! the AcoustID key.
+//! Typed library settings: roots, path policies, staging, the import
+//! naming script, and the AcoustID key.
 
 use super::*;
+
+/// The import naming script a new library starts with: v2's default
+/// layout, `Artist/Album (Year)/0103 Title.ext`, as a naming script.
+pub const DEFAULT_NAMING_SCRIPT: &str = "{albumartist}/{album}{conditional(is_empty(slice(default(original_date, date), 0, 4)), \"\", concat(\" (\", slice(default(original_date, date), 0, 4), \")\"))}/{disc:02d}{track:02d} {title}.{ext}";
 
 // --- library_settings (typed roots + policies) ------------------------------
 
@@ -67,8 +71,8 @@ pub struct TypedLibrary {
     pub library_roots: Vec<LibraryRoot>,
     /// Staging path.
     pub staging_path: String,
-    /// Naming template.
-    pub naming_template: String,
+    /// The naming script that places downloaded and dropped files.
+    pub naming_script: String,
     /// AcoustID key (encrypted at rest).
     #[schema(value_type = String)]
     pub acoustid_api_key: Secret,
@@ -81,7 +85,7 @@ impl Default for TypedLibrary {
         Self {
             library_roots: Vec::new(),
             staging_path: String::new(),
-            naming_template: DEFAULT_NAMING_TEMPLATE.to_owned(),
+            naming_script: DEFAULT_NAMING_SCRIPT.to_owned(),
             acoustid_api_key: Secret::default(),
             enabled: true,
         }
@@ -91,6 +95,12 @@ impl Default for TypedLibrary {
 impl Section for TypedLibrary {
     const KEY: &'static str = "library_settings";
     const EFFECTS: &'static [Effect] = &[Effect::Invalidate(&[CacheRoot::AcoustId])];
+
+    fn normalize(&mut self) {
+        if self.naming_script.trim().is_empty() {
+            DEFAULT_NAMING_SCRIPT.clone_into(&mut self.naming_script);
+        }
+    }
 }
 
 impl SecretSection for TypedLibrary {

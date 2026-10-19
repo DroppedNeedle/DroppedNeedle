@@ -61,7 +61,6 @@ fn manifest(task_id: &str) -> DownloadManifest {
         release_group_mbid: "rg-1".to_string(),
         artist_name: "artist".to_string(),
         album_title: "album".to_string(),
-        naming_template: "{artist}/{album}".to_string(),
         target_files: vec![ExpectedFile {
             filename: "01.flac".to_string(),
             size: 10,

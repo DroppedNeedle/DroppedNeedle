@@ -114,12 +114,17 @@ pub enum ImportFailure {
     /// cannot prove it is this track: hold for a person (v2
     /// `target_occupied`).
     Occupied(String),
+    /// The library's import naming script gave no usable path for a file.
+    /// The download stays for a reimport once the script is fixed.
+    NamingScript(String),
 }
 
 impl ImportFailure {
     pub fn detail(&self) -> &str {
         match self {
-            ImportFailure::LocalFault(detail) | ImportFailure::Occupied(detail) => detail,
+            ImportFailure::LocalFault(detail)
+            | ImportFailure::Occupied(detail)
+            | ImportFailure::NamingScript(detail) => detail,
         }
     }
 }

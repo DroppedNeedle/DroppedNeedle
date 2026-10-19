@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::revision::{naming_script_revision, profile_revision};
+use droppedneedle_kernel::runtime_config::secret_sections::DEFAULT_NAMING_SCRIPT;
 use droppedneedle_kernel::runtime_config::sections::{
     ArtworkImageType, DEFAULT_NAMING_TEMPLATE, FieldMode, GenreSource, LibraryManagement,
     LibraryManagementProfile, ManagedField, MetadataManagementSettings, NamingScript,
@@ -496,20 +497,20 @@ pub fn current_picard_preset_scripts(settings: &LibraryManagement) -> (NamingScr
 
 /// Fresh-tenant initial settings (v2 `build_initial_library_management_settings`):
 /// the Picard-style (default) and complete organizer presets with their
-/// two naming scripts, plus a path-only profile seeded from the naming
-/// template configured before Library Management existed. Nothing is
-/// assigned to a root, so seeding never starts work.
-pub fn initial_settings(legacy_naming_template: &str) -> LibraryManagement {
+/// two naming scripts, plus a path-only profile seeded from the library's
+/// import naming script. Nothing is assigned to a root, so seeding never
+/// starts work.
+pub fn initial_settings(import_naming_script: &str) -> LibraryManagement {
     let mut settings = LibraryManagement {
         schema_version: MANAGEMENT_SCHEMA_VERSION,
         preset_catalog_version: PRESET_CATALOG_VERSION,
         ..LibraryManagement::default()
     };
     let (standard, multi_disc) = current_picard_preset_scripts(&settings);
-    let legacy_source = if legacy_naming_template.trim().is_empty() {
-        DEFAULT_NAMING_TEMPLATE
+    let legacy_source = if import_naming_script.trim().is_empty() {
+        DEFAULT_NAMING_SCRIPT
     } else {
-        legacy_naming_template
+        import_naming_script
     };
     let mut legacy_script = NamingScript {
         id: LEGACY_NAMING_SCRIPT_ID.to_owned(),
@@ -702,5 +703,692 @@ pub fn preset_diff(profile: &LibraryManagementProfile) -> PresetDiff {
         changed_groups: changed,
         version_upgrade_groups,
         preset_profile: Some(preset),
+    }
+}
+
+/// A pre-script naming template rewritten as a naming script, with what
+/// the rewrite could not keep exactly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyConversion {
+    /// The naming script.
+    pub script: String,
+    /// One plain sentence per thing to look at.
+    pub warnings: Vec<String>,
+}
+
+/// Names the template knew whose value can be empty for an imported
+/// file, so a folder made only of them can render empty.
+const OFTEN_EMPTY_NAMES: &[&str] = &["year", "musicbrainz_id", "artist_mbid"];
+
+/// The script value a template's `{name}` became; `None` for a name that
+/// always rendered empty for an import.
+fn legacy_value(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "artist" => "artist",
+        "album" => "album",
+        "albumartist" => "albumartist",
+        "initial" => "initial",
+        "title" => "title",
+        "ext" => "ext",
+        "track" => "track",
+        "disc" => "disc",
+        "musicbrainz_id" => "musicbrainz_id",
+        // The import read the original release year first.
+        "year" => "slice(default(original_date, date), 0, 4)",
+        // The release's first credited artist.
+        "artist_mbid" => "first(musicbrainz_album_artist_id)",
+        _ => return None,
+    })
+}
+
+/// A string literal for a naming expression. Braces are escaped: a raw
+/// `}` would end the expression.
+fn script_string(text: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '{' => out.push_str("\\u007b"),
+            '}' => out.push_str("\\u007d"),
+            other if other.is_control() => out.push('_'),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// One part of a converted folder or file name.
+#[derive(Debug, Clone)]
+enum Piece {
+    /// Literal path text.
+    Text(String),
+    /// A `{...}` hole, as script source.
+    Hole {
+        source: String,
+        /// The hole is a plain `{ext}`.
+        ext: bool,
+        /// The hole can render empty on an import.
+        often_empty: bool,
+        /// The template text it came from.
+        label: String,
+    },
+}
+
+fn pieces_source(pieces: &[Piece]) -> String {
+    let mut out = String::new();
+    for piece in pieces {
+        match piece {
+            Piece::Text(text) => {
+                for ch in text.chars() {
+                    match ch {
+                        '{' | '}' => {
+                            out.push('{');
+                            out.push_str(&script_string(&ch.to_string()));
+                            out.push('}');
+                        }
+                        other if other.is_control() => out.push('_'),
+                        other => out.push(other),
+                    }
+                }
+            }
+            Piece::Hole { source, .. } => out.push_str(source),
+        }
+    }
+    out
+}
+
+/// Rewrite a naming template from before naming scripts (v2's, and the
+/// first v3 `naming_template`) as a naming script that places an imported
+/// file where the template did. A blank template is v2's default.
+///
+/// The template's rules carry over: `{name}` and `{track:02d}` holes
+/// (names it did not know render nothing), a bracket pair around an empty
+/// value disappearing with it, empty folders dropped, a `.` or `..`
+/// folder becoming `_`, and the file always ending in `.{ext}`. A folder
+/// that renders empty at run time is the one thing a script refuses, so
+/// each folder that can is named in the warnings.
+pub fn legacy_template_to_script(template: &str) -> LegacyConversion {
+    let template = if template.trim().is_empty() {
+        DEFAULT_NAMING_TEMPLATE
+    } else {
+        template
+    };
+    let mut warnings = Vec::new();
+    let segments = template_segments(template);
+    let mut keep: Vec<(usize, usize)> = segments
+        .iter()
+        .map(|(part, _)| (0, part.chars().count()))
+        .collect();
+    let mut holes: Vec<Option<Piece>> = vec![None; segments.len()];
+    for (index, (part, is_token)) in segments.iter().enumerate() {
+        if !is_token {
+            continue;
+        }
+        let inner = &part[1..part.len() - 1];
+        let (name, format) = inner.split_once(':').unwrap_or((inner, ""));
+        let value = legacy_value(name);
+        if value.is_none() {
+            push_once(
+                &mut warnings,
+                if name == "genre" {
+                    "{genre} was always empty for imports, so it is left out.".to_owned()
+                } else {
+                    format!("{{{name}}} is not a name the template knew, so it is left out.")
+                },
+            );
+        }
+        let numeric = matches!(name, "track" | "disc");
+        let never_empty = numeric || matches!(name, "ext" | "initial");
+        let group = if never_empty {
+            None
+        } else {
+            template_empty_group(&segments, index)
+        };
+        let source = match (value, group) {
+            (None, _) => None,
+            (Some(value), None) if numeric && !format.is_empty() => {
+                Some(match number_spec(format, &mut warnings) {
+                    Some(spec) => format!("{{{value}:{spec}}}"),
+                    None => format!("{{{value}}}"),
+                })
+            }
+            (Some(value), None) => Some(format!("{{{value}}}")),
+            (Some(value), Some((before_start, after_end))) => {
+                let before: String = segments[index - 1].0.chars().skip(before_start).collect();
+                let after: String = segments[index + 1].0.chars().take(after_end).collect();
+                Some(format!(
+                    "{{conditional(is_empty({value}), \"\", concat({}, {value}, {}))}}",
+                    script_string(&before),
+                    script_string(&after),
+                ))
+            }
+        };
+        if let Some((before_start, after_end)) = group {
+            keep[index - 1].1 = keep[index - 1].1.min(before_start);
+            keep[index + 1].0 = keep[index + 1].0.max(after_end);
+        }
+        holes[index] = source.map(|source| Piece::Hole {
+            source,
+            ext: name == "ext" && format.is_empty(),
+            often_empty: OFTEN_EMPTY_NAMES.contains(&name),
+            label: part.clone(),
+        });
+    }
+
+    // Folders, split on the template's own slashes; empty ones go.
+    let mut components: Vec<Vec<Piece>> = vec![Vec::new()];
+    for (index, (part, is_token)) in segments.iter().enumerate() {
+        if *is_token {
+            if let (Some(hole), Some(current)) = (holes[index].take(), components.last_mut()) {
+                current.push(hole);
+            }
+            continue;
+        }
+        let (start, end) = keep[index];
+        let text: String = part
+            .chars()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .collect();
+        for (n, chunk) in text.split('/').enumerate() {
+            if n > 0 {
+                components.push(Vec::new());
+            }
+            if !chunk.is_empty()
+                && let Some(current) = components.last_mut()
+            {
+                current.push(Piece::Text(chunk.to_owned()));
+            }
+        }
+    }
+    components.retain(|pieces| !pieces.is_empty());
+    for pieces in &mut components {
+        let literal_only = pieces.iter().all(|piece| matches!(piece, Piece::Text(_)));
+        if literal_only && pieces_source(pieces).trim_matches([' ', '.']).is_empty() {
+            *pieces = vec![Piece::Text("_".to_owned())];
+        }
+    }
+    for pieces in &components {
+        let may_vanish = pieces.iter().all(|piece| match piece {
+            Piece::Text(text) => text.trim().is_empty(),
+            Piece::Hole { often_empty, .. } => *often_empty,
+        });
+        if may_vanish {
+            let names: Vec<&str> = pieces
+                .iter()
+                .filter_map(|piece| match piece {
+                    Piece::Hole { label, .. } => Some(label.as_str()),
+                    Piece::Text(_) => None,
+                })
+                .collect();
+            warnings.push(format!(
+                "A folder made only of {} is empty for a release without it, and such an import stops with an error.",
+                names.join(" and ")
+            ));
+        }
+    }
+
+    // The file always ends in `.{ext}`.
+    if components.is_empty() {
+        components.push(Vec::new());
+    }
+    if let Some(last) = components.last_mut() {
+        if let Some(Piece::Text(text)) = last.last_mut() {
+            let trimmed = text.trim_end_matches([' ', '.']).len();
+            text.truncate(trimmed);
+            if text.is_empty() {
+                last.pop();
+            }
+        }
+        let ends_with_ext = matches!(
+            last.as_slice(),
+            [.., Piece::Text(text), Piece::Hole { ext: true, .. }] if text.ends_with('.')
+        );
+        if !ends_with_ext {
+            let literal_ext = match last.last() {
+                Some(Piece::Text(text)) => text
+                    .rsplit_once('.')
+                    .map(|(_, ext)| ext.to_lowercase())
+                    .filter(|ext| !ext.is_empty()),
+                _ => None,
+            };
+            if last.is_empty() {
+                last.push(Piece::Text("_".to_owned()));
+            }
+            let source = match literal_ext {
+                Some(ext) => format!(
+                    "{{conditional(equals(ext, {}), \"\", concat(\".\", ext))}}",
+                    script_string(&ext)
+                ),
+                None => ".{ext}".to_owned(),
+            };
+            last.push(Piece::Hole {
+                source,
+                ext: false,
+                often_empty: false,
+                label: String::new(),
+            });
+        }
+    }
+    let script = components
+        .iter()
+        .map(|pieces| pieces_source(pieces))
+        .collect::<Vec<_>>()
+        .join("/");
+    LegacyConversion { script, warnings }
+}
+
+fn push_once(warnings: &mut Vec<String>, warning: String) {
+    if !warnings.contains(&warning) {
+        warnings.push(warning);
+    }
+}
+
+/// The template's `02d`-style number format as a script writes it;
+/// `None` for one that rendered the plain number.
+fn number_spec(format: &str, warnings: &mut Vec<String>) -> Option<String> {
+    let spec = format.strip_suffix('d').unwrap_or(format);
+    let mut width = spec.trim_start_matches('0').parse::<usize>().unwrap_or(0);
+    if width > 64 {
+        push_once(
+            warnings,
+            format!("A number width of {width} is cut to 64, the widest a script allows."),
+        );
+        width = 64;
+    }
+    if width == 0 {
+        return None;
+    }
+    Some(if spec.starts_with('0') {
+        format!("0{width}d")
+    } else {
+        format!("{width}d")
+    })
+}
+
+/// The template's literal and `{name}` segments, read as the template
+/// engine read them: braces holding nothing stay literal.
+fn template_segments(template: &str) -> Vec<(String, bool)> {
+    let chars: Vec<char> = template.chars().collect();
+    let mut out = Vec::new();
+    let mut literal_start = 0;
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] != '{' {
+            index += 1;
+            continue;
+        }
+        let mut end = index + 1;
+        while end < chars.len() && chars[end] != '{' && chars[end] != '}' {
+            end += 1;
+        }
+        if end >= chars.len() {
+            break;
+        }
+        if chars[end] == '{' {
+            index = end;
+            continue;
+        }
+        if end == index + 1 {
+            index = end + 1;
+            continue;
+        }
+        out.push((chars[literal_start..index].iter().collect(), false));
+        out.push((chars[index..=end].iter().collect(), true));
+        index = end + 1;
+        literal_start = index;
+    }
+    out.push((chars[literal_start..].iter().collect(), false));
+    out
+}
+
+/// For a value between two literals, the bracket pair around it that the
+/// template dropped with an empty value: (start of the opening bracket and
+/// the spaces before it, end of the closing bracket), in characters.
+/// Nested brackets kept theirs.
+fn template_empty_group(segments: &[(String, bool)], token: usize) -> Option<(usize, usize)> {
+    if token == 0 || token + 1 >= segments.len() {
+        return None;
+    }
+    let (before, before_token) = &segments[token - 1];
+    let (after, after_token) = &segments[token + 1];
+    if *before_token || *after_token {
+        return None;
+    }
+    let before: Vec<char> = before.chars().collect();
+    let after: Vec<char> = after.chars().collect();
+    let opening = before.iter().rposition(|ch| !ch.is_whitespace())?;
+    if let Some(outer) = before[..opening].iter().rposition(|ch| !ch.is_whitespace())
+        && matches!(before[outer], '(' | '[' | '{')
+    {
+        return None;
+    }
+    let closing_char = match before[opening] {
+        '(' => ')',
+        '[' => ']',
+        '{' => '}',
+        _ => return None,
+    };
+    let closing = after.iter().position(|ch| !ch.is_whitespace())?;
+    if after[closing] != closing_char {
+        return None;
+    }
+    if let Some(outer) = after[closing + 1..]
+        .iter()
+        .position(|ch| !ch.is_whitespace())
+        && matches!(after[closing + 1 + outer], ')' | ']' | '}')
+    {
+        return None;
+    }
+    let mut start = opening;
+    while start > 0 && before[start - 1].is_whitespace() {
+        start -= 1;
+    }
+    Some((start, closing + 1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::import::naming;
+    use crate::management::settings::validate_naming_language;
+    use crate::matching::model::{CreditedArtist, ReleaseMedium};
+    use crate::matching::{Release, ReleaseTrack};
+
+    fn credit(id: &str, name: &str) -> CreditedArtist {
+        CreditedArtist {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            sort_name: None,
+            join: String::new(),
+        }
+    }
+
+    /// The release and track each table input names: Portishead's "Sour
+    /// Times" (disc 1, track 3, 1994) with one thing changed.
+    fn input(label: &str) -> (Release, ReleaseTrack, &'static str) {
+        let mut release = Release {
+            release_group_id: "rg-id".to_owned(),
+            title: "Dummy".to_owned(),
+            artists: vec![credit("aa-id", "Portishead")],
+            date: Some("1994-08-22".to_owned()),
+            original_date: Some("1994-08-22".to_owned()),
+            media: vec![ReleaseMedium {
+                position: 1,
+                track_count: 11,
+                ..ReleaseMedium::default()
+            }],
+            ..Release::default()
+        };
+        let mut track = ReleaseTrack {
+            title: "Sour Times".to_owned(),
+            artists: vec![credit("ta-id", "Portishead")],
+            disc: 1,
+            position: 3,
+            ..ReleaseTrack::default()
+        };
+        let mut format = "flac";
+        match label {
+            "no_year" => {
+                release.date = None;
+                release.original_date = None;
+            }
+            "original" => {
+                release.date = Some("2009-03-01".to_owned());
+                release.original_date = Some("1991-10-14".to_owned());
+            }
+            "unsafe" => track.title = "AC/DC: Live?".to_owned(),
+            "con" => release.title = "CON".to_owned(),
+            "dots" => release.title = "..".to_owned(),
+            "long228" => track.title = "é".repeat(114),
+            "disc2" => {
+                track.disc = 2;
+                track.position = 12;
+            }
+            "beatles" => {
+                release.artists = vec![credit("aa-id", "The Beatles")];
+                track.artists = vec![credit("ta-id", "The Beatles")];
+            }
+            "mp3" => format = "mp3",
+            "etc" => track.title = "Etc.".to_owned(),
+            _ => {}
+        }
+        (release, track, format)
+    }
+
+    const INPUTS: &[&str] = &[
+        "plain", "no_year", "original", "unsafe", "con", "dots", "long228", "disc2", "beatles",
+        "mp3", "etc",
+    ];
+
+    /// Every template against every input: the path the template engine
+    /// gave, except where a comment names a known difference. D1: a folder
+    /// that renders empty now stops the import. D2: a value ending in a
+    /// dot before an added `.{ext}` keeps its dot, and a file name that is
+    /// only dots stops the import. CUT: names are cut at 240 bytes, not 252.
+    /// `{LONG}` is a 228-byte title.
+    const TABLE: &[(&str, [Option<&str>; 11])] = &[
+        (
+            "{albumartist}/{album} ({year})/{disc:02d}{track:02d} {title}.{ext}",
+            [
+                Some("Portishead/Dummy (1994)/0103 Sour Times.flac"),
+                Some("Portishead/Dummy/0103 Sour Times.flac"),
+                Some("Portishead/Dummy (1991)/0103 Sour Times.flac"),
+                Some("Portishead/Dummy (1994)/0103 AC_DC_ Live_.flac"),
+                Some("Portishead/CON (1994)/0103 Sour Times.flac"),
+                Some("Portishead/(1994)/0103 Sour Times.flac"),
+                Some("Portishead/Dummy (1994)/0103 {LONG}.flac"),
+                Some("Portishead/Dummy (1994)/0212 Sour Times.flac"),
+                Some("The Beatles/Dummy (1994)/0103 Sour Times.flac"),
+                Some("Portishead/Dummy (1994)/0103 Sour Times.mp3"),
+                Some("Portishead/Dummy (1994)/0103 Etc..flac"),
+            ],
+        ),
+        (
+            "{albumartist}/{album}/{track} {title}",
+            [
+                Some("Portishead/Dummy/3 Sour Times.flac"),
+                Some("Portishead/Dummy/3 Sour Times.flac"),
+                Some("Portishead/Dummy/3 Sour Times.flac"),
+                Some("Portishead/Dummy/3 AC_DC_ Live_.flac"),
+                Some("Portishead/_CON/3 Sour Times.flac"),
+                Some("Portishead/_/3 Sour Times.flac"),
+                Some("Portishead/Dummy/3 {LONG}.flac"),
+                Some("Portishead/Dummy/12 Sour Times.flac"),
+                Some("The Beatles/Dummy/3 Sour Times.flac"),
+                Some("Portishead/Dummy/3 Sour Times.mp3"),
+                Some("Portishead/Dummy/3 Etc..flac"), // D2
+            ],
+        ),
+        (
+            "{initial}/{albumartist}/[{year}] {album}/{disc:02d}-{track:02d} {title}.{ext}",
+            [
+                Some("P/Portishead/[1994] Dummy/01-03 Sour Times.flac"),
+                Some("P/Portishead/Dummy/01-03 Sour Times.flac"),
+                Some("P/Portishead/[1991] Dummy/01-03 Sour Times.flac"),
+                Some("P/Portishead/[1994] Dummy/01-03 AC_DC_ Live_.flac"),
+                Some("P/Portishead/[1994] CON/01-03 Sour Times.flac"),
+                Some("P/Portishead/[1994]/01-03 Sour Times.flac"),
+                Some("P/Portishead/[1994] Dummy/01-03 {LONG}.flac"),
+                Some("P/Portishead/[1994] Dummy/02-12 Sour Times.flac"),
+                Some("B/The Beatles/[1994] Dummy/01-03 Sour Times.flac"),
+                Some("P/Portishead/[1994] Dummy/01-03 Sour Times.mp3"),
+                Some("P/Portishead/[1994] Dummy/01-03 Etc..flac"),
+            ],
+        ),
+        (
+            "{artist}/{album}",
+            [
+                Some("Portishead/Dummy.flac"),
+                Some("Portishead/Dummy.flac"),
+                Some("Portishead/Dummy.flac"),
+                Some("Portishead/Dummy.flac"),
+                Some("Portishead/_CON.flac"),
+                None, // D2: no name before the extension
+                Some("Portishead/Dummy.flac"),
+                Some("Portishead/Dummy.flac"),
+                Some("The Beatles/Dummy.flac"),
+                Some("Portishead/Dummy.mp3"),
+                Some("Portishead/Dummy.flac"),
+            ],
+        ),
+        (
+            "{genre}/{albumartist}/{album}/{title}.{ext}",
+            [
+                Some("Portishead/Dummy/Sour Times.flac"),
+                Some("Portishead/Dummy/Sour Times.flac"),
+                Some("Portishead/Dummy/Sour Times.flac"),
+                Some("Portishead/Dummy/AC_DC_ Live_.flac"),
+                Some("Portishead/_CON/Sour Times.flac"),
+                Some("Portishead/_/Sour Times.flac"),
+                Some("Portishead/Dummy/{LONG}.flac"),
+                Some("Portishead/Dummy/Sour Times.flac"),
+                Some("The Beatles/Dummy/Sour Times.flac"),
+                Some("Portishead/Dummy/Sour Times.mp3"),
+                Some("Portishead/Dummy/Etc..flac"),
+            ],
+        ),
+        (
+            "{musicbrainz_id}/{artist_mbid}/{title}.flac",
+            [
+                Some("rg-id/aa-id/Sour Times.flac"),
+                Some("rg-id/aa-id/Sour Times.flac"),
+                Some("rg-id/aa-id/Sour Times.flac"),
+                Some("rg-id/aa-id/AC_DC_ Live_.flac"),
+                Some("rg-id/aa-id/Sour Times.flac"),
+                Some("rg-id/aa-id/Sour Times.flac"),
+                Some("rg-id/aa-id/{LONG}.flac"),
+                Some("rg-id/aa-id/Sour Times.flac"),
+                Some("rg-id/aa-id/Sour Times.flac"),
+                Some("rg-id/aa-id/Sour Times.flac.mp3"),
+                Some("rg-id/aa-id/Etc..flac"),
+            ],
+        ),
+        (
+            "{albumartist}/{album} {} }/{year:04d} {title}",
+            [
+                Some("Portishead/Dummy {} }/1994 Sour Times.flac"),
+                Some("Portishead/Dummy {} }/Sour Times.flac"),
+                Some("Portishead/Dummy {} }/1991 Sour Times.flac"),
+                Some("Portishead/Dummy {} }/1994 AC_DC_ Live_.flac"),
+                Some("Portishead/CON {} }/1994 Sour Times.flac"),
+                Some("Portishead/{} }/1994 Sour Times.flac"),
+                Some("Portishead/Dummy {} }/1994 {LONG}.flac"),
+                Some("Portishead/Dummy {} }/1994 Sour Times.flac"),
+                Some("The Beatles/Dummy {} }/1994 Sour Times.flac"),
+                Some("Portishead/Dummy {} }/1994 Sour Times.mp3"),
+                Some("Portishead/Dummy {} }/1994 Etc..flac"), // D2
+            ],
+        ),
+        (
+            "./{albumartist}/{album}/",
+            [
+                Some("_/Portishead/Dummy.flac"),
+                Some("_/Portishead/Dummy.flac"),
+                Some("_/Portishead/Dummy.flac"),
+                Some("_/Portishead/Dummy.flac"),
+                Some("_/Portishead/_CON.flac"),
+                None, // D2: no name before the extension
+                Some("_/Portishead/Dummy.flac"),
+                Some("_/Portishead/Dummy.flac"),
+                Some("_/The Beatles/Dummy.flac"),
+                Some("_/Portishead/Dummy.mp3"),
+                Some("_/Portishead/Dummy.flac"),
+            ],
+        ),
+        (
+            "{albumartist}/{{year}}/{title}",
+            [
+                Some("Portishead/{1994}/Sour Times.flac"),
+                None, // D1
+                Some("Portishead/{1991}/Sour Times.flac"),
+                Some("Portishead/{1994}/AC_DC_ Live_.flac"),
+                Some("Portishead/{1994}/Sour Times.flac"),
+                Some("Portishead/{1994}/Sour Times.flac"),
+                Some("Portishead/{1994}/{LONG}.flac"),
+                Some("Portishead/{1994}/Sour Times.flac"),
+                Some("The Beatles/{1994}/Sour Times.flac"),
+                Some("Portishead/{1994}/Sour Times.mp3"),
+                Some("Portishead/{1994}/Etc..flac"), // D2
+            ],
+        ),
+        (
+            "{year}/{albumartist}/{title}.{ext}",
+            [
+                Some("1994/Portishead/Sour Times.flac"),
+                None, // D1
+                Some("1991/Portishead/Sour Times.flac"),
+                Some("1994/Portishead/AC_DC_ Live_.flac"),
+                Some("1994/Portishead/Sour Times.flac"),
+                Some("1994/Portishead/Sour Times.flac"),
+                Some("1994/Portishead/{LONG}.flac"),
+                Some("1994/Portishead/Sour Times.flac"),
+                Some("1994/The Beatles/Sour Times.flac"),
+                Some("1994/Portishead/Sour Times.mp3"),
+                Some("1994/Portishead/Etc..flac"),
+            ],
+        ),
+        (
+            "{albumartist}/{album} - {date}/{track:2} \"{title}\" \\ x.{ext}",
+            [
+                Some("Portishead/Dummy -/3 _Sour Times_ _ x.flac"),
+                Some("Portishead/Dummy -/3 _Sour Times_ _ x.flac"),
+                Some("Portishead/Dummy -/3 _Sour Times_ _ x.flac"),
+                Some("Portishead/Dummy -/3 _AC_DC_ Live__ _ x.flac"),
+                Some("Portishead/CON -/3 _Sour Times_ _ x.flac"),
+                Some("Portishead/-/3 _Sour Times_ _ x.flac"),
+                Some("Portishead/Dummy -/3 _{LONG}_ _.flac"), // CUT
+                Some("Portishead/Dummy -/12 _Sour Times_ _ x.flac"),
+                Some("The Beatles/Dummy -/3 _Sour Times_ _ x.flac"),
+                Some("Portishead/Dummy -/3 _Sour Times_ _ x.mp3"),
+                Some("Portishead/Dummy -/3 _Etc._ _ x.flac"),
+            ],
+        ),
+    ];
+
+    #[test]
+    fn converted_templates_place_files_where_the_template_did() {
+        let long = "é".repeat(114);
+        for (template, expected) in TABLE {
+            let converted = legacy_template_to_script(template);
+            validate_naming_language(&converted.script, "converted").expect(template);
+            for (label, expected) in INPUTS.iter().zip(expected) {
+                let (release, track, format) = input(label);
+                let rendered = naming::render(
+                    &converted.script,
+                    &naming::variables(&release, &track, format),
+                    "/music",
+                )
+                .ok();
+                let expected = expected.map(|path| path.replace("{LONG}", &long));
+                assert_eq!(rendered, expected, "{template} with {label}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_default_script_is_v2s_default_template() {
+        assert_eq!(
+            legacy_template_to_script(DEFAULT_NAMING_TEMPLATE),
+            LegacyConversion {
+                script: DEFAULT_NAMING_SCRIPT.to_owned(),
+                warnings: Vec::new(),
+            }
+        );
+        assert_eq!(legacy_template_to_script(" ").script, DEFAULT_NAMING_SCRIPT);
+    }
+
+    #[test]
+    fn folders_that_can_render_empty_are_warned_about() {
+        let warnings = |template: &str| legacy_template_to_script(template).warnings;
+        assert_eq!(warnings("{year}/{title}").len(), 1);
+        assert_eq!(warnings("{albumartist}/[{year}]/{title}").len(), 1);
+        assert!(warnings("{albumartist}/{album} ({year})/{title}").is_empty());
+        assert_eq!(
+            warnings("{genre}/{title}"),
+            vec!["{genre} was always empty for imports, so it is left out.".to_owned()]
+        );
     }
 }

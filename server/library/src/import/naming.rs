@@ -1,342 +1,112 @@
-//! The library naming template: where an imported file goes.
-//!
-//! Ports v2's `NamingTemplateEngine.format_path`. A template such as
-//! `{albumartist}/{album} ({year})/{disc:02d}{track:02d} {title}.{ext}`
-//! names a path relative to the library root:
-//!
-//! - `{name}` is replaced by the value; `{track:02d}` and `{disc:02d}`
-//!   pad numbers. Unknown names render empty.
-//! - A value never adds structure: `/` and other characters a filesystem
-//!   refuses become `_`; only the template's own `/` separate folders.
-//! - A bracket pair around an empty value disappears with it, so a
-//!   release without a year gives `Album`, not `Album ()`.
-//! - Each folder and file name is NFC-normalized, loses leading and
-//!   trailing dots and spaces, steps around Windows device names, and is
-//!   cut to 252 bytes without splitting a character.
+//! Where an imported file goes: the library's import naming script,
+//! rendered by the one script language (`management::script`) over the
+//! variables Library Management names files with, built from the tags the
+//! import writes. The same release and script give the same path here and
+//! in a management preview with default path settings.
 
-use unicode_normalization::UnicodeNormalization;
+use droppedneedle_kernel::runtime_config::sections::PathCompatibilitySettings;
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
-/// Longest name kept, in bytes: a margin under the common 255 limit.
-const MAX_COMPONENT_BYTES: usize = 252;
+use crate::management::profile::{NamingFacts, naming_variables};
+use crate::management::script::{ScriptFault, Value, Variables, render_path};
+use crate::management::settings::validate_naming_language;
+use crate::matching::model::{CreditedArtist, ReleaseMedium};
+use crate::matching::{Release, ReleaseTrack};
+use crate::tags::picard::release_tags;
 
-/// What the template's names resolve to.
-#[derive(Debug, Clone, Default)]
-pub struct NamingFields {
-    pub artist: String,
-    pub album: String,
-    pub album_artist: String,
-    pub title: String,
-    pub year: Option<i32>,
-    pub track: u32,
-    pub disc: u32,
-    pub genre: String,
-    pub release_group_mbid: String,
-    pub artist_mbid: String,
-    /// Lowercase extension without the dot.
-    pub ext: String,
-}
-
-/// Render `template` into a relative path (with `/` separators). The file
-/// always ends in `.{ext}`, even when the template forgets it.
-pub fn render(template: &str, fields: &NamingFields) -> String {
-    let segments = segments(template);
-    let mut values: Vec<Option<String>> = vec![None; segments.len()];
-    let mut dropped = vec![false; segments.len()];
-    let mut prefix_end: Vec<usize> = vec![0; segments.len()];
-    let mut suffix_start: Vec<Option<usize>> = vec![None; segments.len()];
-    for (index, (part, is_token)) in segments.iter().enumerate() {
-        if !is_token {
-            continue;
-        }
-        let inner = &part[1..part.len() - 1];
-        let (name, format) = inner.split_once(':').unwrap_or((inner, ""));
-        let mut value = lookup(name, fields);
-        if !format.is_empty() && matches!(name, "track" | "disc") {
-            value = pad(&value, format);
-        }
-        if value.is_empty()
-            && let Some((before_start, after_end)) = empty_group(&segments, index)
-        {
-            dropped[index] = true;
-            let before_len = segments[index - 1].0.chars().count();
-            let current = suffix_start[index - 1].unwrap_or(before_len);
-            suffix_start[index - 1] = Some(current.min(before_start));
-            prefix_end[index + 1] = prefix_end[index + 1].max(after_end);
-        }
-        values[index] = Some(value);
-    }
-    let mut out = String::new();
-    for (index, (part, is_token)) in segments.iter().enumerate() {
-        if *is_token {
-            if !dropped[index] {
-                out.push_str(&replace_invalid(values[index].as_deref().unwrap_or("")));
-            }
-            continue;
-        }
-        let chars: Vec<char> = part.chars().collect();
-        let end = suffix_start[index].unwrap_or(chars.len());
-        let start = prefix_end[index];
-        if start < end {
-            out.extend(&chars[start..end]);
-        }
-    }
-    let mut components: Vec<String> = out
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .map(clean_component)
-        .collect();
-    if components.is_empty() {
-        components.push("_".to_owned());
-    }
-    let suffix = format!(".{}", fields.ext);
-    if let Some(last) = components.last_mut()
-        && !fields.ext.is_empty()
-        && !last.to_lowercase().ends_with(&suffix)
-    {
-        *last = clean_component(&format!("{last}{suffix}"));
-    }
-    components.join("/")
-}
-
-fn lookup(name: &str, fields: &NamingFields) -> String {
-    match name {
-        "artist" => fields.artist.clone(),
-        "album" => fields.album.clone(),
-        "albumartist" => {
-            if fields.album_artist.is_empty() {
-                fields.artist.clone()
-            } else {
-                fields.album_artist.clone()
-            }
-        }
-        "initial" => initial(if fields.album_artist.is_empty() {
-            &fields.artist
-        } else {
-            &fields.album_artist
-        }),
-        "year" => fields.year.map(|year| year.to_string()).unwrap_or_default(),
-        "title" => fields.title.clone(),
-        "ext" => fields.ext.clone(),
-        "track" => fields.track.to_string(),
-        "disc" => fields.disc.to_string(),
-        "genre" => fields.genre.clone(),
-        "musicbrainz_id" => fields.release_group_mbid.clone(),
-        "artist_mbid" => fields.artist_mbid.clone(),
-        _ => String::new(),
-    }
-}
-
-/// `02d` style padding; anything unreadable renders `00`, as in v2.
-fn pad(value: &str, format: &str) -> String {
-    let Ok(number) = value.parse::<u64>() else {
-        return "00".to_owned();
-    };
-    let spec = format.strip_suffix('d').unwrap_or(format);
-    let width = spec.trim_start_matches('0').parse::<usize>().unwrap_or(0);
-    if spec.starts_with('0') {
-        format!("{number:0width$}")
-    } else {
-        format!("{number:width$}")
-    }
-}
-
-/// The artist's first letter, past a leading "The"; `#` for anything
-/// that is not a letter.
-fn initial(artist: &str) -> String {
-    let name: String = artist.nfc().collect::<String>().trim().to_owned();
-    let lower = name.to_lowercase();
-    let rest = if lower.starts_with("the ") {
-        name[4..].trim_start()
-    } else {
-        name.as_str()
-    };
-    match rest.chars().next() {
-        Some(first) if first.is_alphabetic() => first
-            .to_uppercase()
-            .find(|ch| ch.is_alphabetic())
-            .map(String::from)
-            .unwrap_or_else(|| "#".to_owned()),
-        _ => "#".to_owned(),
-    }
-}
-
-/// Literal and `{name}` segments; braces holding nothing stay literal.
-fn segments(template: &str) -> Vec<(String, bool)> {
-    let chars: Vec<char> = template.chars().collect();
-    let mut out = Vec::new();
-    let mut literal_start = 0;
-    let mut index = 0;
-    while index < chars.len() {
-        if chars[index] != '{' {
-            index += 1;
-            continue;
-        }
-        let mut end = index + 1;
-        while end < chars.len() && chars[end] != '{' && chars[end] != '}' {
-            end += 1;
-        }
-        if end >= chars.len() {
-            break;
-        }
-        if chars[end] == '{' {
-            index = end;
-            continue;
-        }
-        if end == index + 1 {
-            index = end + 1;
-            continue;
-        }
-        out.push((chars[literal_start..index].iter().collect(), false));
-        out.push((chars[index..=end].iter().collect(), true));
-        index = end + 1;
-        literal_start = index;
-    }
-    out.push((chars[literal_start..].iter().collect(), false));
-    out
-}
-
-/// For an empty value between two literals, the bracket pair around it
-/// as (start of the opening bracket and the spaces before it in the
-/// literal before, end of the closing bracket in the literal after).
-/// Nested brackets keep theirs.
-fn empty_group(segments: &[(String, bool)], token: usize) -> Option<(usize, usize)> {
-    if token == 0 || token + 1 >= segments.len() {
-        return None;
-    }
-    let (before, before_token) = &segments[token - 1];
-    let (after, after_token) = &segments[token + 1];
-    if *before_token || *after_token {
-        return None;
-    }
-    let before: Vec<char> = before.chars().collect();
-    let after: Vec<char> = after.chars().collect();
-    let opening = before.iter().rposition(|ch| !ch.is_whitespace())?;
-    if let Some(outer) = before[..opening].iter().rposition(|ch| !ch.is_whitespace())
-        && matches!(before[outer], '(' | '[' | '{')
-    {
-        return None;
-    }
-    let closing_char = match before[opening] {
-        '(' => ')',
-        '[' => ']',
-        '{' => '}',
-        _ => return None,
-    };
-    let closing = after.iter().position(|ch| !ch.is_whitespace())?;
-    if after[closing] != closing_char {
-        return None;
-    }
-    if let Some(outer) = after[closing + 1..]
+/// The variables an imported file's name is made from. `format` is the
+/// file's lowercase extension.
+pub fn variables(release: &Release, track: &ReleaseTrack, format: &str) -> Variables {
+    let fields = release_tags(release, track);
+    let medium = release
+        .media
         .iter()
-        .position(|ch| !ch.is_whitespace())
-        && matches!(after[closing + 1 + outer], ')' | ']' | '}')
-    {
-        return None;
-    }
-    let mut start = opening;
-    while start > 0 && before[start - 1].is_whitespace() {
-        start -= 1;
-    }
-    Some((start, closing + 1))
+        .find(|medium| medium.position == track.disc);
+    let facts = NamingFacts {
+        extension: format,
+        codec: format,
+        bit_rate: None,
+        sample_rate: None,
+        bit_depth: None,
+        medium_format: medium
+            .and_then(|medium| medium.format.clone())
+            .unwrap_or_default(),
+        medium_number: i64::from(track.disc),
+        album_disambiguation: release.disambiguation.clone().unwrap_or_default(),
+    };
+    naming_variables(&fields, &facts)
 }
 
-fn invalid(ch: char) -> bool {
-    matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || ch.is_control()
+/// The relative path `script` gives a file under the root at `root`,
+/// cleaned with Library Management's default path settings. The file name
+/// must be a name followed by `.{ext}`: a file without its audio
+/// extension could be neither placed nor scanned.
+pub fn render(script: &str, variables: &Variables, root: &str) -> Result<String, ScriptFault> {
+    let path = render_path(
+        script,
+        variables,
+        &PathCompatibilitySettings::default(),
+        root,
+    )?;
+    let ext = variables.get("ext").map(Value::text).unwrap_or_default();
+    let file_name = path.rsplit('/').next().unwrap_or_default();
+    let named = file_name
+        .len()
+        .checked_sub(ext.len() + 1)
+        .filter(|stem| *stem > 0)
+        .and_then(|stem| file_name.get(stem..))
+        .is_some_and(|suffix| suffix.eq_ignore_ascii_case(&format!(".{ext}")));
+    if !named {
+        return Err(ScriptFault {
+            message: format!("The file name must end in .{ext}."),
+            line: 1,
+            column: 1,
+            path_too_long: false,
+        });
+    }
+    Ok(path)
 }
 
-fn replace_invalid(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| if invalid(ch) { '_' } else { ch })
-        .collect()
+/// The path `script` gives a fixed example track, shown under the setting.
+pub fn example(script: &str) -> Result<String, ScriptFault> {
+    let artist = CreditedArtist {
+        id: "a74b1b7f-71a5-4011-9441-d0b5e4122711".to_owned(),
+        name: "Radiohead".to_owned(),
+        sort_name: Some("Radiohead".to_owned()),
+        join: String::new(),
+    };
+    let track = ReleaseTrack {
+        title: "Paranoid Android".to_owned(),
+        disc: 1,
+        position: 2,
+        absolute_position: 2,
+        ..ReleaseTrack::default()
+    };
+    let release = Release {
+        release_group_id: "b1392450-e666-3926-a536-22c65f834433".to_owned(),
+        title: "OK Computer".to_owned(),
+        artists: vec![artist],
+        date: Some("1997-05-21".to_owned()),
+        original_date: Some("1997-05-21".to_owned()),
+        media: vec![ReleaseMedium {
+            position: 1,
+            format: Some("CD".to_owned()),
+            track_count: 12,
+            ..ReleaseMedium::default()
+        }],
+        tracks: vec![track.clone()],
+        ..Release::default()
+    };
+    render(script, &variables(&release, &track, "flac"), "/music")
 }
 
-/// One safe, contained file or folder name.
-fn clean_component(component: &str) -> String {
-    let normalized: String = component.nfc().collect();
-    let replaced = replace_invalid(&normalized);
-    let mut cleaned = replaced.trim_matches([' ', '.']).to_owned();
-    if cleaned.is_empty() {
-        cleaned = "_".to_owned();
-    }
-    let stem = cleaned
-        .split('.')
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let reserved = matches!(stem.as_str(), "con" | "prn" | "aux" | "nul")
-        || ((stem.starts_with("com") || stem.starts_with("lpt"))
-            && stem.len() == 4
-            && stem.as_bytes()[3].is_ascii_digit()
-            && stem.as_bytes()[3] != b'0');
-    if reserved {
-        cleaned = format!("_{cleaned}");
-    }
-    if cleaned.len() > MAX_COMPONENT_BYTES {
-        // A long file name loses the end of its stem, never its extension.
-        let (stem, ext) = match cleaned.rfind('.') {
-            Some(dot) if dot > 0 && cleaned.len() - dot <= 16 => {
-                (cleaned[..dot].to_owned(), cleaned[dot..].to_owned())
-            }
-            _ => (cleaned.clone(), String::new()),
-        };
-        let mut cut = MAX_COMPONENT_BYTES - ext.len();
-        while !stem.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        let stem = stem[..cut].trim_matches([' ', '.']);
-        cleaned = format!("{}{ext}", if stem.is_empty() { "_" } else { stem });
-    }
-    cleaned
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const DEFAULT: &str = "{albumartist}/{album} ({year})/{disc:02d}{track:02d} {title}.{ext}";
-
-    fn fields() -> NamingFields {
-        NamingFields {
-            artist: "Portishead".into(),
-            album: "Dummy".into(),
-            album_artist: "Portishead".into(),
-            title: "Sour Times".into(),
-            year: Some(1994),
-            track: 3,
-            disc: 1,
-            ext: "flac".into(),
-            ..NamingFields::default()
-        }
-    }
-
-    #[test]
-    fn renders_the_default_template() {
-        assert_eq!(
-            render(DEFAULT, &fields()),
-            "Portishead/Dummy (1994)/0103 Sour Times.flac"
-        );
-    }
-
-    #[test]
-    fn empty_groups_and_unsafe_values_fold_away() {
-        let mut fields = fields();
-        fields.year = None;
-        fields.title = "AC/DC: Live?".into();
-        fields.album = "..".into();
-        assert_eq!(
-            render(DEFAULT, &fields),
-            "Portishead/_/0103 AC_DC_ Live_.flac"
-        );
-        assert_eq!(render("{title}", &fields), "AC_DC_ Live_.flac");
-        fields.title = "é".repeat(200);
-        let long = render("{title}.{ext}", &fields);
-        assert!(long.ends_with(".flac") && long.len() <= MAX_COMPONENT_BYTES);
-        fields.title = "AC/DC: Live?".into();
-        fields.album = "CON".into();
-        assert_eq!(
-            render("{album}/{title}.{ext}", &fields),
-            "_CON/AC_DC_ Live_.flac"
-        );
-    }
+/// Check a naming script a person saves: it passes the checks every
+/// naming script passes, and places the example track.
+pub fn check(script: &str) -> Result<(), SettingsError> {
+    validate_naming_language(script, "Import naming script")?;
+    example(script)
+        .map(drop)
+        .map_err(|fault| SettingsError::InvalidInput {
+            message: format!("Import naming script: {fault}"),
+        })
 }

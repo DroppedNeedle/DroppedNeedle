@@ -64,7 +64,9 @@ fn compile_error(fault: ScriptFault, script_name: &str) -> SettingsError {
     script_error(fault.message, script_name, fault.line, fault.column)
 }
 
-pub(super) fn validate_naming_language(
+/// Check a naming script as every naming script is checked on save:
+/// it compiles, stays a relative path and reads only known variables.
+pub(crate) fn validate_naming_language(
     source: &str,
     script_name: &str,
 ) -> Result<(), SettingsError> {

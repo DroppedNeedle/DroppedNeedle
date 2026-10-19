@@ -137,3 +137,72 @@ async fn removed_root_restores_and_previews_count_the_catalog() {
         Some("A/one.flac")
     );
 }
+
+/// A changed import naming script is checked on save and refused with its
+/// line and column; a good one is saved with the path it gives an example
+/// track. A stored script that no longer passes never blocks a save that
+/// leaves it alone.
+#[tokio::test]
+async fn an_import_naming_script_is_checked_only_when_changed() {
+    let settings = SettingsSetup::for_tests(Arc::new(FixedIdGenerator::new(FIXED_ID)))
+        .expect("settings bundle builds");
+    let policy = settings.library_policy();
+    let save = |revision: &str, script: &str, enabled: bool| -> LibrarySettingsSaveRequest {
+        serde_json::from_value(json!({
+            "settings": {"naming_script": script, "enabled": enabled},
+            "expected_policy_revision": revision,
+        }))
+        .expect("request decodes")
+    };
+    let current = settings.service().get_library().await.expect("reads");
+    assert_eq!(
+        current.naming_example.as_deref(),
+        Some("Radiohead/OK Computer (1997)/0102 Paranoid Android.flac")
+    );
+
+    let refused = policy
+        .save(save(
+            &current.policy_revision,
+            "{albumartist}/{nope(title)}",
+            true,
+        ))
+        .await
+        .expect_err("a bad script is refused");
+    let SettingsError::InvalidInput { message } = refused else {
+        panic!("not a 400: {refused:?}");
+    };
+    assert!(message.contains("line 1, column"), "{message}");
+
+    let saved = policy
+        .save(save(
+            &current.policy_revision,
+            "{initial}/{albumartist}/{track:02d} {title}.{ext}",
+            true,
+        ))
+        .await
+        .expect("a good script saves");
+    assert_eq!(
+        saved.naming_example.as_deref(),
+        Some("R/Radiohead/02 Paranoid Android.flac")
+    );
+
+    // A script stored before today's checks: a save that changes
+    // something else goes through.
+    let stored = settings
+        .service()
+        .update_library(|mut library| {
+            library.naming_script = "{albumartist}/{unknown_name}/{title}.{ext}".to_owned();
+            Ok(library)
+        })
+        .await
+        .expect("stored as is");
+    let kept = policy
+        .save(save(
+            &stored.policy_revision,
+            "{albumartist}/{unknown_name}/{title}.{ext}",
+            false,
+        ))
+        .await
+        .expect("a save that leaves the script alone goes through");
+    assert!(!kept.settings.enabled);
+}

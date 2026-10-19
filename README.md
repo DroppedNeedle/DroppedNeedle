@@ -300,7 +300,7 @@ Where things live in the UI:
 
 | Setting | Location |
 |-|-|
-| Library paths, naming template, scan schedule, AcoustID key | Settings > Library |
+| Library paths, import naming script, scan schedule, AcoustID key | Settings > Library |
 | Library Management profiles, previews, recovery | Library Management (admin) |
 | Download clients (slskd, SABnzbd), source priority, quality tiers, verification, picking a copy, wanted watcher | Settings > Download Client |
 | Newznab indexers or Prowlarr | Settings > Indexers / Prowlarr |

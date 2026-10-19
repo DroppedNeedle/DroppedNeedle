@@ -10,7 +10,7 @@
 //!    root it is going to (`.droppedneedle-management-import/<task>/`).
 //!    The scan skips the hidden prefix, and the publisher's rename then
 //!    never crosses a filesystem, whatever disk the download client used.
-//! 2. One bundle moves every copy to the path the naming template gives
+//! 2. One bundle moves every copy to the path the import naming script gives
 //!    and writes the release's full tag set on the way.
 //! 3. The publisher's catalog commit adds the tracks to the catalog in the
 //!    same transaction (from the published files' own tags, exactly as a
@@ -48,11 +48,9 @@ pub mod naming;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use self::naming::NamingFields;
 use super::clock::today_day;
 use super::identify::sqlite::{ImportSeal, ImportTrack};
 use super::matching::Release;
-use super::matching::model::credit_text;
 use super::publish::planner::{
     AlbumJoin, Capability, FileFingerprint, JoinedTrack, PlanBundle, PlanItem, PlanKind,
     ReleaseIdentity, SealRecheck, SealedPreview,
@@ -62,7 +60,6 @@ use super::publish::snapshots::sha256_hex;
 use super::publish::{HIDDEN_PREFIX, PublishError};
 use super::scan::models::EffectivePolicy;
 use super::wiring::LibrarySetup;
-use droppedneedle_kernel::runtime_config::sections::DEFAULT_NAMING_TEMPLATE;
 
 /// Revisions the seal pins while profiles and naming have no store (the
 /// same constants manual management uses).
@@ -156,6 +153,8 @@ pub enum ImportError {
     LocalFault(String),
     /// A file already sits where an imported file would go.
     Occupied(String),
+    /// The import naming script gave no usable path for a file.
+    NamingScript(String),
 }
 
 /// One planned file.
@@ -200,18 +199,14 @@ impl LibrarySetup {
             .cloned()
             .ok_or_else(|| fault("no library root takes imports".to_owned()))?;
         // Settings that do not read never mean the default layout.
-        let template = self
+        let script = self
             .settings
             .library
             .read()
             .ok_or_else(|| fault("the library settings cannot be read".to_owned()))?
-            .naming_template
+            .naming_script
             .clone();
-        let template = if template.trim().is_empty() {
-            DEFAULT_NAMING_TEMPLATE.to_owned()
-        } else {
-            template
-        };
+        let root_path = root.path.to_string_lossy().into_owned();
         let task_dir = staging_rel(import.staging.as_deref().unwrap_or(&import.task_id));
         let mut sources = Vec::with_capacity(import.files.len() + import.extras.len());
         for file in &import.files {
@@ -238,28 +233,16 @@ impl LibrarySetup {
                 .map_err(|error| fault(format!("unsupported file: {error}")))?
                 .as_str()
                 .to_owned();
-            let fields = NamingFields {
-                artist: credit_text(if track.artists.is_empty() {
-                    &import.release.artists
-                } else {
-                    &track.artists
-                }),
-                album: import.release.title.clone(),
-                album_artist: import.release.artist_text(),
-                title: track.title.clone(),
-                year: import.release.original_year().or(import.release.year()),
-                track: track.position,
+            let named = super::matching::ReleaseTrack {
                 disc: track.disc.max(1),
-                genre: String::new(),
-                release_group_mbid: import.release.release_group_id.clone(),
-                artist_mbid: import
-                    .release
-                    .artists
-                    .first()
-                    .map(|artist| artist.id.clone())
-                    .unwrap_or_default(),
-                ext: format.clone(),
+                ..track.clone()
             };
+            let dest_rel = naming::render(
+                &script,
+                &naming::variables(&import.release, &named, &format),
+                &root_path,
+            )
+            .map_err(|error| ImportError::NamingScript(error.to_string()))?;
             let mut tags = super::tags::picard::release_tags(&import.release, track);
             tags.retain(|name, values| {
                 super::tags::TagField::from_name(name).is_some_and(|field| {
@@ -277,7 +260,7 @@ impl LibrarySetup {
                 source: path.clone(),
                 track: track.clone(),
                 staged_rel: format!("{task_dir}/{ordinal:03}.{format}"),
-                dest_rel: naming::render(&template, &fields),
+                dest_rel,
                 format,
                 tags,
                 track_id: String::new(),

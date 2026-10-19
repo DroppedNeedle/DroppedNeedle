@@ -96,7 +96,7 @@ impl LibraryManagementService {
     /// normalized on every read, persisted when either changed anything.
     fn load(&self) -> Result<LibraryManagement, SettingsError> {
         let stored: LibraryManagement = self.store.get().map_err(|error| self.config(error))?;
-        let template = self.library()?.naming_template;
+        let template = self.library()?.naming_script;
         let settings = migrated(&stored, &template)?;
         if settings != stored {
             match self.commit(&settings_revision(&settings), settings.clone(), &template) {
@@ -318,11 +318,7 @@ impl LibraryManagementService {
             }
         }
         let library = self.library()?;
-        self.commit(
-            &current_revision,
-            candidate.clone(),
-            &library.naming_template,
-        )?;
+        self.commit(&current_revision, candidate.clone(), &library.naming_script)?;
         Ok(Self::response(candidate))
     }
 

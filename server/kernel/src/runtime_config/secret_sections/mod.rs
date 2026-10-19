@@ -32,8 +32,8 @@ use crate::runtime_config::effects::{CacheRoot, Effect};
 use crate::runtime_config::error::ConfigError;
 use crate::runtime_config::secret::Secret;
 use crate::runtime_config::sections::{
-    DEFAULT_NAMING_TEMPLATE, Section, check_range, is_valid_hhmm, normalize_http_url,
-    sanitize_absolute_mount, sanitize_subpath, strip_api_suffix, tier_rank,
+    Section, check_range, is_valid_hhmm, normalize_http_url, sanitize_absolute_mount,
+    sanitize_subpath, strip_api_suffix, tier_rank,
 };
 
 /// One mutable secret field.

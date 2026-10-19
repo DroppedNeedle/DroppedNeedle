@@ -306,7 +306,8 @@ impl SettingsService {
     /// Save the library settings. Under the store's write lock: a stale
     /// expected revision is a 409 before anything else, then the
     /// candidate is normalized, then dropping every root while the
-    /// catalog holds tracks is a 400. A masked AcoustID key keeps the
+    /// catalog holds tracks is a 400. A changed import naming script must
+    /// pass the naming script checks. A masked AcoustID key keeps the
     /// stored one.
     pub async fn save_library(
         &self,
@@ -315,6 +316,12 @@ impl SettingsService {
     ) -> Result<LibrarySettingsResponse, SettingsError> {
         self.update_library(move |stored| {
             library_policy::check_revision(&stored, &request.expected_policy_revision)?;
+            // Only a script the person changed is checked, so a stored one a
+            // later build refuses never blocks saving the rest.
+            let script = request.settings.naming_script.trim();
+            if !script.is_empty() && script != stored.naming_script.trim() {
+                droppedneedle_library::import::naming::check(script)?;
+            }
             let normalized = library_policy::normalize(&request.settings)?;
             library_policy::guard_last_root(&normalized, catalog_has_tracks)?;
             Ok(normalized)

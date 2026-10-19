@@ -844,7 +844,7 @@ impl DropImports {
                             "old copies not put back after a failed drop import"
                         );
                     }
-                    match failure {
+                    match &failure {
                         ImportFailure::Occupied(detail) => {
                             tracing::info!(item_id = item.id, %detail, "drop import destination taken");
                             done.occupied = import.len() + extras.len();
@@ -857,15 +857,15 @@ impl DropImports {
                                     .filter(|path| !stranded.contains(path)),
                             );
                         }
-                        ImportFailure::LocalFault(detail) => {
+                        ImportFailure::LocalFault(detail) | ImportFailure::NamingScript(detail) => {
                             tracing::warn!(item_id = item.id, %detail, "library could not take a drop import");
-                            self.save(&settled(
-                                item,
-                                item_status::NEEDS_REVIEW,
-                                reasons::LIBRARY_UNAVAILABLE,
-                                None,
-                            ))
-                            .await;
+                            let reason = if matches!(failure, ImportFailure::NamingScript(_)) {
+                                reasons::NAMING_SCRIPT_FAILED
+                            } else {
+                                reasons::LIBRARY_UNAVAILABLE
+                            };
+                            self.save(&settled(item, item_status::NEEDS_REVIEW, reason, None))
+                                .await;
                             return Ok(());
                         }
                     }

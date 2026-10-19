@@ -1011,10 +1011,15 @@ pub fn render_path(
         };
         rendered.push_str(&sanitize_value(&text, compat));
     }
+    // Windows-compatible names lose leading and trailing dots, so a value
+    // of `.` or `..` becomes the replacement there, as `...` already does.
+    // Without that cleaning it would name a folder outside the path.
     let parts: Vec<&str> = rendered.split('/').collect();
     if rendered.is_empty()
         || rendered.starts_with('/')
-        || parts.iter().any(|part| matches!(*part, "" | "." | ".."))
+        || parts.iter().any(|part| {
+            part.is_empty() || (!compat.windows_compatible && matches!(*part, "." | ".."))
+        })
     {
         return fault(
             "The naming script made an empty folder or file name, or a path that leaves the library folder.",
@@ -1299,6 +1304,16 @@ mod tests {
         )
         .expect_err("not a number");
         assert!(bad.message.contains("whole number"));
+    }
+
+    #[test]
+    fn a_dots_value_is_replaced_never_followed() {
+        let dots = vars(&[("album", Value::Text("..".into()))]);
+        let mut compat = PathCompatibilitySettings::default();
+        let path = render_path("{album}/x", &dots, &compat, "/m").expect("renders");
+        assert_eq!(path, "_/x");
+        compat.windows_compatible = false;
+        assert!(render_path("{album}/x", &dots, &compat, "/m").is_err());
     }
 
     #[test]

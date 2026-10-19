@@ -63,6 +63,12 @@ pub const LIBRARY_UNAVAILABLE: Reason = reason(
     "The library couldn't take the files right now.",
     "Check that a library folder is set up and has free space, then try Match again.",
 );
+/// The import naming script gave no usable path for the files.
+pub const NAMING_SCRIPT_FAILED: Reason = reason(
+    "naming_script_failed",
+    "The import naming script gave no usable path for these files, so they wait where they are.",
+    "Fix the import naming script in Settings, Library, then try Match again.",
+);
 /// Files of an imported album that matched none of its tracks well.
 pub const LEFTOVER_FILES: Reason = reason(
     "leftover_files",

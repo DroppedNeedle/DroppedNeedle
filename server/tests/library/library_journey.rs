@@ -9893,6 +9893,170 @@ async fn an_import_that_cannot_read_the_albums_match_leaves_it_alone() {
     assert!(live_jobs > 0, "the album is offered to identification");
 }
 
+/// An imported file and a management preview with the same naming script
+/// give the file the same path, so Library Management never moves what an
+/// import placed: for the default import script, Picard's single-disc
+/// script and an `{initial}` one, with a title long enough to be cut.
+#[tokio::test]
+async fn import_and_management_name_a_file_alike() {
+    use droppedneedle_kernel::runtime_config::secret_sections::{
+        DEFAULT_NAMING_SCRIPT, TypedLibrary,
+    };
+    use droppedneedle_kernel::runtime_config::sections::NamingScript;
+    use droppedneedle_library::import::{DownloadImport, ImportOrigin, ImportSource};
+    use droppedneedle_library::management::models::{ItemFilter, Selection, SelectionKind};
+    use droppedneedle_library::management::service::{Management, PreviewRequest};
+    use droppedneedle_library::management::settings as lm;
+    use droppedneedle_library::matching::model::ReleaseMedium;
+
+    let scripts = [
+        DEFAULT_NAMING_SCRIPT.to_owned(),
+        lm::PICARD_STANDARD_NAMING_SOURCE.to_owned(),
+        lm::legacy_template_to_script(
+            "{initial}/{albumartist}/[{year}] {album}/{disc:02d}-{track:02d} {title}.{ext}",
+        )
+        .script,
+    ];
+    let (scratch, library, music) = bare_library("lib-import-naming-alike").await;
+    std::fs::create_dir_all(&music).expect("music folder");
+    add_music_root(&library, &music).await;
+    library
+        .scan_store
+        .db()
+        .run_sql(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+        )
+        .expect("admin row");
+    let mut settings = lm::initial_settings("");
+    let picard = settings
+        .profiles
+        .iter()
+        .find(|profile| profile.id == lm::PICARD_ORGANIZER_PROFILE_ID)
+        .expect("picard preset")
+        .clone();
+    for (n, script) in scripts.iter().enumerate() {
+        settings.naming_scripts.push(NamingScript {
+            id: format!("script-{n}"),
+            name: format!("Script {n}"),
+            source: script.clone(),
+            ..NamingScript::default()
+        });
+        let mut profile = picard.clone();
+        profile.id = format!("profile-{n}");
+        profile.name = format!("Profile {n}");
+        profile.preset_origin = None;
+        profile.organization.naming_script_id = format!("script-{n}");
+        profile.organization.multi_disc_naming_script_id = None;
+        settings.profiles.push(profile);
+    }
+    let settings = library
+        .settings
+        .store()
+        .save_blocking(settings)
+        .expect("settings saved");
+    let management = Management::new(&library);
+
+    for (n, script) in scripts.iter().enumerate() {
+        let script = script.clone();
+        library
+            .settings
+            .store()
+            .update_secret_blocking::<TypedLibrary, String, _>(move |stored| {
+                let mut library = stored.into_inner();
+                library.naming_script = script;
+                Ok(library)
+            })
+            .expect("import script saved");
+        let artist = CreditedArtist {
+            id: format!("{n}0000000-0000-4000-8000-00000000000a"),
+            name: "The Golden Band".to_owned(),
+            sort_name: Some("Golden Band, The".to_owned()),
+            join: String::new(),
+        };
+        let track = ReleaseTrack {
+            id: format!("{n}0000000-0000-4000-8000-00000000000b"),
+            recording_id: format!("{n}0000000-0000-4000-8000-00000000000c"),
+            title: format!("Song {n} {}", "x".repeat(240)),
+            disc: 1,
+            position: 1,
+            absolute_position: 1,
+            ..ReleaseTrack::default()
+        };
+        let release = Release {
+            id: format!("{n}0000000-0000-4000-8000-00000000000d"),
+            release_group_id: format!("{n}0000000-0000-4000-8000-00000000000e"),
+            title: format!("Golden {n}"),
+            artists: vec![artist],
+            date: Some("2001-02-03".to_owned()),
+            original_date: Some("1999-01-01".to_owned()),
+            media: vec![ReleaseMedium {
+                position: 1,
+                format: Some("CD".to_owned()),
+                track_count: 1,
+                ..ReleaseMedium::default()
+            }],
+            tracks: vec![track],
+            ..Release::default()
+        };
+        let source = scratch.to_path_buf().join(format!("incoming/{n}/01.flac"));
+        std::fs::create_dir_all(source.parent().expect("parent")).expect("mkdir");
+        std::fs::copy(fixtures_dir().join("flac_full_02.flac"), &source).expect("download planted");
+        let imported = library
+            .import_download(&DownloadImport {
+                task_id: format!("task-{n}"),
+                origin: ImportOrigin::Download,
+                staging: None,
+                release,
+                files: vec![ImportSource {
+                    path: source,
+                    track: 0,
+                }],
+                extras: Vec::new(),
+            })
+            .expect("imported");
+        let placed = imported.paths[0]
+            .strip_prefix(&music)
+            .expect("under the root")
+            .to_string_lossy()
+            .into_owned();
+
+        let handle = management
+            .create_preview(
+                PreviewRequest {
+                    selection: Selection {
+                        kind: SelectionKind::Albums,
+                        ids: vec![imported.album_id.clone()],
+                        catalog_filter: None,
+                    },
+                    profile_id: format!("profile-{n}"),
+                    expected_settings_revision: lm::settings_revision(&settings),
+                    expected_policy_revision: library.policy_revision().expect("policy revision"),
+                    idempotency_key: Some(format!("alike-{n}")),
+                    target_root_id: None,
+                    overrides: None,
+                },
+                "admin",
+            )
+            .expect("preview queued");
+        assert!(management_step(&library).await, "planning runs");
+        let page = management
+            .items(&handle.job_id, -1, 100, &ItemFilter::default())
+            .expect("items page");
+        let item = page
+            .items
+            .iter()
+            .find(|item| item.source_rel == placed)
+            .expect("the imported file is planned");
+        assert_eq!(
+            item.dest_rel.as_deref(),
+            Some(placed.as_str()),
+            "{:?}",
+            item.facts.reason
+        );
+    }
+}
+
 /// A file v2 tagged, changed by hand since, then renamed in the app: the
 /// rename keeps v2's record, so the worker still leaves the album to the
 /// user.

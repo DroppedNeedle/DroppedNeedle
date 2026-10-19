@@ -168,6 +168,11 @@ pub const CATALOG: &[Reason] = &[
         "Save Settings, Downloads again. The import then goes ahead by itself.",
     ),
     reason(
+        "naming_script_failed",
+        "The import naming script gave no usable path for these files, so they wait where they are.",
+        "Fix the import naming script in Settings, Library, then retry import.",
+    ),
+    reason(
         "local_fault",
         "Something on this server stopped the import (for example a full disk or a folder it cannot write).",
         "Check free space and folder permissions, then retry import.",

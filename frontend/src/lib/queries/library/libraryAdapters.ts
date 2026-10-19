@@ -135,7 +135,7 @@ export function toTargetLibrarySettings(
 			}))
 		})),
 		staging_path: settings.staging_path ?? '',
-		naming_template: settings.naming_template ?? '',
+		naming_script: settings.naming_script ?? '',
 		acoustid_api_key: settings.acoustid_api_key ?? '',
 		enabled: settings.enabled ?? false,
 		policy_revision: settings.policy_revision,
@@ -147,6 +147,7 @@ export function toTargetLibrarySettings(
 		pending_policy_revision: settings.pending_policy_revision ?? null,
 		affected_scope_ids: settings.affected_scope_ids,
 		actions_applied: settings.actions_applied,
-		warnings: settings.warnings
+		warnings: settings.warnings,
+		naming_example: settings.naming_example ?? null
 	};
 }

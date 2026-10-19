@@ -31,7 +31,7 @@ use droppedneedle_kernel::runtime_config::{ConfigStore, Live, UpdateError};
 /// store for the few things the library writes or signs.
 #[derive(Clone)]
 pub struct LibrarySettings {
-    /// Roots, path rules, the naming template and the AcoustID key.
+    /// Roots, path rules, the import naming script and the AcoustID key.
     pub library: Live<TypedLibrary>,
     /// The automatic-scan schedule.
     pub schedule: Live<LibraryScanSchedule>,

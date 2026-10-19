@@ -20,7 +20,7 @@
 		saveDownloadPolicy
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
 	import LibraryRootPolicyEditor from '$lib/components/library/LibraryRootPolicyEditor.svelte';
-	import LibraryNamingPreview from '$lib/components/library/LibraryNamingPreview.svelte';
+	import LibraryNamingExample from '$lib/components/library/LibraryNamingExample.svelte';
 	import LibraryScanScheduleControl from '$lib/components/library/LibraryScanScheduleControl.svelte';
 	import SettingsLyrics from './SettingsLyrics.svelte';
 	import Button from '$lib/ui/Button.svelte';
@@ -29,6 +29,7 @@
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
+	import TextAreaField from '$lib/ui/TextAreaField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -50,7 +51,7 @@
 	const savePolicy = saveDownloadPolicy();
 	const statsQuery = getLibraryStatsQuery();
 
-	let template = $state('');
+	let namingScript = $state('');
 	let acoustidKey = $state('');
 	let roots = $state<LibraryRootSettings[]>([]);
 	let libraryEnabled = $state(true);
@@ -74,7 +75,7 @@
 	$effect(() => {
 		const data = settingsQuery.data;
 		if (data && !seeded) {
-			template = data.naming_template;
+			namingScript = data.naming_script;
 			acoustidKey = data.acoustid_api_key;
 			roots = data.library_roots.map((root) => ({
 				...root,
@@ -119,7 +120,7 @@
 		return {
 			library_roots: roots,
 			staging_path: settingsQuery.data?.staging_path ?? '',
-			naming_template: template,
+			naming_script: namingScript,
 			acoustid_api_key: acoustidKey,
 			enabled: libraryEnabled
 		};
@@ -347,17 +348,13 @@
 				<div class="divider my-0"></div>
 
 				<section class="space-y-2">
-					<h3 class="font-semibold">Legacy import naming template</h3>
-					<p class="text-xs text-base-content/60">
-						Fallback for downloaded imports that file organization does not handle. Once
-						organization is enabled, its assigned profile controls managed paths. Variables:
-						{'{initial} {albumartist} {album} {year} {disc} {track} {title} {ext}'}.
-						{'{initial}'} uses the effective album artist, ignores leading Unicode whitespace and a case-insensitive
-						"The" plus following Unicode whitespace, then returns one uppercase letter; empty or nonletter
-						leads return "#".
-					</p>
-					<Input label="Naming template" mono class="w-full" bind:value={template} />
-					<LibraryNamingPreview {template} />
+					<TextAreaField
+						label="Import naming script"
+						help="Where downloads and dropped files are filed. Same script language as Library Management."
+						mono
+						bind:value={namingScript}
+					/>
+					<LibraryNamingExample example={currentSettings?.naming_example ?? null} />
 				</section>
 
 				<div class="divider my-0"></div>

@@ -135,9 +135,6 @@ pub struct DownloadManifest {
     /// Album title for the importer.
     #[serde(default)]
     pub album_title: String,
-    /// Naming template the import must render with.
-    #[serde(default)]
-    pub naming_template: String,
     /// Files the task enqueued.
     #[serde(default)]
     pub target_files: Vec<ExpectedFile>,

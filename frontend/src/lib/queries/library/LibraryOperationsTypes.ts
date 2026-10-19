@@ -403,7 +403,7 @@ export interface LibraryRootSettings {
 export interface TypedLibrarySettings {
 	library_roots: LibraryRootSettings[];
 	staging_path: string;
-	naming_template: string;
+	naming_script: string;
 	acoustid_api_key: string;
 	enabled: boolean;
 }
@@ -416,6 +416,7 @@ export interface TargetLibrarySettingsResponse extends TypedLibrarySettings {
 	affected_scope_ids: string[];
 	actions_applied: string[];
 	warnings: string[];
+	naming_example: string | null;
 }
 
 // The path policy routes are on v3; their shapes come from the contract.

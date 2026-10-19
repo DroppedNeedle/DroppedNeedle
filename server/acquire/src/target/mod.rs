@@ -465,7 +465,6 @@ impl Targets {
                 release_group_mbid: task.release_group_mbid.clone(),
                 artist_name: task.artist_name.clone(),
                 album_title: task.album_title.clone(),
-                naming_template: String::new(),
                 target_files: Vec::new(),
                 source_username: None,
                 handle: None,

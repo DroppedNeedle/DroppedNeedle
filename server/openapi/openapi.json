@@ -44478,10 +44478,10 @@
             "description": "Library roots.",
             "default": []
           },
-          "naming_template": {
+          "naming_script": {
             "type": "string",
-            "description": "Naming template.",
-            "default": "{albumartist}/{album} ({year})/{disc:02d}{track:02d} {title}.{ext}"
+            "description": "The naming script that places downloaded and dropped files.",
+            "default": "{albumartist}/{album}{conditional(is_empty(slice(default(original_date, date), 0, 4)), \"\", concat(\" (\", slice(default(original_date, date), 0, 4), \")\"))}/{disc:02d}{track:02d} {title}.{ext}"
           },
           "staging_path": {
             "type": "string",
@@ -44520,6 +44520,13 @@
                   "type": "string"
                 },
                 "description": "Affected scope ids."
+              },
+              "naming_example": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Where the import naming script puts an example track; absent when\nthe stored script places nothing."
               },
               "pending_policy_revision": {
                 "type": [

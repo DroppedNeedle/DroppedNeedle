@@ -35,6 +35,9 @@ pub struct LibrarySettingsResponse {
     pub actions_applied: Vec<String>,
     /// Non-blocking warnings.
     pub warnings: Vec<String>,
+    /// Where the import naming script puts an example track; absent when
+    /// the stored script places nothing.
+    pub naming_example: Option<String>,
 }
 
 /// GET/PUT view of Library Management: the settings plus their content

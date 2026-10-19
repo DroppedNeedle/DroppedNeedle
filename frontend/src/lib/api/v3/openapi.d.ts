@@ -16375,10 +16375,10 @@ export interface components {
              */
             library_roots: components["schemas"]["LibraryRoot"][];
             /**
-             * @description Naming template.
-             * @default {albumartist}/{album} ({year})/{disc:02d}{track:02d} {title}.{ext}
+             * @description The naming script that places downloaded and dropped files.
+             * @default {albumartist}/{album}{conditional(is_empty(slice(default(original_date, date), 0, 4)), "", concat(" (", slice(default(original_date, date), 0, 4), ")"))}/{disc:02d}{track:02d} {title}.{ext}
              */
-            naming_template: string;
+            naming_script: string;
             /**
              * @description Staging path.
              * @default
@@ -16395,6 +16395,11 @@ export interface components {
             actions_applied: string[];
             /** @description Affected scope ids. */
             affected_scope_ids: string[];
+            /**
+             * @description Where the import naming script puts an example track; absent when
+             *     the stored script places nothing.
+             */
+            naming_example?: string | null;
             /** @description Pending revision, when awaiting reconciliation. */
             pending_policy_revision?: string | null;
             /** @description Content revision (write CAS token). */

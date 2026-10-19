@@ -364,7 +364,6 @@ impl UnifiedDispatch {
             release_group_mbid: release_group_mbid.to_owned(),
             artist_name: artist.to_owned(),
             album_title: title.to_owned(),
-            naming_template: String::new(),
             target_files: Vec::new(),
             source_username: None,
             handle: None,
