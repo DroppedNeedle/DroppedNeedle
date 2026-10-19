@@ -1,83 +1,44 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { CircleAlert, Globe } from 'lucide-svelte';
-	import { ApiError } from '$lib/api/client';
 	import {
 		createSavePublicAddressMutation,
-		getPublicAddressQuery
+		getPublicAddressQuery,
+		type PublicAddress
 	} from '$lib/queries/settings/PublicAddressQueries.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import ListField from '$lib/ui/ListField.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import SaveBar from '$lib/ui/SaveBar.svelte';
+	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
 	const MAX_ADDRESSES = 8;
-
-	const query = getPublicAddressQuery();
-	const save = createSavePublicAddressMutation();
-
-	let rows = $state<string[]>([]);
-	// The saved list the rows were last filled from.
-	let filledFrom: string[] = [];
-	let status = $state<{ tone: 'success' | 'error'; message: string } | null>(null);
-	let invalid = $state<string | null>(null);
-
-	const saved = $derived(query.data?.origins ?? []);
-	const entered = $derived(rows.map((row) => row.trim()).filter(Boolean));
-	const dirty = $derived(!sameList(entered, saved));
 	const pageAddress = window.location.origin;
-	const pageListed = $derived(
-		entered.some((address) => address.toLowerCase().replace(/\/$/, '') === pageAddress)
-	);
 
-	function sameList(a: string[], b: string[]): boolean {
-		return a.length === b.length && a.every((value, index) => value === b[index]);
-	}
-
-	// Fill the rows from the saved list when it loads or changes on the
-	// server, unless there are edits in progress.
-	$effect(() => {
-		const latest = saved;
-		untrack(() => {
-			if (sameList(entered, filledFrom)) rows = [...latest];
-			filledFrom = latest;
-		});
-	});
-
-	function addPageAddress() {
-		rows = [...rows.filter((row) => row.trim()), pageAddress];
-	}
-
-	function discard() {
-		rows = [...saved];
-		status = null;
-		invalid = null;
-	}
-
-	async function saveList() {
-		status = null;
-		invalid = null;
-		try {
-			const stored = await save.mutateAsync({ origins: entered });
-			rows = [...stored.origins];
-			filledFrom = stored.origins;
-			status = { tone: 'success', message: 'Saved.' };
-		} catch (error) {
+	const section = createSettingsSection(
+		getPublicAddressQuery(),
+		createSavePublicAddressMutation(),
+		{
+			normalize: (draft: PublicAddress) => ({
+				origins: draft.origins.map((row) => row.trim()).filter(Boolean)
+			}),
 			// Matched on the server's exact wording, which the README quotes
 			// too. Reword the server's message and this advice is lost.
-			if (error instanceof ApiError && error.message === 'Origin not allowed') {
-				status = {
-					tone: 'error',
-					message:
-						"The server does not accept this page's address yet, so it refused the save. Open DroppedNeedle directly at its own address and port and save there, or run droppedneedle-tool public-address on the host."
-				};
-			} else if (error instanceof ApiError && error.status === 400) {
-				invalid = error.message;
-			} else {
-				status = { tone: 'error', message: 'Could not save. Try again.' };
-			}
+			explain: (error) =>
+				error.message === 'Origin not allowed'
+					? "The server does not accept this page's address yet, so it refused the save. Open DroppedNeedle directly at its own address and port and save there, or run droppedneedle-tool public-address on the host."
+					: undefined
 		}
+	);
+
+	function listsPage(origins: string[]): boolean {
+		return origins.some(
+			(address) => address.trim().toLowerCase().replace(/\/$/, '') === pageAddress
+		);
+	}
+
+	function addPageAddress(draft: PublicAddress) {
+		draft.origins = [...draft.origins.filter((row) => row.trim()), pageAddress];
 	}
 </script>
 
@@ -110,32 +71,35 @@
 			</span>
 		</div>
 
-		<QueryBoundary {query} what="the public address">
-			<ListField
-				label="Addresses"
-				itemLabel="Address"
-				addLabel="Add an address"
-				bind:values={rows}
-				max={MAX_ADDRESSES}
-				mono
-				placeholder="https://music.example.com"
-				empty="No address listed."
-				help="The scheme, host and port, such as https://music.example.com or http://192.168.1.5:8688. Leave out any path. Up to {MAX_ADDRESSES}."
-				error={invalid}
-				disabled={save.isPending}
-			>
-				{#snippet actions()}
-					<Button
-						size="sm"
-						disabled={save.isPending || pageListed || rows.length >= MAX_ADDRESSES}
-						onclick={addPageAddress}
-					>
-						Use this page's address
-					</Button>
-				{/snippet}
-			</ListField>
+		<QueryBoundary query={section} what="the public address">
+			{#snippet children(draft)}
+				<ListField
+					label="Addresses"
+					itemLabel="Address"
+					addLabel="Add an address"
+					bind:values={draft.origins}
+					max={MAX_ADDRESSES}
+					mono
+					placeholder="https://music.example.com"
+					empty="No address listed."
+					help="The scheme, host and port, such as https://music.example.com or http://192.168.1.5:8688. Leave out any path. Up to {MAX_ADDRESSES}."
+					disabled={section.saving}
+				>
+					{#snippet actions()}
+						<Button
+							size="sm"
+							disabled={section.saving ||
+								listsPage(draft.origins) ||
+								draft.origins.length >= MAX_ADDRESSES}
+							onclick={() => addPageAddress(draft)}
+						>
+							Use this page's address
+						</Button>
+					{/snippet}
+				</ListField>
 
-			<SaveBar onsave={saveList} {dirty} saving={save.isPending} ondiscard={discard} {status} />
+				<SaveBar {...section.bar} />
+			{/snippet}
 		</QueryBoundary>
 	</div>
 </Card>

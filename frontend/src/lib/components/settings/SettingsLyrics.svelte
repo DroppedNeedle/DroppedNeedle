@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { MicVocal } from 'lucide-svelte';
 	import {
 		createSaveLyricsSettingsMutation,
@@ -9,46 +8,12 @@
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
+	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
-	const query = getLyricsSettingsQuery();
-	const save = createSaveLyricsSettingsMutation();
-
-	let enabled = $state(true);
-	// The saved value the switch was last filled from.
-	let filledFrom: boolean | undefined;
-	let status = $state<{ tone: 'success' | 'error'; message: string } | null>(null);
-
-	const saved = $derived(query.data?.enabled);
-	const dirty = $derived(saved !== undefined && enabled !== saved);
-
-	// Follow the saved value when it loads or changes on the server, unless
-	// there is an unsaved change.
-	$effect(() => {
-		const latest = saved;
-		untrack(() => {
-			if (latest !== undefined && (filledFrom === undefined || enabled === filledFrom)) {
-				enabled = latest;
-			}
-			filledFrom = latest;
-		});
-	});
-
-	function discard() {
-		if (saved !== undefined) enabled = saved;
-		status = null;
-	}
-
-	async function saveSwitch() {
-		status = null;
-		try {
-			const stored = await save.mutateAsync({ enabled });
-			enabled = stored.enabled;
-			filledFrom = stored.enabled;
-			status = { tone: 'success', message: 'Saved.' };
-		} catch {
-			status = { tone: 'error', message: 'Could not save. Try again.' };
-		}
-	}
+	const section = createSettingsSection(
+		getLyricsSettingsQuery(),
+		createSaveLyricsSettingsMutation()
+	);
 </script>
 
 <Card variant="bordered" as="section">
@@ -60,15 +25,17 @@
 			<h3 class="font-semibold">Lyrics</h3>
 		</div>
 	{/snippet}
-	<QueryBoundary {query} what="the lyrics setting">
-		<div class="mt-2 space-y-4">
-			<ToggleRow
-				label="Look up lyrics online"
-				description="When lyrics are opened for a track DroppedNeedle has none for, it asks LRCLIB, a free lyrics database."
-				bind:checked={enabled}
-				disabled={save.isPending}
-			/>
-			<SaveBar onsave={saveSwitch} {dirty} saving={save.isPending} ondiscard={discard} {status} />
-		</div>
+	<QueryBoundary query={section} what="the lyrics setting">
+		{#snippet children(draft)}
+			<div class="mt-2 space-y-4">
+				<ToggleRow
+					label="Look up lyrics online"
+					description="When lyrics are opened for a track DroppedNeedle has none for, it asks LRCLIB, a free lyrics database."
+					bind:checked={draft.enabled}
+					disabled={section.saving}
+				/>
+				<SaveBar {...section.bar} />
+			</div>
+		{/snippet}
 	</QueryBoundary>
 </Card>

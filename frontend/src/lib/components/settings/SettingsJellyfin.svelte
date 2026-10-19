@@ -1,150 +1,115 @@
 <script lang="ts">
-	import { SECRET_MASK } from '$lib/ui/secretMask';
-	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
-	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
-	import { onDestroy } from 'svelte';
-	import type { JellyfinConnectionSettings } from '$lib/types';
-	import Button from '$lib/ui/Button.svelte';
+	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
+	import {
+		createSaveJellyfinSettingsMutation,
+		createVerifyJellyfinMutation,
+		getJellyfinSettingsQuery,
+		type JellyfinVerifyResult
+	} from '$lib/queries/settings/JellyfinSettingsQueries.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
+	import { SECRET_MASK } from '$lib/ui/secretMask';
+	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
-	type JellyfinUser = { id: string; name: string };
-	type JellyfinTestResult = { success: boolean; message: string; users?: JellyfinUser[] };
-	type JellyfinSettingsForm = ReturnType<typeof createSettingsForm<JellyfinConnectionSettings>> & {
-		testResult: JellyfinTestResult | null;
-	};
+	const verify = createVerifyJellyfinMutation();
+	let users = $state<JellyfinVerifyResult['users']>([]);
 
-	const form = createSettingsForm<JellyfinConnectionSettings>({
-		loadEndpoint: SETTINGS_ENDPOINTS.jellyfin(),
-		saveEndpoint: SETTINGS_ENDPOINTS.jellyfin(),
-		testEndpoint: SETTINGS_ENDPOINTS.jellyfinVerify(),
-		enabledField: 'enabled',
-		secondaryEnabledField: 'login_enabled',
-		refreshIntegration: true,
-		afterTest: (result) => {
-			const typedResult = result as JellyfinTestResult;
-			availableUsers = typedResult.users ?? [];
-			if (typedResult.success && form.data && !form.data.user_id && availableUsers.length > 0) {
-				form.data.user_id = availableUsers[0].id;
+	const section = createSettingsSection(
+		getJellyfinSettingsQuery(),
+		createSaveJellyfinSettingsMutation(),
+		{
+			refreshIntegration: true,
+			test: async (draft) => {
+				users = [];
+				if (!draft.jellyfin_url || !draft.api_key) {
+					return { passed: false, message: 'Add the URL and API key first.' };
+				}
+				const result = await verify.mutateAsync(draft);
+				users = result.users;
+				if (result.success && !draft.user_id && users.length > 0) draft.user_id = users[0].id;
+				return { passed: result.success, message: result.message };
 			}
 		}
-	}) as JellyfinSettingsForm;
+	);
 
-	let availableUsers: JellyfinUser[] = $state([]);
-
-	export async function load() {
-		await form.load();
-	}
-
-	async function save() {
-		await form.save();
-	}
-
-	async function test() {
-		availableUsers = [];
-		await form.test();
-	}
-
-	$effect(() => {
-		form.load();
-	});
-
-	onDestroy(() => form.cleanup());
+	// The switches stay locked until a test passes, unless already on.
+	const enableLocked = $derived(!section.testPassed && !section.saved?.enabled);
+	const loginLocked = $derived(!section.testPassed && !section.saved?.login_enabled);
 </script>
 
-<Card title="Jellyfin Connection">
-	<p class="text-base-content/70 mb-4">
-		Connect your Jellyfin server for recently played tracks and favorites.
-	</p>
-
-	{#if form.loading}
-		<div class="flex justify-center items-center py-12">
-			<span class="loading loading-spinner loading-lg"></span>
-		</div>
-	{:else if form.data}
-		<div class="space-y-4">
-			<TextField
-				label="Jellyfin URL"
-				type="url"
-				placeholder="http://localhost:8096"
-				bind:value={form.data.jellyfin_url}
-			/>
-
-			<SecretField
-				label="API Key"
-				mask={SECRET_MASK}
-				placeholder="Your Jellyfin API key"
-				help="Dashboard → API Keys → Create"
-				bind:value={form.data.api_key}
-			/>
-
-			{#if availableUsers.length > 0}
-				<SelectField
-					label="User"
-					bind:value={form.data.user_id}
-					options={availableUsers.map((user) => ({ value: user.id, label: user.name }))}
-				/>
-			{:else}
-				<TextField
-					label="User ID"
-					placeholder="Test connection to select user"
-					help="Test connection to load available users"
-					bind:value={form.data.user_id}
-				/>
-			{/if}
-
-			{#if form.testResult}
-				<div
-					class="alert"
-					class:alert-success={form.testResult.success}
-					class:alert-error={!form.testResult.success}
-				>
-					<span>{form.testResult.message}</span>
-				</div>
-			{/if}
-
-			<ToggleRow
-				label="Enable Jellyfin Integration"
-				description={!form.testResult?.success && !form.wasAlreadyEnabled
-					? 'Test connection first to enable'
-					: 'Show recently played and favorite artists on the home page'}
-				bind:checked={form.data.enabled}
-				disabled={!form.testResult?.success && !form.wasAlreadyEnabled}
-			/>
-
-			<ToggleRow
-				label="Allow login with Jellyfin"
-				description={!form.testResult?.success && !form.wasAlreadySecondaryEnabled
-					? 'Test and get a valid connection to enable'
-					: 'Let users sign in to DroppedNeedle with their Jellyfin account'}
-				bind:checked={form.data.login_enabled}
-				disabled={!form.testResult?.success && !form.wasAlreadySecondaryEnabled}
-			/>
-
-			{#if form.message}
-				<div
-					class="alert"
-					class:alert-success={form.messageType === 'success'}
-					class:alert-error={form.messageType === 'error'}
-				>
-					<span>{form.message}</span>
-				</div>
-			{/if}
-
-			<div class="flex justify-end gap-2 pt-2">
-				<Button
-					variant="ghost"
-					loading={form.testing}
-					disabled={!form.data.jellyfin_url || !form.data.api_key}
-					onclick={test}
-				>
-					Test Connection
-				</Button>
-				<Button variant="primary" loading={form.saving} onclick={save}>Save Settings</Button>
+<Card variant="bordered" as="section">
+	{#snippet header()}
+		<div class="flex items-center gap-3">
+			<div class="rounded-lg bg-primary/10 p-2">
+				<JellyfinIcon class="h-5 w-5 text-primary" />
+			</div>
+			<div>
+				<h2 class="font-semibold">Jellyfin</h2>
+				<p class="text-sm text-base-content/60">Recently played and favorites from your server.</p>
 			</div>
 		</div>
-	{/if}
+	{/snippet}
+	<QueryBoundary query={section} what="the Jellyfin settings">
+		{#snippet children(draft)}
+			<div class="mt-2 flex flex-col gap-5">
+				<TextField
+					label="Jellyfin URL"
+					type="url"
+					mono
+					placeholder="http://localhost:8096"
+					bind:value={draft.jellyfin_url}
+				/>
+				<div class="grid gap-4 md:grid-cols-2">
+					<SecretField
+						label="API key"
+						mask={SECRET_MASK}
+						placeholder="Your Jellyfin API key"
+						help="Dashboard → API Keys → Create"
+						bind:value={draft.api_key}
+					/>
+					{#if users.length > 0}
+						<SelectField
+							label="User"
+							bind:value={draft.user_id}
+							options={users.map((user) => ({ value: user.id, label: user.name }))}
+						/>
+					{:else}
+						<TextField
+							label="User ID"
+							mono
+							placeholder="Test to pick a user"
+							help="Test the connection to choose from a list."
+							bind:value={draft.user_id}
+						/>
+					{/if}
+				</div>
+
+				<div class="flex flex-col gap-4 border-t border-base-300 pt-5">
+					<ToggleRow
+						label="Use Jellyfin"
+						description={enableLocked
+							? 'Test the connection first.'
+							: 'Show recently played and favorite artists on Home.'}
+						bind:checked={draft.enabled}
+						disabled={enableLocked}
+					/>
+					<ToggleRow
+						label="Sign in with Jellyfin"
+						description={loginLocked
+							? 'Test the connection first.'
+							: 'People sign in with their Jellyfin account.'}
+						bind:checked={draft.login_enabled}
+						disabled={loginLocked}
+					/>
+				</div>
+
+				<SaveBar {...section.bar} testLabel="Test connection" />
+			</div>
+		{/snippet}
+	</QueryBoundary>
 </Card>

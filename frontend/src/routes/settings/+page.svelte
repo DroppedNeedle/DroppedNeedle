@@ -42,6 +42,8 @@
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import UnsavedChangesGuard from '$lib/ui/UnsavedChangesGuard.svelte';
+	import { confirmLeave } from '$lib/ui/settingsSection.svelte';
 
 	const integration = fromStore(integrationStore);
 
@@ -139,10 +141,13 @@
 	);
 
 	function selectTab(id: string) {
-		activeTab = id;
-		const url = new URL(page.url);
-		url.searchParams.set('tab', id);
-		replaceState(url, {});
+		if (id === activeTab) return;
+		confirmLeave(() => {
+			activeTab = id;
+			const url = new URL(page.url);
+			url.searchParams.set('tab', id);
+			replaceState(url, {});
+		});
 	}
 
 	onMount(() => {
@@ -252,3 +257,5 @@
 		</div>
 	</div>
 </div>
+
+<UnsavedChangesGuard />
