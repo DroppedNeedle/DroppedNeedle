@@ -6,10 +6,17 @@
 
 use utoipa::{
     Modify, OpenApi, ToSchema,
-    openapi::{Content, RefOr, Response, schema::Ref},
+    openapi::{
+        Content, RefOr, Response,
+        schema::Ref,
+        security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme},
+    },
 };
 
-use droppedneedle_kernel::error::ErrorEnvelope;
+use droppedneedle_kernel::{
+    error::ErrorEnvelope,
+    mount::{SESSION_SCHEME, WRAPPED_KEY_SCHEME},
+};
 
 /// The info block, and the schemas no operation references. Every other
 /// schema comes in with the operations that name it. Each one here is kept
@@ -70,7 +77,43 @@ impl OpenApi for ApiDoc {
         let mut doc = Unreferenced::openapi();
         doc.merge(crate::app::document());
         ErrorBodies.modify(&mut doc);
+        SecuritySchemes.modify(&mut doc);
         doc
+    }
+}
+
+/// The schemes each operation's `security` names. The mount stamps every
+/// operation with its posture group (`kernel::mount`).
+struct SecuritySchemes;
+
+impl Modify for SecuritySchemes {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let schemes = &mut openapi
+            .components
+            .get_or_insert_with(Default::default)
+            .security_schemes;
+        schemes.insert(
+            SESSION_SCHEME.to_owned(),
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .description(Some(
+                        "A session token. A browser sends the same session as the \
+                         `droppedneedle_sid` or `__Secure-droppedneedle_sid` cookie. \
+                         The scope names the posture, not a stored role: `user` is any \
+                         signed-in account, `curator` is trusted or admin, `admin` is \
+                         admin only.",
+                    ))
+                    .build(),
+            ),
+        );
+        schemes.insert(
+            WRAPPED_KEY_SCHEME.to_owned(),
+            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::with_description(
+                "X-Wrapped-API-Key",
+                "The shared secret of the wrapped API. No session satisfies it.",
+            ))),
+        );
     }
 }
 

@@ -7,6 +7,7 @@ mod admin_backups;
 mod admin_routes;
 mod auth_e2e;
 mod auth_federated;
+mod auth_ownership;
 mod auth_stores;
 mod auth_users;
 mod boot;

@@ -10,7 +10,7 @@
 //! [`routes`] mounts through [`AuthSetup`][wiring-setup] (`wiring.rs`); the
 //! user and admin groups sit inside the session middleware (it puts the
 //! request's [`Principal`] in the extensions, which the role extractors read).
-//! `POST /api/v3/auth/password-recovery/reset` is allowlisted public; the
+//! `POST /api/v3/auth/password-recovery/reset` is in the public group; the
 //! origin check guards cookie mutations. Stores are the `sqlite.rs`
 //! adapters over the 0001 baseline tables; hashing is the production
 //! [`Argon2idHasher`][prod-hasher] (bcrypt verify, Argon2id hash,

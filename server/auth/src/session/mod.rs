@@ -1,6 +1,13 @@
 //! Native `/api/v3` session core: middleware, transports, origin check, limits.
 //!
-//! Deny-by-default middleware over `/api/v3/*`, cookie plus Bearer tokens
+//! Deny by default: every route is mounted in one posture group (public,
+//! user, curator, admin or its own credential), and the session gate
+//! covers the user, curator and admin groups. The API document's
+//! `security` states each operation's group. The public and own-credential
+//! operations are pinned by name in the server's `auth_e2e` tests, so
+//! adding one is a reviewed edit there.
+//!
+//! The session gate over the gated groups, cookie plus Bearer tokens
 //! over the same opaque sessions, the cookie-mutation origin check, and the
 //! rate-limit class table, plus the live event stream, which rechecks its
 //! session while open. Role extractors, session/device management
@@ -45,10 +52,9 @@
 //! - Production serves same-origin with no CORS middleware; debug builds keep
 //!   an explicit localhost-origins allowlist with credentials.
 //!
-//! `create_app` mounts the v3 router with the layers in the order the
-//! [`middleware`] module documents.
+//! `create_app` layers each group in the order the [`middleware`] module
+//! documents.
 
-pub mod allowlist;
 pub mod client_ip;
 pub mod cookies;
 pub mod cors;

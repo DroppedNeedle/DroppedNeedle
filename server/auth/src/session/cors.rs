@@ -20,7 +20,7 @@
 //!     .allow_credentials(true)
 //!     .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH])
 //!     .allow_headers([AUTHORIZATION, CONTENT_TYPE, RANGE]);
-//! // .layer(cors) last on the v3 router so it runs first (outermost).
+//! // .layer(cors) over the whole router so it runs first (outermost).
 //! // Never `Any` methods/headers with credentials: tower-http rejects the
 //! // combination, and the SPA needs only the lists above (see
 //! // `debug_cors_layer` in `app.rs` for the mounted copy).

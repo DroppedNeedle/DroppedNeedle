@@ -45,8 +45,8 @@
 //!   admin DELETE); each method keeps its own group's layers.
 //! - The wrapped trio is the wrapped-key group: outside the session gate,
 //!   with the shared rate limiter alone. Its `X-Wrapped-API-Key` extractor
-//!   is the only credential, and allowlisting those paths would wrongly
-//!   make them public.
+//!   is the only credential, and moving those routes to the public group
+//!   would wrongly make them public.
 //! - The callbacks at their old paths (the v1 Spotify and MusicBrainz
 //!   contribution ones, the v2 OIDC one) stay plain routers outside the
 //!   session gate, rate-limited like the public group, until they are

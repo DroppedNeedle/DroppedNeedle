@@ -5,8 +5,8 @@
 //! - `/covers/*`, `/library/albums/{id}/artwork` and `/version*` mount
 //!   in the user group, behind the session gate (no role gate).
 //! - `/wrapped/*` mounts in the wrapped-key group, outside the session
-//!   gate, with only the `X-Wrapped-API-Key` check. Never add these paths
-//!   to the session allowlist: allowlisted means public.
+//!   gate, with only the `X-Wrapped-API-Key` check. Never move these
+//!   routes to the public group: public means anyone.
 //! - The v2 covers debug route stays out of this router: [`covers_debug`]
 //!   mounts on its own, on dev-only tooling routes.
 

@@ -1,7 +1,8 @@
-//! Deny-by-default session middleware over `/api/v3/*`.
+//! The session gate over the user, curator and admin route groups.
 //!
-//! Order of checks per request: scope (non-v3 passes through; the layer mounts
-//! on the v3 router so this is defence in depth) -> public allowlist -> credential
+//! The server layers it on those groups only, so every request that reaches
+//! it needs a session; public and own-credential routes never pass through
+//! it. Order of checks per request: credential
 //! extraction (Bearer-then-cookie) -> session lookup (unknown/revoked/expired
 //! -> 401 + `WWW-Authenticate: Bearer`; the token and its user are read in
 //! one query, so a token whose user is gone fails the same way; each such
@@ -17,12 +18,12 @@
 //!
 //! ## Layer order (wiring)
 //!
-//! In axum the last `.layer()` call is outermost. The v3 router layers, from
+//! In axum the last layer call is outermost. Each gated group gets, from
 //! first call to last: `rate_limit` (inner, closest to handlers), then
-//! `require_session`, then debug-only CORS (outer). Per request that runs
-//! CORS -> session -> rate limit -> handler, so the limiter sees the
-//! [`Principal`] this gate stashes and keys by user. Public paths reach
-//! the limiter without one and are keyed by client address. The
+//! `require_session`; debug-only CORS wraps the whole router. Per request
+//! that runs CORS -> session -> rate limit -> handler, so the limiter sees
+//! the [`Principal`] this gate stashes and keys by user. Public routes
+//! reach the limiter without one and are keyed by client address. The
 //! request-scope middleware wraps the whole app outside all of these. Compat
 //! routers mount outside the session layer with their own app-password
 //! auth; no native token is ever accepted on compat paths and no app
@@ -67,7 +68,6 @@ use axum::{
 };
 
 use super::{
-    allowlist::is_public,
     cookies::is_secure_trusted,
     extract::Transport,
     origin::{OriginDecision, check_origin, is_unsafe_method, named_origin},
@@ -164,16 +164,7 @@ pub async fn require_session<S>(
 where
     S: SessionStore,
 {
-    // The router strips the base path before any layer runs, so this is the
-    // same base-relative path the routes match on.
-    let path = request.uri().path().to_owned();
-    if !path.starts_with("/api/v3") {
-        return next.run(request).await;
-    }
     warn_unlisted_proxy(&auth.unlisted_proxy_warned, &request, &auth.trusted_proxies);
-    if is_public(&path) {
-        return next.run(request).await;
-    }
     let Some((raw_token, transport)) = super::extract::extract(request.headers()) else {
         return auth_failure(&auth.limits, &request, "Not authenticated");
     };
@@ -251,7 +242,9 @@ const FORWARDED_HEADERS: [&str; 4] = [
 /// private-range peer that is not a trusted proxy: that is what a reverse
 /// proxy in another container or on another LAN host looks like before it
 /// is listed. A public peer sending the header is a client making things
-/// up and gets no log line.
+/// up and gets no log line. Only gated routes pass the gate, so the
+/// warning comes with the first request to one, anonymous or signed in,
+/// and never with a sign-in request itself.
 fn warn_unlisted_proxy(warned: &WarnOnce, request: &Request, trusted: &TrustedProxies) {
     let Some(peer) = peer_of(request).map(|peer| peer.ip().to_canonical()) else {
         return;

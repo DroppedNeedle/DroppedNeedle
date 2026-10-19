@@ -6,9 +6,9 @@
 //!
 //! ## Paths (public vs session-gated)
 //!
-//! Most paths below are allowlisted public, but the Plex link/connect
+//! Most paths below are in the public group, but the Plex link/connect
 //! polls are session-gated (they hand out account sessions for a PIN id).
-//! Ground truth is `crate::session::allowlist`; this list must match it:
+//! The group each route is mounted in decides; this list follows it:
 //!
 //! ```text
 //! POST /api/v3/auth/login                       (public)

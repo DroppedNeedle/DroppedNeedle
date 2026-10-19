@@ -1,7 +1,8 @@
 //! Route registration with its posture. An area declares each route once,
 //! with `routes!` over the handler's `#[utoipa::path]`, in the group that
 //! says who may call it. The route and its API document entry come from the
-//! same declaration, so they cannot drift. The server crate layers each
+//! same declaration, so they cannot drift, and each operation's `security`
+//! in the document is stamped from its group. The server crate layers each
 //! group: the session gate for user, curator and admin, the rate limiter
 //! for all. An own-credential group never gets the session gate: its
 //! handlers check their own credential.
@@ -19,11 +20,22 @@
 //! it that way.
 
 use axum::{handler::Handler, routing::MethodRouter};
-use utoipa::openapi::{Components, OpenApi};
+use utoipa::openapi::{Components, OpenApi, security::SecurityRequirement};
 pub use utoipa_axum::{
     router::{OpenApiRouter, UtoipaMethodRouter},
     routes,
 };
+
+/// The document's security scheme for a signed-in session. Its scope names
+/// the group: `user`, `curator` or `admin`.
+pub const SESSION_SCHEME: &str = "session";
+
+/// The document's security scheme for the wrapped API key.
+pub const WRAPPED_KEY_SCHEME: &str = "wrapped_key";
+
+fn session(posture: &str) -> SecurityRequirement {
+    SecurityRequirement::new(SESSION_SCHEME, [posture])
+}
 
 /// A credential a route checks itself, outside the session gate.
 pub enum OwnCredential {
@@ -132,17 +144,41 @@ impl<S: Clone + Send + Sync + 'static> Routes<S> {
         }))
     }
 
-    /// The document entries of every group.
+    /// The document entries of every group, each operation's `security`
+    /// stamped from its group. The stamp replaces whatever an annotation
+    /// said, so the group is the only source of an operation's posture.
     pub fn openapi(&self) -> OpenApi {
         let groups = &self.0;
-        let mut doc = groups.public.get_openapi().clone();
-        for group in [
-            &groups.user,
-            &groups.curator,
-            &groups.admin,
-            &groups.wrapped_key,
+        let mut doc = OpenApi::default();
+        for (group, posture) in [
+            (&groups.public, SecurityRequirement::default()),
+            (&groups.user, session("user")),
+            (&groups.curator, session("curator")),
+            (&groups.admin, session("admin")),
+            (
+                &groups.wrapped_key,
+                SecurityRequirement::new(WRAPPED_KEY_SCHEME, Vec::<String>::new()),
+            ),
         ] {
-            doc.merge(group.get_openapi().clone());
+            let mut part = group.get_openapi().clone();
+            for item in part.paths.paths.values_mut() {
+                for operation in [
+                    &mut item.get,
+                    &mut item.put,
+                    &mut item.post,
+                    &mut item.delete,
+                    &mut item.options,
+                    &mut item.head,
+                    &mut item.patch,
+                    &mut item.trace,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    operation.security = Some(vec![posture.clone()]);
+                }
+            }
+            doc.merge(part);
         }
         doc
     }

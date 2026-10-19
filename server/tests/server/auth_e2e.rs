@@ -6,9 +6,10 @@
 //!
 //! - `journey_*`: setup and sessions, the admin user lifecycle, and app
 //!   passwords across the compat contracts.
-//! - `auth_on_every_endpoint`: every `/api/v3` route in the OpenAPI doc has
-//!   a matrix row; protected routes 401 anonymously with a Bearer challenge,
-//!   admin routes 403 for plain users, and the admin is admitted everywhere.
+//! - `auth_on_every_endpoint`: every documented operation answers as the
+//!   posture its `security` declares, for anonymous, user, trusted, admin
+//!   and wrapped-key callers. The public and wrapped-key operations are
+//!   pinned by name. Two-user ownership lives in `auth_ownership`.
 //! - Rate limits, setup races, and store-failure handling at the edge.
 //! - `login_p95_*`: the login latency budget, run on request.
 
@@ -481,10 +482,6 @@ async fn call_raw(
         .to_vec();
     (status, headers, bytes)
 }
-
-/// The live event stream never ends on its own, so the matrix reads only
-/// its status and drops the body.
-const EVENT_STREAM: &str = "/api/v3/events/stream";
 
 /// One request answered by status alone; the body is never read.
 async fn call_status(app: Router, method: &str, uri: &str, headers: &[(&str, &str)]) -> StatusCode {
@@ -1100,1726 +1097,253 @@ async fn journey_c_app_password_compat_accepts_native_rejects() {
 // Standing contract: auth on every endpoint
 // ---------------------------------------------------------------------------
 
-/// Expected anonymous posture for one mounted route.
+/// The posture an operation declares in the document's `security`, which
+/// the mount stamps from the group it registered the route in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Posture {
-    /// Allowlisted public (or outside the middleware): anything but 401.
+enum Declared {
+    /// `[{}]`: anyone, no session.
     Public,
-    /// Any signed-in user admitted; anonymous gets exactly 401.
+    /// `[{"session": ["user"]}]`: any signed-in account.
     User,
-    /// Admin only; anonymous 401, plain user 403.
-    Admin,
-    /// Curator (admin or trusted) only; anonymous 401, plain user 403.
+    /// `[{"session": ["curator"]}]`: trusted or admin.
     Curator,
-    /// Wrapped shared-secret only: anonymous 401 with no Bearer challenge;
-    /// sessions never satisfy these, the key admits (keyed pass below).
+    /// `[{"session": ["admin"]}]`: admin only.
+    Admin,
+    /// `[{"wrapped_key": []}]`: the wrapped API key, never a session.
     WrappedKey,
 }
 
-/// One matrix row: method, OpenAPI path template, expected posture. The
-/// template must match the doc byte for byte; `{id}` params are filled with
-/// a dummy before the request goes out.
-const MATRIX: &[(&str, &str, Posture)] = &[
-    ("GET", "/health", Posture::Public),
-    ("GET", "/openapi.json", Posture::Public),
-    // Native auth: all four public.
-    ("POST", "/api/v3/auth/login", Posture::Public),
-    ("POST", "/api/v3/auth/logout", Posture::Public),
-    ("POST", "/api/v3/auth/setup", Posture::Public),
-    ("GET", "/api/v3/auth/setup/status", Posture::Public),
-    ("GET", "/api/v3/auth/providers", Posture::Public),
-    // Federated journeys: public, own state-token auth.
-    ("POST", "/api/v3/auth/oidc/authorize", Posture::Public),
-    ("GET", "/api/v3/auth/oidc/callback", Posture::Public),
-    ("POST", "/api/v3/auth/oidc/exchange", Posture::Public),
-    ("POST", "/api/v3/auth/jellyfin/login", Posture::Public),
-    ("POST", "/api/v3/auth/plex/start", Posture::Public),
-    ("POST", "/api/v3/auth/plex/poll/login", Posture::Public),
-    // Link/connect polls hand out account Bearer tokens, so they stay session-gated.
-    ("POST", "/api/v3/auth/plex/start/link", Posture::User),
-    ("POST", "/api/v3/auth/plex/start/connect", Posture::Admin),
-    ("POST", "/api/v3/auth/plex/poll/link", Posture::User),
-    ("POST", "/api/v3/auth/plex/poll/connect", Posture::User),
-    (
-        "POST",
-        "/api/v3/auth/password-recovery/reset",
-        Posture::Public,
-    ),
-    // Signed-in user routes.
-    ("GET", "/api/v3/me", Posture::User),
-    ("PATCH", "/api/v3/me", Posture::User),
-    ("PUT", "/api/v3/me/username", Posture::User),
-    ("PUT", "/api/v3/me/email", Posture::User),
-    ("POST", "/api/v3/me/password", Posture::User),
-    ("POST", "/api/v3/me/local-password", Posture::User),
-    ("POST", "/api/v3/me/avatar", Posture::User),
-    ("GET", "/api/v3/users/{id}/avatar", Posture::User),
-    ("GET", "/api/v3/auth/sessions", Posture::User),
-    ("DELETE", "/api/v3/auth/sessions/{id}", Posture::User),
-    ("POST", "/api/v3/auth/device-sessions", Posture::User),
-    ("POST", "/api/v3/auth/logout-all", Posture::User),
-    ("GET", "/api/v3/me/app-passwords", Posture::User),
-    ("POST", "/api/v3/me/app-passwords", Posture::User),
-    ("DELETE", "/api/v3/me/app-passwords/{id}", Posture::User),
-    ("GET", "/api/v3/me/connections/lastfm", Posture::User),
-    ("PUT", "/api/v3/me/connections/lastfm", Posture::User),
-    ("DELETE", "/api/v3/me/connections/lastfm", Posture::User),
-    ("POST", "/api/v3/me/connections/lastfm/token", Posture::User),
-    (
-        "POST",
-        "/api/v3/me/connections/lastfm/session",
-        Posture::User,
-    ),
-    // Settings: every /settings route is admin-only;
-    // section prefs are per-user.
-    ("GET", "/api/v3/me/section-prefs", Posture::User),
-    ("PUT", "/api/v3/me/section-prefs", Posture::User),
-    ("GET", "/api/v3/settings/advanced", Posture::Admin),
-    ("PUT", "/api/v3/settings/advanced", Posture::Admin),
-    ("GET", "/api/v3/settings/cache-ttls", Posture::Admin),
-    ("GET", "/api/v3/settings/connect-apps", Posture::Admin),
-    ("PUT", "/api/v3/settings/connect-apps", Posture::Admin),
-    (
-        "GET",
-        "/api/v3/settings/download-client/config",
-        Posture::Admin,
-    ),
-    (
-        "PUT",
-        "/api/v3/settings/download-client/config",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/download-client/test",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/settings/download-clients/policy",
-        Posture::Admin,
-    ),
-    (
-        "PUT",
-        "/api/v3/settings/download-clients/policy",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/settings/download-clients/policy-summary",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/download-clients/policy/impact",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/settings/download-clients/sabnzbd",
-        Posture::Admin,
-    ),
-    (
-        "PUT",
-        "/api/v3/settings/download-clients/sabnzbd",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/download-clients/sabnzbd/test",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/settings/download-clients/source-priority",
-        Posture::Admin,
-    ),
-    (
-        "PUT",
-        "/api/v3/settings/download-clients/source-priority",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/settings/download-clients/wanted",
-        Posture::Admin,
-    ),
-    (
-        "PUT",
-        "/api/v3/settings/download-clients/wanted",
-        Posture::Admin,
-    ),
-    ("GET", "/api/v3/settings/events", Posture::Admin),
-    ("PUT", "/api/v3/settings/events", Posture::Admin),
-    (
-        "POST",
-        "/api/v3/settings/events/test-skiddle",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/events/test-ticketmaster",
-        Posture::Admin,
-    ),
-    ("GET", "/api/v3/settings/get-it", Posture::Admin),
-    ("PUT", "/api/v3/settings/get-it", Posture::Admin),
-    ("GET", "/api/v3/settings/home", Posture::Admin),
-    ("PUT", "/api/v3/settings/home", Posture::Admin),
-    ("GET", "/api/v3/settings/library-management", Posture::Admin),
-    ("PUT", "/api/v3/settings/library-management", Posture::Admin),
+/// One documented operation and the posture it declares.
+struct Operation {
+    method: &'static str,
+    path: String,
+    posture: Declared,
+}
+
+/// Every operation the document publishes. A key that is not an HTTP
+/// method, or a `security` the matrix does not know, fails by name.
+fn documented_operations() -> Vec<Operation> {
+    let doc = serde_json::to_value(ApiDoc::openapi()).expect("document serializes");
+    let paths = doc["paths"].as_object().expect("document has paths");
+    let mut operations = Vec::new();
+    for (path, item) in paths {
+        for (key, operation) in item.as_object().expect("path item is an object") {
+            let method = match key.as_str() {
+                "get" => "GET",
+                "put" => "PUT",
+                "post" => "POST",
+                "delete" => "DELETE",
+                "options" => "OPTIONS",
+                "head" => "HEAD",
+                "patch" => "PATCH",
+                "trace" => "TRACE",
+                "summary" | "description" | "servers" | "parameters" => continue,
+                other => panic!("{path}: `{other}` is not a method the auth matrix knows"),
+            };
+            let security = &operation["security"];
+            let posture = declared(security).unwrap_or_else(|| {
+                panic!(
+                    "{method} {path}: security {security} is not a posture the auth matrix knows"
+                )
+            });
+            operations.push(Operation {
+                method,
+                path: path.clone(),
+                posture,
+            });
+        }
+    }
+    operations
+}
+
+/// The posture one `security` value states: exactly one requirement, of a
+/// known scheme and scope.
+fn declared(security: &Value) -> Option<Declared> {
+    let [requirement] = security.as_array()?.as_slice() else {
+        return None;
+    };
+    let requirement = requirement.as_object()?;
+    let mut schemes = requirement.iter();
+    let Some((scheme, scopes)) = schemes.next() else {
+        return Some(Declared::Public);
+    };
+    if schemes.next().is_some() {
+        return None;
+    }
+    let scopes: Vec<&str> = scopes
+        .as_array()?
+        .iter()
+        .map(Value::as_str)
+        .collect::<Option<_>>()?;
+    match (scheme.as_str(), scopes.as_slice()) {
+        ("session", ["user"]) => Some(Declared::User),
+        ("session", ["curator"]) => Some(Declared::Curator),
+        ("session", ["admin"]) => Some(Declared::Admin),
+        ("wrapped_key", []) => Some(Declared::WrappedKey),
+        _ => None,
+    }
+}
+
+/// The operations anyone may call, pinned by name. A new public operation
+/// is a reviewed edit here: the document's public set must equal this list.
+const PUBLIC_OPERATIONS: &[(&str, &str)] = &[
+    ("GET", "/health"),
+    ("GET", "/openapi.json"),
+    ("POST", "/api/v3/auth/login"),
+    ("POST", "/api/v3/auth/logout"),
+    ("POST", "/api/v3/auth/setup"),
+    ("GET", "/api/v3/auth/setup/status"),
+    ("GET", "/api/v3/auth/providers"),
+    ("POST", "/api/v3/auth/password-recovery/reset"),
+    ("POST", "/api/v3/auth/oidc/authorize"),
+    ("GET", "/api/v3/auth/oidc/callback"),
+    ("POST", "/api/v3/auth/oidc/exchange"),
+    ("POST", "/api/v3/auth/jellyfin/login"),
+    ("POST", "/api/v3/auth/plex/start"),
+    ("POST", "/api/v3/auth/plex/poll/login"),
+    // Token-identified callbacks from MusicBrainz and Spotify.
+    ("GET", "/api/v3/library/contributions/musicbrainz/callback"),
+    ("GET", "/api/v3/acquire/spotify/auth/callback"),
+];
+
+/// The operations that take the wrapped API key, pinned the same way.
+const WRAPPED_KEY_OPERATIONS: &[(&str, &str)] = &[
+    ("GET", "/api/v3/wrapped/users"),
+    ("GET", "/api/v3/wrapped/user/{user_id}"),
+    ("GET", "/api/v3/wrapped/server"),
+];
+
+/// What one operation needs beyond its declared posture.
+#[derive(Debug, Clone, Copy)]
+enum Exception {
+    /// `{id}` is filled with the caller's own user id.
+    OwnId,
+    /// Sent with this body in place of `{}`.
+    Body(fn() -> Value),
+    /// Read by status alone: the body never ends.
+    StatusOnly,
+    /// Read as bytes: the body is not JSON.
+    Raw,
+    /// An admitted caller gets exactly 502: the provider is down.
+    ProviderDown,
+    /// An admitted caller gets exactly 503 with the internal error code.
+    HonestUnavailable,
+    /// Revokes the caller's own session; the pass signs in again after it.
+    SignsOut,
+}
+
+/// The operations the document alone cannot drive. Each applies in every
+/// pass, and an entry that names no documented operation fails.
+const EXCEPTIONS: &[(&str, &str, Exception, &str)] = &[
     (
         "GET",
-        "/api/v3/settings/library-management/activation-health",
-        Posture::Admin,
+        "/api/v3/users/{id}/avatar",
+        Exception::OwnId,
+        "self-or-admin: each pass reads its own avatar (404, no bytes yet)",
     ),
     (
         "POST",
-        "/api/v3/settings/library-management/impact",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/library-management/validate",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/library-management/profiles",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/settings/library-management/profiles/{profile_id}",
-        Posture::Admin,
-    ),
-    (
-        "PUT",
-        "/api/v3/settings/library-management/profiles/{profile_id}",
-        Posture::Admin,
-    ),
-    (
-        "DELETE",
-        "/api/v3/settings/library-management/profiles/{profile_id}",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/library-management/profiles/{profile_id}/copy",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/settings/library-management/profiles/{profile_id}/preset-diff",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/library-management/profiles/{profile_id}/export",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/library-management/profile-imports/preview",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/library-management/profile-imports",
-        Posture::Admin,
-    ),
-    ("GET", "/api/v3/settings/indexers", Posture::Admin),
-    ("POST", "/api/v3/settings/indexers", Posture::Admin),
-    ("POST", "/api/v3/settings/indexers/reorder", Posture::Admin),
-    (
-        "GET",
-        "/api/v3/settings/indexers/search-backend",
-        Posture::Admin,
-    ),
-    (
-        "PUT",
-        "/api/v3/settings/indexers/search-backend",
-        Posture::Admin,
-    ),
-    ("POST", "/api/v3/settings/indexers/test", Posture::Admin),
-    ("PUT", "/api/v3/settings/indexers/{id}", Posture::Admin),
-    ("DELETE", "/api/v3/settings/indexers/{id}", Posture::Admin),
-    ("GET", "/api/v3/settings/jellyfin", Posture::Admin),
-    ("PUT", "/api/v3/settings/jellyfin", Posture::Admin),
-    ("POST", "/api/v3/settings/jellyfin/verify", Posture::Admin),
-    ("GET", "/api/v3/settings/lastfm", Posture::Admin),
-    ("PUT", "/api/v3/settings/lastfm", Posture::Admin),
-    ("GET", "/api/v3/settings/library", Posture::Admin),
-    ("PUT", "/api/v3/settings/library", Posture::Admin),
-    (
-        "GET",
-        "/api/v3/settings/library/path-mapping",
-        Posture::Admin,
-    ),
-    ("POST", "/api/v3/settings/library/paths", Posture::Admin),
-    ("DELETE", "/api/v3/settings/library/paths", Posture::Admin),
-    (
-        "POST",
-        "/api/v3/settings/library/policy-apply-preview",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/library/policy-impact",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/settings/library/policy-tree",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/settings/library/restorable-roots",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/library/restore-roots",
-        Posture::Admin,
-    ),
-    ("GET", "/api/v3/settings/library/schedule", Posture::Admin),
-    ("PUT", "/api/v3/settings/library/schedule", Posture::Admin),
-    ("GET", "/api/v3/settings/library/sync", Posture::Admin),
-    ("PUT", "/api/v3/settings/library/sync", Posture::Admin),
-    ("GET", "/api/v3/settings/library/watcher", Posture::Admin),
-    ("PUT", "/api/v3/settings/library/watcher", Posture::Admin),
-    ("GET", "/api/v3/settings/listenbrainz", Posture::Admin),
-    ("PUT", "/api/v3/settings/listenbrainz", Posture::Admin),
-    (
-        "POST",
-        "/api/v3/settings/listenbrainz/verify",
-        Posture::Admin,
-    ),
-    ("GET", "/api/v3/settings/lyrics", Posture::Admin),
-    ("PUT", "/api/v3/settings/lyrics", Posture::Admin),
-    ("GET", "/api/v3/settings/musicbrainz", Posture::Admin),
-    ("PUT", "/api/v3/settings/musicbrainz", Posture::Admin),
-    (
-        "POST",
-        "/api/v3/settings/musicbrainz/activate",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/musicbrainz/brainzmash/consent",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/musicbrainz/brainzmash/stage",
-        Posture::Admin,
+        "/api/v3/import/items/{item_id}/match",
+        Exception::Body(item_match_body),
+        "an empty object fails to decode before the handler runs",
     ),
     (
         "POST",
         "/api/v3/settings/musicbrainz/verify",
-        Posture::Admin,
-    ),
-    ("GET", "/api/v3/settings/navidrome", Posture::Admin),
-    ("PUT", "/api/v3/settings/navidrome", Posture::Admin),
-    ("POST", "/api/v3/settings/navidrome/verify", Posture::Admin),
-    ("GET", "/api/v3/settings/oidc", Posture::Admin),
-    ("PUT", "/api/v3/settings/oidc", Posture::Admin),
-    ("POST", "/api/v3/settings/oidc/verify", Posture::Admin),
-    ("GET", "/api/v3/settings/plex", Posture::Admin),
-    ("PUT", "/api/v3/settings/plex", Posture::Admin),
-    ("GET", "/api/v3/settings/plex/libraries", Posture::Admin),
-    ("POST", "/api/v3/settings/plex/verify", Posture::Admin),
-    ("GET", "/api/v3/settings/preferences", Posture::Admin),
-    ("PUT", "/api/v3/settings/preferences", Posture::Admin),
-    ("GET", "/api/v3/settings/primary-source", Posture::Admin),
-    ("PUT", "/api/v3/settings/primary-source", Posture::Admin),
-    ("GET", "/api/v3/settings/prowlarr/config", Posture::Admin),
-    ("PUT", "/api/v3/settings/prowlarr/config", Posture::Admin),
-    ("POST", "/api/v3/settings/prowlarr/test", Posture::Admin),
-    ("GET", "/api/v3/settings/public-address", Posture::Admin),
-    ("PUT", "/api/v3/settings/public-address", Posture::Admin),
-    ("GET", "/api/v3/settings/scrobble", Posture::Admin),
-    ("PUT", "/api/v3/settings/scrobble", Posture::Admin),
-    ("GET", "/api/v3/settings/security", Posture::Admin),
-    ("PUT", "/api/v3/settings/security", Posture::Admin),
-    (
-        "POST",
-        "/api/v3/settings/security/verify-hibp",
-        Posture::Admin,
-    ),
-    ("GET", "/api/v3/settings/wrapped", Posture::Admin),
-    ("PUT", "/api/v3/settings/wrapped", Posture::Admin),
-    ("GET", "/api/v3/settings/youtube", Posture::Admin),
-    ("PUT", "/api/v3/settings/youtube", Posture::Admin),
-    ("POST", "/api/v3/settings/youtube/verify", Posture::Admin),
-    // Admin routes.
-    ("GET", "/api/v3/admin/users", Posture::Admin),
-    ("POST", "/api/v3/admin/users", Posture::Admin),
-    ("GET", "/api/v3/admin/users/{id}", Posture::Admin),
-    ("DELETE", "/api/v3/admin/users/{id}", Posture::Admin),
-    ("PUT", "/api/v3/admin/users/{id}/role", Posture::Admin),
-    (
-        "DELETE",
-        "/api/v3/admin/users/{id}/sessions",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/admin/users/{id}/recovery-code",
-        Posture::Admin,
-    ),
-    ("GET", "/api/v3/admin/app-passwords", Posture::Admin),
-    ("DELETE", "/api/v3/admin/app-passwords/{id}", Posture::Admin),
-    ("GET", "/api/v3/admin/import/jellyfin", Posture::Admin),
-    ("GET", "/api/v3/admin/import/plex", Posture::Admin),
-    ("POST", "/api/v3/admin/import", Posture::Admin),
-    // Admin tools: backups, cache, stats and quotas.
-    ("GET", "/api/v3/admin/backups", Posture::Admin),
-    ("POST", "/api/v3/admin/backups", Posture::Admin),
-    (
-        "GET",
-        "/api/v3/admin/backups/{name}/restore-report",
-        Posture::Admin,
-    ),
-    ("GET", "/api/v3/admin/cache/stats", Posture::Admin),
-    ("POST", "/api/v3/admin/cache/clear", Posture::Admin),
-    ("GET", "/api/v3/admin/queue-stats", Posture::Admin),
-    ("GET", "/api/v3/admin/provider-stats", Posture::Admin),
-    ("GET", "/api/v3/admin/users/{id}/quota", Posture::Admin),
-    ("PUT", "/api/v3/admin/users/{id}/quota", Posture::Admin),
-    // Plugins and scrobbling. Plugin management and the panel page
-    // are admin-only; sources, guarded plugin HTTP, and the caller's own
-    // scrobble settings admit any signed-in user.
-    ("GET", "/api/v3/plugins", Posture::Admin),
-    ("POST", "/api/v3/plugins/install", Posture::Admin),
-    ("POST", "/api/v3/plugins/install/preview", Posture::Admin),
-    ("POST", "/api/v3/plugins/{name}/update", Posture::Admin),
-    ("PUT", "/api/v3/plugins/{name}", Posture::Admin),
-    ("DELETE", "/api/v3/plugins/{name}", Posture::Admin),
-    ("GET", "/api/v3/plugins/sources", Posture::User),
-    ("GET", "/api/v3/plugins/ext/{name}/{subpath}", Posture::User),
-    (
-        "POST",
-        "/api/v3/plugins/ext/{name}/{subpath}",
-        Posture::User,
-    ),
-    (
-        "DELETE",
-        "/api/v3/plugins/ext/{name}/{subpath}",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/plugins/{name}/ui/panel", Posture::Admin),
-    ("GET", "/api/v3/me/scrobble-preferences", Posture::User),
-    ("PUT", "/api/v3/me/scrobble-preferences", Posture::User),
-    ("PUT", "/api/v3/me/connections/listenbrainz", Posture::User),
-    ("GET", "/api/v3/me/connections/listenbrainz", Posture::User),
-    (
-        "DELETE",
-        "/api/v3/me/connections/listenbrainz",
-        Posture::User,
-    ),
-    // Jobs: the playlist export trigger and the precache trigger
-    // are both admin-only.
-    (
-        "POST",
-        "/api/v3/settings/navidrome/playlist-sync",
-        Posture::Admin,
-    ),
-    ("POST", "/api/v3/admin/precache/run", Posture::Admin),
-    // Library image refresh progress: anyone signed in watches it,
-    // curators may stop it.
-    ("GET", "/api/v3/cache/sync/status", Posture::User),
-    ("POST", "/api/v3/cache/sync/cancel", Posture::Curator),
-    // Admin reimport behind the request card.
-    (
-        "POST",
-        "/api/v3/downloads/tasks/{task_id}/reimport",
-        Posture::Admin,
-    ),
-    // Download queue: own tasks for users, every task for admins; the
-    // blocklist is admin only.
-    ("GET", "/api/v3/downloads/tasks", Posture::User),
-    ("GET", "/api/v3/downloads/tasks/{task_id}", Posture::User),
-    (
-        "GET",
-        "/api/v3/downloads/tasks/{task_id}/files",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/downloads/tasks/{task_id}/cancel",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/downloads/tasks/{task_id}/next-source",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/downloads/tasks/{task_id}/retry",
-        Posture::User,
-    ),
-    ("POST", "/api/v3/downloads/clear", Posture::User),
-    ("POST", "/api/v3/downloads/stop-all-retries", Posture::User),
-    ("POST", "/api/v3/downloads/retry-all-failed", Posture::User),
-    ("GET", "/api/v3/downloads/activity-summary", Posture::User),
-    ("GET", "/api/v3/downloads/quarantine", Posture::Admin),
-    (
-        "DELETE",
-        "/api/v3/downloads/quarantine/{quarantine_id}",
-        Posture::Admin,
-    ),
-    // Manual album searches: the owner's own jobs (admins may dismiss).
-    ("POST", "/api/v3/downloads/search/album", Posture::User),
-    ("GET", "/api/v3/downloads/search/{job_id}", Posture::User),
-    (
-        "POST",
-        "/api/v3/downloads/search/{job_id}/pick",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/downloads/search/{job_id}/dismiss",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/downloads/search/{job_id}/cancel",
-        Posture::User,
-    ),
-    // Held imports: own files for users, every file for admins; the
-    // per-download library actions are admin only. Upgrades are curator.
-    ("GET", "/api/v3/downloads/held", Posture::User),
-    ("POST", "/api/v3/downloads/held/reverify", Posture::User),
-    (
-        "POST",
-        "/api/v3/downloads/held/{held_id}/import",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/downloads/held/{held_id}/discard",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/downloads/held/{held_id}/reverify",
-        Posture::User,
+        Exception::Body(verify_body),
+        "an empty object would decode as a tier update and probe MusicBrainz",
     ),
     (
         "GET",
-        "/api/v3/downloads/held/{held_id}/audio",
-        Posture::User,
+        "/api/v3/events/stream",
+        Exception::StatusOnly,
+        "the live event stream never ends",
     ),
-    (
-        "POST",
-        "/api/v3/downloads/held/management/{source_task_id}/retry",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/downloads/held/management/{source_task_id}/discard",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/downloads/held/verdict/{source_task_id}/discard",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/downloads/cutoff-unmet", Posture::Curator),
-    ("POST", "/api/v3/downloads/upgrade/album", Posture::Curator),
-    ("POST", "/api/v3/downloads/upgrade/track", Posture::Curator),
-    // Drop import: curators only (their own jobs; admins may list all).
-    ("POST", "/api/v3/import/uploads", Posture::Curator),
-    ("GET", "/api/v3/import/jobs", Posture::Curator),
-    ("GET", "/api/v3/import/jobs/{job_id}", Posture::Curator),
-    (
-        "POST",
-        "/api/v3/import/items/{item_id}/match",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/import/items/{item_id}/discard",
-        Posture::Curator,
-    ),
-    // Library reads.
-    ("GET", "/api/v3/library/albums", Posture::User),
-    ("GET", "/api/v3/library/albums/{id}", Posture::User),
-    ("GET", "/api/v3/library/albums/{id}/tracks", Posture::User),
-    ("GET", "/api/v3/library/albums/{id}/copies", Posture::User),
-    ("GET", "/api/v3/library/artists", Posture::User),
-    ("GET", "/api/v3/library/artists/{id}", Posture::User),
-    ("GET", "/api/v3/library/artists/{id}/albums", Posture::User),
-    (
-        "GET",
-        "/api/v3/library/artists/{id}/appearances",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/library/tracks", Posture::User),
-    ("GET", "/api/v3/library/tracks/{id}", Posture::User),
-    ("GET", "/api/v3/library/tracks/{id}/lyrics", Posture::User),
-    ("GET", "/api/v3/library/stats", Posture::User),
-    ("POST", "/api/v3/library/membership", Posture::User),
-    ("GET", "/api/v3/library/mbids", Posture::User),
-    ("GET", "/api/v3/library/tracks/{id}/tags", Posture::Admin),
-    ("GET", "/api/v3/library/albums/{id}/status", Posture::User),
-    ("POST", "/api/v3/library/resolve-tracks", Posture::User),
-    ("GET", "/api/v3/library/recently-added", Posture::User),
-    ("GET", "/api/v3/library/genres", Posture::User),
-    ("GET", "/api/v3/library/genres/{name}/tracks", Posture::User),
-    ("GET", "/api/v3/local-library/albums", Posture::User),
-    ("GET", "/api/v3/local-library/search", Posture::User),
-    ("GET", "/api/v3/local-library/recent", Posture::User),
-    ("GET", "/api/v3/local-library/decades", Posture::User),
-    ("GET", "/api/v3/local-library/suggestions", Posture::User),
-    // Local album match.
-    (
-        "GET",
-        "/api/v3/local-library/albums/match/{mbid}",
-        Posture::User,
-    ),
-    // Unified search.
-    ("GET", "/api/v3/search", Posture::User),
-    ("GET", "/api/v3/search/{bucket}", Posture::User),
-    ("GET", "/api/v3/search/suggest", Posture::User),
-    ("POST", "/api/v3/search/enrich/batch", Posture::User),
-    // Catalog: MusicBrainz artist and album pages. The dummy id is not an
-    // MBID or a library album, so every row answers 400 without dialing out.
-    ("GET", "/api/v3/artists/{artist_mbid}", Posture::User),
-    (
-        "GET",
-        "/api/v3/artists/{artist_mbid}/extended",
-        Posture::User,
-    ),
-    (
-        "GET",
-        "/api/v3/artists/{artist_mbid}/releases",
-        Posture::User,
-    ),
-    (
-        "GET",
-        "/api/v3/artists/{artist_mbid}/similar",
-        Posture::User,
-    ),
-    (
-        "GET",
-        "/api/v3/artists/{artist_mbid}/top-songs",
-        Posture::User,
-    ),
-    (
-        "GET",
-        "/api/v3/artists/{artist_mbid}/top-albums",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/artists/{artist_mbid}/lastfm", Posture::User),
-    (
-        "GET",
-        "/api/v3/artists/{artist_mbid}/purchase-options",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/albums/{album_id}", Posture::User),
-    ("GET", "/api/v3/albums/{album_id}/basic", Posture::User),
-    ("GET", "/api/v3/albums/{album_id}/tracks", Posture::User),
-    ("GET", "/api/v3/albums/{album_id}/editions", Posture::User),
-    ("POST", "/api/v3/albums/{album_id}/refresh", Posture::User),
-    ("GET", "/api/v3/albums/{album_id}/similar", Posture::User),
-    (
-        "GET",
-        "/api/v3/albums/{album_id}/more-by-artist",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/albums/{album_id}/lastfm", Posture::User),
-    (
-        "GET",
-        "/api/v3/albums/{album_id}/purchase-options",
-        Posture::User,
-    ),
-    (
-        "GET",
-        "/api/v3/albums/{album_id}/plugin-details",
-        Posture::User,
-    ),
-    // Discover, queue, radio and batches.
-    ("GET", "/api/v3/discover", Posture::User),
-    ("POST", "/api/v3/discover/refresh", Posture::User),
-    ("POST", "/api/v3/discover/activity", Posture::User),
-    ("POST", "/api/v3/discover/radio", Posture::User),
-    ("POST", "/api/v3/discover/radio/plan", Posture::User),
-    (
-        "POST",
-        "/api/v3/discover/playlist-suggestions",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/discover/queue", Posture::User),
-    ("GET", "/api/v3/discover/queue/status", Posture::User),
-    ("POST", "/api/v3/discover/queue/generate", Posture::User),
-    (
-        "GET",
-        "/api/v3/discover/queue/enrich/{release_group_mbid}",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/discover/queue/preview/{release_group_mbid}",
-        Posture::User,
-    ),
-    ("POST", "/api/v3/discover/queue/ignore", Posture::User),
-    ("GET", "/api/v3/discover/queue/ignored", Posture::User),
-    ("POST", "/api/v3/discover/queue/validate", Posture::User),
-    (
-        "GET",
-        "/api/v3/discover/queue/youtube-search",
-        Posture::User,
-    ),
-    (
-        "GET",
-        "/api/v3/discover/queue/youtube-track-search",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/discover/queue/youtube-quota", Posture::User),
-    (
-        "POST",
-        "/api/v3/discover/queue/youtube-cache-check",
-        Posture::User,
-    ),
-    ("POST", "/api/v3/youtube/generate", Posture::User),
-    ("GET", "/api/v3/youtube/link/{album_id}", Posture::User),
-    ("PUT", "/api/v3/youtube/link/{album_id}", Posture::User),
-    ("DELETE", "/api/v3/youtube/link/{album_id}", Posture::User),
-    ("GET", "/api/v3/youtube/links", Posture::User),
-    ("POST", "/api/v3/youtube/manual", Posture::User),
-    ("POST", "/api/v3/youtube/generate-track", Posture::User),
-    ("POST", "/api/v3/youtube/generate-tracks", Posture::User),
-    (
-        "GET",
-        "/api/v3/youtube/track-links/{album_id}",
-        Posture::User,
-    ),
-    (
-        "DELETE",
-        "/api/v3/youtube/track-link/{album_id}/{disc_number}/{track_number}",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/youtube/quota", Posture::User),
-    ("GET", "/api/v3/discover/track-preview", Posture::User),
-    ("GET", "/api/v3/discover/album-preview", Posture::User),
-    ("POST", "/api/v3/discover/batches", Posture::User),
-    ("GET", "/api/v3/discover/batches", Posture::User),
-    ("GET", "/api/v3/discover/batches/{batch_id}", Posture::User),
-    (
-        "DELETE",
-        "/api/v3/discover/batches/{batch_id}",
-        Posture::User,
-    ),
-    // Home and now playing.
-    ("GET", "/api/v3/home", Posture::User),
-    ("GET", "/api/v3/home/integration-status", Posture::User),
-    ("GET", "/api/v3/home/genre/{genre_name}", Posture::User),
-    ("GET", "/api/v3/home/trending/artists", Posture::User),
-    ("GET", "/api/v3/home/popular/albums", Posture::User),
-    ("GET", "/api/v3/home/your-top/albums", Posture::User),
-    ("GET", "/api/v3/now-playing", Posture::User),
-    ("GET", "/api/v3/events/stream", Posture::User),
-    // Collections: playlists.
-    ("GET", "/api/v3/playlists", Posture::User),
-    ("POST", "/api/v3/playlists", Posture::User),
-    ("GET", "/api/v3/playlists/{playlist_id}", Posture::User),
-    ("PUT", "/api/v3/playlists/{playlist_id}", Posture::User),
-    ("DELETE", "/api/v3/playlists/{playlist_id}", Posture::User),
-    (
-        "PATCH",
-        "/api/v3/playlists/{playlist_id}/visibility",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/playlists/{playlist_id}/tracks",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/playlists/{playlist_id}/tracks/remove",
-        Posture::User,
-    ),
-    (
-        "DELETE",
-        "/api/v3/playlists/{playlist_id}/tracks/{track_id}",
-        Posture::User,
-    ),
-    (
-        "PATCH",
-        "/api/v3/playlists/{playlist_id}/tracks/reorder",
-        Posture::User,
-    ),
-    (
-        "PATCH",
-        "/api/v3/playlists/{playlist_id}/tracks/{track_id}",
-        Posture::User,
-    ),
-    ("POST", "/api/v3/playlists/check-tracks", Posture::User),
-    (
-        "POST",
-        "/api/v3/playlists/{playlist_id}/resolve-sources",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/playlists/{playlist_id}/cover",
-        Posture::User,
-    ),
-    (
-        "GET",
-        "/api/v3/playlists/{playlist_id}/cover",
-        Posture::User,
-    ),
-    (
-        "DELETE",
-        "/api/v3/playlists/{playlist_id}/cover",
-        Posture::User,
-    ),
-    // Collections: favorites, follows, approvals, pins.
-    ("GET", "/api/v3/favorites", Posture::User),
-    ("PUT", "/api/v3/favorites/{kind}/{item_id}", Posture::User),
-    ("PUT", "/api/v3/ratings/{kind}/{item_id}", Posture::User),
-    ("POST", "/api/v3/ratings/lookup", Posture::User),
-    (
-        "GET",
-        "/api/v3/artists/{artist_mbid}/follow-status",
-        Posture::User,
-    ),
-    ("PUT", "/api/v3/artists/{artist_mbid}/follow", Posture::User),
-    (
-        "PUT",
-        "/api/v3/artists/{artist_mbid}/auto-download",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/following/artists", Posture::User),
-    ("GET", "/api/v3/following/new-releases", Posture::User),
-    (
-        "GET",
-        "/api/v3/following/new-releases/recent",
-        Posture::User,
-    ),
-    (
-        "GET",
-        "/api/v3/following/new-releases/unseen-count",
-        Posture::User,
-    ),
-    ("POST", "/api/v3/following/new-releases/seen", Posture::User),
-    ("GET", "/api/v3/following/concerts", Posture::User),
-    ("GET", "/api/v3/following/concerts/cities", Posture::User),
-    ("PUT", "/api/v3/following/concerts/cities", Posture::User),
-    (
-        "GET",
-        "/api/v3/following/concerts/city-search",
-        Posture::User,
-    ),
-    (
-        "GET",
-        "/api/v3/following/concerts/unseen-count",
-        Posture::User,
-    ),
-    ("POST", "/api/v3/following/concerts/seen", Posture::User),
-    (
-        "GET",
-        "/api/v3/requests/auto-download-approvals",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/requests/auto-download-approval-batches",
-        Posture::Admin,
-    ),
-    // Platform: covers, version, wrapped.
     (
         "GET",
         "/api/v3/covers/release-group/{release_group_id}",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/covers/release/{release_id}", Posture::User),
-    ("GET", "/api/v3/covers/artist/{artist_id}", Posture::User),
-    ("GET", "/api/v3/library/albums/{id}/artwork", Posture::User),
-    ("GET", "/api/v3/version", Posture::User),
-    ("GET", "/api/v3/version/check-update", Posture::User),
-    ("GET", "/api/v3/version/releases", Posture::User),
-    ("GET", "/api/v3/wrapped/users", Posture::WrappedKey),
-    ("GET", "/api/v3/wrapped/user/{user_id}", Posture::WrappedKey),
-    ("GET", "/api/v3/wrapped/server", Posture::WrappedKey),
-    // Remote sources.
-    ("GET", "/api/v3/me/connections", Posture::User),
-    ("GET", "/api/v3/remotes/{source}/moods", Posture::User),
-    ("GET", "/api/v3/remotes/{source}/filters", Posture::User),
-    (
-        "GET",
-        "/api/v3/remotes/{source}/most-played/albums",
-        Posture::User,
+        Exception::Raw,
+        "covers answer image bytes",
     ),
     (
         "GET",
-        "/api/v3/remotes/{source}/most-played/artists",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/remotes/{source}/analytics", Posture::User),
-    ("GET", "/api/v3/remotes/{source}/hub", Posture::User),
-    ("GET", "/api/v3/remotes/{source}/stats", Posture::User),
-    ("GET", "/api/v3/remotes/{source}/albums", Posture::User),
-    ("GET", "/api/v3/remotes/{source}/albums/{id}", Posture::User),
-    (
-        "GET",
-        "/api/v3/remotes/{source}/albums/{id}/tracks",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/remotes/{source}/artists", Posture::User),
-    (
-        "GET",
-        "/api/v3/remotes/{source}/artists/index",
-        Posture::User,
+        "/api/v3/covers/release/{release_id}",
+        Exception::Raw,
+        "covers answer image bytes",
     ),
     (
         "GET",
-        "/api/v3/remotes/{source}/artists/{id}",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/remotes/{source}/tracks", Posture::User),
-    ("GET", "/api/v3/remotes/{source}/search", Posture::User),
-    // Remote source browse feeds.
-    ("GET", "/api/v3/remotes/{source}/random", Posture::User),
-    ("GET", "/api/v3/remotes/{source}/discovery", Posture::User),
-    ("GET", "/api/v3/remotes/{source}/recent", Posture::User),
-    (
-        "GET",
-        "/api/v3/remotes/{source}/recently-added",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/remotes/{source}/favorites", Posture::User),
-    ("GET", "/api/v3/remotes/{source}/genres", Posture::User),
-    (
-        "GET",
-        "/api/v3/remotes/{source}/genres/songs",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/remotes/{source}/playlists", Posture::User),
-    (
-        "GET",
-        "/api/v3/remotes/{source}/playlists/{id}",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/remotes/{source}/playlists/{id}/import",
-        Posture::User,
+        "/api/v3/covers/artist/{artist_id}",
+        Exception::Raw,
+        "covers answer image bytes",
     ),
     (
         "GET",
-        "/api/v3/remotes/{source}/info/artists/{id}",
-        Posture::User,
+        "/api/v3/home/trending/artists",
+        Exception::ProviderDown,
+        "reads ListenBrainz charts live, and the harness closes its port",
     ),
     (
         "GET",
-        "/api/v3/remotes/{source}/info/albums/{id}",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/remotes/{source}/lyrics/{id}", Posture::User),
-    (
-        "GET",
-        "/api/v3/remotes/{source}/top/{artist}",
-        Posture::User,
+        "/api/v3/home/popular/albums",
+        Exception::ProviderDown,
+        "reads ListenBrainz charts live, and the harness closes its port",
     ),
     (
         "GET",
-        "/api/v3/remotes/{source}/similar/{id}",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/remotes/{source}/mix/{id}", Posture::User),
-    ("GET", "/api/v3/remotes/{source}/sessions", Posture::User),
-    ("GET", "/api/v3/remotes/{source}/history", Posture::User),
-    ("GET", "/api/v3/remotes/{source}/images/{id}", Posture::User),
-    (
-        "GET",
-        "/api/v3/remotes/{source}/covers/playlists/{id}",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/remotes/{source}/match", Posture::User),
-    ("GET", "/api/v3/remotes/{source}/connection", Posture::User),
-    ("PUT", "/api/v3/remotes/{source}/connection", Posture::User),
-    (
-        "DELETE",
-        "/api/v3/remotes/{source}/connection",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/remotes/navidrome/folders", Posture::User),
-    ("PUT", "/api/v3/remotes/navidrome/folders", Posture::User),
-    // Stream gateway.
-    ("GET", "/api/v3/stream/{source}/{*key}", Posture::User),
-    ("HEAD", "/api/v3/stream/{source}/{*key}", Posture::User),
-    // Local file downloads; the access setting then decides per role.
-    ("GET", "/api/v3/download/access", Posture::User),
-    ("GET", "/api/v3/download/local/track/{id}", Posture::User),
-    ("GET", "/api/v3/download/local/album/{id}", Posture::User),
-    (
-        "GET",
-        "/api/v3/download/local/album/mbid/{mbid}",
-        Posture::User,
-    ),
-    // Playback reporting (GET /now-playing is listed with home above and
-    // is served from the live registry).
-    ("POST", "/api/v3/playback/start", Posture::User),
-    ("POST", "/api/v3/playback/progress", Posture::User),
-    ("POST", "/api/v3/playback/stop", Posture::User),
-    ("POST", "/api/v3/scrobble/submit", Posture::User),
-    ("POST", "/api/v3/scrobble/now-playing", Posture::User),
-    ("POST", "/api/v3/now-playing", Posture::User),
-    ("DELETE", "/api/v3/now-playing", Posture::User),
-    // Acquisition requests.
-    ("POST", "/api/v3/requests/albums", Posture::User),
-    ("POST", "/api/v3/requests/tracks", Posture::User),
-    ("POST", "/api/v3/requests/batches", Posture::User),
-    ("POST", "/api/v3/requests/batches/cancel", Posture::User),
-    ("GET", "/api/v3/requests/active", Posture::User),
-    ("GET", "/api/v3/requests/active/count", Posture::User),
-    (
-        "DELETE",
-        "/api/v3/requests/active/{musicbrainz_id}",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/requests/retry/{musicbrainz_id}",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/requests/history", Posture::User),
-    (
-        "DELETE",
-        "/api/v3/requests/history/{musicbrainz_id}",
-        Posture::User,
-    ),
-    ("POST", "/api/v3/requests/sync", Posture::Admin),
-    ("GET", "/api/v3/requests/wanted", Posture::User),
-    (
-        "POST",
-        "/api/v3/requests/wanted/{musicbrainz_id}/stop",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/requests/wanted/{musicbrainz_id}/resume",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/requests/wanted/{musicbrainz_id}/seen",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/requests/approvals", Posture::Admin),
-    ("GET", "/api/v3/requests/approvals/count", Posture::Admin),
-    (
-        "POST",
-        "/api/v3/requests/approvals/{musicbrainz_id}/approve",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/requests/approvals/{musicbrainz_id}/reject",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/requests/auto-download-approval-batches/{batch_id}/approve",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/requests/auto-download-approval-batches/{batch_id}/reject",
-        Posture::Admin,
+        "/api/v3/admin/import/jellyfin",
+        Exception::HonestUnavailable,
+        "no Jellyfin server is set up, so the import directory is unconfigured",
     ),
     (
         "GET",
-        "/api/v3/requests/personal-mix-approvals",
-        Posture::Admin,
+        "/api/v3/admin/import/plex",
+        Exception::HonestUnavailable,
+        "no Plex server is set up, so the import directory is unconfigured",
     ),
     (
         "POST",
-        "/api/v3/requests/personal-mix-approvals/{user_id}/approve",
-        Posture::Admin,
+        "/api/v3/auth/plex/start/connect",
+        Exception::HonestUnavailable,
+        "plex.tv is unreachable, so no PIN can be minted",
     ),
     (
         "POST",
-        "/api/v3/requests/personal-mix-approvals/{user_id}/reject",
-        Posture::Admin,
+        "/api/v3/auth/logout-all",
+        Exception::SignsOut,
+        "it revokes the pass's own session by design",
     ),
-    (
-        "POST",
-        "/api/v3/requests/personal-mix-approvals/{user_id}/revoke",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/requests/personal-mix/refresh",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/albums/{album_id}/edition/acquire",
-        Posture::Curator,
-    ),
-    // Acquisition imports.
-    (
-        "GET",
-        "/api/v3/acquire/lidarr-import/config",
-        Posture::Admin,
-    ),
-    (
-        "PUT",
-        "/api/v3/acquire/lidarr-import/config",
-        Posture::Admin,
-    ),
-    ("POST", "/api/v3/acquire/lidarr-import/test", Posture::Admin),
-    (
-        "GET",
-        "/api/v3/acquire/lidarr-import/artists",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/acquire/lidarr-import/import",
-        Posture::Admin,
-    ),
-    ("GET", "/api/v3/acquire/spotify/settings", Posture::Admin),
-    ("PUT", "/api/v3/acquire/spotify/settings", Posture::Admin),
-    (
-        "GET",
-        "/api/v3/acquire/spotify/redirect-uri",
-        Posture::Admin,
-    ),
-    ("GET", "/api/v3/acquire/spotify/auth/url", Posture::User),
-    (
-        "GET",
-        "/api/v3/acquire/spotify/auth/callback",
-        Posture::Public,
-    ),
-    ("GET", "/api/v3/acquire/spotify/playlists", Posture::User),
-    (
-        "POST",
-        "/api/v3/acquire/spotify/playlists/{id}/import",
-        Posture::User,
-    ),
-    ("GET", "/api/v3/acquire/spotify/jobs/{id}", Posture::User),
-    ("DELETE", "/api/v3/me/connections/spotify", Posture::User),
-    ("GET", "/api/v3/system/health", Posture::User),
-    ("GET", "/api/v3/acquire/health", Posture::User),
-    ("GET", "/api/v3/acquire/slskd/status", Posture::User),
-    ("GET", "/api/v3/acquire/sabnzbd/status", Posture::Admin),
-    // Library engine.
-    ("GET", "/api/v3/library/roots", Posture::User),
-    ("POST", "/api/v3/library/roots", Posture::Admin),
-    ("POST", "/api/v3/library/scan", Posture::Admin),
-    ("GET", "/api/v3/library/scan/runs", Posture::User),
-    ("GET", "/api/v3/library/scan/runs/{id}", Posture::User),
-    ("POST", "/api/v3/library/scan/runs", Posture::Admin),
-    ("GET", "/api/v3/library/scan/runs/current", Posture::Admin),
-    ("GET", "/api/v3/library/scan/runs/history", Posture::Admin),
-    ("GET", "/api/v3/library/scan/runs/estimate", Posture::Admin),
-    (
-        "GET",
-        "/api/v3/library/scan/runs/{id}/failures",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/scan/runs/{id}/pause",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/scan/runs/{id}/resume",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/scan/runs/{id}/stop",
-        Posture::Admin,
-    ),
-    ("GET", "/api/v3/library/activity", Posture::User),
-    (
-        "POST",
-        "/api/v3/library/identification/pause",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/identification/resume",
-        Posture::Admin,
-    ),
-    ("POST", "/api/v3/library/identify", Posture::Curator),
-    ("GET", "/api/v3/library/reviews", Posture::User),
-    (
-        "POST",
-        "/api/v3/library/reviews/{id}/approve",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/reviews/{id}/reject",
-        Posture::Curator,
-    ),
-    ("GET", "/api/v3/library/reviews/{id}", Posture::User),
-    (
-        "POST",
-        "/api/v3/library/reviews/retry-pending",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/reviews/bulk-preview",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/reviews/bulk-apply",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/reviews/{id}/dismiss",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/reviews/{id}/detach",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/reviews/{id}/exclude",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/reviews/{id}/restore",
-        Posture::Admin,
-    ),
-    ("POST", "/api/v3/library/reviews/{id}/retry", Posture::Admin),
-    ("POST", "/api/v3/library/manage/preview", Posture::Curator),
-    ("POST", "/api/v3/library/manage/apply", Posture::Curator),
-    ("POST", "/api/v3/library/manage/undo", Posture::Curator),
-    (
-        "POST",
-        "/api/v3/library/manage/baseline/restore",
-        Posture::Admin,
-    ), // Library contributions; the release-editor callback is token identified.
-    (
-        "POST",
-        "/api/v3/library/albums/{id}/contributions",
-        Posture::Curator,
-    ),
-    ("GET", "/api/v3/library/contributions/{id}", Posture::User),
-    (
-        "PUT",
-        "/api/v3/library/contributions/{id}/draft",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/contributions/{id}/rebuild",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/contributions/{id}/cancel",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/contributions/{id}/discogs/search",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/contributions/{id}/discogs/select",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/contributions/{id}/discogs/remove",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/contributions/{id}/musicbrainz/duplicates",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/contributions/{id}/musicbrainz/attach",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/contributions/{id}/musicbrainz/seed",
-        Posture::Curator,
-    ),
-    (
-        "PUT",
-        "/api/v3/library/contributions/{id}/musicbrainz/result",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/contributions/{id}/musicbrainz/verify",
-        Posture::Curator,
-    ),
-    (
-        "GET",
-        "/api/v3/library/contributions/musicbrainz/callback",
-        Posture::Public,
-    ),
-    // Library Management jobs: admin-only, as in v2.
-    (
-        "POST",
-        "/api/v3/library/management/previews",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/management/previews/{job_id}",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/management/previews/{job_id}/items",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/management/previews/{job_id}/discard",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/management/previews/{job_id}/apply",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/management/previews/{job_id}/reissue",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/management/operations",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/management/operations/{job_id}",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/management/operations/{job_id}/results",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/management/operations/{job_id}/undo-preview",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/management/tracks/{track_id}/tag-editor",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/management/tag-edit-previews",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/management/baselines/restore-previews",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/management/baselines/purge-impact",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/management/baselines/purge",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/management/duplicate-resolution-previews",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/management/recovery/diagnostics",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/management/recovery/import-bundles/{bundle_id}/resolve",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/management/automatic/skipped",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/management/takeovers",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/management/hand-back",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/settings/library-management/placement",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/library-management/placement/{root_id}/check",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/library-management/activation-previews",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/settings/library-management/activation-previews/{job_id}",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/settings/library-management/activation-confirmations",
-        Posture::Admin,
-    ),
-    // Identity repairs, preparations and scan diagnostics: admin-only, as in v2.
-    ("POST", "/api/v3/library/identity-repairs", Posture::Admin),
-    ("GET", "/api/v3/library/identity-repairs", Posture::Admin),
-    (
-        "GET",
-        "/api/v3/library/identity-repairs/estimate",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/identity-repairs/{job_id}",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/identity-repairs/{job_id}/findings",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/identity-repairs/{job_id}/apply",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/identity-repairs/{job_id}/pause",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/identity-repairs/{job_id}/resume",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/identity-repairs/{job_id}/stop",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/management/identity-preparations",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/management/identity-preparations",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/management/identity-preparations/estimate",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/management/identity-preparations/{job_id}",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/management/identity-preparations/{job_id}/findings",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/management/identity-preparations/{job_id}/apply",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/management/identity-preparations/{job_id}/discard",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/scan/runs/{id}/diagnostics",
-        Posture::Admin,
-    ),
-    // Library operations: admin-only, as in v2.
-    ("GET", "/api/v3/library/operations/{job_id}", Posture::Admin),
-    (
-        "POST",
-        "/api/v3/library/operations/{job_id}/pause",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/operations/{job_id}/resume",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/operations/{job_id}/stop",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/albums/{album_id}/reidentification/releases",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/undo-automatic-edition",
-        Posture::Admin,
-    ),
-    // Catalog corrections: admin-only, as in v2.
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/split-preview",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/split",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/albums/merge-preview",
-        Posture::Admin,
-    ),
-    ("POST", "/api/v3/library/albums/merge", Posture::Admin),
-    (
-        "POST",
-        "/api/v3/library/tracks/move-preview",
-        Posture::Admin,
-    ),
-    ("POST", "/api/v3/library/tracks/move", Posture::Admin),
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/reset-grouping-preview",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/reset-grouping",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/artists/merge-preview",
-        Posture::Admin,
-    ),
-    ("POST", "/api/v3/library/artists/merge", Posture::Admin),
-    ("GET", "/api/v3/library/retag-pairs", Posture::Admin),
-    (
-        "POST",
-        "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/join",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/dismiss",
-        Posture::Admin,
-    ),
-    // Artist reconciliation: admin-only, as in v2.
-    (
-        "GET",
-        "/api/v3/library/artists/reconciliation",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/artists/duplicate-groups",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/artists/duplicate-groups/{group_id}",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/artists/duplicate-groups/{group_id}/dismiss",
-        Posture::Admin,
-    ),
-    ("DELETE", "/api/v3/library/albums/{id}", Posture::Admin),
-    ("DELETE", "/api/v3/library/tracks/{id}", Posture::Curator),
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/rescan",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/management/re-enable",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/management/hand-back",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/settings/edition-preferences",
-        Posture::Admin,
-    ),
-    (
-        "PUT",
-        "/api/v3/settings/edition-preferences",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/albums/{album_id}/editions/{release_mbid}/tracks",
-        Posture::User,
-    ),
-    (
-        "GET",
-        "/api/v3/library/albums/{album_id}/edition",
-        Posture::User,
-    ),
-    (
-        "GET",
-        "/api/v3/library/albums/{album_id}/history",
-        Posture::User,
-    ),
-    (
-        "PUT",
-        "/api/v3/library/albums/{album_id}/edition",
-        Posture::Curator,
-    ),
-    (
-        "DELETE",
-        "/api/v3/library/albums/{album_id}/edition",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/edition/confirm",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/edition/undo",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/edition/custom",
-        Posture::Admin,
-    ),
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/edition/leave-unmanaged",
-        Posture::Admin,
-    ),
-    (
-        "GET",
-        "/api/v3/library/albums/{album_id}/edition/plan",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/edition/extras/remove",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/library/albums/{album_id}/edition/extras/restore",
-        Posture::Curator,
-    ),
-    (
-        "PUT",
-        "/api/v3/library/albums/{album_id}/edition/files/{track_id}",
-        Posture::Curator,
-    ),
-    (
-        "DELETE",
-        "/api/v3/library/albums/{album_id}/edition/files/{track_id}",
-        Posture::Curator,
-    ),
-    ("GET", "/api/v3/library/unconfirmed", Posture::User),
 ];
 
-/// Fill `{param}` segments with a dummy id.
-/// Rows that read ListenBrainz charts live. The harness points ListenBrainz
-/// at a closed local port, so these answer 502 (the provider is down), the
-/// same answer a real outage gets.
-fn charts_provider_down(method: &str, template: &str) -> bool {
-    matches!(
-        (method, template),
-        ("GET", "/api/v3/home/trending/artists") | ("GET", "/api/v3/home/popular/albums")
-    )
+fn item_match_body() -> Value {
+    json!({"release_group_mbid": "e2e-dummy-id"})
 }
 
+/// A BrainzMash binding on a non-BrainzMash selection: refused with 400
+/// before anything is probed.
+fn verify_body() -> Value {
+    json!({
+        "access_revision": "matrix",
+        "source_id": "matrix",
+        "generation": 1,
+        "disclosure_version": "matrix",
+    })
+}
+
+fn exception(method: &str, path: &str) -> Option<Exception> {
+    EXCEPTIONS
+        .iter()
+        .find(|(m, p, _, _)| *m == method && *p == path)
+        .map(|(_, _, exception, _)| *exception)
+}
+
+/// Fill `{param}` segments with a dummy id.
 fn concretize(template: &str) -> String {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(start) = rest.find('{') {
         out.push_str(&rest[..start]);
         let end = rest.find('}').expect("balanced template braces");
-        let _ = &rest[start..=end];
         out.push_str("e2e-dummy-id");
         rest = &rest[end + 1..];
     }
@@ -2827,109 +1351,240 @@ fn concretize(template: &str) -> String {
     out
 }
 
-/// Every (method, template) pair the OpenAPI doc publishes.
-fn documented_routes() -> Vec<(String, String)> {
-    let doc = ApiDoc::openapi();
-    let mut routes = Vec::new();
-    for (path, item) in doc.paths.paths.iter() {
-        for (method, op) in [
-            ("GET", &item.get),
-            ("POST", &item.post),
-            ("PUT", &item.put),
-            ("DELETE", &item.delete),
-            ("PATCH", &item.patch),
-            ("HEAD", &item.head),
-        ] {
-            if op.is_some() {
-                routes.push((method.to_owned(), path.clone()));
-            }
-        }
+fn request_body(method: &str, exception: Option<Exception>) -> Option<Value> {
+    match (method, exception) {
+        (_, Some(Exception::Body(body))) => Some(body()),
+        ("POST" | "PUT" | "PATCH", _) => Some(json!({})),
+        _ => None,
     }
-    routes
 }
 
-#[tokio::test]
-async fn auth_on_every_endpoint() {
-    // Coverage first, both directions: a documented route without a matrix
-    // row fails by name, and a stale row fails too.
-    for (method, path) in documented_routes() {
-        assert!(
-            MATRIX.iter().any(|(m, p, _)| *m == method && *p == path),
-            "route {method} {path} is documented but has no auth-matrix row; add one"
-        );
-    }
-    let documented = documented_routes();
-    for (method, template, _) in MATRIX {
-        assert!(
-            documented.iter().any(|(m, p)| m == method && p == template),
-            "matrix row {method} {template} matches no documented route; fix or drop it"
-        );
-    }
-
-    let e2e = E2e::open("matrix").await;
-    // One app for the whole matrix: building the full state per row
-    // (scratch databases, migrations, the router itself) used to dominate
-    // the runtime. Rows still never share a rate budget: the limiter is
-    // emptied before every request, back to the buckets a fresh build
-    // starts with.
-    let state = e2e.state();
-    let limits = Arc::clone(&state.auth.limits);
-    let app = create_app(state);
-    let fresh = || {
-        limits.reset();
-        app.clone()
+/// The public and wrapped-key pins equal the document's sets exactly, and
+/// every exception names a documented operation.
+#[test]
+fn public_and_own_credential_operations_are_pinned() {
+    let operations = documented_operations();
+    let with = |posture: Declared| -> std::collections::BTreeSet<(String, String)> {
+        operations
+            .iter()
+            .filter(|op| op.posture == posture)
+            .map(|op| (op.method.to_owned(), op.path.clone()))
+            .collect()
     };
+    let pinned = |list: &[(&str, &str)]| -> std::collections::BTreeSet<(String, String)> {
+        list.iter()
+            .map(|(m, p)| ((*m).to_owned(), (*p).to_owned()))
+            .collect()
+    };
+    assert_eq!(
+        with(Declared::Public),
+        pinned(PUBLIC_OPERATIONS),
+        "the public operations changed; a new public operation is a reviewed edit to PUBLIC_OPERATIONS"
+    );
+    assert_eq!(
+        with(Declared::WrappedKey),
+        pinned(WRAPPED_KEY_OPERATIONS),
+        "the wrapped-key operations changed; edit WRAPPED_KEY_OPERATIONS after review"
+    );
+    for (method, path, _, _) in EXCEPTIONS {
+        assert!(
+            operations
+                .iter()
+                .any(|op| op.method == *method && op.path == *path),
+            "exception {method} {path} names no documented operation; drop it"
+        );
+    }
+}
 
-    // Anonymous pass: protected rows 401 with the Bearer challenge; public
-    // rows answer anything but 401.
-    for (method, template, posture) in MATRIX {
-        let uri = concretize(template);
-        let body = match *method {
-            "POST" | "PUT" | "PATCH" => Some(json!({})),
-            _ => None,
+/// A signed-in caller of the matrix.
+struct Caller {
+    name: &'static str,
+    username: &'static str,
+    password: &'static str,
+    id: String,
+    auth: String,
+    role: CallerRole,
+}
+
+#[derive(Clone, Copy)]
+enum CallerRole {
+    User,
+    Trusted,
+    Admin,
+}
+
+/// What a caller must get on an operation of a given posture.
+enum Expect {
+    Admitted,
+    Forbidden,
+    NoSession,
+}
+
+fn expect(role: CallerRole, posture: Declared) -> Expect {
+    match (role, posture) {
+        (_, Declared::WrappedKey) => Expect::NoSession,
+        (_, Declared::User) => Expect::Admitted,
+        (CallerRole::Trusted | CallerRole::Admin, Declared::Curator) => Expect::Admitted,
+        (CallerRole::Admin, Declared::Admin) => Expect::Admitted,
+        (CallerRole::User, Declared::Curator) => Expect::Forbidden,
+        (CallerRole::User | CallerRole::Trusted, Declared::Admin) => Expect::Forbidden,
+        (_, Declared::Public) => unreachable!("public operations are skipped"),
+    }
+}
+
+/// The app under the matrix: one build, its limiter emptied before every
+/// request so no row spends another's budget.
+struct MatrixApp {
+    app: Router,
+    limits: Arc<droppedneedle_auth::session::rate_limit::RateLimiter>,
+}
+
+impl MatrixApp {
+    fn fresh(&self) -> Router {
+        self.limits.reset();
+        self.app.clone()
+    }
+}
+
+/// One signed-in pass over every gated and wrapped-key operation.
+async fn credentialed_pass(matrix: &MatrixApp, operations: &[Operation], caller: &mut Caller) {
+    let who = caller.name;
+    for op in operations {
+        if op.posture == Declared::Public {
+            continue;
+        }
+        let method = op.method;
+        let exception = exception(method, &op.path);
+        let uri = match exception {
+            Some(Exception::OwnId) => op.path.replace("{id}", &caller.id),
+            _ => concretize(&op.path),
         };
-        let (status, response_body, headers) = call(fresh(), method, &uri, &[], body).await;
+        let auth = caller.auth.clone();
+        let headers = [("authorization", auth.as_str())];
+        let (status, body) = match exception {
+            Some(Exception::StatusOnly) => (
+                call_status(matrix.fresh(), method, &uri, &headers).await,
+                Value::Null,
+            ),
+            Some(Exception::Raw) => {
+                let (status, _, _) = call_raw(matrix.fresh(), method, &uri, &headers).await;
+                (status, Value::Null)
+            }
+            _ => {
+                let (status, body, _) = call_lenient(
+                    matrix.fresh(),
+                    method,
+                    &uri,
+                    &headers,
+                    request_body(method, exception),
+                )
+                .await;
+                (status, body)
+            }
+        };
         assert_ne!(
             status,
             StatusCode::TOO_MANY_REQUESTS,
-            "{method} {uri}: anonymous pass tripped the limiter; reset it per row"
+            "{method} {uri}: the {who} pass tripped the limiter"
         );
-        match posture {
-            Posture::Public => assert_ne!(
+        match expect(caller.role, op.posture) {
+            Expect::NoSession => assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "a {who} session must not satisfy {method} {uri}, got {status}: {body}"
+            ),
+            Expect::Forbidden => assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "{who} {method} {uri} must 403, got {status}: {body}"
+            ),
+            Expect::Admitted => {
+                assert!(
+                    status != StatusCode::UNAUTHORIZED && status != StatusCode::FORBIDDEN,
+                    "{who} {method} {uri} must be admitted, got {status}: {body}"
+                );
+                match exception {
+                    Some(Exception::ProviderDown) => assert_eq!(
+                        status,
+                        StatusCode::BAD_GATEWAY,
+                        "{who} {method} {uri} must 502 while charts are down: {body}"
+                    ),
+                    Some(Exception::HonestUnavailable) => {
+                        assert_eq!(
+                            status,
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "{who} {method} {uri} must 503 while unconfigured, got {status}: {body}"
+                        );
+                        assert_eq!(error_code(&body), "INTERNAL_ERROR", "{method} {uri}");
+                    }
+                    _ => assert!(
+                        !status.is_server_error(),
+                        "{who} {method} {uri} must not 5xx on dummy input, got {status}: {body}"
+                    ),
+                }
+                if matches!(exception, Some(Exception::SignsOut)) {
+                    let (status, body, _) =
+                        login(matrix.fresh(), caller.username, caller.password, "bearer").await;
+                    assert_eq!(status, StatusCode::OK, "{who} signs in again: {body}");
+                    caller.auth = bearer(body["token"].as_str().expect("fresh token"));
+                }
+            }
+        }
+    }
+}
+
+/// Every documented operation answers as its declared posture says, for
+/// an anonymous caller, a plain user, a trusted user, an admin and the
+/// wrapped key.
+#[tokio::test]
+async fn auth_on_every_endpoint() {
+    let operations = documented_operations();
+    let e2e = E2e::open("matrix").await;
+    let state = e2e.state();
+    let matrix = MatrixApp {
+        limits: Arc::clone(&state.auth.limits),
+        app: create_app(state),
+    };
+
+    // Anonymous: session operations 401 with the Bearer challenge, public
+    // ones anything but 401, wrapped-key ones 401 with no challenge.
+    for op in &operations {
+        let method = op.method;
+        let uri = concretize(&op.path);
+        let body = request_body(method, exception(method, &op.path));
+        let (status, response_body, headers) = call(matrix.fresh(), method, &uri, &[], body).await;
+        assert_ne!(
+            status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "{method} {uri}: the anonymous pass tripped the limiter"
+        );
+        match op.posture {
+            Declared::Public => assert_ne!(
                 status,
                 StatusCode::UNAUTHORIZED,
                 "{method} {uri} is public but answered 401: {response_body}"
             ),
-            Posture::WrappedKey => {
+            Declared::WrappedKey => {
                 assert_eq!(
                     status,
                     StatusCode::UNAUTHORIZED,
                     "{method} {uri} must 401 anonymously, got {status}: {response_body}"
                 );
-                assert_eq!(
-                    error_code(&response_body),
-                    "UNAUTHORIZED",
-                    "{method} {uri}: envelope code"
-                );
+                assert_eq!(error_code(&response_body), "UNAUTHORIZED", "{method} {uri}");
                 assert!(
                     headers.get("www-authenticate").is_none(),
                     "{method} {uri}: a shared-secret rejection must not send a Bearer challenge"
                 );
             }
-            Posture::User | Posture::Admin | Posture::Curator => {
+            Declared::User | Declared::Curator | Declared::Admin => {
                 assert_eq!(
                     status,
                     StatusCode::UNAUTHORIZED,
                     "{method} {uri} must 401 anonymously, got {status}: {response_body}"
                 );
-                // HEAD answers carry no body (the router strips it), so only
-                // methods with a body pin the envelope code here.
-                if *method != "HEAD" {
-                    assert_eq!(
-                        error_code(&response_body),
-                        "UNAUTHORIZED",
-                        "{method} {uri}: envelope code"
-                    );
+                // A HEAD answer has no body, so only the others pin the code.
+                if method != "HEAD" {
+                    assert_eq!(error_code(&response_body), "UNAUTHORIZED", "{method} {uri}");
                 }
                 assert_eq!(
                     headers
@@ -2942,313 +1597,46 @@ async fn auth_on_every_endpoint() {
         }
     }
 
-    // Seed one admin and one user for the credentialed passes.
-    let (_, admin_token) =
-        setup_admin(fresh(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
-    let admin_token = admin_token.as_str().expect("admin token").to_owned();
-    let mut admin_auth = bearer(admin_token.as_str());
-    let (status, body, _) = call(
-        fresh(),
-        "POST",
-        "/api/v3/admin/users",
-        &[("authorization", admin_auth.as_str())],
-        Some(json!({"username": "molly", "password": "molly-password-1234"})),
+    // One admin, one plain user and one trusted user, made the way an
+    // admin makes them.
+    let (admin_user, admin_token) = setup_admin(
+        matrix.fresh(),
+        "e2e-owner",
+        "e2e-owner-password-1",
+        "bearer",
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-    let molly_id = body["id"].as_str().expect("molly id").to_owned();
-    let (status, body, _) = login(fresh(), "molly", "molly-password-1234", "bearer").await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let user_token = body["token"].as_str().expect("user token").to_owned();
-    let mut user_auth = bearer(user_token.as_str());
-
-    // User pass: admin rows 403, user rows admit (anything but 401/403).
-    for (method, template, posture) in MATRIX {
-        if !matches!(
-            posture,
-            Posture::User | Posture::Admin | Posture::Curator | Posture::WrappedKey
-        ) {
-            continue;
-        }
-        // Avatar reads are self-or-admin: the user pass reads the user's
-        // own avatar (404, no bytes yet), which is the admitted path. The
-        // foreign-id 403 is pinned in the users-slice briefs.
-        let uri = if *template == "/api/v3/users/{id}/avatar" {
-            format!("/api/v3/users/{molly_id}/avatar")
-        } else {
-            concretize(template)
-        };
-        let mut body = match *method {
-            "POST" | "PUT" | "PATCH" => Some(json!({})),
-            _ => None,
-        };
-        if *template == "/api/v3/import/items/{item_id}/match" {
-            body = Some(json!({"release_group_mbid": "e2e-dummy-id"}));
-        }
-        // Covers answer SVG/PNG bytes, so the user pass reads them raw;
-        // every other row still decodes JSON for the failure message.
-        let (status, response_body) = if *template == EVENT_STREAM {
-            let status = call_status(
-                fresh(),
-                method,
-                &uri,
-                &[("authorization", user_auth.as_str())],
-            )
-            .await;
-            (status, Value::Null)
-        } else if template.starts_with("/api/v3/covers/") {
-            let (status, _, _) = call_raw(
-                fresh(),
-                method,
-                &uri,
-                &[("authorization", user_auth.as_str())],
-            )
-            .await;
-            (status, Value::Null)
-        } else {
-            let (status, response_body, _) = call_lenient(
-                fresh(),
-                method,
-                &uri,
-                &[("authorization", user_auth.as_str())],
-                body,
-            )
-            .await;
-            (status, response_body)
-        };
-        assert_ne!(
-            status,
-            StatusCode::TOO_MANY_REQUESTS,
-            "{method} {uri}: user pass tripped the limiter"
-        );
-        match posture {
-            Posture::Admin | Posture::Curator => assert_eq!(
-                status,
-                StatusCode::FORBIDDEN,
-                "user {method} {uri} must 403, got {status}: {response_body}"
-            ),
-            Posture::WrappedKey => assert_eq!(
-                status,
-                StatusCode::UNAUTHORIZED,
-                "user session must not satisfy {method} {uri}, got {status}: {response_body}"
-            ),
-            Posture::User => {
-                assert!(
-                    status != StatusCode::UNAUTHORIZED && status != StatusCode::FORBIDDEN,
-                    "user {method} {uri} must be admitted, got {status}: {response_body}"
-                );
-                if charts_provider_down(method, template) {
-                    assert_eq!(
-                        status,
-                        StatusCode::BAD_GATEWAY,
-                        "user {method} {uri} must 502 while charts are down: {response_body}"
-                    );
-                } else {
-                    assert!(
-                        !status.is_server_error(),
-                        "user {method} {uri} must not 5xx on dummy input, got {status}: {response_body}"
-                    );
-                }
-            }
-            Posture::Public => unreachable!("filtered above"),
-        }
-        // Logout-all revokes the pass's own token by design; re-login so
-        // the rows after it still run credentialed.
-        if *template == "/api/v3/auth/logout-all" {
-            let (status, body, _) = login(fresh(), "molly", "molly-password-1234", "bearer").await;
-            assert_eq!(status, StatusCode::OK, "user re-login: {body}");
-            user_auth = bearer(body["token"].as_str().expect("fresh user token"));
-        }
-    }
-
-    // Trusted pass: a third account, promoted to trusted the way an admin
-    // does it, calls every admin and curator row. Admin rows answer 403;
-    // curator rows admit (not 401, not 403, not 5xx).
-    let (status, body, _) = call(
-        fresh(),
-        "POST",
-        "/api/v3/admin/users",
-        &[("authorization", admin_auth.as_str())],
-        Some(json!({"username": "tris", "password": "tris-password-1234"})),
+    let mut admin = Caller {
+        name: "admin",
+        username: "e2e-owner",
+        password: "e2e-owner-password-1",
+        id: admin_user["id"].as_str().expect("admin id").to_owned(),
+        auth: bearer(admin_token.as_str().expect("admin token")),
+        role: CallerRole::Admin,
+    };
+    let mut user = matrix_account(&matrix, &admin, "molly", "molly-password-1234", None).await;
+    let mut trusted = matrix_account(
+        &matrix,
+        &admin,
+        "tris",
+        "tris-password-1234",
+        Some("trusted"),
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-    let tris_id = body["id"].as_str().expect("tris id").to_owned();
-    let (status, body, _) = call(
-        fresh(),
-        "PUT",
-        &format!("/api/v3/admin/users/{tris_id}/role"),
-        &[("authorization", admin_auth.as_str())],
-        Some(json!({"role": "trusted"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, body, _) = login(fresh(), "tris", "tris-password-1234", "bearer").await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let trusted_auth = bearer(body["token"].as_str().expect("trusted token"));
-    for (method, template, posture) in MATRIX {
-        if !matches!(posture, Posture::Admin | Posture::Curator) {
-            continue;
-        }
-        let uri = concretize(template);
-        let mut body = match *method {
-            "POST" | "PUT" | "PATCH" => Some(json!({})),
-            _ => None,
-        };
-        if *template == "/api/v3/import/items/{item_id}/match" {
-            body = Some(json!({"release_group_mbid": "e2e-dummy-id"}));
-        }
-        let (status, response_body, _) = call_lenient(
-            fresh(),
-            method,
-            &uri,
-            &[("authorization", trusted_auth.as_str())],
-            body,
-        )
-        .await;
-        assert_ne!(
-            status,
-            StatusCode::TOO_MANY_REQUESTS,
-            "{method} {uri}: trusted pass tripped the limiter"
-        );
-        if matches!(posture, Posture::Admin) {
-            assert_eq!(
-                status,
-                StatusCode::FORBIDDEN,
-                "trusted {method} {uri} must 403, got {status}: {response_body}"
-            );
-        } else {
-            assert!(
-                status != StatusCode::UNAUTHORIZED
-                    && status != StatusCode::FORBIDDEN
-                    && !status.is_server_error(),
-                "trusted {method} {uri} must be admitted, got {status}: {response_body}"
-            );
-        }
-    }
 
-    // Admin pass: admitted everywhere (v2 spirit: auth passed means the body
-    // ran, so 4xx from dummy input still counts; 5xx never does). Wrapped
-    // rows are the exception: no session satisfies the shared-secret gate.
-    for (method, template, posture) in MATRIX {
-        if !matches!(
-            posture,
-            Posture::User | Posture::Admin | Posture::Curator | Posture::WrappedKey
-        ) {
-            continue;
-        }
-        let uri = concretize(template);
-        let mut body = match *method {
-            "POST" | "PUT" | "PATCH" => Some(json!({})),
-            _ => None,
-        };
-        // Shaped binding body: a BrainzMash binding on a non-Brainzmash
-        // selection answers 400 without probing. The empty object would
-        // decode as a default tier update and probe MusicBrainz for real,
-        // which the matrix must never do.
-        if *template == "/api/v3/settings/musicbrainz/verify" && *method == "POST" {
-            body = Some(json!({
-                "access_revision": "matrix",
-                "source_id": "matrix",
-                "generation": 1,
-                "disclosure_version": "matrix",
-            }));
-        }
-        let (status, response_body) = if *template == EVENT_STREAM {
-            let status = call_status(
-                fresh(),
-                method,
-                &uri,
-                &[("authorization", admin_auth.as_str())],
-            )
-            .await;
-            (status, Value::Null)
-        } else if template.starts_with("/api/v3/covers/") {
-            let (status, _, _) = call_raw(
-                fresh(),
-                method,
-                &uri,
-                &[("authorization", admin_auth.as_str())],
-            )
-            .await;
-            (status, Value::Null)
-        } else {
-            let (status, response_body, _) = call_lenient(
-                fresh(),
-                method,
-                &uri,
-                &[("authorization", admin_auth.as_str())],
-                body,
-            )
-            .await;
-            (status, response_body)
-        };
-        assert_ne!(
-            status,
-            StatusCode::TOO_MANY_REQUESTS,
-            "{method} {uri}: admin pass tripped the limiter"
-        );
-        // Honest-503 rows: no Jellyfin or Plex server is set up in the
-        // scratch config, so the import directories report unconfigured,
-        // and plex.tv is unreachable, so the admin's Plex settings sign-in
-        // cannot mint a PIN. The 503 is the contract here, not a failure,
-        // so it pins exactly.
-        if matches!(
-            (*method, *template),
-            ("GET", "/api/v3/admin/import/jellyfin")
-                | ("GET", "/api/v3/admin/import/plex")
-                | ("POST", "/api/v3/auth/plex/start/connect")
-        ) {
-            assert_eq!(
-                status,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "admin {method} {uri} must 503 while disabled, got {status}: {response_body}"
-            );
-            assert_eq!(
-                error_code(&response_body),
-                "INTERNAL_ERROR",
-                "{method} {uri}: envelope code"
-            );
-        } else if matches!(posture, Posture::WrappedKey) {
-            assert_eq!(
-                status,
-                StatusCode::UNAUTHORIZED,
-                "admin session must not satisfy {method} {uri}, got {status}: {response_body}"
-            );
-        } else {
-            assert!(
-                status != StatusCode::UNAUTHORIZED && status != StatusCode::FORBIDDEN,
-                "admin {method} {uri} must be admitted, got {status}: {response_body}"
-            );
-            if charts_provider_down(method, template) {
-                assert_eq!(
-                    status,
-                    StatusCode::BAD_GATEWAY,
-                    "admin {method} {uri} must 502 while charts are down: {response_body}"
-                );
-            } else {
-                assert!(
-                    !status.is_server_error(),
-                    "admin {method} {uri} must not 5xx on dummy input, got {status}: {response_body}"
-                );
-            }
-        }
-        if *template == "/api/v3/auth/logout-all" {
-            let (status, body, _) =
-                login(fresh(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
-            assert_eq!(status, StatusCode::OK, "admin re-login: {body}");
-            admin_auth = bearer(body["token"].as_str().expect("fresh admin token"));
-        }
-    }
+    credentialed_pass(&matrix, &operations, &mut user).await;
+    credentialed_pass(&matrix, &operations, &mut trusted).await;
+    credentialed_pass(&matrix, &operations, &mut admin).await;
 
-    // Keyed pass: the wrapped secret admits where sessions cannot.
-    for (method, template, posture) in MATRIX {
-        if !matches!(posture, Posture::WrappedKey) {
-            continue;
-        }
-        let uri = concretize(template);
+    // The wrapped key admits where no session can.
+    for op in operations
+        .iter()
+        .filter(|op| op.posture == Declared::WrappedKey)
+    {
+        let method = op.method;
+        let uri = concretize(&op.path);
         let (status, response_body, _) = call(
-            fresh(),
+            matrix.fresh(),
             method,
             &uri,
             &[("x-wrapped-api-key", TEST_WRAPPED_KEY)],
@@ -3260,6 +1648,51 @@ async fn auth_on_every_endpoint() {
             StatusCode::OK,
             "keyed {method} {uri} must pass, got {status}: {response_body}"
         );
+    }
+}
+
+/// An account the admin creates, given `role` when set, signed in by bearer.
+async fn matrix_account(
+    matrix: &MatrixApp,
+    admin: &Caller,
+    username: &'static str,
+    password: &'static str,
+    role: Option<&str>,
+) -> Caller {
+    let (status, body, _) = call(
+        matrix.fresh(),
+        "POST",
+        "/api/v3/admin/users",
+        &[("authorization", admin.auth.as_str())],
+        Some(json!({"username": username, "password": password})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let id = body["id"].as_str().expect("new user id").to_owned();
+    if let Some(role) = role {
+        let (status, body, _) = call(
+            matrix.fresh(),
+            "PUT",
+            &format!("/api/v3/admin/users/{id}/role"),
+            &[("authorization", admin.auth.as_str())],
+            Some(json!({"role": role})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let (status, body, _) = login(matrix.fresh(), username, password, "bearer").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    Caller {
+        name: if role.is_some() { "trusted" } else { "user" },
+        username,
+        password,
+        id,
+        auth: bearer(body["token"].as_str().expect("token")),
+        role: if role.is_some() {
+            CallerRole::Trusted
+        } else {
+            CallerRole::User
+        },
     }
 }
 

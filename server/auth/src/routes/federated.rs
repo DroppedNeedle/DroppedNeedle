@@ -6,7 +6,7 @@
 //! authorize/callback/exchange steps, Jellyfin keeps credential login, Plex
 //! keeps one start plus one poll per purpose (login/link/connect). The
 //! provider list, OIDC, Jellyfin, Plex start, and Plex poll/login are
-//! allowlisted public; Plex poll/link and poll/connect require a session
+//! in the public group; Plex poll/link and poll/connect require a session
 //! (v2 parity: the link and settings flows always ran authenticated) and
 //! return no session. Only the login-shaped completions mint sessions.
 

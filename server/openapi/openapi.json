@@ -28,7 +28,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/acquire/lidarr-import/artists": {
@@ -49,7 +56,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/acquire/lidarr-import/config": {
@@ -70,7 +84,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -99,7 +120,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/acquire/lidarr-import/import": {
@@ -130,7 +158,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/acquire/lidarr-import/test": {
@@ -161,7 +196,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/acquire/sabnzbd/status": {
@@ -182,7 +224,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/acquire/slskd/status": {
@@ -203,7 +252,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/acquire/spotify/auth/callback": {
@@ -246,7 +302,10 @@
           "307": {
             "description": "Redirect to the profile page"
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v3/acquire/spotify/auth/url": {
@@ -277,7 +336,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/acquire/spotify/jobs/{id}": {
@@ -309,7 +375,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/acquire/spotify/playlists": {
@@ -330,7 +403,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/acquire/spotify/playlists/{id}/import": {
@@ -372,7 +452,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/acquire/spotify/redirect-uri": {
@@ -403,7 +490,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/acquire/spotify/settings": {
@@ -424,7 +518,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -453,7 +554,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/app-passwords": {
@@ -474,7 +582,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/app-passwords/{id}": {
@@ -499,7 +614,14 @@
           "204": {
             "description": "Revoked"
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/backups": {
@@ -520,7 +642,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -539,7 +668,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/backups/{name}/restore-report": {
@@ -571,7 +707,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/cache/clear": {
@@ -602,7 +745,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/cache/stats": {
@@ -623,7 +773,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/import": {
@@ -654,7 +811,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/import/jellyfin": {
@@ -685,7 +849,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/import/plex": {
@@ -716,7 +887,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/precache/run": {
@@ -747,7 +925,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/provider-stats": {
@@ -768,7 +953,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/queue-stats": {
@@ -789,7 +981,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/users": {
@@ -810,7 +1009,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -839,7 +1045,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/users/{id}": {
@@ -871,7 +1084,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -894,7 +1114,14 @@
           "204": {
             "description": "Deleted"
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/users/{id}/quota": {
@@ -926,7 +1153,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -966,7 +1200,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/users/{id}/recovery-code": {
@@ -998,7 +1239,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/users/{id}/role": {
@@ -1040,7 +1288,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/admin/users/{id}/sessions": {
@@ -1065,7 +1320,14 @@
           "204": {
             "description": "Sessions revoked"
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/albums/{album_id}": {
@@ -1137,7 +1399,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/albums/{album_id}/basic": {
@@ -1209,7 +1478,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/albums/{album_id}/edition/acquire": {
@@ -1269,7 +1545,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/albums/{album_id}/editions": {
@@ -1341,7 +1624,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/albums/{album_id}/editions/{release_mbid}/tracks": {
@@ -1422,7 +1712,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/albums/{album_id}/lastfm": {
@@ -1492,7 +1789,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/albums/{album_id}/more-by-artist": {
@@ -1564,7 +1868,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/albums/{album_id}/plugin-details": {
@@ -1626,7 +1937,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/albums/{album_id}/purchase-options": {
@@ -1688,7 +2006,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/albums/{album_id}/refresh": {
@@ -1760,7 +2085,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/albums/{album_id}/similar": {
@@ -1832,7 +2164,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/albums/{album_id}/tracks": {
@@ -1904,7 +2243,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/artists/{artist_mbid}": {
@@ -1976,7 +2322,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/artists/{artist_mbid}/auto-download": {
@@ -2058,7 +2411,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/artists/{artist_mbid}/extended": {
@@ -2110,7 +2470,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/artists/{artist_mbid}/follow": {
@@ -2172,7 +2539,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/artists/{artist_mbid}/follow-status": {
@@ -2214,7 +2588,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/artists/{artist_mbid}/lastfm": {
@@ -2275,7 +2656,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/artists/{artist_mbid}/purchase-options": {
@@ -2336,7 +2724,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/artists/{artist_mbid}/releases": {
@@ -2420,7 +2815,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/artists/{artist_mbid}/similar": {
@@ -2492,7 +2894,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/artists/{artist_mbid}/top-albums": {
@@ -2564,7 +2973,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/artists/{artist_mbid}/top-songs": {
@@ -2636,7 +3052,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/auth/device-sessions": {
@@ -2667,7 +3090,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/auth/jellyfin/login": {
@@ -2721,7 +3151,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v3/auth/login": {
@@ -2789,7 +3222,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v3/auth/logout": {
@@ -2803,7 +3239,10 @@
           "204": {
             "description": "Logged out; cookie cleared"
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v3/auth/logout-all": {
@@ -2817,7 +3256,14 @@
           "204": {
             "description": "All own sessions revoked"
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/auth/oidc/authorize": {
@@ -2848,7 +3294,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v3/auth/oidc/callback": {
@@ -2902,7 +3351,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v3/auth/oidc/exchange": {
@@ -2936,7 +3388,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v3/auth/password-recovery/reset": {
@@ -2960,7 +3415,10 @@
           "204": {
             "description": "Password reset"
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v3/auth/plex/poll/connect": {
@@ -3021,7 +3479,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/auth/plex/poll/link": {
@@ -3082,7 +3547,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/auth/plex/poll/login": {
@@ -3133,7 +3605,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v3/auth/plex/start": {
@@ -3164,7 +3639,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v3/auth/plex/start/connect": {
@@ -3215,7 +3693,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/auth/plex/start/link": {
@@ -3266,7 +3751,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/auth/providers": {
@@ -3287,7 +3779,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v3/auth/sessions": {
@@ -3308,7 +3803,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/auth/sessions/{id}": {
@@ -3333,7 +3835,14 @@
           "204": {
             "description": "Revoked"
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/auth/setup": {
@@ -3401,7 +3910,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v3/auth/setup/status": {
@@ -3422,7 +3934,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v3/cache/sync/cancel": {
@@ -3443,7 +3958,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/cache/sync/status": {
@@ -3464,7 +3986,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/covers/artist/{artist_id}": {
@@ -3526,7 +4055,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/covers/release-group/{release_group_id}": {
@@ -3586,7 +4122,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/covers/release/{release_id}": {
@@ -3646,7 +4189,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover": {
@@ -3677,7 +4227,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/activity": {
@@ -3728,7 +4285,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/album-preview": {
@@ -3809,7 +4373,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/batches": {
@@ -3850,7 +4421,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -3929,7 +4507,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/batches/{batch_id}": {
@@ -3981,7 +4566,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -4050,7 +4642,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/playlist-suggestions": {
@@ -4121,7 +4720,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/queue": {
@@ -4184,7 +4790,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/queue/enrich/{release_group_mbid}": {
@@ -4236,7 +4849,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/queue/generate": {
@@ -4287,7 +4907,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/queue/ignore": {
@@ -4341,7 +4968,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/queue/ignored": {
@@ -4382,7 +5016,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/queue/preview/{release_group_mbid}": {
@@ -4444,7 +5085,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/queue/status": {
@@ -4475,7 +5123,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/queue/validate": {
@@ -4536,7 +5191,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/queue/youtube-cache-check": {
@@ -4587,7 +5249,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/queue/youtube-quota": {
@@ -4628,7 +5297,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/queue/youtube-search": {
@@ -4709,7 +5385,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/queue/youtube-track-search": {
@@ -4790,7 +5473,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/radio": {
@@ -4861,7 +5551,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/radio/plan": {
@@ -4932,7 +5629,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/refresh": {
@@ -4963,7 +5667,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/discover/track-preview": {
@@ -5034,7 +5745,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/download/access": {
@@ -5065,7 +5783,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/download/local/album/mbid/{mbid}": {
@@ -5123,7 +5848,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/download/local/album/{id}": {
@@ -5181,7 +5913,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/download/local/track/{id}": {
@@ -5255,7 +5994,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/activity-summary": {
@@ -5276,7 +6022,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/clear": {
@@ -5297,7 +6050,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/cutoff-unmet": {
@@ -5318,7 +6078,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/held": {
@@ -5350,7 +6117,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/held/management/{source_task_id}/discard": {
@@ -5382,7 +6156,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/held/management/{source_task_id}/retry": {
@@ -5414,7 +6195,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/held/reverify": {
@@ -5445,7 +6233,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/held/verdict/{source_task_id}/discard": {
@@ -5477,7 +6272,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/held/{held_id}/audio": {
@@ -5522,7 +6324,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/held/{held_id}/discard": {
@@ -5555,7 +6364,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/held/{held_id}/import": {
@@ -5588,7 +6404,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/held/{held_id}/reverify": {
@@ -5621,7 +6444,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/quarantine": {
@@ -5664,7 +6494,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/quarantine/{quarantine_id}": {
@@ -5697,7 +6534,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/retry-all-failed": {
@@ -5718,7 +6562,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/search/album": {
@@ -5749,7 +6600,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/search/{job_id}": {
@@ -5781,7 +6639,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/search/{job_id}/cancel": {
@@ -5813,7 +6678,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/search/{job_id}/dismiss": {
@@ -5845,7 +6717,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/search/{job_id}/pick": {
@@ -5887,7 +6766,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/stop-all-retries": {
@@ -5908,7 +6794,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/tasks": {
@@ -5969,7 +6862,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/tasks/{task_id}": {
@@ -6001,7 +6901,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/tasks/{task_id}/cancel": {
@@ -6033,7 +6940,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/tasks/{task_id}/files": {
@@ -6065,7 +6979,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/tasks/{task_id}/next-source": {
@@ -6107,7 +7028,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/tasks/{task_id}/reimport": {
@@ -6139,7 +7067,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/tasks/{task_id}/retry": {
@@ -6171,7 +7106,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/upgrade/album": {
@@ -6202,7 +7144,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/downloads/upgrade/track": {
@@ -6233,7 +7182,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/events/stream": {
@@ -6265,7 +7221,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/favorites": {
@@ -6317,7 +7280,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/favorites/{kind}/{item_id}": {
@@ -6388,7 +7358,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/following/artists": {
@@ -6419,7 +7396,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/following/concerts": {
@@ -6450,7 +7434,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/following/concerts/cities": {
@@ -6481,7 +7472,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -6530,7 +7528,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/following/concerts/city-search": {
@@ -6592,7 +7597,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/following/concerts/seen": {
@@ -6623,7 +7635,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/following/concerts/unseen-count": {
@@ -6654,7 +7673,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/following/new-releases": {
@@ -6717,7 +7743,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/following/new-releases/recent": {
@@ -6790,7 +7823,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/following/new-releases/seen": {
@@ -6821,7 +7861,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/following/new-releases/unseen-count": {
@@ -6852,7 +7899,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/home": {
@@ -6883,7 +7937,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/home/genre/{genre_name}": {
@@ -6965,7 +8026,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/home/integration-status": {
@@ -7006,7 +8074,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/home/popular/albums": {
@@ -7097,7 +8172,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/home/trending/artists": {
@@ -7188,7 +8270,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/home/your-top/albums": {
@@ -7279,7 +8368,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/import/items/{item_id}/discard": {
@@ -7312,7 +8408,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/import/items/{item_id}/match": {
@@ -7355,7 +8458,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/import/jobs": {
@@ -7387,7 +8497,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/import/jobs/{job_id}": {
@@ -7419,7 +8536,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/import/uploads": {
@@ -7450,7 +8574,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/activity": {
@@ -7481,7 +8612,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums": {
@@ -7599,7 +8737,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/merge": {
@@ -7680,7 +8825,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/merge-preview": {
@@ -7761,7 +8913,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/edition": {
@@ -7813,7 +8972,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -7903,7 +9069,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -7963,7 +9136,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/edition/confirm": {
@@ -8035,7 +9215,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/edition/custom": {
@@ -8137,7 +9324,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/edition/extras/remove": {
@@ -8249,7 +9443,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/edition/extras/restore": {
@@ -8331,7 +9532,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/edition/files/{track_id}": {
@@ -8443,7 +9651,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -8523,7 +9738,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/edition/leave-unmanaged": {
@@ -8605,7 +9827,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/edition/plan": {
@@ -8696,7 +9925,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/edition/undo": {
@@ -8768,7 +10004,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/history": {
@@ -8820,7 +10063,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/management/hand-back": {
@@ -8892,7 +10142,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/management/re-enable": {
@@ -8974,7 +10231,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/reidentification/releases": {
@@ -9105,7 +10369,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/rescan": {
@@ -9177,7 +10448,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/reset-grouping": {
@@ -9269,7 +10547,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/reset-grouping-preview": {
@@ -9361,7 +10646,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/split": {
@@ -9453,7 +10745,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/split-preview": {
@@ -9545,7 +10844,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{album_id}/undo-automatic-edition": {
@@ -9637,7 +10943,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{id}": {
@@ -9689,7 +11002,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -9787,7 +11107,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{id}/artwork": {
@@ -9864,7 +11191,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{id}/contributions": {
@@ -9936,7 +11270,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{id}/copies": {
@@ -9988,7 +11329,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{id}/status": {
@@ -10030,7 +11378,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/albums/{id}/tracks": {
@@ -10112,7 +11467,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/artists": {
@@ -10211,7 +11573,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/artists/duplicate-groups": {
@@ -10300,7 +11669,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/artists/duplicate-groups/{group_id}": {
@@ -10362,7 +11738,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/artists/duplicate-groups/{group_id}/dismiss": {
@@ -10454,7 +11837,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/artists/merge": {
@@ -10535,7 +11925,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/artists/merge-preview": {
@@ -10616,7 +12013,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/artists/reconciliation": {
@@ -10657,7 +12061,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/artists/{id}": {
@@ -10709,7 +12120,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/artists/{id}/albums": {
@@ -10791,7 +12209,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/artists/{id}/appearances": {
@@ -10873,7 +12298,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/contributions/musicbrainz/callback": {
@@ -10907,7 +12339,10 @@
           "303": {
             "description": "Redirect to the contribution or library page"
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/api/v3/library/contributions/{id}": {
@@ -10959,7 +12394,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/contributions/{id}/cancel": {
@@ -11041,7 +12483,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/contributions/{id}/discogs/remove": {
@@ -11123,7 +12572,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/contributions/{id}/discogs/search": {
@@ -11225,7 +12681,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/contributions/{id}/discogs/select": {
@@ -11327,7 +12790,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/contributions/{id}/draft": {
@@ -11419,7 +12889,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/contributions/{id}/musicbrainz/attach": {
@@ -11511,7 +12988,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/contributions/{id}/musicbrainz/duplicates": {
@@ -11603,7 +13087,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/contributions/{id}/musicbrainz/result": {
@@ -11695,7 +13186,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/contributions/{id}/musicbrainz/seed": {
@@ -11797,7 +13295,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/contributions/{id}/musicbrainz/verify": {
@@ -11879,7 +13384,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/contributions/{id}/rebuild": {
@@ -11961,7 +13473,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/genres": {
@@ -11992,7 +13511,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/genres/{name}/tracks": {
@@ -12064,7 +13590,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/identification/pause": {
@@ -12125,7 +13658,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/identification/resume": {
@@ -12186,7 +13726,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/identify": {
@@ -12257,7 +13804,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/identity-repairs": {
@@ -12326,7 +13880,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -12394,7 +13955,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/identity-repairs/estimate": {
@@ -12449,7 +14017,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/identity-repairs/{job_id}": {
@@ -12510,7 +14085,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/identity-repairs/{job_id}/apply": {
@@ -12601,7 +14183,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/identity-repairs/{job_id}/findings": {
@@ -12698,7 +14287,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/identity-repairs/{job_id}/pause": {
@@ -12779,7 +14375,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/identity-repairs/{job_id}/resume": {
@@ -12860,7 +14463,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/identity-repairs/{job_id}/stop": {
@@ -12941,7 +14551,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/manage/apply": {
@@ -13022,7 +14639,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/manage/baseline/restore": {
@@ -13093,7 +14717,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/manage/preview": {
@@ -13164,7 +14795,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/manage/undo": {
@@ -13245,7 +14883,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/automatic/skipped": {
@@ -13286,7 +14931,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/baselines/purge": {
@@ -13357,7 +15009,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/baselines/purge-impact": {
@@ -13398,7 +15057,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/baselines/restore-previews": {
@@ -13469,7 +15135,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/duplicate-resolution-previews": {
@@ -13550,7 +15223,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/hand-back": {
@@ -13591,7 +15271,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/identity-preparations": {
@@ -13660,7 +15347,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -13728,7 +15422,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/identity-preparations/estimate": {
@@ -13783,7 +15484,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/identity-preparations/{job_id}": {
@@ -13844,7 +15552,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/identity-preparations/{job_id}/apply": {
@@ -13935,7 +15650,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/identity-preparations/{job_id}/discard": {
@@ -14016,7 +15738,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/identity-preparations/{job_id}/findings": {
@@ -14113,7 +15842,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/operations": {
@@ -14243,7 +15979,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/operations/{job_id}": {
@@ -14305,7 +16048,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/operations/{job_id}/results": {
@@ -14385,7 +16135,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/operations/{job_id}/undo-preview": {
@@ -14477,7 +16234,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/previews": {
@@ -14548,7 +16312,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/previews/{job_id}": {
@@ -14610,7 +16381,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/previews/{job_id}/apply": {
@@ -14702,7 +16480,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/previews/{job_id}/discard": {
@@ -14794,7 +16579,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/previews/{job_id}/items": {
@@ -14936,7 +16728,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}": {
@@ -15013,7 +16812,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/previews/{job_id}/reissue": {
@@ -15085,7 +16891,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/recovery/diagnostics": {
@@ -15126,7 +16939,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/recovery/import-bundles/{bundle_id}/resolve": {
@@ -15198,7 +17018,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/tag-edit-previews": {
@@ -15279,7 +17106,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/takeovers": {
@@ -15320,7 +17154,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/management/tracks/{track_id}/tag-editor": {
@@ -15392,7 +17233,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/mbids": {
@@ -15423,7 +17271,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/membership": {
@@ -15474,7 +17329,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/operations/{job_id}": {
@@ -15536,7 +17398,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/operations/{job_id}/pause": {
@@ -15628,7 +17497,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/operations/{job_id}/resume": {
@@ -15720,7 +17596,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/operations/{job_id}/stop": {
@@ -15812,7 +17695,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/recently-added": {
@@ -15865,7 +17755,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/resolve-tracks": {
@@ -15916,7 +17813,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/retag-pairs": {
@@ -15957,7 +17861,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/dismiss": {
@@ -16028,7 +17939,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/join": {
@@ -16129,7 +18047,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/reviews": {
@@ -16323,7 +18248,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/reviews/bulk-apply": {
@@ -16394,7 +18326,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/reviews/bulk-preview": {
@@ -16455,7 +18394,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/reviews/retry-pending": {
@@ -16506,7 +18452,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/reviews/{id}": {
@@ -16558,7 +18511,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/reviews/{id}/approve": {
@@ -16650,7 +18610,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/reviews/{id}/detach": {
@@ -16722,7 +18689,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/reviews/{id}/dismiss": {
@@ -16794,7 +18768,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/reviews/{id}/exclude": {
@@ -16866,7 +18847,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/reviews/{id}/reject": {
@@ -16938,7 +18926,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/reviews/{id}/restore": {
@@ -17010,7 +19005,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/reviews/{id}/retry": {
@@ -17092,7 +19094,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/roots": {
@@ -17123,7 +19132,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -17192,7 +19208,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/scan": {
@@ -17273,7 +19296,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/scan/runs": {
@@ -17304,7 +19334,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -17373,7 +19410,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/scan/runs/current": {
@@ -17414,7 +19458,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/scan/runs/estimate": {
@@ -17480,7 +19531,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/scan/runs/history": {
@@ -17552,7 +19610,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/scan/runs/{id}": {
@@ -17604,7 +19669,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/scan/runs/{id}/diagnostics": {
@@ -17675,7 +19747,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/scan/runs/{id}/failures": {
@@ -17757,7 +19836,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/scan/runs/{id}/pause": {
@@ -17839,7 +19925,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/scan/runs/{id}/resume": {
@@ -17921,7 +20014,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/scan/runs/{id}/stop": {
@@ -18003,7 +20103,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/stats": {
@@ -18034,7 +20141,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/tracks": {
@@ -18151,7 +20265,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/tracks/move": {
@@ -18232,7 +20353,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/tracks/move-preview": {
@@ -18313,7 +20441,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/tracks/{id}": {
@@ -18365,7 +20500,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -18454,7 +20596,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "curator"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/tracks/{id}/lyrics": {
@@ -18506,7 +20655,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/tracks/{id}/tags": {
@@ -18578,7 +20734,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/library/unconfirmed": {
@@ -18650,7 +20813,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/local-library/albums": {
@@ -18750,7 +20920,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/local-library/albums/match/{mbid}": {
@@ -18832,7 +21009,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/local-library/decades": {
@@ -18863,7 +21047,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/local-library/recent": {
@@ -18919,7 +21110,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/local-library/search": {
@@ -18981,7 +21179,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/local-library/suggestions": {
@@ -19044,7 +21249,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me": {
@@ -19065,7 +21277,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "patch": {
         "tags": [
@@ -19094,7 +21313,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/app-passwords": {
@@ -19115,7 +21341,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -19144,7 +21377,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/app-passwords/{id}": {
@@ -19169,7 +21409,14 @@
           "204": {
             "description": "Revoked"
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/avatar": {
@@ -19200,7 +21447,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/connections": {
@@ -19221,7 +21475,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/connections/lastfm": {
@@ -19242,7 +21503,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -19271,7 +21539,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -19283,7 +21558,14 @@
           "204": {
             "description": "Unlinked"
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/connections/lastfm/session": {
@@ -19314,7 +21596,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/connections/lastfm/token": {
@@ -19335,7 +21624,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/connections/listenbrainz": {
@@ -19376,7 +21672,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -19435,7 +21738,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -19474,7 +21784,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/connections/spotify": {
@@ -19498,7 +21815,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/email": {
@@ -19529,7 +21853,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/local-password": {
@@ -19560,7 +21891,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/password": {
@@ -19591,7 +21929,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/scrobble-preferences": {
@@ -19622,7 +21967,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -19671,7 +22023,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/section-prefs": {
@@ -19692,7 +22051,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -19731,7 +22097,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/me/username": {
@@ -19762,7 +22135,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/now-playing": {
@@ -19793,7 +22173,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -19835,7 +22222,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -19878,7 +22272,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/playback/progress": {
@@ -19939,7 +22340,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/playback/start": {
@@ -20000,7 +22408,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/playback/stop": {
@@ -20061,7 +22476,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/playlists": {
@@ -20092,7 +22514,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -20141,7 +22570,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/playlists/check-tracks": {
@@ -20192,7 +22628,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/playlists/{playlist_id}": {
@@ -20244,7 +22687,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -20324,7 +22774,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -20384,7 +22841,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/playlists/{playlist_id}/cover": {
@@ -20429,7 +22893,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -20509,7 +22980,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -20569,7 +23047,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/playlists/{playlist_id}/resolve-sources": {
@@ -20621,7 +23106,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/playlists/{playlist_id}/tracks": {
@@ -20703,7 +23195,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/playlists/{playlist_id}/tracks/remove": {
@@ -20785,7 +23284,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/playlists/{playlist_id}/tracks/reorder": {
@@ -20867,7 +23373,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/playlists/{playlist_id}/tracks/{track_id}": {
@@ -20938,7 +23451,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "patch": {
         "tags": [
@@ -21027,7 +23547,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/playlists/{playlist_id}/visibility": {
@@ -21109,7 +23636,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/plugins": {
@@ -21150,7 +23684,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/plugins/ext/{name}/{subpath}": {
@@ -21224,7 +23765,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -21306,7 +23854,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -21378,7 +23933,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/plugins/install": {
@@ -21469,7 +24031,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/plugins/install/preview": {
@@ -21550,7 +24119,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/plugins/sources": {
@@ -21581,7 +24157,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/plugins/{name}": {
@@ -21663,7 +24246,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -21723,7 +24313,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/plugins/{name}/ui/panel": {
@@ -21784,7 +24381,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/plugins/{name}/update": {
@@ -21896,7 +24500,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/ratings/lookup": {
@@ -21948,7 +24559,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/ratings/{kind}/{item_id}": {
@@ -22030,7 +24648,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/navidrome/folders": {
@@ -22051,7 +24676,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -22080,7 +24712,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/albums": {
@@ -22205,7 +24844,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/albums/{id}": {
@@ -22246,7 +24892,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/albums/{id}/tracks": {
@@ -22287,7 +24940,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/analytics": {
@@ -22319,7 +24979,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/artists": {
@@ -22398,7 +25065,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/artists/index": {
@@ -22430,7 +25104,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/artists/{id}": {
@@ -22471,7 +25152,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/connection": {
@@ -22503,7 +25191,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -22543,7 +25238,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -22573,7 +25275,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/covers/playlists/{id}": {
@@ -22617,7 +25326,14 @@
           "200": {
             "description": "Playlist cover bytes"
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/discovery": {
@@ -22659,7 +25375,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/favorites": {
@@ -22701,7 +25424,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/filters": {
@@ -22733,7 +25463,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/genres": {
@@ -22768,7 +25505,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/genres/songs": {
@@ -22838,7 +25582,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/history": {
@@ -22890,7 +25641,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/hub": {
@@ -22922,7 +25680,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/images/{id}": {
@@ -22966,7 +25731,14 @@
           "200": {
             "description": "Image bytes"
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/info/albums/{id}": {
@@ -23007,7 +25779,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/info/artists/{id}": {
@@ -23048,7 +25827,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/lyrics/{id}": {
@@ -23107,7 +25893,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/match": {
@@ -23148,7 +25941,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/mix/{id}": {
@@ -23208,7 +26008,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/moods": {
@@ -23243,7 +26050,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/most-played/albums": {
@@ -23288,7 +26102,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/most-played/artists": {
@@ -23333,7 +26154,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/playlists": {
@@ -23365,7 +26193,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/playlists/{id}": {
@@ -23406,7 +26241,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/playlists/{id}/import": {
@@ -23447,7 +26289,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/random": {
@@ -23498,7 +26347,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/recent": {
@@ -23553,7 +26409,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/recently-added": {
@@ -23608,7 +26471,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/search": {
@@ -23659,7 +26529,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/sessions": {
@@ -23691,7 +26568,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/similar/{id}": {
@@ -23752,7 +26636,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/stats": {
@@ -23784,7 +26675,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/top/{artist}": {
@@ -23845,7 +26743,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/remotes/{source}/tracks": {
@@ -23933,7 +26838,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/active": {
@@ -23954,7 +26866,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/active/count": {
@@ -23975,7 +26894,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/active/{musicbrainz_id}": {
@@ -24007,7 +26933,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/albums": {
@@ -24038,7 +26971,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/approvals": {
@@ -24059,7 +26999,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/approvals/count": {
@@ -24080,7 +27027,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/approvals/{musicbrainz_id}/approve": {
@@ -24112,7 +27066,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/approvals/{musicbrainz_id}/reject": {
@@ -24144,7 +27105,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/auto-download-approval-batches": {
@@ -24185,7 +27153,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/auto-download-approval-batches/{batch_id}/approve": {
@@ -24217,7 +27192,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/auto-download-approval-batches/{batch_id}/reject": {
@@ -24249,7 +27231,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/auto-download-approvals": {
@@ -24290,7 +27279,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve": {
@@ -24331,7 +27327,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject": {
@@ -24372,7 +27375,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke": {
@@ -24413,7 +27423,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/batches": {
@@ -24444,7 +27461,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/batches/cancel": {
@@ -24475,7 +27499,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/history": {
@@ -24496,7 +27527,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/history/{musicbrainz_id}": {
@@ -24528,7 +27566,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/personal-mix-approvals": {
@@ -24549,7 +27594,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/personal-mix-approvals/{user_id}/approve": {
@@ -24581,7 +27633,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/personal-mix-approvals/{user_id}/reject": {
@@ -24613,7 +27672,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/personal-mix-approvals/{user_id}/revoke": {
@@ -24645,7 +27711,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/personal-mix/refresh": {
@@ -24686,7 +27759,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/retry/{musicbrainz_id}": {
@@ -24718,7 +27798,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/sync": {
@@ -24739,7 +27826,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/tracks": {
@@ -24770,7 +27864,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/wanted": {
@@ -24791,7 +27892,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/wanted/{musicbrainz_id}/resume": {
@@ -24823,7 +27931,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/wanted/{musicbrainz_id}/seen": {
@@ -24855,7 +27970,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/requests/wanted/{musicbrainz_id}/stop": {
@@ -24887,7 +28009,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/scrobble/now-playing": {
@@ -24938,7 +28067,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/scrobble/submit": {
@@ -24989,7 +28125,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/search": {
@@ -25083,7 +28226,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/search/enrich/batch": {
@@ -25134,7 +28284,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/search/suggest": {
@@ -25197,7 +28354,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/search/{bucket}": {
@@ -25290,7 +28454,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/advanced": {
@@ -25311,7 +28482,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -25340,7 +28518,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/cache-ttls": {
@@ -25361,7 +28546,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/connect-apps": {
@@ -25382,7 +28574,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -25411,7 +28610,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/download-client/config": {
@@ -25432,7 +28638,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -25461,7 +28674,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/download-client/test": {
@@ -25492,7 +28712,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/download-clients/policy": {
@@ -25513,7 +28740,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -25542,7 +28776,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/download-clients/policy-summary": {
@@ -25563,7 +28804,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/download-clients/policy/impact": {
@@ -25604,7 +28852,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/download-clients/sabnzbd": {
@@ -25625,7 +28880,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -25654,7 +28916,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/download-clients/sabnzbd/test": {
@@ -25685,7 +28954,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/download-clients/source-priority": {
@@ -25706,7 +28982,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -25735,7 +29018,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/download-clients/wanted": {
@@ -25756,7 +29046,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -25785,7 +29082,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/edition-preferences": {
@@ -25806,7 +29110,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -25835,7 +29146,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/events": {
@@ -25856,7 +29174,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -25885,7 +29210,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/events/test-skiddle": {
@@ -25916,7 +29248,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/events/test-ticketmaster": {
@@ -25947,7 +29286,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/get-it": {
@@ -25968,7 +29314,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -25997,7 +29350,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/home": {
@@ -26018,7 +29378,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -26057,7 +29424,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/indexers": {
@@ -26081,7 +29455,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -26110,7 +29491,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/indexers/reorder": {
@@ -26141,7 +29529,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/indexers/search-backend": {
@@ -26162,7 +29557,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -26191,7 +29593,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/indexers/test": {
@@ -26222,7 +29631,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/indexers/{id}": {
@@ -26264,7 +29680,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -26294,7 +29717,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/jellyfin": {
@@ -26315,7 +29745,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -26344,7 +29781,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/jellyfin/verify": {
@@ -26375,7 +29819,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/lastfm": {
@@ -26396,7 +29847,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -26425,7 +29883,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library": {
@@ -26446,7 +29911,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -26495,7 +29967,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management": {
@@ -26516,7 +29995,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -26565,7 +30051,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/activation-confirmations": {
@@ -26646,7 +30139,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/activation-health": {
@@ -26667,7 +30167,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/activation-previews": {
@@ -26738,7 +30245,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/activation-previews/{job_id}": {
@@ -26810,7 +30324,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/impact": {
@@ -26841,7 +30362,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/placement": {
@@ -26882,7 +30410,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/placement/{root_id}/check": {
@@ -26954,7 +30489,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/profile-imports": {
@@ -26995,7 +30537,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/profile-imports/preview": {
@@ -27026,7 +30575,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/profiles": {
@@ -27057,7 +30613,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/profiles/{profile_id}": {
@@ -27089,7 +30652,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -27129,7 +30699,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -27169,7 +30746,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/profiles/{profile_id}/copy": {
@@ -27211,7 +30795,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/profiles/{profile_id}/export": {
@@ -27253,7 +30844,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/profiles/{profile_id}/preset-diff": {
@@ -27285,7 +30883,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library-management/validate": {
@@ -27316,7 +30921,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library/path-mapping": {
@@ -27347,7 +30959,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library/paths": {
@@ -27378,7 +30997,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -27418,7 +31044,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library/policy-apply-preview": {
@@ -27479,7 +31112,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library/policy-impact": {
@@ -27520,7 +31160,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library/policy-tree": {
@@ -27541,7 +31188,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library/restorable-roots": {
@@ -27572,7 +31226,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library/restore-roots": {
@@ -27633,7 +31294,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library/schedule": {
@@ -27654,7 +31322,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -27683,7 +31358,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library/sync": {
@@ -27704,7 +31386,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -27723,7 +31412,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/library/watcher": {
@@ -27744,7 +31440,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -27773,7 +31476,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/listenbrainz": {
@@ -27794,7 +31504,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -27823,7 +31540,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/listenbrainz/verify": {
@@ -27864,7 +31588,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/lyrics": {
@@ -27885,7 +31616,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -27914,7 +31652,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/musicbrainz": {
@@ -27935,7 +31680,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -27964,7 +31716,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/musicbrainz/activate": {
@@ -28005,7 +31764,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/musicbrainz/brainzmash/consent": {
@@ -28046,7 +31812,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/musicbrainz/brainzmash/stage": {
@@ -28067,7 +31840,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/musicbrainz/verify": {
@@ -28118,7 +31898,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/navidrome": {
@@ -28139,7 +31926,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -28168,7 +31962,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/navidrome/playlist-sync": {
@@ -28209,7 +32010,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/navidrome/verify": {
@@ -28240,7 +32048,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/oidc": {
@@ -28261,7 +32076,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -28290,7 +32112,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/oidc/verify": {
@@ -28321,7 +32150,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/plex": {
@@ -28342,7 +32178,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -28371,7 +32214,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/plex/libraries": {
@@ -28415,7 +32265,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/plex/verify": {
@@ -28446,7 +32303,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/preferences": {
@@ -28467,7 +32331,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -28496,7 +32367,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/primary-source": {
@@ -28517,7 +32395,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -28546,7 +32431,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/prowlarr/config": {
@@ -28567,7 +32459,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -28596,7 +32495,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/prowlarr/test": {
@@ -28627,7 +32533,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/public-address": {
@@ -28648,7 +32561,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -28687,7 +32607,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/scrobble": {
@@ -28708,7 +32635,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -28737,7 +32671,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/security": {
@@ -28758,7 +32699,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -28787,7 +32735,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/security/verify-hibp": {
@@ -28818,7 +32773,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/wrapped": {
@@ -28839,7 +32801,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -28868,7 +32837,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/youtube": {
@@ -28889,7 +32865,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -28918,7 +32901,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/settings/youtube/verify": {
@@ -28949,7 +32939,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "admin"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/stream/{source}/{*key}": {
@@ -29084,7 +33081,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "head": {
         "tags": [
@@ -29176,7 +33180,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/system/health": {
@@ -29207,7 +33218,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/users/{id}/avatar": {
@@ -29232,7 +33250,14 @@
           "200": {
             "description": "Avatar bytes"
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/version": {
@@ -29263,7 +33288,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/version/check-update": {
@@ -29294,7 +33326,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/version/releases": {
@@ -29328,7 +33367,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/wrapped/server": {
@@ -29359,7 +33405,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "wrapped_key": []
+          }
+        ]
       }
     },
     "/api/v3/wrapped/user/{user_id}": {
@@ -29401,7 +33452,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "wrapped_key": []
+          }
+        ]
       }
     },
     "/api/v3/wrapped/users": {
@@ -29432,7 +33488,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "wrapped_key": []
+          }
+        ]
       }
     },
     "/api/v3/youtube/generate": {
@@ -29523,7 +33584,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/youtube/generate-track": {
@@ -29614,7 +33682,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/youtube/generate-tracks": {
@@ -29665,7 +33740,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/youtube/link/{album_id}": {
@@ -29710,7 +33792,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "put": {
         "tags": [
@@ -29780,7 +33869,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       },
       "delete": {
         "tags": [
@@ -29813,7 +33909,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/youtube/links": {
@@ -29847,7 +33950,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/youtube/manual": {
@@ -29898,7 +34008,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/youtube/quota": {
@@ -29929,7 +34046,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/youtube/track-link/{album_id}/{disc_number}/{track_number}": {
@@ -29994,7 +34118,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/api/v3/youtube/track-links/{album_id}": {
@@ -30039,7 +34170,14 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "session": [
+              "user"
+            ]
+          }
+        ]
       }
     },
     "/health": {
@@ -30060,7 +34198,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/openapi.json": {
@@ -30081,7 +34222,10 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     }
   },
@@ -61076,6 +65220,19 @@
             "description": "The saved (or already saved) track link."
           }
         }
+      }
+    },
+    "securitySchemes": {
+      "session": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A session token. A browser sends the same session as the `droppedneedle_sid` or `__Secure-droppedneedle_sid` cookie. The scope names the posture, not a stored role: `user` is any signed-in account, `curator` is trusted or admin, `admin` is admin only."
+      },
+      "wrapped_key": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Wrapped-API-Key",
+        "description": "The shared secret of the wrapped API. No session satisfies it."
       }
     }
   }

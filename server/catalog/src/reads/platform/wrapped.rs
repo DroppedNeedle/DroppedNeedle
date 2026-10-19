@@ -335,9 +335,8 @@ impl WrappedState {
 }
 
 /// Wrapped routes. The shared secret, checked by [`WrappedKey`], is the
-/// only credential: they never pass the session gate and never ride the
-/// session allowlist (allowlisted means public, which these routes are
-/// not).
+/// only credential: they never pass the session gate and never sit in the
+/// public group (public means anyone, which these routes are not).
 pub fn routes() -> Routes<WrappedState> {
     Routes::new()
         .own_credential(OwnCredential::WrappedKey, routes!(get_wrapped_users))
