@@ -36,25 +36,6 @@ fn write_openapi_document() {
     std::fs::write(out, document).unwrap();
 }
 
-/// The equality check above cannot catch a mounted route nobody told utoipa
-/// about, so the trigger routes mounted outside the modules that document
-/// them pin their paths here by name.
-#[test]
-fn openapi_covers_routes_mounted_outside_their_slices() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/openapi/openapi.json");
-    let committed = std::fs::read_to_string(path).unwrap();
-    let committed_json: serde_json::Value = serde_json::from_str(&committed).unwrap();
-    for route in [
-        "/api/v3/settings/navidrome/playlist-sync",
-        "/api/v3/admin/precache/run",
-    ] {
-        assert!(
-            committed_json["paths"][route]["post"].is_object(),
-            "{route} is mounted but missing from the snapshot; register its utoipa path"
-        );
-    }
-}
-
 /// Every operation declares exactly the `{name}` segments of its path as
 /// path parameters. A query struct without
 /// `#[into_params(parameter_in = Query)]` lands its fields here as path

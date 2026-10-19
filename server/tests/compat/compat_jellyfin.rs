@@ -16,7 +16,7 @@ use droppedneedle_compat::jellyfin::fake::{FakeLibrary, MemoryEngine, MemoryIds,
 use droppedneedle_compat::jellyfin::seams::{
     AlbumView, ArtistView, GenreView, IdMap, JellyfinSettings, TrackView,
 };
-use droppedneedle_compat::jellyfin::{JellyfinState, router};
+use droppedneedle_compat::jellyfin::{JellyfinState, routes};
 use droppedneedle_compat::shared::address::ListenerConfig;
 use droppedneedle_kernel::config::TrustedProxies;
 use serde_json::{Value, json};
@@ -198,22 +198,21 @@ fn settings() -> JellyfinSettings {
 
 impl Fx {
     fn app(&self, settings: JellyfinSettings) -> Router {
-        Router::new().nest(
-            "/jellyfin",
-            router(JellyfinState::new(
-                self.passwords.clone(),
-                self.library.clone(),
-                self.engine.clone(),
-                self.sessions.clone(),
-                self.ids.clone(),
-                settings,
-                ListenerConfig {
-                    port: 8096,
-                    trusted_proxies: TrustedProxies::default(),
-                    base_path: String::new(),
-                },
-            )),
-        )
+        routes(JellyfinState::new(
+            self.passwords.clone(),
+            self.library.clone(),
+            self.engine.clone(),
+            self.sessions.clone(),
+            self.ids.clone(),
+            settings,
+            ListenerConfig {
+                port: 8096,
+                trusted_proxies: TrustedProxies::default(),
+                base_path: String::new(),
+            },
+        ))
+        .into_parts()
+        .0
     }
 
     async fn send(&self, method: &str, uri: &str, auth: Option<&str>, body: &[u8]) -> Reply {

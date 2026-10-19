@@ -18,11 +18,10 @@
 //!
 //! Wiring: this module lives in the tree under
 //! [`compat`](crate) and mounts through
-//! [`CompatSetup`](crate::setup::CompatSetup), which nests the
-//! [`router`] under `/jellyfin` outside the `/api/*` session gate (compat
-//! carries its own app-password auth) behind the shared CORS + limits
-//! layers. Production binds the seams to the app-password store, the
-//! catalog-backed
+//! [`CompatSetup`](crate::setup::CompatSetup), which serves [`routes`]
+//! outside the `/api/*` session gate (compat carries its own app-password
+//! auth) behind the shared CORS + limits layers. Production binds the
+//! seams to the app-password store, the catalog-backed
 //! [`JellyfinLibrary`](crate::adapters::jellyfin_library::JellyfinLibrary)
 //! and [`CatalogIds`](crate::adapters::jellyfin_library::CatalogIds),
 //! the [`GatewayStream`](crate::adapters::engines::GatewayStream),
@@ -48,5 +47,5 @@ pub mod seams;
 mod system;
 
 pub(crate) use router::QueryTokens;
-pub use router::{JellyfinState, router};
+pub use router::{JellyfinState, routes};
 pub use seams::JellyfinSettings;

@@ -5,8 +5,10 @@
 //! v3 catalog and the shared collections ([`CompatLibrary`]), queues and
 //! bookmarks to SQLite, playback to the reporting services and streaming to
 //! the stream engine. Settings (kill switches, names, transcode policy)
-//! are read per request ([`LiveSettings`]). Both routers mount outside the
-//! `/api` session gate with the shared layers (case, CORS, limits).
+//! are read per request ([`LiveSettings`]). Both protocols register through
+//! the kernel's compat mount, which records their path templates for case
+//! fixing, and serve outside the `/api` session gate with the shared layers
+//! (CORS, limits).
 //!
 //! Stream leases count against the authenticated caller on both protocols.
 
@@ -22,8 +24,8 @@ use crate::adapters::playback::CompatPlayback;
 use crate::adapters::principal::SubsonicVerifier;
 use crate::adapters::queues::CompatQueues;
 use crate::adapters::subsonic_store::SubsonicStore;
-use crate::http::{CompatLimits, SubsonicState, cors_layer, limits_layer, subsonic_router};
-use crate::jellyfin::{JellyfinState, router as jellyfin_router};
+use crate::http::{CompatLimits, SubsonicState, cors_layer, limits_layer, subsonic_routes};
+use crate::jellyfin::{JellyfinState, routes as jellyfin_routes};
 use crate::settings::LiveSettings;
 use crate::shared::address::ListenerConfig;
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
@@ -106,6 +108,7 @@ pub struct CompatSetup {
     limits: CompatLimits,
     listener: ListenerConfig,
     router: Router,
+    templates: Arc<[&'static str]>,
 }
 
 impl CompatSetup {
@@ -139,7 +142,7 @@ impl CompatSetup {
         )
         .with_trusted_proxies(deps.listener.trusted_proxies.clone());
         let audio = CompatAudio::new(deps.engine);
-        let router = Self::assemble(
+        let (router, templates) = Self::assemble(
             &verifier,
             &store,
             &audio,
@@ -157,6 +160,7 @@ impl CompatSetup {
             limits,
             listener: deps.listener,
             router,
+            templates,
         }
     }
 
@@ -251,7 +255,7 @@ impl CompatSetup {
         self.settings = LiveSettings::fixed(subsonic_settings, jellyfin_settings);
         self.jellyfin.settings = self.settings.clone();
         self.limits.settings = self.settings.clone();
-        self.router = Self::assemble(
+        (self.router, self.templates) = Self::assemble(
             &self.verifier,
             &self.store,
             &self.audio,
@@ -269,6 +273,12 @@ impl CompatSetup {
     /// [`canonicalize_case`](crate::http::canonicalize_case) first.
     pub fn router(&self) -> Router {
         self.router.clone()
+    }
+
+    /// The path template of every compat route, in registration order, for
+    /// [`canonicalize_case`](crate::http::canonicalize_case).
+    pub fn templates(&self) -> Arc<[&'static str]> {
+        Arc::clone(&self.templates)
     }
 
     /// The compat answer to a 5xx on `path`, with the Subsonic settings
@@ -299,8 +309,8 @@ impl CompatSetup {
         jellyfin: &CompatJellyfinState,
         limits: &CompatLimits,
         listener: &ListenerConfig,
-    ) -> Router {
-        let subsonic = subsonic_router(SubsonicState::new(
+    ) -> (Router, Arc<[&'static str]>) {
+        let (subsonic, mut templates) = subsonic_routes(SubsonicState::new(
             verifier.clone(),
             store.clone(),
             audio.clone(),
@@ -308,12 +318,15 @@ impl CompatSetup {
             limits.limits.clone(),
             limits.started.clone(),
             listener.clone(),
-        ));
-        let jellyfin = Router::new().nest("/jellyfin", jellyfin_router(jellyfin.clone()));
-        Router::new()
+        ))
+        .into_parts();
+        let (jellyfin, jellyfin_templates) = jellyfin_routes(jellyfin.clone()).into_parts();
+        templates.extend(jellyfin_templates);
+        let router = Router::new()
             .merge(subsonic)
             .merge(jellyfin)
             .layer(from_fn_with_state(limits.clone(), limits_layer))
-            .layer(axum::middleware::from_fn(cors_layer))
+            .layer(axum::middleware::from_fn(cors_layer));
+        (router, templates.into())
     }
 }

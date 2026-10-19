@@ -41,67 +41,7 @@ use droppedneedle_auth::compat_auth::jellyfin::extract_token;
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::session::client_ip::ClientIp;
 use droppedneedle_kernel::config::TrustedProxies;
-
-/// Jellyfin route templates (registered casing) for path canonicalization.
-/// Mirrors `jellyfin::router` registration; the wiring test pins at
-/// least the lowercase-login route so drift shows up as a failure, not a
-/// silent 404.
-pub const JELLYFIN_TEMPLATES: &[&str] = &[
-    "/jellyfin/System/Info/Public",
-    "/jellyfin/System/Info",
-    "/jellyfin/QuickConnect/Enabled",
-    "/jellyfin/Sessions/Logout",
-    "/jellyfin/Users/AuthenticateByName",
-    "/jellyfin/Users/Me",
-    "/jellyfin/Users/{user_id}",
-    "/jellyfin/Users/{user_id}/Views",
-    "/jellyfin/UserViews",
-    "/jellyfin/Users/{user_id}/Items",
-    "/jellyfin/Items",
-    "/jellyfin/Items/Latest",
-    "/jellyfin/Users/{user_id}/Items/Latest",
-    "/jellyfin/Artists",
-    "/jellyfin/Artists/AlbumArtists",
-    "/jellyfin/Genres",
-    "/jellyfin/MusicGenres",
-    "/jellyfin/Items/Filters",
-    "/jellyfin/Users/{user_id}/Items/Filters",
-    "/jellyfin/Users/{user_id}/Items/{item_id}",
-    "/jellyfin/Items/{item_id}",
-    "/jellyfin/Items/{item_id}/Images/{image_type}",
-    "/jellyfin/Items/{item_id}/Images/{image_type}/{index}",
-    "/jellyfin/Audio/{item_id}/{tail}",
-    "/jellyfin/Items/{item_id}/File",
-    "/jellyfin/Items/{item_id}/Download",
-    "/jellyfin/Items/{item_id}/PlaybackInfo",
-    "/jellyfin/Users/{user_id}/FavoriteItems/{item_id}",
-    "/jellyfin/UserFavoriteItems/{item_id}",
-    "/jellyfin/Users/{user_id}/PlayedItems/{item_id}",
-    "/jellyfin/UserPlayedItems/{item_id}",
-    "/jellyfin/Sessions/Playing",
-    "/jellyfin/Sessions/Playing/Progress",
-    "/jellyfin/Sessions/Playing/Stopped",
-    "/jellyfin/Sessions/Playing/Ping",
-    "/jellyfin/Sessions/Capabilities/Full",
-    "/jellyfin/Playlists",
-    "/jellyfin/Playlists/{playlist_id}",
-    "/jellyfin/Playlists/{playlist_id}/Items",
-    "/jellyfin/Playlists/{playlist_id}/Items/{entry_id}/Move/{new_index}",
-    "/jellyfin/Items/{item_id}/Similar",
-    "/jellyfin/Items/{item_id}/InstantMix",
-    "/jellyfin/Artists/{item_id}/InstantMix",
-];
-
-/// Subsonic route templates for path canonicalization.
-pub const SUBSONIC_TEMPLATES: &[&str] = &["/subsonic/rest/{endpoint}", picture::PATH];
-
-/// All compat templates in one list for the case layer.
-pub fn compat_templates() -> Vec<&'static str> {
-    let mut out = Vec::with_capacity(SUBSONIC_TEMPLATES.len() + JELLYFIN_TEMPLATES.len());
-    out.extend_from_slice(SUBSONIC_TEMPLATES);
-    out.extend_from_slice(JELLYFIN_TEMPLATES);
-    out
-}
+use droppedneedle_kernel::mount::CompatRoutes;
 
 /// Stamp the compat CORS headers on a response. The app also stamps every
 /// answer on a compat path, so native 404/405s there are indistinguishable
@@ -136,9 +76,10 @@ pub fn preflight(request: &Request) -> Option<Response> {
 }
 
 /// Rewrite a case-variant compat path (Feishin posts lowercase Jellyfin
-/// paths) to its registered casing, keeping the query.
-pub fn canonicalize_case(request: &mut Request) {
-    let Some(canon) = path_case::canonicalize(&compat_templates(), request.uri().path()) else {
+/// paths) to its casing in `templates`, the ones the compat routes
+/// recorded, keeping the query.
+pub fn canonicalize_case(templates: &[&str], request: &mut Request) {
+    let Some(canon) = path_case::canonicalize(templates, request.uri().path()) else {
         return;
     };
     let target = match request.uri().query() {
@@ -524,22 +465,22 @@ impl<V, S, B> SubsonicState<V, S, B> {
     }
 }
 
-/// Build the `/subsonic`-mounted router. Unknown HTTP methods answer the
-/// code-0 envelope (never the native 405).
-pub fn subsonic_router<V, S, B>(state: SubsonicState<V, S, B>) -> axum::Router
+/// The `/subsonic` routes. Unknown HTTP methods answer the code-0
+/// envelope (never the native 405).
+pub fn subsonic_routes<V, S, B>(state: SubsonicState<V, S, B>) -> CompatRoutes
 where
     V: Verifier + 'static,
     S: Store + 'static,
     B: AudioBackend + 'static,
 {
-    axum::Router::new()
-        .route(
+    CompatRoutes::new()
+        .at(
             "/subsonic/rest/{endpoint}",
             get(subsonic_dispatch::<V, S, B>)
                 .post(subsonic_dispatch::<V, S, B>)
                 .head(subsonic_dispatch::<V, S, B>),
         )
-        .route(
+        .at(
             picture::PATH,
             get(subsonic_picture::<V, S, B>).head(subsonic_picture::<V, S, B>),
         )

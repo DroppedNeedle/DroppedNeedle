@@ -9,7 +9,16 @@
 //! One path per `routes!` call: a call listing handlers at different paths
 //! mounts every handler at every one of those paths. `route_walk` in the
 //! server tests catches it.
+//!
+//! The compat shims (Subsonic, Jellyfin) register through [`CompatRoutes`]
+//! instead: they are not in the API document, carry their own credentials
+//! outside the session gate, and record each path template so the app can
+//! fix a request path's case before routing.
+//!
+//! Nothing else registers a route; `route_gate` in the server tests keeps
+//! it that way.
 
+use axum::{handler::Handler, routing::MethodRouter};
 use utoipa::openapi::{Components, OpenApi};
 pub use utoipa_axum::{
     router::{OpenApiRouter, UtoipaMethodRouter},
@@ -200,5 +209,59 @@ fn rest_path(path: &str) -> String {
     match path.rfind('{') {
         Some(at) => format!("{}{{*{}", &path[..at], &path[at + 1..]),
         None => path.to_owned(),
+    }
+}
+
+/// The routes of a compat shim, at the paths its clients call, with the
+/// template of each recorded in registration order. Not documented and
+/// never behind the session gate: the shim checks its own credentials.
+pub struct CompatRoutes<S = ()> {
+    router: axum::Router<S>,
+    templates: Vec<&'static str>,
+}
+
+impl<S: Clone + Send + Sync + 'static> Default for CompatRoutes<S> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<S: Clone + Send + Sync + 'static> CompatRoutes<S> {
+    /// No routes yet.
+    pub fn new() -> Self {
+        Self {
+            router: axum::Router::new(),
+            templates: Vec::new(),
+        }
+    }
+
+    /// Serve `methods` at `template` and record the template.
+    pub fn at(mut self, template: &'static str, methods: MethodRouter<S>) -> Self {
+        self.router = self.router.route(template, methods);
+        self.templates.push(template);
+        self
+    }
+
+    /// The answer to a known path called with a method it does not serve.
+    pub fn method_not_allowed_fallback<H, T>(mut self, handler: H) -> Self
+    where
+        H: Handler<T, S>,
+        T: 'static,
+    {
+        self.router = self.router.method_not_allowed_fallback(handler);
+        self
+    }
+
+    /// Give the routes their state.
+    pub fn with_state<S2>(self, state: S) -> CompatRoutes<S2> {
+        CompatRoutes {
+            router: self.router.with_state(state),
+            templates: self.templates,
+        }
+    }
+
+    /// The router and the recorded templates.
+    pub fn into_parts(self) -> (axum::Router<S>, Vec<&'static str>) {
+        (self.router, self.templates)
     }
 }

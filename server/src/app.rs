@@ -12,11 +12,12 @@
 //!    the 5xx boundary). They wrap steps 4 and 5, fallbacks included.
 //! 4. Pre-routing. On a compat path (`/subsonic`, `/jellyfin`, in any
 //!    case) a preflight answers 204 with compat CORS before auth, a
-//!    case-variant path is rewritten to its registered casing (Feishin posts
-//!    lower-case Jellyfin paths), and every answer carries compat CORS, so a
-//!    native 404 or 405 there looks like a disabled protocol's 404 and the
-//!    enabled protocols cannot be enumerated. Any other path goes through
-//!    the debug-only CORS layer when the constructor enables it.
+//!    case-variant path is rewritten to the casing its compat route
+//!    recorded (Feishin posts lower-case Jellyfin paths), and every answer
+//!    carries compat CORS, so a native 404 or 405 there looks like a
+//!    disabled protocol's 404 and the enabled protocols cannot be
+//!    enumerated. Any other path goes through the debug-only CORS layer
+//!    when the constructor enables it.
 //! 5. The router: the routes, a plain 404 fallback that serves the web UI
 //!    for a GET outside the API and compat paths, and a plain 405.
 //!
@@ -30,8 +31,9 @@
 //! not the default is never replaced.
 //!
 //! Inside the router, matching does not follow registration order (an
-//! overlap panics at build). What is load-bearing is which layers wrap
-//! which routes:
+//! overlap panics at build). Every route is registered through the kernel's
+//! mount API (`route_gate` in the server tests refuses any other). What is
+//! load-bearing is which layers wrap which routes:
 //! - Areas declare their routes as [`Routes`], in posture groups (public,
 //!   user, curator, admin, own credential), and [`mount`] lists them once.
 //!   Each group is layered on its own and merged at the root: the user,
@@ -47,10 +49,11 @@
 //!   make them public.
 //! - The callbacks at their old paths (the v1 Spotify and MusicBrainz
 //!   contribution ones, the v2 OIDC one) stay plain routers outside the
-//!   session gate, rate-limited like the public group.
-//! - The compat shims merge outside the session gate too: they carry their
-//!   own app-password auth plus the compat layers (CORS, limits), and never
-//!   inherit `/api` session auth.
+//!   session gate, rate-limited like the public group, until they are
+//!   removed.
+//! - The compat shims register through the compat mount and merge outside
+//!   the session gate too: they carry their own app-password auth plus the
+//!   compat layers (CORS, limits), and never inherit `/api` session auth.
 
 use axum::{Router, extract::Request, middleware, response::IntoResponse};
 use tower::{Layer as _, ServiceExt as _};
@@ -146,6 +149,7 @@ fn pre_routing(state: &AppState, routes: Router) -> Router {
     } else {
         routes.clone()
     };
+    let templates = state.compat.templates();
     Router::new().fallback(move |mut request: Request| async move {
         if !is_compat_path(request.uri().path()) {
             return answer(native.oneshot(request).await);
@@ -153,7 +157,7 @@ fn pre_routing(state: &AppState, routes: Router) -> Router {
         if let Some(preflight) = preflight(&request) {
             return preflight;
         }
-        canonicalize_case(&mut request);
+        canonicalize_case(&templates, &mut request);
         let mut response = answer(routes.oneshot(request).await);
         stamp_cors(&mut response);
         response

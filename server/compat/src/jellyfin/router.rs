@@ -15,7 +15,6 @@
 //! no `/jellyfin/socket` endpoint, on purpose (v2 gap: uvicorn 403s the
 //! websocket scope; Finamp PlayOn only, non-blocking).
 
-use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::response::Response;
@@ -25,6 +24,7 @@ use droppedneedle_auth::compat_auth::jellyfin::{
 };
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_kernel::ids::RequestId;
+use droppedneedle_kernel::mount::CompatRoutes;
 use uuid::Uuid;
 
 use crate::body::AudioBody;
@@ -92,115 +92,148 @@ impl<L, E, P, I> JellyfinState<L, E, P, I> {
     }
 }
 
-/// Build the `/jellyfin`-prefixed router.
-pub fn router<L, E, P, I>(state: JellyfinState<L, E, P, I>) -> Router
+/// The `/jellyfin` routes.
+pub fn routes<L, E, P, I>(state: JellyfinState<L, E, P, I>) -> CompatRoutes
 where
     L: LibraryRead,
     E: StreamEngine,
     P: PlaybackSessions,
     I: IdMap,
 {
-    Router::new()
-        .route("/System/Info/Public", get(system_info_public::<L, E, P, I>))
-        .route("/System/Info", get(system_info::<L, E, P, I>))
-        .route("/QuickConnect/Enabled", get(quick_connect::<L, E, P, I>))
-        .route("/Sessions/Logout", post(sessions_logout::<L, E, P, I>))
-        .route(
-            "/Users/AuthenticateByName",
+    CompatRoutes::new()
+        .at(
+            "/jellyfin/System/Info/Public",
+            get(system_info_public::<L, E, P, I>),
+        )
+        .at("/jellyfin/System/Info", get(system_info::<L, E, P, I>))
+        .at(
+            "/jellyfin/QuickConnect/Enabled",
+            get(quick_connect::<L, E, P, I>),
+        )
+        .at(
+            "/jellyfin/Sessions/Logout",
+            post(sessions_logout::<L, E, P, I>),
+        )
+        .at(
+            "/jellyfin/Users/AuthenticateByName",
             post(authenticate::<L, E, P, I>),
         )
-        .route("/Users/Me", get(users_me::<L, E, P, I>))
-        .route("/Users/{user_id}", get(user_by_id::<L, E, P, I>))
-        .route("/Users/{user_id}/Views", get(views::<L, E, P, I>))
-        .route("/UserViews", get(views::<L, E, P, I>))
-        .route("/Users/{user_id}/Items", get(browse::<L, E, P, I>))
-        .route("/Items", get(browse::<L, E, P, I>))
+        .at("/jellyfin/Users/Me", get(users_me::<L, E, P, I>))
+        .at("/jellyfin/Users/{user_id}", get(user_by_id::<L, E, P, I>))
+        .at("/jellyfin/Users/{user_id}/Views", get(views::<L, E, P, I>))
+        .at("/jellyfin/UserViews", get(views::<L, E, P, I>))
+        .at("/jellyfin/Users/{user_id}/Items", get(browse::<L, E, P, I>))
+        .at("/jellyfin/Items", get(browse::<L, E, P, I>))
         // Not recorded: Jellyfin 10.10.6 serves this from
         // `UserLibraryController.GetLatestMedia`, the user from the token.
         // Jellify asks here (`@jellyfin/sdk` 0.13.0). Before `/Items/{item_id}`.
-        .route("/Items/Latest", get(latest::<L, E, P, I>))
-        .route("/Users/{user_id}/Items/Latest", get(latest::<L, E, P, I>))
-        .route("/Artists", get(artists::<L, E, P, I>))
-        .route("/Artists/AlbumArtists", get(album_artists::<L, E, P, I>))
-        .route("/Genres", get(genres::<L, E, P, I>))
-        .route("/MusicGenres", get(genres::<L, E, P, I>))
+        .at("/jellyfin/Items/Latest", get(latest::<L, E, P, I>))
+        .at(
+            "/jellyfin/Users/{user_id}/Items/Latest",
+            get(latest::<L, E, P, I>),
+        )
+        .at("/jellyfin/Artists", get(artists::<L, E, P, I>))
+        .at(
+            "/jellyfin/Artists/AlbumArtists",
+            get(album_artists::<L, E, P, I>),
+        )
+        .at("/jellyfin/Genres", get(genres::<L, E, P, I>))
+        .at("/jellyfin/MusicGenres", get(genres::<L, E, P, I>))
         // Filters before `/{item_id}`: "Filters" must never be an id.
-        .route("/Items/Filters", get(filters::<L, E, P, I>))
-        .route("/Users/{user_id}/Items/Filters", get(filters::<L, E, P, I>))
-        .route(
-            "/Users/{user_id}/Items/{item_id}",
+        .at("/jellyfin/Items/Filters", get(filters::<L, E, P, I>))
+        .at(
+            "/jellyfin/Users/{user_id}/Items/Filters",
+            get(filters::<L, E, P, I>),
+        )
+        .at(
+            "/jellyfin/Users/{user_id}/Items/{item_id}",
             get(single_item_legacy::<L, E, P, I>),
         )
-        .route("/Items/{item_id}", get(single_item::<L, E, P, I>))
-        .route(
-            "/Items/{item_id}/Images/{image_type}",
+        .at("/jellyfin/Items/{item_id}", get(single_item::<L, E, P, I>))
+        .at(
+            "/jellyfin/Items/{item_id}/Images/{image_type}",
             get(image::<L, E, P, I>),
         )
-        .route(
-            "/Items/{item_id}/Images/{image_type}/{index}",
+        .at(
+            "/jellyfin/Items/{item_id}/Images/{image_type}/{index}",
             get(image_indexed::<L, E, P, I>),
         )
-        .route(
-            "/Audio/{item_id}/{tail}",
+        .at(
+            "/jellyfin/Audio/{item_id}/{tail}",
             get(audio::<L, E, P, I>).head(audio_head::<L, E, P, I>),
         )
-        .route(
-            "/Items/{item_id}/File",
+        .at(
+            "/jellyfin/Items/{item_id}/File",
             get(item_file::<L, E, P, I>).head(item_file_head::<L, E, P, I>),
         )
-        .route(
-            "/Items/{item_id}/Download",
+        .at(
+            "/jellyfin/Items/{item_id}/Download",
             get(item_download::<L, E, P, I>).head(item_download_head::<L, E, P, I>),
         )
-        .route(
-            "/Items/{item_id}/PlaybackInfo",
+        .at(
+            "/jellyfin/Items/{item_id}/PlaybackInfo",
             get(playback_info::<L, E, P, I>).post(playback_info::<L, E, P, I>),
         )
-        .route(
-            "/Users/{user_id}/FavoriteItems/{item_id}",
+        .at(
+            "/jellyfin/Users/{user_id}/FavoriteItems/{item_id}",
             post(favorite_add_legacy::<L, E, P, I>).delete(favorite_remove_legacy::<L, E, P, I>),
         )
-        .route(
-            "/UserFavoriteItems/{item_id}",
+        .at(
+            "/jellyfin/UserFavoriteItems/{item_id}",
             post(favorite_add_modern::<L, E, P, I>).delete(favorite_remove_modern::<L, E, P, I>),
         )
-        .route(
-            "/Users/{user_id}/PlayedItems/{item_id}",
+        .at(
+            "/jellyfin/Users/{user_id}/PlayedItems/{item_id}",
             post(played_add_legacy::<L, E, P, I>).delete(played_remove_legacy::<L, E, P, I>),
         )
-        .route(
-            "/UserPlayedItems/{item_id}",
+        .at(
+            "/jellyfin/UserPlayedItems/{item_id}",
             post(played_add_modern::<L, E, P, I>).delete(played_remove_modern::<L, E, P, I>),
         )
-        .route("/Sessions/Playing", post(playing::<L, E, P, I>))
-        .route(
-            "/Sessions/Playing/Progress",
+        .at("/jellyfin/Sessions/Playing", post(playing::<L, E, P, I>))
+        .at(
+            "/jellyfin/Sessions/Playing/Progress",
             post(playing_progress::<L, E, P, I>),
         )
-        .route(
-            "/Sessions/Playing/Stopped",
+        .at(
+            "/jellyfin/Sessions/Playing/Stopped",
             post(playing_stopped::<L, E, P, I>),
         )
-        .route("/Sessions/Playing/Ping", post(sessions_ping::<L, E, P, I>))
-        .route(
-            "/Sessions/Capabilities/Full",
+        .at(
+            "/jellyfin/Sessions/Playing/Ping",
+            post(sessions_ping::<L, E, P, I>),
+        )
+        .at(
+            "/jellyfin/Sessions/Capabilities/Full",
             post(sessions_capabilities::<L, E, P, I>),
         )
-        .route("/Playlists", post(create_playlist::<L, E, P, I>))
-        .route("/Playlists/{playlist_id}", get(get_playlist::<L, E, P, I>))
-        .route(
-            "/Playlists/{playlist_id}/Items",
+        .at("/jellyfin/Playlists", post(create_playlist::<L, E, P, I>))
+        .at(
+            "/jellyfin/Playlists/{playlist_id}",
+            get(get_playlist::<L, E, P, I>),
+        )
+        .at(
+            "/jellyfin/Playlists/{playlist_id}/Items",
             get(playlist_items::<L, E, P, I>)
                 .post(playlist_add::<L, E, P, I>)
                 .delete(playlist_remove::<L, E, P, I>),
         )
-        .route(
-            "/Playlists/{playlist_id}/Items/{entry_id}/Move/{new_index}",
+        .at(
+            "/jellyfin/Playlists/{playlist_id}/Items/{entry_id}/Move/{new_index}",
             post(playlist_move::<L, E, P, I>),
         )
-        .route("/Items/{item_id}/Similar", get(similar::<L, E, P, I>))
-        .route("/Items/{item_id}/InstantMix", get(similar::<L, E, P, I>))
-        .route("/Artists/{item_id}/InstantMix", get(similar::<L, E, P, I>))
+        .at(
+            "/jellyfin/Items/{item_id}/Similar",
+            get(similar::<L, E, P, I>),
+        )
+        .at(
+            "/jellyfin/Items/{item_id}/InstantMix",
+            get(similar::<L, E, P, I>),
+        )
+        .at(
+            "/jellyfin/Artists/{item_id}/InstantMix",
+            get(similar::<L, E, P, I>),
+        )
         .with_state(state)
 }
 
