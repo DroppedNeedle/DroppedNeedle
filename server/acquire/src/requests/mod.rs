@@ -1,11 +1,9 @@
 //! Request intake: album, track, batch, and edition-acquire asks plus the
 //! approval queues behind them.
 //!
-//! Clean-slate `/api/v3` surface. The router below mounts paths relative to
-//! `/api/v3`; the app nests it there behind the session gate, and each
-//! handler names who may call it by taking `User`, `Curator` or `Admin`.
-//! Handler utoipa annotations carry the full `/api/v3` paths for the
-//! contract document.
+//! Clean-slate `/api/v3` surface. [`routes`] mounts each handler at the
+//! full path its utoipa annotation names, in the group of the `User`,
+//! `Curator` or `Admin` extractor it takes.
 //!
 //! Seams owned elsewhere: [`dispatch::DownloadDispatch`] (the downloads
 //! module implements durable fetch; intake only starts, cancels, and
@@ -30,146 +28,74 @@ pub mod sqlite;
 pub mod state;
 pub mod views;
 
+#[cfg(any(test, feature = "test-support"))]
 use axum::{Router, routing};
+use droppedneedle_kernel::mount::{Routes, routes};
 
 pub use state::RequestsState;
 
-/// Every requests route, including the two approval-read GETs the app
-/// serves from the collections routes instead. Route posture per handler
-/// docs: reads and intake need any signed-in user, approval verbs need an
-/// admin, edition acquire needs a curator.
+/// Every requests route plus the two approval-read GETs, in one router
+/// with no layers, for tests.
 #[cfg(any(test, feature = "test-support"))]
 pub fn requests_routes(state: RequestsState) -> Router {
-    requests_core_routes(state.clone()).merge(approval_read_routes(state))
+    routes()
+        .with_state(state.clone())
+        .into_router()
+        .merge(approval_read_routes(state))
 }
 
-/// App-facing routes: everything except the two approval-read GETs. The
-/// reads collections routes serve those paths (same paths, same admin
-/// posture); mounting both would collide.
-pub fn requests_core_routes(state: RequestsState) -> Router {
-    Router::new()
-        .route(
-            "/requests/albums",
-            routing::post(intake::request_album_handler),
-        )
-        .route(
-            "/requests/tracks",
-            routing::post(intake::request_track_handler),
-        )
-        .route(
-            "/requests/batches",
-            routing::post(intake::request_batch_handler),
-        )
-        .route(
-            "/requests/batches/cancel",
-            routing::post(intake::cancel_batch_handler),
-        )
-        .route("/requests/active", routing::get(views::active_handler))
-        .route(
-            "/requests/active/count",
-            routing::get(views::active_count_handler),
-        )
-        .route(
-            "/requests/active/{musicbrainz_id}",
-            routing::delete(intake::cancel_one_handler),
-        )
-        .route(
-            "/requests/retry/{musicbrainz_id}",
-            routing::post(intake::retry_one_handler),
-        )
-        .route("/requests/history", routing::get(views::history_handler))
-        .route(
-            "/requests/history/{musicbrainz_id}",
-            routing::delete(intake::clear_history_handler),
-        )
-        .route("/requests/sync", routing::post(views::sync_handler))
-        .route("/requests/wanted", routing::get(views::wanted_handler))
-        .route(
-            "/requests/wanted/{musicbrainz_id}/stop",
-            routing::post(views::wanted_stop_handler),
-        )
-        .route(
-            "/requests/wanted/{musicbrainz_id}/resume",
-            routing::post(views::wanted_resume_handler),
-        )
-        .route(
-            "/requests/wanted/{musicbrainz_id}/seen",
-            routing::post(views::wanted_seen_handler),
-        )
-        .route(
-            "/requests/approvals",
-            routing::get(views::approvals_handler),
-        )
-        .route(
-            "/requests/approvals/count",
-            routing::get(views::approvals_count_handler),
-        )
-        .route(
-            "/requests/approvals/{musicbrainz_id}/approve",
-            routing::post(views::approve_handler),
-        )
-        .route(
-            "/requests/approvals/{musicbrainz_id}/reject",
-            routing::post(views::reject_handler),
-        )
-        .route(
-            "/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve",
-            routing::post(views::approve_auto_download_handler),
-        )
-        .route(
-            "/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject",
-            routing::post(views::reject_auto_download_handler),
-        )
-        .route(
-            "/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke",
-            routing::post(views::revoke_auto_download_handler),
-        )
-        .route(
-            "/requests/auto-download-approval-batches/{batch_id}/approve",
-            routing::post(views::approve_auto_download_batch_handler),
-        )
-        .route(
-            "/requests/auto-download-approval-batches/{batch_id}/reject",
-            routing::post(views::reject_auto_download_batch_handler),
-        )
-        .route(
-            "/requests/personal-mix-approvals",
-            routing::get(views::mix_approvals_handler),
-        )
-        .route(
-            "/requests/personal-mix-approvals/{user_id}/approve",
-            routing::post(views::approve_mix_handler),
-        )
-        .route(
-            "/requests/personal-mix-approvals/{user_id}/reject",
-            routing::post(views::reject_mix_handler),
-        )
-        .route(
-            "/requests/personal-mix-approvals/{user_id}/revoke",
-            routing::post(views::revoke_mix_handler),
-        )
-        .route(
-            "/requests/personal-mix/refresh",
-            routing::post(views::refresh_mix_handler),
-        )
-        .route(
-            "/albums/{album_id}/edition/acquire",
-            routing::post(intake::acquire_edition_handler),
-        )
-        .with_state(state)
+/// App-facing routes: everything except the two approval-read GETs, which
+/// the collections routes serve (same paths, same admin posture; mounting
+/// both would collide). Reads and intake take any signed-in user, approval
+/// verbs an admin, edition acquire a curator.
+pub fn routes() -> Routes<RequestsState> {
+    use intake::*;
+    use views::*;
+
+    Routes::new()
+        .user(routes!(request_album_handler))
+        .user(routes!(request_track_handler))
+        .user(routes!(request_batch_handler))
+        .user(routes!(cancel_batch_handler))
+        .user(routes!(active_handler))
+        .user(routes!(active_count_handler))
+        .user(routes!(cancel_one_handler))
+        .user(routes!(retry_one_handler))
+        .user(routes!(history_handler))
+        .user(routes!(clear_history_handler))
+        .admin(routes!(sync_handler))
+        .user(routes!(wanted_handler))
+        .user(routes!(wanted_stop_handler))
+        .user(routes!(wanted_resume_handler))
+        .user(routes!(wanted_seen_handler))
+        .admin(routes!(approvals_handler))
+        .admin(routes!(approvals_count_handler))
+        .admin(routes!(approve_handler))
+        .admin(routes!(reject_handler))
+        .admin(routes!(approve_auto_download_handler))
+        .admin(routes!(reject_auto_download_handler))
+        .admin(routes!(revoke_auto_download_handler))
+        .admin(routes!(approve_auto_download_batch_handler))
+        .admin(routes!(reject_auto_download_batch_handler))
+        .admin(routes!(mix_approvals_handler))
+        .admin(routes!(approve_mix_handler))
+        .admin(routes!(reject_mix_handler))
+        .admin(routes!(revoke_mix_handler))
+        .user(routes!(refresh_mix_handler))
+        .curator(routes!(acquire_edition_handler))
 }
 
-/// The two approval-read GETs over this module's approval store. The app
-/// does not mount these (see [`requests_core_routes`]).
+/// The two approval-read GETs over this module's approval store, kept out
+/// of the API document. The app does not mount these (see [`routes`]).
 #[cfg(any(test, feature = "test-support"))]
 pub fn approval_read_routes(state: RequestsState) -> Router {
     Router::new()
         .route(
-            "/requests/auto-download-approvals",
+            "/api/v3/requests/auto-download-approvals",
             routing::get(views::auto_download_approvals_handler),
         )
         .route(
-            "/requests/auto-download-approval-batches",
+            "/api/v3/requests/auto-download-approval-batches",
             routing::get(views::auto_download_batches_handler),
         )
         .with_state(state)

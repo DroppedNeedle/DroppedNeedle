@@ -6,9 +6,9 @@
 //! shared SQLite runtime ([`AcquireDb`]). Clients, quotas and the download
 //! policy read their sections through live handles, so saving settings
 //! takes effect without a restart. `for_tests` binds the same shape over a
-//! scratch database and scratch settings. The routers nest under `/api/v3` inside the
-//! deny-by-default session gate; only the Spotify OAuth callback mounts
-//! outside it (it is state-token identified, like v2's ungated route).
+//! scratch database and scratch settings. Routes are declared in posture
+//! groups through `routes()`; only the Spotify OAuth callback is public (it
+//! is state-token identified, like v2's ungated route).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -32,9 +32,7 @@ use super::flows::seams::{Candidate, CandidateSearch, TickSink};
 use super::flows::stores::{
     AdminDirectory, FollowStore as FlowsFollowStore, LibraryPresence, UpgradeWorklist,
 };
-use super::imports::handlers::{
-    ImportsDeps, imports_callback_router, imports_gated_router, imports_legacy_callback_router,
-};
+use super::imports::handlers::{ImportsDeps, imports_legacy_callback_router};
 use super::imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor};
 use super::imports::lidarr::LidarrClient;
 use super::imports::spotify::{
@@ -1013,32 +1011,17 @@ impl AcquireSetup {
         })
     }
 
-    /// Relative-path routers for nesting under `/api/v3` inside the
-    /// session gate. Each handler names who may call it.
-    pub fn gated_router(&self) -> Router {
-        let upgrades = super::downloads::upgrades::Upgrades::new(
-            self.flows.worklist.clone(),
-            self.flows.sweep_deps.policy.clone(),
-            self.dispatch.clone(),
-        );
-        let legs = super::requests::requests_core_routes(self.requests.clone())
-            .merge(super::downloads::downloads_core_routes(
-                self.worker.clone(),
-                upgrades,
-            ))
-            .merge(super::downloads::search_core_routes(
-                self.search_jobs.clone(),
-            ))
-            .merge(super::drop_import::http::drop_import_routes(
-                self.drops.clone(),
-            ));
-        legs.merge(imports_gated_router(self.imports.clone()))
-    }
-
-    /// Spotify OAuth callback for mounting under `/api/v3` outside the
-    /// session gate (state-token identified).
-    pub fn callback_router(&self) -> Router {
-        imports_callback_router(self.imports.clone())
+    /// The state the queue and held-import routes read
+    /// ([`super::downloads::routes`]).
+    pub fn downloads_routes(&self) -> super::downloads::DownloadsRoutes {
+        super::downloads::DownloadsRoutes::new(
+            self.worker.clone(),
+            super::downloads::upgrades::Upgrades::new(
+                self.flows.worklist.clone(),
+                self.flows.sweep_deps.policy.clone(),
+                self.dispatch.clone(),
+            ),
+        )
     }
 
     /// The Spotify OAuth callback at its v2 path, at full path: mount it at

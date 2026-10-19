@@ -33,7 +33,9 @@ const PNG_BYTES: &[u8] = &[
 const WRAPPED_KEY: &str = "test-secret-key";
 
 fn covers_app(fake: FakeCoverArt) -> Router {
-    platform::covers::routes(CoversState::new(Arc::new(fake)))
+    platform::covers::routes()
+        .with_state(CoversState::new(Arc::new(fake)))
+        .into_router()
 }
 
 fn covers_fixture() -> FakeCoverArt {
@@ -101,7 +103,9 @@ fn wrapped_app(api_key: &str) -> Router {
             top_album_sitewide: None,
         },
     );
-    platform::wrapped::routes(WrappedState::new(api_key.to_owned(), Arc::new(data)))
+    platform::wrapped::routes()
+        .with_state(WrappedState::new(api_key.to_owned(), Arc::new(data)))
+        .into_router()
 }
 
 async fn get(
@@ -142,7 +146,7 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
 #[tokio::test]
 async fn release_group_cover_hit_serves_bytes_and_revalidates() {
     let app = || covers_app(covers_fixture());
-    let (status, headers, body) = get(app(), "/covers/release-group/rg-1", &[]).await;
+    let (status, headers, body) = get(app(), "/api/v3/covers/release-group/rg-1", &[]).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, PNG_BYTES);
     assert_eq!(header(&headers, "content-type"), Some("image/png"));
@@ -158,7 +162,7 @@ async fn release_group_cover_hit_serves_bytes_and_revalidates() {
     for candidate in [etag.clone(), format!("W/{etag}"), "*".to_owned()] {
         let (status, headers, body) = get(
             app(),
-            "/covers/release-group/rg-1",
+            "/api/v3/covers/release-group/rg-1",
             &[("if-none-match", &candidate)],
         )
         .await;
@@ -172,7 +176,7 @@ async fn release_group_cover_hit_serves_bytes_and_revalidates() {
 async fn release_group_cover_miss_serves_album_placeholder() {
     let (status, headers, body) = get(
         covers_app(covers_fixture()),
-        "/covers/release-group/unknown",
+        "/api/v3/covers/release-group/unknown",
         &[],
     )
     .await;
@@ -187,7 +191,7 @@ async fn release_group_cover_miss_serves_album_placeholder() {
 async fn release_group_cover_warming_answers_202() {
     let (status, headers, body) = get(
         covers_app(covers_fixture()),
-        "/covers/release-group/rg-warm",
+        "/api/v3/covers/release-group/rg-warm",
         &[],
     )
     .await;
@@ -202,7 +206,7 @@ async fn release_group_cover_warming_answers_202() {
 #[tokio::test]
 async fn wrapped_trio_shapes_with_valid_key() {
     let key = [("x-wrapped-api-key", WRAPPED_KEY)];
-    let (status, _, body) = get(wrapped_app(WRAPPED_KEY), "/wrapped/users", &key).await;
+    let (status, _, body) = get(wrapped_app(WRAPPED_KEY), "/api/v3/wrapped/users", &key).await;
     assert_eq!(status, StatusCode::OK);
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(
@@ -214,7 +218,7 @@ async fn wrapped_trio_shapes_with_valid_key() {
             "email": "ada@example.invalid",
         }]})
     );
-    let (status, _, body) = get(wrapped_app(WRAPPED_KEY), "/wrapped/user/u-1", &key).await;
+    let (status, _, body) = get(wrapped_app(WRAPPED_KEY), "/api/v3/wrapped/user/u-1", &key).await;
     assert_eq!(status, StatusCode::OK);
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["user_id"], "u-1");
@@ -225,7 +229,7 @@ async fn wrapped_trio_shapes_with_valid_key() {
     assert_eq!(json["top_genres"][0]["genre"], "rock");
     assert_eq!(json["loved_tracks_count"], 7);
     assert_eq!(json["total_listens_estimated"], 42);
-    let (status, _, body) = get(wrapped_app(WRAPPED_KEY), "/wrapped/server", &key).await;
+    let (status, _, body) = get(wrapped_app(WRAPPED_KEY), "/api/v3/wrapped/server", &key).await;
     assert_eq!(status, StatusCode::OK);
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["year"], 2026);
@@ -236,7 +240,11 @@ async fn wrapped_trio_shapes_with_valid_key() {
 
 #[tokio::test]
 async fn wrapped_rejects_missing_key_on_every_route() {
-    for uri in ["/wrapped/users", "/wrapped/user/u-1", "/wrapped/server"] {
+    for uri in [
+        "/api/v3/wrapped/users",
+        "/api/v3/wrapped/user/u-1",
+        "/api/v3/wrapped/server",
+    ] {
         let (status, headers, body) = get(wrapped_app(WRAPPED_KEY), uri, &[]).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri}");
         assert!(header(&headers, "www-authenticate").is_none(), "{uri}");
@@ -255,11 +263,11 @@ async fn wrapped_rejects_missing_key_on_every_route() {
 
 #[tokio::test]
 async fn wrapped_rejects_everything_when_unconfigured() {
-    let (status, _, _) = get(wrapped_app(""), "/wrapped/users", &[]).await;
+    let (status, _, _) = get(wrapped_app(""), "/api/v3/wrapped/users", &[]).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, _, _) = get(
         wrapped_app(""),
-        "/wrapped/server",
+        "/api/v3/wrapped/server",
         &[("x-wrapped-api-key", "anything")],
     )
     .await;
@@ -271,7 +279,7 @@ async fn wrapped_rejects_padded_values_without_trimming() {
     for value in [" test-secret-key", "test-secret-key ", " test-secret-key "] {
         let (status, _, _) = get(
             wrapped_app(WRAPPED_KEY),
-            "/wrapped/users",
+            "/api/v3/wrapped/users",
             &[("x-wrapped-api-key", value)],
         )
         .await;
@@ -285,7 +293,7 @@ async fn wrapped_rejects_padded_values_without_trimming() {
 async fn wrapped_rejection_echoes_no_key_material() {
     let (status, _, body) = get(
         wrapped_app("expected-dn-secret-marker-9f31"),
-        "/wrapped/users",
+        "/api/v3/wrapped/users",
         &[(
             "x-wrapped-api-key",
             "presented-/srv/secrets/droppedneedle.key",
@@ -302,7 +310,7 @@ async fn wrapped_rejection_echoes_no_key_material() {
 async fn covers_400_carries_only_caller_input() {
     let (status, _, body) = get(
         covers_app(covers_fixture()),
-        "/covers/release/rel-1?size=%2Fsrv%2Fsecrets%2Fx",
+        "/api/v3/covers/release/rel-1?size=%2Fsrv%2Fsecrets%2Fx",
         &[],
     )
     .await;
@@ -333,6 +341,6 @@ async fn covers_debug_route_stays_out() {
             Arc::new(FakeWrappedData::empty(2026)),
         ),
     ));
-    let (status, _, _) = get(app, "/covers/debug/artist/art-1", &[]).await;
+    let (status, _, _) = get(app, "/api/v3/covers/debug/artist/art-1", &[]).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }

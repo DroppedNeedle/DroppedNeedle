@@ -3,8 +3,8 @@
 //! Layout: `handlers` parse and render, `service` holds the rules and
 //! returns the domain [`error::CollectionsError`], `store` reads and
 //! writes SQLite, `http` is the one place an error meets a status code.
-//! The router mounts paths relative to `/api/v3`; the app nests it there
-//! behind the session gate, whose principal the handlers read.
+//! [`routes`] mounts them behind the session gate, whose principal the
+//! handlers read.
 
 pub mod db;
 pub mod error;
@@ -16,112 +16,47 @@ pub mod service;
 pub mod state;
 pub mod store;
 
-use axum::{Router, routing};
+use droppedneedle_kernel::mount::{Routes, routes};
 
 pub use state::CollectionsState;
 
-/// The collections routes. Playlists, favorites, ratings and follows take
-/// any signed-in user, approvals an admin. The app mounts them inside the
-/// session gate. Registration order is specific routes first, then
-/// parameterized ones.
-pub fn collections_routes(state: CollectionsState) -> Router {
-    Router::new()
-        .route(
-            "/playlists",
-            routing::get(handlers::list_playlists_handler).post(handlers::create_playlist_handler),
-        )
-        .route(
-            "/playlists/check-tracks",
-            routing::post(handlers::check_tracks_handler),
-        )
-        .route(
-            "/playlists/{playlist_id}",
-            routing::get(handlers::get_playlist_handler)
-                .put(handlers::update_playlist_handler)
-                .delete(handlers::delete_playlist_handler),
-        )
-        .route(
-            "/playlists/{playlist_id}/visibility",
-            routing::patch(handlers::set_visibility_handler),
-        )
-        .route(
-            "/playlists/{playlist_id}/tracks",
-            routing::post(handlers::add_tracks_handler),
-        )
-        .route(
-            "/playlists/{playlist_id}/tracks/remove",
-            routing::post(handlers::remove_tracks_handler),
-        )
-        .route(
-            "/playlists/{playlist_id}/tracks/reorder",
-            routing::patch(handlers::reorder_track_handler),
-        )
-        .route(
-            "/playlists/{playlist_id}/tracks/{track_id}",
-            routing::patch(handlers::update_track_handler).delete(handlers::remove_track_handler),
-        )
-        .route(
-            "/playlists/{playlist_id}/resolve-sources",
-            routing::post(handlers::resolve_sources_handler),
-        )
-        .route(
-            "/playlists/{playlist_id}/cover",
-            routing::post(handlers::upload_cover_handler)
-                .get(handlers::get_cover_handler)
-                .delete(handlers::remove_cover_handler),
-        )
-        .route("/favorites", routing::get(handlers::list_favorites_handler))
-        .route(
-            "/favorites/{kind}/{item_id}",
-            routing::put(handlers::set_favorite_handler),
-        )
-        .route(
-            "/ratings/lookup",
-            routing::post(handlers::rating_lookup_handler),
-        )
-        .route(
-            "/ratings/{kind}/{item_id}",
-            routing::put(handlers::set_rating_handler),
-        )
-        .route(
-            "/artists/{artist_mbid}/follow-status",
-            routing::get(handlers::get_follow_status_handler),
-        )
-        .route(
-            "/artists/{artist_mbid}/follow",
-            routing::put(handlers::set_follow_handler),
-        )
-        .route(
-            "/artists/{artist_mbid}/auto-download",
-            routing::put(handlers::set_auto_download_handler),
-        )
-        .route(
-            "/following/artists",
-            routing::get(handlers::list_followed_artists_handler),
-        )
-        .route(
-            "/following/new-releases",
-            routing::get(handlers::list_new_releases_handler),
-        )
-        .route(
-            "/following/new-releases/recent",
-            routing::get(handlers::list_recent_releases_handler),
-        )
-        .route(
-            "/following/new-releases/unseen-count",
-            routing::get(handlers::unseen_count_handler),
-        )
-        .route(
-            "/following/new-releases/seen",
-            routing::post(handlers::mark_seen_handler),
-        )
-        .route(
-            "/requests/auto-download-approvals",
-            routing::get(handlers::list_approvals_handler),
-        )
-        .route(
-            "/requests/auto-download-approval-batches",
-            routing::get(handlers::list_approval_batches_handler),
-        )
-        .with_state(state)
+/// The collections routes at their full `/api/v3` paths. Playlists,
+/// favorites, ratings and follows take any signed-in user, approvals an
+/// admin.
+pub fn routes() -> Routes<CollectionsState> {
+    use handlers::*;
+
+    Routes::new()
+        .user(routes!(list_playlists_handler, create_playlist_handler))
+        .user(routes!(check_tracks_handler))
+        .user(routes!(
+            get_playlist_handler,
+            update_playlist_handler,
+            delete_playlist_handler
+        ))
+        .user(routes!(set_visibility_handler))
+        .user(routes!(add_tracks_handler))
+        .user(routes!(remove_tracks_handler))
+        .user(routes!(reorder_track_handler))
+        .user(routes!(update_track_handler, remove_track_handler))
+        .user(routes!(resolve_sources_handler))
+        .user(routes!(
+            upload_cover_handler,
+            get_cover_handler,
+            remove_cover_handler
+        ))
+        .user(routes!(list_favorites_handler))
+        .user(routes!(set_favorite_handler))
+        .user(routes!(rating_lookup_handler))
+        .user(routes!(set_rating_handler))
+        .user(routes!(get_follow_status_handler))
+        .user(routes!(set_follow_handler))
+        .user(routes!(set_auto_download_handler))
+        .user(routes!(list_followed_artists_handler))
+        .user(routes!(list_new_releases_handler))
+        .user(routes!(list_recent_releases_handler))
+        .user(routes!(unseen_count_handler))
+        .user(routes!(mark_seen_handler))
+        .admin(routes!(list_approvals_handler))
+        .admin(routes!(list_approval_batches_handler))
 }

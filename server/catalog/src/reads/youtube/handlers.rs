@@ -3,11 +3,10 @@
 //! v2. Status mapping lives in `From<LinkError> for ApiError`.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path, State, rejection::PathRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
 };
 
 use crate::reads::collections::db::StoreError;
@@ -15,6 +14,7 @@ use crate::reads::discover::error::NOT_CONFIGURED;
 use droppedneedle_auth::User;
 use droppedneedle_kernel::error::{ApiError, NOT_FOUND, RATE_LIMITED, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
+use droppedneedle_kernel::mount::{Routes, routes};
 
 use super::models::{
     YouTubeLink, YouTubeLinkGenerateRequest, YouTubeLinkResponse, YouTubeLinkUpdateRequest,
@@ -26,25 +26,18 @@ use super::service::{LinkError, YouTubeLinks};
 
 type Reply<T> = Result<T, ApiError>;
 
-/// The YouTube link routes. Mount under `/api/v3` inside the session gate.
-pub fn router(links: YouTubeLinks) -> Router {
-    Router::new()
-        .route("/youtube/generate", post(generate_link))
-        .route(
-            "/youtube/link/{album_id}",
-            get(get_link).put(update_link).delete(delete_link),
-        )
-        .route("/youtube/links", get(list_links))
-        .route("/youtube/manual", post(save_manual_link))
-        .route("/youtube/generate-track", post(generate_track_link))
-        .route("/youtube/generate-tracks", post(generate_track_links))
-        .route("/youtube/track-links/{album_id}", get(list_track_links))
-        .route(
-            "/youtube/track-link/{album_id}/{disc_number}/{track_number}",
-            delete(delete_track_link),
-        )
-        .route("/youtube/quota", get(get_quota))
-        .with_state(links)
+/// The YouTube link routes, for any signed-in user.
+pub fn routes() -> Routes<YouTubeLinks> {
+    Routes::new()
+        .user(routes!(generate_link))
+        .user(routes!(get_link, update_link, delete_link))
+        .user(routes!(list_links))
+        .user(routes!(save_manual_link))
+        .user(routes!(generate_track_link))
+        .user(routes!(generate_track_links))
+        .user(routes!(list_track_links))
+        .user(routes!(delete_track_link))
+        .user(routes!(get_quota))
 }
 
 /// Find and save a full-album video. A saved one answers without a search.

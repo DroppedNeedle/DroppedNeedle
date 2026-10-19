@@ -33,18 +33,21 @@
 //! overlap panics at build). What is load-bearing is which layers wrap
 //! which routes:
 //! - Areas declare their routes as [`Routes`], in posture groups (public,
-//!   user, curator, admin), and [`mount`] lists them once. Each group is
-//!   layered on its own and merged at the root: the user, curator and
-//!   admin groups get the rate limiter, then the session gate outside it,
-//!   so the limiter keys signed-in callers by user; the public group gets
-//!   the limiter alone. The API document comes from the same list.
-//! - The areas not yet declared as [`Routes`] nest under one `/api/v3`
-//!   router with the same two layers, the deny-by-default session gate
-//!   outermost.
-//! - The wrapped trio nests under `/api/v3` on its own router outside the
-//!   session gate: its `X-Wrapped-API-Key` extractor is the only credential,
-//!   and allowlisting those paths would wrongly make them public. It keeps
-//!   the shared rate limiter, as do the public callbacks.
+//!   user, curator, admin, own credential), and [`mount`] lists them once.
+//!   Each group is layered on its own and merged at the root: the user,
+//!   curator and admin groups get the rate limiter, then the session gate
+//!   outside it, so the limiter keys signed-in callers by user; the public
+//!   group gets the limiter alone. The API document comes from the same
+//!   list.
+//! - A path may carry methods from several groups (a user GET beside an
+//!   admin DELETE); each method keeps its own group's layers.
+//! - The wrapped trio is the wrapped-key group: outside the session gate,
+//!   with the shared rate limiter alone. Its `X-Wrapped-API-Key` extractor
+//!   is the only credential, and allowlisting those paths would wrongly
+//!   make them public.
+//! - The callbacks at their old paths (the v1 Spotify and MusicBrainz
+//!   contribution ones, the v2 OIDC one) stay plain routers outside the
+//!   session gate, rate-limited like the public group.
 //! - The compat shims merge outside the session gate too: they carry their
 //!   own app-password auth plus the compat layers (CORS, limits), and never
 //!   inherit `/api` session auth.
@@ -65,6 +68,7 @@ use crate::{
 use droppedneedle_auth::session::{
     event_stream, middleware::require_session, rate_limit::rate_limit,
 };
+use droppedneedle_catalog::reads;
 use droppedneedle_compat::{
     http::{canonicalize_case, preflight, stamp_cors},
     shared::path_case::is_compat_path,
@@ -194,6 +198,52 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
         .area(droppedneedle_library::wiring::routes(), |state| {
             state.library.clone()
         })
+        .area(reads::library::routes(), |state| {
+            state.reads.library.clone()
+        })
+        .area(reads::discover::routes(), |state| {
+            state.reads.discover.clone()
+        })
+        .area(reads::collections::routes(), |state| {
+            state.reads.collections.clone()
+        })
+        .area(reads::platform::covers::routes(), |state| {
+            state.reads.platform.covers.clone()
+        })
+        .area(reads::platform::version::routes(), |state| {
+            state.reads.platform.version.clone()
+        })
+        .area(reads::platform::wrapped::routes(), |state| {
+            state.reads.platform.wrapped.clone()
+        })
+        .area(reads::youtube::routes(), |state| {
+            state.reads.youtube.clone()
+        })
+        .area(reads::search::routes(), |state| state.reads.search.clone())
+        .optional_area(reads::catalog::routes(), |state| {
+            state.reads.catalog.clone()
+        })
+        .optional_area(
+            droppedneedle_catalog::concerts::handlers::routes(),
+            |state| state.concerts.service(),
+        )
+        .area(droppedneedle_acquire::requests::routes(), |state| {
+            state.acquire.requests.clone()
+        })
+        .area(droppedneedle_acquire::downloads::routes(), |state| {
+            state.acquire.downloads_routes()
+        })
+        .area(droppedneedle_acquire::downloads::search_routes(), |state| {
+            state.acquire.search_jobs.clone()
+        })
+        .area(
+            droppedneedle_acquire::drop_import::http::routes(),
+            |state| state.acquire.drops.clone(),
+        )
+        .area(
+            droppedneedle_acquire::imports::handlers::routes(),
+            |state| state.acquire.imports.clone(),
+        )
 }
 
 /// The server crate's own routes.
@@ -243,19 +293,34 @@ impl<'a> Mount<'a> {
         }
         self
     }
+
+    /// An area whose state is absent on an unwired setup: always in the
+    /// document, served only when the state is there.
+    fn optional_area<S: Clone + Send + Sync + 'static>(
+        mut self,
+        routes: Routes<S>,
+        state: impl FnOnce(&AppState) -> Option<S>,
+    ) -> Self {
+        self.document.merge(routes.openapi());
+        if let Some(served) = self.state.and_then(state) {
+            self.routes = self.routes.merge(routes.with_state(served));
+        }
+        self
+    }
 }
 
 /// Each posture group with its own layers, merged at the root. User,
 /// curator and admin routes get the rate limiter inside the session gate,
-/// so the limiter keys signed-in callers by user; public routes get the
-/// limiter alone. A group with no routes is left out: `route_layer`
-/// refuses an empty router.
+/// so the limiter keys signed-in callers by user; public and wrapped-key
+/// routes get the limiter alone, keyed by client address. A group with no
+/// routes is left out: `route_layer` refuses an empty router.
 fn layered(state: &AppState, routes: Routes) -> Router {
     let Postures {
         public,
         user,
         curator,
         admin,
+        wrapped_key,
     } = routes.into_postures();
     let limited = |group: Router| {
         group.route_layer(middleware::from_fn_with_state(
@@ -264,9 +329,11 @@ fn layered(state: &AppState, routes: Routes) -> Router {
         ))
     };
     let mut app = Router::new();
-    let public = Router::from(public);
-    if public.has_routes() {
-        app = app.merge(limited(public));
+    for group in [public, wrapped_key] {
+        let group = Router::from(group);
+        if group.has_routes() {
+            app = app.merge(limited(group));
+        }
     }
     for group in [user, curator, admin] {
         let group = Router::from(group);
@@ -283,37 +350,11 @@ fn layered(state: &AppState, routes: Routes) -> Router {
 /// Every route and the 404 and 405 fallbacks, at base-relative paths.
 fn routes(state: &AppState, web: Option<WebUi>) -> Router {
     let mounted = layered(state, mount(Mount::serve(state)).routes);
-    // The areas below are not mounted through `Routes` yet.
-    let v3 = Router::new()
-        .nest(
-            "/api/v3",
-            state
-                .reads
-                .gated_router()
-                .merge(state.acquire.gated_router())
-                .merge(state.concerts.gated_router()),
-        )
-        .merge(state.reads.search_router())
-        .layer(middleware::from_fn_with_state(
-            state.auth.limits.clone(),
-            rate_limit,
-        ))
-        .layer(middleware::from_fn_with_state(
-            state.auth.session_auth.clone(),
-            require_session,
-        ));
-    let wrapped = Router::new()
-        .nest("/api/v3", state.reads.wrapped_router())
-        .layer(middleware::from_fn_with_state(
-            state.auth.limits.clone(),
-            rate_limit,
-        ));
-    // Spotify OAuth callbacks and the v1 MusicBrainz contribution
-    // callback: outside the session gate (token identified), still
-    // rate-limited like the wrapped trio.
-    let acquire_public = Router::new()
-        .nest("/api/v3", state.acquire.callback_router())
-        .merge(state.acquire.legacy_callback_router())
+    // The v1 Spotify and MusicBrainz contribution callbacks: outside the
+    // session gate (token identified), rate-limited like the public group.
+    let legacy_callbacks = state
+        .acquire
+        .legacy_callback_router()
         .merge(state.library.legacy_contrib_callback_router())
         .layer(middleware::from_fn_with_state(
             state.auth.limits.clone(),
@@ -329,9 +370,7 @@ fn routes(state: &AppState, web: Option<WebUi>) -> Router {
             rate_limit,
         ));
     let app = mounted
-        .merge(v3)
-        .merge(wrapped)
-        .merge(acquire_public)
+        .merge(legacy_callbacks)
         .merge(oidc_legacy)
         .merge(state.compat.router());
     // Dev-only tooling routes (covers-debug). The debug-build gate

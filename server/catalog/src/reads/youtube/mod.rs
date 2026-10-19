@@ -13,5 +13,5 @@ pub mod models;
 pub mod service;
 pub mod store;
 
-pub use handlers::router;
+pub use handlers::routes;
 pub use service::YouTubeLinks;

@@ -144,9 +144,15 @@ async fn app(pool: SqlitePool, enrichment: Arc<dyn EnrichmentPort>) -> (axum::Ro
     rig.sign_in(&user.id, TEST_TOKEN).await;
     let scope = TestApp::start("reads-search").await;
     let app = scope
-        .request_scope(search::router(search_deps(pool, enrichment)).layer(
-            middleware::from_fn_with_state(rig.session_gate(), require_session),
-        ))
+        .request_scope(
+            search::routes()
+                .with_state(search_deps(pool, enrichment))
+                .into_router()
+                .layer(middleware::from_fn_with_state(
+                    rig.session_gate(),
+                    require_session,
+                )),
+        )
         .fallback(droppedneedle::handlers::fallback_404)
         .method_not_allowed_fallback(droppedneedle::handlers::fallback_405);
     (app, (rig, scope))

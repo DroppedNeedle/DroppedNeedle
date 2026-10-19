@@ -12,6 +12,7 @@ use axum::{
 use droppedneedle_auth::User;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 use serde::Deserialize;
 
 use super::{
@@ -910,63 +911,42 @@ pub async fn now_playing(State(deps): State<ReadsDeps>, _user: User) -> Json<Now
 // Routers
 // ---------------------------------------------------------------------------
 
-/// Discover routes: shelves, radio, queue, batches. Mount under `/api/v3`.
-pub fn discover_router(deps: ReadsDeps) -> axum::Router {
-    use axum::routing::{get, post};
-
-    axum::Router::new()
-        .route("/discover", get(get_discover))
-        .route("/discover/refresh", post(refresh_discover))
-        .route("/discover/activity", post(record_activity))
-        .route("/discover/radio", post(discover_radio))
-        .route("/discover/radio/plan", post(radio_plan))
-        .route("/discover/playlist-suggestions", post(playlist_suggestions))
-        .route("/discover/queue", get(get_queue))
-        .route("/discover/queue/status", get(queue_status))
-        .route("/discover/queue/generate", post(queue_generate))
-        .route(
-            "/discover/queue/enrich/{release_group_mbid}",
-            get(enrich_queue_item),
-        )
-        .route(
-            "/discover/queue/preview/{release_group_mbid}",
-            post(preview_queue_item),
-        )
-        .route("/discover/queue/ignore", post(ignore_queue_item))
-        .route("/discover/queue/ignored", get(ignored_releases))
-        .route("/discover/queue/validate", post(validate_queue))
-        .route("/discover/queue/youtube-search", get(youtube_search))
-        .route(
-            "/discover/queue/youtube-track-search",
-            get(youtube_track_search),
-        )
-        .route("/discover/queue/youtube-quota", get(youtube_quota))
-        .route(
-            "/discover/queue/youtube-cache-check",
-            post(youtube_cache_check),
-        )
-        .route("/discover/track-preview", get(track_preview))
-        .route("/discover/album-preview", get(album_preview))
-        .route("/discover/batches", post(create_batch).get(list_batches))
-        .route(
-            "/discover/batches/{batch_id}",
-            get(get_batch).delete(remove_batch),
-        )
-        .with_state(deps)
-}
-
-/// Home routes: shelves, genre, and the redesigned chart pages.
-pub fn home_router(deps: ReadsDeps) -> axum::Router {
-    use axum::routing::get;
-
-    axum::Router::new()
-        .route("/home", get(get_home))
-        .route("/home/integration-status", get(integration_status))
-        .route("/home/genre/{genre_name}", get(genre_detail))
-        .route("/home/trending/artists", get(trending_artists))
-        .route("/home/popular/albums", get(popular_albums))
-        .route("/home/your-top/albums", get(your_top_albums))
-        .with_state(deps)
+/// Discover and home routes at their full `/api/v3` paths, for any
+/// signed-in user.
+///
+/// `GET /now-playing` is absent on purpose: `playback` serves it from the
+/// live presence registry (same JSON shape), and mounting both would panic
+/// on the duplicate route.
+pub fn routes() -> Routes<ReadsDeps> {
+    Routes::new()
+        .user(routes!(get_discover))
+        .user(routes!(refresh_discover))
+        .user(routes!(record_activity))
+        .user(routes!(discover_radio))
+        .user(routes!(radio_plan))
+        .user(routes!(playlist_suggestions))
+        .user(routes!(get_queue))
+        .user(routes!(queue_status))
+        .user(routes!(queue_generate))
+        .user(routes!(enrich_queue_item))
+        .user(routes!(preview_queue_item))
+        .user(routes!(ignore_queue_item))
+        .user(routes!(ignored_releases))
+        .user(routes!(validate_queue))
+        .user(routes!(youtube_search))
+        .user(routes!(youtube_track_search))
+        .user(routes!(youtube_quota))
+        .user(routes!(youtube_cache_check))
+        .user(routes!(track_preview))
+        .user(routes!(album_preview))
+        .user(routes!(create_batch, list_batches))
+        .user(routes!(get_batch, remove_batch))
+        .user(routes!(get_home))
+        .user(routes!(integration_status))
+        .user(routes!(genre_detail))
+        .user(routes!(trending_artists))
+        .user(routes!(popular_albums))
+        .user(routes!(your_top_albums))
 }
 
 /// Now-playing snapshot route. Presence writes live in `playback`.
@@ -976,16 +956,4 @@ pub fn now_playing_router(deps: ReadsDeps) -> axum::Router {
     axum::Router::new()
         .route("/now-playing", get(now_playing))
         .with_state(deps)
-}
-
-/// Every discover route. Mount under `/api/v3` behind the session
-/// gate; see `mod.rs` for the wiring note.
-///
-/// `GET /now-playing` is absent on purpose: `playback` serves it from the
-/// live presence registry (same JSON shape), and merging both routers
-/// would panic on the duplicate route.
-pub fn reads_router(deps: ReadsDeps) -> axum::Router {
-    axum::Router::new()
-        .merge(discover_router(deps.clone()))
-        .merge(home_router(deps))
 }

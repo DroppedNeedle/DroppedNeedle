@@ -422,10 +422,9 @@ fn page_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
         now_playing: Arc::new(FakeNowPlaying),
         clock: Arc::new(SystemClock),
     };
-    let router = Router::new().nest(
-        "/api/v3",
-        droppedneedle_catalog::reads::discover::reads_router(deps),
-    );
+    let router = droppedneedle_catalog::reads::discover::routes()
+        .with_state(deps)
+        .into_router();
     with_test_principal(
         router,
         test_principal("user-1", Role::User, "sess-test", SessionKind::Standard),

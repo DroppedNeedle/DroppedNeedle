@@ -17,7 +17,8 @@
 
 use std::sync::Arc;
 
-use axum::{Json, Router, extract::State, routing::get};
+use axum::{Json, extract::State};
+use droppedneedle_kernel::mount::{Routes, routes};
 use futures_util::future::BoxFuture;
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -215,13 +216,12 @@ impl VersionState {
     }
 }
 
-/// Version routes, relative paths for nesting under `/api/v3`.
-pub fn routes(state: VersionState) -> Router {
-    Router::new()
-        .route("/version", get(get_version))
-        .route("/version/check-update", get(check_update))
-        .route("/version/releases", get(get_releases))
-        .with_state(state)
+/// Version routes, for any signed-in user.
+pub fn routes() -> Routes<VersionState> {
+    Routes::new()
+        .user(routes!(get_version))
+        .user(routes!(check_update))
+        .user(routes!(get_releases))
 }
 
 /// Parse a tag into numeric release segments. Leading `v`s are stripped (v2

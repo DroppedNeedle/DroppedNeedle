@@ -6,10 +6,8 @@
 //! or "not available" answers where the v2 builders are not ported yet.
 //! The fakes exist for tests only.
 //!
-//! Wiring: mounted as `reads::discover` under `/api/v3` via
-//! [`reads_router`] (with [`discover_router`] and [`home_router`]), and
-//! its paths and schemas are registered in the utoipa document. The
-//! now-playing route is served by `playback`.
+//! Wiring: the app mounts [`routes`], which also registers the paths in
+//! the API document. The now-playing route is served by `playback`.
 
 pub mod adapters;
 pub mod demand;
@@ -21,5 +19,5 @@ pub mod models;
 pub mod ports;
 pub mod services;
 
-pub use handlers::{discover_router, home_router, now_playing_router, reads_router};
+pub use handlers::{now_playing_router, routes};
 pub use services::ReadsDeps;

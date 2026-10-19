@@ -312,7 +312,7 @@ async fn lidarr_import_becomes_follows_with_counts() {
 
     let (status, body) = post_json(
         authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
-        "/acquire/lidarr-import/import",
+        "/api/v3/acquire/lidarr-import/import",
         payload.clone(),
     )
     .await;
@@ -326,7 +326,7 @@ async fn lidarr_import_becomes_follows_with_counts() {
     // Re-import never re-arms or double-counts: disjoint pre-existing subset.
     let (status, body) = post_json(
         authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
-        "/acquire/lidarr-import/import",
+        "/api/v3/acquire/lidarr-import/import",
         payload,
     )
     .await;
@@ -338,7 +338,7 @@ async fn lidarr_import_becomes_follows_with_counts() {
     // Candidates now read as already following.
     let (status, body) = get_json(
         authed_app(bundle.deps, &admin_id, Role::Admin),
-        "/acquire/lidarr-import/artists",
+        "/api/v3/acquire/lidarr-import/artists",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -381,7 +381,7 @@ async fn lidarr_config_round_trip_masks_and_normalizes() {
 
     let (status, body) = put_json(
         authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
-        "/acquire/lidarr-import/config",
+        "/api/v3/acquire/lidarr-import/config",
         json!({"url": pasted, "api_key": LIDARR_KEY}),
     )
     .await;
@@ -393,14 +393,14 @@ async fn lidarr_config_round_trip_masks_and_normalizes() {
     // authenticates afterwards.
     let (status, _) = put_json(
         authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
-        "/acquire/lidarr-import/config",
+        "/api/v3/acquire/lidarr-import/config",
         json!({"url": server.base_url, "api_key": "********"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     let (status, body) = post_json(
         authed_app(bundle.deps, &admin_id, Role::Admin),
-        "/acquire/lidarr-import/test",
+        "/api/v3/acquire/lidarr-import/test",
         json!({"url": server.base_url, "api_key": "********"}),
     )
     .await;
@@ -417,18 +417,18 @@ async fn lidarr_surface_issues_only_the_two_sanctioned_gets() {
 
     let _ = post_json(
         authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
-        "/acquire/lidarr-import/test",
+        "/api/v3/acquire/lidarr-import/test",
         json!({"url": server.base_url, "api_key": LIDARR_KEY}),
     )
     .await;
     let _ = get_json(
         authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
-        "/acquire/lidarr-import/artists",
+        "/api/v3/acquire/lidarr-import/artists",
     )
     .await;
     let _ = post_json(
         authed_app(bundle.deps, &admin_id, Role::Admin),
-        "/acquire/lidarr-import/import",
+        "/api/v3/acquire/lidarr-import/import",
         json!({"selected_mbids": [LIDARR_MBID_ALL]}),
     )
     .await;
@@ -455,7 +455,7 @@ async fn lidarr_routes_gate_anonymous_and_non_admin() {
 
     let (status, body) = get_json(
         anon_app(bundle.deps.clone()),
-        "/acquire/lidarr-import/artists",
+        "/api/v3/acquire/lidarr-import/artists",
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -463,7 +463,7 @@ async fn lidarr_routes_gate_anonymous_and_non_admin() {
 
     let (status, body) = get_json(
         authed_app(bundle.deps.clone(), &user_id, Role::User),
-        "/acquire/lidarr-import/artists",
+        "/api/v3/acquire/lidarr-import/artists",
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -472,7 +472,7 @@ async fn lidarr_routes_gate_anonymous_and_non_admin() {
     // The admin still passes.
     let (status, _) = get_json(
         authed_app(bundle.deps, &admin_id, Role::Admin),
-        "/acquire/lidarr-import/artists",
+        "/api/v3/acquire/lidarr-import/artists",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -484,7 +484,7 @@ async fn lidarr_routes_gate_anonymous_and_non_admin() {
 async fn seed_spotify_app(bundle_deps: ImportsDeps, admin_id: &str) {
     let (status, body) = put_json(
         authed_app(bundle_deps, admin_id, Role::Admin),
-        "/acquire/spotify/settings",
+        "/api/v3/acquire/spotify/settings",
         json!({
             "client_id": "test-client",
             "client_secret": "test-secret",
@@ -517,7 +517,7 @@ fn state_from_auth_url(auth_url: &str) -> String {
 async fn authorize(bundle_deps: ImportsDeps, user_id: &str) -> (String, String) {
     let (status, body) = get_json(
         authed_app(bundle_deps, user_id, Role::User),
-        "/acquire/spotify/auth/url",
+        "/api/v3/acquire/spotify/auth/url",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -534,7 +534,7 @@ async fn link_spotify(bundle_deps: ImportsDeps, recorder: &MockRecorder, user_id
         bundle_deps,
         recorder,
         user_id,
-        "/acquire/spotify/auth/callback",
+        "/api/v3/acquire/spotify/auth/callback",
     )
     .await;
 }
@@ -582,7 +582,7 @@ async fn poll_job_done(deps: ImportsDeps, user_id: &str, spotify_id: &str) -> Va
     for _ in 0..100 {
         let (status, body) = get_json(
             authed_app(deps.clone(), user_id, Role::User),
-            &format!("/acquire/spotify/jobs/{spotify_id}"),
+            &format!("/api/v3/acquire/spotify/jobs/{spotify_id}"),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -603,7 +603,7 @@ async fn spotify_settings_round_trip_and_reject_bad_origin() {
 
     let (status, body) = get_json(
         authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
-        "/acquire/spotify/settings",
+        "/api/v3/acquire/spotify/settings",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -613,7 +613,7 @@ async fn spotify_settings_round_trip_and_reject_bad_origin() {
 
     let (status, body) = put_json(
         authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
-        "/acquire/spotify/settings",
+        "/api/v3/acquire/spotify/settings",
         json!({
             "client_id": "test-client",
             "client_secret": "********",
@@ -628,7 +628,7 @@ async fn spotify_settings_round_trip_and_reject_bad_origin() {
     // Non-admins cannot read the app settings.
     let (status, _) = get_json(
         authed_app(bundle.deps.clone(), &user_id, Role::User),
-        "/acquire/spotify/settings",
+        "/api/v3/acquire/spotify/settings",
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -636,7 +636,7 @@ async fn spotify_settings_round_trip_and_reject_bad_origin() {
     // The redirect URI derives through the single source of truth.
     let (status, body) = get_json(
         authed_app(bundle.deps, &admin_id, Role::Admin),
-        "/acquire/spotify/redirect-uri",
+        "/api/v3/acquire/spotify/redirect-uri",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -664,14 +664,14 @@ fn forwarded_get(path: &str, peer: &str) -> Request<Body> {
 async fn callback_addresses(deps: &ImportsDeps, admin_id: &str, peer: &str) -> String {
     let (status, shown) = request_json(
         authed_app(deps.clone(), admin_id, Role::Admin),
-        forwarded_get("/acquire/spotify/redirect-uri", peer),
+        forwarded_get("/api/v3/acquire/spotify/redirect-uri", peer),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     let shown = shown["redirect_uri"].as_str().expect("address").to_owned();
     let (status, link) = request_json(
         authed_app(deps.clone(), admin_id, Role::Admin),
-        forwarded_get("/acquire/spotify/auth/url", peer),
+        forwarded_get("/api/v3/acquire/spotify/auth/url", peer),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -713,7 +713,10 @@ async fn spotify_callback_address_follows_a_trusted_proxy_only() {
     );
 
     // No address to work out: an honest 400 that names the field, no guess.
-    for path in ["/acquire/spotify/redirect-uri", "/acquire/spotify/auth/url"] {
+    for path in [
+        "/api/v3/acquire/spotify/redirect-uri",
+        "/api/v3/acquire/spotify/auth/url",
+    ] {
         let (status, body) = request_json(
             authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
             Request::get(path).body(Body::empty()).expect("builds"),
@@ -727,7 +730,7 @@ async fn spotify_callback_address_follows_a_trusted_proxy_only() {
 
     let (status, _) = put_json(
         authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
-        "/acquire/spotify/settings",
+        "/api/v3/acquire/spotify/settings",
         json!({
             "client_id": "test-client",
             "client_secret": "********",
@@ -756,7 +759,7 @@ async fn spotify_callback_rejects_error_and_replayed_state() {
     // Provider-side error redirects plain.
     let response = anon_app(bundle.deps.clone())
         .oneshot(
-            Request::get("/acquire/spotify/auth/callback?error=access_denied")
+            Request::get("/api/v3/acquire/spotify/auth/callback?error=access_denied")
                 .header("host", "app.test")
                 .body(Body::empty())
                 .expect("request builds"),
@@ -768,7 +771,7 @@ async fn spotify_callback_rejects_error_and_replayed_state() {
     // Unknown state names its reason.
     let response = anon_app(bundle.deps.clone())
         .oneshot(
-            Request::get("/acquire/spotify/auth/callback?code=good-code&state=nope")
+            Request::get("/api/v3/acquire/spotify/auth/callback?code=good-code&state=nope")
                 .header("host", "app.test")
                 .body(Body::empty())
                 .expect("request builds"),
@@ -789,7 +792,7 @@ async fn spotify_callback_rejects_error_and_replayed_state() {
     // Bad code names the token reason.
     let (status, body) = get_json(
         authed_app(bundle.deps.clone(), &user_id, Role::User),
-        "/acquire/spotify/auth/url",
+        "/api/v3/acquire/spotify/auth/url",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -797,7 +800,7 @@ async fn spotify_callback_rejects_error_and_replayed_state() {
     let response = anon_app(bundle.deps.clone())
         .oneshot(
             Request::get(format!(
-                "/acquire/spotify/auth/callback?code=bad-code&state={state}"
+                "/api/v3/acquire/spotify/auth/callback?code=bad-code&state={state}"
             ))
             .header("host", "app.test")
             .body(Body::empty())
@@ -820,7 +823,7 @@ async fn spotify_callback_rejects_error_and_replayed_state() {
     let response = anon_app(bundle.deps)
         .oneshot(
             Request::get(format!(
-                "/acquire/spotify/auth/callback?code=good-code&state={state}"
+                "/api/v3/acquire/spotify/auth/callback?code=good-code&state={state}"
             ))
             .header("host", "app.test")
             .body(Body::empty())
@@ -854,7 +857,7 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
 
     let (status, body) = post_json(
         authed_app(bundle.deps.clone(), &user_id, Role::User),
-        "/acquire/spotify/playlists/sp-playlist-1/import",
+        "/api/v3/acquire/spotify/playlists/sp-playlist-1/import",
         json!({"name": "Neon Nights"}),
     )
     .await;
@@ -886,7 +889,7 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
     // Re-import answers the same record and replaces the rows wholesale.
     let (status, body) = post_json(
         authed_app(bundle.deps.clone(), &user_id, Role::User),
-        "/acquire/spotify/playlists/sp-playlist-1/import",
+        "/api/v3/acquire/spotify/playlists/sp-playlist-1/import",
         json!({"name": "Neon Nights"}),
     )
     .await;
@@ -899,7 +902,7 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
     // Playlists now carry the imported mapping.
     let (status, body) = get_json(
         authed_app(bundle.deps, &user_id, Role::User),
-        "/acquire/spotify/playlists",
+        "/api/v3/acquire/spotify/playlists",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -917,7 +920,7 @@ async fn spotify_tracks_come_from_items_never_legacy_tracks() {
 
     let (status, _) = post_json(
         authed_app(bundle.deps.clone(), &user_id, Role::User),
-        "/acquire/spotify/playlists/sp-playlist-1/import",
+        "/api/v3/acquire/spotify/playlists/sp-playlist-1/import",
         json!({"name": "Neon Nights"}),
     )
     .await;
@@ -995,7 +998,7 @@ async fn spotify_expired_tokens_refresh_transparently() {
 
     let (status, body) = get_json(
         authed_app(bundle.deps, &user_id, Role::User),
-        "/acquire/spotify/playlists",
+        "/api/v3/acquire/spotify/playlists",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -1049,7 +1052,7 @@ async fn spotify_v2_registered_app_links_and_disconnects() {
     let response = anon_app(bundle.deps.clone())
         .oneshot(
             Request::get(format!(
-                "/acquire/spotify/auth/callback?code=good-code&state={state}"
+                "/api/v3/acquire/spotify/auth/callback?code=good-code&state={state}"
             ))
             .header("host", "app.test")
             .body(Body::empty())
@@ -1080,7 +1083,7 @@ async fn spotify_v2_registered_app_links_and_disconnects() {
 
     let response = authed_app(bundle.deps, &user_id, Role::User)
         .oneshot(
-            Request::delete("/me/connections/spotify")
+            Request::delete("/api/v3/me/connections/spotify")
                 .body(Body::empty())
                 .expect("request builds"),
         )
@@ -1237,7 +1240,7 @@ async fn health_smoke_is_not_ready_with_no_source() {
 
     let (status, body) = get_json(
         authed_app(bundle.deps, &user_id, Role::User),
-        "/acquire/health",
+        "/api/v3/acquire/health",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -1257,7 +1260,7 @@ async fn slskd_gate_greens_independently() {
 
     let (status, body) = get_json(
         authed_app(bundle.deps, &user_id, Role::User),
-        "/acquire/health",
+        "/api/v3/acquire/health",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -1284,7 +1287,7 @@ async fn health_degrades_when_an_enabled_path_is_down() {
 
     let (status, body) = get_json(
         authed_app(bundle.deps, &user_id, Role::User),
-        "/acquire/health",
+        "/api/v3/acquire/health",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -1300,7 +1303,7 @@ async fn slskd_status_readable_by_any_user() {
 
     let (status, body) = get_json(
         authed_app(bundle.deps.clone(), &user_id, Role::User),
-        "/acquire/slskd/status",
+        "/api/v3/acquire/slskd/status",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -1308,7 +1311,7 @@ async fn slskd_status_readable_by_any_user() {
     assert_eq!(body["reachable"], true);
     assert_eq!(body["version"], "1.4.3");
 
-    let (status, _) = get_json(anon_app(bundle.deps), "/acquire/slskd/status").await;
+    let (status, _) = get_json(anon_app(bundle.deps), "/api/v3/acquire/slskd/status").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
@@ -1323,7 +1326,7 @@ async fn sabnzbd_status_is_admin_only_with_mount_hint() {
 
     let (status, body) = get_json(
         authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
-        "/acquire/sabnzbd/status",
+        "/api/v3/acquire/sabnzbd/status",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -1334,7 +1337,7 @@ async fn sabnzbd_status_is_admin_only_with_mount_hint() {
 
     let (status, body) = get_json(
         authed_app(bundle.deps, &user_id, Role::User),
-        "/acquire/sabnzbd/status",
+        "/api/v3/acquire/sabnzbd/status",
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);

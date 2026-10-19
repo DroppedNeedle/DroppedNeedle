@@ -585,7 +585,7 @@ async fn held_files_import_as_upgrades_or_discard() {
     let review = worker(Vec::new());
     let ada = &test_principal("u-ada", Role::User, "sess-ada", SessionKind::Standard);
 
-    let import = |id: i64| format!("/downloads/held/{id}/import");
+    let import = |id: i64| format!("/api/v3/downloads/held/{id}/import");
     let (status, _) = held_call(&review, "POST", &import(seeded[1]), ada).await;
     assert_eq!(status, 404, "someone else's held file is not found");
 
@@ -606,7 +606,7 @@ async fn held_files_import_as_upgrades_or_discard() {
     .expect("catalog");
     assert_eq!(formats, vec!["flac".to_owned()]);
 
-    let discard = format!("/downloads/held/{}/discard", seeded[2]);
+    let discard = format!("/api/v3/downloads/held/{}/discard", seeded[2]);
     let (status, body) = held_call(&review, "POST", &discard, ada).await;
     assert_eq!(status, 200, "{body}");
     assert!(
@@ -624,7 +624,7 @@ async fn held_files_import_as_upgrades_or_discard() {
     );
     assert!(new_copy.is_file(), "the library copy is untouched");
 
-    let (status, body) = held_call(&review, "GET", "/downloads/held", ada).await;
+    let (status, body) = held_call(&review, "GET", "/api/v3/downloads/held", ada).await;
     assert_eq!(status, 200);
     let left: Vec<i64> = body["items"]
         .as_array()

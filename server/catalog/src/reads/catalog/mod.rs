@@ -36,12 +36,9 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use axum::{
-    Router,
-    routing::{get, post},
-};
 use serde::{Serialize, de::DeserializeOwned};
 
+use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_providers::Singleflight;
 use droppedneedle_providers::musicbrainz::MbError;
 
@@ -312,60 +309,31 @@ pub struct CatalogDeps {
     pub catalog: Catalog,
 }
 
-/// Mount the artist and album routes, relative to `/api/v3`. Path
-/// parameter names match the follow and edition routes mounted by
-/// acquisition on the same prefixes (the router requires one name per
+/// The artist and album routes at their full `/api/v3` paths, for any
+/// signed-in user. Path parameter names match the follow and edition
+/// routes mounted on the same prefixes (the router requires one name per
 /// segment).
-pub fn router(deps: CatalogDeps) -> Router {
-    Router::new()
-        .route("/artists/{artist_mbid}", get(handlers::artist))
-        .route(
-            "/artists/{artist_mbid}/extended",
-            get(handlers::artist_extended),
-        )
-        .route(
-            "/artists/{artist_mbid}/releases",
-            get(handlers::artist_releases),
-        )
-        .route(
-            "/artists/{artist_mbid}/similar",
-            get(handlers::similar_artists),
-        )
-        .route("/artists/{artist_mbid}/top-songs", get(handlers::top_songs))
-        .route(
-            "/artists/{artist_mbid}/top-albums",
-            get(handlers::top_albums),
-        )
-        .route(
-            "/artists/{artist_mbid}/lastfm",
-            get(handlers::artist_lastfm),
-        )
-        .route(
-            "/artists/{artist_mbid}/purchase-options",
-            get(handlers::artist_purchase_options),
-        )
-        .route("/albums/{album_id}", get(handlers::album))
-        .route("/albums/{album_id}/basic", get(handlers::album_basic))
-        .route("/albums/{album_id}/tracks", get(handlers::album_tracks))
-        .route("/albums/{album_id}/editions", get(handlers::album_editions))
-        .route(
-            "/albums/{album_id}/editions/{release_mbid}/tracks",
-            get(handlers::edition_tracks),
-        )
-        .route("/albums/{album_id}/refresh", post(handlers::album_refresh))
-        .route("/albums/{album_id}/similar", get(handlers::similar_albums))
-        .route(
-            "/albums/{album_id}/plugin-details",
-            get(handlers::album_plugin_details),
-        )
-        .route(
-            "/albums/{album_id}/more-by-artist",
-            get(handlers::more_by_artist),
-        )
-        .route("/albums/{album_id}/lastfm", get(handlers::album_lastfm))
-        .route(
-            "/albums/{album_id}/purchase-options",
-            get(handlers::album_purchase_options),
-        )
-        .with_state(deps)
+pub fn routes() -> Routes<CatalogDeps> {
+    use handlers::*;
+
+    Routes::new()
+        .user(routes!(artist))
+        .user(routes!(artist_extended))
+        .user(routes!(artist_releases))
+        .user(routes!(similar_artists))
+        .user(routes!(top_songs))
+        .user(routes!(top_albums))
+        .user(routes!(artist_lastfm))
+        .user(routes!(artist_purchase_options))
+        .user(routes!(album))
+        .user(routes!(album_basic))
+        .user(routes!(album_tracks))
+        .user(routes!(album_editions))
+        .user(routes!(edition_tracks))
+        .user(routes!(album_refresh))
+        .user(routes!(similar_albums))
+        .user(routes!(album_plugin_details))
+        .user(routes!(more_by_artist))
+        .user(routes!(album_lastfm))
+        .user(routes!(album_purchase_options))
 }

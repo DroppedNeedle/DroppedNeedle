@@ -11,10 +11,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{DefaultBodyLimit, Multipart, Path, State, multipart::MultipartRejection},
     http::StatusCode,
-    routing,
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt as _;
@@ -26,6 +25,7 @@ use crate::requests::error::RequestsError;
 use droppedneedle_auth::Curator;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 
 /// The largest upload accepted in one request (all files together).
 const MAX_UPLOAD_BYTES: usize = 8 * (1 << 30);
@@ -362,23 +362,15 @@ pub async fn discard_item_handler(
     Ok(Json(service.discard_item(&viewer, item_id).await?.into()))
 }
 
-/// Drop-import routes without an auth layer, mounted inside the session
-/// gate beside the download routes.
-pub fn drop_import_routes(service: Arc<DropImports>) -> Router {
-    Router::new()
-        .route(
-            "/import/uploads",
-            routing::post(upload_handler).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
-        )
-        .route("/import/jobs", routing::get(list_jobs_handler))
-        .route("/import/jobs/{job_id}", routing::get(get_job_handler))
-        .route(
-            "/import/items/{item_id}/match",
-            routing::post(match_item_handler),
-        )
-        .route(
-            "/import/items/{item_id}/discard",
-            routing::post(discard_item_handler),
-        )
-        .with_state(service)
+/// Drop-import routes, for an admin or trusted user. The upload takes a
+/// body up to `MAX_UPLOAD_BYTES`.
+pub fn routes() -> Routes<Arc<DropImports>> {
+    let (schemas, paths, upload) = routes!(upload_handler);
+    let upload = upload.layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES));
+    Routes::new()
+        .curator((schemas, paths, upload))
+        .curator(routes!(list_jobs_handler))
+        .curator(routes!(get_job_handler))
+        .curator(routes!(match_item_handler))
+        .curator(routes!(discard_item_handler))
 }

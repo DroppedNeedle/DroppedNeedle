@@ -91,7 +91,7 @@ impl Rig {
     }
 
     fn app(&self) -> Router {
-        collections::collections_routes(self.state())
+        collections::routes().with_state(self.state()).into_router()
     }
 
     /// Close the database and open it again, as a server restart does.
@@ -161,20 +161,21 @@ async fn playlist_auth_matrix() {
     let rig = Rig::open().await;
     let app = rig.app();
 
-    let (status, headers, _) = send(&app, None, request(Method::GET, "/playlists", None)).await;
+    let (status, headers, _) =
+        send(&app, None, request(Method::GET, "/api/v3/playlists", None)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(headers.get("www-authenticate").unwrap(), "Bearer");
 
     let (_, created) = call(
         &app,
         Method::POST,
-        "/playlists",
+        "/api/v3/playlists",
         Some(ADA),
         Some(json!({"name": "Secret", "source_ref": "plex:xyz"})),
     )
     .await;
     let id = created["id"].as_str().unwrap().to_owned();
-    let one = format!("/playlists/{id}");
+    let one = format!("/api/v3/playlists/{id}");
 
     let (status, _) = call(&app, Method::GET, &one, Some(BOB), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "private hides from others");
@@ -189,7 +190,7 @@ async fn playlist_auth_matrix() {
     assert_eq!(status, StatusCode::NOT_FOUND, "private mutation hides too");
 
     for identity in [BOB, ADMIN] {
-        let (_, list) = call(&app, Method::GET, "/playlists", Some(identity), None).await;
+        let (_, list) = call(&app, Method::GET, "/api/v3/playlists", Some(identity), None).await;
         let row = &list["playlists"][0];
         assert_eq!(row["is_redacted"], true, "admins read redacted too");
         assert_eq!(row["owner_name"], "Ada");
@@ -235,7 +236,7 @@ async fn playlists_favorites_and_follows_survive_a_restart() {
     let (_, created) = call(
         &app,
         Method::POST,
-        "/playlists",
+        "/api/v3/playlists",
         Some(ADA),
         Some(json!({"name": "Trip"})),
     )
@@ -244,7 +245,7 @@ async fn playlists_favorites_and_follows_survive_a_restart() {
     let (_, added) = call(
         &app,
         Method::POST,
-        &format!("/playlists/{id}/tracks"),
+        &format!("/api/v3/playlists/{id}/tracks"),
         Some(ADA),
         Some(json!({"tracks": [track("One"), track("Two"), track("Three")]})),
     )
@@ -253,7 +254,7 @@ async fn playlists_favorites_and_follows_survive_a_restart() {
     let (_, moved) = call(
         &app,
         Method::PATCH,
-        &format!("/playlists/{id}/tracks/reorder"),
+        &format!("/api/v3/playlists/{id}/tracks/reorder"),
         Some(ADA),
         Some(json!({"track_id": first, "new_position": 9})),
     )
@@ -262,7 +263,7 @@ async fn playlists_favorites_and_follows_survive_a_restart() {
     let (status, _) = call(
         &app,
         Method::POST,
-        &format!("/playlists/{id}/cover"),
+        &format!("/api/v3/playlists/{id}/cover"),
         Some(ADA),
         Some(json!({"image_base64": PIXEL_PNG, "content_type": "image/png"})),
     )
@@ -271,7 +272,7 @@ async fn playlists_favorites_and_follows_survive_a_restart() {
     call(
         &app,
         Method::PUT,
-        "/favorites/album/alb-1",
+        "/api/v3/favorites/album/alb-1",
         Some(ADA),
         Some(json!({"favorited": true, "name": "First"})),
     )
@@ -279,7 +280,7 @@ async fn playlists_favorites_and_follows_survive_a_restart() {
     call(
         &app,
         Method::PUT,
-        "/artists/MB-Followed/follow",
+        "/api/v3/artists/MB-Followed/follow",
         Some(ADA),
         Some(json!({"followed": true, "artist_name": "Followed"})),
     )
@@ -291,7 +292,7 @@ async fn playlists_favorites_and_follows_survive_a_restart() {
     let (_, detail) = call(
         &app,
         Method::GET,
-        &format!("/playlists/{id}"),
+        &format!("/api/v3/playlists/{id}"),
         Some(ADA),
         None,
     )
@@ -310,14 +311,14 @@ async fn playlists_favorites_and_follows_survive_a_restart() {
     let (status, headers, bytes) = send(
         &app,
         Some(ADA),
-        request(Method::GET, &format!("/playlists/{id}/cover"), None),
+        request(Method::GET, &format!("/api/v3/playlists/{id}/cover"), None),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers.get("content-type").unwrap(), "image/png");
     assert!(!bytes.is_empty());
 
-    let (_, favorites) = call(&app, Method::GET, "/favorites", Some(ADA), None).await;
+    let (_, favorites) = call(&app, Method::GET, "/api/v3/favorites", Some(ADA), None).await;
     assert_eq!(favorites["items"][0]["name"], "First");
     assert_eq!(
         favorites["counts"],
@@ -326,7 +327,7 @@ async fn playlists_favorites_and_follows_survive_a_restart() {
     let (_, follow) = call(
         &app,
         Method::GET,
-        "/artists/mb-followed/follow-status",
+        "/api/v3/artists/mb-followed/follow-status",
         Some(ADA),
         None,
     )
@@ -344,7 +345,7 @@ async fn playlist_input_validation() {
     let (_, created) = call(
         &app,
         Method::POST,
-        "/playlists",
+        "/api/v3/playlists",
         Some(ADA),
         Some(json!({"name": "Mix"})),
     )
@@ -352,22 +353,25 @@ async fn playlist_input_validation() {
     let id = created["id"].as_str().unwrap().to_owned();
 
     let bad = [
-        ("/playlists".to_owned(), json!({"name": "  "})),
-        ("/playlists".to_owned(), json!({"name": "x".repeat(201)})),
+        ("/api/v3/playlists".to_owned(), json!({"name": "  "})),
         (
-            format!("/playlists/{id}/tracks"),
+            "/api/v3/playlists".to_owned(),
+            json!({"name": "x".repeat(201)}),
+        ),
+        (
+            format!("/api/v3/playlists/{id}/tracks"),
             json!({"tracks": [{"track_name": "", "artist_name": "A", "album_name": "B"}]}),
         ),
         (
-            format!("/playlists/{id}/tracks"),
+            format!("/api/v3/playlists/{id}/tracks"),
             json!({"tracks": [{"track_name": "T", "artist_name": "A", "album_name": "B", "source_type": "napster"}]}),
         ),
         (
-            format!("/playlists/{id}/cover"),
+            format!("/api/v3/playlists/{id}/cover"),
             json!({"image_base64": PIXEL_PNG, "content_type": "image/gif"}),
         ),
         (
-            format!("/playlists/{id}/cover"),
+            format!("/api/v3/playlists/{id}/cover"),
             json!({"image_base64": "!!!", "content_type": "image/png"}),
         ),
     ];
@@ -381,7 +385,7 @@ async fn playlist_input_validation() {
     let (status, body) = call(
         &app,
         Method::POST,
-        &format!("/playlists/{id}/cover"),
+        &format!("/api/v3/playlists/{id}/cover"),
         Some(ADA),
         Some(oversized),
     )
@@ -398,7 +402,7 @@ async fn favorites_stay_per_user() {
         let (status, body) = call(
             &app,
             Method::PUT,
-            &format!("/favorites/{kind}/{item}"),
+            &format!("/api/v3/favorites/{kind}/{item}"),
             Some(ADA),
             Some(json!({"favorited": true})),
         )
@@ -408,10 +412,17 @@ async fn favorites_stay_per_user() {
             (StatusCode::OK, Some(true))
         );
     }
-    let (_, filtered) = call(&app, Method::GET, "/favorites?kind=album", Some(ADA), None).await;
+    let (_, filtered) = call(
+        &app,
+        Method::GET,
+        "/api/v3/favorites?kind=album",
+        Some(ADA),
+        None,
+    )
+    .await;
     assert_eq!(filtered["items"].as_array().unwrap().len(), 1);
     assert_eq!(filtered["counts"]["track"], 1, "counts ignore the filter");
-    let (_, other) = call(&app, Method::GET, "/favorites", Some(BOB), None).await;
+    let (_, other) = call(&app, Method::GET, "/api/v3/favorites", Some(BOB), None).await;
     assert_eq!(
         other["items"],
         json!([]),
@@ -420,7 +431,7 @@ async fn favorites_stay_per_user() {
     let (status, _) = call(
         &app,
         Method::PUT,
-        "/favorites/genre/rock",
+        "/api/v3/favorites/genre/rock",
         Some(ADA),
         Some(json!({"favorited": true})),
     )
@@ -436,7 +447,7 @@ async fn follow_auto_download_states_and_admin_reads() {
     let (status, _) = call(
         &app,
         Method::PUT,
-        "/artists/mb-x/auto-download",
+        "/api/v3/artists/mb-x/auto-download",
         Some(ADA),
         Some(json!({"enabled": true})),
     )
@@ -452,7 +463,7 @@ async fn follow_auto_download_states_and_admin_reads() {
         call(
             &app,
             Method::PUT,
-            &format!("/artists/{mbid}/follow"),
+            &format!("/api/v3/artists/{mbid}/follow"),
             Some(identity),
             Some(json!({"followed": true, "artist_name": mbid})),
         )
@@ -460,7 +471,7 @@ async fn follow_auto_download_states_and_admin_reads() {
         let (_, body) = call(
             &app,
             Method::PUT,
-            &format!("/artists/{mbid}/auto-download"),
+            &format!("/api/v3/artists/{mbid}/auto-download"),
             Some(identity),
             Some(json!({"enabled": true})),
         )
@@ -474,8 +485,8 @@ async fn follow_auto_download_states_and_admin_reads() {
     }
 
     for uri in [
-        "/requests/auto-download-approvals",
-        "/requests/auto-download-approval-batches",
+        "/api/v3/requests/auto-download-approvals",
+        "/api/v3/requests/auto-download-approval-batches",
     ] {
         let (status, _) = call(&app, Method::GET, uri, Some(ADA), None).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
@@ -483,7 +494,7 @@ async fn follow_auto_download_states_and_admin_reads() {
     let (_, approvals) = call(
         &app,
         Method::GET,
-        "/requests/auto-download-approvals",
+        "/api/v3/requests/auto-download-approvals",
         Some(ADMIN),
         None,
     )
@@ -492,7 +503,7 @@ async fn follow_auto_download_states_and_admin_reads() {
     let (_, batches) = call(
         &app,
         Method::GET,
-        "/requests/auto-download-approval-batches",
+        "/api/v3/requests/auto-download-approval-batches",
         Some(ADMIN),
         None,
     )
@@ -502,7 +513,7 @@ async fn follow_auto_download_states_and_admin_reads() {
     let (_, off) = call(
         &app,
         Method::PUT,
-        "/artists/mb-a/auto-download",
+        "/api/v3/artists/mb-a/auto-download",
         Some(ADA),
         Some(json!({"enabled": false})),
     )
@@ -511,13 +522,20 @@ async fn follow_auto_download_states_and_admin_reads() {
     let (_, approvals) = call(
         &app,
         Method::GET,
-        "/requests/auto-download-approvals",
+        "/api/v3/requests/auto-download-approvals",
         Some(ADMIN),
         None,
     )
     .await;
     assert_eq!(approvals["count"], 2, "turning it off withdraws the ask");
-    let (_, list) = call(&app, Method::GET, "/following/artists", Some(BOB), None).await;
+    let (_, list) = call(
+        &app,
+        Method::GET,
+        "/api/v3/following/artists",
+        Some(BOB),
+        None,
+    )
+    .await;
     assert_eq!(
         list["artists"].as_array().unwrap().len(),
         2,
@@ -572,7 +590,7 @@ async fn remote_playlist_import_lands_in_the_users_playlists() {
     let (_, detail) = call(
         &rig.app(),
         Method::GET,
-        &format!("/playlists/{}", first.local_playlist_id),
+        &format!("/api/v3/playlists/{}", first.local_playlist_id),
         Some(ADA),
         None,
     )
@@ -585,12 +603,16 @@ async fn remote_playlist_import_lands_in_the_users_playlists() {
 #[tokio::test]
 async fn store_faults_render_fixed_500_envelopes() {
     let scope = TestApp::start("reads-collections-faults").await;
-    let app = scope.request_scope(collections::collections_routes(CollectionsState::unwired()));
+    let app = scope.request_scope(
+        collections::routes()
+            .with_state(CollectionsState::unwired())
+            .into_router(),
+    );
     for uri in [
-        "/playlists",
-        "/favorites",
-        "/following/artists",
-        "/requests/auto-download-approvals",
+        "/api/v3/playlists",
+        "/api/v3/favorites",
+        "/api/v3/following/artists",
+        "/api/v3/requests/auto-download-approvals",
     ] {
         let (status, headers, bytes) =
             send(&app, Some(ADMIN), request(Method::GET, uri, None)).await;

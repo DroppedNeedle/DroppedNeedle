@@ -38,10 +38,7 @@ pub const REFRESH_BUFFER_SECS: i64 = 60;
 pub const MAX_COVER_FETCH_BYTES: usize = 5 * 1024 * 1024;
 /// Largest Web API answer read.
 pub const MAX_API_BODY_BYTES: usize = 4 * 1024 * 1024;
-/// OAuth callback path: the route [`imports_callback_router`] mounts
-/// under `/api/v3`.
-///
-/// [`imports_callback_router`]: super::handlers::imports_callback_router
+/// OAuth callback path, as the callback's route annotation names it.
 pub const SPOTIFY_CALLBACK_PATH: &str = "/api/v3/acquire/spotify/auth/callback";
 /// The v2 callback path. Spotify apps registered against v2 list it, so the
 /// server keeps answering there and sends it while the settings carry the

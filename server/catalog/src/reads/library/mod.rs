@@ -11,9 +11,8 @@
 //! the ports, `sqlite` implements them over the reader pool, and `memory`
 //! carries the test fakes. Status mapping lives only in `error`.
 //!
-//! Wiring: this module is mounted as `reads::library` under `/api/v3`
-//! with [`library_router`], and its paths are registered in the utoipa
-//! document.
+//! Wiring: the app mounts [`routes`], which also registers the paths in
+//! the API document.
 
 pub mod error;
 pub mod file_lyrics;
@@ -31,10 +30,7 @@ pub mod tags;
 
 use std::sync::Arc;
 
-use axum::{
-    Router,
-    routing::{get, post},
-};
+use droppedneedle_kernel::mount::{Routes, routes};
 use stores::{FavoriteReads, LibraryCatalog, LibraryLookups, LyricsPort, TrackTagReader};
 
 /// Every dependency the library reads need, injected by constructor.
@@ -59,62 +55,37 @@ pub struct LibraryDeps {
     pub tags: Arc<dyn TrackTagReader>,
 }
 
-/// Authenticated read routes. The session gate authenticates before these
-/// run; every handler takes `User`, so every route 401s anonymously and
-/// admits any signed-in role, except the tag view, which takes `Admin`.
-/// The two POSTs (membership, resolve-tracks) are reads that take their
-/// ids in a body.
-pub fn library_router(deps: LibraryDeps) -> Router {
-    Router::new()
-        .route("/library/albums", get(handlers::list_albums))
-        .route("/library/albums/{id}", get(handlers::get_album))
-        .route("/library/albums/{id}/status", get(handlers::album_status))
-        .route("/library/membership", post(handlers::membership))
-        .route("/library/mbids", get(handlers::album_mbids))
-        .route("/library/tracks/{id}/tags", get(handlers::track_tags))
-        .route("/library/resolve-tracks", post(handlers::resolve_tracks))
-        .route(
-            "/library/albums/{id}/tracks",
-            get(handlers::list_album_tracks),
-        )
-        .route(
-            "/library/albums/{id}/copies",
-            get(handlers::list_album_copies),
-        )
-        .route("/library/artists", get(handlers::list_artists))
-        .route("/library/artists/{id}", get(handlers::get_artist))
-        .route(
-            "/library/artists/{id}/albums",
-            get(handlers::list_artist_albums),
-        )
-        .route(
-            "/library/artists/{id}/appearances",
-            get(handlers::list_artist_appearances),
-        )
-        .route("/library/tracks", get(handlers::list_tracks))
-        .route("/library/tracks/{id}", get(handlers::get_track))
-        .route("/library/tracks/{id}/lyrics", get(handlers::get_lyrics))
-        .route("/library/stats", get(handlers::get_stats))
-        .route(
-            "/library/recently-added",
-            get(handlers::list_recently_added),
-        )
-        .route("/library/genres", get(handlers::list_genres))
-        .route(
-            "/library/genres/{name}/tracks",
-            get(handlers::list_genre_tracks),
-        )
-        .route("/local-library/albums", get(handlers::browse_albums))
-        .route(
-            "/local-library/albums/match/{mbid}",
-            get(handlers::match_album),
-        )
-        .route("/local-library/search", get(handlers::search_library))
-        .route("/local-library/recent", get(handlers::recent_albums))
-        .route("/local-library/decades", get(handlers::list_decades))
-        .route(
-            "/local-library/suggestions",
-            get(handlers::list_suggestions),
-        )
-        .with_state(deps)
+/// The library read routes, at their full `/api/v3` paths. Every handler
+/// takes `User`, except the tag view, which takes `Admin`. The two POSTs
+/// (membership, resolve-tracks) are reads that take their ids in a body.
+pub fn routes() -> Routes<LibraryDeps> {
+    use handlers::*;
+
+    Routes::new()
+        .user(routes!(list_albums))
+        .user(routes!(get_album))
+        .user(routes!(album_status))
+        .user(routes!(membership))
+        .user(routes!(album_mbids))
+        .admin(routes!(track_tags))
+        .user(routes!(resolve_tracks))
+        .user(routes!(list_album_tracks))
+        .user(routes!(list_album_copies))
+        .user(routes!(list_artists))
+        .user(routes!(get_artist))
+        .user(routes!(list_artist_albums))
+        .user(routes!(list_artist_appearances))
+        .user(routes!(list_tracks))
+        .user(routes!(get_track))
+        .user(routes!(get_lyrics))
+        .user(routes!(get_stats))
+        .user(routes!(list_recently_added))
+        .user(routes!(list_genres))
+        .user(routes!(list_genre_tracks))
+        .user(routes!(browse_albums))
+        .user(routes!(match_album))
+        .user(routes!(search_library))
+        .user(routes!(recent_albums))
+        .user(routes!(list_decades))
+        .user(routes!(list_suggestions))
 }

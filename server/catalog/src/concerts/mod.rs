@@ -30,8 +30,6 @@ pub mod sweep;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::Router;
-
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
@@ -117,19 +115,15 @@ impl ConcertsSetup {
         })
     }
 
-    /// The six concerts routes, mounted inside the session gate. Empty
-    /// when unwired.
-    pub fn gated_router(&self) -> Router {
-        self.live
-            .as_ref()
-            .map(|live| {
-                handlers::router(ConcertsService::new(
-                    live.store.clone(),
-                    live.settings.clone(),
-                    Arc::clone(&live.sources),
-                ))
-            })
-            .unwrap_or_default()
+    /// The service the concerts routes run on; `None` when unwired.
+    pub fn service(&self) -> Option<ConcertsService> {
+        self.live.as_ref().map(|live| {
+            ConcertsService::new(
+                live.store.clone(),
+                live.settings.clone(),
+                Arc::clone(&live.sources),
+            )
+        })
     }
 }
 

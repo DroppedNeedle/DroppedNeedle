@@ -4,10 +4,10 @@
 //! shape. Status mapping lives in [`ImportsError`](super::error::ImportsError)'s
 //! one mapping onto `ApiError`; query strings parse through [`ValidQuery`] and
 //! bodies through [`ValidJson`] so malformed input stays inside the shared
-//! envelope. The app mounts [`imports_gated_router`] inside the session gate
-//! and the Spotify OAuth callback outside it; every gated handler also takes
-//! a user extractor, so those routes 401 anonymously (the callback is
-//! identified by its state token, exactly like v2). The callback also
+//! envelope. [`routes`] mounts every handler in the group of its caller
+//! extractor, so those routes 401 anonymously, and the Spotify OAuth
+//! callback in the public group (it is identified by its state token,
+//! exactly like v2). The callback also
 //! answers on its v2 path for Spotify apps registered against v2; either
 //! way it exchanges the code with the redirect URI stored next to the state
 //! at authorize time.
@@ -19,7 +19,7 @@ use axum::{
     extract::{Path, Request, State},
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
-    routing::{delete, get, post},
+    routing::get,
 };
 use droppedneedle_auth::session::middleware::effective_origin;
 use droppedneedle_auth::{Admin, User};
@@ -28,6 +28,7 @@ use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::http_client::read_capped;
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::mount::{Routes, routes};
 use serde::Deserialize;
 use utoipa::IntoParams;
 
@@ -118,55 +119,36 @@ impl ImportsDeps {
     }
 }
 
-/// The gated routes plus both OAuth callbacks in one router, for tests. The
-/// app mounts [`imports_gated_router`] inside the session gate and the
-/// callbacks outside it.
+/// Every imports route plus the v2 OAuth callback in one router with no
+/// layers, for tests.
 #[cfg(any(test, feature = "test-support"))]
 pub fn imports_router(deps: ImportsDeps) -> axum::Router {
-    imports_gated_router(deps.clone())
-        .merge(imports_callback_router(deps.clone()))
+    routes()
+        .with_state(deps.clone())
+        .into_router()
         .merge(imports_legacy_callback_router(deps))
 }
 
-/// Session-gated routes. Paths are relative: the app nests this under
-/// `/api/v3` inside the deny-by-default session gate.
-pub fn imports_gated_router(deps: ImportsDeps) -> axum::Router {
-    axum::Router::new()
-        .route(
-            "/acquire/lidarr-import/config",
-            get(get_lidarr_config).put(put_lidarr_config),
-        )
-        .route("/acquire/lidarr-import/test", post(test_lidarr))
-        .route("/acquire/lidarr-import/artists", get(list_lidarr_artists))
-        .route("/acquire/lidarr-import/import", post(import_lidarr))
-        .route(
-            "/acquire/spotify/settings",
-            get(get_spotify_settings).put(put_spotify_settings),
-        )
-        .route(
-            "/acquire/spotify/redirect-uri",
-            get(get_spotify_redirect_uri),
-        )
-        .route("/acquire/spotify/auth/url", get(get_spotify_auth_url))
-        .route("/acquire/spotify/playlists", get(list_spotify_playlists))
-        .route(
-            "/acquire/spotify/playlists/{id}/import",
-            post(import_spotify_playlist),
-        )
-        .route("/acquire/spotify/jobs/{id}", get(get_spotify_job))
-        .route("/me/connections/spotify", delete(disconnect_spotify))
-        .route("/acquire/health", get(get_health))
-        .route("/acquire/slskd/status", get(get_slskd_status))
-        .route("/acquire/sabnzbd/status", get(get_sabnzbd_status))
-        .with_state(deps)
-}
-
-/// Spotify OAuth callback, mounted outside the session gate: it is
+/// The imports, health and Spotify routes, in the group of each handler's
+/// caller extractor. The Spotify OAuth callback is public: it is
 /// state-token identified, exactly like v2's ungated route.
-pub fn imports_callback_router(deps: ImportsDeps) -> axum::Router {
-    axum::Router::new()
-        .route("/acquire/spotify/auth/callback", get(spotify_callback))
-        .with_state(deps)
+pub fn routes() -> Routes<ImportsDeps> {
+    Routes::new()
+        .admin(routes!(get_lidarr_config, put_lidarr_config))
+        .admin(routes!(test_lidarr))
+        .admin(routes!(list_lidarr_artists))
+        .admin(routes!(import_lidarr))
+        .admin(routes!(get_spotify_settings, put_spotify_settings))
+        .admin(routes!(get_spotify_redirect_uri))
+        .user(routes!(get_spotify_auth_url))
+        .public(routes!(spotify_callback))
+        .user(routes!(list_spotify_playlists))
+        .user(routes!(import_spotify_playlist))
+        .user(routes!(get_spotify_job))
+        .user(routes!(disconnect_spotify))
+        .user(routes!(get_health))
+        .user(routes!(get_slskd_status))
+        .admin(routes!(get_sabnzbd_status))
 }
 
 /// The callback at its v2 path, at full path (not nested under `/api/v3`).

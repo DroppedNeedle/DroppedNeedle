@@ -2,13 +2,12 @@
 //! collections, platform.
 //!
 //! Each area owns its handlers, services, and state; this module only
-//! composes them. [`ReadsSetup`] is the single bundle `create_app` mounts:
-//! [`ReadsSetup::gated_router`] plus [`ReadsSetup::search_router`] nest
-//! inside the deny-by-default session gate (search carries full `/api/v3`
-//! paths, so it merges at the router root instead of under the nest), while
-//! [`ReadsSetup::wrapped_router`] mounts under `/api/v3` outside the gate
-//! with only its `X-Wrapped-API-Key` extractor. Sessions never satisfy the
-//! wrapped routes and the wrapped key never satisfies the session gate.
+//! composes them. [`ReadsSetup`] is the single bundle `create_app` mounts,
+//! each area's routes with the state the bundle holds for it. Every route
+//! sits behind the session gate except the wrapped trio, which mounts in
+//! its own-credential group with only its `X-Wrapped-API-Key` extractor.
+//! Sessions never satisfy the wrapped routes and the wrapped key never
+//! satisfies the session gate.
 
 pub mod catalog;
 pub mod collections;
@@ -20,8 +19,6 @@ pub mod search;
 pub mod youtube;
 
 use std::sync::Arc;
-
-use axum::Router;
 
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::ids::IdGenerator;
@@ -220,34 +217,6 @@ impl ReadsSetup {
         self.search.service = self.search.service.clone().with_remote(catalog.clone());
         self.catalog = Some(catalog::CatalogDeps { catalog });
         self
-    }
-
-    /// Relative-path routers for nesting under `/api/v3` inside the session
-    /// gate.
-    pub fn gated_router(&self) -> Router {
-        let router = Router::new()
-            .merge(library::library_router(self.library.clone()))
-            .merge(discover::reads_router(self.discover.clone()))
-            .merge(collections::collections_routes(self.collections.clone()))
-            .merge(platform::session_router(&self.platform))
-            .merge(youtube::router(self.youtube.clone()));
-        match &self.catalog {
-            Some(deps) => router.merge(catalog::router(deps.clone())),
-            None => router,
-        }
-    }
-
-    /// Full-path search router. It already carries the `/api/v3` prefix, so
-    /// the app merges it at the gated router root instead of under the nest.
-    pub fn search_router(&self) -> Router {
-        search::router(self.search.clone())
-    }
-
-    /// Key-gated wrapped router. The app nests this under `/api/v3` outside
-    /// the session middleware: the shared secret is the only credential and
-    /// must never ride the session allowlist (allowlisted means public).
-    pub fn wrapped_router(&self) -> Router {
-        platform::wrapped_router(&self.platform)
     }
 }
 

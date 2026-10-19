@@ -17,14 +17,13 @@
 //! [`ArtworkService`](super::artwork::ArtworkService).
 
 use axum::{
-    Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::get,
 };
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidQuery;
+use droppedneedle_kernel::mount::{Routes, routes};
 use futures_util::future::BoxFuture;
 use serde::Deserialize;
 
@@ -264,17 +263,13 @@ impl CoversState {
     }
 }
 
-/// Cover routes, relative paths for nesting under `/api/v3`.
-pub fn routes(state: CoversState) -> Router {
-    Router::new()
-        .route(
-            "/covers/release-group/{release_group_id}",
-            get(cover_from_release_group),
-        )
-        .route("/covers/release/{release_id}", get(cover_from_release))
-        .route("/covers/artist/{artist_id}", get(artist_cover))
-        .route("/library/albums/{id}/artwork", get(album_artwork))
-        .with_state(state)
+/// Cover routes, for any signed-in user.
+pub fn routes() -> Routes<CoversState> {
+    Routes::new()
+        .user(routes!(cover_from_release_group))
+        .user(routes!(cover_from_release))
+        .user(routes!(artist_cover))
+        .user(routes!(album_artwork))
 }
 
 /// `size` query for the release cover routes.

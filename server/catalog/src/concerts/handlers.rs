@@ -3,12 +3,7 @@
 //!
 //! Every route is a plain signed-in-user route that takes `User`.
 
-use axum::{
-    Json, Router,
-    extract::State,
-    http::StatusCode,
-    routing::{get, post},
-};
+use axum::{Json, extract::State, http::StatusCode};
 
 use super::models::{
     CitySearchQuery, CitySearchResponse, ConcertsResponse, EventCitiesResponse, EventCitiesUpdate,
@@ -18,6 +13,7 @@ use crate::reads::collections::models::UnseenCountResponse;
 use droppedneedle_auth::User;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 
 impl From<ConcertsError> for ApiError {
     fn from(error: ConcertsError) -> Self {
@@ -37,18 +33,14 @@ impl From<ConcertsError> for ApiError {
 
 type HttpResult<T> = Result<Json<T>, ApiError>;
 
-/// The concerts routes, relative to `/api/v3`.
-pub fn router(service: ConcertsService) -> Router {
-    Router::new()
-        .route("/following/concerts", get(list_concerts))
-        .route(
-            "/following/concerts/cities",
-            get(list_event_cities).put(replace_event_cities),
-        )
-        .route("/following/concerts/city-search", get(search_cities))
-        .route("/following/concerts/unseen-count", get(unseen_concerts))
-        .route("/following/concerts/seen", post(mark_concerts_seen))
-        .with_state(service)
+/// The concerts routes, for any signed-in user.
+pub fn routes() -> Routes<ConcertsService> {
+    Routes::new()
+        .user(routes!(list_concerts))
+        .user(routes!(list_event_cities, replace_event_cities))
+        .user(routes!(search_cities))
+        .user(routes!(unseen_concerts))
+        .user(routes!(mark_concerts_seen))
 }
 
 /// Upcoming gigs for the caller's followed artists in their saved cities,

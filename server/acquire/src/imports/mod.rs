@@ -16,8 +16,8 @@
 //! holds the slskd/Usenet smoke plus the per-source release gates,
 //! and `handlers` owns the native routes; the loopback mock servers the
 //! tests run against live in the testkit crate. The app mounts
-//! [`handlers::imports_gated_router`] inside the session gate and the
-//! OAuth callback outside it.
+//! [`handlers::routes`]: the OAuth callback in the public group, the rest
+//! behind the session gate.
 
 pub mod error;
 pub mod handlers;

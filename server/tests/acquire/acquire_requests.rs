@@ -138,7 +138,7 @@ async fn ask(state: &RequestsState, who: Who, mbid: &str) -> (StatusCode, Value)
     call(
         state,
         Method::POST,
-        "/requests/albums",
+        "/api/v3/requests/albums",
         Some(who),
         Some(json!({"musicbrainz_id": mbid, "artist": "Artist", "album": "Album"})),
     )
@@ -198,25 +198,39 @@ async fn requests_and_approvals_survive_a_rebuild() {
     let (_, approvals) = call(
         &after,
         Method::GET,
-        "/requests/approvals",
+        "/api/v3/requests/approvals",
         Some(ADMIN),
         None,
     )
     .await;
     assert_eq!(keys(&approvals), vec![MBID_A.to_owned()]);
-    let (_, bobs) = call(&after, Method::GET, "/requests/active", Some(BOB), None).await;
+    let (_, bobs) = call(
+        &after,
+        Method::GET,
+        "/api/v3/requests/active",
+        Some(BOB),
+        None,
+    )
+    .await;
     assert_eq!(keys(&bobs), vec![MBID_B.to_owned()]);
     assert_eq!(bobs["items"][0]["requester_count"], 1);
     let (_, count) = call(
         &after,
         Method::GET,
-        "/requests/approvals/count",
+        "/api/v3/requests/approvals/count",
         Some(ADMIN),
         None,
     )
     .await;
     assert_eq!(count["count"], 2, "one album ask plus one follow approval");
-    let (_, wanted) = call(&after, Method::GET, "/requests/wanted", Some(ADA), None).await;
+    let (_, wanted) = call(
+        &after,
+        Method::GET,
+        "/api/v3/requests/wanted",
+        Some(ADA),
+        None,
+    )
+    .await;
     assert_eq!(keys(&wanted), vec![MBID_C.to_owned()]);
 }
 
@@ -226,7 +240,7 @@ async fn approval_dispatches_and_the_landing_imports() {
     let (state, _db, dispatch) = setup().await;
     ask(&state, ADA, MBID_A).await;
     assert!(dispatch.take_calls().is_empty());
-    let uri = format!("/requests/approvals/{MBID_A}/approve");
+    let uri = format!("/api/v3/requests/approvals/{MBID_A}/approve");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let calls = dispatch.take_calls();
@@ -238,9 +252,23 @@ async fn approval_dispatches_and_the_landing_imports() {
     assert!(dispatch.take_calls().is_empty());
 
     dispatch.land("task-1");
-    let (_, active) = call(&state, Method::GET, "/requests/active", Some(ADA), None).await;
+    let (_, active) = call(
+        &state,
+        Method::GET,
+        "/api/v3/requests/active",
+        Some(ADA),
+        None,
+    )
+    .await;
     assert!(keys(&active).is_empty());
-    let (_, history) = call(&state, Method::GET, "/requests/history", Some(ADA), None).await;
+    let (_, history) = call(
+        &state,
+        Method::GET,
+        "/api/v3/requests/history",
+        Some(ADA),
+        None,
+    )
+    .await;
     assert_eq!(history["items"][0]["status"], "imported");
     assert_eq!(history["items"][0]["reviewed_by_name"], "Root");
 }
@@ -254,7 +282,14 @@ async fn duplicate_ask_attaches_a_listener() {
     assert_eq!(status, StatusCode::ACCEPTED);
     assert_eq!(body["message"], "Request already in progress");
     assert_eq!(dispatch.take_calls().len(), 1);
-    let (_, all) = call(&state, Method::GET, "/requests/active", Some(ADMIN), None).await;
+    let (_, all) = call(
+        &state,
+        Method::GET,
+        "/api/v3/requests/active",
+        Some(ADMIN),
+        None,
+    )
+    .await;
     assert_eq!(all["count"], 1);
     assert_eq!(all["items"][0]["task_id"], "task-1");
 }
@@ -269,7 +304,7 @@ async fn batch_dedupes_and_dispatches_new_rows() {
     let (status, body) = call(
         &state,
         Method::POST,
-        "/requests/batches",
+        "/api/v3/requests/batches",
         Some(TRUSTED),
         Some(json!({"items": [item(MBID_A), item(MBID_B), item(MBID_B), item(MBID_C)]})),
     )
@@ -286,7 +321,7 @@ async fn cancel_matrix() {
     let (state, _db, dispatch) = setup().await;
     ask(&state, TRUSTED, MBID_A).await;
     ask(&state, BOB, MBID_A).await;
-    let uri = format!("/requests/active/{MBID_A}");
+    let uri = format!("/api/v3/requests/active/{MBID_A}");
     let (status, _) = call(&state, Method::DELETE, &uri, Some(ADA), None).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let (_, detached) = call(&state, Method::DELETE, &uri, Some(BOB), None).await;
@@ -301,7 +336,7 @@ async fn cancel_matrix() {
     let (_, history) = call(
         &state,
         Method::GET,
-        "/requests/history",
+        "/api/v3/requests/history",
         Some(TRUSTED),
         None,
     )
@@ -366,7 +401,14 @@ async fn an_unreadable_download_policy_refuses_requests_until_saved() {
 
     let (status, _) = ask(&state, ADA, MBID_A).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    let (_, history) = call(&state, Method::GET, "/requests/history", Some(ADA), None).await;
+    let (_, history) = call(
+        &state,
+        Method::GET,
+        "/api/v3/requests/history",
+        Some(ADA),
+        None,
+    )
+    .await;
     assert_eq!(history["items"], json!([]));
     assert!(dispatch.take_calls().is_empty());
 
@@ -427,19 +469,26 @@ async fn retry_keeps_approval_provenance() {
     call(
         &state,
         Method::POST,
-        &format!("/requests/approvals/{MBID_B}/reject"),
+        &format!("/api/v3/requests/approvals/{MBID_B}/reject"),
         Some(ADMIN),
         None,
     )
     .await;
     dispatch.fail("task-1");
-    call(&state, Method::POST, "/requests/sync", Some(ADMIN), None).await;
+    call(
+        &state,
+        Method::POST,
+        "/api/v3/requests/sync",
+        Some(ADMIN),
+        None,
+    )
+    .await;
     dispatch.take_calls();
 
     let (_, retried) = call(
         &state,
         Method::POST,
-        &format!("/requests/retry/{MBID_A}"),
+        &format!("/api/v3/requests/retry/{MBID_A}"),
         Some(TRUSTED),
         None,
     )
@@ -450,7 +499,7 @@ async fn retry_keeps_approval_provenance() {
     let (_, rejected) = call(
         &state,
         Method::POST,
-        &format!("/requests/retry/{MBID_B}"),
+        &format!("/api/v3/requests/retry/{MBID_B}"),
         Some(ADA),
         None,
     )
@@ -465,7 +514,7 @@ async fn retry_keeps_approval_provenance() {
 async fn wanted_view_and_actions() {
     let (state, _db, dispatch) = setup().await;
     state.wanted.enrol(watch(MBID_A, "u-ada")).await.unwrap();
-    let stop = format!("/requests/wanted/{MBID_A}/stop");
+    let stop = format!("/api/v3/requests/wanted/{MBID_A}/stop");
     assert_eq!(
         call(&state, Method::POST, &stop, Some(BOB), None).await.0,
         StatusCode::NOT_FOUND
@@ -475,7 +524,7 @@ async fn wanted_view_and_actions() {
     let (_, resumed) = call(
         &state,
         Method::POST,
-        &format!("/requests/wanted/{MBID_A}/resume"),
+        &format!("/api/v3/requests/wanted/{MBID_A}/resume"),
         Some(ADMIN),
         None,
     )
@@ -493,7 +542,14 @@ async fn wanted_view_and_actions() {
 
     ask(&state, TRUSTED, MBID_B).await;
     dispatch.fail("task-1");
-    call(&state, Method::POST, "/requests/sync", Some(ADMIN), None).await;
+    call(
+        &state,
+        Method::POST,
+        "/api/v3/requests/sync",
+        Some(ADMIN),
+        None,
+    )
+    .await;
     dispatch.set_retry(
         "task-1",
         RetrySchedule {
@@ -502,7 +558,14 @@ async fn wanted_view_and_actions() {
             next_retry_at: 1_700_000_900,
         },
     );
-    let (_, wanted) = call(&state, Method::GET, "/requests/wanted", Some(TRUSTED), None).await;
+    let (_, wanted) = call(
+        &state,
+        Method::GET,
+        "/api/v3/requests/wanted",
+        Some(TRUSTED),
+        None,
+    )
+    .await;
     assert_eq!(wanted["retrying"][0]["musicbrainz_id"], MBID_B);
     assert_eq!(wanted["retrying"][0]["retry_count"], 1);
 }
@@ -533,13 +596,13 @@ async fn auto_download_approvals() {
     let (_, count) = call(
         &state,
         Method::GET,
-        "/requests/approvals/count",
+        "/api/v3/requests/approvals/count",
         Some(ADMIN),
         None,
     )
     .await;
     assert_eq!(count["count"], 2, "one single plus one batch");
-    let approve = format!("/requests/auto-download-approvals/u-ada/{ARTIST}/approve");
+    let approve = format!("/api/v3/requests/auto-download-approvals/u-ada/{ARTIST}/approve");
     assert_eq!(
         call(&state, Method::POST, &approve, Some(ADA), None)
             .await
@@ -553,7 +616,7 @@ async fn auto_download_approvals() {
     let (_, rejected) = call(
         &state,
         Method::POST,
-        "/requests/auto-download-approval-batches/batch-1/reject",
+        "/api/v3/requests/auto-download-approval-batches/batch-1/reject",
         Some(ADMIN),
         None,
     )
@@ -675,7 +738,7 @@ async fn personal_mix_grant_build_and_refresh() {
         hooks.auto_request_state("u-ada", "user", true).await,
         "pending"
     );
-    let approve = "/requests/personal-mix-approvals/u-ada/approve";
+    let approve = "/api/v3/requests/personal-mix-approvals/u-ada/approve";
     assert_eq!(
         call(&state, Method::POST, approve, Some(ADMIN), None)
             .await
@@ -702,7 +765,7 @@ async fn personal_mix_grant_build_and_refresh() {
     let again = builder.build_for_user("u-ada", false).await.unwrap();
     assert_eq!(again.skipped, Some(SkipReason::Fresh));
 
-    let revoke = "/requests/personal-mix-approvals/u-ada/revoke";
+    let revoke = "/api/v3/requests/personal-mix-approvals/u-ada/revoke";
     assert_eq!(
         call(&state, Method::POST, revoke, Some(ADMIN), None)
             .await
@@ -714,7 +777,7 @@ async fn personal_mix_grant_build_and_refresh() {
         "revoke turns the toggle off"
     );
 
-    let refresh = "/requests/personal-mix/refresh";
+    let refresh = "/api/v3/requests/personal-mix/refresh";
     assert_eq!(
         call(&state, Method::POST, refresh, Some(ADA), None).await.1["status"],
         "started"
@@ -740,7 +803,7 @@ async fn history_pages_and_clears() {
     let (_, page) = call(
         &state,
         Method::GET,
-        "/requests/history?page=2&page_size=2",
+        "/api/v3/requests/history?page=2&page_size=2",
         Some(TRUSTED),
         None,
     )
@@ -749,7 +812,7 @@ async fn history_pages_and_clears() {
     assert_eq!(page["total_pages"], 2);
     assert_eq!(page["items"].as_array().unwrap().len(), 1);
 
-    let clear = format!("/requests/history/{MBID_A}");
+    let clear = format!("/api/v3/requests/history/{MBID_A}");
     assert_eq!(
         call(&state, Method::DELETE, &clear, Some(ADA), None)
             .await
@@ -762,12 +825,19 @@ async fn history_pages_and_clears() {
             .1["success"],
         true
     );
-    let (_, bobs) = call(&state, Method::GET, "/requests/history", Some(BOB), None).await;
+    let (_, bobs) = call(
+        &state,
+        Method::GET,
+        "/api/v3/requests/history",
+        Some(BOB),
+        None,
+    )
+    .await;
     assert_eq!(bobs["total"], 0, "hidden from Bob only");
     let (_, owners) = call(
         &state,
         Method::GET,
-        "/requests/history",
+        "/api/v3/requests/history",
         Some(TRUSTED),
         None,
     )
@@ -777,7 +847,7 @@ async fn history_pages_and_clears() {
     let (_, owners) = call(
         &state,
         Method::GET,
-        "/requests/history",
+        "/api/v3/requests/history",
         Some(TRUSTED),
         None,
     )
@@ -790,15 +860,22 @@ async fn history_pages_and_clears() {
 #[tokio::test]
 async fn auth_and_envelope_posture() {
     let (state, _db, _dispatch) = setup().await;
-    let (status, body) = call(&state, Method::GET, "/requests/active", None, None).await;
+    let (status, body) = call(&state, Method::GET, "/api/v3/requests/active", None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body["error"]["code"], "UNAUTHORIZED");
-    let (status, _) = call(&state, Method::GET, "/requests/approvals", Some(ADA), None).await;
+    let (status, _) = call(
+        &state,
+        Method::GET,
+        "/api/v3/requests/approvals",
+        Some(ADA),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let (status, body) = call(
         &state,
         Method::POST,
-        "/requests/albums",
+        "/api/v3/requests/albums",
         Some(ADA),
         Some(json!({"musicbrainz_id": "not-an-mbid", "artist": "A", "album": "B"})),
     )
@@ -987,7 +1064,7 @@ async fn edition_setup() -> (RequestsState, AcquireDb, Arc<ScriptedDispatch>) {
 #[tokio::test]
 async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
     let (state, _db, dispatch) = edition_setup().await;
-    let asked = format!("/albums/{MBID_A}/edition/acquire?album_id=al1");
+    let asked = format!("/api/v3/albums/{MBID_A}/edition/acquire?album_id=al1");
     let uri = format!("{asked}&replace_versions=false");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -1133,7 +1210,7 @@ async fn edition_acquire_without_a_plan_fetches_for_the_named_copy() {
     .await
     .unwrap();
     assert!(state.edition_plans.set(Arc::new(NoPlan)).is_ok());
-    let uri = format!("/albums/{MBID_A}/edition/acquire?album_id=al1");
+    let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire?album_id=al1");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let calls = dispatch.take_calls();
@@ -1172,7 +1249,7 @@ async fn edition_acquire_is_held_while_no_source_is_ready() {
             })
             .is_ok()
     );
-    let uri = format!("/albums/{MBID_A}/edition/acquire?album_id=al1");
+    let uri = format!("/api/v3/albums/{MBID_A}/edition/acquire?album_id=al1");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], "started", "{body}");

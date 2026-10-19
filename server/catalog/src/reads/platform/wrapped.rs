@@ -11,23 +11,24 @@
 //! Unknown users answer 200 with an empty `has_data: false` payload (v2
 //! `get_user_wrapped` rule kept, display name falls back to the user id) -
 //! never 404. These routes take no session: the shared secret is the only
-//! credential, so they mount outside the session middleware.
+//! credential, so they mount in their own-credential group, outside the
+//! session gate.
 //!
 //! The error envelope mirrors `droppedneedle_kernel::error` exactly.
 
 use std::sync::Arc;
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{FromRequestParts, Path, State},
     http::{HeaderMap, request::Parts},
-    routing::get,
 };
 use futures_util::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
 use droppedneedle_auth::session::tokens::constant_time_eq;
 use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::mount::{OwnCredential, Routes, routes};
 use droppedneedle_kernel::runtime_config::{Live, secret_sections::WrappedSettings};
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -333,16 +334,15 @@ impl WrappedState {
     }
 }
 
-/// Wrapped routes, relative paths for nesting under `/api/v3`.
-/// Mount outside the session middleware: the shared secret is the only
-/// credential and must never ride the session allowlist (allowlisted means
-/// public, which these routes are not).
-pub fn routes(state: WrappedState) -> Router {
-    Router::new()
-        .route("/wrapped/users", get(get_wrapped_users))
-        .route("/wrapped/user/{user_id}", get(get_wrapped_user))
-        .route("/wrapped/server", get(get_wrapped_server))
-        .with_state(state)
+/// Wrapped routes. The shared secret, checked by [`WrappedKey`], is the
+/// only credential: they never pass the session gate and never ride the
+/// session allowlist (allowlisted means public, which these routes are
+/// not).
+pub fn routes() -> Routes<WrappedState> {
+    Routes::new()
+        .own_credential(OwnCredential::WrappedKey, routes!(get_wrapped_users))
+        .own_credential(OwnCredential::WrappedKey, routes!(get_wrapped_user))
+        .own_credential(OwnCredential::WrappedKey, routes!(get_wrapped_server))
 }
 
 /// Key check, v2 `verify_wrapped_api_key` semantics: the header name is

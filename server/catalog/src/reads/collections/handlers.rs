@@ -1,7 +1,7 @@
 //! Collections handlers. Thin: extract, call the service, render.
 //!
 //! Utoipa annotations carry the full `/api/v3` paths for the contract
-//! document; [`super::collections_routes`] mounts them relative to it.
+//! document and for [`super::routes`], which mounts them.
 
 use axum::{
     Json,

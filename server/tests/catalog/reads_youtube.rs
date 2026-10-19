@@ -54,7 +54,7 @@ async fn youtube_links_journey() {
         )),
     );
     let app = with_test_principal(
-        Router::new().nest("/api/v3", youtube::router(links)),
+        youtube::routes().with_state(links).into_router(),
         test_principal("u-ada", Role::User, "sess-test", SessionKind::Standard),
     );
 

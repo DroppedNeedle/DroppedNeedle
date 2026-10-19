@@ -14,10 +14,9 @@
 use std::sync::Arc;
 
 use axum::{
-    Json, Router,
-    extract::{Path, State},
+    Json,
+    extract::{FromRef, Path, State},
     response::IntoResponse,
-    routing,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -36,6 +35,7 @@ use crate::worker::{DownloadWorker, ReimportError};
 use droppedneedle_auth::{Admin, Principal, User};
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 
 /// Reimport outcome: the task as the import left it.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -766,118 +766,78 @@ pub async fn reimport_task_handler(
     }))
 }
 
-/// Queue routes. The app mounts this inside the session gate.
-pub fn downloads_core_routes(worker: Arc<DownloadWorker>, upgrades: Upgrades) -> Router {
-    let review = ReviewState {
-        held: HeldImports::new(worker.clone()),
-        upgrades,
-    };
-    let state = DownloadsState {
-        queue: DownloadQueue::new(worker.clone()),
-        worker,
-    };
-    let review = Router::new()
-        .route(
-            "/downloads/held",
-            routing::get(held_http::list_held_handler),
-        )
-        .route(
-            "/downloads/held/reverify",
-            routing::post(held_http::reverify_bulk_handler),
-        )
-        .route(
-            "/downloads/held/{held_id}/import",
-            routing::post(held_http::import_held_handler),
-        )
-        .route(
-            "/downloads/held/{held_id}/discard",
-            routing::post(held_http::discard_held_handler),
-        )
-        .route(
-            "/downloads/held/{held_id}/reverify",
-            routing::post(held_http::reverify_held_handler),
-        )
-        .route(
-            "/downloads/held/{held_id}/audio",
-            routing::get(held_http::held_audio_handler),
-        )
-        .route(
-            "/downloads/held/management/{source_task_id}/retry",
-            routing::post(held_http::retry_local_handler),
-        )
-        .route(
-            "/downloads/held/management/{source_task_id}/discard",
-            routing::post(held_http::discard_local_handler),
-        )
-        .route(
-            "/downloads/held/verdict/{source_task_id}/discard",
-            routing::post(held_http::discard_verdict_handler),
-        )
-        .route(
-            "/downloads/cutoff-unmet",
-            routing::get(held_http::cutoff_unmet_handler),
-        )
-        .route(
-            "/downloads/upgrade/album",
-            routing::post(held_http::upgrade_album_handler),
-        )
-        .route(
-            "/downloads/upgrade/track",
-            routing::post(held_http::upgrade_track_handler),
-        )
-        .with_state(review);
-    Router::new()
-        .route("/downloads/tasks", routing::get(list_tasks_handler))
-        .route("/downloads/tasks/{task_id}", routing::get(get_task_handler))
-        .route(
-            "/downloads/tasks/{task_id}/files",
-            routing::get(task_files_handler),
-        )
-        .route(
-            "/downloads/tasks/{task_id}/cancel",
-            routing::post(cancel_task_handler),
-        )
-        .route(
-            "/downloads/tasks/{task_id}/next-source",
-            routing::post(next_source_handler),
-        )
-        .route(
-            "/downloads/tasks/{task_id}/retry",
-            routing::post(retry_task_handler),
-        )
-        .route(
-            "/downloads/tasks/{task_id}/reimport",
-            routing::post(reimport_task_handler),
-        )
-        .route("/downloads/clear", routing::post(clear_handler))
-        .route(
-            "/downloads/stop-all-retries",
-            routing::post(stop_all_retries_handler),
-        )
-        .route(
-            "/downloads/retry-all-failed",
-            routing::post(retry_all_failed_handler),
-        )
-        .route(
-            "/downloads/activity-summary",
-            routing::get(activity_summary_handler),
-        )
-        .route(
-            "/downloads/quarantine",
-            routing::get(list_quarantine_handler),
-        )
-        .route(
-            "/downloads/quarantine/{quarantine_id}",
-            routing::delete(delete_quarantine_handler),
-        )
-        .with_state(state)
-        .merge(review)
+/// What the queue and held-import routes read, built once.
+#[derive(Clone)]
+pub struct DownloadsRoutes {
+    queue: DownloadsState,
+    review: ReviewState,
+}
+
+impl DownloadsRoutes {
+    /// The queue over `worker`, upgrades through `upgrades`.
+    pub fn new(worker: Arc<DownloadWorker>, upgrades: Upgrades) -> Self {
+        Self {
+            review: ReviewState {
+                held: HeldImports::new(worker.clone()),
+                upgrades,
+            },
+            queue: DownloadsState {
+                queue: DownloadQueue::new(worker.clone()),
+                worker,
+            },
+        }
+    }
+}
+
+impl FromRef<DownloadsRoutes> for DownloadsState {
+    fn from_ref(routes: &DownloadsRoutes) -> Self {
+        routes.queue.clone()
+    }
+}
+
+impl FromRef<DownloadsRoutes> for ReviewState {
+    fn from_ref(routes: &DownloadsRoutes) -> Self {
+        routes.review.clone()
+    }
+}
+
+/// Queue, held-import and upgrade routes, in the group of each handler's
+/// caller extractor.
+pub fn routes() -> Routes<DownloadsRoutes> {
+    use held_http::*;
+
+    Routes::new()
+        .user(routes!(list_held_handler))
+        .user(routes!(reverify_bulk_handler))
+        .user(routes!(import_held_handler))
+        .user(routes!(discard_held_handler))
+        .user(routes!(reverify_held_handler))
+        .user(routes!(held_audio_handler))
+        .admin(routes!(retry_local_handler))
+        .admin(routes!(discard_local_handler))
+        .user(routes!(discard_verdict_handler))
+        .curator(routes!(cutoff_unmet_handler))
+        .curator(routes!(upgrade_album_handler))
+        .curator(routes!(upgrade_track_handler))
+        .user(routes!(list_tasks_handler))
+        .user(routes!(get_task_handler))
+        .user(routes!(task_files_handler))
+        .user(routes!(cancel_task_handler))
+        .user(routes!(next_source_handler))
+        .user(routes!(retry_task_handler))
+        .admin(routes!(reimport_task_handler))
+        .user(routes!(clear_handler))
+        .user(routes!(stop_all_retries_handler))
+        .user(routes!(retry_all_failed_handler))
+        .user(routes!(activity_summary_handler))
+        .admin(routes!(list_quarantine_handler))
+        .admin(routes!(delete_quarantine_handler))
 }
 
 /// Queue routes over default settings (upgrades off), for tests. The
 /// settings sit beside the worker's scratch database.
 #[cfg(any(test, feature = "test-support"))]
-pub fn downloads_router(worker: Arc<DownloadWorker>) -> Result<Router, String> {
+pub fn downloads_router(worker: Arc<DownloadWorker>) -> Result<axum::Router, String> {
     let db = worker.journal().db().clone();
     let dir = db
         .path()
@@ -890,7 +850,9 @@ pub fn downloads_router(worker: Arc<DownloadWorker>) -> Result<Router, String> {
         settings.live(),
         Arc::new(crate::flows::seams::ScriptedDownloads::new()),
     );
-    Ok(downloads_core_routes(worker, upgrades))
+    Ok(routes()
+        .with_state(DownloadsRoutes::new(worker, upgrades))
+        .into_router())
 }
 
 // Manual album searches.
@@ -1124,29 +1086,12 @@ pub async fn cancel_search_handler(
     Ok(Json(DownloadActionResponse { success: true }))
 }
 
-/// Manual search routes without an auth layer, mounted beside the queue
-/// routes inside the session gate.
-pub fn search_core_routes(search: Arc<SearchJobs>) -> Router {
-    Router::new()
-        .route(
-            "/downloads/search/album",
-            routing::post(search_album_handler),
-        )
-        .route(
-            "/downloads/search/{job_id}",
-            routing::get(search_job_handler),
-        )
-        .route(
-            "/downloads/search/{job_id}/pick",
-            routing::post(pick_candidate_handler),
-        )
-        .route(
-            "/downloads/search/{job_id}/dismiss",
-            routing::post(dismiss_search_handler),
-        )
-        .route(
-            "/downloads/search/{job_id}/cancel",
-            routing::post(cancel_search_handler),
-        )
-        .with_state(search)
+/// Manual search routes, for any signed-in user.
+pub fn search_routes() -> Routes<Arc<SearchJobs>> {
+    Routes::new()
+        .user(routes!(search_album_handler))
+        .user(routes!(search_job_handler))
+        .user(routes!(pick_candidate_handler))
+        .user(routes!(dismiss_search_handler))
+        .user(routes!(cancel_search_handler))
 }

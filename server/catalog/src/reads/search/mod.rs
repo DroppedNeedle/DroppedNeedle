@@ -6,9 +6,8 @@
 //! through the [`catalog`](crate::reads::catalog) service; enrichment runs
 //! behind the [`ports::EnrichmentPort`] seam.
 //!
-//! Wiring: [`router`] is mounted under `/api/v3` inside the session gate
-//! via `ReadsSetup::search_router`, with the handler paths and model
-//! schemas in the utoipa document. Auth is the deny-by-default middleware
+//! Wiring: the app mounts [`routes`] inside the session gate, which also
+//! registers the paths in the API document. Auth is the session gate
 //! alone: every role sees the same catalog.
 
 pub mod error;
@@ -19,10 +18,7 @@ pub mod service;
 
 use std::sync::Arc;
 
-use axum::{
-    Router,
-    routing::{get, post},
-};
+use droppedneedle_kernel::mount::{Routes, routes};
 
 /// Default per-bucket cap for unified search, kept from v2.
 pub const DEFAULT_BUCKET_LIMIT: u32 = 10;
@@ -57,15 +53,15 @@ impl SearchDeps {
     }
 }
 
-/// Mount the search routes. Registration order matters: the static
-/// `suggest` and `enrich/batch` segments must win over the `{bucket}`
-/// capture, which Axum's router guarantees by preferring static segments.
-/// The session gate and 405 fallback are applied by the app, not here.
-pub fn router(deps: SearchDeps) -> Router {
-    Router::new()
-        .route("/api/v3/search", get(handlers::search))
-        .route("/api/v3/search/suggest", get(handlers::suggest))
-        .route("/api/v3/search/enrich/batch", post(handlers::enrich_batch))
-        .route("/api/v3/search/{bucket}", get(handlers::search_bucket))
-        .with_state(deps)
+/// The search routes, for any signed-in user. The static `suggest` and
+/// `enrich/batch` segments win over the `{bucket}` capture: Axum's router
+/// prefers static segments.
+pub fn routes() -> Routes<SearchDeps> {
+    use handlers::*;
+
+    Routes::new()
+        .user(routes!(search))
+        .user(routes!(suggest))
+        .user(routes!(enrich_batch))
+        .user(routes!(search_bucket))
 }

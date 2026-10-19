@@ -387,9 +387,10 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRi
     let scope = TestApp::start("reads-catalog").await;
     let app = scope
         .request_scope(
-            axum::Router::new()
-                .nest("/api/v3", catalog::router(CatalogDeps { catalog }))
-                .merge(search::router(search))
+            catalog::routes()
+                .with_state(CatalogDeps { catalog })
+                .into_router()
+                .merge(search::routes().with_state(search).into_router())
                 .layer(middleware::from_fn_with_state(
                     rig.session_gate(),
                     require_session,

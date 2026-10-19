@@ -210,7 +210,9 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
     )
     .with_events(recorder.clone());
     let app = with_test_principal(
-        setup.gated_router(),
+        droppedneedle_catalog::concerts::handlers::routes()
+            .with_state(setup.service().expect("wired concerts"))
+            .into_router(),
         test_principal("u1", Role::User, "s1", SessionKind::Standard),
     );
     let stop = droppedneedle_kernel::jobs::CancellationToken::new();
@@ -231,7 +233,7 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
     assert_eq!(notified, [("u1".to_owned(), 3), ("u2".to_owned(), 3)]);
 
     // No cities yet: nothing to show, nothing unseen.
-    let (status, body) = call(&app, "GET", "/following/concerts", None).await;
+    let (status, body) = call(&app, "GET", "/api/v3/following/concerts", None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["configured"], true);
     assert_eq!(body["total"], 0);
@@ -239,7 +241,7 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
     let (status, body) = call(
         &app,
         "PUT",
-        "/following/concerts/cities",
+        "/api/v3/following/concerts/cities",
         Some(json!({"items": [
             {"city_name": " Liverpool ", "latitude": 53.41, "longitude": -2.98, "country_code": "GB"},
             {"city_name": "", "latitude": 1.0, "longitude": 1.0}
@@ -253,7 +255,7 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
                 "radius_km": 30.0, "country_code": "GB"}])
     );
 
-    let (status, body) = call(&app, "GET", "/following/concerts", None).await;
+    let (status, body) = call(&app, "GET", "/api/v3/following/concerts", None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let items = body["items"].as_array().unwrap();
     assert_eq!(body["total"], 2, "{body}");
@@ -267,11 +269,11 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
     assert_eq!(items[1]["artist_mbid"], MBID);
     assert_eq!(items[1]["distance_km"], 1.1);
 
-    let (_, body) = call(&app, "GET", "/following/concerts/unseen-count", None).await;
+    let (_, body) = call(&app, "GET", "/api/v3/following/concerts/unseen-count", None).await;
     assert_eq!(body, json!({"count": 2}));
-    let (_, body) = call(&app, "POST", "/following/concerts/seen", None).await;
+    let (_, body) = call(&app, "POST", "/api/v3/following/concerts/seen", None).await;
     assert_eq!(body, json!({"count": 0}));
-    let (_, body) = call(&app, "GET", "/following/concerts/unseen-count", None).await;
+    let (_, body) = call(&app, "GET", "/api/v3/following/concerts/unseen-count", None).await;
     assert_eq!(body, json!({"count": 0}));
 
     // Second sweep: resolutions come from the cache and the vanished
@@ -282,7 +284,7 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
     let (_, second) = sweep.run(None, &stop).await.unwrap();
     assert_eq!((second.events_new, second.errors), (1, 0));
     assert_eq!(attraction_calls.load(Ordering::SeqCst), 1);
-    let (_, body) = call(&app, "GET", "/following/concerts", None).await;
+    let (_, body) = call(&app, "GET", "/api/v3/following/concerts", None).await;
     let ids: Vec<&str> = body["items"]
         .as_array()
         .unwrap()
@@ -290,11 +292,17 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
         .filter_map(|item| item["source_event_id"].as_str())
         .collect();
     assert_eq!(ids, ["sk-cavern", "sk-o2"]);
-    let (_, body) = call(&app, "GET", "/following/concerts/unseen-count", None).await;
+    let (_, body) = call(&app, "GET", "/api/v3/following/concerts/unseen-count", None).await;
     assert_eq!(body, json!({"count": 1}));
 
     // Bad input stays a 400 in the shared envelope.
-    let (status, body) = call(&app, "GET", "/following/concerts/city-search?q=x", None).await;
+    let (status, body) = call(
+        &app,
+        "GET",
+        "/api/v3/following/concerts/city-search?q=x",
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["code"], "INVALID_INPUT");
 }

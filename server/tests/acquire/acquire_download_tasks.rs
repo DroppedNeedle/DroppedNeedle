@@ -139,17 +139,37 @@ async fn send(journal: &Arc<Journal>, (req, who): (Request<Body>, Who)) -> (Stat
 #[tokio::test]
 async fn reimport_guards_role_link_and_client() {
     let journal = journal().await;
-    let (status, _) = send(&journal, post("/downloads/tasks/t-linked/reimport", USER)).await;
+    let (status, _) = send(
+        &journal,
+        post("/api/v3/downloads/tasks/t-linked/reimport", USER),
+    )
+    .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
-    let (status, _) = send(&journal, post("/downloads/tasks/t-bare/reimport", ADMIN)).await;
+    let (status, _) = send(
+        &journal,
+        post("/api/v3/downloads/tasks/t-bare/reimport", ADMIN),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = send(&journal, post("/downloads/tasks/t-live/reimport", ADMIN)).await;
+    let (status, _) = send(
+        &journal,
+        post("/api/v3/downloads/tasks/t-live/reimport", ADMIN),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = send(&journal, post("/downloads/tasks/nope/reimport", ADMIN)).await;
+    let (status, _) = send(
+        &journal,
+        post("/api/v3/downloads/tasks/nope/reimport", ADMIN),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    let (status, _) = send(&journal, post("/downloads/tasks/t-linked/reimport", ADMIN)).await;
+    let (status, _) = send(
+        &journal,
+        post("/api/v3/downloads/tasks/t-linked/reimport", ADMIN),
+    )
+    .await;
     assert_eq!(status, StatusCode::CONFLICT);
     let row = journal
         .run("test.read", |store| store.get_task("t-linked"))
@@ -393,7 +413,7 @@ async fn queue_journey_scopes_explains_retries_and_clears() {
         .await
         .unwrap();
 
-    let (status, body) = send(&journal, get("/downloads/tasks", USER)).await;
+    let (status, body) = send(&journal, get("/api/v3/downloads/tasks", USER)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let items = body["items"].as_array().unwrap();
     assert_eq!(items.len(), 2, "own tasks only: {body}");
@@ -401,28 +421,32 @@ async fn queue_journey_scopes_explains_retries_and_clears() {
     assert_eq!(failed["reason"]["code"], "wrong_album");
     assert!(failed["reason"]["action"].as_str().unwrap().len() > 10);
     assert_eq!(failed["decision"]["outcome"], "rejected");
-    let (status, _) = send(&journal, get("/downloads/tasks/q-bob", USER)).await;
+    let (status, _) = send(&journal, get("/api/v3/downloads/tasks/q-bob", USER)).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
-    let (status, _) = send(&journal, get("/downloads/quarantine", USER)).await;
+    let (status, _) = send(&journal, get("/api/v3/downloads/quarantine", USER)).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    let (_, body) = send(&journal, get("/downloads/quarantine", ADMIN)).await;
+    let (_, body) = send(&journal, get("/api/v3/downloads/quarantine", ADMIN)).await;
     assert_eq!(body["items"][0]["username"], "peer");
 
-    let (status, body) = send(&journal, post("/downloads/tasks/q-failed/retry", USER)).await;
+    let (status, body) = send(
+        &journal,
+        post("/api/v3/downloads/tasks/q-failed/retry", USER),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let successor = body["task_id"].as_str().unwrap().to_owned();
-    let (_, body) = send(&journal, get("/downloads/quarantine", ADMIN)).await;
+    let (_, body) = send(&journal, get("/api/v3/downloads/quarantine", ADMIN)).await;
     assert_eq!(body["items"].as_array().map(Vec::len), Some(0));
 
-    let uri = format!("/downloads/tasks/{successor}/cancel");
+    let uri = format!("/api/v3/downloads/tasks/{successor}/cancel");
     let (status, _) = send(&journal, post(&uri, USER)).await;
     assert_eq!(status, StatusCode::OK);
-    let (status, body) = send(&journal, post("/downloads/clear", USER)).await;
+    let (status, body) = send(&journal, post("/api/v3/downloads/clear", USER)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["cleared"], 2, "the done task and the cancelled retry");
 
-    let (_, body) = send(&journal, get("/downloads/activity-summary", USER)).await;
+    let (_, body) = send(&journal, get("/api/v3/downloads/activity-summary", USER)).await;
     assert_eq!(body["failed_count"], 1);
     assert_eq!(body["active_count"], 0);
 }

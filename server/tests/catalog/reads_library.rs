@@ -12,6 +12,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle_auth::users::roles::{Role, SessionKind};
+use library::LibraryDeps;
 use library::memory::{
     FailingCatalog, FailingFavorites, FailingLyrics, MemoryCatalog, MemoryFavorites, MemoryLyrics,
 };
@@ -21,7 +22,6 @@ use library::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, FavoriteReads,
     LibraryCatalog, LyricDoc, LyricsPort, TrackFilter, TrackRecord, TrackSort,
 };
-use library::{LibraryDeps, library_router};
 use serde_json::Value;
 use tower::ServiceExt as _;
 
@@ -226,7 +226,7 @@ const ADA: (&str, Role) = ("user-ada", Role::User);
 
 /// Router signed in as `caller`, or anonymous when None.
 fn app(deps: LibraryDeps, caller: Option<(&str, Role)>) -> Router {
-    let router = library_router(deps);
+    let router = library::routes().with_state(deps).into_router();
     match caller {
         Some((user_id, role)) => with_test_principal(
             router,
@@ -255,27 +255,27 @@ async fn get(app: Router, path: &str) -> (StatusCode, Value) {
 
 /// Every library route with concrete ids. The auth and leak loops walk this.
 const ROUTES: &[&str] = &[
-    "/library/albums",
-    "/library/albums/al1",
-    "/library/albums/al1/tracks",
-    "/library/albums/al1/copies",
-    "/library/artists",
-    "/library/artists/a1",
-    "/library/artists/a1/albums",
-    "/library/artists/a1/appearances",
-    "/library/tracks",
-    "/library/tracks/t1",
-    "/library/tracks/t1/lyrics",
-    "/library/stats",
-    "/library/recently-added",
-    "/library/genres",
-    "/library/genres/rock/tracks",
-    "/local-library/albums",
-    "/local-library/albums/match/rg-first-light",
-    "/local-library/search?q=light",
-    "/local-library/recent",
-    "/local-library/decades",
-    "/local-library/suggestions",
+    "/api/v3/library/albums",
+    "/api/v3/library/albums/al1",
+    "/api/v3/library/albums/al1/tracks",
+    "/api/v3/library/albums/al1/copies",
+    "/api/v3/library/artists",
+    "/api/v3/library/artists/a1",
+    "/api/v3/library/artists/a1/albums",
+    "/api/v3/library/artists/a1/appearances",
+    "/api/v3/library/tracks",
+    "/api/v3/library/tracks/t1",
+    "/api/v3/library/tracks/t1/lyrics",
+    "/api/v3/library/stats",
+    "/api/v3/library/recently-added",
+    "/api/v3/library/genres",
+    "/api/v3/library/genres/rock/tracks",
+    "/api/v3/local-library/albums",
+    "/api/v3/local-library/albums/match/rg-first-light",
+    "/api/v3/local-library/search?q=light",
+    "/api/v3/local-library/recent",
+    "/api/v3/local-library/decades",
+    "/api/v3/local-library/suggestions",
 ];
 
 #[tokio::test]
@@ -330,7 +330,7 @@ async fn suggestions_same_era_pool_tags_era_picks() {
         ),
         Some(ADA),
     );
-    let (status, json) = get(app, "/local-library/suggestions?limit=4&decade=1990").await;
+    let (status, json) = get(app, "/api/v3/local-library/suggestions?limit=4&decade=1990").await;
     assert_eq!(status, StatusCode::OK);
     let suggestions: SuggestionsResponse =
         serde_json::from_value(json).expect("suggestions decode");
@@ -354,16 +354,16 @@ async fn bad_input_stays_in_the_envelope() {
         Some(ADA),
     );
     for path in [
-        "/library/albums?sort=nope",
-        "/library/albums?order=sideways",
-        "/library/albums?limit=0",
-        "/library/albums?limit=abc",
-        "/library/albums?offset=-1",
-        "/library/albums?decade=1995",
-        "/library/artists?scope=nope",
-        "/library/artists?sort=nope",
-        "/library/tracks?sort=nope",
-        "/local-library/suggestions?limit=99",
+        "/api/v3/library/albums?sort=nope",
+        "/api/v3/library/albums?order=sideways",
+        "/api/v3/library/albums?limit=0",
+        "/api/v3/library/albums?limit=abc",
+        "/api/v3/library/albums?offset=-1",
+        "/api/v3/library/albums?decade=1995",
+        "/api/v3/library/artists?scope=nope",
+        "/api/v3/library/artists?sort=nope",
+        "/api/v3/library/tracks?sort=nope",
+        "/api/v3/local-library/suggestions?limit=99",
     ] {
         let (status, json) = get(app.clone(), path).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "for {path}");
@@ -422,7 +422,7 @@ async fn auth_matrix_every_route_401s_anonymous_and_admits_users() {
         ),
         Some(("user-root", Role::Admin)),
     );
-    let (status, _) = get(as_admin, "/library/stats").await;
+    let (status, _) = get(as_admin, "/api/v3/library/stats").await;
     assert_eq!(status, StatusCode::OK);
 }
 

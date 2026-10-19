@@ -130,7 +130,9 @@ impl Rig {
             Some(Arc::new(cover_client(self.archive.clone()))),
             config.live(),
         );
-        covers::routes(CoversState::new(Arc::new(service)))
+        covers::routes()
+            .with_state(CoversState::new(Arc::new(service)))
+            .into_router()
     }
 }
 
@@ -162,7 +164,7 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
 #[tokio::test]
 async fn archive_cover_is_fetched_once_then_served_from_cache() {
     let rig = rig(None).await;
-    let uri = format!("/covers/release-group/{RG}?size=500");
+    let uri = format!("/api/v3/covers/release-group/{RG}?size=500");
     for _ in 0..2 {
         let (status, headers, body) = get(rig.app(true), &uri).await;
         assert_eq!(status, StatusCode::OK);
@@ -198,14 +200,15 @@ async fn embedded_art_from_the_scan_beats_the_archive_when_preferred() {
     let again = store.refresh_album_artwork(&|| false).unwrap();
     assert_eq!(again.checked, 0, "unchanged files are not read again");
 
-    let uri = format!("/covers/release-group/{RG}?size=500");
+    let uri = format!("/api/v3/covers/release-group/{RG}?size=500");
     let (status, headers, body) = get(rig.app(true), &uri).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, embedded);
     assert_eq!(header(&headers, "x-cover-source"), Some("embedded"));
     assert!(rig.archive.calls().is_empty(), "local art needs no fetch");
 
-    let (status, headers, body) = get(rig.app(true), "/library/albums/al1/artwork?v=1").await;
+    let (status, headers, body) =
+        get(rig.app(true), "/api/v3/library/albums/al1/artwork?v=1").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, embedded);
     assert_eq!(
