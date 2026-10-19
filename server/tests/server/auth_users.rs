@@ -420,7 +420,7 @@ async fn breached_passwords_reject_when_screening_is_on() {
         digest.as_str(),
     ]))));
     rig.config
-        .save(SecuritySettings {
+        .save_blocking(SecuritySettings {
             hibp_check: true,
             ..SecuritySettings::default()
         })

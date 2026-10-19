@@ -190,11 +190,8 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         .expect("scratch dir")
         .to_path_buf();
     let config = Arc::new(
-        ConfigStore::open(
-            &dir.join("config.json"),
-            Crypto::from_key_bytes(&[7u8; 32]).expect("key"),
-        )
-        .expect("config"),
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
     );
     let (library, _) = library_at(acquire.db.db(), config);
     let music = dir.join("music");
@@ -472,11 +469,8 @@ async fn held_files_import_as_upgrades_or_discard() {
         .expect("scratch dir")
         .to_path_buf();
     let config = Arc::new(
-        ConfigStore::open(
-            &dir.join("config.json"),
-            Crypto::from_key_bytes(&[7u8; 32]).expect("key"),
-        )
-        .expect("config"),
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
     );
     let (library, _) = library_at(acquire.db.db(), config);
     let music = dir.join("music");
@@ -807,8 +801,8 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
     )
     .expect("manifest");
     let config = Arc::new(
-        ConfigStore::open(
-            &dir.join("plugin-config.json"),
+        ConfigStore::scratch(
+            &dir.join("plugin-config"),
             Crypto::from_key_bytes(&[7u8; 32]).expect("key"),
         )
         .expect("config"),
@@ -918,11 +912,8 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
         .expect("scratch dir")
         .to_path_buf();
     let config = Arc::new(
-        ConfigStore::open(
-            &dir.join("config.json"),
-            Crypto::from_key_bytes(&[7u8; 32]).expect("key"),
-        )
-        .expect("config"),
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
     );
     let (library, _) = library_at(acquire.db.db(), config);
     let music = dir.join("music");
@@ -1208,11 +1199,8 @@ struct JoinRig {
 async fn join_rig(releases: Vec<Release>) -> JoinRig {
     let (acquire, dir, auth) = bare_acquire().await;
     let config = Arc::new(
-        ConfigStore::open(
-            &dir.join("config.json"),
-            Crypto::from_key_bytes(&[7u8; 32]).expect("key"),
-        )
-        .expect("config"),
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
     );
     let (library, _) = library_at(acquire.db.db(), config);
     let music = dir.join("music");

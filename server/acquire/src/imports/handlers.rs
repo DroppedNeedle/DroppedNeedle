@@ -218,7 +218,7 @@ pub async fn put_lidarr_config(
     _admin: Admin,
     ValidJson(body): ValidJson<LidarrConnectionSettings>,
 ) -> Json<LidarrConnectionSettings> {
-    deps.lidarr_settings.save(&body);
+    deps.lidarr_settings.save(&body).await;
     Json(deps.lidarr_settings.get())
 }
 
@@ -321,9 +321,7 @@ pub async fn put_spotify_settings(
     _admin: Admin,
     ValidJson(body): ValidJson<SpotifySettings>,
 ) -> Result<Json<SpotifySettings>, ApiError> {
-    deps.spotify_settings
-        .save(&body)
-        .map_err(|message| ImportsError::InvalidInput { message })?;
+    deps.spotify_settings.save(&body).await?;
     Ok(Json(deps.spotify_settings.get()))
 }
 

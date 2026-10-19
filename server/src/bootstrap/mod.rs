@@ -21,7 +21,7 @@ use thiserror::Error;
 pub use outbound::{Outbound, Port};
 pub use serve::{Background, ServeError, Stopped, bind, serve};
 
-use data_dirs::{BootRefusal, DataDirs, check_bootable};
+use data_dirs::{BootRefusal, DataDirs, check_bootable, refuse_lost_key};
 use jobs::JobsSetup;
 
 use crate::{
@@ -39,7 +39,10 @@ use crate::{
 };
 use droppedneedle_acquire::AcquireSetup;
 use droppedneedle_auth::{
-    federated::MediaLinks, prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup,
+    federated::{MediaLinks, settings::InstallIds},
+    prod::ProdAuth,
+    users::stores::SystemClock,
+    wiring::AuthSetup,
 };
 use droppedneedle_catalog::reads::{
     ReadsInputs, ReadsSetup,
@@ -68,8 +71,12 @@ use droppedneedle_kernel::{
     ids::UuidGenerator,
     jobs::{CancellationToken, Supervisor},
     runtime_config::{
-        ConfigStore, Crypto, crypto::CryptoError, quota::QUOTA_FILE_NAME,
-        secret_sections::ListenBrainzConnection, sections::LyricsSettings,
+        ConfigError, ConfigStore, Crypto, KeyOrigin, LegacyConfig,
+        crypto::{CryptoError, KEY_FILE_NAME},
+        ingest::mark_skip,
+        quota::QUOTA_FILE_NAME,
+        secret_sections::ListenBrainzConnection,
+        sections::LyricsSettings,
     },
 };
 use droppedneedle_library::wiring::LibrarySetup;
@@ -109,7 +116,7 @@ pub enum BootError {
     /// stopped halfway.
     #[error(transparent)]
     DataDir(#[from] BootRefusal),
-    /// The settings file could not be opened.
+    /// The settings could not be opened.
     #[error("settings: {0}")]
     Settings(#[from] droppedneedle_kernel::runtime_config::ConfigError),
     /// One bundle failed to wire or recover.
@@ -219,6 +226,18 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // server from starting, and the server lock refuses a second server.
     let data_lock = DataLock::server(&config.library_db_path)?;
     refuse_foreign_data_dir(&config).await?;
+    // The key comes before the database: a first start that stops early
+    // never leaves a database without its key, and a database whose key is
+    // gone was refused above rather than given a new one.
+    let config_dir = config.config_dir();
+    // A config.json found where no key is yet was not written by this
+    // server: record that it is never to be copied in before the key
+    // exists, so a start that fails before the settings open still skips it.
+    if !config_dir.join(KEY_FILE_NAME).exists() {
+        mark_skip(&config_dir)?;
+    }
+    let (crypto, key_origin) = Crypto::load_or_generate(&config_dir)?;
+    let crypto = Arc::new(crypto);
     let runtime = open_runtime(
         &DbConfig::new(&config.library_db_path).with_shutdown_grace(config.shutdown_grace),
     )
@@ -245,17 +264,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let queues = jobs::QueueSetup::new(db.clone(), &config);
     let web = prepare_web(&config).await?;
 
-    let crypto = Arc::new(Crypto::load_or_generate(&config.config_dir())?);
-    // The store owns its own key handle; the file exists after the line above.
-    let config_store = Arc::new(ConfigStore::open(
-        &config.config_file,
-        Crypto::load(&config.config_dir())?,
-    )?);
-    // A fresh install has no MusicBrainz section; its default mints a source
-    // id, so store it once or every read reports a new source (and clients
-    // keyed on it refetch without end).
-    config_store
-        .seed_default::<droppedneedle_kernel::runtime_config::sections::MusicBrainzSettings>()?;
+    let config_store = Arc::new(open_settings(&db, &config_dir, key_origin).await?);
     let ids = Arc::new(UuidGenerator);
     let clock = Arc::new(SystemClock);
     // One live event hub for the process. Bundles built below publish into
@@ -739,19 +748,62 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     })
 }
 
+/// Open the settings, before anything reads or writes one: the store
+/// copies in a `config.json` this database has never seen (which refuses
+/// while any row exists). Then store the defaults that mint values once: a
+/// fresh install has no MusicBrainz section, and its default mints a source
+/// id, so it is stored once or every read reports a new source (and clients
+/// keyed on it refetch without end); the Plex and Jellyfin install ids
+/// likewise. Each step is safe to run again, so a busy database is waited
+/// out.
+async fn open_settings(
+    db: &droppedneedle_kernel::db::Db,
+    config_dir: &std::path::Path,
+    key_origin: KeyOrigin,
+) -> Result<ConfigStore, BootError> {
+    let legacy = LegacyConfig::at(config_dir, key_origin == KeyOrigin::Minted);
+    let store = wait_out_busy("settings", ConfigError::is_busy, || async {
+        let store = ConfigStore::open(
+            db.clone(),
+            Crypto::load(config_dir).map_err(|error| ConfigError::Database(error.to_string()))?,
+            legacy.clone(),
+        )
+        .await?;
+        store
+            .seed_default::<droppedneedle_kernel::runtime_config::sections::MusicBrainzSettings>()
+            .await?;
+        // A busy database is waited out; any other failure (an install id
+        // section that does not read) leaves the ids to their per-process
+        // fallback rather than blocking every start.
+        match InstallIds::new(Arc::new(store.clone())).ensure().await {
+            Err(error) if error.is_busy() => return Err(error),
+            Err(error) => {
+                tracing::warn!(%error, "cannot store the install ids; using the fallback");
+            }
+            Ok(()) => {}
+        }
+        Ok::<_, ConfigError>(store)
+    })
+    .await?;
+    Ok(store)
+}
+
 /// Refuse a v2 data directory, or one an upgrade left halfway, before the
 /// database is opened, backed up or migrated: migrating would run v3's
-/// schema over the v2 database. Runs under the data lock, so the upgrade
-/// tool cannot be moving files while this looks.
+/// schema over the v2 database. Refuse too a v3 database whose key file is
+/// missing, before a new key is minted. Runs under the data lock, so the
+/// upgrade tool cannot be moving files while this looks.
 async fn refuse_foreign_data_dir(config: &AppConfig) -> Result<(), BootError> {
     let dirs = DataDirs::from_config(config);
-    tokio::task::spawn_blocking(move || check_bootable(&dirs))
-        .await
-        .map_err(|error| BootError::Stage {
-            stage: "data directory check",
-            message: error.to_string(),
-        })?
-        .map_err(BootError::from)
+    tokio::task::spawn_blocking(move || {
+        check_bootable(&dirs).and_then(|()| refuse_lost_key(&dirs.config_dir, &dirs.db_path))
+    })
+    .await
+    .map_err(|error| BootError::Stage {
+        stage: "data directory check",
+        message: error.to_string(),
+    })?
+    .map_err(BootError::from)
 }
 
 /// Stamp the shipped web UI into the cache, off the async workers.

@@ -172,11 +172,8 @@ async fn bundles() -> (
     }
     let dir = acquire.db.path().parent().expect("scratch").to_path_buf();
     let config = Arc::new(
-        ConfigStore::open(
-            &dir.join("config.json"),
-            Crypto::from_key_bytes(&[7u8; 32]).expect("key"),
-        )
-        .expect("config"),
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("config"),
     );
     let (library, _) = library_at(acquire.db.db(), config);
     let music = dir.join("music");

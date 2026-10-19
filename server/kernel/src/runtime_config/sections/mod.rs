@@ -33,9 +33,9 @@ pub use management::*;
 pub use musicbrainz::*;
 pub use plugins::*;
 
-/// One user-editable runtime section stored under a config-file key.
+/// One user-editable runtime section, stored as one settings row.
 pub trait Section: Default + serde::Serialize + serde::de::DeserializeOwned {
-    /// Config-file key, kept byte-identical to v2 for import fidelity.
+    /// Row key, kept byte-identical to v2's config key for import fidelity.
     const KEY: &'static str;
 
     /// Reject bad submitted values with typed errors. Secret fields are

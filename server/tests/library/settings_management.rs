@@ -269,15 +269,21 @@ fn stored_unknown_field_is_dropped_on_read() {
     .expect("config writes");
 
     let store = Arc::new(
-        ConfigStore::open(&path, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("store opens"),
     );
     let service = LibraryManagementService::new(store);
     let read = service.get_settings().expect("the section reads");
+    let stored: String = rusqlite::Connection::open(dir.join("settings.db"))
+        .expect("settings database opens")
+        .query_row(
+            "SELECT value_json FROM config_sections WHERE key = 'library_management'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("the section is stored");
     assert!(
-        !std::fs::read_to_string(&path)
-            .expect("config reads")
-            .contains("album_mood"),
+        !stored.contains("album_mood"),
         "the read writes the section back without the field"
     );
     let saved = service
@@ -323,7 +329,7 @@ fn scripts_validate_with_the_running_compiler() {
     )
     .expect("config writes");
     let store = Arc::new(
-        ConfigStore::open(&path, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+        ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("store opens"),
     );
     let service = LibraryManagementService::new(store);

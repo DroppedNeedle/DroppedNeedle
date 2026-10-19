@@ -20,13 +20,14 @@ use super::models::{
 };
 use super::verify::{VerifyProbes, require_service_url};
 use crate::bootstrap::Outbound;
-use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::db::DurableLane;
 use droppedneedle_kernel::runtime_config::sections::{
     BRAINZMASH_CONCURRENT_SEARCHES, BRAINZMASH_ENDPOINT, BRAINZMASH_RATE_LIMIT, MbSourceMode,
     MusicBrainzSettings, OFFICIAL_MB_API_BASE, OFFICIAL_MB_CONCURRENT_SEARCHES,
     OFFICIAL_MB_RATE_LIMIT, exact_nonblank,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::runtime_config::{ConfigStore, UpdateError};
 
 /// BrainzMash disclosure version. A proposal carrying any other version
 /// is outdated and cannot proceed.
@@ -85,15 +86,17 @@ impl PendingProposal {
     }
 }
 
-/// The lifecycle service: settled state in config, the pending proposal
-/// in memory. The op mutex serializes whole lifecycle operations like
-/// v2's coordinator lock (always taken before the pending mutex; never
-/// re-entered).
+/// The lifecycle service: settled state in the settings, the pending
+/// proposal in memory. The op lock serializes whole lifecycle operations
+/// like v2's coordinator lock (always taken before the pending mutex; never
+/// re-entered). It is an async lock because a save waits for its turn on
+/// the writer lane while holding it; the pending mutex is only ever held
+/// for a moment, never across a wait.
 pub struct MusicBrainzLifecycle {
     /// Config store.
     pub store: std::sync::Arc<ConfigStore>,
     /// Whole-operation serialization.
-    pub op: Mutex<()>,
+    pub op: tokio::sync::Mutex<()>,
     /// Transient pending proposal.
     pub pending: Mutex<Option<PendingProposal>>,
     /// Post-save fan-out (source changes invalidate the cache root).
@@ -112,7 +115,7 @@ impl MusicBrainzLifecycle {
     ) -> Self {
         Self {
             store,
-            op: Mutex::new(()),
+            op: tokio::sync::Mutex::new(()),
             pending: Mutex::new(None),
             effects,
             outbound,
@@ -123,10 +126,25 @@ impl MusicBrainzLifecycle {
         SettingsError::from_config(error)
     }
 
-    fn begin_op(&self) -> Result<std::sync::MutexGuard<'_, ()>, SettingsError> {
-        self.op.lock().map_err(|cause| {
-            SettingsError::internal(&format!("musicbrainz lifecycle lock poisoned: {cause}"))
-        })
+    async fn begin_op(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.op.lock().await
+    }
+
+    /// One settings write of the MusicBrainz section: `next` gets the
+    /// stored section and returns the one to save, in the same transaction.
+    async fn update_settings<F>(&self, next: F) -> Result<MusicBrainzSettings, SettingsError>
+    where
+        F: FnOnce(MusicBrainzSettings) -> Result<MusicBrainzSettings, SettingsError>
+            + Send
+            + 'static,
+    {
+        self.store
+            .update::<MusicBrainzSettings, SettingsError, _>(DurableLane::Foreground, next)
+            .await
+            .map_err(|error| match error {
+                UpdateError::Rejected(error) => error,
+                UpdateError::Config(error) => self.config(error),
+            })
     }
 
     /// Build the GET view: settled state plus the transient pending echo.
@@ -168,8 +186,7 @@ impl MusicBrainzLifecycle {
         &self,
         update: &MusicBrainzSettingsUpdate,
     ) -> Result<MusicBrainzSettingsView, SettingsError> {
-        let _op = self.begin_op()?;
-        let previous: MusicBrainzSettings = self.store.get().map_err(|e| self.config(e))?;
+        let _op = self.begin_op().await;
         let mode = update.source_mode;
         if mode == MbSourceMode::Brainzmash {
             return Err(SettingsError::InvalidInput {
@@ -179,7 +196,7 @@ impl MusicBrainzLifecycle {
             });
         }
         if mode == MbSourceMode::Official {
-            let view = self.save_official(&previous)?;
+            let view = self.save_official().await?;
             drop(_op);
             self.effects.after_save(SavedSection::MusicBrainz).await;
             return Ok(view);
@@ -198,65 +215,72 @@ impl MusicBrainzLifecycle {
                 message: "Community source acknowledgement is required".to_owned(),
             });
         }
-        let source_changed =
-            previous.source_mode != mode || previous.api_url.trim_end_matches('/') != api_url;
-        let (source_id, generation) = if source_changed || previous.source_id.trim().is_empty() {
-            (
-                uuid::Uuid::new_v4().to_string(),
-                previous.generation.max(1) + 1,
-            )
-        } else {
-            (previous.source_id.clone(), previous.generation.max(1))
-        };
-        let mut next = MusicBrainzSettings {
-            source_mode: mode,
-            api_url,
-            rate_limit: update.rate_limit,
-            concurrent_searches: update.concurrent_searches,
-            community_acknowledged: update.community_acknowledged.unwrap_or(false),
-            selected_source_mode: mode,
-            source_id,
-            generation,
-            ..previous.clone()
-        };
-        next.active_brainzmash = None;
-        next.clamped_to_official_limits = false;
+        let rate_limit = update.rate_limit;
+        let concurrent_searches = update.concurrent_searches;
+        let community_acknowledged = update.community_acknowledged.unwrap_or(false);
         *self.pending_mut()? = None;
-        let saved: MusicBrainzSettings = self.store.save(next).map_err(|e| self.config(e))?;
+        let saved = self
+            .update_settings(move |previous| {
+                let source_changed = previous.source_mode != mode
+                    || previous.api_url.trim_end_matches('/') != api_url;
+                let (source_id, generation) =
+                    if source_changed || previous.source_id.trim().is_empty() {
+                        (
+                            uuid::Uuid::new_v4().to_string(),
+                            previous.generation.max(1) + 1,
+                        )
+                    } else {
+                        (previous.source_id.clone(), previous.generation.max(1))
+                    };
+                Ok(MusicBrainzSettings {
+                    source_mode: mode,
+                    api_url,
+                    rate_limit,
+                    concurrent_searches,
+                    community_acknowledged,
+                    selected_source_mode: mode,
+                    source_id,
+                    generation,
+                    active_brainzmash: None,
+                    clamped_to_official_limits: false,
+                })
+            })
+            .await?;
         let view = self.view(saved);
         drop(_op);
         self.effects.after_save(SavedSection::MusicBrainz).await;
         Ok(view)
     }
 
-    fn save_official(
-        &self,
-        previous: &MusicBrainzSettings,
-    ) -> Result<MusicBrainzSettingsView, SettingsError> {
-        let source_changed = previous.source_mode != MbSourceMode::Official
-            || previous.api_url.trim_end_matches('/') != OFFICIAL_MB_API_BASE;
-        let (source_id, generation) = if source_changed || previous.source_id.trim().is_empty() {
-            (
-                uuid::Uuid::new_v4().to_string(),
-                previous.generation.max(1) + 1,
-            )
-        } else {
-            (previous.source_id.clone(), previous.generation.max(1))
-        };
-        let next = MusicBrainzSettings {
-            source_mode: MbSourceMode::Official,
-            api_url: OFFICIAL_MB_API_BASE.to_owned(),
-            rate_limit: OFFICIAL_MB_RATE_LIMIT,
-            concurrent_searches: OFFICIAL_MB_CONCURRENT_SEARCHES,
-            community_acknowledged: false,
-            selected_source_mode: MbSourceMode::Official,
-            source_id,
-            generation,
-            active_brainzmash: None,
-            clamped_to_official_limits: false,
-        };
+    async fn save_official(&self) -> Result<MusicBrainzSettingsView, SettingsError> {
         *self.pending_mut()? = None;
-        let saved: MusicBrainzSettings = self.store.save(next).map_err(|e| self.config(e))?;
+        let saved = self
+            .update_settings(|previous| {
+                let source_changed = previous.source_mode != MbSourceMode::Official
+                    || previous.api_url.trim_end_matches('/') != OFFICIAL_MB_API_BASE;
+                let (source_id, generation) =
+                    if source_changed || previous.source_id.trim().is_empty() {
+                        (
+                            uuid::Uuid::new_v4().to_string(),
+                            previous.generation.max(1) + 1,
+                        )
+                    } else {
+                        (previous.source_id.clone(), previous.generation.max(1))
+                    };
+                Ok(MusicBrainzSettings {
+                    source_mode: MbSourceMode::Official,
+                    api_url: OFFICIAL_MB_API_BASE.to_owned(),
+                    rate_limit: OFFICIAL_MB_RATE_LIMIT,
+                    concurrent_searches: OFFICIAL_MB_CONCURRENT_SEARCHES,
+                    community_acknowledged: false,
+                    selected_source_mode: MbSourceMode::Official,
+                    source_id,
+                    generation,
+                    active_brainzmash: None,
+                    clamped_to_official_limits: false,
+                })
+            })
+            .await?;
         Ok(self.view(saved))
     }
 
@@ -264,36 +288,40 @@ impl MusicBrainzLifecycle {
     /// tier, rotate identity on source change, mint a fresh proposal.
     /// The save invalidates the MusicBrainz cache root.
     pub async fn stage(&self) -> Result<(MusicBrainzSettingsView, PendingProposal), SettingsError> {
-        let _op = self.begin_op()?;
-        let previous: MusicBrainzSettings = self.store.get().map_err(|e| self.config(e))?;
-        let source_changed = previous.source_mode != MbSourceMode::Brainzmash;
-        let (source_id, generation) = if source_changed || previous.source_id.trim().is_empty() {
-            (
-                uuid::Uuid::new_v4().to_string(),
-                previous.generation.max(1) + 1,
-            )
-        } else {
-            (previous.source_id.clone(), previous.generation.max(1))
-        };
-        let next = MusicBrainzSettings {
-            source_mode: MbSourceMode::Brainzmash,
-            api_url: BRAINZMASH_ENDPOINT.to_owned(),
-            rate_limit: BRAINZMASH_RATE_LIMIT,
-            concurrent_searches: BRAINZMASH_CONCURRENT_SEARCHES,
-            community_acknowledged: previous.community_acknowledged,
-            selected_source_mode: MbSourceMode::Brainzmash,
-            source_id,
-            generation,
-            active_brainzmash: if source_changed {
-                None
-            } else {
-                previous.active_brainzmash.clone()
-            },
-            clamped_to_official_limits: false,
-        };
-        let proposal = PendingProposal::fresh(generation + 1);
+        let _op = self.begin_op().await;
+        let saved = self
+            .update_settings(|previous| {
+                let source_changed = previous.source_mode != MbSourceMode::Brainzmash;
+                let (source_id, generation) =
+                    if source_changed || previous.source_id.trim().is_empty() {
+                        (
+                            uuid::Uuid::new_v4().to_string(),
+                            previous.generation.max(1) + 1,
+                        )
+                    } else {
+                        (previous.source_id.clone(), previous.generation.max(1))
+                    };
+                Ok(MusicBrainzSettings {
+                    source_mode: MbSourceMode::Brainzmash,
+                    api_url: BRAINZMASH_ENDPOINT.to_owned(),
+                    rate_limit: BRAINZMASH_RATE_LIMIT,
+                    concurrent_searches: BRAINZMASH_CONCURRENT_SEARCHES,
+                    community_acknowledged: previous.community_acknowledged,
+                    selected_source_mode: MbSourceMode::Brainzmash,
+                    source_id,
+                    generation,
+                    active_brainzmash: if source_changed {
+                        None
+                    } else {
+                        previous.active_brainzmash
+                    },
+                    clamped_to_official_limits: false,
+                })
+            })
+            .await?;
+        // Built from the generation the save stored, after the commit.
+        let proposal = PendingProposal::fresh(saved.generation + 1);
         *self.pending_mut()? = Some(proposal.clone());
-        let saved: MusicBrainzSettings = self.store.save(next).map_err(|e| self.config(e))?;
         let view = self.view(saved);
         drop(_op);
         self.effects.after_save(SavedSection::MusicBrainz).await;
@@ -302,15 +330,36 @@ impl MusicBrainzLifecycle {
 
     /// Record consent for the exact staged proposal and the consenting
     /// admin. A stale proposal or an outdated disclosure is a 409.
-    pub fn consent(
+    pub async fn consent(
         &self,
         binding: &MusicBrainzBindingRequest,
         admin: &droppedneedle_auth::Admin,
     ) -> Result<MusicBrainzSettingsView, SettingsError> {
-        let _op = self.begin_op()?;
+        let _op = self.begin_op().await;
+        self.mark_consented(binding)?;
+        let admin_id = admin.user_id().to_owned();
+        self.store
+            .update::<droppedneedle_kernel::runtime_config::sections::InternalState, SettingsError, _>(
+                DurableLane::Foreground,
+                move |mut internal| {
+                    internal.brainzmash_consent_admin = Some(admin_id);
+                    Ok(internal)
+                },
+            )
+            .await
+            .map_err(|error| match error {
+                UpdateError::Rejected(error) => error,
+                UpdateError::Config(error) => self.config(error),
+            })?;
+        let stored: MusicBrainzSettings = self.store.get().map_err(|e| self.config(e))?;
+        Ok(self.view(stored))
+    }
+
+    /// Mark the exact staged proposal consented, under the pending mutex
+    /// alone (never held across a wait).
+    fn mark_consented(&self, binding: &MusicBrainzBindingRequest) -> Result<(), SettingsError> {
         let mut guard = self.pending_mut()?;
-        let pending = guard.as_mut();
-        match pending {
+        match guard.as_mut() {
             Some(proposal) if proposal.matches(binding) => {
                 if proposal.disclosure_version != BRAINZMASH_DISCLOSURE_VERSION {
                     return Err(SettingsError::Conflict {
@@ -318,30 +367,50 @@ impl MusicBrainzLifecycle {
                     });
                 }
                 proposal.consented = true;
+                Ok(())
             }
+            _ => Err(SettingsError::Conflict {
+                message: "BrainzMash proposal is stale".to_owned(),
+            }),
+        }
+    }
+
+    /// Take the exact consented and verified proposal out of pending,
+    /// under the pending mutex alone.
+    fn take_verified(
+        &self,
+        binding: &MusicBrainzBindingRequest,
+    ) -> Result<PendingProposal, SettingsError> {
+        let mut guard = self.pending_mut()?;
+        let proposal = match guard.as_ref() {
+            Some(proposal) if proposal.matches(binding) => proposal.clone(),
             _ => {
                 return Err(SettingsError::Conflict {
                     message: "BrainzMash proposal is stale".to_owned(),
                 });
             }
+        };
+        if !proposal.consented {
+            return Err(SettingsError::Conflict {
+                message: "BrainzMash consent is required".to_owned(),
+            });
         }
-        drop(guard);
-        let mut internal: droppedneedle_kernel::runtime_config::sections::InternalState =
-            self.store.get().map_err(|e| self.config(e))?;
-        internal.brainzmash_consent_admin = Some(admin.user_id().to_owned());
-        let _: droppedneedle_kernel::runtime_config::sections::InternalState =
-            self.store.save(internal).map_err(|e| self.config(e))?;
-        let stored: MusicBrainzSettings = self.store.get().map_err(|e| self.config(e))?;
-        Ok(self.view(stored))
+        if !proposal.verified {
+            return Err(SettingsError::Conflict {
+                message: "BrainzMash verification is required".to_owned(),
+            });
+        }
+        *guard = None;
+        Ok(proposal)
     }
 
     /// Check that a binding names the exact consented proposal (the
     /// verify gate, before probing upstream).
-    pub fn check_verify_binding(
+    pub async fn check_verify_binding(
         &self,
         binding: &MusicBrainzBindingRequest,
     ) -> Result<PendingProposal, SettingsError> {
-        let _op = self.begin_op()?;
+        let _op = self.begin_op().await;
         let guard = self.pending_mut()?;
         match guard.as_ref() {
             Some(proposal) if proposal.matches(binding) => {
@@ -373,11 +442,11 @@ impl MusicBrainzLifecycle {
     }
 
     /// Record a successful verification for the exact consented proposal.
-    pub fn record_verification(
+    pub async fn record_verification(
         &self,
         binding: &MusicBrainzBindingRequest,
     ) -> Result<MusicBrainzSettingsView, SettingsError> {
-        let _op = self.begin_op()?;
+        let _op = self.begin_op().await;
         let mut guard = self.pending_mut()?;
         match guard.as_mut() {
             Some(proposal) if proposal.matches(binding) => {
@@ -406,41 +475,19 @@ impl MusicBrainzLifecycle {
         &self,
         binding: &MusicBrainzBindingRequest,
     ) -> Result<MusicBrainzSettingsView, SettingsError> {
-        // The locks live and die inside the sync core: no guard
-        // crosses the effects await below (guards are not Send).
-        let view = self.promote_verified(binding)?;
+        let view = self.promote_verified(binding).await?;
         self.effects.after_save(SavedSection::MusicBrainz).await;
         Ok(view)
     }
 
-    /// Synchronous promotion core: validate the exact verified proposal,
-    /// clear it, and persist the promoted source. Returns the GET view.
-    fn promote_verified(
+    /// Promotion core: validate the exact verified proposal, clear it, and
+    /// persist the promoted source. Returns the GET view.
+    async fn promote_verified(
         &self,
         binding: &MusicBrainzBindingRequest,
     ) -> Result<MusicBrainzSettingsView, SettingsError> {
-        let _op = self.begin_op()?;
-        let mut guard = self.pending_mut()?;
-        let proposal = match guard.as_ref() {
-            Some(proposal) if proposal.matches(binding) => proposal.clone(),
-            _ => {
-                return Err(SettingsError::Conflict {
-                    message: "BrainzMash proposal is stale".to_owned(),
-                });
-            }
-        };
-        if !proposal.consented {
-            return Err(SettingsError::Conflict {
-                message: "BrainzMash consent is required".to_owned(),
-            });
-        }
-        if !proposal.verified {
-            return Err(SettingsError::Conflict {
-                message: "BrainzMash verification is required".to_owned(),
-            });
-        }
-        *guard = None;
-        drop(guard);
+        let _op = self.begin_op().await;
+        let proposal = self.take_verified(binding)?;
         let promoted = MusicBrainzSettings {
             source_mode: MbSourceMode::Brainzmash,
             api_url: proposal.endpoint.trim_end_matches('/').to_owned(),
@@ -463,7 +510,7 @@ impl MusicBrainzLifecycle {
             ),
             clamped_to_official_limits: false,
         };
-        let saved: MusicBrainzSettings = self.store.save(promoted).map_err(|e| self.config(e))?;
+        let saved = self.update_settings(move |_| Ok(promoted)).await?;
         Ok(self.view(saved))
     }
 
@@ -498,7 +545,7 @@ impl MusicBrainzLifecycle {
                                 .to_owned(),
                     });
                 }
-                self.check_verify_binding(binding)?;
+                self.check_verify_binding(binding).await?;
                 let verdict = probes.musicbrainz(&self.outbound.brainzmash).await;
                 if !verdict.valid {
                     return Err(SettingsError::Upstream {
@@ -510,7 +557,7 @@ impl MusicBrainzLifecycle {
                         message: "BrainzMash proposal is stale.".to_owned(),
                     });
                 }
-                self.record_verification(binding)
+                self.record_verification(binding).await
             }
             MusicBrainzVerifyRequest::Update(update) => {
                 let stored: MusicBrainzSettings = self.store.get().map_err(|e| self.config(e))?;

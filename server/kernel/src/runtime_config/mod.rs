@@ -4,7 +4,8 @@
 //! see [`deployment`](crate::config::deployment) for the kept/dropped
 //! registry). Everything
 //! user-editable at runtime lives here as a typed section with a schema and
-//! a getter on [`ConfigStore`](store::ConfigStore). Secrets follow the
+//! a getter on [`ConfigStore`](store::ConfigStore), stored as one row per
+//! section in the database. Secrets follow the
 //! exact-match mask-sentinel rule ([`mask`]) and are encrypted at rest by
 //! [`Crypto`](crypto::Crypto); they are never logged (a test enforces it).
 //!
@@ -14,6 +15,7 @@
 
 pub mod crypto;
 pub mod error;
+pub mod ingest;
 pub mod mask;
 pub mod origin;
 pub mod quota;
@@ -21,10 +23,12 @@ pub mod secret;
 pub mod secret_sections;
 pub mod sections;
 pub mod settings_error;
+pub mod sql;
 pub mod store;
 
-pub use crypto::Crypto;
+pub use crypto::{Crypto, KeyOrigin};
 pub use error::ConfigError;
+pub use ingest::LegacyConfig;
 pub use mask::Masked;
 pub use quota::{QuotaStatus, QuotaStore};
 pub use secret::Secret;
@@ -32,9 +36,9 @@ pub use secret_sections::SecretSection;
 pub use sections::Section;
 pub use store::{ConfigStore, UpdateError};
 
-/// Every top-level key v3 owns in `config.json`: kept sections plus the
-/// instance id. Anything else is reported by
-/// [`ConfigStore::unknown_top_level_keys`](store::ConfigStore::unknown_top_level_keys).
+/// Every settings key v3 stores: kept sections plus the instance id. The
+/// one-time copy of `config.json` ([`ingest`]) copies only these and names
+/// any other key it leaves behind.
 pub const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
     "user_preferences",
     "home_settings",
@@ -85,9 +89,8 @@ pub struct DroppedSection {
     pub note: &'static str,
 }
 
-/// Sections v3 dropped. The import validator rejects these in exports;
-/// [`ConfigStore::dropped_sections_present`](store::ConfigStore::dropped_sections_present)
-/// reports them when a v2 file is opened directly.
+/// Sections v3 dropped. The import validator rejects these in exports, and
+/// the one-time copy of `config.json` leaves them behind.
 pub const DROPPED_SECTIONS: &[DroppedSection] = &[
     DroppedSection {
         key: "library_sync_settings",

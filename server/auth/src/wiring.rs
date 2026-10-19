@@ -17,7 +17,6 @@ use super::federated::oidc::{EXCHANGE_TTL_SECS, OidcExchangeStore, OidcLogin};
 use super::federated::oidc_http::OidcHttp;
 use super::federated::plex::PlexServerIdentity;
 use super::federated::plex_http::PlexTv;
-use super::federated::settings::InstallIds;
 use super::federated::{FederatedError, MediaLinks};
 use super::prod::{
     ProdAuth, SqliteFederatedStore, SqliteOidcStateStore, SqliteSessionIssuer, SqliteSessionStore,
@@ -257,7 +256,6 @@ impl AuthSetup {
     ) -> Self {
         use super::users::hibp::{HibpScreen, PwnedPasswordsHttp};
 
-        InstallIds::new(config_store.clone()).ensure();
         warn_on_public_http_oidc(&config_store);
         let no_redirect = http.no_redirect().clone();
         let http = http.shared().clone();

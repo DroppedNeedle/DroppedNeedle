@@ -88,19 +88,16 @@ impl E2e {
             .expect("scratch runtime opens");
         let crypto = Arc::new(Crypto::from_key_bytes(&[7u8; 32]).expect("test key"));
         let store = Arc::new(
-            ConfigStore::open(
-                &dir.join("config.json"),
-                Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
-            )
-            .expect("scratch config opens"),
+            ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("test key"))
+                .expect("scratch config opens"),
         );
         // Breach screening off via the real knob: setup and user creation
         // must never dial the network in this suite.
         let mut security: SecuritySettings = store.get().expect("security section reads");
         security.hibp_check = false;
-        store.save(security).expect("hibp switch saves");
+        store.save_blocking(security).expect("hibp switch saves");
         store
-            .save_secret(WrappedSettings {
+            .save_secret_blocking(WrappedSettings {
                 api_key: Secret::new(TEST_WRAPPED_KEY),
             })
             .expect("wrapped key saves");

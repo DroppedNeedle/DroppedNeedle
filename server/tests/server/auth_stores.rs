@@ -656,7 +656,7 @@ async fn recovery_reset_checks_the_code_first_then_revokes_and_consumes() {
     let hibp = Arc::new(CountingHibp::default());
     deps.screen = Arc::new(HibpScreen::new(hibp.clone()));
     fx.config
-        .save(SecuritySettings {
+        .save_blocking(SecuritySettings {
             hibp_check: true,
             ..SecuritySettings::default()
         })

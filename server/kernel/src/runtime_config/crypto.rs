@@ -108,16 +108,27 @@ impl Drop for Crypto {
     }
 }
 
+/// Where [`Crypto::load_or_generate`] got the key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyOrigin {
+    /// The key file was already there.
+    Loaded,
+    /// No key file was there; this call wrote a new one.
+    Minted,
+}
+
 impl Crypto {
     /// Load the key, minting and persisting a fresh one on first boot.
-    pub fn load_or_generate(config_dir: &Path) -> Result<Self, CryptoError> {
+    /// Says which happened: a key minted now cannot have sealed anything
+    /// already on disk.
+    pub fn load_or_generate(config_dir: &Path) -> Result<(Self, KeyOrigin), CryptoError> {
         let path = config_dir.join(KEY_FILE_NAME);
         match std::fs::read_to_string(&path) {
-            Ok(text) => Self::from_key_text(&text),
+            Ok(text) => Ok((Self::from_key_text(&text)?, KeyOrigin::Loaded)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let key = random_bytes()?;
                 write_key_file(&path, &key)?;
-                Ok(Self { key })
+                Ok((Self { key }, KeyOrigin::Minted))
             }
             Err(error) => Err(CryptoError::KeyRead {
                 path,
@@ -323,7 +334,9 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let crypto = Crypto::load_or_generate(&dir).unwrap();
+        let (crypto, origin) = Crypto::load_or_generate(&dir).unwrap();
+        assert_eq!(origin, KeyOrigin::Minted);
+        assert_eq!(Crypto::load_or_generate(&dir).unwrap().1, KeyOrigin::Loaded);
         let sealed = crypto.encrypt("x").unwrap();
         let reloaded = Crypto::load(&dir).unwrap();
         assert_eq!(reloaded.decrypt(&sealed).unwrap(), "x");

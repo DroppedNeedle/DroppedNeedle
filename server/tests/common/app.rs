@@ -88,7 +88,7 @@ impl TestApp {
     /// As [`TestApp::start`], reaching the outside world as `outbound`
     /// says: a journey that scripts a provider port passes it here.
     pub async fn start_with(tag: &str, outbound: bootstrap::Outbound) -> Self {
-        Self::launch(tag, outbound, |config| config).await
+        Self::launch(tag, outbound, |config| config, |_| {}).await
     }
 
     /// As [`TestApp::start`], with the deployment config passed through
@@ -98,18 +98,32 @@ impl TestApp {
         tag: &str,
         configure: impl FnOnce(AppConfig) -> AppConfig,
     ) -> Self {
-        Self::launch(tag, closed_outbound(), configure).await
+        Self::launch(tag, closed_outbound(), configure, |_| {}).await
+    }
+
+    /// As [`TestApp::start`], with `place` run on the data directory before
+    /// the first boot, after the migrated database is copied in: a test
+    /// puts its own database, key file or `config.json` there.
+    pub async fn start_prepared(tag: &str, place: impl FnOnce(&AppConfig)) -> Self {
+        Self::launch(tag, closed_outbound(), |config| config, place).await
     }
 
     async fn launch(
         tag: &str,
         outbound: bootstrap::Outbound,
         configure: impl FnOnce(AppConfig) -> AppConfig,
+        place: impl FnOnce(&AppConfig),
     ) -> Self {
         let dir = ScratchDir::new(tag);
         let config = configure(AppConfig::with_root(0, &dir));
         std::fs::create_dir_all(&config.cache_dir).expect("cache dir creates");
+        std::fs::create_dir_all(config.config_dir()).expect("config dir creates");
+        // A database that holds data comes with its key, as the server's
+        // first start leaves them.
         migrated_db(&config.library_db_path);
+        droppedneedle_kernel::runtime_config::Crypto::load_or_generate(&config.config_dir())
+            .expect("key file writes");
+        place(&config);
 
         let slskd = MockSlskd::start().await.expect("mock slskd starts");
         let sabnzbd = SabnzbdMock::new();
@@ -182,6 +196,16 @@ impl TestApp {
     #[allow(dead_code)]
     pub fn state(&self) -> &AppState {
         self.state.as_deref().expect("the app is running")
+    }
+
+    /// Stop the app as [`TestApp::restart`] does, run `look` on its stopped
+    /// data directory, then build it again on the same directory.
+    #[allow(dead_code)]
+    pub async fn while_stopped<T>(mut self, look: impl FnOnce(&AppConfig) -> T) -> (Self, T) {
+        self.halt().await;
+        let seen = look(&self.config);
+        self.boot().await;
+        (self, seen)
     }
 
     /// `router` under this app's request wrapper: request ids from its

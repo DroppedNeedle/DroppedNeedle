@@ -172,16 +172,19 @@ pub fn watcher(config: &ConfigStore) -> WatcherSettings {
 /// resolver the settings page saves through then refuses a path that
 /// equals, holds, or sits inside another root (or staging). The label is
 /// the directory name, made unique against the other roots. The checks
-/// and the write run as one locked store update, the same lock every
-/// settings-page library save takes.
+/// and the write run as one settings transaction, like every
+/// settings-page library save. Blocking: call it off the async workers.
 pub fn add_root(config: &ConfigStore, root: &LibraryRoot) -> Result<(), ServiceError> {
     config
-        .update_secret::<TypedLibrary, ServiceError, _>(|stored| {
+        .update_secret_blocking::<TypedLibrary, ServiceError, _>(|stored| {
             with_root(stored.into_inner(), root)
         })
         .map(|_| ())
         .map_err(|error| match error {
             UpdateError::Rejected(error) => error,
+            UpdateError::Config(error) if error.is_busy() => ServiceError::Busy {
+                cause: error.to_string(),
+            },
             UpdateError::Config(error) => ServiceError::internal(&error),
         })
 }
@@ -223,11 +226,10 @@ fn with_root(mut settings: TypedLibrary, root: &LibraryRoot) -> Result<TypedLibr
         policy: stored_policy(root.policy),
         rules: Vec::new(),
     });
-    let resolved = library_policy::resolve(&settings).map_err(|error| match error {
+    library_policy::normalize(&settings).map_err(|error| match error {
         SettingsError::InvalidInput { message } | SettingsError::Conflict { message } => {
             ServiceError::Conflict { message }
         }
         other => ServiceError::internal(&format!("{other:?}")),
-    })?;
-    Ok(resolved.settings)
+    })
 }

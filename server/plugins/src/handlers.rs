@@ -20,7 +20,7 @@ use axum::{
 };
 
 use droppedneedle_auth::{Admin, Principal, Role, User};
-use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 
@@ -445,6 +445,9 @@ pub async fn update_plugin(
         }
         Err(UpdateError::NotFound) => Err(ApiError::not_found()),
         Err(UpdateError::StoreFailed(reason)) => Err(ApiError::internal(reason)),
+        Err(UpdateError::Busy(reason)) => {
+            Err(ApiError::unavailable(Unavailable::ServerBusy, reason))
+        }
     }
 }
 

@@ -83,13 +83,13 @@ impl AuthRig {
         let crypto = Arc::new(Crypto::from_key_bytes(&[7u8; 32]).expect("test key"));
         let config = config_store(&scratch);
         config
-            .save(SecuritySettings {
+            .save_blocking(SecuritySettings {
                 hibp_check: false,
                 ..SecuritySettings::default()
             })
             .expect("security settings save");
         config
-            .save_secret(LastFmSettings {
+            .save_secret_blocking(LastFmSettings {
                 enabled: true,
                 ..LastFmSettings::default()
             })

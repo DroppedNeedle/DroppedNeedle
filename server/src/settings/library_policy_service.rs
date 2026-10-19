@@ -183,7 +183,7 @@ impl LibraryPolicyService {
                 library_policy::check_revision(&stored, &expected)?;
                 let restorable = library_policy::restorable_roots(&stored, &roots);
                 let restored = library_policy::with_restored_roots(stored, &restorable, &paths)?;
-                Ok(library_policy::resolve(&restored)?.settings)
+                library_policy::normalize(&restored)
             })
             .await
     }

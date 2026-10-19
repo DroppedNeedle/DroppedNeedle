@@ -118,7 +118,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Before a new version changes the database schema, DroppedNeedle writes a verified backup of the database to `/app/cache/backups`. If an upgrade goes wrong, stop the container, delete `library.db-wal` and `library.db-shm` if they exist, put the backup back in place of `/app/cache/library.db`, and run the previous image.
+Before a new version changes the database schema, DroppedNeedle writes a verified backup of the database to `/app/cache/backups`. If an upgrade goes wrong, stop the container, delete `library.db-wal` and `library.db-shm` if they exist, put the backup back in place of `/app/cache/library.db`, and run the previous image. A backup holds your settings too. Stored passwords and API keys in it are sealed with the key file `/app/config/data_enc.key`, so keep that file with your backups: a database restored without it cannot read them.
 
 Coming from v2? Follow [docs/upgrading-from-v2.md](docs/upgrading-from-v2.md). Stop v2, switch the image tag to v3, and run `docker compose run --rm droppedneedle droppedneedle-tool upgrade` before you start it. It upgrades your data directory in place and keeps your v2 files in a `v2-backup` folder so you can go back. v3 refuses to start on a v2 data directory that has not been upgraded. The guide lists what comes across (accounts, settings, playlists, history, your library with its ids and matches, and the originals of files Library Management changed) and what stays behind.
 
@@ -237,7 +237,7 @@ Bought music somewhere else? Drop it in. Admins and trusted users can upload up 
 
 ## Configuration
 
-Everything user-editable lives in the web UI and lands in `config/config.json`. Environment is only for container basics:
+Everything user-editable lives in the web UI and is stored in the database, so a database backup holds it. The config folder holds the key that seals stored secrets. A `config/config.json` from an earlier v3 is copied into the database once, at the first start, and left as it was. You can delete it once you are settled on this version; while it is there, a fresh database beside it would copy it in again. Environment is only for container basics:
 
 | Variable | Default | What it is |
 |-|-|-|
@@ -272,7 +272,7 @@ Behind a reverse proxy, list the proxy in `TRUSTED_PROXY_IPS` and have it pass `
 | `CACHE_DIR` | `/app/cache` | Database, backups, served web UI, caches |
 | `COVER_CACHE_MAX_SIZE_MB` | `500` | Size cap for downloaded and extracted cover art under `CACHE_DIR/covers`; the least recently shown covers go first |
 | `LIBRARY_DB_PATH` | `/app/cache/library.db` | The database file; backups go in `backups/` next to it |
-| `CONFIG_FILE_PATH` | `/app/config/config.json` | Settings file; the encryption key sits next to it |
+| `CONFIG_DIR` | `/app/config` | Holds `data_enc.key`, the key that seals stored secrets. Replaces `CONFIG_FILE_PATH`, which now stops the start: set `CONFIG_DIR` to that file's folder |
 | `DROPPEDNEEDLE_STATIC_DIR` | `/app/static` | The web UI build shipped in the image |
 
 </details>

@@ -224,8 +224,9 @@ pub trait LidarrSettingsStore: Send + Sync {
     fn get(&self) -> LidarrConnectionSettings;
     /// Raw settings including the real key, for probes and imports.
     fn get_raw(&self) -> LidarrConnectionSettings;
-    /// Save; a masked key preserves the stored one.
-    fn save(&self, settings: &LidarrConnectionSettings);
+    /// Save; a masked key preserves the stored one. A failed save is
+    /// logged, and the read that follows shows what is stored.
+    fn save<'a>(&'a self, settings: &'a LidarrConnectionSettings) -> BoxFuture<'a, ()>;
 }
 
 /// In-memory follow rows for tests and the pre-persistence tier.
@@ -408,15 +409,17 @@ impl LidarrSettingsStore for MemoryLidarrSettings {
             .clone()
     }
 
-    fn save(&self, settings: &LidarrConnectionSettings) {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        inner.url = normalize_lidarr_url(&settings.url);
-        if settings.api_key != LIDARR_API_KEY_MASK {
-            inner.api_key = settings.api_key.clone();
-        }
+    fn save<'a>(&'a self, settings: &'a LidarrConnectionSettings) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let mut inner = self
+                .inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            inner.url = normalize_lidarr_url(&settings.url);
+            if settings.api_key != LIDARR_API_KEY_MASK {
+                inner.api_key = settings.api_key.clone();
+            }
+        })
     }
 }
 

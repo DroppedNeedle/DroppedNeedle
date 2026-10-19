@@ -66,8 +66,8 @@ pub struct AppConfig {
     pub cover_cache_max_bytes: u64,
     /// The single SQLite WAL file.
     pub library_db_path: PathBuf,
-    /// Config file location.
-    pub config_file: PathBuf,
+    /// Holds `data_enc.key`, the key that seals stored secrets.
+    pub config_dir: PathBuf,
     /// Reverse-proxy mount prefix: `""` at the domain root, else a
     /// canonical `/seg[/seg...]` checked by [`normalize_base_path`].
     pub base_path: String,
@@ -122,7 +122,7 @@ impl AppConfig {
             library_db_path: cache_dir.join("library.db"),
             cache_dir,
             cover_cache_max_bytes: DEFAULT_COVER_CACHE_MAX_SIZE_MB * 1024 * 1024,
-            config_file: root.join("config").join("config.json"),
+            config_dir: root.join("config"),
             base_path: String::new(),
             static_dir: root.join("static"),
             trusted_proxies: TrustedProxies::loopback(),
@@ -187,8 +187,16 @@ impl AppConfig {
         if let Some(db) = path("LIBRARY_DB_PATH") {
             config.library_db_path = db;
         }
-        if let Some(file) = path("CONFIG_FILE_PATH") {
-            config.config_file = file;
+        if let Some(file) = path(deployment::REMOVED_CONFIG_FILE_VAR) {
+            return Err(ConfigError::ConfigFilePathRemoved {
+                suggested: file
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .map_or_else(|| root.join("config"), Path::to_path_buf),
+            });
+        }
+        if let Some(dir) = path("CONFIG_DIR") {
+            config.config_dir = dir;
         }
         // Not trimmed: a stray space in BASE_PATH is refused, not fixed up.
         let base = lookup("BASE_PATH").unwrap_or_default();
@@ -246,12 +254,9 @@ impl AppConfig {
         Ok(config)
     }
 
-    /// Directory holding `config.json` and the data-encryption key.
+    /// Directory holding the data-encryption key.
     pub fn config_dir(&self) -> PathBuf {
-        self.config_file
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| self.root_app_dir.join("config"))
+        self.config_dir.clone()
     }
 
     /// Installed plugins.
@@ -378,6 +383,19 @@ pub enum ConfigError {
     /// `CONTACT_EMAIL` cannot go into a User-Agent header.
     #[error("invalid CONTACT_EMAIL value {0:?}: spaces and control characters are not allowed")]
     InvalidContactEmail(String),
+    /// `CONFIG_FILE_PATH` is set. Settings live in the database now, and
+    /// silently ignoring the variable would mint a new key in another
+    /// folder and leave every stored secret unreadable.
+    #[error(
+        "CONFIG_FILE_PATH is no longer read: settings live in the database. Remove it and set \
+         CONFIG_DIR={} instead, the folder that holds data_enc.key. Keep that key file where it \
+         is: without it the stored secrets cannot be read",
+        .suggested.display()
+    )]
+    ConfigFilePathRemoved {
+        /// The folder the old value named.
+        suggested: PathBuf,
+    },
 }
 
 #[cfg(test)]
@@ -402,11 +420,46 @@ mod tests {
             None
         })
         .unwrap();
-        let registry: BTreeSet<String> = deployment::DEPLOYMENT_VARS
+        let mut registry: BTreeSet<String> = deployment::DEPLOYMENT_VARS
             .iter()
             .map(|var| var.env_name.to_owned())
             .collect();
+        registry.insert(deployment::REMOVED_CONFIG_FILE_VAR.to_owned());
         assert_eq!(asked.into_inner(), registry);
+    }
+
+    /// `CONFIG_FILE_PATH` refuses the start and names the `CONFIG_DIR` to
+    /// set, so the key file is not left behind in a folder no longer read.
+    #[test]
+    fn config_file_path_refuses_and_config_dir_sets_the_folder() {
+        let refused =
+            |value: &str| match load(&[("ROOT_APP_DIR", "/srv/dn"), ("CONFIG_FILE_PATH", value)]) {
+                Err(ConfigError::ConfigFilePathRemoved { suggested }) => suggested,
+                other => panic!("{value}: {other:?}"),
+            };
+        assert_eq!(
+            refused("/data/conf/config.json"),
+            PathBuf::from("/data/conf")
+        );
+        assert_eq!(refused("config.json"), PathBuf::from("/srv/dn/config"));
+        let message = load(&[("CONFIG_FILE_PATH", "/data/conf/config.json")])
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("CONFIG_DIR=/data/conf"), "{message}");
+        assert!(message.contains("data_enc.key"), "{message}");
+
+        assert_eq!(
+            load(&[("CONFIG_FILE_PATH", "  ")]).unwrap().config_dir,
+            PathBuf::from(DEFAULT_ROOT_APP_DIR).join("config")
+        );
+        assert_eq!(
+            load(&[("ROOT_APP_DIR", "/srv/dn")]).unwrap().config_dir,
+            PathBuf::from("/srv/dn/config")
+        );
+        assert_eq!(
+            load(&[("CONFIG_DIR", "/data/conf")]).unwrap().config_dir,
+            PathBuf::from("/data/conf")
+        );
     }
 
     #[test]

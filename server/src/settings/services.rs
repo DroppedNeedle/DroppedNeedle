@@ -92,8 +92,8 @@ impl SettingsService {
         SettingsError::from_config(error)
     }
 
-    /// Run one store write on the blocking pool (it writes and fsyncs the
-    /// config file).
+    /// Run one store write on the blocking pool (it waits for its turn on
+    /// the writer lane and syncs the commit to disk).
     async fn write<T, F>(&self, op: F) -> Result<T, SettingsError>
     where
         T: Send + 'static,
@@ -122,7 +122,9 @@ impl SettingsService {
         &self,
         section: S,
     ) -> Result<S, SettingsError> {
-        let saved = self.write(move |store| store.save(section)).await?;
+        let saved = self
+            .write(move |store| store.save_blocking(section))
+            .await?;
         self.effects.after_save(SavedSection::for_key(S::KEY)).await;
         Ok(saved)
     }
@@ -147,7 +149,9 @@ impl SettingsService {
         &self,
         incoming: S,
     ) -> Result<Masked<S>, SettingsError> {
-        let saved = self.write(move |store| store.save_secret(incoming)).await?;
+        let saved = self
+            .write(move |store| store.save_secret_blocking(incoming))
+            .await?;
         self.effects.after_save(SavedSection::for_key(S::KEY)).await;
         Ok(saved)
     }
@@ -223,9 +227,24 @@ impl SettingsService {
         &self,
         incoming: Masked<SabnzbdConnection>,
     ) -> Result<Masked<SabnzbdConnection>, SettingsError> {
-        let mut clients = self.get_masked::<DownloadClients>()?.into_inner();
-        clients.sabnzbd = incoming.into_inner();
-        let saved = self.save_submitted(clients).await?;
+        let incoming = incoming.into_inner();
+        let store = self.store.clone();
+        let saved = self
+            .write(move |_| {
+                store
+                    .update_secret_blocking::<DownloadClients, ConfigError, _>(|stored| {
+                        let mut clients = stored.into_inner();
+                        clients.sabnzbd = incoming;
+                        Ok(clients)
+                    })
+                    .map_err(|error| match error {
+                        UpdateError::Rejected(error) | UpdateError::Config(error) => error,
+                    })
+            })
+            .await?;
+        self.effects
+            .after_save(SavedSection::for_key(DownloadClients::KEY))
+            .await;
         Ok(saved.map(|clients| clients.sabnzbd))
     }
 
@@ -295,9 +314,9 @@ impl SettingsService {
     ) -> Result<LibrarySettingsResponse, SettingsError> {
         self.update_library(move |stored| {
             library_policy::check_revision(&stored, &request.expected_policy_revision)?;
-            let resolved = library_policy::resolve(&request.settings)?;
-            library_policy::guard_last_root(&resolved.settings, catalog_has_tracks)?;
-            Ok(resolved.settings)
+            let normalized = library_policy::normalize(&request.settings)?;
+            library_policy::guard_last_root(&normalized, catalog_has_tracks)?;
+            Ok(normalized)
         })
         .await
     }
@@ -343,7 +362,7 @@ impl SettingsService {
                     rules: Vec::new(),
                 });
             }
-            Ok(library_policy::resolve(&library)?.settings)
+            library_policy::normalize(&library)
         })
         .await
     }
@@ -363,17 +382,19 @@ impl SettingsService {
             if library.library_roots.len() < before {
                 library_policy::guard_last_root(&library, catalog_has_tracks)?;
             }
-            Ok(library_policy::resolve(&library)?.settings)
+            library_policy::normalize(&library)
         })
         .await
     }
 
-    /// Read, check, and save the library settings in one step under the
-    /// store's secret write lock, on the blocking pool (normalizing stats
-    /// the roots). `update` gets the stored settings with the AcoustID key
-    /// masked and returns the settings to save; an `Err` writes nothing.
-    /// Every library-settings writer goes through the same lock, the scan
-    /// engine's add-root included.
+    /// Read, check, and save the library settings in one settings
+    /// transaction, on the blocking pool. `update` gets the stored settings
+    /// with the AcoustID key masked and returns the settings to save; an
+    /// `Err` writes nothing. `update` runs inside the write, so it touches
+    /// no file: it normalizes with `library_policy::normalize`, and the
+    /// availability warnings are worked out after the commit. Every
+    /// library-settings writer works this way, the scan engine's add-root
+    /// included.
     pub async fn update_library<F>(
         &self,
         update: F,
@@ -385,7 +406,7 @@ impl SettingsService {
         let response = self
             .library_blocking(move || {
                 let saved = store
-                    .update_secret::<TypedLibrary, SettingsError, _>(|stored| {
+                    .update_secret_blocking::<TypedLibrary, SettingsError, _>(|stored| {
                         update(stored.into_inner())
                     })
                     .map_err(|error| match error {
@@ -565,7 +586,9 @@ impl SettingsService {
         if indexer.indexer_type.trim().is_empty() {
             indexer.indexer_type = "newznab".to_owned();
         }
-        let id = self.write(move |store| store.save_indexer(indexer)).await?;
+        let id = self
+            .write(move |store| store.save_indexer_blocking(indexer))
+            .await?;
         self.effects.after_save(SavedSection::Other).await;
         Ok(IndexerSavedResponse { id })
     }
@@ -573,7 +596,7 @@ impl SettingsService {
     /// Delete one indexer. Unknown ids are a silent no-op.
     pub async fn delete_indexer(&self, indexer_id: &str) -> Result<(), SettingsError> {
         let indexer_id = indexer_id.to_owned();
-        self.write(move |store| store.delete_indexer(&indexer_id))
+        self.write(move |store| store.delete_indexer_blocking(&indexer_id))
             .await?;
         self.effects.after_save(SavedSection::Other).await;
         Ok(())
@@ -581,7 +604,7 @@ impl SettingsService {
 
     /// Persist a dragged-card priority order (1-based on save).
     pub async fn reorder_indexers(&self, ordered_ids: Vec<String>) -> Result<(), SettingsError> {
-        self.write(move |store| store.reorder_indexers(&ordered_ids))
+        self.write(move |store| store.reorder_indexers_blocking(&ordered_ids))
             .await?;
         self.effects.after_save(SavedSection::Other).await;
         Ok(())

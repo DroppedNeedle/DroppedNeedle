@@ -3,8 +3,9 @@
 //!
 //! [`detect`] tells an empty, v2, v3 or interrupted layout apart without
 //! changing anything, and [`check_bootable`] lets the server start only on
-//! an empty or v3 one. The offline upgrade in the tool reads the same
-//! layout before it moves anything.
+//! an empty or v3 one. [`refuse_lost_key`] keeps it off a v3 database whose
+//! key file is gone. The offline upgrade in the tool reads the same layout
+//! before it moves anything.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ use thiserror::Error;
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::db::factory::sqlite_uri_path;
 use droppedneedle_kernel::runtime_config::crypto::KEY_FILE_NAME;
+use droppedneedle_kernel::runtime_config::ingest::LEGACY_CONFIG_FILE_NAME;
 
 /// Folder inside `config/` and inside `cache/` that keeps the v2 files.
 pub const BACKUP_DIR_NAME: &str = "v2-backup";
@@ -30,10 +32,9 @@ pub const DATA_ENC_KEY_VAR: &str = "DATA_ENC_KEY";
 /// The folders one instance keeps its data in, as the server resolves them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DataDirs {
-    /// Holds the settings file and the encryption key.
+    /// Holds the encryption key (and, before v3 kept settings in the
+    /// database, the settings file).
     pub config_dir: PathBuf,
-    /// The settings file.
-    pub config_file: PathBuf,
     /// Holds the database and everything cached beside it.
     pub cache_dir: PathBuf,
     /// The database file.
@@ -48,11 +49,17 @@ impl DataDirs {
     pub fn from_config(config: &AppConfig) -> Self {
         Self {
             config_dir: config.config_dir(),
-            config_file: config.config_file.clone(),
             cache_dir: config.cache_dir.clone(),
             db_path: config.library_db_path.clone(),
             plugins_dir: config.plugins_dir(),
         }
+    }
+
+    /// The settings file from before settings moved into the database: a
+    /// v2 one, or a v3 one copied in once at the first start.
+    #[must_use]
+    pub fn legacy_config_file(&self) -> PathBuf {
+        self.config_dir.join(LEGACY_CONFIG_FILE_NAME)
     }
 
     /// Where the v2 config files are kept.
@@ -181,6 +188,20 @@ pub enum BootRefusal {
          docs/upgrading-from-v2.md"
     )]
     Unknown(UnknownLayout),
+    /// A v3 database whose key file is missing: a new key would leave every
+    /// stored secret unreadable.
+    #[error(
+        "the key file {} is missing, but the database {} already holds this server's data. Put \
+         the key file back, or set CONFIG_DIR to the folder that holds it. Nothing was changed",
+        .key.display(),
+        .database.display()
+    )]
+    KeyMissing {
+        /// Where the key file should be.
+        key: PathBuf,
+        /// The database it belongs to.
+        database: PathBuf,
+    },
 }
 
 /// The server's boot guard: start only on an empty or v3 layout.
@@ -191,6 +212,47 @@ pub fn check_bootable(dirs: &DataDirs) -> Result<(), BootRefusal> {
         Layout::Interrupted => Err(BootRefusal::Interrupted),
         Layout::Unknown(reason) => Err(BootRefusal::Unknown(reason)),
     }
+}
+
+/// Refuse a v3 database whose key file is missing, before any key is
+/// minted: every secret the database holds was sealed with the lost key.
+/// A database that holds no settings and no accounts passes, as a missing
+/// one does: every sealed value lives in a settings row or in a table a user
+/// owns, so nothing there can need the lost key (a dry run of the import
+/// leaves such a database behind).
+pub fn refuse_lost_key(config_dir: &Path, db_path: &Path) -> Result<(), BootRefusal> {
+    let key = config_dir.join(KEY_FILE_NAME);
+    if std::fs::symlink_metadata(&key).is_ok() {
+        return Ok(());
+    }
+    match probe_database(db_path) {
+        Database::V3 if holds_data(db_path) => Err(BootRefusal::KeyMissing {
+            key,
+            database: db_path.to_path_buf(),
+        }),
+        _ => Ok(()),
+    }
+}
+
+/// Whether a v3 database holds settings or accounts. One that cannot be
+/// read counts as holding them.
+#[must_use]
+pub fn holds_data(db_path: &Path) -> bool {
+    let Ok(db) = open_read_only(db_path) else {
+        return true;
+    };
+    ["config_sections", "auth_users"].iter().any(|table| {
+        db.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM {table})"),
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap_or_else(|error| {
+            // A table a schema this old does not have yet holds nothing.
+            !matches!(error, rusqlite::Error::SqliteFailure(_, Some(ref message))
+                if message.starts_with("no such table"))
+        })
+    })
 }
 
 /// What the database file is.
@@ -226,14 +288,7 @@ fn probe_database(db_path: &Path) -> Database {
 /// its `-wal` file has to be read through that file, so it gets a normal
 /// read-only connection.
 fn read_stamp(db_path: &Path) -> rusqlite::Result<(i64, i64)> {
-    let db = if wal_bytes(db_path) > 0 {
-        Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?
-    } else {
-        Connection::open_with_flags(
-            format!("file:{}?immutable=1", sqlite_uri_path(db_path)),
-            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-        )?
-    };
+    let db = open_read_only(db_path)?;
     let stamp: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if stamp > 0 {
         return Ok((stamp, 0));
@@ -247,6 +302,20 @@ fn read_stamp(db_path: &Path) -> rusqlite::Result<(i64, i64)> {
         |row| row.get(0),
     )?;
     Ok((stamp, tables))
+}
+
+/// A read-only connection that creates nothing beside the database: a
+/// cleanly closed one is opened immutable, one with writes still in its
+/// `-wal` file is read through it.
+fn open_read_only(db_path: &Path) -> rusqlite::Result<Connection> {
+    if wal_bytes(db_path) > 0 {
+        Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+    } else {
+        Connection::open_with_flags(
+            format!("file:{}?immutable=1", sqlite_uri_path(db_path)),
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+        )
+    }
 }
 
 /// The `-wal` file beside a database.

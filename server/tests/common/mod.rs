@@ -262,11 +262,32 @@ pub fn outbound_at(origin: &str) -> droppedneedle::bootstrap::Outbound {
     }
 }
 
-/// A settings store in `dir` with a fixed test key.
+/// The settings of the server `config` describes, while it is stopped:
+/// its database (a migrated copy is placed first when there is none) and
+/// its key (minted when there is none), as the server's first start
+/// would leave them.
+pub fn app_settings(
+    config: &droppedneedle_kernel::config::AppConfig,
+) -> droppedneedle_kernel::runtime_config::ConfigStore {
+    use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, LegacyConfig};
+    std::fs::create_dir_all(config.config_dir()).expect("config dir creates");
+    std::fs::create_dir_all(&config.cache_dir).expect("cache dir creates");
+    if !config.library_db_path.exists() {
+        migrated_db(&config.library_db_path);
+    }
+    let (crypto, _) = Crypto::load_or_generate(&config.config_dir()).expect("key loads");
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&config.library_db_path)
+        .expect("database opens");
+    ConfigStore::open_blocking(db, crypto, &LegacyConfig::None).expect("settings open")
+}
+
+/// A settings store over its own database in `dir`, with a fixed test key.
+/// A `config.json` the test wrote in `dir` first is copied in, as at a
+/// first start. Calling it again on the same `dir` reopens the same rows.
 pub fn config_store(dir: &Path) -> Arc<droppedneedle_kernel::runtime_config::ConfigStore> {
     Arc::new(
-        droppedneedle_kernel::runtime_config::ConfigStore::open(
-            &dir.join("config.json"),
+        droppedneedle_kernel::runtime_config::ConfigStore::scratch(
+            dir,
             droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
                 .expect("test key"),
         )

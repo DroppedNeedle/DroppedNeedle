@@ -56,7 +56,7 @@ impl SaveEffects for RecorderEffects {
 fn scratch_service() -> (SettingsService, Arc<RecorderEffects>, ScratchDir) {
     let dir = ScratchDir::new("settings-sections");
     let crypto = Crypto::from_key_bytes(&[7u8; 32]).expect("test crypto builds");
-    let store = ConfigStore::open(&dir.join("config.json"), crypto).expect("store opens");
+    let store = ConfigStore::scratch(&dir, crypto).expect("store opens");
     let effects = Arc::new(RecorderEffects::default());
     let ids = Arc::new(FixedIdGenerator::new(FIXED_ID));
     (

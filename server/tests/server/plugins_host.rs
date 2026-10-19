@@ -55,7 +55,7 @@ struct Rig {
 fn rig(tag: &str) -> Rig {
     let dir = ScratchDir::new(&format!("plugins-{tag}"));
     let crypto = Crypto::from_key_bytes(&[7u8; 32]).unwrap();
-    let config = Arc::new(ConfigStore::open(&dir.join("config.json"), crypto).unwrap());
+    let config = Arc::new(ConfigStore::scratch(&dir, crypto).unwrap());
     let launcher = Arc::new(FakeLauncher::new());
     let host = PluginHost::new(dir.join("plugins"), Arc::clone(&config), launcher.clone());
     Rig {
@@ -206,8 +206,9 @@ async fn secrets_seal_at_rest_and_saves_reach_the_running_plugin() {
         ("nick".to_owned(), "toybrick".to_owned()),
     ]);
     rig.host.update_settings("toy", true, settings).unwrap();
-    let raw = std::fs::read_to_string(rig.dir.join("config.json")).unwrap();
-    assert!(!raw.contains("live-secret"));
+    let mut raw = std::fs::read(rig.dir.join("settings.db")).unwrap();
+    raw.extend(std::fs::read(rig.dir.join("settings.db-wal")).unwrap_or_default());
+    assert!(!String::from_utf8_lossy(&raw).contains("live-secret"));
 
     // Same code, new settings: no relaunch, the plugin hears the decrypted
     // values.
@@ -681,7 +682,7 @@ async fn the_panel_page_is_sealed_on_every_answer() {
     assert!(page.contains("var b = 2;"), "{page}");
 
     rig.config
-        .save(SecuritySettings {
+        .save_blocking(SecuritySettings {
             frame_ancestors: vec![format!("{DASHBOARD}/")],
             ..SecuritySettings::default()
         })

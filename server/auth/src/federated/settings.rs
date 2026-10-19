@@ -7,11 +7,12 @@
 use std::sync::Arc;
 
 use super::oidc::OidcConfig;
-use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::db::DurableLane;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     JellyfinConnection, OidcConnection, PlexConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::InternalState;
+use droppedneedle_kernel::runtime_config::{ConfigError, ConfigStore, UpdateError};
 
 /// Which sign-in methods the login page offers (v2 `AuthProvidersResponse`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,28 +123,25 @@ impl InstallIds {
         }
     }
 
-    /// Create any missing id. Called once at boot so request paths only
-    /// read (v2 created them lazily with `get_or_create_setting`).
-    pub fn ensure(&self) {
-        let mut internal = match self.store.get::<InternalState>() {
-            Ok(internal) => internal,
-            Err(error) => {
-                tracing::warn!(%error, "cannot read install ids; using the fallback");
-                return;
-            }
-        };
-        if internal.plex_client_id.is_some() && internal.droppedneedle_device_id.is_some() {
-            return;
-        }
-        internal
-            .plex_client_id
-            .get_or_insert_with(|| uuid::Uuid::new_v4().to_string());
-        internal
-            .droppedneedle_device_id
-            .get_or_insert_with(|| uuid::Uuid::new_v4().to_string());
-        if let Err(error) = self.store.save(internal) {
-            tracing::warn!(%error, "cannot store install ids; using the fallback");
-        }
+    /// Create any missing id, in one settings write that keeps ids already
+    /// stored. Called once at boot so request paths only read (v2 created
+    /// them lazily with `get_or_create_setting`).
+    pub async fn ensure(&self) -> Result<(), ConfigError> {
+        self.store
+            .update::<InternalState, ConfigError, _>(DurableLane::Background, |mut internal| {
+                internal
+                    .plex_client_id
+                    .get_or_insert_with(|| uuid::Uuid::new_v4().to_string());
+                internal
+                    .droppedneedle_device_id
+                    .get_or_insert_with(|| uuid::Uuid::new_v4().to_string());
+                Ok(internal)
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| match error {
+                UpdateError::Rejected(error) | UpdateError::Config(error) => error,
+            })
     }
 
     /// `X-Plex-Client-Identifier` for plex.tv calls.

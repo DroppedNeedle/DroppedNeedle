@@ -515,11 +515,11 @@ mod tests {
         use droppedneedle_kernel::runtime_config::{Crypto, Secret};
         let dir = std::env::temp_dir().join(format!("dn-wrapped-key-{}", std::process::id()));
         let crypto = || Crypto::from_key_bytes(&[7u8; 32]).unwrap();
-        let store = Arc::new(ConfigStore::open(&dir.join("config.json"), crypto()).unwrap());
+        let store = Arc::new(ConfigStore::scratch(&dir, crypto()).unwrap());
         let source = ConfigWrappedKey::new(store.clone());
         for key in ["first-key", "rotated-key"] {
             store
-                .save_secret(WrappedSettings {
+                .save_secret_blocking(WrappedSettings {
                     api_key: Secret::new(key),
                 })
                 .unwrap();

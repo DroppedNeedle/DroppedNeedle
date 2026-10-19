@@ -10,12 +10,17 @@
 //! Settings are read from the store on every call, never cached. The
 //! first read seeds the presets (v2 seeds exactly once, from the naming
 //! template configured before Library Management existed) and later
-//! reads persist preset-catalog migrations. All methods touch the config
-//! file and library roots synchronously, so handlers run them on the
-//! blocking pool.
+//! reads persist preset-catalog migrations.
+//!
+//! A change is built and checked against the settings as read, outside
+//! any write: the root checks probe the library folders. The write then
+//! stores it only if the stored settings still have the revision it was
+//! built from (compare-and-swap), and answers a stale revision otherwise.
+//! Methods wait for the settings write and touch the library roots
+//! synchronously, so handlers run them on the blocking pool.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 
 use uuid::Uuid;
 
@@ -39,12 +44,13 @@ use crate::settings_models::{
     LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,
     LibraryManagementSettingsResponse, ManagedFieldInfo,
 };
-use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::db::DurableLane;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_kernel::runtime_config::sections::{
     FieldMode, LibraryManagement, LibraryManagementProfile,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::runtime_config::{ConfigStore, UpdateError};
 
 /// What a confirmed dry run pins on its library folder.
 #[derive(Debug, Clone)]
@@ -65,28 +71,16 @@ const STALE_SETTINGS: &str =
 /// Library Management operations over the config store.
 pub struct LibraryManagementService {
     store: Arc<ConfigStore>,
-    /// Serializes read-compare-write so two saves with the same expected
-    /// revision cannot both land.
-    write: Mutex<()>,
 }
 
 impl LibraryManagementService {
     /// Build over the shared store.
     pub fn new(store: Arc<ConfigStore>) -> Self {
-        Self {
-            store,
-            write: Mutex::new(()),
-        }
+        Self { store }
     }
 
     fn config(&self, error: droppedneedle_kernel::runtime_config::ConfigError) -> SettingsError {
         SettingsError::from_config(error)
-    }
-
-    fn lock(&self) -> Result<MutexGuard<'_, ()>, SettingsError> {
-        self.write.lock().map_err(|cause| {
-            SettingsError::internal(&format!("library management write lock poisoned: {cause}"))
-        })
     }
 
     /// The typed library settings (roots and the legacy naming template).
@@ -102,26 +96,50 @@ impl LibraryManagementService {
     /// normalized on every read, persisted when either changed anything.
     fn load(&self) -> Result<LibraryManagement, SettingsError> {
         let stored: LibraryManagement = self.store.get().map_err(|error| self.config(error))?;
-        let mut settings = if stored.profiles.is_empty() {
-            initial_settings(&self.library()?.naming_template)
-        } else {
-            let mut migrated = stored.clone();
-            migrate_presets(&mut migrated);
-            drop_unknown_fields(&mut migrated);
-            migrated
-        };
-        normalize_stored(&mut settings).map_err(|error| {
-            tracing::error!(?error, "stored library management settings are invalid");
-            SettingsError::InvalidInput {
-                message: "Library Management settings are invalid.".to_owned(),
-            }
-        })?;
+        let template = self.library()?.naming_template;
+        let settings = migrated(&stored, &template)?;
         if settings != stored {
-            self.store
-                .save(settings.clone())
-                .map_err(|error| self.config(error))?;
+            match self.commit(&settings_revision(&settings), settings.clone(), &template) {
+                Ok(()) => {}
+                // Another change landed first; read what it stored.
+                Err(SettingsError::StaleRevision { .. }) => {
+                    let stored: LibraryManagement =
+                        self.store.get().map_err(|error| self.config(error))?;
+                    return migrated(&stored, &template);
+                }
+                Err(other) => return Err(other),
+            }
         }
         Ok(settings)
+    }
+
+    /// Store `candidate` if the stored settings, migrated as [`Self::load`]
+    /// migrates them, still have revision `base`; otherwise answer a stale
+    /// revision. The check and the write are one transaction, and the
+    /// check touches no file.
+    fn commit(
+        &self,
+        base: &str,
+        candidate: LibraryManagement,
+        template: &str,
+    ) -> Result<(), SettingsError> {
+        self.store
+            .update_blocking::<LibraryManagement, SettingsError, _>(
+                DurableLane::Foreground,
+                |stored| {
+                    if settings_revision(&migrated(&stored, template)?) != base {
+                        return Err(SettingsError::StaleRevision {
+                            message: STALE_SETTINGS.to_owned(),
+                        });
+                    }
+                    Ok(candidate)
+                },
+            )
+            .map(|_| ())
+            .map_err(|error| match error {
+                UpdateError::Rejected(error) => error,
+                UpdateError::Config(error) => self.config(error),
+            })
     }
 
     fn require_current(
@@ -164,13 +182,11 @@ impl LibraryManagementService {
 
     /// The settings plus their revision.
     pub fn get_settings(&self) -> Result<LibraryManagementSettingsResponse, SettingsError> {
-        let _guard = self.lock()?;
         self.load().map(Self::response)
     }
 
     /// One profile by id.
     pub fn get_profile(&self, profile_id: &str) -> Result<LibraryManagementProfile, SettingsError> {
-        let _guard = self.lock()?;
         find_profile(&self.load()?, profile_id).cloned()
     }
 
@@ -181,7 +197,6 @@ impl LibraryManagementService {
         proposed: LibraryManagement,
         expected_settings_revision: Option<&str>,
     ) -> Result<ChangeImpact, SettingsError> {
-        let _guard = self.lock()?;
         let current = self.load()?;
         let candidate = self.normalized_candidate(&current, proposed)?;
         validate_root_assignments(&candidate, &self.library()?)?;
@@ -196,7 +211,6 @@ impl LibraryManagementService {
         proposed: LibraryManagement,
         expected_settings_revision: &str,
     ) -> Result<LibraryManagementSettingsResponse, SettingsError> {
-        let _guard = self.lock()?;
         self.save_locked(proposed, expected_settings_revision)
     }
 
@@ -220,7 +234,6 @@ impl LibraryManagementService {
         root_id: &str,
         expected_settings_revision: &str,
     ) -> Result<LibraryManagement, SettingsError> {
-        let _guard = self.lock()?;
         let current = self.load()?;
         self.require_current(&current, expected_settings_revision)?;
         let candidate = self.normalized_candidate(&current, proposed)?;
@@ -246,7 +259,6 @@ impl LibraryManagementService {
         expected_settings_revision: &str,
         proofs: &[ActivationProofPins],
     ) -> Result<LibraryManagementSettingsResponse, SettingsError> {
-        let _guard = self.lock()?;
         let current = self.load()?;
         let current_revision = self.require_current(&current, expected_settings_revision)?;
         let mut candidate = self.normalized_candidate(&current, proposed)?;
@@ -305,9 +317,12 @@ impl LibraryManagementService {
                 }
             }
         }
-        self.store
-            .save(candidate.clone())
-            .map_err(|error| self.config(error))?;
+        let library = self.library()?;
+        self.commit(
+            &current_revision,
+            candidate.clone(),
+            &library.naming_template,
+        )?;
         Ok(Self::response(candidate))
     }
 
@@ -318,7 +333,6 @@ impl LibraryManagementService {
         description: &str,
         expected_settings_revision: &str,
     ) -> Result<LibraryManagementProfileMutationResponse, SettingsError> {
-        let _guard = self.lock()?;
         let settings = self.load()?;
         let source = find_profile(&settings, &settings.default_profile_id)?.clone();
         self.copy_locked(
@@ -337,7 +351,6 @@ impl LibraryManagementService {
         name: &str,
         expected_settings_revision: &str,
     ) -> Result<LibraryManagementProfileMutationResponse, SettingsError> {
-        let _guard = self.lock()?;
         let settings = self.load()?;
         let source = find_profile(&settings, profile_id)?.clone();
         let description = source.description.clone();
@@ -381,7 +394,6 @@ impl LibraryManagementService {
         if profile.id != profile_id {
             return Err(invalid("The profile ID does not match the request path."));
         }
-        let _guard = self.lock()?;
         let mut settings = self.load()?;
         let slot = settings
             .profiles
@@ -400,7 +412,6 @@ impl LibraryManagementService {
         profile_id: &str,
         expected_settings_revision: &str,
     ) -> Result<LibraryManagementSettingsResponse, SettingsError> {
-        let _guard = self.lock()?;
         let mut settings = self.load()?;
         let deleted = find_profile(&settings, profile_id)?.clone();
         if deleted.preset_origin.is_some() {
@@ -427,13 +438,11 @@ impl LibraryManagementService {
 
     /// Which groups of a preset-tracking profile differ from the preset.
     pub fn preset_diff(&self, profile_id: &str) -> Result<PresetDiff, SettingsError> {
-        let _guard = self.lock()?;
         Ok(preset_diff(find_profile(&self.load()?, profile_id)?))
     }
 
     /// Dry-run activation health for the active automatic roots.
     pub fn activation_health(&self) -> Result<ActivationHealth, SettingsError> {
-        let _guard = self.lock()?;
         let settings = self.load()?;
         Ok(activation_health(&settings, &self.library()?))
     }
@@ -444,7 +453,6 @@ impl LibraryManagementService {
         profile_id: &str,
         expected_settings_revision: &str,
     ) -> Result<LibraryManagementProfileExportResponse, SettingsError> {
-        let _guard = self.lock()?;
         let settings = self.load()?;
         let settings_revision = self.require_current(&settings, expected_settings_revision)?;
         let profile = find_profile(&settings, profile_id)?;
@@ -467,7 +475,6 @@ impl LibraryManagementService {
         content: &str,
         expected_settings_revision: &str,
     ) -> Result<LibraryManagementProfileImportPreviewResponse, SettingsError> {
-        let _guard = self.lock()?;
         let settings = self.load()?;
         let settings_revision = self.require_current(&settings, expected_settings_revision)?;
         let parsed = parse_profile_bundle(content)?;
@@ -494,7 +501,6 @@ impl LibraryManagementService {
         name: &str,
         expected_settings_revision: &str,
     ) -> Result<LibraryManagementProfileImportResponse, SettingsError> {
-        let _guard = self.lock()?;
         let mut settings = self.load()?;
         self.require_current(&settings, expected_settings_revision)?;
         let parsed = parse_profile_bundle(content)?;
@@ -553,6 +559,30 @@ impl LibraryManagementService {
 }
 
 const MISSING_PROFILE: &str = "The Library Management profile does not exist.";
+
+/// The stored settings as every read sees them: the presets seeded when
+/// there are none (from the library's naming template), else
+/// preset-migrated, then normalized. Touches no file.
+fn migrated(
+    stored: &LibraryManagement,
+    naming_template: &str,
+) -> Result<LibraryManagement, SettingsError> {
+    let mut settings = if stored.profiles.is_empty() {
+        initial_settings(naming_template)
+    } else {
+        let mut migrated = stored.clone();
+        migrate_presets(&mut migrated);
+        drop_unknown_fields(&mut migrated);
+        migrated
+    };
+    normalize_stored(&mut settings).map_err(|error| {
+        tracing::error!(?error, "stored library management settings are invalid");
+        SettingsError::InvalidInput {
+            message: "Library Management settings are invalid.".to_owned(),
+        }
+    })?;
+    Ok(settings)
+}
 
 /// Drop field entries no version of DroppedNeedle has named instead of
 /// refusing the whole section. The caller saves the result, so this warns

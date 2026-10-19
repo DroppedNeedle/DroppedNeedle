@@ -68,7 +68,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 161);
+    assert_eq!(table_names(&pool).await.len(), 163);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -3536,6 +3536,54 @@ async fn jobs_table_holds_one_queued_row_per_key() {
     ] {
         assert!(
             sqlx::query(&refused).execute(&pool).await.is_err(),
+            "{refused}"
+        );
+    }
+}
+
+/// Migration 0071 adds the settings tables, empty: the server copies
+/// `config.json` in at its first start, never the migration. Both tables are
+/// STRICT, keep only JSON in their JSON columns and refuse an unknown ingest
+/// outcome or a second ingest row.
+#[tokio::test]
+async fn settings_tables_arrive_empty() {
+    let pool = scratch_pool().await;
+    migrator_through(70).run(&pool).await.unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    for table in ["config_sections", "config_ingests"] {
+        let rows: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(rows, 0, "{table}");
+    }
+    sqlx::query(
+        "INSERT INTO config_sections (key, value_json, revision, updated_at) \
+         VALUES ('home_settings', '{}', 1, 1700000000000)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO config_ingests (singleton, outcome, file_sha256, ingested_at, keys_copied, keys_left) \
+         VALUES (1, 'ingested', 'ab', 1, '[]', '[]')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for refused in [
+        "INSERT INTO config_sections (key, value_json, revision, updated_at) VALUES ('a', 'not json', 1, 1)",
+        "INSERT INTO config_sections (key, value_json, revision, updated_at) VALUES ('b', '{}', 0, 1)",
+        "INSERT INTO config_ingests (singleton, outcome, file_sha256, ingested_at, keys_copied, keys_left) \
+         VALUES (2, 'ingested', 'ab', 1, '[]', '[]')",
+        "UPDATE config_ingests SET outcome = 'renamed'",
+        "UPDATE config_ingests SET keys_left = 'x'",
+    ] {
+        assert!(
+            sqlx::query(refused).execute(&pool).await.is_err(),
             "{refused}"
         );
     }

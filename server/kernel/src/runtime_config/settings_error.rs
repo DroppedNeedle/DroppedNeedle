@@ -5,8 +5,9 @@
 //! goes to the log once, at the request boundary.
 //!
 //! Config failures map by kind: [`ConfigError::Validation`] and
-//! [`ConfigError::SectionDecode`] are caller faults (400), lock and IO
-//! failures are server faults (500).
+//! [`ConfigError::SectionDecode`] are caller faults (400), a database too
+//! busy to take the write is the busy 503, and other storage failures are
+//! server faults (500).
 //!
 //! [`ConfigError::Validation`]: crate::runtime_config::ConfigError::Validation
 //! [`ConfigError::SectionDecode`]: crate::runtime_config::ConfigError::SectionDecode
@@ -92,7 +93,24 @@ impl SettingsError {
             Source::SectionDecode { section, reason } => Self::InvalidInput {
                 message: format!("Stored {section} has the wrong shape: {reason}"),
             },
+            Source::Busy(cause) => Self::Busy { cause },
             other => Self::internal(&other),
+        }
+    }
+}
+
+impl std::fmt::Display for SettingsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidInput { message }
+            | Self::Conflict { message }
+            | Self::StaleRevision { message }
+            | Self::Dropped { message }
+            | Self::RateLimited { message } => f.write_str(message),
+            Self::Upstream { cause }
+            | Self::Unavailable { cause }
+            | Self::Busy { cause }
+            | Self::Internal { cause } => f.write_str(cause),
         }
     }
 }

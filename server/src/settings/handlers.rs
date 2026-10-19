@@ -1946,6 +1946,7 @@ pub async fn consent_brainzmash(
     settings
         .lifecycle()
         .consent(&body, &caller)
+        .await
         .map(Json)
         .map_err(ApiError::from)
 }

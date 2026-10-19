@@ -61,7 +61,7 @@ async fn rig(tag: &str, examples: &[&str]) -> Rig {
         );
     }
     let crypto = Crypto::from_key_bytes(&[7u8; 32]).unwrap();
-    let config = Arc::new(ConfigStore::open(&dir.join("config.json"), crypto).unwrap());
+    let config = Arc::new(ConfigStore::scratch(&dir, crypto).unwrap());
     crate::common::migrated_db(&dir.join("app.db"));
     let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
         droppedneedle_kernel::db::Db::open_for_tests(&dir.join("app.db")).unwrap(),

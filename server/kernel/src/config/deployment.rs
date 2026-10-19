@@ -5,6 +5,8 @@
 //! unit test proves the list and the loader agree. Use sites take the
 //! loaded struct by constructor and never read the environment themselves.
 //!
+//! [`REMOVED_CONFIG_FILE_VAR`] is read only to refuse the start.
+//!
 //! [`DROPPED_ENV_VARS`] names v2 `Settings` fields that v3 no longer reads.
 //! The migration validator uses it to reject environment-only values that
 //! turn up in a v2 export file.
@@ -55,9 +57,9 @@ pub const DEPLOYMENT_VARS: &[DeploymentVar] = &[
         note: "The single SQLite WAL file.",
     },
     DeploymentVar {
-        env_name: "CONFIG_FILE_PATH",
-        default: "<root>/config/config.json",
-        note: "Config file; the encryption key sits next to it.",
+        env_name: "CONFIG_DIR",
+        default: "<root>/config",
+        note: "Holds data_enc.key, the key that seals stored secrets.",
     },
     DeploymentVar {
         env_name: "BASE_PATH",
@@ -125,6 +127,11 @@ pub const DEPLOYMENT_VARS: &[DeploymentVar] = &[
         note: "Seconds to drain connections and stop background work.",
     },
 ];
+
+/// A variable that refuses the start while it is set, because ignoring it
+/// would lose data. [`AppConfig::from_env`](super::AppConfig::from_env)
+/// reads it only to refuse.
+pub const REMOVED_CONFIG_FILE_VAR: &str = "CONFIG_FILE_PATH";
 
 /// One v2 `Settings` field dropped from the deployment tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

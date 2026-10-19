@@ -98,6 +98,9 @@ pub enum UpdateError {
     NotFound,
     /// Stored settings failed to save. The message is log-only.
     StoreFailed(String),
+    /// The database was too busy, or stopping, to take the save. The
+    /// message is log-only.
+    Busy(String),
 }
 
 /// Uninstall failures.
@@ -562,10 +565,14 @@ impl PluginHost {
         let plugin = self.get(name).ok_or(UpdateError::NotFound)?;
         let secret_keys = plugin.manifest.secret_keys();
         self.config
-            .save_plugin(name, PluginConfig { enabled, settings }, &secret_keys)
+            .save_plugin_blocking(name, PluginConfig { enabled, settings }, &secret_keys)
             .map_err(|error| {
                 tracing::warn!(plugin = %name, %error, "plugin settings save failed");
-                UpdateError::StoreFailed(error.to_string())
+                if error.is_busy() {
+                    UpdateError::Busy(error.to_string())
+                } else {
+                    UpdateError::StoreFailed(error.to_string())
+                }
             })?;
         self.load_all();
         self.get(name).ok_or(UpdateError::NotFound)

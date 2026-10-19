@@ -117,8 +117,12 @@ pub trait SpotifySettingsStore: Send + Sync {
     /// Raw settings including the real secret.
     fn get_raw(&self) -> SpotifySettings;
     /// Save; a masked secret preserves the stored one. Rejects a
-    /// non-absolute redirect origin (v2 `ConfigurationError` text kept).
-    fn save(&self, settings: &SpotifySettings) -> Result<(), String>;
+    /// non-absolute redirect origin (v2 `ConfigurationError` text kept) as
+    /// invalid input.
+    fn save<'a>(
+        &'a self,
+        settings: &'a SpotifySettings,
+    ) -> BoxFuture<'a, Result<(), super::error::ImportsError>>;
     /// True when the app was registered against v2, so its dashboard lists
     /// the v2 callback path. The v2 import sets it; saving a different
     /// client id clears it.
@@ -335,10 +339,27 @@ impl SpotifySettingsStore for MemorySpotifySettings {
             .clone()
     }
 
-    fn save(&self, settings: &SpotifySettings) -> Result<(), String> {
+    fn save<'a>(
+        &'a self,
+        settings: &'a SpotifySettings,
+    ) -> BoxFuture<'a, Result<(), super::error::ImportsError>> {
+        Box::pin(async move { self.save_now(settings) })
+    }
+
+    fn legacy_callback(&self) -> bool {
+        self.legacy_callback
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl MemorySpotifySettings {
+    fn save_now(&self, settings: &SpotifySettings) -> Result<(), super::error::ImportsError> {
         let origin = settings.spotify_redirect_origin.trim();
         if !(origin.is_empty() || origin.starts_with("http://") || origin.starts_with("https://")) {
-            return Err("Spotify redirect origin must be an absolute http(s) URL".to_owned());
+            return Err(super::error::ImportsError::InvalidInput {
+                message: "Spotify redirect origin must be an absolute http(s) URL".to_owned(),
+            });
         }
         let mut inner = self
             .inner
@@ -354,11 +375,6 @@ impl SpotifySettingsStore for MemorySpotifySettings {
         inner.enabled = settings.enabled;
         inner.spotify_redirect_origin = origin.trim_end_matches('/').to_owned();
         Ok(())
-    }
-
-    fn legacy_callback(&self) -> bool {
-        self.legacy_callback
-            .load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 

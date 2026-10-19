@@ -1,7 +1,7 @@
 //! Runtime config secrets: per-section masks that keep the stored value,
 //! ciphertext at rest, fail-closed decryption, no secret in Debug output
-//! or logs, typed errors instead of panics on bad files, and the YouTube
-//! quota file.
+//! or logs, typed errors instead of panics on bad sections, and the
+//! YouTube quota file.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -26,7 +26,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 use droppedneedle_kernel::runtime_config::sections::{
     LibraryScanSchedule, MusicBrainzSettings, PluginConfig,
 };
-use droppedneedle_kernel::runtime_config::store::{ConfigStore, INSTANCE_ID_KEY};
+use droppedneedle_kernel::runtime_config::store::ConfigStore;
 use droppedneedle_kernel::runtime_config::{ConfigError, DROPPED_SECTIONS};
 
 fn test_dir(name: &str) -> ScratchDir {
@@ -35,13 +35,22 @@ fn test_dir(name: &str) -> ScratchDir {
 
 fn test_store(name: &str) -> (ScratchDir, ConfigStore) {
     let dir = test_dir(name);
-    let crypto = Crypto::from_key_bytes(&[42u8; 32]).unwrap();
-    let store = ConfigStore::open(&dir.join("config.json"), crypto).unwrap();
+    let store = open_store(&dir, [42u8; 32]);
     (dir, store)
 }
 
-fn read_config(dir: &std::path::Path) -> String {
-    std::fs::read_to_string(dir.join("config.json")).unwrap()
+/// The store over the settings database in `dir` (made on first use),
+/// copying in a `config.json` written there first.
+fn open_store(dir: &std::path::Path, key: [u8; 32]) -> ConfigStore {
+    ConfigStore::scratch(dir, Crypto::from_key_bytes(&key).unwrap()).unwrap()
+}
+
+/// Every byte the settings database holds on disk: the file and its WAL,
+/// where a committed row can sit until a checkpoint.
+fn stored_bytes(dir: &std::path::Path) -> String {
+    let mut bytes = std::fs::read(dir.join("settings.db")).unwrap();
+    bytes.extend(std::fs::read(dir.join("settings.db-wal")).unwrap_or_default());
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// A fresh install's MusicBrainz source id is minted once at boot and then
@@ -51,15 +60,14 @@ fn read_config(dir: &std::path::Path) -> String {
 fn musicbrainz_source_id_is_minted_once() {
     let (dir, store) = test_store("mb-source-id");
     store
-        .seed_default::<MusicBrainzSettings>()
+        .seed_default_blocking::<MusicBrainzSettings>()
         .expect("default seeds");
     let first = store.get::<MusicBrainzSettings>().unwrap().source_id;
     assert_eq!(store.get::<MusicBrainzSettings>().unwrap().source_id, first);
     drop(store);
-    let crypto = Crypto::from_key_bytes(&[42u8; 32]).unwrap();
-    let reopened = ConfigStore::open(&dir.join("config.json"), crypto).unwrap();
+    let reopened = open_store(&dir, [42u8; 32]);
     reopened
-        .seed_default::<MusicBrainzSettings>()
+        .seed_default_blocking::<MusicBrainzSettings>()
         .expect("seeding again keeps the stored section");
     assert_eq!(
         reopened.get::<MusicBrainzSettings>().unwrap().source_id,
@@ -81,26 +89,26 @@ fn every_secret_section_masks_and_keeps() {
             assert_eq!(masked.$($field).+.expose(), $fresh, "{label} fresh");
             let mut incoming = <$ty>::default();
             *incoming.$($field).+.expose_mut() = "live-secret-1".to_owned();
-            store.save_secret(incoming).unwrap();
+            store.save_secret_blocking(incoming).unwrap();
             let masked: $ty = store.get_masked::<$ty>().unwrap().into_inner();
             assert_eq!(masked.$($field).+.expose(), $mask, "{label} masked");
             let raw: $ty = store.get_raw().unwrap();
             assert_eq!(raw.$($field).+.expose(), "live-secret-1", "{label} raw");
             let mut incoming = <$ty>::default();
             *incoming.$($field).+.expose_mut() = $mask.to_owned();
-            store.save_secret(incoming).unwrap();
+            store.save_secret_blocking(incoming).unwrap();
             let raw: $ty = store.get_raw().unwrap();
             assert_eq!(raw.$($field).+.expose(), "live-secret-1", "{label} mask keeps");
             let decoy = format!("{0}{0}-tail", $mask);
             let mut incoming = <$ty>::default();
             *incoming.$($field).+.expose_mut() = decoy.clone();
-            store.save_secret(incoming).unwrap();
+            store.save_secret_blocking(incoming).unwrap();
             let raw: $ty = store.get_raw().unwrap();
             assert_eq!(raw.$($field).+.expose(), decoy, "{label} prefix is new");
             let padded = format!("  {}  ", $mask);
             let mut incoming = <$ty>::default();
             *incoming.$($field).+.expose_mut() = padded.clone();
-            store.save_secret(incoming).unwrap();
+            store.save_secret_blocking(incoming).unwrap();
             let raw: $ty = store.get_raw().unwrap();
             let expected = if $strip { decoy } else { padded };
             assert_eq!(raw.$($field).+.expose(), expected, "{label} padded mask");
@@ -170,11 +178,11 @@ fn events_masks_resolve_each_key_independently() {
     let mut incoming = EventsSettings::default();
     *incoming.ticketmaster_api_key.expose_mut() = "tm-live".to_owned();
     *incoming.skiddle_api_key.expose_mut() = "sk-live".to_owned();
-    store.save_secret(incoming).unwrap();
+    store.save_secret_blocking(incoming).unwrap();
     let mut incoming = EventsSettings::default();
     *incoming.ticketmaster_api_key.expose_mut() = TICKETMASTER_KEY_MASK.to_owned();
     *incoming.skiddle_api_key.expose_mut() = "sk-next".to_owned();
-    store.save_secret(incoming).unwrap();
+    store.save_secret_blocking(incoming).unwrap();
     let raw: EventsSettings = store.get_raw().unwrap();
     assert_eq!(raw.ticketmaster_api_key.expose(), "tm-live");
     assert_eq!(raw.skiddle_api_key.expose(), "sk-next");
@@ -184,19 +192,19 @@ fn events_masks_resolve_each_key_independently() {
 }
 
 #[test]
-fn secrets_rest_encrypted_and_never_plaintext_in_file() {
+fn secrets_rest_encrypted_and_never_plaintext_in_the_database() {
     let (dir, store) = test_store("at_rest");
     let mut slskd = SlskdConnection::default();
     *slskd.api_key.expose_mut() = "slskd-live-plaintext".to_owned();
-    store.save_secret(slskd).unwrap();
+    store.save_secret_blocking(slskd).unwrap();
     let mut advanced = AdvancedSettings::default();
     *advanced.audiodb_api_key.expose_mut() = "audiodb-live-plaintext".to_owned();
-    store.save_secret(advanced).unwrap();
+    store.save_secret_blocking(advanced).unwrap();
     let secrets: HashSet<String> = HashSet::from(["token".to_owned()]);
     let mut settings = std::collections::HashMap::new();
     settings.insert("token".to_owned(), "plugin-live-plaintext".to_owned());
     store
-        .save_plugin(
+        .save_plugin_blocking(
             "demo",
             PluginConfig {
                 enabled: true,
@@ -206,14 +214,14 @@ fn secrets_rest_encrypted_and_never_plaintext_in_file() {
         )
         .unwrap();
     store
-        .save_indexer(NewznabIndexer {
+        .save_indexer_blocking(NewznabIndexer {
             name: "first".to_owned(),
             url: "https://example.com".to_owned(),
             api_key: Secret::new("indexer-live-plaintext"),
             ..NewznabIndexer::default()
         })
         .unwrap();
-    let body = read_config(&dir);
+    let body = stored_bytes(&dir);
     assert!(!body.contains("slskd-live-plaintext"));
     assert!(!body.contains("audiodb-live-plaintext"));
     assert!(!body.contains("plugin-live-plaintext"));
@@ -237,9 +245,9 @@ fn empty_secret_stays_empty_and_clears() {
     let (_dir, store) = test_store("empty_secret");
     let mut incoming = PlexConnection::default();
     *incoming.plex_token.expose_mut() = "plex-live".to_owned();
-    store.save_secret(incoming).unwrap();
+    store.save_secret_blocking(incoming).unwrap();
     let cleared = PlexConnection::default();
-    store.save_secret(cleared).unwrap();
+    store.save_secret_blocking(cleared).unwrap();
     let masked: PlexConnection = store.get_masked::<PlexConnection>().unwrap().into_inner();
     assert_eq!(masked.plex_token.expose(), "");
     let raw: PlexConnection = store.get_raw().unwrap();
@@ -251,10 +259,9 @@ fn wrong_key_fails_closed_never_legacy_passthrough() {
     let (dir, store) = test_store("wrong_key");
     let mut incoming = SlskdConnection::default();
     *incoming.api_key.expose_mut() = "slskd-live".to_owned();
-    store.save_secret(incoming).unwrap();
+    store.save_secret_blocking(incoming).unwrap();
     drop(store);
-    let other = Crypto::from_key_bytes(&[9u8; 32]).unwrap();
-    let store = ConfigStore::open(&dir.join("config.json"), other).unwrap();
+    let store = open_store(&dir, [9u8; 32]);
     let result: Result<SlskdConnection, ConfigError> = store.get_raw();
     assert!(matches!(
         result,
@@ -269,10 +276,10 @@ fn secrets_never_appear_in_debug_output() {
     let (_dir, store) = test_store("debug_redaction");
     let mut slskd = SlskdConnection::default();
     *slskd.api_key.expose_mut() = "debug-live-slskd".to_owned();
-    store.save_secret(slskd).unwrap();
+    store.save_secret_blocking(slskd).unwrap();
     let mut events = EventsSettings::default();
     *events.ticketmaster_api_key.expose_mut() = "debug-live-tm".to_owned();
-    store.save_secret(events).unwrap();
+    store.save_secret_blocking(events).unwrap();
     let raw_slskd: SlskdConnection = store.get_raw().unwrap();
     let masked_slskd: SlskdConnection = store.get_masked::<SlskdConnection>().unwrap().into_inner();
     let raw_events: EventsSettings = store.get_raw().unwrap();
@@ -318,7 +325,7 @@ fn secrets_never_reach_structured_logs() {
     tracing::dispatcher::with_default(&tracing::Dispatch::new(subscriber), || {
         let mut slskd = SlskdConnection::default();
         *slskd.api_key.expose_mut() = "log-live-slskd-secret".to_owned();
-        store.save_secret(slskd).unwrap();
+        store.save_secret_blocking(slskd).unwrap();
         let _: SlskdConnection = store.get_raw().unwrap();
         let _: SlskdConnection = store.get_masked::<SlskdConnection>().unwrap().into_inner();
         tracing::info!("round-trip done");
@@ -339,8 +346,7 @@ fn wrong_shapes_fail_typed_not_panics() {
             "library_scan_schedule": {"scan_frequency": "fortnightly"}}"#,
     )
     .unwrap();
-    let crypto = Crypto::from_key_bytes(&[42u8; 32]).unwrap();
-    let store = ConfigStore::open(&dir.join("config.json"), crypto).unwrap();
+    let store = open_store(&dir, [42u8; 32]);
     let result: Result<YouTubeConnection, ConfigError> = store.get_raw();
     assert!(matches!(
         result,
@@ -363,7 +369,7 @@ fn wrong_shapes_fail_typed_not_panics() {
 fn indexer_crud_matches_masks_by_id() {
     let (_dir, store) = test_store("indexers");
     let id = store
-        .save_indexer(NewznabIndexer {
+        .save_indexer_blocking(NewznabIndexer {
             name: "first".to_owned(),
             url: "example.com".to_owned(),
             api_key: Secret::new("indexer-live-1"),
@@ -378,7 +384,7 @@ fn indexer_crud_matches_masks_by_id() {
     let raw = store.get_indexers_raw().unwrap();
     assert_eq!(raw[0].api_key.expose(), "indexer-live-1");
     store
-        .save_indexer(NewznabIndexer {
+        .save_indexer_blocking(NewznabIndexer {
             id: id.clone(),
             name: "renamed".to_owned(),
             url: "https://example.com".to_owned(),
@@ -391,7 +397,7 @@ fn indexer_crud_matches_masks_by_id() {
     assert_eq!(raw[0].name, "renamed");
     assert_eq!(raw[0].api_key.expose(), "indexer-live-1");
     let second = store
-        .save_indexer(NewznabIndexer {
+        .save_indexer_blocking(NewznabIndexer {
             name: "second".to_owned(),
             url: "https://two.example".to_owned(),
             api_key: Secret::new("indexer-live-2"),
@@ -400,13 +406,13 @@ fn indexer_crud_matches_masks_by_id() {
         })
         .unwrap();
     store
-        .reorder_indexers(&[second.clone(), id.clone()])
+        .reorder_indexers_blocking(&[second.clone(), id.clone()])
         .unwrap();
     let raw = store.get_indexers_raw().unwrap();
     assert_eq!(raw[0].id, second);
     assert_eq!(raw[0].priority, 1);
     assert_eq!(raw[1].priority, 2);
-    store.delete_indexer(&id).unwrap();
+    store.delete_indexer_blocking(&id).unwrap();
     let raw = store.get_indexers_raw().unwrap();
     assert_eq!(raw.len(), 1);
     assert_eq!(raw[0].id, second);
@@ -420,7 +426,7 @@ fn plugin_secrets_encrypted_and_mask_resolved() {
     settings.insert("token".to_owned(), "plugin-live-token".to_owned());
     settings.insert("nick".to_owned(), "plain".to_owned());
     store
-        .save_plugin(
+        .save_plugin_blocking(
             "demo",
             droppedneedle_kernel::runtime_config::sections::PluginConfig {
                 enabled: true,
@@ -438,7 +444,7 @@ fn plugin_secrets_encrypted_and_mask_resolved() {
     settings.insert("token".to_owned(), PLUGIN_SECRET_MASK.to_owned());
     settings.insert("nick".to_owned(), "renamed".to_owned());
     store
-        .save_plugin(
+        .save_plugin_blocking(
             "demo",
             droppedneedle_kernel::runtime_config::sections::PluginConfig {
                 enabled: true,
@@ -462,7 +468,7 @@ fn musicbrainz_official_clamp_and_mirror_rules() {
         concurrent_searches: 32,
         ..Default::default()
     };
-    let saved = store.save(settings).unwrap();
+    let saved = store.save_blocking(settings).unwrap();
     assert_eq!(saved.rate_limit, 1.0);
     assert_eq!(saved.concurrent_searches, 6);
     assert!(saved.clamped_to_official_limits);
@@ -475,7 +481,7 @@ fn musicbrainz_official_clamp_and_mirror_rules() {
         ..Default::default()
     };
     assert!(matches!(
-        store.save(settings),
+        store.save_blocking(settings),
         Err(ConfigError::Validation {
             field: "api_url",
             ..
@@ -484,19 +490,7 @@ fn musicbrainz_official_clamp_and_mirror_rules() {
 }
 
 #[test]
-fn instance_id_minted_once_and_stable() {
-    let (_dir, store) = test_store("instance");
-    assert_eq!(store.instance_id().unwrap(), "");
-    let first = store.ensure_instance_id().unwrap();
-    assert_eq!(first.len(), 36);
-    assert_eq!(store.ensure_instance_id().unwrap(), first);
-    assert_eq!(store.instance_id().unwrap(), first);
-    let file: serde_json::Value = serde_json::from_str(&read_config(&_dir)).unwrap();
-    assert_eq!(file[INSTANCE_ID_KEY], serde_json::Value::String(first));
-}
-
-#[test]
-fn dropped_and_unknown_keys_reported_never_read() {
+fn dropped_and_unknown_keys_left_behind_never_read() {
     let dir = test_dir("dropped");
     std::fs::write(
         dir.join("config.json"),
@@ -506,15 +500,32 @@ fn dropped_and_unknown_keys_reported_never_read() {
             "future_section": {}}"#,
     )
     .unwrap();
-    let crypto = Crypto::from_key_bytes(&[42u8; 32]).unwrap();
-    let store = ConfigStore::open(&dir.join("config.json"), crypto).unwrap();
-    let dropped = store.dropped_sections_present().unwrap();
-    assert!(dropped.contains(&"local_files_settings"));
-    assert!(dropped.contains(&"_legacy_lidarr"));
-    assert!(dropped.contains(&"jellyfin_url"));
-    let unknown = store.unknown_top_level_keys().unwrap();
-    assert!(unknown.contains(&"future_section".to_owned()));
-    assert!(!DROPPED_SECTIONS.is_empty());
+    let store = open_store(&dir, [42u8; 32]);
+    let db = rusqlite::Connection::open(dir.join("settings.db")).unwrap();
+    let left: String = db
+        .query_row("SELECT keys_left FROM config_ingests", [], |row| row.get(0))
+        .unwrap();
+    let left: Vec<String> = serde_json::from_str(&left).unwrap();
+    for key in [
+        "_legacy_lidarr",
+        "future_section",
+        "jellyfin_url",
+        "local_files_settings",
+    ] {
+        assert!(
+            left.contains(&key.to_owned()),
+            "{key} left behind: {left:?}"
+        );
+    }
+    let rows: i64 = db
+        .query_row("SELECT COUNT(*) FROM config_sections", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rows, 0);
+    assert!(
+        DROPPED_SECTIONS
+            .iter()
+            .any(|dropped| dropped.key == "jellyfin_url")
+    );
     let prefs: droppedneedle_kernel::runtime_config::sections::UserPreferences =
         store.get().unwrap();
     assert_eq!(prefs.primary_types, vec!["album", "ep", "single"]);

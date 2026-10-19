@@ -351,7 +351,7 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     .await;
     let mock = mock_slot.lock().expect("slot").clone().expect("mock built");
     e2e.store
-        .save_secret(OidcConnection {
+        .save_secret_blocking(OidcConnection {
             enabled: true,
             issuer: issuer.clone(),
             client_id: OIDC_CLIENT.to_owned(),
@@ -464,7 +464,7 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     // From a stated https address the state cookie is marked, so it goes
     // by the `__Secure-` name; the callback clears both names.
     e2e.store
-        .save(PublicAddress {
+        .save_blocking(PublicAddress {
             origins: vec!["https://e2e.test".to_owned()],
         })
         .expect("public address saves");
@@ -556,7 +556,7 @@ async fn jellyfin_sign_in_links_the_media_account_and_feeds_the_import() {
         login_enabled: true,
     };
     e2e.store
-        .save_secret(settings.clone())
+        .save_secret_blocking(settings.clone())
         .expect("jellyfin settings save");
     assert_eq!(providers(e2e.router()).await["jellyfin"], true);
 
@@ -622,7 +622,9 @@ async fn jellyfin_sign_in_links_the_media_account_and_feeds_the_import() {
 
     // Switching Jellyfin login off closes the route, not just the tab.
     settings.login_enabled = false;
-    e2e.store.save_secret(settings).expect("settings save");
+    e2e.store
+        .save_secret_blocking(settings)
+        .expect("settings save");
     assert_eq!(providers(e2e.router()).await["jellyfin"], false);
     let (status, _, _) = login("right-password").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -729,7 +731,7 @@ async fn plex_pins_are_bound_to_their_starter_and_gate_membership() {
         scrobble_to_plex: true,
     };
     e2e.store
-        .save_secret(settings.clone())
+        .save_secret_blocking(settings.clone())
         .expect("plex settings save");
     assert_eq!(providers(e2e.router()).await["plex"], true);
     // One app throughout: started PINs live in its memory.
@@ -857,7 +859,7 @@ async fn plex_pins_are_bound_to_their_starter_and_gate_membership() {
     let reachable = settings.plex_url.clone();
     settings.plex_url = "http://127.0.0.1:9".to_owned();
     e2e.store
-        .save_secret(settings.clone())
+        .save_secret_blocking(settings.clone())
         .expect("settings save");
     // A fresh app: the Plex rate budget of the first one is spent.
     let app = e2e.router();
@@ -876,7 +878,9 @@ async fn plex_pins_are_bound_to_their_starter_and_gate_membership() {
     // With Plex login off, starting a login is refused outright.
     settings.plex_url = reachable;
     settings.login_enabled = false;
-    e2e.store.save_secret(settings).expect("settings save");
+    e2e.store
+        .save_secret_blocking(settings)
+        .expect("settings save");
     let (status, _, _) = call(app, "POST", "/api/v3/auth/plex/start", &[], None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 }
@@ -936,7 +940,7 @@ async fn lastfm_links_with_the_instance_key_and_binds_tokens_to_the_user() {
     });
     // v2 model: the admin saves one app key pair for the whole instance.
     e2e.store
-        .save_secret(LastFmSettings {
+        .save_secret_blocking(LastFmSettings {
             enabled: true,
             api_key: Secret::new(LASTFM_KEY),
             shared_secret: Secret::new(LASTFM_SECRET),

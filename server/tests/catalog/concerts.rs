@@ -159,14 +159,10 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
     let scratch = ScratchDir::new("concerts");
     let runtime = crate::common::scratch_runtime(&scratch.join("app.db")).await;
     let config = Arc::new(
-        ConfigStore::open(
-            &scratch.join("config.json"),
-            Crypto::from_key_bytes(&[7u8; 32]).unwrap(),
-        )
-        .unwrap(),
+        ConfigStore::scratch(&scratch, Crypto::from_key_bytes(&[7u8; 32]).unwrap()).unwrap(),
     );
     config
-        .save_secret(EventsSettings {
+        .save_secret_blocking(EventsSettings {
             enabled: true,
             ticketmaster_enabled: true,
             ticketmaster_api_key: Secret::new("tm-key"),

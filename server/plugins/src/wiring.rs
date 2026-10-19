@@ -181,13 +181,10 @@ impl PluginsSetup {
         let scratch = Arc::new(ScratchGuard(dir.clone()));
         // `Crypto` is not cloneable, so the store and the link sealer each
         // open the same test key; both instances seal identically.
-        let config = Arc::new(
-            ConfigStore::open(
-                &dir.join("config.json"),
-                Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?,
-            )
-            .map_err(|error| error.to_string())?,
-        );
+        let config = Arc::new(ConfigStore::scratch(
+            &dir,
+            Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?,
+        )?);
         let crypto =
             Arc::new(Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?);
         let cache: Arc<dyn ProviderCache> = Arc::new(InMemoryProviderCache::new());

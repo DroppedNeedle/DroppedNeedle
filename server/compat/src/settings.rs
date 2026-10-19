@@ -192,14 +192,14 @@ mod tests {
     use super::*;
     use droppedneedle_kernel::runtime_config::Crypto;
 
-    /// What both protocols read as the download setting from a config file
-    /// holding `config`.
+    /// What both protocols read as the download setting from settings
+    /// holding `config`, copied in as a first start copies `config.json`.
     fn download_access(tag: &str, config: &str) -> [DownloadAccess; 2] {
         let dir = std::env::temp_dir().join(format!("dn-compat-{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("scratch folder");
         std::fs::write(dir.join("config.json"), config).expect("config writes");
         let crypto = Crypto::from_key_bytes(&[7u8; 32]).expect("test key");
-        let store = ConfigStore::open(&dir.join("config.json"), crypto).expect("store opens");
+        let store = ConfigStore::scratch(&dir, crypto).expect("store opens");
         let live = LiveSettings::from_config(Arc::new(store));
         std::fs::remove_dir_all(&dir).expect("scratch folder removed");
         [

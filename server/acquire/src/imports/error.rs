@@ -42,6 +42,12 @@ pub enum ImportsError {
         /// What failed, for the log only.
         cause: String,
     },
+    /// The database was too busy, or stopping, to take a write (503
+    /// `SERVER_BUSY`).
+    Busy {
+        /// What waited, for the log only.
+        cause: String,
+    },
     /// Server fault.
     Internal {
         /// What went wrong, for the log only.
@@ -69,6 +75,9 @@ impl From<ImportsError> for ApiError {
             }
             ImportsError::AuthFailed { cause } | ImportsError::Unavailable { cause } => {
                 ApiError::fault(StatusCode::BAD_GATEWAY, cause)
+            }
+            ImportsError::Busy { cause } => {
+                ApiError::unavailable(droppedneedle_kernel::error::Unavailable::ServerBusy, cause)
             }
             ImportsError::Internal { cause } => ApiError::internal(cause),
         }

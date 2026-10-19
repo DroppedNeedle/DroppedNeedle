@@ -196,16 +196,29 @@ pub struct ResolvedLibraryPolicy {
     pub policy_revision: String,
 }
 
-/// Normalize-and-validate library settings, then hash the revision.
-/// Mirrors v2's resolver: unique root ids, unique casefolded labels,
-/// no root inside another root or inside staging, unique rule ids per
-/// root, rules ordered by depth, warnings for unavailable paths.
+/// Normalize-and-validate library settings, then hash the revision and
+/// warn about paths that are not there now. Mirrors v2's resolver: unique
+/// root ids, unique casefolded labels, no root inside another root or
+/// inside staging, unique rule ids per root, rules ordered by depth,
+/// warnings for unavailable paths.
 pub fn resolve(settings: &TypedLibrary) -> Result<ResolvedLibraryPolicy, SettingsError> {
+    let normalized = normalize(settings)?;
+    let warnings = availability_warnings(&normalized);
+    let policy_revision = revision(&normalized);
+    Ok(ResolvedLibraryPolicy {
+        settings: normalized,
+        warnings,
+        policy_revision,
+    })
+}
+
+/// The validating, normalizing half of [`resolve`]. It touches no file,
+/// so it may run inside a settings write.
+pub fn normalize(settings: &TypedLibrary) -> Result<TypedLibrary, SettingsError> {
     let mut root_ids = BTreeSet::new();
     let mut labels = BTreeSet::new();
     let mut canonical_paths: Vec<(String, PathBuf)> = Vec::new();
     let mut roots: Vec<LibraryRoot> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
     let staging = if settings.staging_path.trim().is_empty() {
         None
     } else {
@@ -274,11 +287,6 @@ pub fn resolve(settings: &TypedLibrary) -> Result<ResolvedLibraryPolicy, Setting
                     message: format!("Library root {label} has more than one rule for {relative}."),
                 });
             }
-            if !canonical.join(&relative).exists() {
-                warnings.push(format!(
-                    "Policy path {relative} under {label} is not currently available."
-                ));
-            }
             rules.push(LibraryPathRule {
                 id: rule_id,
                 relative_path: relative,
@@ -291,9 +299,6 @@ pub fn resolve(settings: &TypedLibrary) -> Result<ResolvedLibraryPolicy, Setting
             (a.relative_path.matches('/').count(), &a.relative_path)
                 .cmp(&(b.relative_path.matches('/').count(), &b.relative_path))
         });
-        if !canonical.exists() {
-            warnings.push(format!("Library root {label} is not currently available."));
-        }
         roots.push(LibraryRoot {
             id: root_id,
             path: canonical.to_string_lossy().into_owned(),
@@ -303,24 +308,44 @@ pub fn resolve(settings: &TypedLibrary) -> Result<ResolvedLibraryPolicy, Setting
         });
     }
 
-    let normalized = TypedLibrary {
+    Ok(TypedLibrary {
         library_roots: roots,
         staging_path: settings.staging_path.clone(),
         naming_template: settings.naming_template.clone(),
         acoustid_api_key: settings.acoustid_api_key.clone(),
         enabled: settings.enabled,
-    };
-    let policy_revision = revision(&normalized);
-    Ok(ResolvedLibraryPolicy {
-        settings: normalized,
-        warnings,
-        policy_revision,
     })
 }
 
-/// 409 unless `expected` is the stored settings' revision.
+/// Warnings for normalized roots and rule paths that are not there now.
+/// Each one is a filesystem check, so this never runs inside a write.
+pub fn availability_warnings(normalized: &TypedLibrary) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for root in &normalized.library_roots {
+        let path = Path::new(&root.path);
+        for rule in &root.rules {
+            if !path.join(&rule.relative_path).exists() {
+                warnings.push(format!(
+                    "Policy path {} under {} is not currently available.",
+                    rule.relative_path, root.label
+                ));
+            }
+        }
+        if !path.exists() {
+            warnings.push(format!(
+                "Library root {} is not currently available.",
+                root.label
+            ));
+        }
+    }
+    warnings
+}
+
+/// 409 unless `expected` is the stored settings' revision. Touches no
+/// file, so it may run inside a settings write.
 pub fn check_revision(stored: &TypedLibrary, expected: &str) -> Result<(), SettingsError> {
-    if expected != resolve_stored(stored).policy_revision {
+    let current = normalize(stored).map_or_else(|_| revision(stored), |normal| revision(&normal));
+    if expected != current {
         return Err(SettingsError::StaleRevision {
             message: "Library settings changed since this page loaded. Refresh and retry."
                 .to_owned(),

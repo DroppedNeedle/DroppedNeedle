@@ -1605,8 +1605,8 @@ async fn bare_library(tag: &str) -> (Scratch, LibrarySetup, PathBuf) {
 /// restart would build it.
 fn open_library(scratch: &Scratch) -> LibrarySetup {
     let config = Arc::new(
-        ConfigStore::open(
-            &scratch.join("config.json"),
+        ConfigStore::scratch(
+            scratch,
             Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
         )
         .expect("config opens"),
@@ -5050,8 +5050,8 @@ async fn a_busy_database_leaves_a_management_job_runnable() {
     config.readers = 1;
     let runtime = open_runtime(&config).await.expect("database opens");
     let settings_store = Arc::new(
-        ConfigStore::open(
-            &scratch.join("config.json"),
+        ConfigStore::scratch(
+            &scratch,
             Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
         )
         .expect("config opens"),
@@ -5079,7 +5079,7 @@ async fn a_busy_database_leaves_a_management_job_runnable() {
         .expect("admin row");
     let settings = library
         .config
-        .save(lm::initial_settings(""))
+        .save_blocking(lm::initial_settings(""))
         .expect("settings saved");
     let management = Management::new(&library);
     let handle = management
@@ -5215,7 +5215,10 @@ async fn library_management_preview_apply_undo() {
     in_place.organization.naming_script_id = "in-place".to_owned();
     in_place.organization.multi_disc_naming_script_id = None;
     settings.profiles.push(in_place);
-    let settings = library.config.save(settings).expect("settings saved");
+    let settings = library
+        .config
+        .save_blocking(settings)
+        .expect("settings saved");
 
     let management = Management::new(&library);
     let request =
@@ -5869,7 +5872,10 @@ async fn library_management_tools_journey() {
             }
         }
     }
-    library.config.save(settings).expect("settings saved");
+    library
+        .config
+        .save_blocking(settings)
+        .expect("settings saved");
     // The settings page reads them first, which stores them normalized.
     lm::service::LibraryManagementService::new(library.config.clone())
         .get_settings()
@@ -5963,7 +5969,10 @@ async fn library_management_tools_journey() {
             profile.artwork.external_enabled = true;
             profile.metadata.scrub_unmanaged_tags = true;
         }
-        library.config.save(enriched).expect("profile saved");
+        library
+            .config
+            .save_blocking(enriched)
+            .expect("profile saved");
         let normalize = || {
             lm::service::LibraryManagementService::new(library.config.clone())
                 .get_settings()
@@ -6083,7 +6092,7 @@ async fn library_management_tools_journey() {
         );
         assert!(!lrc.exists(), "the lyrics file is gone");
         assert!(!cover_file.exists(), "the cover file is gone");
-        library.config.save(stored).expect("profile back");
+        library.config.save_blocking(stored).expect("profile back");
         normalize();
     }
 
@@ -6594,7 +6603,7 @@ async fn library_management_custom_edition_journey() {
         .expect("match confirmed");
     library
         .config
-        .save(lm::initial_settings(""))
+        .save_blocking(lm::initial_settings(""))
         .expect("settings saved");
     lm::service::LibraryManagementService::new(library.config.clone())
         .get_settings()
@@ -6766,7 +6775,10 @@ async fn library_management_artwork_journey() {
         profile.artwork.external_enabled = true;
         profile.metadata.scrub_unmanaged_tags = true;
     }
-    library.config.save(settings).expect("settings saved");
+    library
+        .config
+        .save_blocking(settings)
+        .expect("settings saved");
     let original = read_document(&file).expect("original tags");
     lm::service::LibraryManagementService::new(library.config.clone())
         .get_settings()
@@ -7005,7 +7017,10 @@ impl ManagedLibrary {
         {
             configure(profile);
         }
-        library.config.save(settings).expect("settings saved");
+        library
+            .config
+            .save_blocking(settings)
+            .expect("settings saved");
         lm::service::LibraryManagementService::new(library.config.clone())
             .get_settings()
             .expect("settings normalized");
@@ -8087,7 +8102,7 @@ async fn the_picard_profile_writes_its_fields_in_every_format() {
     managed
         .library
         .config
-        .save(settings)
+        .save_blocking(settings)
         .expect("settings saved");
     let by_hand = vec!["By Hand".to_owned()];
     for track in &tracks {
@@ -9271,7 +9286,10 @@ impl ManagedLibrary {
             assignment.automatic_scan_discovered = scan_discovered;
             assignment.automatic_acquisitions = acquisitions;
         }
-        self.library.config.save(settings).expect("settings saved");
+        self.library
+            .config
+            .save_blocking(settings)
+            .expect("settings saved");
     }
 
     /// A person's preview with the folder's profile, planned and applied.
@@ -13344,7 +13362,7 @@ async fn a_held_album_matched_after_its_folder_is_let_go_is_judged_at_its_look()
                 managed
                     .library
                     .config
-                    .save(preferences)
+                    .save_blocking(preferences)
                     .expect("preferences saved");
             }
             _ => {}

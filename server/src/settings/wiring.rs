@@ -170,10 +170,7 @@ impl SettingsSetup {
             std::process::id()
         )));
         let crypto = Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?;
-        let store = Arc::new(
-            ConfigStore::open(&scratch.0.join("config.json"), crypto)
-                .map_err(|error| error.to_string())?,
-        );
+        let store = Arc::new(ConfigStore::scratch(&scratch.0, crypto)?);
         let cache: Arc<dyn ProviderCache> = Arc::new(InMemoryProviderCache::new());
         let effects: Arc<dyn SaveEffects> =
             Arc::new(LiveSaveEffects::new(cache, Arc::new(NoopKick)));

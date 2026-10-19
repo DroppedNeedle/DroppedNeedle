@@ -356,6 +356,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("catalog/src/reads/platform/artwork/mod.rs", 2, IMAGE_WORK),
     ("compat/src/adapters/library.rs", 1, REQUEST),
     ("compat/src/adapters/subsonic_store.rs", 1, REQUEST),
+    ("kernel/src/runtime_config/store.rs", 4, AWAITED),
     ("kernel/src/schema/template.rs", 1, TEST_TEMPLATE),
     ("library/src/adapters.rs", 1, LOOP_STEP),
     ("library/src/http/corrections.rs", 1, REQUEST),

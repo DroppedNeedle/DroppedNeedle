@@ -39,7 +39,9 @@ use droppedneedle_catalog::reads::collections::store::FollowStore as Collections
 use droppedneedle_kernel::runtime_config::secret_sections::{
     LidarrImportConnection, SpotifySettings,
 };
-use droppedneedle_kernel::runtime_config::{ConfigStore, Masked, Secret};
+use droppedneedle_kernel::runtime_config::{ConfigError, ConfigStore, Masked, Secret, UpdateError};
+
+use super::imports::error::ImportsError;
 
 /// Lidarr connection settings over the `lidarr_import` secret section.
 /// Read failures fail closed to empty (the import then reports Lidarr as
@@ -86,14 +88,16 @@ impl LidarrSettingsStore for ConfigLidarrSettings {
         }
     }
 
-    fn save(&self, settings: &LidarrConnectionSettings) {
+    fn save<'a>(&'a self, settings: &'a LidarrConnectionSettings) -> BoxFuture<'a, ()> {
         let incoming = LidarrImportConnection {
             url: settings.url.clone(),
             api_key: Secret::new(settings.api_key.clone()),
         };
-        if let Err(error) = self.store.save_secret(incoming) {
-            tracing::warn!(%error, "lidarr settings save failed");
-        }
+        Box::pin(async move {
+            if let Err(error) = self.store.save_secret(incoming).await {
+                tracing::warn!(%error, "lidarr settings save failed");
+            }
+        })
     }
 }
 
@@ -160,27 +164,44 @@ impl SpotifySettingsStore for ConfigSpotifySettings {
         }
     }
 
-    fn save(&self, settings: &ImportsSpotifySettings) -> Result<(), String> {
-        // The v2 marker belongs to the app it was stamped for: a different
-        // client id is a new app, registered with the v3 path. A stored
-        // section that does not read fails the save rather than dropping
-        // the marker.
-        let stored = self
-            .store
-            .get_raw::<SpotifySettings>()
-            .map_err(|error| error.to_string())?;
-        let same_app = stored.client_id.trim() == settings.client_id.trim();
-        let incoming = SpotifySettings {
-            client_id: settings.client_id.clone(),
-            client_secret: Secret::new(settings.client_secret.clone()),
-            enabled: settings.enabled,
-            spotify_redirect_origin: settings.spotify_redirect_origin.clone(),
-            legacy_callback: stored.legacy_callback && same_app,
-        };
-        self.store
-            .save_secret(incoming)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+    fn save<'a>(
+        &'a self,
+        settings: &'a ImportsSpotifySettings,
+    ) -> BoxFuture<'a, Result<(), ImportsError>> {
+        let submitted = settings.clone();
+        Box::pin(async move {
+            // The v2 marker belongs to the app it was stamped for: a
+            // different client id is a new app, registered with the v3
+            // path. The check reads the stored row in the same write, and a
+            // stored section that does not read fails the save rather than
+            // dropping the marker.
+            self.store
+                .update_secret::<SpotifySettings, ConfigError, _>(move |stored| {
+                    let stored = stored.into_inner();
+                    let same_app = stored.client_id.trim() == submitted.client_id.trim();
+                    Ok(SpotifySettings {
+                        client_id: submitted.client_id,
+                        client_secret: Secret::new(submitted.client_secret),
+                        enabled: submitted.enabled,
+                        spotify_redirect_origin: submitted.spotify_redirect_origin,
+                        legacy_callback: stored.legacy_callback && same_app,
+                    })
+                })
+                .await
+                .map(|_| ())
+                .map_err(|error| match error {
+                    UpdateError::Rejected(error) | UpdateError::Config(error) => error,
+                })
+                .map_err(|error| match error {
+                    ConfigError::Validation { .. } => ImportsError::InvalidInput {
+                        message: error.to_string(),
+                    },
+                    error if error.is_busy() => ImportsError::Busy {
+                        cause: error.to_string(),
+                    },
+                    error => ImportsError::internal(&error),
+                })
+        })
     }
 }
 

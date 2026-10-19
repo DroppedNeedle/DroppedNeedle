@@ -23,7 +23,7 @@ services:
     ports:
       - "8688:8688"          # host:container; publishes on IPv4 and IPv6 when the Docker daemon has IPv6 enabled
     volumes:
-      - ./config:/app/config       # settings and encryption key
+      - ./config:/app/config       # encryption key; keep it with your backups
       - ./cache:/app/cache         # database, backups, cover art and metadata cache
       - ./plugins:/app/plugins     # installed plugins; omit and they vanish on recreate
       # One common-parent mount keeps the library and completed downloads on one container
