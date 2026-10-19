@@ -594,7 +594,12 @@ async fn write_settings(
             .await?;
         changed += 1;
     }
-    for key in stored.keys().filter(|key| !staged.contains_key(*key)) {
+    // Only a replaced section is ever removed: rows outside the replace
+    // list (the key's check value among them) are not the export's to drop.
+    for key in stored
+        .keys()
+        .filter(|key| !staged.contains_key(*key) && REPLACE_UNIVERSE.contains(&key.as_str()))
+    {
         sqlx::query(settings_sql::DELETE_SECTION.text())
             .bind(key)
             .execute(&mut *tx)

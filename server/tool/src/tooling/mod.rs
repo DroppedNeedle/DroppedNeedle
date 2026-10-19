@@ -12,6 +12,8 @@
 //!   an admin who cannot sign in.
 //! - [`host_settings`] changes a setting from the host, for an admin whose
 //!   saves the web UI refuses.
+//! - [`reset_key`] gives an instance whose data key is lost for good a new
+//!   key, clearing every secret the old one sealed.
 //! - [`restore`] wraps the backup mechanism as an offline restore command.
 //!   There is no HTTP route for restore, on purpose.
 //! - [`fixture`] builds a scratch v2 instance dir carrying every entity
@@ -23,5 +25,6 @@
 pub mod fixture;
 pub mod host_settings;
 pub mod recovery_code;
+pub mod reset_key;
 pub mod restore;
 pub mod upgrade;

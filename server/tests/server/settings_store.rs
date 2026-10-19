@@ -418,9 +418,9 @@ async fn a_config_json_that_does_not_read_refuses_the_start() {
     assert!(ingest_record(&config).is_none());
 }
 
-/// A database that holds this server's data, with its key file gone,
-/// refuses the start instead of taking a new key that could read none of
-/// its secrets.
+/// A database that holds this server's data, sealed values among it and no
+/// key check yet, with its key file gone, refuses the start instead of
+/// taking a new key that could read none of its secrets.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_database_whose_key_is_gone_refuses_the_start() {
     let dir = ScratchDir::new("settings-lost-key");
@@ -432,7 +432,7 @@ async fn a_database_whose_key_is_gone_refuses_the_start() {
         .unwrap()
         .execute(
             "INSERT INTO config_sections (key, value_json, revision, updated_at) \
-             VALUES ('home_settings', '{}', 1, 1)",
+             VALUES ('wrapped_settings', '{\"api_key\": \"v3:c2VhbGVkLWJ5LXRoZS1sb3N0LWtleQ==\"}', 1, 1)",
             [],
         )
         .unwrap();
@@ -446,6 +446,121 @@ async fn a_database_whose_key_is_gone_refuses_the_start() {
     );
     assert!(refused.to_string().contains("CONFIG_DIR"), "{refused}");
     assert!(!config.config_dir().join("data_enc.key").exists());
+}
+
+/// The stored check value for the data key, if any.
+fn key_check(config: &AppConfig) -> Option<String> {
+    rusqlite::Connection::open(&config.library_db_path)
+        .unwrap()
+        .query_row(
+            "SELECT value_json FROM config_sections WHERE key = 'key_check'",
+            [],
+            |row| row.get(0),
+        )
+        .ok()
+}
+
+/// A data directory whose database was made before the key check existed:
+/// migrated, with a key file and one account, and no check stored.
+fn unchecked_instance(name: &str) -> (ScratchDir, AppConfig, Crypto) {
+    let dir = ScratchDir::new(name);
+    let config = AppConfig::with_root(0, &dir);
+    std::fs::create_dir_all(config.config_dir()).unwrap();
+    std::fs::create_dir_all(&config.cache_dir).unwrap();
+    crate::common::migrated_db(&config.library_db_path);
+    let (crypto, _) = Crypto::load_or_generate(&config.config_dir()).unwrap();
+    rusqlite::Connection::open(&config.library_db_path)
+        .unwrap()
+        .execute(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('u1', 'U', 'admin', '2026-01-01T00:00:00+00:00')",
+            [],
+        )
+        .unwrap();
+    (dir, config, crypto)
+}
+
+/// A key file that is not the database's own refuses the start and is left
+/// as it was; with the key file gone, the stored check still refuses and no
+/// key is minted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_key_that_does_not_belong_refuses_the_start() {
+    let dir = ScratchDir::new("settings-wrong-key");
+    let config = AppConfig::with_root(0, &dir);
+    boot_once(&config).await.unwrap();
+    assert!(key_check(&config).is_some());
+
+    let key = config.config_dir().join("data_enc.key");
+    std::fs::remove_file(&key).unwrap();
+    Crypto::mint_file(&key).unwrap();
+    let wrong = std::fs::read(&key).unwrap();
+    let Err(refused) = bootstrap::build_with(config.clone(), closed_outbound()).await else {
+        panic!("a key from elsewhere must refuse the start");
+    };
+    assert!(
+        matches!(refused, BootError::DataDir(BootRefusal::KeyMismatch { .. })),
+        "{refused:?}"
+    );
+    assert!(refused.to_string().contains("reset-key"), "{refused}");
+    assert_eq!(std::fs::read(&key).unwrap(), wrong);
+
+    std::fs::remove_file(&key).unwrap();
+    let Err(refused) = bootstrap::build_with(config.clone(), closed_outbound()).await else {
+        panic!("a database with a check and no key must refuse the start");
+    };
+    assert!(
+        matches!(refused, BootError::DataDir(BootRefusal::KeyMissing { .. })),
+        "{refused:?}"
+    );
+    assert!(!key.exists());
+}
+
+/// The first start after the check arrived, on a database holding a link
+/// sealed whole (not JSON), accepts its own key and records the check.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_whole_sealed_link_lets_the_right_key_start() {
+    let (_dir, config, crypto) = unchecked_instance("settings-check-link");
+    rusqlite::Connection::open(&config.library_db_path)
+        .unwrap()
+        .execute(
+            "INSERT INTO user_connections (user_id, service, connection_data, created_at, \
+             updated_at) VALUES ('u1', 'plex', ?1, 'now', 'now')",
+            [crypto.encrypt(r#"{"token":"plex-token"}"#).unwrap()],
+        )
+        .unwrap();
+
+    boot_once(&config).await.unwrap();
+    assert_eq!(
+        key_check(&config),
+        Some(serde_json::to_string(&crypto.check_value()).unwrap())
+    );
+}
+
+/// One stale value that opens under no key does not refuse the right key,
+/// as long as another sealed value opens under it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stale_value_beside_a_good_one_lets_the_right_key_start() {
+    let (_dir, config, crypto) = unchecked_instance("settings-check-stale");
+    let stale = Crypto::from_key_bytes(&[9u8; 32])
+        .unwrap()
+        .encrypt("stale")
+        .unwrap();
+    let db = rusqlite::Connection::open(&config.library_db_path).unwrap();
+    db.execute(
+        "INSERT INTO connect_app_passwords (id, user_id, name, secret_sha256, \
+         secret_encrypted, created_at) VALUES ('p1', 'u1', 'phone', 'sha', ?1, 'now')",
+        [stale],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO user_connections (user_id, service, connection_data, created_at, \
+         updated_at) VALUES ('u1', 'jellyfin', ?1, 'now', 'now')",
+        [crypto.encrypt(r#"{"token":"jellyfin-token"}"#).unwrap()],
+    )
+    .unwrap();
+
+    boot_once(&config).await.unwrap();
+    assert!(key_check(&config).is_some());
 }
 
 /// W3.8: a backup carries the settings. A secret saved over HTTP, backed up

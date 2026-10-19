@@ -31,6 +31,16 @@ use thiserror::Error;
 
 /// Name of the v3 key file inside the config directory.
 pub const KEY_FILE_NAME: &str = "data_enc.key";
+/// A replacement key `reset-key` wrote and has not yet moved into place.
+pub const NEW_KEY_FILE_NAME: &str = "data_enc.key.new";
+/// Where `reset-key` keeps the key it replaced (then `.old.1`, `.old.2`).
+pub const OLD_KEY_FILE_NAME: &str = "data_enc.key.old";
+/// Purpose and message of the check value a database stores for its key.
+/// Never change either: every stored check would then read as another
+/// key's, and every start would refuse.
+pub const KEY_CHECK_PURPOSE: &str = "data-key-check";
+/// See [`KEY_CHECK_PURPOSE`].
+pub const KEY_CHECK_TEXT: &[u8] = b"DroppedNeedle data key check";
 /// Prefix marking v3 ciphertext in stored secret fields.
 pub const CIPHER_PREFIX: &str = "v3:";
 /// Raw key length in bytes (ChaCha20-Poly1305 key).
@@ -139,7 +149,12 @@ impl Crypto {
 
     /// Load the key, refusing to mint when absent.
     pub fn load(config_dir: &Path) -> Result<Self, CryptoError> {
-        let path = config_dir.join(KEY_FILE_NAME);
+        Self::load_file(&config_dir.join(KEY_FILE_NAME))
+    }
+
+    /// Load the key file at `path`, refusing to mint when absent.
+    pub fn load_file(path: &Path) -> Result<Self, CryptoError> {
+        let path = path.to_path_buf();
         match std::fs::read_to_string(&path) {
             Ok(text) => Self::from_key_text(&text),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -150,6 +165,24 @@ impl Crypto {
                 reason: error.to_string(),
             }),
         }
+    }
+
+    /// Mint a new key into `path`, which must not exist yet. The file and
+    /// its folder are synced before this returns.
+    pub fn mint_file(path: &Path) -> Result<Self, CryptoError> {
+        let key = random_bytes()?;
+        write_key_file(path, &key)?;
+        Ok(Self { key })
+    }
+
+    /// The check value a database stores for this key: hex, so it never
+    /// looks like ciphertext.
+    #[must_use]
+    pub fn check_value(&self) -> String {
+        self.mac(KEY_CHECK_PURPOSE, KEY_CHECK_TEXT)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
     }
 
     /// Build from raw key bytes (tests and the v2 importer, which

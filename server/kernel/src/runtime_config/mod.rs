@@ -16,6 +16,7 @@
 pub mod crypto;
 pub mod error;
 pub mod ingest;
+pub mod key_check;
 pub mod mask;
 pub mod origin;
 pub mod quota;

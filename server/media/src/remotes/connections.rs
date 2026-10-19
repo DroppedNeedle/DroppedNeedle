@@ -311,6 +311,22 @@ impl CredentialCoder {
     }
 }
 
+/// Delete every link whose document holds a value sealed under a data key
+/// that is gone, inside the caller's transaction: one sealed whole (media
+/// servers, ListenBrainz, Spotify) or plain JSON with sealed fields
+/// (Last.fm). The user links the service again. Answers the rows deleted.
+pub fn forget_sealed(conn: &rusqlite::Connection) -> rusqlite::Result<usize> {
+    // `json_tree` fails the whole statement on text that is not JSON, so a
+    // document sealed whole is walked as an empty array.
+    conn.execute(
+        "DELETE FROM user_connections WHERE connection_data LIKE 'v3:%' OR EXISTS (
+             SELECT 1 FROM json_tree(CASE WHEN json_valid(user_connections.connection_data)
+                 THEN user_connections.connection_data ELSE '[]' END) AS tree
+             WHERE tree.type = 'text' AND tree.value LIKE 'v3:%')",
+        [],
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Per-user links
 // ---------------------------------------------------------------------------

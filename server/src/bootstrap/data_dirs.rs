@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::db::factory::sqlite_uri_path;
-use droppedneedle_kernel::runtime_config::crypto::KEY_FILE_NAME;
+use droppedneedle_kernel::runtime_config::crypto::{KEY_FILE_NAME, NEW_KEY_FILE_NAME};
 use droppedneedle_kernel::runtime_config::ingest::LEGACY_CONFIG_FILE_NAME;
 
 /// Folder inside `config/` and inside `cache/` that keeps the v2 files.
@@ -192,7 +192,10 @@ pub enum BootRefusal {
     /// stored secret unreadable.
     #[error(
         "the key file {} is missing, but the database {} already holds this server's data. Put \
-         the key file back, or set CONFIG_DIR to the folder that holds it. Nothing was changed",
+         back the data_enc.key saved with this database (from the same backup), or set \
+         CONFIG_DIR to the folder that holds it. Nothing was changed. Only if that key is lost \
+         for good: stop the server and run `droppedneedle-tool reset-key --yes`, which clears \
+         every stored password and API key",
         .key.display(),
         .database.display()
     )]
@@ -202,6 +205,46 @@ pub enum BootRefusal {
         /// The database it belongs to.
         database: PathBuf,
     },
+    /// The key file is not the one the database's secrets were sealed with.
+    #[error(
+        "the key file {} does not belong to the database {}: it cannot open the passwords and \
+         API keys stored there. Put back the data_enc.key saved with this database (from the \
+         same backup; a key replaced by reset-key is kept as data_enc.key.old), or set \
+         CONFIG_DIR to the folder that holds it. Nothing was changed. Only if that key is lost \
+         for good: stop the server and run `droppedneedle-tool reset-key --yes`, which clears \
+         every stored password and API key",
+        .key.display(),
+        .database.display()
+    )]
+    KeyMismatch {
+        /// The key file.
+        key: PathBuf,
+        /// The database it does not belong to.
+        database: PathBuf,
+    },
+    /// `reset-key` stopped before it moved its new key into place.
+    #[error(
+        "a reset-key did not finish here ({} is still waiting to be moved into place). Stop \
+         the server and run `droppedneedle-tool reset-key --yes` again to finish it",
+        .0.display()
+    )]
+    ResetUnfinished(PathBuf),
+}
+
+/// The refusal for a key that is missing or does not belong to the
+/// database: a `reset-key` that stopped halfway says so instead.
+#[must_use]
+pub fn key_refusal(config_dir: &Path, db_path: &Path, missing: bool) -> BootRefusal {
+    let new_key = config_dir.join(NEW_KEY_FILE_NAME);
+    let key = config_dir.join(KEY_FILE_NAME);
+    let database = db_path.to_path_buf();
+    if std::fs::symlink_metadata(&new_key).is_ok() {
+        BootRefusal::ResetUnfinished(new_key)
+    } else if missing {
+        BootRefusal::KeyMissing { key, database }
+    } else {
+        BootRefusal::KeyMismatch { key, database }
+    }
 }
 
 /// The server's boot guard: start only on an empty or v3 layout.
@@ -226,10 +269,7 @@ pub fn refuse_lost_key(config_dir: &Path, db_path: &Path) -> Result<(), BootRefu
         return Ok(());
     }
     match probe_database(db_path) {
-        Database::V3 if holds_data(db_path) => Err(BootRefusal::KeyMissing {
-            key,
-            database: db_path.to_path_buf(),
-        }),
+        Database::V3 if holds_data(db_path) => Err(key_refusal(config_dir, db_path, true)),
         _ => Ok(()),
     }
 }

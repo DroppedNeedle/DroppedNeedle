@@ -656,6 +656,10 @@ fn upgrade_turns_a_v2_directory_into_v3_in_place() {
     let settings = settings_in(&root.join("cache").join("library.db"));
     assert_eq!(settings["instance_id"], fixture.instance_id.as_str());
     assert!(
+        settings.contains_key("key_check"),
+        "the new key's check is stored"
+    );
+    assert!(
         !root.join("config").join("config.json").exists(),
         "v3 keeps its settings in the database"
     );
@@ -726,6 +730,130 @@ fn upgrade_turns_a_v2_directory_into_v3_in_place() {
     assert!(removed.status.success(), "stderr: {}", stderr_of(&removed));
     assert!(!config_backup.exists() && !cache_backup.exists());
     assert!(is_v3(&root));
+}
+
+/// Every text value in every table of the database at `db` that is, or
+/// holds in JSON, `v3:` ciphertext.
+fn sealed_values(db: &Path) -> Vec<String> {
+    let connection = rusqlite::Connection::open(db).expect("database opens");
+    let tables: Vec<String> = connection
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+        .expect("tables list")
+        .query_map([], |row| row.get(0))
+        .expect("tables read")
+        .collect::<Result<_, _>>()
+        .expect("table names read");
+    let mut found = Vec::new();
+    for table in tables {
+        let columns: Vec<String> = connection
+            .prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))
+            .expect("columns list")
+            .query_map([], |row| row.get(0))
+            .expect("columns read")
+            .collect::<Result<_, _>>()
+            .expect("column names read");
+        for column in columns {
+            let hits: i64 = connection
+                .query_row(
+                    &format!(
+                        "SELECT count(*) FROM \"{table}\" WHERE CAST(\"{column}\" AS TEXT) \
+                         GLOB 'v3:*' OR CAST(\"{column}\" AS TEXT) GLOB '*\"v3:*'"
+                    ),
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("column scans");
+            if hits > 0 {
+                found.push(format!("{table}.{column}"));
+            }
+        }
+    }
+    found
+}
+
+/// A key that is lost for good: `reset-key` refuses while the key file
+/// belongs to the database, and an import refuses a key that does not.
+/// With the key lost, it clears every sealed value, keeps the replaced
+/// key, prints no secret, and the server starts on the result.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reset_key_clears_every_secret_of_a_lost_key() {
+    let scratch = scratch_dir("reset-key");
+    let root = scratch.join("data");
+    droppedneedle_tool::tooling::fixture::build_v2_fixture(&root).expect("fixture builds");
+    let upgraded = tool_in(&root, &["upgrade"]);
+    assert!(
+        upgraded.status.success(),
+        "stderr: {}",
+        stderr_of(&upgraded)
+    );
+    let db = root.join("cache").join("library.db");
+    let config = root.join("config");
+    let key = config.join("data_enc.key");
+    assert!(!sealed_values(&db).is_empty());
+
+    let before = (tree(&config), settings_in(&db), sealed_values(&db));
+    let refused = tool_in(&root, &["reset-key", "--yes"]);
+    assert_eq!(refused.status.code(), Some(1), "{}", stderr_of(&refused));
+    assert!(stderr_of(&refused).contains("belongs to this database"));
+    assert_eq!(
+        (tree(&config), settings_in(&db), sealed_values(&db)),
+        before
+    );
+
+    std::fs::remove_file(&key).expect("key removes");
+    droppedneedle_kernel::runtime_config::Crypto::mint_file(&key).expect("another key");
+    let wrong = std::fs::read(&key).expect("key reads");
+    let (_fixture, export) = repaired_export(&scratch.join("export"));
+    let pass = passphrase_file(&scratch, "operator-passphrase");
+    let import = Command::new(tool())
+        .args(["import", "--file"])
+        .arg(&export)
+        .args(["--db"])
+        .arg(&db)
+        .args(["--config-dir"])
+        .arg(&config)
+        .args(["--passphrase-file"])
+        .arg(&pass)
+        .output()
+        .expect("tool runs");
+    assert_eq!(import.status.code(), Some(1), "{}", stderr_of(&import));
+    assert!(
+        stderr_of(&import).contains("does not belong"),
+        "{}",
+        stderr_of(&import)
+    );
+    assert_eq!(settings_in(&db), before.1);
+
+    let reset = tool_in(&root, &["reset-key", "--yes"]);
+    assert!(reset.status.success(), "stderr: {}", stderr_of(&reset));
+    let output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&reset.stdout),
+        stderr_of(&reset)
+    );
+    assert!(!output.contains("plaintext"), "{output}");
+    assert!(output.contains("app passwords revoked"), "{output}");
+    assert_eq!(sealed_values(&db), Vec::<String>::new());
+    assert_eq!(
+        std::fs::read(config.join("data_enc.key.old")).expect("old key kept"),
+        wrong
+    );
+    assert_ne!(std::fs::read(&key).expect("new key"), wrong);
+    assert!(!config.join("data_enc.key.new").exists());
+
+    let built = droppedneedle::bootstrap::build_with(
+        droppedneedle_kernel::config::AppConfig::with_root(0, &root),
+        common::closed_outbound(),
+    )
+    .await
+    .expect("the server starts after the reset");
+    drop(built.state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener binds");
+    let stopped =
+        droppedneedle::bootstrap::serve(listener, built.router, built.background, async {}).await;
+    assert!(stopped.outcome.is_ok(), "{:?}", stopped.outcome);
 }
 
 /// A locked-out admin who only ever used single sign-on gets a recovery

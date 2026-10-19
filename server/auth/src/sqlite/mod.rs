@@ -58,6 +58,37 @@ pub use sessions::{
 };
 pub use users::{SqliteCredentialLookup, SqliteUserStore};
 
+/// What [`forget_sealed`] cleared.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ForgottenAuth {
+    /// App passwords revoked.
+    pub app_passwords: usize,
+    /// Federated sign-in token sets dropped.
+    pub sign_in_tokens: usize,
+}
+
+/// Clear what auth holds sealed under a data key that is gone, inside the
+/// caller's transaction. An app password is revoked as well as emptied:
+/// the Subsonic token sign-in needs its plaintext, and an active row with
+/// an empty secret would accept an empty password. A federated binding
+/// keeps its row with no tokens, which is how a pre-linked one looks and
+/// is refilled at the next sign-in. Local password rows hold no ciphertext.
+pub fn forget_sealed(conn: &rusqlite::Connection) -> rusqlite::Result<ForgottenAuth> {
+    let app_passwords = conn.execute(
+        "UPDATE connect_app_passwords SET revoked = 1, secret_encrypted = '' \
+         WHERE secret_encrypted LIKE 'v3:%'",
+        [],
+    )?;
+    let sign_in_tokens = conn.execute(
+        "UPDATE auth_providers SET provider_data = NULL WHERE provider_data LIKE 'v3:%'",
+        [],
+    )?;
+    Ok(ForgottenAuth {
+        app_passwords,
+        sign_in_tokens,
+    })
+}
+
 /// Shared SQLite handle for every auth adapter. `Clone` is cheap; clones
 /// share the database.
 #[derive(Clone, Debug)]

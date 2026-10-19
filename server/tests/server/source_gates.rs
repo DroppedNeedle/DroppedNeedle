@@ -396,6 +396,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("plugins/src/wiring.rs", 1, CACHE_HOOK),
     ("providers/src/youtube.rs", 1, REQUEST),
     ("src/admin/handlers.rs", 1, REQUEST),
+    ("src/bootstrap/key_check.rs", 1, BOOT_STEP),
     ("src/bootstrap/mod.rs", 2, BOOT_STEP),
     ("src/bootstrap/serve.rs", 1, HTTP_SERVER),
     ("src/settings/library_policy_service.rs", 1, REQUEST),
@@ -404,6 +405,8 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("tool/src/import/carry/avatars.rs", 2, OFFLINE_TOOL),
     ("tool/src/import/carry/bundle.rs", 1, OFFLINE_TOOL),
     ("tool/src/import/carry/held.rs", 2, OFFLINE_TOOL),
+    ("tool/src/tooling/reset_key.rs", 1, OFFLINE_TOOL),
+    ("tool/src/tooling/upgrade.rs", 1, OFFLINE_TOOL),
 ];
 
 /// The code before the file's unit tests, comment lines blanked.

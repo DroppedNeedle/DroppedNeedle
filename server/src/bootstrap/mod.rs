@@ -10,6 +10,7 @@
 
 pub mod data_dirs;
 pub mod jobs;
+pub mod key_check;
 mod outbound;
 mod serve;
 
@@ -264,6 +265,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let web = prepare_web(&config).await?;
 
     let config_store = Arc::new(open_settings(&db, &config_dir, key_origin).await?);
+    key_check::verify(&db, &crypto, &config_dir, &config.library_db_path).await?;
     let ids = Arc::new(UuidGenerator);
     let clock = Arc::new(droppedneedle_kernel::clock::SystemClock);
     // One live event hub for the process. Bundles built below publish into

@@ -1,5 +1,5 @@
 //! Offline tooling: upgrade, export, validate, import, dry-run, restore,
-//! recovery-code, public-address, content-security-policy.
+//! recovery-code, reset-key, public-address, content-security-policy.
 //!
 //! Thin operator surface over the migration engines:
 //! [`upgrade`](droppedneedle_tool::tooling::upgrade) turns a v2 data directory
@@ -41,6 +41,7 @@ use droppedneedle_tool::export::{ExportRequest, export_v2_to_file};
 use droppedneedle_tool::r#import::ExitCode;
 use droppedneedle_tool::tooling::host_settings;
 use droppedneedle_tool::tooling::recovery_code;
+use droppedneedle_tool::tooling::reset_key;
 use droppedneedle_tool::tooling::upgrade::{
     self, OfflineImport, Step, Summary, UpgradeError, UpgradeRequest, Upgraded,
 };
@@ -63,6 +64,7 @@ Usage:
   droppedneedle-tool restore --backup <file> --target-dir <dir> [--allow-downgrade]
   droppedneedle-tool recovery-code [--] <username>
   droppedneedle-tool recovery-code --list-admins
+  droppedneedle-tool reset-key --yes
   droppedneedle-tool public-address <address>...
   droppedneedle-tool public-address --show | --clear
   droppedneedle-tool content-security-policy enforce | report-only | off
@@ -86,6 +88,10 @@ together. Import and dry-run print exactly one JSON report to stdout.
 
 recovery-code prints a one-time password recovery code for an account.
 droppedneedle-tool recovery-code --help says how to use it.
+
+reset-key gives an instance whose config/data_enc.key is lost for good a
+new key, clearing every stored password and API key.
+droppedneedle-tool reset-key --help says what it clears and changes.
 
 public-address states the address the web UI is opened at, for when every
 save is answered \"Origin not allowed\".
@@ -167,6 +173,33 @@ server start does, so a database from an older version is backed up and
 migrated first. Whoever holds the code can take over that account.
 ";
 
+/// Help for `reset-key`, printed without touching the data directory.
+const RESET_KEY_HELP: &str = "\
+Usage:
+  droppedneedle-tool reset-key --yes
+
+For when the server refuses to start because config/data_enc.key is missing
+or does not belong to the database, and the right key is lost for good.
+First try to put back the data_enc.key saved with the database. This
+command cannot bring back what the old key sealed: it clears it.
+
+It mints a new key and clears every stored password and API key: the
+download client, indexer, Lidarr, single sign-on, Spotify and plugin
+secrets in Settings, every app password, and every user's link to Plex,
+Jellyfin, Navidrome, Spotify, ListenBrainz and Last.fm. It prints which
+settings it cleared, never their values. The old key is kept as
+config/data_enc.key.old (or .old.1, .old.2), which still opens backups made
+before the reset.
+
+Also changed with the key: Jellyfin album and artist ids are new, so
+Finamp and Jellify see a new library and lose their pins and downloads, and
+Subsonic picture links, corrections links and transcode links made before
+stop opening.
+
+It refuses, changing nothing, while the key file belongs to the database.
+Stop the server first. It finds the data the way upgrade does.
+";
+
 /// Flags that take no value.
 const BARE_FLAGS: &[&str] = &["--allow-downgrade", "--no-backup", "--undo", "--yes"];
 
@@ -185,6 +218,7 @@ fn main() {
         "dry-run" => run_import_cmd(&args[1..], true),
         "restore" => run_restore(&args[1..]),
         "recovery-code" => run_recovery_code(&args[1..]),
+        "reset-key" => run_reset_key(&args[1..]),
         "public-address" => run_public_address(&args[1..]),
         "content-security-policy" => run_content_security_policy(&args[1..]),
         "help" | "--help" | "-h" => {
@@ -765,6 +799,63 @@ fn run_list_admins() -> Result<(), String> {
     }
     for name in names {
         println!("{name}");
+    }
+    Ok(())
+}
+
+/// `reset-key --yes`. Prints counts and setting names, never a value.
+fn run_reset_key(args: &[String]) -> Result<(), String> {
+    match args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["--yes"] => {}
+        ["-h" | "--help"] => {
+            println!("{RESET_KEY_HELP}");
+            return Ok(());
+        }
+        _ => return Err(format!("reset-key needs --yes\n{RESET_KEY_HELP}")),
+    }
+    let done = new_runtime()?
+        .block_on(reset_key::reset(&data_dirs()?))
+        .map_err(|error| error.to_string())?;
+    match &done.forgotten {
+        None => println!("Finished a reset-key that had stopped before moving the new key in."),
+        Some(forgotten) => {
+            println!("A new data key is in place. Cleared:");
+            println!("  settings values: {}", forgotten.settings.len());
+            for path in &forgotten.settings {
+                println!("    {path}");
+            }
+            println!("  app passwords revoked: {}", forgotten.app_passwords);
+            println!(
+                "  single sign-on token sets dropped: {}",
+                forgotten.sign_in_tokens
+            );
+            println!(
+                "  service links removed (users link them again): {}",
+                forgotten.connections
+            );
+        }
+    }
+    if let Some(old) = &done.old_key {
+        println!(
+            "The old key is kept as {}. It still opens backups made before this reset.",
+            old.display()
+        );
+    }
+    println!(
+        "Re-enter the cleared settings. Jellyfin album and artist ids are new, so Finamp and \
+         Jellify see a new library; Subsonic picture, corrections and transcode links made \
+         before stop opening. If nobody can sign in, run droppedneedle-tool recovery-code."
+    );
+    if let Some(config) = &done.unread_config {
+        eprintln!(
+            "{} is still there. Settings live in the database, so it stays unread.",
+            config.display()
+        );
     }
     Ok(())
 }

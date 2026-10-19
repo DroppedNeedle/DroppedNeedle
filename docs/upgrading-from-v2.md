@@ -573,7 +573,18 @@ A backup of the v3 database (the ones in `cache/backups`, or a copy that
 `droppedneedle-tool restore` puts back) holds the settings as well. Keep
 `config/data_enc.key` with it, and put it back beside a restored database:
 without it, v3 refuses to start on that database rather than lose the
-stored secrets.
+stored secrets. The database remembers which key it belongs to, so a key
+file from another instance or another backup is refused as well.
+
+If that key is lost for good, stop the server and run
+`droppedneedle-tool reset-key --yes`. It gives the instance a new key and
+clears every stored password and API key: the secrets in Settings, every
+app password, and every user's link to Plex, Jellyfin, Navidrome, Spotify,
+ListenBrainz and Last.fm. It prints the settings it cleared so you know
+what to enter again. Jellyfin album and artist ids change with the key, so
+Finamp and Jellify see a new library and lose their pins and downloads.
+The replaced key is kept as `config/data_enc.key.old`. The command refuses,
+changing nothing, while the key file still belongs to the database.
 
 ### 7. Start v3
 
@@ -627,3 +638,5 @@ import leaves their v2 version out.
 | `BUNDLE_SECTION_MISSING` | The bundle lacks a part the export says it holds | Export again; do not edit the bundle |
 | `BUNDLE_COLUMN_MISSING` | Your v2 is too old to have a value v3 needs for some data | Update v2 to its last release, start and stop it once, then upgrade again |
 | `target database is locked` | A server has the v3 database open | Stop it and re-run |
+| `the key file ... is missing` or `does not belong to the database` | The database's `data_enc.key` is not in the config folder | Nothing was changed. Put back the `data_enc.key` saved with the database, or set `CONFIG_DIR` to its folder. Only if it is lost for good: `reset-key --yes` (see "Backups and restore") |
+| `a reset-key did not finish` | `reset-key` was stopped partway | Run `reset-key --yes` again to finish it |

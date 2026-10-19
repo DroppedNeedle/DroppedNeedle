@@ -52,12 +52,13 @@ use crate::import::{
 };
 use droppedneedle::bootstrap::data_dirs::{
     BACKUP_DIR_NAME, BootRefusal, DataDirs, Layout, MARKER_FILE_NAME, UnknownLayout, detect,
-    refuse_lost_key, wal_bytes, wal_path,
+    key_refusal, refuse_lost_key, wal_bytes, wal_path,
 };
 use droppedneedle_kernel::db::datalock::{DataLock, DataLockError, lock_path, server_lock_path};
 use droppedneedle_kernel::db::{DbConfig, open_runtime};
 use droppedneedle_kernel::runtime_config::crypto::{CryptoError, KEY_FILE_NAME};
 use droppedneedle_kernel::runtime_config::ingest::{LEGACY_CONFIG_FILE_NAME, mark_skip};
+use droppedneedle_kernel::runtime_config::key_check::{Assessment, KeyCheck, assess, enforce};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, KeyOrigin, LegacyConfig, Secret};
 use droppedneedle_kernel::schema::SchemaError;
 
@@ -1002,7 +1003,8 @@ pub enum OfflineImportError {
     /// The v3 key could not be loaded or created.
     #[error(transparent)]
     Key(#[from] CryptoError),
-    /// The target holds v3 data whose key file is missing.
+    /// The target holds v3 data whose key file is missing, or is not the
+    /// key the data was sealed with.
     #[error(transparent)]
     LostKey(BootRefusal),
     /// The target's settings could not be opened (a `config.json` from
@@ -1029,6 +1031,11 @@ pub async fn run_offline_import(
         // the real run would mint one, and so would leave config.json
         // unread.
         let key_absent = !job.config_dir.join(KEY_FILE_NAME).exists();
+        // A real key beside a database is checked now, writing nothing, so
+        // a key that does not belong shows before the real run.
+        if !key_absent && job.db_path.is_file() {
+            prepare_target(&job.db_path, &job.config_dir, None, false).await?;
+        }
         (
             Crypto::from_key_bytes(&[42u8; 32])?,
             LegacyConfig::at(&job.config_dir, key_absent),
@@ -1040,11 +1047,7 @@ pub async fn run_offline_import(
         }
         let (crypto, origin) = Crypto::load_or_generate(&job.config_dir)?;
         let legacy = LegacyConfig::at(&job.config_dir, origin == KeyOrigin::Minted);
-        // With no file there is nothing to copy in (an upgrade has moved
-        // v2's away), and the import's own pool migrates the database.
-        if job.config_dir.join(LEGACY_CONFIG_FILE_NAME).exists() {
-            ingest_settings(&job.db_path, &job.config_dir, &legacy).await?;
-        }
+        prepare_target(&job.db_path, &job.config_dir, Some(&legacy), false).await?;
         (crypto, legacy)
     };
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -1052,32 +1055,70 @@ pub async fn run_offline_import(
         .connect(&format!("sqlite:{}?mode=rwc", job.db_path.display()))
         .await
         .map_err(OfflineImportError::Open)?;
+    let (dry_run, db_path, config_dir) = (job.dry_run, job.db_path.clone(), job.config_dir.clone());
     let outcome = import_into(&pool, job, crypto, legacy).await;
     pool.close().await;
+    // A finished import stores the key's check value; a refused one
+    // leaves the settings as they were.
+    if let Ok(report) = &outcome
+        && !dry_run
+        && matches!(report.exit.code, ExitCode::Ok | ExitCode::OkWithDrops)
+    {
+        prepare_target(&db_path, &config_dir, None, true).await?;
+    }
     outcome
 }
 
-/// Open the target's settings the way the server's start does, so a
-/// `config.json` it never started on is copied in before the import reads
-/// or replaces any section. Migrates the database too.
-async fn ingest_settings(
+/// Ready the target the way the server's start does, with no other pool
+/// open on it: migrate it, copy in a `config.json` it never started on
+/// (when `legacy` is given and the file exists), then check that the key
+/// file belongs to the database. With `record`, a key that belongs has its
+/// check value stored when none is yet.
+async fn prepare_target(
     db_path: &Path,
     config_dir: &Path,
-    legacy: &LegacyConfig,
+    legacy: Option<&LegacyConfig>,
+    record: bool,
 ) -> Result<(), OfflineImportError> {
     let failed = |error: &dyn std::fmt::Display| OfflineImportError::Settings(error.to_string());
     let runtime = open_runtime(&DbConfig::new(db_path))
         .await
         .map_err(|error| failed(&error))?;
-    let opened = match Crypto::load(config_dir) {
-        Ok(crypto) => ConfigStore::open(runtime.db().clone(), crypto, legacy.clone())
-            .await
-            .map(drop)
-            .map_err(|error| failed(&error)),
-        Err(error) => Err(OfflineImportError::Key(error)),
-    };
+    let outcome = async {
+        if let Some(legacy) = legacy
+            && config_dir.join(LEGACY_CONFIG_FILE_NAME).exists()
+        {
+            let crypto = Crypto::load(config_dir)?;
+            ConfigStore::open(runtime.db().clone(), crypto, legacy.clone())
+                .await
+                .map_err(|error| failed(&error))?;
+        }
+        let (db, dir) = (runtime.db().clone(), config_dir.to_path_buf());
+        let belongs = tokio::task::spawn_blocking(move || {
+            let crypto = Crypto::load(&dir)?;
+            if record {
+                enforce(&db, &crypto)
+                    .map(|outcome| outcome != KeyCheck::Mismatch)
+                    .map_err(|error| failed(&error))
+            } else {
+                db.read_blocking("import.key_check", |conn| assess(conn, &crypto))
+                    .map(|outcome| outcome != Assessment::Mismatch)
+                    .map_err(|error| failed(&error))
+            }
+        })
+        .await
+        .map_err(|error| failed(&error))??;
+        if belongs {
+            Ok(())
+        } else {
+            Err(OfflineImportError::LostKey(key_refusal(
+                config_dir, db_path, false,
+            )))
+        }
+    }
+    .await;
     runtime.shutdown().await;
-    opened
+    outcome
 }
 
 async fn import_into(
