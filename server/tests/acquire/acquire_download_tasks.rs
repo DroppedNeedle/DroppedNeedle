@@ -11,13 +11,12 @@ use axum::{
 };
 use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::dispatch::{Journal, UnifiedDispatch};
-use droppedneedle_acquire::downloads::watchdog::RetryPolicy;
 use droppedneedle_acquire::downloads::{
     http::downloads_router,
     state::{AttemptState, TaskStatus},
     store::NewTask,
 };
-use droppedneedle_acquire::landing::{LandingService, LandingSettings, LibrarySlot};
+use droppedneedle_acquire::landing::{LandingService, LibrarySlot};
 use droppedneedle_acquire::requests::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DownloadDispatch as _,
 };
@@ -103,7 +102,7 @@ fn worker_over(journal: &Arc<Journal>) -> Arc<DownloadWorker> {
     let landing = Arc::new(LandingService::new(
         journal.clone(),
         LibrarySlot::default(),
-        Arc::new(LandingSettings::default),
+        settings_beside(journal).live(),
         staging.join("held"),
     ));
     Arc::new(
@@ -121,7 +120,8 @@ fn worker_over(journal: &Arc<Journal>) -> Arc<DownloadWorker> {
 
 async fn send(journal: &Arc<Journal>, (req, who): (Request<Body>, Who)) -> (StatusCode, Value) {
     let principal = test_principal(who.0, who.1, "sess-test", SessionKind::Standard);
-    let response = with_test_principal(downloads_router(worker_over(journal)), principal)
+    let router = downloads_router(worker_over(journal)).expect("router builds");
+    let response = with_test_principal(router, principal)
         .oneshot(req)
         .await
         .unwrap();
@@ -180,12 +180,19 @@ async fn dispatch_reads_progress_and_guard_from_journal() {
 /// Dispatch over `journal`, staging under its scratch database directory.
 fn dispatch_over(journal: Arc<Journal>) -> UnifiedDispatch {
     let staging = staging_for(&journal);
-    UnifiedDispatch::new(
-        journal,
-        Arc::new(UuidGenerator),
-        staging,
-        Arc::new(RetryPolicy::default),
-    )
+    let policy = settings_beside(&journal).live();
+    UnifiedDispatch::new(journal, Arc::new(UuidGenerator), staging, policy)
+}
+
+/// Default settings beside the journal's scratch database.
+fn settings_beside(journal: &Journal) -> droppedneedle_kernel::runtime_config::ConfigStore {
+    let dir = journal
+        .db()
+        .path()
+        .parent()
+        .expect("scratch dir")
+        .join("settings");
+    droppedneedle_acquire::settings::scratch_settings(&dir).expect("settings open")
 }
 
 fn staging_for(journal: &Journal) -> std::path::PathBuf {

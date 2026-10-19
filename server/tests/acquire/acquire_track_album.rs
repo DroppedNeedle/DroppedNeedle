@@ -11,7 +11,6 @@ use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::dispatch::{Journal, UnifiedDispatch};
 use droppedneedle_acquire::downloads::manifest::{ManifestCodec, TrackPosition};
 use droppedneedle_acquire::downloads::sources::SourceHandle;
-use droppedneedle_acquire::downloads::watchdog::RetryPolicy;
 use droppedneedle_acquire::requests::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DownloadDispatch,
 };
@@ -119,11 +118,19 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
     db.add_user("u1", "U", "user").await.expect("user seeds");
     let staging = crate::common::ScratchDir::new("track-album-staging");
     let journal = Arc::new(Journal::new(db));
+    let settings_dir = journal
+        .db()
+        .path()
+        .parent()
+        .expect("scratch dir")
+        .join("settings");
+    let settings =
+        droppedneedle_acquire::settings::scratch_settings(&settings_dir).expect("settings open");
     let dispatch = UnifiedDispatch::new(
         journal.clone(),
         Arc::new(UuidGenerator),
         staging.to_path_buf(),
-        Arc::new(RetryPolicy::default),
+        settings.live(),
     );
     let outcome = DownloadDispatch::dispatch(
         &dispatch,

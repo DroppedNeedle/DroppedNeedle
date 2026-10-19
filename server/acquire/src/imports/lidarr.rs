@@ -21,6 +21,7 @@ use super::models::{
 use droppedneedle_kernel::http_client::{BodyError, read_capped, transport_error};
 #[cfg(any(test, feature = "test-support"))]
 use droppedneedle_kernel::runtime_config::SECRET_MASK;
+use droppedneedle_kernel::runtime_config::secret_sections::LidarrImportConnection;
 
 /// Largest Lidarr answer read. `/artist` is one unpaged list of every
 /// artist with its overview and images, so a large library runs to tens
@@ -222,8 +223,11 @@ pub trait ApprovalSink: Send + Sync {
 pub trait LidarrSettingsStore: Send + Sync {
     /// Masked settings for reads.
     fn get(&self) -> LidarrConnectionSettings;
-    /// Raw settings including the real key, for probes and imports.
-    fn get_raw(&self) -> LidarrConnectionSettings;
+    /// The saved connection with its real key, for probes and imports.
+    /// The key sits in a [`Secret`], so it never reaches a response.
+    ///
+    /// [`Secret`]: droppedneedle_kernel::runtime_config::Secret
+    fn get_raw(&self) -> LidarrImportConnection;
     /// Save; a masked key preserves the stored one. A failed save is
     /// logged, and the read that follows shows what is stored.
     fn save<'a>(&'a self, settings: &'a LidarrConnectionSettings) -> BoxFuture<'a, ()>;
@@ -402,11 +406,15 @@ impl LidarrSettingsStore for MemoryLidarrSettings {
         }
     }
 
-    fn get_raw(&self) -> LidarrConnectionSettings {
-        self.inner
+    fn get_raw(&self) -> LidarrImportConnection {
+        let inner = self
+            .inner
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        LidarrImportConnection {
+            url: inner.url.clone(),
+            api_key: droppedneedle_kernel::runtime_config::Secret::new(inner.api_key.clone()),
+        }
     }
 
     fn save<'a>(&'a self, settings: &'a LidarrConnectionSettings) -> BoxFuture<'a, ()> {
@@ -454,12 +462,12 @@ impl LidarrImportService {
     /// Re-fetch Lidarr and keep monitored artists with a valid MBID.
     async fn monitored_artists(&self) -> Result<Vec<LidarrArtist>, ServiceError> {
         let raw = self.settings.get_raw();
-        if raw.url.is_empty() || raw.api_key.is_empty() {
+        if raw.url.is_empty() || raw.api_key.expose().is_empty() {
             return Err(ServiceError::NotConnected);
         }
         let artists = self
             .client
-            .list_artists(&raw.url, &raw.api_key)
+            .list_artists(&raw.url, raw.api_key.expose())
             .await
             .map_err(ServiceError::Lidarr)?;
         Ok(artists

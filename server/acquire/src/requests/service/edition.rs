@@ -421,7 +421,9 @@ impl RequestsService {
     /// The plan's kept files below the upgrade cutoff; none while upgrades
     /// are off or the qualities cannot be read.
     async fn below_cutoff(&self, plan: &EditionPlan) -> Vec<String> {
-        let Some(policy) = self.upgrade_policy.get().map(|read| read()) else {
+        let Some(policy) = self.upgrade_policy.get().map(|live| {
+            crate::flows::stores::UpgradePolicy::from_policy(&crate::settings::current(live))
+        }) else {
             return Vec::new();
         };
         if !policy.upgrade_allowed {

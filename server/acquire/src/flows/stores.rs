@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::AcquireDb;
 use droppedneedle_kernel::db::{DbError, map_sqlx_busy};
-use droppedneedle_kernel::runtime_config::sections::tier_rank;
+use droppedneedle_kernel::runtime_config::sections::{DownloadPolicy, tier_rank};
 
 /// A flows store failure, already logged by the caller with its context.
 #[derive(Debug, thiserror::Error)]
@@ -511,14 +511,16 @@ pub struct UpgradePolicy {
     pub interval_hours: u64,
 }
 
-impl Default for UpgradePolicy {
-    fn default() -> Self {
+impl UpgradePolicy {
+    /// The upgrade half of the download-policy section.
+    pub fn from_policy(policy: &DownloadPolicy) -> Self {
+        use crate::settings::{clamp_u64, clamp_usize};
         Self {
-            upgrade_allowed: false,
-            cutoff: "lossless".to_owned(),
-            scan_enabled: false,
-            max_per_run: 5,
-            interval_hours: 12,
+            upgrade_allowed: policy.upgrade_allowed,
+            cutoff: policy.quality_cutoff.clone(),
+            scan_enabled: policy.background_upgrade_scan_enabled,
+            max_per_run: clamp_usize(policy.background_upgrade_max_per_run).max(1),
+            interval_hours: clamp_u64(policy.background_upgrade_scan_interval_hours).max(1),
         }
     }
 }

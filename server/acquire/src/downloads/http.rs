@@ -874,15 +874,23 @@ pub fn downloads_core_routes(worker: Arc<DownloadWorker>, upgrades: Upgrades) ->
         .merge(review)
 }
 
-/// Queue routes with upgrades switched off, for tests.
+/// Queue routes over default settings (upgrades off), for tests. The
+/// settings sit beside the worker's scratch database.
 #[cfg(any(test, feature = "test-support"))]
-pub fn downloads_router(worker: Arc<DownloadWorker>) -> Router {
+pub fn downloads_router(worker: Arc<DownloadWorker>) -> Result<Router, String> {
+    let db = worker.journal().db().clone();
+    let dir = db
+        .path()
+        .parent()
+        .map(|dir| dir.join("settings"))
+        .ok_or_else(|| "scratch database has no directory".to_owned())?;
+    let settings = crate::settings::scratch_settings(&dir)?;
     let upgrades = Upgrades::new(
-        crate::flows::stores::UpgradeWorklist::new(worker.journal().db().clone()),
-        Arc::new(crate::flows::stores::UpgradePolicy::default),
+        crate::flows::stores::UpgradeWorklist::new(db),
+        settings.live(),
         Arc::new(crate::flows::seams::ScriptedDownloads::new()),
     );
-    downloads_core_routes(worker, upgrades)
+    Ok(downloads_core_routes(worker, upgrades))
 }
 
 // Manual album searches.

@@ -460,10 +460,33 @@ impl Default for WorkerConfig {
 
 /// The configured sources for one pass.
 pub type SourceSet = Arc<Vec<Source>>;
-/// Resolves the configured sources; called once per pass.
-pub type SourceProvider = Arc<dyn Fn() -> SourceSet + Send + Sync>;
-/// Resolves the worker tuning; called once per pass.
-pub type ConfigProvider = Arc<dyn Fn() -> WorkerConfig + Send + Sync>;
+
+/// Where the worker's sources and tuning come from, read once per pass.
+enum Inputs {
+    /// The saved settings.
+    Live(super::wiring::WorkerSettings),
+    /// A fixed set, for tests that script the sources.
+    Fixed {
+        sources: SourceSet,
+        config: WorkerConfig,
+    },
+}
+
+impl Inputs {
+    fn sources(&self) -> SourceSet {
+        match self {
+            Self::Live(settings) => settings.sources(),
+            Self::Fixed { sources, .. } => sources.clone(),
+        }
+    }
+
+    fn config(&self) -> WorkerConfig {
+        match self {
+            Self::Live(settings) => settings.config(),
+            Self::Fixed { config, .. } => config.clone(),
+        }
+    }
+}
 
 /// Everything one pass works with: settings and sources resolved once at
 /// the start of the pass.
@@ -526,8 +549,7 @@ struct PollMemory {
 /// isolated: one bad task never stops its siblings.
 pub struct DownloadWorker {
     journal: Arc<Journal>,
-    sources: SourceProvider,
-    config: ConfigProvider,
+    inputs: Inputs,
     ownership: JournalOwnership,
     poll_cache: Mutex<HashMap<String, PollMemory>>,
     enqueue_not_before: Mutex<HashMap<String, f64>>,
@@ -558,14 +580,16 @@ pub type SettledHook =
     Arc<dyn Fn(TaskRow, TaskStatus) -> futures_util::future::BoxFuture<'static, ()> + Send + Sync>;
 
 impl DownloadWorker {
-    /// Wire the worker over the shared journal plus live source and config
-    /// resolvers.
-    pub fn new(journal: Arc<Journal>, sources: SourceProvider, config: ConfigProvider) -> Self {
+    /// Wire the worker over the shared journal and the saved settings.
+    pub fn new(journal: Arc<Journal>, settings: super::wiring::WorkerSettings) -> Self {
+        Self::over(journal, Inputs::Live(settings))
+    }
+
+    fn over(journal: Arc<Journal>, inputs: Inputs) -> Self {
         let ownership = JournalOwnership::new(journal.clone());
         Self {
             journal,
-            sources,
-            config,
+            inputs,
             ownership,
             poll_cache: Mutex::new(HashMap::new()),
             enqueue_not_before: Mutex::new(HashMap::new()),
@@ -603,13 +627,13 @@ impl DownloadWorker {
 
     /// The worker tuning as saved right now.
     pub fn current_config(&self) -> WorkerConfig {
-        (self.config)()
+        self.inputs.config()
     }
 
     /// The sources turned on right now, in the configured try order.
     pub fn sources_now(&self) -> Vec<Source> {
-        let sources = (self.sources)();
-        let order = (self.config)().source_order;
+        let sources = self.inputs.sources();
+        let order = self.inputs.config().source_order;
         in_try_order(&sources, &order)
             .into_iter()
             .cloned()
@@ -650,11 +674,12 @@ impl DownloadWorker {
 
     /// Worker over a fixed source list and fixed tuning.
     pub fn fixed(journal: Arc<Journal>, sources: Vec<Source>, config: WorkerConfig) -> Self {
-        let sources: SourceSet = Arc::new(sources);
-        Self::new(
+        Self::over(
             journal,
-            Arc::new(move || sources.clone()),
-            Arc::new(move || config.clone()),
+            Inputs::Fixed {
+                sources: Arc::new(sources),
+                config,
+            },
         )
     }
 
@@ -663,10 +688,10 @@ impl DownloadWorker {
     /// starts run on their own tasks; [`Self::wait_for_landings`] awaits
     /// them.
     pub async fn run_once(self: &Arc<Self>, pass: u64) {
-        let config = (self.config)();
+        let config = self.inputs.config();
         let pass_ctx = Pass {
             watchdog: Watchdog::new(config.watchdog.clone()),
-            sources: (self.sources)(),
+            sources: self.inputs.sources(),
             config,
             now: now_unix_f64(),
         };

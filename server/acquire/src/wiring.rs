@@ -4,9 +4,9 @@
 //! stores and loop deps, the unified dispatch, the live client set, the
 //! health probes, and the download worker. Every durable piece sits on the
 //! shared SQLite runtime ([`AcquireDb`]). Clients, quotas and the download
-//! policy are resolved from the config store on use, so saving settings
+//! policy read their sections through live handles, so saving settings
 //! takes effect without a restart. `for_tests` binds the same shape over a
-//! scratch database. The routers nest under `/api/v3` inside the
+//! scratch database and scratch settings. The routers nest under `/api/v3` inside the
 //! deny-by-default session gate; only the Spotify OAuth callback mounts
 //! outside it (it is state-token identified, like v2's ungated route).
 
@@ -18,20 +18,19 @@ use axum::Router;
 use futures_util::future::BoxFuture;
 
 use super::db::AcquireDb;
-use super::dispatch::{Journal, RetryPolicySource, UnifiedDispatch};
+use super::dispatch::{Journal, UnifiedDispatch};
 use super::downloads::orphans::RecycleBin;
 use super::downloads::watchdog::{RetryPolicy, WatchdogConfig};
 use super::drop_import::DropImports;
 use super::drop_import::store::DropStore;
 use super::flows::loops::{
-    FOLLOW_JOB, FollowDeps, PRUNE_JOB, PruneDeps, PruneSettings, SYNC_JOB, SweepDeps, SyncDeps,
-    UPGRADE_JOB, WANTED_JOB, WantedDeps, WantedSettings, spawn_follow_loop, spawn_prune_loop,
-    spawn_sweep_loop, spawn_sync_loop, spawn_wanted_loop,
+    FOLLOW_JOB, FollowDeps, PRUNE_JOB, PruneDeps, SYNC_JOB, SweepDeps, SyncDeps, UPGRADE_JOB,
+    WANTED_JOB, WantedDeps, spawn_follow_loop, spawn_prune_loop, spawn_sweep_loop, spawn_sync_loop,
+    spawn_wanted_loop,
 };
 use super::flows::seams::{Candidate, CandidateSearch, TickSink};
 use super::flows::stores::{
-    AdminDirectory, FollowStore as FlowsFollowStore, LibraryPresence, UpgradePolicy,
-    UpgradeWorklist,
+    AdminDirectory, FollowStore as FlowsFollowStore, LibraryPresence, UpgradeWorklist,
 };
 use super::imports::handlers::{
     ImportsDeps, imports_callback_router, imports_gated_router, imports_legacy_callback_router,
@@ -49,10 +48,10 @@ use super::imports::spotify_store::{
     CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates,
 };
 use super::landing::ports::LandingLibrary;
-use super::landing::{LandingService, LandingSettings, LibrarySlot};
-use super::probes::{LiveProbes, ProbeCache, ProbeInputs, refresh_probes, seed_from_config};
+use super::landing::{LandingService, LibrarySlot};
+use super::probes::{LiveProbes, ProbeCache, ProbeInputs, refresh_probes};
 use super::requests::error::RequestsError;
-use super::requests::quota::{QuotaLedger, QuotaPolicy};
+use super::requests::quota::QuotaLedger;
 use super::requests::sqlite::{RequestStore, WantedStore};
 use super::requests::state::RequestsState;
 use super::search::{FanoutSearch, ReleasePollSlot, SlotPoll};
@@ -60,7 +59,8 @@ use super::search_jobs::SearchJobs;
 use super::search_jobs::store::JobStore;
 use super::settings::{
     ApprovalSeedBridge, CollectionsFollowBridge, ConfigLidarrSettings, ConfigSpotifySettings,
-    FollowDecisionBridge, RequestsApprovalBridge, RequestsPendingSource,
+    FollowDecisionBridge, RequestsApprovalBridge, RequestsPendingSource, clamp_u32, clamp_u64,
+    clamp_usize, current,
 };
 use super::slskd::{DownloadPolicy as SlskdPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository};
 use super::sources::{SabnzbdSource, SlskdSource};
@@ -77,15 +77,15 @@ use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::events::{EventSink, PlaylistImported, UserNotice, new_event_id};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::{AlreadyRunning, FnTick, Next, Schedule, Supervisor};
-use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::{
-    AdvancedSettings, DownloadClients, LidarrImportConnection, NewznabIndexer as ConfigIndexer,
-    ProwlarrConnection, SecretSection, SlskdConnection, TypedLibrary,
+    DownloadClients, Indexers as ConfigIndexers, LidarrImportConnection,
+    NewznabIndexer as ConfigIndexer, ProwlarrConnection, SlskdConnection, TypedLibrary,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    DownloadPolicy, PlainSection, SourcePriority, UsenetBackendSetting, UserPreferences,
-    WantedWatcher,
+    DownloadPolicy, SourcePriority, UsenetBackendSetting,
 };
+use droppedneedle_kernel::runtime_config::{ConfigStore, Live, Section};
+use tokio::sync::watch;
 
 /// Spotify Web API root (v2 `spotify_client.py`).
 pub const SPOTIFY_API_BASE: &str = "https://api.spotify.com/v1";
@@ -118,85 +118,88 @@ pub const ACQUIRE_LOOPS: &[&str] = &[
     PROBE_JOB,
 ];
 
-/// Clamp a config integer to a non-negative `u32` (0 = unlimited).
-fn clamp_u32(value: i64) -> u32 {
-    u32::try_from(value.max(0)).unwrap_or(u32::MAX)
+/// The sections the acquisition clients are built from.
+pub struct ClientLives {
+    slskd: Live<SlskdConnection>,
+    sabnzbd: Live<DownloadClients>,
+    prowlarr: Live<ProwlarrConnection>,
+    lidarr: Live<LidarrImportConnection>,
+    policy: Live<DownloadPolicy>,
+    backend: Live<UsenetBackendSetting>,
+    library: Live<TypedLibrary>,
+    /// The indexers are not a listed section, so they have no live
+    /// handle: they are read through the store's indexer read, and
+    /// followed through their change notice.
+    indexers: ConfigStore,
 }
 
-/// Clamp a config integer to a non-negative `u64`.
-fn clamp_u64(value: i64) -> u64 {
-    u64::try_from(value.max(0)).unwrap_or(0)
-}
+impl ClientLives {
+    /// Handles on `store`'s sections.
+    pub fn new(store: &ConfigStore) -> Self {
+        Self {
+            slskd: store.live(),
+            sabnzbd: store.live(),
+            prowlarr: store.live(),
+            lidarr: store.live(),
+            policy: store.live(),
+            backend: store.live(),
+            library: store.live(),
+            indexers: store.clone(),
+        }
+    }
 
-/// Clamp a config integer to a non-negative `usize`.
-fn clamp_usize(value: i64) -> usize {
-    usize::try_from(value.max(0)).unwrap_or(usize::MAX)
-}
+    /// One change notice per section read here.
+    fn subscribe(&self) -> Vec<watch::Receiver<i64>> {
+        vec![
+            self.slskd.subscribe(),
+            self.sabnzbd.subscribe(),
+            self.prowlarr.subscribe(),
+            self.lidarr.subscribe(),
+            self.policy.subscribe(),
+            self.backend.subscribe(),
+            self.library.subscribe(),
+            self.indexers.subscribe(ConfigIndexers::KEY),
+        ]
+    }
 
-/// Read one plain section, logging and falling back to the defaults when
-/// the stored value cannot be read.
-fn plain<S: PlainSection>(store: &ConfigStore) -> S {
-    store.get::<S>().unwrap_or_else(|error| {
-        tracing::warn!(section = S::KEY, %error, "settings read failed; using defaults");
-        S::default()
-    })
-}
-
-/// Read one secret section with its real secrets, logging and falling back
-/// to the defaults (unconfigured) when it cannot be read.
-fn secret<S: SecretSection + Clone>(store: &ConfigStore) -> S {
-    store.get_raw::<S>().map(|plain| (*plain).clone()).unwrap_or_else(|error| {
-        tracing::warn!(section = S::KEY, %error, "settings read failed; treating as unconfigured");
-        S::default()
-    })
-}
-
-/// The settings every acquisition client is built from.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct ClientSettings {
-    /// slskd connection.
-    pub slskd: SlskdConnection,
-    /// SABnzbd connection.
-    pub sabnzbd: DownloadClients,
-    /// Native Newznab indexers.
-    pub indexers: Vec<ConfigIndexer>,
-    /// Prowlarr connection.
-    pub prowlarr: ProwlarrConnection,
-    /// Lidarr import connection.
-    pub lidarr: LidarrImportConnection,
-    /// Download policy (quality gates, timeouts).
-    pub policy: DownloadPolicy,
-    /// Active Usenet search side.
-    pub backend: UsenetBackendSetting,
-    /// Library root folders (the mount probe compares filesystems).
-    pub library_roots: Vec<PathBuf>,
-}
-
-impl ClientSettings {
-    /// Current settings from the config store.
-    pub fn read(store: &ConfigStore) -> Self {
-        let indexers = store
+    /// The sections as saved right now.
+    fn read(&self) -> ClientSettings {
+        let indexers = self
+            .indexers
             .get_indexers_raw()
             .map(|indexers| indexers.iter().map(|indexer| (**indexer).clone()).collect())
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "indexer settings read failed; treating as none");
                 Vec::new()
             });
-        Self {
-            slskd: secret(store),
-            sabnzbd: secret(store),
+        ClientSettings {
+            slskd: (**current(&self.slskd)).clone(),
+            sabnzbd: (**current(&self.sabnzbd)).clone(),
             indexers,
-            prowlarr: secret(store),
-            lidarr: secret(store),
-            policy: plain(store),
-            backend: plain(store),
-            library_roots: secret::<TypedLibrary>(store)
+            prowlarr: (**current(&self.prowlarr)).clone(),
+            lidarr: (**current(&self.lidarr)).clone(),
+            policy: (**current(&self.policy)).clone(),
+            backend: **current(&self.backend),
+            library_roots: current(&self.library)
                 .library_roots
-                .into_iter()
-                .map(|root| PathBuf::from(root.path))
+                .iter()
+                .map(|root| PathBuf::from(&root.path))
                 .collect(),
         }
     }
+}
+
+/// The settings one client set is built from.
+struct ClientSettings {
+    slskd: SlskdConnection,
+    sabnzbd: DownloadClients,
+    indexers: Vec<ConfigIndexer>,
+    prowlarr: ProwlarrConnection,
+    lidarr: LidarrImportConnection,
+    policy: DownloadPolicy,
+    backend: UsenetBackendSetting,
+    /// Library root folders (the mount probe compares filesystems).
+    library_roots: Vec<PathBuf>,
 }
 
 /// One built set of clients for the current settings.
@@ -209,15 +212,22 @@ pub struct ClientSet {
     pub probe_inputs: Arc<ProbeInputs>,
 }
 
-/// Acquisition clients resolved from the live settings. The set rebuilds
-/// only when the settings it was built from change, so per-client caches
-/// survive between uses while a saved setting takes effect on the next use.
+/// A built client set and the change notices of the sections it was
+/// built from.
+struct Built {
+    notices: Vec<watch::Receiver<i64>>,
+    set: Arc<ClientSet>,
+}
+
+/// Acquisition clients over the live settings. The set is rebuilt only
+/// after a section it was built from changes, so per-client caches survive
+/// between uses while a saved setting takes effect on the next use.
 pub struct LiveClients {
     http: reqwest::Client,
-    settings: Arc<dyn Fn() -> ClientSettings + Send + Sync>,
+    settings: ClientLives,
     slskd_downloads: PathBuf,
     journal: Arc<Journal>,
-    built: Mutex<Option<(ClientSettings, Arc<ClientSet>)>>,
+    built: Mutex<Option<Built>>,
     plugins: PluginSlot,
     targets: Arc<Targets>,
 }
@@ -227,11 +237,11 @@ pub struct LiveClients {
 pub type PluginSlot = Arc<std::sync::OnceLock<Arc<droppedneedle_plugins::host::PluginHost>>>;
 
 impl LiveClients {
-    /// Resolver over a settings source. `slskd_downloads` is the slskd
+    /// Clients over the live sections. `slskd_downloads` is the slskd
     /// downloads mount (`SLSKD_DOWNLOADS_PATH`).
     pub fn new(
         http: reqwest::Client,
-        settings: Arc<dyn Fn() -> ClientSettings + Send + Sync>,
+        settings: ClientLives,
         slskd_downloads: PathBuf,
         journal: Arc<Journal>,
         targets: Arc<Targets>,
@@ -290,18 +300,26 @@ impl LiveClients {
 
     /// The client set for the current settings.
     pub fn current(&self) -> Arc<ClientSet> {
-        let settings = (self.settings)();
         let mut built = match self.built.lock() {
             Ok(built) => built,
             Err(poisoned) => poisoned.into_inner(),
         };
-        if let Some((seen, set)) = built.as_ref()
-            && *seen == settings
+        if let Some(built) = built.as_ref()
+            && !built
+                .notices
+                .iter()
+                .any(|notice| notice.has_changed().unwrap_or(false))
         {
-            return set.clone();
+            return built.set.clone();
         }
-        let set = Arc::new(self.build(&settings));
-        *built = Some((settings, set.clone()));
+        // Subscribed before the read, so a change that lands during the
+        // build is seen on the next use.
+        let notices = self.settings.subscribe();
+        let set = Arc::new(self.build(&self.settings.read()));
+        *built = Some(Built {
+            notices,
+            set: set.clone(),
+        });
         set
     }
 
@@ -516,35 +534,6 @@ pub fn settled_hook(flows: Arc<FlowsBundle>) -> super::worker::SettledHook {
     })
 }
 
-/// Landing settings from the download-policy section: the quality band
-/// landed files must sit in.
-fn landing_settings(policy: &DownloadPolicy) -> LandingSettings {
-    LandingSettings {
-        quality_min: policy.quality_min.clone(),
-        quality_max: policy.quality_max.clone(),
-    }
-}
-
-/// Live retry policy from the download-policy section.
-fn retry_policy_from(policy: &DownloadPolicy) -> RetryPolicy {
-    RetryPolicy {
-        enabled: policy.auto_retry_enabled,
-        max_attempts: clamp_u32(policy.auto_retry_max_attempts),
-        base_interval_minutes: policy.auto_retry_base_interval_minutes.max(0) as f64,
-        cap_seconds: 86_400.0,
-    }
-}
-
-/// Live quota policy from the download-policy section.
-fn quota_policy_from(policy: &DownloadPolicy) -> QuotaPolicy {
-    QuotaPolicy {
-        request_count: clamp_u32(policy.default_request_quota_count),
-        request_days: clamp_u32(policy.default_request_quota_days).max(1),
-        storage_gb_per_user: clamp_u64(policy.default_storage_quota_gb),
-        max_library_gb: clamp_u64(policy.max_library_size_gb),
-    }
-}
-
 /// The pieces shared by the production and test bundles.
 struct Core {
     requests: RequestsState,
@@ -561,12 +550,9 @@ fn core(
     db: &AcquireDb,
     ids: Arc<dyn IdGenerator>,
     staging_root: &Path,
-    retry: RetryPolicySource,
+    settings: &ConfigStore,
     quota: Arc<QuotaLedger>,
     search: Arc<dyn CandidateSearch>,
-    wanted_settings: Arc<dyn Fn() -> WantedSettings + Send + Sync>,
-    upgrade_policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
-    preferences: Arc<dyn Fn() -> UserPreferences + Send + Sync>,
     collections: &mut CollectionsState,
     plugins: PluginSlot,
     events: EventSink,
@@ -576,7 +562,7 @@ fn core(
         journal.clone(),
         ids,
         staging_root.to_owned(),
-        retry,
+        settings.live(),
     ));
     let mut requests = RequestsState::new(db, quota, dispatch.clone());
     requests.follow_sink = Some(Arc::new(FollowDecisionBridge::new(
@@ -596,9 +582,7 @@ fn core(
         &requests,
         search,
         dispatch.clone(),
-        wanted_settings,
-        upgrade_policy,
-        preferences,
+        settings,
         ticks,
     ));
     // "Get missing tracks" also asks for the edition's tracks below the
@@ -635,40 +619,11 @@ impl AcquireSetup {
     ) -> Result<Self, String> {
         let (http, no_redirect) = (http.shared().clone(), http.no_redirect().clone());
         let staging_root = config.imports_dir();
-        let policy_store = config_store.clone();
-        let retry: RetryPolicySource =
-            Arc::new(move || retry_policy_from(&plain::<DownloadPolicy>(&policy_store)));
-        let quota_store = config_store.clone();
-        let quota = Arc::new(QuotaLedger::new(
-            Arc::new(move || quota_policy_from(&plain::<DownloadPolicy>(&quota_store))),
-            db.clone(),
-        ));
-        let wanted_store = config_store.clone();
-        let wanted_settings = Arc::new(move || {
-            let section: WantedWatcher = plain(&wanted_store);
-            WantedSettings {
-                enabled: section.enabled,
-                watch_partial_albums: section.watch_partial_albums,
-                max_checks_per_sweep: clamp_usize(section.max_checks_per_sweep).max(1),
-                auto_download_on_find: section.auto_download_on_find,
-            }
-        });
-        let sweep_store = config_store.clone();
-        let upgrade_policy = Arc::new(move || {
-            let section: DownloadPolicy = plain(&sweep_store);
-            UpgradePolicy {
-                upgrade_allowed: section.upgrade_allowed,
-                cutoff: section.quality_cutoff.clone(),
-                scan_enabled: section.background_upgrade_scan_enabled,
-                max_per_run: clamp_usize(section.background_upgrade_max_per_run).max(1),
-                interval_hours: clamp_u64(section.background_upgrade_scan_interval_hours).max(1),
-            }
-        });
+        let quota = Arc::new(QuotaLedger::new(config_store.live(), db.clone()));
         let journal_for_clients = Arc::new(Journal::new(db.clone()));
-        let settings_store = config_store.clone();
         let clients = Arc::new(LiveClients::new(
             http.clone(),
-            Arc::new(move || ClientSettings::read(&settings_store)),
+            ClientLives::new(&config_store),
             config.slskd_downloads_path.clone(),
             journal_for_clients.clone(),
             Arc::new(Targets::new(journal_for_clients, staging_root.clone())),
@@ -682,28 +637,15 @@ impl AcquireSetup {
             &db,
             ids.clone(),
             &staging_root,
-            retry,
+            &config_store,
             quota,
             search,
-            wanted_settings,
-            upgrade_policy,
-            {
-                let preferences_store = config_store.clone();
-                Arc::new(move || plain::<UserPreferences>(&preferences_store))
-            },
             collections,
             clients.plugins().clone(),
             events.clone(),
         );
-        let prune_store = config_store.clone();
         let prune = Arc::new(PruneDeps {
-            settings: Arc::new(move || {
-                let section: AdvancedSettings = secret(&prune_store);
-                PruneSettings {
-                    retention_days: clamp_u64(section.request_history_retention_days),
-                    interval_hours: clamp_u64(section.store_prune_interval_hours),
-                }
-            }),
+            settings: config_store.live(),
             ledger: core.requests.store.clone(),
             watches: core.requests.wanted.clone(),
             search_jobs: JobStore::new(db.clone()),
@@ -756,14 +698,7 @@ impl AcquireSetup {
                 })
             },
         ));
-        let boot_settings = ClientSettings::read(&config_store);
-        let probe_cache = Arc::new(ProbeCache::new(seed_from_config(
-            &boot_settings.slskd,
-            &boot_settings.sabnzbd,
-            &boot_settings.indexers,
-            &boot_settings.prowlarr,
-            &boot_settings.lidarr,
-        )));
+        let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let imports = ImportsDeps {
             http: http.clone(),
@@ -788,49 +723,19 @@ impl AcquireSetup {
             trusted_proxies: config.trusted_proxies.clone(),
         };
 
-        let landing_store = config_store.clone();
         let landing = Arc::new(LandingService::new(
             core.journal.clone(),
             LibrarySlot::default(),
-            Arc::new(move || landing_settings(&plain::<DownloadPolicy>(&landing_store))),
+            config_store.live(),
             config.cache_dir.join("held"),
         ));
 
         // Worker over the live sources and tuning.
-        let worker_clients = clients.clone();
-        let worker_store = config_store.clone();
-        let worker_staging = staging_root.clone();
-        let sources_store = config_store.clone();
         let worker_plugins = clients.plugins().clone();
         let worker = Arc::new(
             DownloadWorker::new(
                 core.journal.clone(),
-                Arc::new(move || {
-                    let policy: DownloadPolicy = plain(&sources_store);
-                    worker_clients.sources_with_plugins(&policy)
-                }),
-                Arc::new(move || {
-                    let policy: DownloadPolicy = plain(&worker_store);
-                    let source_priority: SourcePriority = plain(&worker_store);
-                    let sab: DownloadClients = secret(&worker_store);
-                    let sab_mount = (!sab.sabnzbd.url.is_empty())
-                        .then(|| PathBuf::from(sab.sabnzbd.downloads_mount.clone()));
-                    let library: TypedLibrary = secret(&worker_store);
-                    let library_roots: Vec<PathBuf> = library
-                        .library_roots
-                        .iter()
-                        .map(|root| root.path.trim())
-                        .filter(|path| !path.is_empty())
-                        .map(PathBuf::from)
-                        .collect();
-                    worker_config(
-                        &policy,
-                        &source_priority,
-                        &worker_staging,
-                        sab_mount,
-                        &library_roots,
-                    )
-                }),
+                WorkerSettings::new(&config_store, clients.clone(), staging_root.clone()),
             )
             .with_plugin_events(worker_plugins)
             .with_targets(clients.targets().clone())
@@ -941,12 +846,13 @@ impl AcquireSetup {
             .parent()
             .map(|dir| dir.join("staging"))
             .ok_or_else(|| "scratch database has no directory".to_owned())?;
+        let settings = super::settings::scratch_settings(&staging_root.join("settings"))?;
         let factory = droppedneedle_kernel::http_client::HttpClientFactory::new()
             .map_err(|error| error.to_string())?;
         let http = factory.shared().clone();
         let clients = Arc::new(LiveClients::new(
             http.clone(),
-            Arc::new(ClientSettings::default),
+            ClientLives::new(&settings),
             staging_root.clone(),
             Arc::new(Journal::new(db.clone())),
             Arc::new(Targets::new(
@@ -959,14 +865,11 @@ impl AcquireSetup {
             &db,
             ids.clone(),
             &staging_root,
-            Arc::new(RetryPolicy::default),
+            &settings,
             Arc::new(QuotaLedger::unlimited(db.clone())),
             Arc::new(LiveSearch {
                 clients: clients.clone(),
             }),
-            Arc::new(WantedSettings::default),
-            Arc::new(UpgradePolicy::default),
-            Arc::new(UserPreferences::default),
             collections,
             clients.plugins().clone(),
             events.clone(),
@@ -1042,7 +945,7 @@ impl AcquireSetup {
         let landing = Arc::new(LandingService::new(
             core.journal.clone(),
             LibrarySlot::default(),
-            Arc::new(LandingSettings::default),
+            settings.live(),
             held_dir,
         ));
         let worker = Arc::new(
@@ -1065,16 +968,10 @@ impl AcquireSetup {
             events.clone(),
         ));
         let drops = drop_imports(&db, &landing, &staging_root, &events, &core.flows);
-        let probe_cache = Arc::new(ProbeCache::new(seed_from_config(
-            &SlskdConnection::default(),
-            &DownloadClients::default(),
-            &[],
-            &ProwlarrConnection::default(),
-            &LidarrImportConnection::default(),
-        )));
+        let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let prune = Arc::new(PruneDeps {
-            settings: Arc::new(PruneSettings::default),
+            settings: settings.live(),
             ledger: core.requests.store.clone(),
             watches: core.requests.wanted.clone(),
             search_jobs: JobStore::new(db.clone()),
@@ -1201,9 +1098,7 @@ fn flows_bundle(
     requests: &RequestsState,
     search: Arc<dyn CandidateSearch>,
     dispatch: Arc<UnifiedDispatch>,
-    wanted_settings: Arc<dyn Fn() -> WantedSettings + Send + Sync>,
-    upgrade_policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
-    preferences: Arc<dyn Fn() -> UserPreferences + Send + Sync>,
+    settings: &ConfigStore,
     ticks: Arc<dyn TickSink>,
 ) -> FlowsBundle {
     let watches = requests.wanted.clone();
@@ -1213,7 +1108,7 @@ fn flows_bundle(
     let library = Arc::new(LibraryPresence::over_catalog(db.pool().clone()));
     let admins = AdminDirectory::over_users(db.clone());
     let wanted_deps = Arc::new(WantedDeps {
-        settings: wanted_settings,
+        settings: settings.live(),
         watches: watches.clone(),
         ledger: ledger.clone(),
         search,
@@ -1229,7 +1124,7 @@ fn flows_bundle(
         downloads: dispatch.clone(),
         library: library.clone(),
         ticks: ticks.clone(),
-        preferences,
+        preferences: settings.live(),
         today: Arc::new(|| {
             // Days since epoch to a UTC calendar date.
             let days = SystemTime::now()
@@ -1240,7 +1135,7 @@ fn flows_bundle(
         }),
     });
     let sweep_deps = Arc::new(SweepDeps {
-        policy: upgrade_policy,
+        policy: settings.live(),
         worklist: Arc::new(worklist.clone()),
         admins: admins.clone(),
         downloads: dispatch.clone(),
@@ -1424,6 +1319,56 @@ fn usenet_policy_from(policy: &DownloadPolicy) -> UsenetPolicy {
     out
 }
 
+/// The sections the download worker reads, once per pass.
+pub struct WorkerSettings {
+    clients: Arc<LiveClients>,
+    policy: Live<DownloadPolicy>,
+    source_priority: Live<SourcePriority>,
+    sabnzbd: Live<DownloadClients>,
+    library: Live<TypedLibrary>,
+    staging_root: PathBuf,
+}
+
+impl WorkerSettings {
+    /// Handles on `store`'s sections, with the sources `clients` build.
+    pub fn new(store: &ConfigStore, clients: Arc<LiveClients>, staging_root: PathBuf) -> Self {
+        Self {
+            clients,
+            policy: store.live(),
+            source_priority: store.live(),
+            sabnzbd: store.live(),
+            library: store.live(),
+            staging_root,
+        }
+    }
+
+    /// The sources turned on right now, plugin download clients included.
+    pub(crate) fn sources(&self) -> SourceSet {
+        self.clients.sources_with_plugins(&current(&self.policy))
+    }
+
+    /// The worker tuning as saved right now.
+    pub(crate) fn config(&self) -> WorkerConfig {
+        let sab = current(&self.sabnzbd);
+        let sab_mount = (!sab.sabnzbd.url.is_empty())
+            .then(|| PathBuf::from(sab.sabnzbd.downloads_mount.clone()));
+        let library_roots: Vec<PathBuf> = current(&self.library)
+            .library_roots
+            .iter()
+            .map(|root| root.path.trim())
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .collect();
+        worker_config(
+            &current(&self.policy),
+            &current(&self.source_priority),
+            &self.staging_root,
+            sab_mount,
+            &library_roots,
+        )
+    }
+}
+
 /// Worker tuning bound from the download-policy section. Only the
 /// SABnzbd complete dir is walked: slskd folders cannot prove client
 /// inactivity from the folder name, so they always keep.
@@ -1471,7 +1416,7 @@ fn worker_config(
     WorkerConfig {
         max_concurrent_downloads: clamp_usize(policy.max_concurrent_downloads).max(1),
         max_failover_attempts: policy.max_failover_attempts.max(0),
-        retry: retry_policy_from(policy),
+        retry: RetryPolicy::from_policy(policy),
         watchdog: WatchdogConfig {
             poll_interval_seconds: 2.0,
             stall_timeout_seconds: (clamp_u64(policy.download_stall_timeout_minutes).max(1) * 60)

@@ -57,9 +57,14 @@ pub struct RequestsState {
 pub type EditionPlanSlot =
     Arc<std::sync::OnceLock<Arc<dyn droppedneedle_library::operations::port::EditionPlans>>>;
 
-/// The slot the upgrade policy reader goes into.
-pub type UpgradePolicySlot =
-    Arc<std::sync::OnceLock<Arc<dyn Fn() -> crate::flows::stores::UpgradePolicy + Send + Sync>>>;
+/// The slot the download policy the upgrade cutoff comes from goes into.
+pub type UpgradePolicySlot = Arc<
+    std::sync::OnceLock<
+        droppedneedle_kernel::runtime_config::Live<
+            droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
+        >,
+    >,
+>;
 
 /// What "get missing tracks" checks before it asks for anything (v2
 /// checked a source was set up and the staging disk had room).

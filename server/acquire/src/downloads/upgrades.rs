@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 use crate::flows::seams::{DispatchKind, DispatchRequest, DownloadDispatch, UpgradeDispatch};
 use crate::flows::stores::{UpgradeItem, UpgradePolicy, UpgradeWorklist};
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 
 /// Upgrade failures, mapped to HTTP statuses by the handlers.
 #[derive(Debug, thiserror::Error)]
@@ -55,14 +57,14 @@ pub struct UpgradeAsk {
 #[derive(Clone)]
 pub struct Upgrades {
     worklist: UpgradeWorklist,
-    policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
+    policy: Live<DownloadPolicy>,
     dispatch: Arc<dyn DownloadDispatch>,
 }
 
 impl Upgrades {
     pub fn new(
         worklist: UpgradeWorklist,
-        policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
+        policy: Live<DownloadPolicy>,
         dispatch: Arc<dyn DownloadDispatch>,
     ) -> Self {
         Self {
@@ -72,10 +74,15 @@ impl Upgrades {
         }
     }
 
+    /// The upgrade policy as saved right now.
+    fn policy(&self) -> UpgradePolicy {
+        UpgradePolicy::from_policy(&crate::settings::current(&self.policy))
+    }
+
     /// Albums below the cutoff, worst first. Empty while upgrades are off:
     /// the list is an upgrade surface, not a quality report.
     pub async fn cutoff_unmet(&self) -> Result<CutoffView, UpgradeError> {
-        let policy = (self.policy)();
+        let policy = self.policy();
         let items = if policy.upgrade_allowed {
             self.worklist
                 .list_cutoff_unmet(&policy.cutoff)
@@ -93,7 +100,7 @@ impl Upgrades {
 
     /// Queue a better copy of an album or a track.
     pub async fn request(&self, ask: UpgradeAsk) -> Result<UpgradeOutcome, UpgradeError> {
-        let policy = (self.policy)();
+        let policy = self.policy();
         if !policy.upgrade_allowed {
             return Ok(UpgradeOutcome::Satisfied);
         }

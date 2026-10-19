@@ -53,6 +53,8 @@ use super::dispatch::Journal;
 use super::downloads::landing_rows::{HeldFile, ImportDecisionRow};
 use super::downloads::manifest::DownloadManifest;
 use super::downloads::store::{TaskDetails, TaskRow};
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 use droppedneedle_library::import::ImportJoin;
 
 /// The library port, set once the library bundle exists.
@@ -119,26 +121,6 @@ pub fn lexical_absolute(path: &Path) -> Option<PathBuf> {
     Some(resolved)
 }
 
-/// Settings a landing reads, resolved per landing.
-#[derive(Debug, Clone)]
-pub struct LandingSettings {
-    pub quality_min: String,
-    pub quality_max: String,
-}
-
-impl Default for LandingSettings {
-    fn default() -> Self {
-        let policy = QualityPolicy::default();
-        Self {
-            quality_min: policy.quality_min,
-            quality_max: policy.quality_max,
-        }
-    }
-}
-
-/// Resolves the landing settings; called once per landing.
-pub type SettingsProvider = Arc<dyn Fn() -> LandingSettings + Send + Sync>;
-
 /// What became of one landing.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LandingResult {
@@ -193,7 +175,8 @@ struct Versions {
 pub struct LandingService {
     journal: Arc<Journal>,
     library: LibrarySlot,
-    settings: SettingsProvider,
+    /// The quality band landed files must sit in, read per landing.
+    policy: Live<DownloadPolicy>,
     held_dir: PathBuf,
 }
 
@@ -234,13 +217,13 @@ impl LandingService {
     pub fn new(
         journal: Arc<Journal>,
         library: LibrarySlot,
-        settings: SettingsProvider,
+        policy: Live<DownloadPolicy>,
         held_dir: PathBuf,
     ) -> Self {
         Self {
             journal,
             library,
-            settings,
+            policy,
             held_dir,
         }
     }
@@ -337,10 +320,10 @@ impl LandingService {
         {
             return report;
         }
-        let settings = (self.settings)();
+        let settings = crate::settings::current(&self.policy);
         let mut policy = QualityPolicy {
-            quality_min: settings.quality_min,
-            quality_max: settings.quality_max,
+            quality_min: settings.quality_min.clone(),
+            quality_max: settings.quality_max.clone(),
             held_tier: None,
         };
         if target.origin == "upgrade"

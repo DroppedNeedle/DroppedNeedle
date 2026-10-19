@@ -10,6 +10,8 @@
 //! This module is pure evaluation plus retry math; the sleeping poll loop
 //! that drives it belongs to the runtime wiring.
 
+use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
+
 /// One poll's progress sample.
 #[derive(Debug, Clone)]
 pub struct PollSample {
@@ -157,6 +159,16 @@ impl Default for RetryPolicy {
 }
 
 impl RetryPolicy {
+    /// The retry policy the download-policy section sets.
+    pub fn from_policy(policy: &DownloadPolicy) -> Self {
+        Self {
+            enabled: policy.auto_retry_enabled,
+            max_attempts: crate::settings::clamp_u32(policy.auto_retry_max_attempts),
+            base_interval_minutes: policy.auto_retry_base_interval_minutes.max(0) as f64,
+            cap_seconds: 86_400.0,
+        }
+    }
+
     /// Configured max attempts (0 when auto-retry is off).
     pub fn auto_retry_max(&self) -> u32 {
         if self.enabled { self.max_attempts } else { 0 }

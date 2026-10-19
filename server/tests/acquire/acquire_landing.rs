@@ -418,7 +418,8 @@ async fn held_call(
         .uri(uri)
         .body(axum::body::Body::empty())
         .expect("request");
-    let router = droppedneedle_acquire::downloads::downloads_router(worker.clone());
+    let router =
+        droppedneedle_acquire::downloads::downloads_router(worker.clone()).expect("router builds");
     let response = with_test_principal(router, principal.clone())
         .oneshot(request)
         .await

@@ -31,6 +31,8 @@ use super::flows::seams as flows;
 use super::requests::dispatch as requests;
 use droppedneedle_kernel::db::{DbError, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 
 /// Current unix time as the float seconds the journal stores.
 fn now_unix_f64() -> f64 {
@@ -184,15 +186,12 @@ impl Journal {
     }
 }
 
-/// Live retry policy, read on every use.
-pub type RetryPolicySource = Arc<dyn Fn() -> RetryPolicy + Send + Sync>;
-
 /// One production dispatch behind both trait spellings.
 pub struct UnifiedDispatch {
     journal: Arc<Journal>,
     ids: Arc<dyn IdGenerator>,
     staging_root: PathBuf,
-    retry: RetryPolicySource,
+    policy: Live<DownloadPolicy>,
 }
 
 /// The task columns the request-path reads need.
@@ -208,19 +207,19 @@ struct TaskSnapshot {
 
 impl UnifiedDispatch {
     /// Wire dispatch over a shared journal. `staging_root` holds the
-    /// per-task manifest skeletons written at dispatch time; `retry` reads
-    /// the auto-retry policy for the wanted view's retrying rows.
+    /// per-task manifest skeletons written at dispatch time; `policy`
+    /// holds the auto-retry policy for the wanted view's retrying rows.
     pub fn new(
         journal: Arc<Journal>,
         ids: Arc<dyn IdGenerator>,
         staging_root: PathBuf,
-        retry: RetryPolicySource,
+        policy: Live<DownloadPolicy>,
     ) -> Self {
         Self {
             journal,
             ids,
             staging_root,
-            retry,
+            policy,
         }
     }
 
@@ -542,7 +541,7 @@ impl requests::DownloadDispatch for UnifiedDispatch {
         task_id: &'a str,
     ) -> BoxFuture<'a, Result<Option<requests::RetrySchedule>, requests::DispatchError>> {
         Box::pin(async move {
-            let policy = (self.retry)();
+            let policy = RetryPolicy::from_policy(&crate::settings::current(&self.policy));
             if policy.auto_retry_max() == 0 {
                 return Ok(None);
             }

@@ -12,16 +12,14 @@ use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::flows::{
     self,
     loops::{
-        FollowDeps, PruneDeps, PruneSettings, SYNC_INITIAL_DELAY, SYNC_INTERVAL, SYNC_JOB,
-        SweepDeps, SyncDeps, WantedDeps, WantedSettings, follow_tick, interval_seconds, prune_tick,
-        spawn_sync_loop, sweep_tick, sync_tick, wanted_tick,
+        FollowDeps, PruneDeps, SYNC_INITIAL_DELAY, SYNC_INTERVAL, SYNC_JOB, SweepDeps, SyncDeps,
+        WantedDeps, follow_tick, interval_seconds, prune_tick, spawn_sync_loop, sweep_tick,
+        sync_tick, wanted_tick,
     },
     seams::{
         Candidate, MemoryTicks, ObservedRelease, ScriptedDownloads, ScriptedPoll, ScriptedSearch,
     },
-    stores::{
-        AdminDirectory, FollowStore, LibraryPresence, MemoryWorklist, UpgradeItem, UpgradePolicy,
-    },
+    stores::{AdminDirectory, FollowStore, LibraryPresence, MemoryWorklist, UpgradeItem},
 };
 use droppedneedle_acquire::requests::{
     ledger::{BeginOutcome, RequestRecord},
@@ -31,7 +29,8 @@ use droppedneedle_acquire::requests::{
 use droppedneedle_acquire::search_jobs::store::JobStore;
 use droppedneedle_kernel::db::{DbRuntime, JobState};
 use droppedneedle_kernel::jobs::Supervisor;
-use droppedneedle_kernel::runtime_config::sections::UserPreferences;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::sections::{DownloadPolicy, WantedWatcher};
 
 const NOW: i64 = 1_700_000_000;
 /// Scratch directory, removed when the test ends.
@@ -99,14 +98,30 @@ struct Wanted {
     ticks: Arc<MemoryTicks>,
 }
 
+/// Settings beside `db`, at their defaults until a test saves one.
+fn settings(db: &AcquireDb) -> ConfigStore {
+    let dir = db.path().parent().expect("scratch dir").join("settings");
+    droppedneedle_acquire::settings::scratch_settings(&dir).expect("settings open")
+}
+
 fn wanted(db: &AcquireDb) -> Wanted {
+    let settings = settings(db);
+    settings
+        .save_blocking(WantedWatcher {
+            enabled: true,
+            watch_partial_albums: false,
+            max_checks_per_sweep: 20,
+            auto_download_on_find: true,
+            ..WantedWatcher::default()
+        })
+        .expect("watcher settings save");
     let search = Arc::new(ScriptedSearch::new());
     let downloads = Arc::new(ScriptedDownloads::new());
     let library = Arc::new(LibraryPresence::new());
     let ticks = Arc::new(MemoryTicks::new());
     Wanted {
         deps: WantedDeps {
-            settings: Arc::new(WantedSettings::default),
+            settings: settings.live(),
             watches: WantedStore::new(db.clone()),
             ledger: RequestStore::new(db.clone()),
             search: search.clone(),
@@ -264,7 +279,7 @@ async fn follow_poll_baselines_then_emits() {
         downloads: downloads.clone(),
         library,
         ticks: Arc::new(MemoryTicks::new()),
-        preferences: Arc::new(UserPreferences::default),
+        preferences: settings(&db).live(),
         today: Arc::new(|| "2024-06-01".to_owned()),
     };
     let first = follow_tick(NOW, &deps).await;
@@ -329,15 +344,19 @@ async fn upgrade_sweep_gates_and_cap() {
     let admins = AdminDirectory::over_users(db.clone());
     let downloads = Arc::new(ScriptedDownloads::new());
     downloads.mark_in_library("rg-0");
-    let policy = UpgradePolicy {
-        upgrade_allowed: true,
-        cutoff: "lossless".to_owned(),
-        scan_enabled: true,
-        max_per_run: 2,
-        interval_hours: 12,
-    };
+    let settings = settings(&db);
+    settings
+        .save_blocking(DownloadPolicy {
+            upgrade_allowed: true,
+            quality_cutoff: "lossless".to_owned(),
+            background_upgrade_scan_enabled: true,
+            background_upgrade_max_per_run: 2,
+            background_upgrade_scan_interval_hours: 12,
+            ..DownloadPolicy::default()
+        })
+        .expect("download policy saves");
     let deps = SweepDeps {
-        policy: Arc::new(move || policy.clone()),
+        policy: settings.live(),
         worklist: Arc::new(worklist),
         admins,
         downloads: downloads.clone(),
@@ -459,7 +478,7 @@ async fn prune_drops_only_settled_rows_past_retention() {
     seed_request(&ledger, "rg-done", "imported", None).await;
     seed_request(&ledger, "rg-live", "pending", None).await;
     let deps = PruneDeps {
-        settings: Arc::new(PruneSettings::default),
+        settings: settings(&db).live(),
         ledger: ledger.clone(),
         watches: WantedStore::new(db.clone()),
         search_jobs: JobStore::new(db.clone()),

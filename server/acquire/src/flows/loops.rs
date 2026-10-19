@@ -36,7 +36,11 @@ use crate::requests::sqlite::{RequestStore, WantedStore};
 use crate::search_jobs::store::JobStore;
 use droppedneedle_catalog::reads::catalog::mapping::{should_include_release, type_set};
 use droppedneedle_kernel::events::{AutoDownloadEnqueued, UserNotice, WantedNotice};
-use droppedneedle_kernel::runtime_config::sections::UserPreferences;
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_kernel::runtime_config::sections::{
+    DownloadPolicy, UserPreferences, WantedWatcher,
+};
 
 /// Wanted-watcher sweep cadence in seconds (v2 `_WANTED_WATCHER_INTERVAL`).
 pub const WANTED_INTERVAL: Duration = Duration::from_secs(900);
@@ -95,13 +99,14 @@ pub struct WantedSettings {
     pub auto_download_on_find: bool,
 }
 
-impl Default for WantedSettings {
-    fn default() -> Self {
+impl WantedSettings {
+    /// The watcher settings the `wanted` section sets.
+    pub fn from_section(section: &WantedWatcher) -> Self {
         Self {
-            enabled: true,
-            watch_partial_albums: false,
-            max_checks_per_sweep: 25,
-            auto_download_on_find: true,
+            enabled: section.enabled,
+            watch_partial_albums: section.watch_partial_albums,
+            max_checks_per_sweep: crate::settings::clamp_usize(section.max_checks_per_sweep).max(1),
+            auto_download_on_find: section.auto_download_on_find,
         }
     }
 }
@@ -123,8 +128,8 @@ pub struct WantedSummary {
 
 /// Wanted-watcher dependencies.
 pub struct WantedDeps {
-    /// Settings source, read fresh every sweep.
-    pub settings: Arc<dyn Fn() -> WantedSettings + Send + Sync>,
+    /// The watcher settings, read fresh every sweep.
+    pub settings: Live<WantedWatcher>,
     /// Watch registry (shared with the wanted view).
     pub watches: WantedStore,
     /// Request ledger for enrolment.
@@ -148,7 +153,7 @@ fn epoch(now: i64) -> u64 {
 /// check due watches. Disabled reads as an empty pass. One bad watch never
 /// kills the sweep (v2 `run_sweep` isolation).
 pub async fn wanted_tick(now: i64, deps: &WantedDeps) -> WantedSummary {
-    let settings = (deps.settings)();
+    let settings = WantedSettings::from_section(&crate::settings::current(&deps.settings));
     if !settings.enabled {
         return WantedSummary::default();
     }
@@ -476,7 +481,7 @@ pub struct FollowDeps {
     /// Durable ticks.
     pub ticks: Arc<dyn TickSink>,
     /// Release-type preferences, read once per tick.
-    pub preferences: Arc<dyn Fn() -> UserPreferences + Send + Sync>,
+    pub preferences: Live<UserPreferences>,
     /// Today provider (`YYYY-MM-DD`, UTC), so tests pin the cursor date.
     pub today: Arc<dyn Fn() -> String + Send + Sync>,
 }
@@ -493,7 +498,7 @@ pub struct FollowDeps {
 pub async fn follow_tick(now: i64, deps: &FollowDeps) -> FollowSummary {
     let mut summary = FollowSummary::default();
     let today = (deps.today)();
-    let types = ReleaseTypes::from_preferences(&(deps.preferences)());
+    let types = ReleaseTypes::from_preferences(&crate::settings::current(&deps.preferences));
     let due = match deps
         .follows
         .list_due(now, FOLLOW_MAX_ARTISTS_PER_TICK)
@@ -786,8 +791,9 @@ pub struct SweepSummary {
 
 /// Upgrade-sweep dependencies.
 pub struct SweepDeps {
-    /// Policy source, re-read every pass so enabling needs no restart.
-    pub policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
+    /// The download policy, re-read every pass so enabling needs no
+    /// restart.
+    pub policy: Live<DownloadPolicy>,
     /// Cutoff-unmet worklist.
     pub worklist: Arc<dyn CutoffList>,
     /// Admin directory for sweep ownership.
@@ -804,7 +810,7 @@ pub struct SweepDeps {
 /// `AlreadyInLibrary` answers never count as enqueued; a poison item never
 /// starves its siblings (v2 `run_background_upgrade_sweep`).
 pub async fn sweep_tick(now: i64, deps: &SweepDeps) -> SweepSummary {
-    let policy = (deps.policy)();
+    let policy = UpgradePolicy::from_policy(&crate::settings::current(&deps.policy));
     if !(policy.upgrade_allowed && policy.scan_enabled) {
         return SweepSummary::default();
     }
@@ -875,19 +881,20 @@ pub struct PruneSettings {
     pub interval_hours: u64,
 }
 
-impl Default for PruneSettings {
-    fn default() -> Self {
+impl PruneSettings {
+    /// The retention policy the advanced section sets.
+    pub fn from_section(section: &AdvancedSettings) -> Self {
         Self {
-            retention_days: 180,
-            interval_hours: 6,
+            retention_days: crate::settings::clamp_u64(section.request_history_retention_days),
+            interval_hours: crate::settings::clamp_u64(section.store_prune_interval_hours),
         }
     }
 }
 
 /// Store-prune dependencies.
 pub struct PruneDeps {
-    /// Live retention policy.
-    pub settings: Arc<dyn Fn() -> PruneSettings + Send + Sync>,
+    /// The section the retention policy comes from.
+    pub settings: Live<AdvancedSettings>,
     /// Request ledger.
     pub ledger: RequestStore,
     /// Wanted watches.
@@ -914,7 +921,9 @@ pub struct PruneSummary {
 /// window is clamped to the settings' 30..3650 days. Manual search jobs
 /// keep their own, shorter window (see [`JobStore::prune`]).
 pub async fn prune_tick(now: i64, deps: &PruneDeps) -> Result<PruneSummary, RequestsError> {
-    let days = (deps.settings)().retention_days.clamp(30, 3650);
+    let days = PruneSettings::from_section(&crate::settings::current(&deps.settings))
+        .retention_days
+        .clamp(30, 3650);
     let cutoff = u64::try_from(now)
         .unwrap_or(0)
         .saturating_sub(days * 86_400);
@@ -1178,7 +1187,9 @@ impl<D> IntervalTick<D> {
 
 impl Tick for IntervalTick<PruneDeps> {
     async fn tick(&mut self, _ctx: &TickCtx) -> TickResult {
-        let hours = (self.deps.settings)().interval_hours.clamp(1, 168);
+        let hours = PruneSettings::from_section(&crate::settings::current(&self.deps.settings))
+            .interval_hours
+            .clamp(1, 168);
         let Some(now) = self.due(hours) else {
             return Ok(Next::Continue);
         };
@@ -1193,7 +1204,9 @@ impl Tick for IntervalTick<PruneDeps> {
 
 impl Tick for IntervalTick<SweepDeps> {
     async fn tick(&mut self, _ctx: &TickCtx) -> TickResult {
-        let hours = (self.deps.policy)().interval_hours.max(1);
+        let hours = UpgradePolicy::from_policy(&crate::settings::current(&self.deps.policy))
+            .interval_hours
+            .max(1);
         let Some(now) = self.due(hours) else {
             return Ok(Next::Continue);
         };

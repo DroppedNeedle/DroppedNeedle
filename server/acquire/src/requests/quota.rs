@@ -17,7 +17,7 @@
 //! The policy is read fresh on every check, so saved settings bite at once.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
 use serde_json::json;
 
@@ -27,6 +27,8 @@ use super::ledger::{QuotaGate, QuotaRefusal};
 use super::sqlite::RequestStore;
 use crate::db::{AcquireDb, to_u64};
 use droppedneedle_auth::Role;
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 
 /// Global download-policy quota knobs.
 #[derive(Debug, Clone)]
@@ -39,6 +41,19 @@ pub struct QuotaPolicy {
     pub storage_gb_per_user: u64,
     /// Whole-library bytes in GiB (0 = unlimited).
     pub max_library_gb: u64,
+}
+
+impl QuotaPolicy {
+    /// The limits the download-policy section sets.
+    pub fn from_policy(policy: &DownloadPolicy) -> Self {
+        use crate::settings::{clamp_u32, clamp_u64};
+        Self {
+            request_count: clamp_u32(policy.default_request_quota_count),
+            request_days: clamp_u32(policy.default_request_quota_days).max(1),
+            storage_gb_per_user: clamp_u64(policy.default_storage_quota_gb),
+            max_library_gb: clamp_u64(policy.max_library_size_gb),
+        }
+    }
 }
 
 impl Default for QuotaPolicy {
@@ -74,14 +89,12 @@ pub struct EffectiveQuota {
     pub storage_gb: u64,
 }
 
-/// Policy source, read on every check.
-pub type PolicySource = Arc<dyn Fn() -> QuotaPolicy + Send + Sync>;
-
 /// Quota decisions over the live policy, the admin overrides and the
 /// durable request and library rows.
 pub struct QuotaLedger {
-    /// Live policy.
-    policy: PolicySource,
+    /// The download-policy section the limits come from; `None` for no
+    /// limits.
+    policy: Option<Live<DownloadPolicy>>,
     /// Per-user overrides. The admin face persists them in `user_quotas`
     /// and reloads them at boot.
     overrides: RwLock<HashMap<String, QuotaOverride>>,
@@ -92,8 +105,17 @@ pub struct QuotaLedger {
 }
 
 impl QuotaLedger {
-    /// Ledger over a live policy source and the database.
-    pub fn new(policy: PolicySource, db: AcquireDb) -> Self {
+    /// Ledger over the live download policy and the database.
+    pub fn new(policy: Live<DownloadPolicy>, db: AcquireDb) -> Self {
+        Self::over(Some(policy), db)
+    }
+
+    /// Ledger with no limits (the policy defaults).
+    pub fn unlimited(db: AcquireDb) -> Self {
+        Self::over(None, db)
+    }
+
+    fn over(policy: Option<Live<DownloadPolicy>>, db: AcquireDb) -> Self {
         Self {
             policy,
             overrides: RwLock::new(HashMap::new()),
@@ -102,9 +124,13 @@ impl QuotaLedger {
         }
     }
 
-    /// Ledger with no limits (the policy defaults).
-    pub fn unlimited(db: AcquireDb) -> Self {
-        Self::new(Arc::new(QuotaPolicy::default), db)
+    /// The limits as saved right now.
+    fn policy(&self) -> QuotaPolicy {
+        self.policy
+            .as_ref()
+            .map_or_else(QuotaPolicy::default, |live| {
+                QuotaPolicy::from_policy(&crate::settings::current(live))
+            })
     }
 
     /// Set one user's override row. Bounds mirror v2 (`set_override`).
@@ -142,7 +168,7 @@ impl QuotaLedger {
 
     /// One user's effective limits: override where set, else policy default.
     pub fn effective_quota(&self, user_id: &str) -> Result<EffectiveQuota, RequestsError> {
-        let policy = (self.policy)();
+        let policy = self.policy();
         let row = self
             .overrides
             .read()
@@ -224,7 +250,7 @@ impl QuotaLedger {
         ) {
             return Ok(());
         }
-        let policy = (self.policy)();
+        let policy = self.policy();
         if policy.max_library_gb > 0 {
             let total = self.library_bytes().await?;
             if total >= policy.max_library_gb * gib() {

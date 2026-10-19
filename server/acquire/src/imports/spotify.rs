@@ -26,6 +26,7 @@ use super::models::{
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
 #[cfg(any(test, feature = "test-support"))]
 use droppedneedle_kernel::runtime_config::SECRET_MASK;
+use droppedneedle_kernel::runtime_config::secret_sections::SpotifySettings as SpotifySection;
 
 /// OAuth scopes (v2 `_SPOTIFY_SCOPES`, verbatim).
 pub const SPOTIFY_SCOPES: &str =
@@ -114,8 +115,11 @@ impl std::fmt::Debug for SpotifyConnection {
 pub trait SpotifySettingsStore: Send + Sync {
     /// Masked settings for reads.
     fn get(&self) -> SpotifySettings;
-    /// Raw settings including the real secret.
-    fn get_raw(&self) -> SpotifySettings;
+    /// The saved app settings with the real secret. The secret sits in a
+    /// [`Secret`], so it never reaches a response.
+    ///
+    /// [`Secret`]: droppedneedle_kernel::runtime_config::Secret
+    fn get_raw(&self) -> SpotifySection;
     /// Save; a masked secret preserves the stored one. Rejects a
     /// non-absolute redirect origin (v2 `ConfigurationError` text kept) as
     /// invalid input.
@@ -332,11 +336,20 @@ impl SpotifySettingsStore for MemorySpotifySettings {
         }
     }
 
-    fn get_raw(&self) -> SpotifySettings {
-        self.inner
+    fn get_raw(&self) -> SpotifySection {
+        let inner = self
+            .inner
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        SpotifySection {
+            client_id: inner.client_id.clone(),
+            client_secret: droppedneedle_kernel::runtime_config::Secret::new(
+                inner.client_secret.clone(),
+            ),
+            enabled: inner.enabled,
+            spotify_redirect_origin: inner.spotify_redirect_origin.clone(),
+            legacy_callback: self.legacy_callback(),
+        }
     }
 
     fn save<'a>(
@@ -1264,7 +1277,7 @@ impl SpotifyImportService {
         state: &str,
     ) -> Result<SpotifyAuthUrlResponse, String> {
         let raw = self.settings.get_raw();
-        if !raw.enabled || raw.client_id.is_empty() || raw.client_secret.is_empty() {
+        if !raw.enabled || raw.client_id.is_empty() || raw.client_secret.expose().is_empty() {
             return Err("Spotify is not configured by the administrator".to_owned());
         }
         let query = [
@@ -1300,7 +1313,7 @@ impl SpotifyImportService {
             self.connections.as_ref(),
             user_id,
             &raw.client_id,
-            &raw.client_secret,
+            raw.client_secret.expose(),
             connection,
         )
     }

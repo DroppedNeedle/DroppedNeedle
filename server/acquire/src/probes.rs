@@ -6,7 +6,8 @@
 //! snapshot, and [`refresh_probes`] recomputes the snapshot with real
 //! client health checks. Wiring runs one refresh at boot and repeats it on
 //! a slow loop, so the smoke and the status routes always render a fresh
-//! verdict without blocking a request on five network calls.
+//! verdict without blocking a request on five network calls. Until the
+//! first refresh lands, a read answers from the saved settings alone.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -21,9 +22,9 @@ use super::slskd::{ReqwestSlskdHttp, SlskdRepository};
 use super::usenet::newznab::NewznabIndexer;
 use super::usenet::prowlarr::ProwlarrIndexer;
 use super::usenet::sabnzbd::SabnzbdQueue;
+use super::wiring::LiveClients;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     DownloadClients, LidarrImportConnection, NewznabIndexer as ConfigIndexer, ProwlarrConnection,
-    SlskdConnection,
 };
 
 /// One cached verdict per probe.
@@ -46,38 +47,44 @@ pub struct CachedProbes {
 }
 
 /// Shared verdict snapshot behind the live probes.
-#[derive(Debug, Default)]
 pub struct ProbeCache {
-    inner: Mutex<CachedProbes>,
+    /// The last refresh, `None` until one lands.
+    inner: Mutex<Option<CachedProbes>>,
+    /// The clients the saved settings build, which a read before the
+    /// first refresh answers from.
+    clients: Arc<LiveClients>,
 }
 
 impl ProbeCache {
-    /// Cache over one snapshot (wiring seeds config-derived fields so the
-    /// first smoke already reports enabled/configured correctly).
-    pub fn new(initial: CachedProbes) -> Self {
+    /// Cache over the live clients, with no refresh yet.
+    pub fn new(clients: Arc<LiveClients>) -> Self {
         Self {
-            inner: Mutex::new(initial),
+            inner: Mutex::new(None),
+            clients,
         }
     }
 
-    /// Current snapshot.
+    /// Current snapshot: the last refresh, or before the first one the
+    /// enabled and configured flags of the saved settings.
     pub fn snapshot(&self) -> CachedProbes {
-        self.inner
-            .lock()
-            .map(|guard| guard.clone())
-            .unwrap_or_default()
+        let refreshed = match self.inner.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        refreshed.unwrap_or_else(|| seed(&self.clients.current().probe_inputs))
     }
 
     /// Replace the snapshot after a refresh pass.
     pub fn update(&self, next: CachedProbes) {
-        if let Ok(mut guard) = self.inner.lock() {
-            *guard = next;
+        match self.inner.lock() {
+            Ok(mut guard) => *guard = Some(next),
+            Err(poisoned) => *poisoned.into_inner() = Some(next),
         }
     }
 }
 
 /// All five health traits over one shared cache.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LiveProbes {
     cache: Arc<ProbeCache>,
 }
@@ -180,17 +187,16 @@ pub async fn refresh_probes(cache: &ProbeCache, inputs: &ProbeInputs) {
     });
 }
 
-/// Seed snapshot from config alone (no network): enabled/configured read
-/// correctly while reachability waits for the first refresh pass.
-pub fn seed_from_config(
-    slskd: &SlskdConnection,
-    sabnzbd: &DownloadClients,
-    indexers: &[ConfigIndexer],
-    prowlarr: &ProwlarrConnection,
-    lidarr: &LidarrImportConnection,
-) -> CachedProbes {
-    let slskd_configured = !slskd.url.is_empty() && !slskd.api_key.expose().is_empty();
-    let sab = &sabnzbd.sabnzbd;
+/// Verdicts from the settings alone (no network): enabled and configured
+/// read correctly while reachability waits for the first refresh pass.
+fn seed(inputs: &ProbeInputs) -> CachedProbes {
+    let slskd_configured = inputs.slskd.is_some();
+    let (indexers, prowlarr, lidarr) = (
+        &inputs.newznab_entries,
+        &inputs.prowlarr_section,
+        &inputs.lidarr_section,
+    );
+    let sab = &inputs.sabnzbd_section.sabnzbd;
     let sab_configured = !sab.url.is_empty() && !sab.api_key.expose().is_empty();
     let mut entries: Vec<IndexerProbe> = indexers
         .iter()
@@ -210,7 +216,7 @@ pub fn seed_from_config(
     let lidarr_configured = !lidarr.url.is_empty() && !lidarr.api_key.expose().is_empty();
     CachedProbes {
         slskd: ClientProbe {
-            enabled: slskd.enabled,
+            enabled: inputs.slskd_enabled,
             configured: slskd_configured,
             reachable: false,
             version: None,

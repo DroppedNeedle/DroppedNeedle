@@ -14,6 +14,8 @@ use droppedneedle_acquire::requests::mix::{
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 use droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore;
 use droppedneedle_kernel::events::EventSink;
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 use droppedneedle_plugins::scrobble::{
     MemoryScrobblePrefsStore, MixApprovalHook as _, MixStateReader as _, ScrobblePrefsPatch,
     ScrobblePrefsStore as _,
@@ -76,12 +78,27 @@ async fn setup() -> (RequestsState, AcquireDb, Arc<ScriptedDispatch>) {
     (state, db, dispatch)
 }
 
+/// The download policy beside `db`, saved as `policy`.
+fn saved_policy(db: &AcquireDb, policy: DownloadPolicy) -> Live<DownloadPolicy> {
+    let dir = db.path().parent().expect("scratch dir").join("settings");
+    let store = droppedneedle_acquire::settings::scratch_settings(&dir).expect("settings open");
+    store.save_blocking(policy).expect("policy saves");
+    store.live()
+}
+
 /// A fresh state over the same database: what a restart sees.
 fn rebuilt(db: &AcquireDb, quota: QuotaPolicy, dispatch: Arc<ScriptedDispatch>) -> RequestsState {
-    let quota = Arc::new(QuotaLedger::new(
-        Arc::new(move || quota.clone()),
-        db.clone(),
-    ));
+    let policy = saved_policy(
+        db,
+        DownloadPolicy {
+            default_request_quota_count: i64::from(quota.request_count),
+            default_request_quota_days: i64::from(quota.request_days),
+            default_storage_quota_gb: i64::try_from(quota.storage_gb_per_user).expect("fits"),
+            max_library_size_gb: i64::try_from(quota.max_library_gb).expect("fits"),
+            ..DownloadPolicy::default()
+        },
+    );
+    let quota = Arc::new(QuotaLedger::new(policy, db.clone()));
     RequestsState::new(db, quota, dispatch)
 }
 
@@ -896,13 +913,14 @@ async fn edition_setup() -> (RequestsState, AcquireDb, Arc<ScriptedDispatch>) {
     assert!(
         state
             .upgrade_policy
-            .set(Arc::new(|| {
-                droppedneedle_acquire::flows::stores::UpgradePolicy {
+            .set(saved_policy(
+                &db,
+                DownloadPolicy {
                     upgrade_allowed: true,
-                    cutoff: "lossless".into(),
-                    ..Default::default()
-                }
-            }))
+                    quality_cutoff: "lossless".into(),
+                    ..DownloadPolicy::default()
+                },
+            ))
             .is_ok()
     );
     (state, db, dispatch)

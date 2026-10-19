@@ -205,10 +205,10 @@ impl DownloadWorker {
                 "The download finished and is being imported.",
             ));
         }
-        let config = (self.config)();
+        let config = self.inputs.config();
         let pass = Pass {
             watchdog: Watchdog::new(config.watchdog.clone()),
-            sources: (self.sources)(),
+            sources: self.inputs.sources(),
             config,
             now: now_unix_f64(),
         };

@@ -226,7 +226,7 @@ impl DownloadWorker {
             }
         };
         let patient = origin == Origin::Poll && self.waits(&task.id) + 1 < MAX_LANDING_WAITS;
-        let staging_root = (self.config)().staging_root;
+        let staging_root = self.inputs.config().staging_root;
         let manifest = read_manifest(&staging_root, &task.id).await;
         let report = landing
             .land(task, Some(&attempt.id), manifest.as_ref(), landed, patient)
@@ -390,7 +390,7 @@ impl DownloadWorker {
         let Some(attempts) = self.attempts(&task.id).await else {
             return false;
         };
-        handled_count(&attempts, None) < (self.config)().max_failover_attempts
+        handled_count(&attempts, None) < self.inputs.config().max_failover_attempts
     }
 
     fn waits(&self, task_id: &str) -> u32 {
@@ -543,7 +543,9 @@ impl DownloadWorker {
         let Some(handle) = attempt.handle.clone() else {
             return Ok(None);
         };
-        let Some(source) = (self.sources)()
+        let Some(source) = self
+            .inputs
+            .sources()
             .iter()
             .find(|source| source.journal_source() == attempt.row.source)
             .cloned()

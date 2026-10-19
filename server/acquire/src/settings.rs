@@ -1,11 +1,15 @@
-//! Config-backed settings and the follow bridges between modules.
+//! Settings reads and the follow bridges between modules.
 //!
-//! Credentials and URLs live in the config store (encrypted at
-//! rest, never in plaintext): [`ConfigLidarrSettings`] and
+//! Acquire reads every settings section through a [`Live`] handle, so a
+//! saved setting reaches the next use without a restart. [`current`]
+//! reads one and falls back to the defaults when the stored value does
+//! not read.
+//!
+//! Credentials and URLs live in the config store (encrypted at rest,
+//! never in plaintext): [`ConfigLidarrSettings`] and
 //! [`ConfigSpotifySettings`] implement the imports settings traits over
-//! the `lidarr_import` and `spotify_settings` secret sections. The mask
-//! sentinels match the imports models exactly, so a masked save preserves
-//! the stored secret through the store's positional pairing.
+//! the `lidarr_import` and `spotify_settings` secret sections. They read
+//! through live handles and hold the store only to save.
 //!
 //! The follow bridges share one follow/approval truth across modules:
 //!
@@ -36,58 +40,79 @@ use droppedneedle_catalog::reads::collections::state::{
     ApprovalSeedSink, PendingApproval, PendingApprovalsSource, PendingBatch,
 };
 use droppedneedle_catalog::reads::collections::store::FollowStore as CollectionsFollowStore;
+use droppedneedle_kernel::runtime_config::mask::display_mask;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     LidarrImportConnection, SpotifySettings,
 };
 use droppedneedle_kernel::runtime_config::{
-    ConfigError, ConfigStore, Masked, Plain, Secret, UpdateError,
+    ConfigError, ConfigStore, Listed, Live, Plain, Secret, UpdateError,
 };
 
 use super::imports::error::ImportsError;
 
+/// The section as last saved, or its defaults (logged) when the stored
+/// value does not read. A secret section that does not read therefore
+/// reads as unconfigured.
+pub fn current<S: Listed>(live: &Live<S>) -> Arc<Plain<S>> {
+    live.get().unwrap_or_else(|error| {
+        tracing::warn!(section = S::KEY, %error, "settings read failed; using defaults");
+        Arc::new(Plain::default())
+    })
+}
+
+/// Clamp a settings integer to a non-negative `u32` (0 = unlimited).
+pub(crate) fn clamp_u32(value: i64) -> u32 {
+    u32::try_from(value.max(0)).unwrap_or(u32::MAX)
+}
+
+/// Clamp a settings integer to a non-negative `u64`.
+pub(crate) fn clamp_u64(value: i64) -> u64 {
+    u64::try_from(value.max(0)).unwrap_or(0)
+}
+
+/// Clamp a settings integer to a non-negative `usize`.
+pub(crate) fn clamp_usize(value: i64) -> usize {
+    usize::try_from(value.max(0)).unwrap_or(usize::MAX)
+}
+
+/// A settings store for tests over `settings.db` in `dir`, with a fixed
+/// test key. Opening the same `dir` again reopens the same rows.
+#[cfg(any(test, feature = "test-support"))]
+pub fn scratch_settings(dir: &std::path::Path) -> Result<ConfigStore, String> {
+    let crypto = droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
+        .map_err(|error| error.to_string())?;
+    ConfigStore::scratch(dir, crypto)
+}
+
 /// Lidarr connection settings over the `lidarr_import` secret section.
-/// Read failures fail closed to empty (the import then reports Lidarr as
-/// not connected, exactly like an unconfigured deployment).
+/// A section that does not read reads as empty (the import then reports
+/// Lidarr as not connected, exactly like an unconfigured deployment).
 pub struct ConfigLidarrSettings {
+    live: Live<LidarrImportConnection>,
     store: Arc<ConfigStore>,
 }
 
 impl ConfigLidarrSettings {
-    /// Settings over a shared config store.
+    /// Settings over a shared config store, which saves go to.
     pub fn new(store: Arc<ConfigStore>) -> Self {
-        Self { store }
+        Self {
+            live: store.live(),
+            store,
+        }
     }
 }
 
 impl LidarrSettingsStore for ConfigLidarrSettings {
     fn get(&self) -> LidarrConnectionSettings {
-        match self
-            .store
-            .get_masked::<LidarrImportConnection>()
-            .map(Masked::into_inner)
-        {
-            Ok(section) => LidarrConnectionSettings {
-                url: section.url,
-                api_key: section.api_key.expose().to_owned(),
-            },
-            Err(error) => {
-                tracing::warn!(%error, "lidarr settings read failed; treating as unconfigured");
-                LidarrConnectionSettings::default()
-            }
+        let section = current(&self.live);
+        LidarrConnectionSettings {
+            url: section.url.clone(),
+            api_key: display_mask(section.api_key.expose()).to_owned(),
         }
     }
 
-    fn get_raw(&self) -> LidarrConnectionSettings {
-        match self.store.get_raw::<LidarrImportConnection>() {
-            Ok(section) => LidarrConnectionSettings {
-                url: section.url.clone(),
-                api_key: section.api_key.expose().to_owned(),
-            },
-            Err(error) => {
-                tracing::warn!(%error, "lidarr settings read failed; treating as unconfigured");
-                LidarrConnectionSettings::default()
-            }
-        }
+    fn get_raw(&self) -> LidarrImportConnection {
+        (**current(&self.live)).clone()
     }
 
     fn save<'a>(&'a self, settings: &'a LidarrConnectionSettings) -> BoxFuture<'a, ()> {
@@ -103,67 +128,41 @@ impl LidarrSettingsStore for ConfigLidarrSettings {
     }
 }
 
-/// Spotify app settings over the `spotify_settings` secret section. Read
-/// failures fail closed to empty (OAuth then reports the app as
-/// unconfigured).
+/// Spotify app settings over the `spotify_settings` secret section. A
+/// section that does not read reads as empty (OAuth then reports the app
+/// as unconfigured).
 pub struct ConfigSpotifySettings {
+    live: Live<SpotifySettings>,
     store: Arc<ConfigStore>,
 }
 
 impl ConfigSpotifySettings {
-    /// Settings over a shared config store.
+    /// Settings over a shared config store, which saves go to.
     pub fn new(store: Arc<ConfigStore>) -> Self {
-        Self { store }
-    }
-
-    /// The stored section, or defaults (logged) when it does not read.
-    fn stored(&self) -> Plain<SpotifySettings> {
-        self.store
-            .get_raw::<SpotifySettings>()
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "spotify settings read failed; treating as unconfigured");
-                Plain::default()
-            })
+        Self {
+            live: store.live(),
+            store,
+        }
     }
 }
 
 impl SpotifySettingsStore for ConfigSpotifySettings {
     fn legacy_callback(&self) -> bool {
-        self.stored().legacy_callback
+        current(&self.live).legacy_callback
     }
 
     fn get(&self) -> ImportsSpotifySettings {
-        match self
-            .store
-            .get_masked::<SpotifySettings>()
-            .map(Masked::into_inner)
-        {
-            Ok(section) => ImportsSpotifySettings {
-                client_id: section.client_id,
-                client_secret: section.client_secret.expose().to_owned(),
-                enabled: section.enabled,
-                spotify_redirect_origin: section.spotify_redirect_origin,
-            },
-            Err(error) => {
-                tracing::warn!(%error, "spotify settings read failed; treating as unconfigured");
-                ImportsSpotifySettings::default()
-            }
+        let section = current(&self.live);
+        ImportsSpotifySettings {
+            client_id: section.client_id.clone(),
+            client_secret: display_mask(section.client_secret.expose()).to_owned(),
+            enabled: section.enabled,
+            spotify_redirect_origin: section.spotify_redirect_origin.clone(),
         }
     }
 
-    fn get_raw(&self) -> ImportsSpotifySettings {
-        match self.store.get_raw::<SpotifySettings>() {
-            Ok(section) => ImportsSpotifySettings {
-                client_id: section.client_id.clone(),
-                client_secret: section.client_secret.expose().to_owned(),
-                enabled: section.enabled,
-                spotify_redirect_origin: section.spotify_redirect_origin.clone(),
-            },
-            Err(error) => {
-                tracing::warn!(%error, "spotify settings read failed; treating as unconfigured");
-                ImportsSpotifySettings::default()
-            }
-        }
+    fn get_raw(&self) -> SpotifySettings {
+        (**current(&self.live)).clone()
     }
 
     fn save<'a>(

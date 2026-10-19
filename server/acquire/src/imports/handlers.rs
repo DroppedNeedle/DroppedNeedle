@@ -237,7 +237,7 @@ pub async fn test_lidarr(
 ) -> Json<LidarrTestResponse> {
     let mut api_key = body.api_key;
     if api_key == droppedneedle_kernel::runtime_config::SECRET_MASK {
-        api_key = deps.lidarr_settings.get_raw().api_key;
+        api_key = deps.lidarr_settings.get_raw().api_key.expose().to_owned();
     }
     let url = normalize_lidarr_url(&body.url);
     match deps.lidarr.system_status(&url, &api_key).await {
@@ -462,7 +462,7 @@ async fn finish_spotify_link(deps: &ImportsDeps, query: SpotifyCallbackQuery) ->
         .spotify
         .exchange_code(
             &raw.client_id,
-            &raw.client_secret,
+            raw.client_secret.expose(),
             query.code.as_deref().unwrap_or_default(),
             &pending.redirect_uri,
         )
