@@ -24,7 +24,6 @@ export interface MusicBrainzSettingsResponse {
 	/** Active endpoint; built-in BrainzMash responses use its pinned canonical endpoint. */
 	api_url: string | null;
 	rate_limit: number;
-	concurrent_searches: number;
 	community_acknowledged: boolean | null;
 	/** Source identity is opaque; it scopes provider caches without exposing an endpoint. */
 	source_id: string;

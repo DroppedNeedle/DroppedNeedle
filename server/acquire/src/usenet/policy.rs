@@ -90,9 +90,6 @@ pub struct UsenetPolicy {
     /// provider's retention the articles are gone, so the grab would only
     /// partially download and fail (v2 `usenet_retention_days`).
     pub retention_days: u32,
-    /// Never permanently blocklist a release younger than this; it may
-    /// still be propagating (v2 `usenet_min_release_age_minutes`).
-    pub min_release_age: Duration,
     /// Hard upper bound on one album's total size in MB (0 = unbounded).
     pub max_size_mb: u64,
 }
@@ -110,7 +107,6 @@ impl Default for UsenetPolicy {
             stall_timeout: Duration::from_secs(30 * 60),
             queued_timeout: Duration::from_secs(120 * 60),
             retention_days: 0,
-            min_release_age: Duration::from_secs(30 * 60),
             max_size_mb: 0,
         }
     }

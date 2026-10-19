@@ -1820,10 +1820,10 @@ export interface LibraryScanSchedule {
 	scan_frequency: ScanFrequency;
 	/** HH:MM (server-local) used when scan_frequency is 'daily'. */
 	daily_scan_time: string;
-	last_scan: number | null;
-	last_scan_success: boolean;
 	/** Server timezone label for the daily-time caption; present on reads only. */
 	server_timezone?: string;
+	/** When the last scan finished, unix seconds, from the scan history; reads only. */
+	last_scan_at?: number | null;
 }
 
 export interface LibraryActionResponse {
@@ -1839,23 +1839,10 @@ export interface StatusMessageResponse {
 
 export interface DownloadClientConfig {
 	enabled: boolean;
-	client_type: string;
 	url: string;
 	api_key: string;
-	verify_downloads: boolean;
-	min_bitrate_kbps: number;
-	quality_min: string;
-	quality_max: string;
-	flac_mp3_only: boolean;
 	downloads_subpath: string;
 	slskd_incomplete_mount: string;
-	preflight_score_auto_accept: number;
-	preflight_score_manual_min: number;
-	download_stall_timeout_minutes: number;
-	download_queued_timeout_minutes: number;
-	preferred_quality_wait_minutes: number;
-	max_failover_attempts: number;
-	max_concurrent_downloads: number;
 }
 
 export interface DownloadsMountStatus {
@@ -1901,7 +1888,6 @@ export interface TestConnectionResult {
 
 export interface IndexerSettings {
 	id: string;
-	type: string;
 	name: string;
 	url: string;
 	api_key: string;
@@ -1937,12 +1923,10 @@ export interface OperationResult {
 
 export interface SabnzbdConnectionSettings {
 	enabled: boolean;
-	client_type: string;
 	url: string;
 	api_key: string;
 	category: string;
 	priority: number;
-	post_processing: number;
 	downloads_mount: string;
 }
 
@@ -1966,7 +1950,6 @@ export interface QualityRecipeEntry {
 	format: QualityRecipeFormat;
 	quality: QualityRecipeQuality;
 	min_bitrate_kbps?: number | null;
-	target_bitrate_kbps?: number | null;
 	max_bitrate_kbps?: number | null;
 	bit_depth?: number | null;
 	sample_rate_hz?: number | null;
@@ -1981,7 +1964,6 @@ export interface DownloadPolicySettings {
 	quality_min: string;
 	quality_max: string;
 	flac_mp3_only: boolean;
-	verify_downloads: boolean;
 	preflight_score_auto_accept: number;
 	preflight_score_manual_min: number;
 	download_stall_timeout_minutes: number;
@@ -1992,7 +1974,6 @@ export interface DownloadPolicySettings {
 	auto_retry_enabled: boolean;
 	auto_retry_max_attempts: number;
 	auto_retry_base_interval_minutes: number;
-	usenet_min_release_age_minutes: number;
 	quality_cutoff: string;
 	upgrade_allowed: boolean;
 	max_library_size_gb: number;
@@ -2002,15 +1983,6 @@ export interface DownloadPolicySettings {
 	background_upgrade_scan_enabled: boolean;
 	background_upgrade_scan_interval_hours: number;
 	background_upgrade_max_per_run: number;
-	quality_preference_order?: string[];
-	preferred_lossy_bitrate_kbps?: number | null;
-	lossy_min_bitrate_kbps?: number | null;
-	lossy_max_bitrate_kbps?: number | null;
-	lossless_preference?: string;
-	lossless_max_bit_depth?: number | null;
-	lossless_max_sample_rate_hz?: number | null;
-	unknown_quality_behavior?: string;
-	source_selection_mode?: string;
 	/** when an automatic download waits for a pick: when_unsure, always or off */
 	search_review?: string;
 	quality_recipe?: QualityRecipeEntry[];
@@ -2024,7 +1996,6 @@ export interface WantedWatcherSettings {
 	auto_download_on_find: boolean;
 	watch_partial_albums: boolean;
 	max_checks_per_sweep: number;
-	dormant_after_days: number;
 }
 
 // Hand-mirrors backend PluginSourceInfo (api/v1/schemas/plugins.py).
@@ -2186,13 +2157,11 @@ export type QuarantineListResponse = components['schemas']['QuarantineListRespon
 export interface ConnectAppsSettings {
 	subsonic_enabled: boolean;
 	jellyfin_enabled: boolean;
-	exact_track_approval_supported: boolean;
 	transcoding_enabled: boolean;
 	transcode_default_format: 'mp3' | 'opus';
 	transcode_max_bitrate_kbps: number;
 	advertise_server_name: string;
 	advertise_server_version: string;
-	discover_mode: 'local-only' | 'lazy-mb' | 'use-scrobble-targets';
 }
 
 export type AppPasswordView = components['schemas']['AppPasswordView'];

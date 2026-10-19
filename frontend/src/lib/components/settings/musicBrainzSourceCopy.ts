@@ -16,16 +16,12 @@ export const BRAINZMASH_SUPPORTED_ROUTE_FAMILIES = [
 
 /** Public sources use explicit provider-specific wire policies. */
 export const OFFICIAL_RATE_MAX = 1;
-export const OFFICIAL_CONCURRENT_MAX = 1;
 export const BRAINZMASH_RATE_MAX = 10;
-export const BRAINZMASH_CONCURRENT_MAX = 1;
 export const NON_OFFICIAL_RATE_MAX = 500;
-export const NON_OFFICIAL_CONCURRENT_MAX = 64;
 export const UNLIMITED_RATE_SENTINEL = 0;
 
 export interface SourceBounds {
 	rateMax: number;
-	concurrentMax: number;
 	allowUnlimitedRate: boolean;
 }
 
@@ -33,20 +29,17 @@ export function sourceBounds(mode: MusicBrainzSourceMode): SourceBounds {
 	if (mode === 'brainzmash') {
 		return {
 			rateMax: BRAINZMASH_RATE_MAX,
-			concurrentMax: BRAINZMASH_CONCURRENT_MAX,
 			allowUnlimitedRate: false
 		};
 	}
 	if (mode === 'official') {
 		return {
 			rateMax: OFFICIAL_RATE_MAX,
-			concurrentMax: OFFICIAL_CONCURRENT_MAX,
 			allowUnlimitedRate: false
 		};
 	}
 	return {
 		rateMax: NON_OFFICIAL_RATE_MAX,
-		concurrentMax: NON_OFFICIAL_CONCURRENT_MAX,
 		allowUnlimitedRate: true
 	};
 }

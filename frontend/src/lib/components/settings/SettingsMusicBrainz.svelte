@@ -78,7 +78,6 @@
 	let selectedMode = $state<MusicBrainzSourceMode>('brainzmash');
 	let apiUrl = $state('');
 	let rateLimit = $state(1);
-	let concurrentSearches = $state(1);
 	let communityAcknowledged = $state(false);
 	let testResult = $state<MusicBrainzTestResult | null>(null);
 	let actionError = $state('');
@@ -171,8 +170,6 @@
 				: fixedWirePolicy || customModeFromFixedSource
 					? 1
 					: data.rate_limit;
-		concurrentSearches =
-			fixedWirePolicy || customModeFromFixedSource ? 1 : data.concurrent_searches;
 		communityAcknowledged = data.community_acknowledged ?? false;
 	}
 
@@ -230,12 +227,10 @@
 		const fixedWirePolicy = selectedMode === 'brainzmash' || selectedMode === 'official';
 		const rate =
 			selectedMode === 'brainzmash' ? BRAINZMASH_RATE_MAX : fixedWirePolicy ? 1 : Number(rateLimit);
-		const concurrency = fixedWirePolicy ? 1 : Number(concurrentSearches);
 		return {
 			source_mode: selectedMode,
 			api_url: selectedMode === 'brainzmash' ? null : apiUrl.trim(),
 			rate_limit: Number.isFinite(rate) ? rate : 1,
-			concurrent_searches: Number.isFinite(concurrency) ? concurrency : 1,
 			community_acknowledged: selectedMode === 'community' ? communityAcknowledged : null
 		};
 	}
@@ -341,13 +336,11 @@
 		if (mode === 'brainzmash') {
 			apiUrl = pendingBrainzMash?.endpoint ?? BRAINZMASH_ENDPOINT_URL;
 			rateLimit = BRAINZMASH_RATE_MAX;
-			concurrentSearches = 1;
 			return;
 		}
 		if (mode === 'official') {
 			apiUrl = OFFICIAL_ENDPOINT_URL;
 			rateLimit = 1;
-			concurrentSearches = 1;
 		}
 		if (mode === 'mirror' || mode === 'community') {
 			const normalizedApiUrl = apiUrl.trim().replace(/\/+$/, '');
@@ -359,7 +352,6 @@
 			}
 			if (leavingFixedSource || usingBuiltInEndpoint) {
 				rateLimit = 1;
-				concurrentSearches = 1;
 			}
 		}
 	}
@@ -648,7 +640,7 @@
 						{:else if activeMode === 'brainzmash'}
 							<p class="text-sm text-success">
 								BrainzMash is the active runtime source. Traffic uses the local 10 requests/second
-								policy and one concurrent search.
+								policy.
 							</p>
 						{/if}
 						<Button
@@ -709,13 +701,6 @@
 								? `Up to ${selectedBounds.rateMax} req/sec on your own or a chosen server. 0 = ${UNLIMITED_RATE_LABEL}. Be polite with servers you do not own.`
 								: 'DroppedNeedle keeps this source at 1 request/second.'}
 							bind:value={() => rateLimit, (next) => (rateLimit = Number(next))}
-						/>
-						<NumberField
-							label="Concurrent Searches"
-							min={1}
-							max={selectedBounds.concurrentMax}
-							help={`Local queue capacity, maximum ${selectedBounds.concurrentMax}.`}
-							bind:value={() => concurrentSearches, (next) => (concurrentSearches = Number(next))}
 						/>
 					</div>
 				</div>

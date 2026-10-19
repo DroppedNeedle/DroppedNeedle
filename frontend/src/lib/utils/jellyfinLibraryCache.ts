@@ -28,7 +28,6 @@ const jellyfinAlbumsListCache = createLocalStorageCache<JellyfinAlbumsListData>(
 export const getJellyfinSidebarCachedData = jellyfinSidebarCache.get;
 export const setJellyfinSidebarCachedData = jellyfinSidebarCache.set;
 export const isJellyfinSidebarCacheStale = jellyfinSidebarCache.isStale;
-export const updateJellyfinSidebarCacheTTL = jellyfinSidebarCache.updateTTL;
 
 export const getJellyfinAlbumsListCachedData = jellyfinAlbumsListCache.get;
 export const setJellyfinAlbumsListCachedData = jellyfinAlbumsListCache.set;

@@ -51,8 +51,6 @@ pub struct WantedWatcher {
     pub watch_partial_albums: bool,
     /// Max artist checks per sweep.
     pub max_checks_per_sweep: i64,
-    /// Days before a watch goes dormant.
-    pub dormant_after_days: i64,
 }
 
 impl Default for WantedWatcher {
@@ -62,7 +60,6 @@ impl Default for WantedWatcher {
             auto_download_on_find: true,
             watch_partial_albums: true,
             max_checks_per_sweep: 3,
-            dormant_after_days: 365,
         }
     }
 }
@@ -77,15 +74,7 @@ impl Section for WantedWatcher {
             self.max_checks_per_sweep,
             1,
             20,
-        )?;
-        check_range(
-            Self::KEY,
-            "dormant_after_days",
-            self.dormant_after_days,
-            30,
-            3650,
-        )?;
-        Ok(())
+        )
     }
 }
 
@@ -292,8 +281,6 @@ pub struct QualityRecipeEntry {
     pub quality: String,
     /// Custom MP3 lower bound, or canonical standard bound.
     pub min_bitrate_kbps: Option<i64>,
-    /// Custom MP3 target, or canonical standard bound.
-    pub target_bitrate_kbps: Option<i64>,
     /// Custom MP3 upper bound (`None` when open-ended), or canonical.
     pub max_bitrate_kbps: Option<i64>,
     /// Custom FLAC bit depth.
@@ -302,13 +289,13 @@ pub struct QualityRecipeEntry {
     pub sample_rate_hz: Option<i64>,
 }
 
-/// Canonical MP3 standard bounds: (min, target, max).
-fn mp3_standard_bounds(quality: &str) -> Option<(i64, i64, Option<i64>)> {
+/// Canonical MP3 standard bounds: (min, max).
+fn mp3_standard_bounds(quality: &str) -> Option<(i64, Option<i64>)> {
     match quality {
-        "below_192" => Some((16, 128, Some(191))),
-        "192_255" => Some((192, 192, Some(255))),
-        "256_319" => Some((256, 256, Some(319))),
-        "320_plus" => Some((320, 320, None)),
+        "below_192" => Some((16, Some(191))),
+        "192_255" => Some((192, Some(255))),
+        "256_319" => Some((256, Some(319))),
+        "320_plus" => Some((320, None)),
         _ => None,
     }
 }
@@ -357,48 +344,36 @@ impl QualityRecipeEntry {
                 ));
             }
             if self.quality == "custom" {
-                let (Some(minimum), Some(target), Some(maximum)) = (
-                    self.min_bitrate_kbps,
-                    self.target_bitrate_kbps,
-                    self.max_bitrate_kbps,
-                ) else {
+                let (Some(minimum), Some(maximum)) = (self.min_bitrate_kbps, self.max_bitrate_kbps)
+                else {
                     return Err(recipe_error(
-                        "custom MP3 recipe requires min, target, and max bitrates".to_owned(),
+                        "custom MP3 recipe requires min and max bitrates".to_owned(),
                     ));
                 };
-                for (name, value) in [
-                    ("min_bitrate_kbps", minimum),
-                    ("target_bitrate_kbps", target),
-                    ("max_bitrate_kbps", maximum),
-                ] {
+                for (name, value) in [("min_bitrate_kbps", minimum), ("max_bitrate_kbps", maximum)]
+                {
                     if !(QUALITY_KBPS_MIN..=QUALITY_KBPS_MAX).contains(&value) {
                         return Err(recipe_error(format!(
                             "{name} must be an integer between {QUALITY_KBPS_MIN} and {QUALITY_KBPS_MAX}"
                         )));
                     }
                 }
-                if !(minimum <= target && target <= maximum) {
+                if minimum > maximum {
                     return Err(recipe_error(
-                        "custom MP3 recipe requires min_bitrate_kbps <= \
-                         target_bitrate_kbps <= max_bitrate_kbps"
+                        "custom MP3 recipe requires min_bitrate_kbps <= max_bitrate_kbps"
                             .to_owned(),
                     ));
                 }
                 return Ok(());
             }
-            let Some((exp_min, exp_target, exp_max)) = mp3_standard_bounds(&self.quality) else {
+            let Some((exp_min, exp_max)) = mp3_standard_bounds(&self.quality) else {
                 return Err(recipe_error(format!(
                     "unsupported mp3 quality recipe value: {:?}",
                     self.quality
                 )));
             };
-            let actual = (
-                self.min_bitrate_kbps,
-                self.target_bitrate_kbps,
-                self.max_bitrate_kbps,
-            );
-            if actual != (None, None, None) && actual != (Some(exp_min), Some(exp_target), exp_max)
-            {
+            let actual = (self.min_bitrate_kbps, self.max_bitrate_kbps);
+            if actual != (None, None) && actual != (Some(exp_min), exp_max) {
                 return Err(recipe_error(
                     "standard MP3 recipe fields must use their canonical bounds".to_owned(),
                 ));
@@ -411,10 +386,7 @@ impl QualityRecipeEntry {
                 self.quality
             )));
         }
-        if self.min_bitrate_kbps.is_some()
-            || self.target_bitrate_kbps.is_some()
-            || self.max_bitrate_kbps.is_some()
-        {
+        if self.min_bitrate_kbps.is_some() || self.max_bitrate_kbps.is_some() {
             return Err(recipe_error(
                 "FLAC recipe entries cannot define a bitrate".to_owned(),
             ));
@@ -449,10 +421,9 @@ impl QualityRecipeEntry {
     fn canonicalize(&mut self) {
         if self.format == "mp3"
             && self.quality != "custom"
-            && let Some((min, target, max)) = mp3_standard_bounds(&self.quality)
+            && let Some((min, max)) = mp3_standard_bounds(&self.quality)
         {
             self.min_bitrate_kbps = Some(min);
-            self.target_bitrate_kbps = Some(target);
             self.max_bitrate_kbps = max;
         }
     }
@@ -492,7 +463,7 @@ pub fn validate_quality_recipe(entries: &[QualityRecipeEntry]) -> Result<(), Con
             let mut bounds = (entry.min_bitrate_kbps, entry.max_bitrate_kbps);
             if entry.quality != "custom"
                 && bounds == (None, None)
-                && let Some((min, _, max)) = mp3_standard_bounds(&entry.quality)
+                && let Some((min, max)) = mp3_standard_bounds(&entry.quality)
             {
                 bounds = (Some(min), max);
             }
@@ -539,8 +510,6 @@ pub struct DownloadPolicy {
     /// gates recipe saves on it, the quality snapshot carries it, and the
     /// matcher and orchestrator consumers all read it.
     pub flac_mp3_only: bool,
-    /// Verify downloads after landing.
-    pub verify_downloads: bool,
     /// Preflight auto-accept score.
     pub preflight_score_auto_accept: f64,
     /// Preflight manual-review floor.
@@ -561,8 +530,6 @@ pub struct DownloadPolicy {
     pub auto_retry_max_attempts: i64,
     /// Retry base interval.
     pub auto_retry_base_interval_minutes: i64,
-    /// Minimum Usenet release age.
-    pub usenet_min_release_age_minutes: i64,
     /// Max download size in MB (0 unlimited).
     pub max_size_mb: i64,
     /// Usenet retention in days (0 unknown).
@@ -595,24 +562,6 @@ pub struct DownloadPolicy {
     pub background_upgrade_max_per_run: i64,
     /// Closed v2 quality recipe (empty means a v1 policy).
     pub quality_recipe: Vec<QualityRecipeEntry>,
-    /// Tier preference order, most preferred first.
-    pub quality_preference_order: Vec<String>,
-    /// Preferred lossy bitrate target.
-    pub preferred_lossy_bitrate_kbps: Option<i64>,
-    /// Lossy lower bound.
-    pub lossy_min_bitrate_kbps: Option<i64>,
-    /// Lossy upper bound.
-    pub lossy_max_bitrate_kbps: Option<i64>,
-    /// Lossless edition preference.
-    pub lossless_preference: String,
-    /// Lossless bit-depth ceiling.
-    pub lossless_max_bit_depth: Option<i64>,
-    /// Lossless sample-rate ceiling.
-    pub lossless_max_sample_rate_hz: Option<i64>,
-    /// Unknown-quality handling.
-    pub unknown_quality_behavior: String,
-    /// Source-vs-quality selection.
-    pub source_selection_mode: String,
     /// When an automatic download waits for a hand pick: `when_unsure`
     /// (no candidate looks like the whole album in an accepted quality),
     /// `always`, or `off` (grab the best guess).
@@ -625,7 +574,6 @@ impl Default for DownloadPolicy {
             quality_min: "mp3_320".to_owned(),
             quality_max: "lossless".to_owned(),
             flac_mp3_only: true,
-            verify_downloads: true,
             preflight_score_auto_accept: 0.70,
             preflight_score_manual_min: 0.50,
             download_stall_timeout_minutes: 30,
@@ -636,7 +584,6 @@ impl Default for DownloadPolicy {
             auto_retry_enabled: true,
             auto_retry_max_attempts: 6,
             auto_retry_base_interval_minutes: 15,
-            usenet_min_release_age_minutes: 30,
             max_size_mb: 0,
             usenet_retention_days: 0,
             ignored_terms: Vec::new(),
@@ -653,15 +600,6 @@ impl Default for DownloadPolicy {
             background_upgrade_scan_interval_hours: 12,
             background_upgrade_max_per_run: 3,
             quality_recipe: Vec::new(),
-            quality_preference_order: Vec::new(),
-            preferred_lossy_bitrate_kbps: None,
-            lossy_min_bitrate_kbps: None,
-            lossy_max_bitrate_kbps: None,
-            lossless_preference: "highest".to_owned(),
-            lossless_max_bit_depth: None,
-            lossless_max_sample_rate_hz: None,
-            unknown_quality_behavior: "allow_as_fallback".to_owned(),
-            source_selection_mode: "source_first".to_owned(),
             search_review: "when_unsure".to_owned(),
         }
     }
@@ -748,13 +686,6 @@ impl Section for DownloadPolicy {
             1,
             1440,
         )?;
-        check_range(
-            key,
-            "usenet_min_release_age_minutes",
-            self.usenet_min_release_age_minutes,
-            0,
-            1440,
-        )?;
         check_range(key, "max_size_mb", self.max_size_mb, 0, 1_000_000)?;
         check_range(
             key,
@@ -838,24 +769,6 @@ impl Section for DownloadPolicy {
                 ),
             ));
         }
-        if !self.quality_preference_order.is_empty() {
-            let expected = derive_default_order(&self.quality_min, &self.quality_max);
-            let mut submitted = self.quality_preference_order.clone();
-            let mut want = expected.clone();
-            submitted.sort();
-            want.sort();
-            if submitted != want || self.quality_preference_order.len() != expected.len() {
-                return Err(validation(
-                    key,
-                    "quality_preference_order",
-                    format!(
-                        "must contain exactly the accepted tiers {expected:?} \
-                         (min={}, max={}), got {:?}",
-                        self.quality_min, self.quality_max, self.quality_preference_order
-                    ),
-                ));
-            }
-        }
         if !self.quality_recipe.is_empty() && !self.flac_mp3_only {
             return Err(validation(
                 key,
@@ -867,45 +780,6 @@ impl Section for DownloadPolicy {
         }
         validate_quality_recipe(&self.quality_recipe)?;
         if !matches!(
-            self.lossless_preference.as_str(),
-            "cd" | "24_48" | "24_96" | "24_192" | "highest"
-        ) {
-            return Err(validation(
-                key,
-                "lossless_preference",
-                format!(
-                    "invalid lossless_preference: {:?}",
-                    self.lossless_preference
-                ),
-            ));
-        }
-        if !matches!(
-            self.unknown_quality_behavior.as_str(),
-            "reject" | "review" | "allow_as_fallback"
-        ) {
-            return Err(validation(
-                key,
-                "unknown_quality_behavior",
-                format!(
-                    "invalid unknown_quality_behavior: {:?}",
-                    self.unknown_quality_behavior
-                ),
-            ));
-        }
-        if !matches!(
-            self.source_selection_mode.as_str(),
-            "source_first" | "quality_first"
-        ) {
-            return Err(validation(
-                key,
-                "source_selection_mode",
-                format!(
-                    "invalid source_selection_mode: {:?}",
-                    self.source_selection_mode
-                ),
-            ));
-        }
-        if !matches!(
             self.search_review.as_str(),
             "when_unsure" | "always" | "off"
         ) {
@@ -915,135 +789,16 @@ impl Section for DownloadPolicy {
                 format!("invalid search_review: {:?}", self.search_review),
             ));
         }
-        for (field, value) in [
-            (
-                "preferred_lossy_bitrate_kbps",
-                self.preferred_lossy_bitrate_kbps,
-            ),
-            ("lossy_min_bitrate_kbps", self.lossy_min_bitrate_kbps),
-            ("lossy_max_bitrate_kbps", self.lossy_max_bitrate_kbps),
-        ] {
-            if let Some(bound) = value
-                && !(QUALITY_KBPS_MIN..=QUALITY_KBPS_MAX).contains(&bound)
-            {
-                return Err(validation(
-                    key,
-                    field,
-                    format!(
-                        "{field} must be between {QUALITY_KBPS_MIN} and {QUALITY_KBPS_MAX} kbps"
-                    ),
-                ));
-            }
-        }
-        if let (Some(minimum), Some(maximum)) =
-            (self.lossy_min_bitrate_kbps, self.lossy_max_bitrate_kbps)
-            && minimum > maximum
-        {
-            return Err(validation(
-                key,
-                "lossy_min_bitrate_kbps",
-                "lossy_min_bitrate_kbps exceeds lossy_max_bitrate_kbps".to_owned(),
-            ));
-        }
-        if let Some(target) = self.preferred_lossy_bitrate_kbps {
-            let below = self
-                .lossy_min_bitrate_kbps
-                .is_some_and(|minimum| target < minimum);
-            let above = self
-                .lossy_max_bitrate_kbps
-                .is_some_and(|maximum| target > maximum);
-            if below || above {
-                return Err(validation(
-                    key,
-                    "preferred_lossy_bitrate_kbps",
-                    "preferred_lossy_bitrate_kbps must sit inside \
-                     [lossy_min_bitrate_kbps, lossy_max_bitrate_kbps]"
-                        .to_owned(),
-                ));
-            }
-        }
-        if let Some(depth) = self.lossless_max_bit_depth
-            && !(1..=64).contains(&depth)
-        {
-            return Err(validation(
-                key,
-                "lossless_max_bit_depth",
-                "lossless_max_bit_depth must be 1..64 bits".to_owned(),
-            ));
-        }
-        if let Some(rate) = self.lossless_max_sample_rate_hz
-            && !(8000..=768000).contains(&rate)
-        {
-            return Err(validation(
-                key,
-                "lossless_max_sample_rate_hz",
-                "lossless_max_sample_rate_hz must be 8000..768000 Hz".to_owned(),
-            ));
-        }
         Ok(())
     }
 
     fn normalize(&mut self) {
         self.heal_tiers();
-        let accepted = derive_default_order(&self.quality_min, &self.quality_max);
-        let mut order = self.quality_preference_order.clone();
-        let mut want = accepted.clone();
-        order.sort();
-        want.sort();
-        if order != want || self.quality_preference_order.len() != accepted.len() {
-            self.quality_preference_order = accepted;
-        }
-        if !matches!(
-            self.lossless_preference.as_str(),
-            "cd" | "24_48" | "24_96" | "24_192" | "highest"
-        ) {
-            self.lossless_preference = "highest".to_owned();
-        }
-        if !matches!(
-            self.unknown_quality_behavior.as_str(),
-            "reject" | "review" | "allow_as_fallback"
-        ) {
-            self.unknown_quality_behavior = "allow_as_fallback".to_owned();
-        }
-        if !matches!(
-            self.source_selection_mode.as_str(),
-            "source_first" | "quality_first"
-        ) {
-            self.source_selection_mode = "source_first".to_owned();
-        }
         if !matches!(
             self.search_review.as_str(),
             "when_unsure" | "always" | "off"
         ) {
             self.search_review = "when_unsure".to_owned();
-        }
-        for bound in [
-            &mut self.preferred_lossy_bitrate_kbps,
-            &mut self.lossy_min_bitrate_kbps,
-            &mut self.lossy_max_bitrate_kbps,
-        ] {
-            if bound.is_some_and(|value| !(QUALITY_KBPS_MIN..=QUALITY_KBPS_MAX).contains(&value)) {
-                *bound = None;
-            }
-        }
-        if let (Some(minimum), Some(maximum)) =
-            (self.lossy_min_bitrate_kbps, self.lossy_max_bitrate_kbps)
-            && minimum > maximum
-        {
-            self.lossy_min_bitrate_kbps = None;
-            self.lossy_max_bitrate_kbps = None;
-        }
-        if self
-            .lossless_max_bit_depth
-            .is_some_and(|depth| !(1..=64).contains(&depth))
-        {
-            self.lossless_max_bit_depth = None;
-        }
-        if self
-            .lossless_max_sample_rate_hz
-            .is_some_and(|rate| !(8000..=768000).contains(&rate))
-        {
-            self.lossless_max_sample_rate_hz = None;
         }
         for entry in &mut self.quality_recipe {
             entry.canonicalize();

@@ -91,9 +91,7 @@ export function saveLibraryScanSchedule() {
 		mutationFn: (schedule: LibraryScanSchedule) =>
 			api.global.v3.PUT(LibraryV3Api.schedule(), {
 				scan_frequency: schedule.scan_frequency,
-				daily_scan_time: schedule.daily_scan_time,
-				last_scan: schedule.last_scan,
-				last_scan_success: schedule.last_scan_success
+				daily_scan_time: schedule.daily_scan_time
 			}),
 		onSuccess: () =>
 			invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.scanSchedule() })

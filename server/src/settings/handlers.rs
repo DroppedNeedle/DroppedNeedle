@@ -37,9 +37,9 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     SabnzbdConnection, SlskdConnection, WrappedSettings, YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    ConnectApps, DownloadPolicy, EditionPreferences, FilesystemWatcher, GetIt, HomeSettings,
+    ConnectApps, DownloadPolicy, EditionPreferences, FilesystemWatcher, GetIt,
     LibraryManagementProfile, LibraryScanSchedule, LyricsSettings, PrimaryMusicSource,
-    PublicAddress, ScrobbleSettings, SecuritySettings, UserPreferences, WantedWatcher,
+    PublicAddress, SecuritySettings, UserPreferences, WantedWatcher,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::management::settings::{ActivationHealth, ChangeImpact, PresetDiff};
@@ -100,11 +100,8 @@ pub async fn get_schedule(
     State(settings): State<SettingsSetup>,
     _caller: Admin,
 ) -> JsonResult<LibraryScanScheduleResponse> {
-    settings
-        .service()
-        .get_schedule()
-        .map(Json)
-        .map_err(ApiError::from)
+    let schedule = settings.service().get_schedule()?;
+    Ok(Json(settings.with_last_scan(schedule).await))
 }
 
 /// Save the scan schedule.
@@ -120,12 +117,8 @@ pub async fn put_schedule(
     _caller: Admin,
     ValidJson(body): ValidJson<LibraryScanSchedule>,
 ) -> JsonResult<LibraryScanScheduleResponse> {
-    settings
-        .service()
-        .save_schedule(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
+    let schedule = settings.service().save_schedule(body).await?;
+    Ok(Json(settings.with_last_scan(schedule).await))
 }
 
 /// Read the filesystem poller knobs.
@@ -155,41 +148,6 @@ pub async fn put_watcher(
     _caller: Admin,
     ValidJson(body): ValidJson<FilesystemWatcher>,
 ) -> JsonResult<FilesystemWatcher> {
-    settings
-        .service()
-        .save(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the scrobble targets.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/scrobble",
-    responses((status = 200, description = "Scrobble targets", body = ScrobbleSettings))
-)]
-pub async fn get_scrobble(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<ScrobbleSettings> {
-    settings.service().get().map(Json).map_err(ApiError::from)
-}
-
-/// Save the scrobble targets.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/scrobble",
-    request_body = ScrobbleSettings,
-    responses((status = 200, description = "Saved targets", body = ScrobbleSettings))
-)]
-pub async fn put_scrobble(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<ScrobbleSettings>,
-) -> JsonResult<ScrobbleSettings> {
     settings
         .service()
         .save(body)
@@ -371,45 +329,6 @@ pub async fn put_edition_preferences(
     _caller: Admin,
     ValidJson(body): ValidJson<EditionPreferences>,
 ) -> JsonResult<EditionPreferences> {
-    settings
-        .service()
-        .save(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the home page settings.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/home",
-    operation_id = "get_home_settings",
-    responses((status = 200, description = "Home page settings", body = HomeSettings))
-)]
-pub async fn get_home(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<HomeSettings> {
-    settings.service().get().map(Json).map_err(ApiError::from)
-}
-
-/// Save the home page settings. The save clears the cached home rows.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/home",
-    request_body = HomeSettings,
-    responses(
-        (status = 200, description = "Saved settings", body = HomeSettings),
-        (status = 400, description = "A value is out of range")
-    )
-)]
-pub async fn put_home(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<HomeSettings>,
-) -> JsonResult<HomeSettings> {
     settings
         .service()
         .save(body)
@@ -942,12 +861,12 @@ pub async fn put_advanced(
         .map_err(ApiError::from)
 }
 
-/// Read the frontend cache TTLs in stored units (milliseconds).
+/// Read the advanced settings the web app reads at start.
 #[utoipa::path(
     get,
     tag = "settings",
     path = "/api/v3/settings/cache-ttls",
-    responses((status = 200, description = "Frontend cache TTLs", body = FrontendCacheTTLs))
+    responses((status = 200, description = "Web app settings", body = FrontendCacheTTLs))
 )]
 pub async fn get_cache_ttls(
     State(settings): State<SettingsSetup>,
@@ -1940,12 +1859,12 @@ pub async fn stage_brainzmash(
 )]
 pub async fn consent_brainzmash(
     State(settings): State<SettingsSetup>,
-    caller: Admin,
+    _caller: Admin,
     ValidJson(body): ValidJson<MusicBrainzBindingRequest>,
 ) -> JsonResult<MusicBrainzSettingsView> {
     settings
         .lifecycle()
-        .consent(&body, &caller)
+        .consent(&body)
         .await
         .map(Json)
         .map_err(ApiError::from)

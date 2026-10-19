@@ -1394,8 +1394,6 @@ fn usenet_policy_from(policy: &DownloadPolicy) -> UsenetPolicy {
     }
     out.flac_mp3_only = policy.flac_mp3_only;
     out.retention_days = clamp_u32(policy.usenet_retention_days);
-    out.min_release_age =
-        Duration::from_secs(clamp_u64(policy.usenet_min_release_age_minutes) * 60);
     out.max_size_mb = clamp_u64(policy.max_size_mb);
     out.stall_timeout =
         Duration::from_secs(clamp_u64(policy.download_stall_timeout_minutes).max(1) * 60);

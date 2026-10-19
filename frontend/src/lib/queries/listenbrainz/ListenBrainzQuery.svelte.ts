@@ -21,19 +21,3 @@ export const getListenBrainzConnectionQuery = () =>
 		...getListenBrainzConnectionQueryOptions(),
 		enabled: authStore.isAdmin
 	}));
-
-export const getScrobbleTargetsQueryOptions = () =>
-	queryOptions({
-		queryKey: ListenBrainzQueryKeyFactory.scrobble(),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(LISTENBRAINZ_ENDPOINTS.scrobble, {
-				signal,
-				timeoutMs: LISTENBRAINZ_TIMEOUT_MS
-			})
-	});
-
-export const getScrobbleTargetsQuery = () =>
-	createQuery(() => ({
-		...getScrobbleTargetsQueryOptions(),
-		enabled: authStore.isAdmin
-	}));

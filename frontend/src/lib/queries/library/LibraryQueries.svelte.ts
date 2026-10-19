@@ -40,7 +40,6 @@ import type {
 	ScanFrequency
 } from '$lib/types';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { ttl } from '$lib/stores/cacheTtl.svelte';
 import { setQueryDataWithPersister } from '../QueryClient';
 
 // Catalog reads for the local library. Each read calls the v3 catalog and
@@ -90,7 +89,7 @@ export const getLibraryAlbumsQueryOptions = (
 	params: LibraryV3AlbumsParams
 ) =>
 	queryOptions({
-		staleTime: ttl('library', CACHE_TTL.LIBRARY_NATIVE),
+		staleTime: CACHE_TTL.LIBRARY,
 		placeholderData: keepPreviousData,
 		queryKey: LibraryQueryKeyFactory.catalog.albums(forUser, params),
 		queryFn: async ({ signal }) =>
@@ -137,7 +136,7 @@ export const getLibraryArtistsInfiniteQuery = (getParams: Getter<LibraryArtistsP
 	createInfiniteQuery(() => {
 		const params = getParams();
 		return {
-			staleTime: ttl('library', CACHE_TTL.LIBRARY_NATIVE),
+			staleTime: CACHE_TTL.LIBRARY,
 			queryKey: LibraryQueryKeyFactory.catalog.artists(userId(), artistParams(params, 0)),
 			initialPageParam: 0,
 			queryFn: ({ pageParam = 0, signal }) => fetchArtists(artistParams(params, pageParam), signal),
@@ -153,7 +152,7 @@ const ARTIST_THUMBS_LIMIT = 12;
 
 export const getLibraryArtistThumbsQuery = () =>
 	createQuery(() => ({
-		staleTime: ttl('library', CACHE_TTL.LIBRARY_NATIVE),
+		staleTime: CACHE_TTL.LIBRARY,
 		queryKey: LibraryQueryKeyFactory.catalog.artistThumbs(userId()),
 		queryFn: ({ signal }) =>
 			fetchArtists(
@@ -176,7 +175,7 @@ const RECENTLY_ADDED_LIMIT = 20;
 
 export const getLibraryRecentlyAddedQuery = () =>
 	createQuery(() => ({
-		staleTime: ttl('recentlyAdded', CACHE_TTL.LIBRARY_NATIVE),
+		staleTime: CACHE_TTL.RECENTLY_ADDED,
 		queryKey: LibraryQueryKeyFactory.catalog.recentlyAdded(userId(), RECENTLY_ADDED_LIMIT),
 		queryFn: async ({ signal }) =>
 			toNativeAlbums(
@@ -362,9 +361,8 @@ export const getLibraryScanScheduleQuery = (enabled: () => boolean = () => true)
 			return {
 				scan_frequency: (data.scan_frequency ?? 'manual') as ScanFrequency,
 				daily_scan_time: data.daily_scan_time ?? '',
-				last_scan: data.last_scan ?? null,
-				last_scan_success: data.last_scan_success ?? false,
-				server_timezone: data.server_timezone
+				server_timezone: data.server_timezone,
+				last_scan_at: data.last_scan_at ?? null
 			};
 		}
 	}));

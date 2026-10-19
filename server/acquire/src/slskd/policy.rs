@@ -19,12 +19,12 @@ pub const FLAC_RECIPE_QUALITIES: [&str; 6] = ["cd", "24_48", "24_96", "24_192", 
 
 /// Canonical `(min, target, max)` kbps bounds for the standard MP3 recipe
 /// qualities (v2 `_MP3_STANDARD_BOUNDS`).
-pub fn mp3_standard_bounds(quality: &str) -> Option<(i32, i32, Option<i32>)> {
+pub fn mp3_standard_bounds(quality: &str) -> Option<(i32, Option<i32>)> {
     match quality {
-        "below_192" => Some((16, 128, Some(191))),
-        "192_255" => Some((192, 192, Some(255))),
-        "256_319" => Some((256, 256, Some(319))),
-        "320_plus" => Some((320, 320, None)),
+        "below_192" => Some((16, Some(191))),
+        "192_255" => Some((192, Some(255))),
+        "256_319" => Some((256, Some(319))),
+        "320_plus" => Some((320, None)),
         _ => None,
     }
 }
@@ -74,7 +74,6 @@ pub struct QualityRecipeEntry {
     pub format: String,
     pub quality: String,
     pub min_bitrate_kbps: Option<i32>,
-    pub target_bitrate_kbps: Option<i32>,
     pub max_bitrate_kbps: Option<i32>,
     pub bit_depth: Option<i32>,
     pub sample_rate_hz: Option<i32>,
@@ -93,7 +92,6 @@ impl QualityRecipeEntry {
         format: &str,
         quality: &str,
         min_bitrate_kbps: Option<i32>,
-        target_bitrate_kbps: Option<i32>,
         max_bitrate_kbps: Option<i32>,
         bit_depth: Option<i32>,
         sample_rate_hz: Option<i32>,
@@ -119,43 +117,37 @@ impl QualityRecipeEntry {
                     "MP3 recipe entries cannot define FLAC resolution".to_owned(),
                 ));
             }
-            let (minimum, target, maximum) = if quality == "custom" {
+            let (minimum, maximum) = if quality == "custom" {
                 let minimum = strict_int(min_bitrate_kbps, "min_bitrate_kbps", 16, 2048)?;
-                let target = strict_int(target_bitrate_kbps, "target_bitrate_kbps", 16, 2048)?;
                 let maximum = strict_int(max_bitrate_kbps, "max_bitrate_kbps", 16, 2048)?;
-                if !(minimum <= target && target <= maximum) {
+                if minimum > maximum {
                     return Err(RecipeError(
-                        "custom MP3 recipe requires min_bitrate_kbps <= \
-                         target_bitrate_kbps <= max_bitrate_kbps"
+                        "custom MP3 recipe requires min_bitrate_kbps <= max_bitrate_kbps"
                             .to_owned(),
                     ));
                 }
-                (minimum, target, maximum)
+                (minimum, maximum)
             } else {
-                let (exp_min, exp_target, exp_max) = mp3_standard_bounds(quality)
+                let (exp_min, exp_max) = mp3_standard_bounds(quality)
                     .ok_or_else(|| RecipeError(format!("unknown MP3 recipe quality: {quality}")))?;
-                let given = (min_bitrate_kbps, target_bitrate_kbps, max_bitrate_kbps);
-                if given != (None, None, None)
-                    && given != (Some(exp_min), Some(exp_target), exp_max)
-                {
+                let given = (min_bitrate_kbps, max_bitrate_kbps);
+                if given != (None, None) && given != (Some(exp_min), exp_max) {
                     return Err(RecipeError(
                         "standard MP3 recipe fields must use their canonical bounds".to_owned(),
                     ));
                 }
-                (exp_min, exp_target, exp_max.unwrap_or(i32::MAX))
+                (exp_min, exp_max.unwrap_or(i32::MAX))
             };
             return Ok(Self {
                 format: format.to_owned(),
                 quality: quality.to_owned(),
                 min_bitrate_kbps: Some(minimum),
-                target_bitrate_kbps: Some(target),
                 max_bitrate_kbps: (maximum != i32::MAX).then_some(maximum),
                 bit_depth: None,
                 sample_rate_hz: None,
             });
         }
-        if min_bitrate_kbps.is_some() || target_bitrate_kbps.is_some() || max_bitrate_kbps.is_some()
-        {
+        if min_bitrate_kbps.is_some() || max_bitrate_kbps.is_some() {
             return Err(RecipeError(
                 "FLAC recipe entries cannot define a bitrate".to_owned(),
             ));
@@ -167,7 +159,6 @@ impl QualityRecipeEntry {
                 format: format.to_owned(),
                 quality: quality.to_owned(),
                 min_bitrate_kbps: None,
-                target_bitrate_kbps: None,
                 max_bitrate_kbps: None,
                 bit_depth: Some(depth),
                 sample_rate_hz: Some(rate),
@@ -182,7 +173,6 @@ impl QualityRecipeEntry {
             format: format.to_owned(),
             quality: quality.to_owned(),
             min_bitrate_kbps: None,
-            target_bitrate_kbps: None,
             max_bitrate_kbps: None,
             bit_depth: None,
             sample_rate_hz: None,
@@ -298,7 +288,6 @@ impl Default for DownloadPolicy {
                     format: "flac".to_owned(),
                     quality: "cd".to_owned(),
                     min_bitrate_kbps: None,
-                    target_bitrate_kbps: None,
                     max_bitrate_kbps: None,
                     bit_depth: None,
                     sample_rate_hz: None,
@@ -307,7 +296,6 @@ impl Default for DownloadPolicy {
                     format: "mp3".to_owned(),
                     quality: "320_plus".to_owned(),
                     min_bitrate_kbps: Some(320),
-                    target_bitrate_kbps: Some(320),
                     max_bitrate_kbps: None,
                     bit_depth: None,
                     sample_rate_hz: None,

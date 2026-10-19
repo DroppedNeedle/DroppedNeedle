@@ -42,9 +42,11 @@ use thiserror::Error;
 
 use super::carry::bundle::{Bundle, BundleRejection};
 use super::envelope::{ExportFile, Opener, collect_sealed, is_sealed, unseal_value};
-use super::report::{ExitCode, ExportProvenance, ImportReport, ReportBuilder, utc_now_iso};
+use super::report::{
+    DROPPED_SETTING, ExitCode, ExportProvenance, ImportReport, ReportBuilder, utc_now_iso,
+};
 use super::schedule_carry::carry_frequency;
-use super::validate::{ValidationIssue, validate_export};
+use super::validate::{REMOVED_SECTIONS, ValidationIssue, strip_removed, validate_export};
 use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Sections the export may carry (kept whole or in part). Present
@@ -79,7 +81,6 @@ pub(crate) const REPLACE_UNIVERSE: &[&str] = &[
     "connect_apps",
     "library_settings",
     "library_management",
-    "scrobble_settings",
     "primary_music_source",
     "get_it",
     "advanced_settings",
@@ -641,10 +642,18 @@ fn stage_settings(
         .and_then(Value::as_object)
         .unwrap_or(&empty);
 
+    for section in REMOVED_SECTIONS {
+        if exported.contains_key(*section) {
+            note_dropped_setting(report, (*section).to_owned());
+        }
+    }
     for section in REPLACE_UNIVERSE {
         match exported.get(*section) {
             Some(value) => {
                 let mut filtered = filter_section(section, value);
+                for path in strip_removed(section, &mut filtered) {
+                    note_dropped_setting(report, path);
+                }
                 if *section == "plugins" {
                     note_unflagged_plugin_settings(&filtered, report);
                 }
@@ -690,6 +699,16 @@ fn stage_settings(
         );
     }
     Ok(staged)
+}
+
+/// Note one v2 setting v3 removed: it is not imported.
+fn note_dropped_setting(report: &mut ReportBuilder, path: String) {
+    report.note(
+        "settings",
+        path,
+        DROPPED_SETTING,
+        "v3 removed this setting; it is not imported".to_owned(),
+    );
 }
 
 /// Note every plugin setting the exporter sealed without knowing whether it
@@ -2388,8 +2407,6 @@ mod tests {
             "lyrics_settings",
             "public_address",
             "edition_preferences",
-            // Not in the v2 export.
-            "home_settings",
             // This install's own id.
             "instance_id",
         ];

@@ -18,6 +18,8 @@ pub const REPORT_FORMAT: &str = "droppedneedle-import-report";
 /// Report schema version. Version 2 adds the carried sections, the
 /// left-behind list and the pending library links.
 pub const REPORT_FORMAT_VERSION: u32 = 2;
+/// Item outcome for a v2 setting v3 removed: listed, never imported.
+pub const DROPPED_SETTING: &str = "dropped_setting";
 /// Imported outcomes sampled per entity before counts-only cutoff.
 pub const IMPORT_SAMPLE_LIMIT: usize = 50;
 
@@ -97,7 +99,8 @@ pub struct ReportItem {
     /// Semantic key (an MBID or username), never secret material.
     pub key: String,
     /// Outcome (`imported`, `skipped_identical`, `conflict_kept_existing`,
-    /// `dropped_unknown_user`, `dropped_invalid`, `nulled_field`, `error`).
+    /// `dropped_unknown_user`, `dropped_invalid`, `nulled_field`, `error`;
+    /// settings notes also use `dropped_setting`).
     pub outcome: String,
     /// Short human detail, empty when obvious.
     pub detail: String,

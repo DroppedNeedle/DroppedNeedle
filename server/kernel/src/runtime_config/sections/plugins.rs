@@ -48,10 +48,10 @@ impl Section for Plugins {
 }
 
 // --- _internal ------------------------------------------------------------
-// Kept: plex_client_id, droppedneedle_device_id,
-// brainzmash_consent_admin. Dropped as recomputed/derived: audiodb sweep
-// cursor + completion, release_type_policy_revision,
-// musicbrainz_settings_revision, official_source_selected.
+// Kept: plex_client_id, droppedneedle_device_id. Dropped as recomputed or
+// unread: audiodb sweep cursor + completion, release_type_policy_revision,
+// musicbrainz_settings_revision, official_source_selected,
+// brainzmash_consent_admin.
 
 /// Typed subset of the `_internal` section. Only the kept keys exist;
 /// anything else in the file is ignored.
@@ -62,8 +62,6 @@ pub struct InternalState {
     pub plex_client_id: Option<String>,
     /// Stable Jellyfin device id.
     pub droppedneedle_device_id: Option<String>,
-    /// Admin id that consented to BrainzMash.
-    pub brainzmash_consent_admin: Option<String>,
 }
 
 impl Section for InternalState {

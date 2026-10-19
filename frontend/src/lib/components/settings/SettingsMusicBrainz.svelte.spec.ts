@@ -12,7 +12,6 @@ const h = vi.hoisted(() => {
 		source_mode: 'brainzmash',
 		api_url: 'https://api.brainzmash.cc/ws/2',
 		rate_limit: 10,
-		concurrent_searches: 1,
 		community_acknowledged: null,
 		selected_source_mode: 'brainzmash',
 		source_id: 'brainzmash-default',
@@ -98,7 +97,6 @@ function initialSettings(): MusicBrainzSettingsResponse {
 		source_mode: 'brainzmash',
 		api_url: 'https://api.brainzmash.cc/ws/2',
 		rate_limit: 10,
-		concurrent_searches: 1,
 		community_acknowledged: null,
 		selected_source_mode: 'brainzmash',
 		source_id: 'brainzmash-default',
@@ -219,7 +217,6 @@ describe('MusicBrainz four-way source picker', () => {
 			source_mode: 'community',
 			api_url: 'https://community.example/ws/2',
 			rate_limit: 1,
-			concurrent_searches: 1,
 			community_acknowledged: true
 		});
 		await expect.element(page.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
@@ -229,7 +226,6 @@ describe('MusicBrainz four-way source picker', () => {
 			source_mode: 'community',
 			api_url: 'https://community.example/ws/2',
 			rate_limit: 1,
-			concurrent_searches: 1,
 			community_acknowledged: true
 		});
 		await expect.element(page.getByText('MusicBrainz settings saved.')).toBeVisible();
@@ -348,7 +344,6 @@ describe('MusicBrainz four-way source picker', () => {
 			source_mode: 'official',
 			api_url: 'https://musicbrainz.org/ws/2',
 			rate_limit: 1,
-			concurrent_searches: 1,
 			community_acknowledged: null
 		});
 		expect(h.invalidate).toHaveBeenCalledOnce();

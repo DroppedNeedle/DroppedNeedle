@@ -1,18 +1,13 @@
 <script lang="ts">
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import { AudioLines, ExternalLink } from 'lucide-svelte';
-	import {
-		getListenBrainzConnectionQuery,
-		getScrobbleTargetsQuery
-	} from '$lib/queries/listenbrainz/ListenBrainzQuery.svelte';
+	import { getListenBrainzConnectionQuery } from '$lib/queries/listenbrainz/ListenBrainzQuery.svelte';
 	import {
 		createSaveListenBrainzMutation,
-		createSaveScrobbleTargetsMutation,
 		createVerifyListenBrainzMutation
 	} from '$lib/queries/listenbrainz/ListenBrainzMutations.svelte';
 	import type {
 		ListenBrainzConnection,
-		ScrobbleSettings,
 		VerifyConnectionResponse
 	} from '$lib/queries/listenbrainz/types';
 	import Button from '$lib/ui/Button.svelte';
@@ -23,15 +18,11 @@
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	const connQuery = getListenBrainzConnectionQuery();
-	const targetsQuery = getScrobbleTargetsQuery();
 	const saveConn = createSaveListenBrainzMutation();
-	const saveTargets = createSaveScrobbleTargetsMutation();
 	const verify = createVerifyListenBrainzMutation();
 
 	let connDraft = $state<ListenBrainzConnection | null>(null);
 	let connDirty = $state(false);
-	let targetsDraft = $state<ScrobbleSettings | null>(null);
-	let targetsDirty = $state(false);
 	let verdict = $state<VerifyConnectionResponse | null>(null);
 
 	interface FormMessage {
@@ -40,17 +31,12 @@
 	}
 
 	let connMessage = $state<FormMessage | null>(null);
-	let targetsMessage = $state<FormMessage | null>(null);
 
 	// Sync server data into the editable drafts until the admin touches them,
 	// so a background refetch never clobbers half-typed input.
 	$effect(() => {
 		const data = connQuery.data;
 		if (data && !connDirty) connDraft = { ...data };
-	});
-	$effect(() => {
-		const data = targetsQuery.data;
-		if (data && !targetsDirty) targetsDraft = { ...data };
 	});
 
 	function editConn<K extends keyof ListenBrainzConnection>(
@@ -60,12 +46,6 @@
 		if (!connDraft) return;
 		connDraft[key] = value;
 		connDirty = true;
-	}
-
-	function editTargets<K extends keyof ScrobbleSettings>(key: K, value: ScrobbleSettings[K]) {
-		if (!targetsDraft) return;
-		targetsDraft[key] = value;
-		targetsDirty = true;
 	}
 
 	function errorText(err: unknown, fallback: string): string {
@@ -93,19 +73,6 @@
 			verdict = await verify.mutateAsync(connDraft);
 		} catch (err) {
 			verdict = { valid: false, message: errorText(err, 'Could not reach ListenBrainz.') };
-		}
-	}
-
-	async function saveScrobbleTargets() {
-		if (!targetsDraft) return;
-		targetsMessage = null;
-		try {
-			const saved = await saveTargets.mutateAsync(targetsDraft);
-			targetsDraft = { ...saved };
-			targetsDirty = false;
-			targetsMessage = { type: 'success', text: 'Scrobble targets saved.' };
-		} catch (err) {
-			targetsMessage = { type: 'error', text: errorText(err, 'Could not save targets.') };
 		}
 	}
 </script>
@@ -204,58 +171,6 @@
 						onclick={() => void saveConnection()}
 					>
 						Save ListenBrainz settings
-					</Button>
-				</div>
-			{/if}
-		</div>
-	</Card>
-
-	<Card variant="bordered">
-		{#snippet header()}
-			<div>
-				<CardTitle>Scrobble targets</CardTitle>
-				<p class="text-sm text-base-content/60">Where plays from this instance are reported.</p>
-			</div>
-		{/snippet}
-		<div class="mt-2 flex flex-col gap-4">
-			{#if targetsQuery.isPending || !targetsDraft}
-				<div class="flex animate-pulse flex-col gap-3 py-2">
-					<div class="h-6 w-56 rounded bg-base-300"></div>
-					<div class="h-6 w-64 rounded bg-base-300"></div>
-				</div>
-			{:else}
-				<ToggleRow
-					label="Scrobble to ListenBrainz"
-					bind:checked={
-						() => targetsDraft!.scrobble_to_listenbrainz,
-						(v) => editTargets('scrobble_to_listenbrainz', v)
-					}
-				/>
-				<ToggleRow
-					label="Scrobble to Last.fm"
-					bind:checked={
-						() => targetsDraft!.scrobble_to_lastfm, (v) => editTargets('scrobble_to_lastfm', v)
-					}
-				/>
-
-				{#if targetsMessage}
-					<div
-						class="alert"
-						class:alert-success={targetsMessage.type === 'success'}
-						class:alert-error={targetsMessage.type === 'error'}
-					>
-						<span>{targetsMessage.text}</span>
-					</div>
-				{/if}
-
-				<div class="flex justify-end pt-1">
-					<Button
-						variant="primary"
-						pill
-						loading={saveTargets.isPending}
-						onclick={() => void saveScrobbleTargets()}
-					>
-						Save scrobble targets
 					</Button>
 				</div>
 			{/if}

@@ -13,7 +13,7 @@ use droppedneedle_providers::musicbrainz::{Criticality, hit_score};
 
 use super::error::CatalogError;
 use super::mapping;
-use super::{Catalog, mb_error, mb_retry, secs};
+use super::{Catalog, SEARCH_TTL, mb_error, mb_retry};
 
 /// Stale bucket copies live six hours (v2 `SEARCH_STALE_CACHE_TTL`).
 const STALE_TTL: Duration = Duration::from_secs(6 * 3600);
@@ -100,7 +100,7 @@ impl Catalog {
         let stale = digest_key("mb:artist:search:stale:", &parts, "v1");
         let catalog = self.clone();
         let text = query.trim().to_owned();
-        let ttl = secs(self.upstream().settings().advanced().cache_ttl_search);
+        let ttl = SEARCH_TTL;
         let fetch = move || async move {
             let (client, _) = catalog
                 .upstream()
@@ -183,7 +183,7 @@ impl Catalog {
         let stale = digest_key("mb:album:search:stale:", &parts, "v1");
         let catalog = self.clone();
         let text = query.trim().to_owned();
-        let ttl = secs(self.upstream().settings().advanced().cache_ttl_search * 2);
+        let ttl = SEARCH_TTL * 2;
         let fetch = move || async move {
             let (client, _) = catalog
                 .upstream()

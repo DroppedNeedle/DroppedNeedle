@@ -38,7 +38,7 @@ use droppedneedle_kernel::jobs::{
     AlreadyRunning, BoxFuture, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
 };
 use droppedneedle_kernel::platform::Platform;
-use droppedneedle_kernel::runtime_config::secret_sections::{AdvancedSettings, EventsSettings};
+use droppedneedle_kernel::runtime_config::secret_sections::EventsSettings;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 use droppedneedle_media::remotes::playlist_sync::{
     NavidromeSyncSettings, PlaylistSyncState, ProdPlaylistSync,
@@ -112,13 +112,19 @@ impl ScansEnded {
     }
 }
 
-/// The production precache trigger: one supervised run per call. Watchdog
-/// limits re-read the advanced settings on every run; an unreadable section
-/// falls back to the shipped timeouts.
+/// A precache run with no progress for this long is stopped. Fixed, not a
+/// setting: a healthy run beats far more often than this.
+const PRECACHE_STALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// A precache run is stopped after this long whatever it is doing. Fixed,
+/// not a setting: long enough for a large library's first warm.
+const PRECACHE_MAX_TIMEOUT: Duration = Duration::from_secs(8 * 3600);
+
+/// The production precache trigger: one supervised run per call, under the
+/// fixed watchdog limits.
 #[derive(Clone)]
 pub struct PrecacheTrigger {
     supervisor: Supervisor,
-    advanced: Live<AdvancedSettings>,
     status: CacheSyncStatus,
     sources: Option<Arc<dyn PrecacheSources>>,
     scans: ScansEnded,
@@ -162,27 +168,9 @@ impl PrecacheTrigger {
             .await;
     }
 
-    /// Watchdog limits for the next run. Values clamp to at least one unit;
-    /// a garbage section must not arm a zero stall timeout.
+    /// Watchdog limits for the next run.
     fn limits(&self) -> PrecacheLimits {
-        let fallback = AdvancedSettings::default();
-        let (stall_minutes, max_hours) = self
-            .advanced
-            .get()
-            .map(|settings| {
-                (
-                    settings.sync_stall_timeout_minutes,
-                    settings.sync_max_timeout_hours,
-                )
-            })
-            .unwrap_or((
-                fallback.sync_stall_timeout_minutes,
-                fallback.sync_max_timeout_hours,
-            ));
-        PrecacheLimits::new(
-            Duration::from_secs(stall_minutes.max(1) as u64 * 60),
-            Duration::from_secs(max_hours.max(1) as u64 * 3600),
-        )
+        PrecacheLimits::new(PRECACHE_STALL_TIMEOUT, PRECACHE_MAX_TIMEOUT)
     }
 
     /// Start the loop that turns scan completions into one run each time
@@ -264,7 +252,6 @@ pub struct JobsSetup {
     presence: (RegistryFeed, RemoteSessionPollers),
     poll_time: EventsPollTime,
     watcher: Option<ConcertsSweep>,
-    config: Arc<ConfigStore>,
     mixer: Arc<dyn PersonalMixer>,
     demand: Arc<dyn DemandTick>,
     cache_sync: CacheSyncStatus,
@@ -341,7 +328,6 @@ impl JobsSetup {
                 events: config.live(),
             },
             watcher,
-            config,
             mixer: Arc::new(UnwiredMixer),
             demand: Arc::new(NoDemand),
             cache_sync: CacheSyncStatus::new(platform.events.clone()),
@@ -433,7 +419,6 @@ impl JobsSetup {
     pub fn precache_trigger(&self) -> PrecacheTrigger {
         PrecacheTrigger {
             supervisor: self.supervisor.clone(),
-            advanced: self.config.live(),
             status: self.cache_sync.clone(),
             sources: self.precache_sources.clone(),
             scans: self.scans.clone(),

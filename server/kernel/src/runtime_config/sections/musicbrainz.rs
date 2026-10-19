@@ -9,8 +9,8 @@ use crate::runtime_config::error::ConfigError;
 
 // --- musicbrainz_settings -------------------------------------------------
 // Dropped transients: pending_brainzmash, source_quarantined,
-// quarantine_reason. Kept: source_mode, api_url, rate_limit,
-// concurrent_searches, community_acknowledged, selected_source_mode,
+// quarantine_reason, and the unread concurrent_searches. Kept: source_mode,
+// api_url, rate_limit, community_acknowledged, selected_source_mode,
 // source_id, generation, active_brainzmash.
 
 /// Official MusicBrainz API base (v2 `OFFICIAL_MB_API_BASE`).
@@ -19,16 +19,10 @@ pub const OFFICIAL_MB_API_BASE: &str = "https://musicbrainz.org/ws/2";
 pub const BRAINZMASH_ENDPOINT: &str = "https://api.brainzmash.cc/ws/2";
 /// Forced BrainzMash throughput (v2 `_BRAINZMASH_RATE_LIMIT`).
 pub const BRAINZMASH_RATE_LIMIT: f64 = 10.0;
-/// Forced BrainzMash concurrency (v2 `_BRAINZMASH_CONCURRENT_SEARCHES`).
-pub const BRAINZMASH_CONCURRENT_SEARCHES: i64 = 1;
 /// Official-host ceilings (never raised).
 pub const OFFICIAL_MB_RATE_LIMIT: f64 = 1.0;
-/// Official-host ceilings (never raised).
-pub const OFFICIAL_MB_CONCURRENT_SEARCHES: i64 = 6;
 /// Widest allowed off-official throughput (0 = Unlimited sentinel).
 pub const MAX_MB_RATE_LIMIT: f64 = 500.0;
-/// Widest allowed off-official concurrency.
-pub const MAX_MB_CONCURRENT_SEARCHES: i64 = 64;
 
 /// MusicBrainz source tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
@@ -89,8 +83,6 @@ pub struct MusicBrainzSettings {
     pub api_url: String,
     /// Requests per second (0 = Unlimited, off-official only).
     pub rate_limit: f64,
-    /// Concurrent searches.
-    pub concurrent_searches: i64,
     /// Community-tier disclosure acknowledged.
     pub community_acknowledged: bool,
     /// Last tier the admin chose.
@@ -114,7 +106,6 @@ impl Default for MusicBrainzSettings {
             source_mode: MbSourceMode::Brainzmash,
             api_url: BRAINZMASH_ENDPOINT.to_owned(),
             rate_limit: BRAINZMASH_RATE_LIMIT,
-            concurrent_searches: BRAINZMASH_CONCURRENT_SEARCHES,
             community_acknowledged: false,
             selected_source_mode: MbSourceMode::Brainzmash,
             source_id: uuid::Uuid::new_v4().to_string(),
@@ -241,13 +232,6 @@ impl Section for MusicBrainzSettings {
                 "rate_limit must be finite".to_owned(),
             ));
         }
-        if self.concurrent_searches < 1 {
-            return Err(validation(
-                key,
-                "concurrent_searches",
-                "concurrent_searches must be at least 1".to_owned(),
-            ));
-        }
         match self.source_mode {
             MbSourceMode::Official | MbSourceMode::Brainzmash => {}
             MbSourceMode::Mirror | MbSourceMode::Community => {
@@ -264,28 +248,16 @@ impl Section for MusicBrainzSettings {
                 }
             }
         }
-        if !is_mb_rate_policy_public_host(&self.api_url) {
-            if self.rate_limit < 0.0
+        if !is_mb_rate_policy_public_host(&self.api_url)
+            && (self.rate_limit < 0.0
                 || (self.rate_limit > 0.0 && self.rate_limit < 0.1)
-                || self.rate_limit > MAX_MB_RATE_LIMIT
-            {
-                return Err(validation(
-                    key,
-                    "rate_limit",
-                    format!(
-                        "rate_limit must be 0 (unlimited) or between 0.1 and {MAX_MB_RATE_LIMIT}"
-                    ),
-                ));
-            }
-            if self.concurrent_searches > MAX_MB_CONCURRENT_SEARCHES {
-                return Err(validation(
-                    key,
-                    "concurrent_searches",
-                    format!(
-                        "concurrent_searches must be between 1 and {MAX_MB_CONCURRENT_SEARCHES}"
-                    ),
-                ));
-            }
+                || self.rate_limit > MAX_MB_RATE_LIMIT)
+        {
+            return Err(validation(
+                key,
+                "rate_limit",
+                format!("rate_limit must be 0 (unlimited) or between 0.1 and {MAX_MB_RATE_LIMIT}"),
+            ));
         }
         Ok(())
     }
@@ -295,18 +267,14 @@ impl Section for MusicBrainzSettings {
         self.clamped_to_official_limits = false;
         if self.source_mode == MbSourceMode::Brainzmash {
             self.rate_limit = BRAINZMASH_RATE_LIMIT;
-            self.concurrent_searches = BRAINZMASH_CONCURRENT_SEARCHES;
         }
         if is_mb_rate_policy_public_host(&self.api_url) {
-            let before = (self.rate_limit, self.concurrent_searches);
+            let before = self.rate_limit;
             self.rate_limit = self.rate_limit.min(OFFICIAL_MB_RATE_LIMIT);
-            self.concurrent_searches = self
-                .concurrent_searches
-                .min(OFFICIAL_MB_CONCURRENT_SEARCHES);
             if self.rate_limit <= 0.0 {
                 self.rate_limit = OFFICIAL_MB_RATE_LIMIT;
             }
-            self.clamped_to_official_limits = before != (self.rate_limit, self.concurrent_searches);
+            self.clamped_to_official_limits = before != self.rate_limit;
         }
     }
 }

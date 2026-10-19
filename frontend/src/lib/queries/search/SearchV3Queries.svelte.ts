@@ -5,7 +5,6 @@ import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { ttl } from '$lib/stores/cacheTtl.svelte';
 import { SearchV3Api } from './SearchV3Api';
 import {
 	SearchQueryKeyFactory,
@@ -28,9 +27,7 @@ const enabled = (userId: SearchV3UserId, query: string) =>
 // Failures hold a short floor instead; success keeps the full search window.
 const SEARCH_FAILURE_STALE_TIME_MS = 60_000;
 const successfulSearchStaleTime = (query: { state: { data?: { status?: string } } }) =>
-	query.state.data?.status === 'ok'
-		? ttl('search', CACHE_TTL.SEARCH)
-		: SEARCH_FAILURE_STALE_TIME_MS;
+	query.state.data?.status === 'ok' ? CACHE_TTL.SEARCH : SEARCH_FAILURE_STALE_TIME_MS;
 
 // A degraded enrichment answers from a partial provider fan-out, so it holds
 // briefly; a clean answer keeps the full search window.
@@ -57,7 +54,7 @@ export const successfulUnifiedSearchV3StaleTime = (query: {
 	const data = query.state.data;
 	const healthy =
 		data?.artist_status === 'ok' && data?.album_status === 'ok' && data?.track_status === 'ok';
-	return healthy ? ttl('search', CACHE_TTL.SEARCH) : SEARCH_FAILURE_STALE_TIME_MS;
+	return healthy ? CACHE_TTL.SEARCH : SEARCH_FAILURE_STALE_TIME_MS;
 };
 
 export const getUnifiedSearchV3QueryOptions = (
@@ -128,7 +125,7 @@ export const getSearchSuggestionsV3Query = (
 		const query = getQuery().trim();
 		return {
 			enabled: getEnabled() && enabled(authStore.user?.id, query),
-			staleTime: ttl('search', CACHE_TTL.SEARCH),
+			staleTime: CACHE_TTL.SEARCH,
 			queryKey: SearchQueryKeyFactory.v3.suggest(authStore.user?.id, query, limit),
 			queryFn: ({ signal }: { signal?: AbortSignal }) =>
 				api.global.v3.GET(SearchV3Api.suggest(query, limit), { signal })

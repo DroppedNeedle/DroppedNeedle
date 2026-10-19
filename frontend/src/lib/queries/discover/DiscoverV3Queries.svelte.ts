@@ -5,7 +5,6 @@ import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
-import { ttl } from '$lib/stores/cacheTtl.svelte';
 import { discoverHasContent } from '$lib/utils/discoverContent';
 import { DiscoverV3Api } from './DiscoverV3Api';
 import {
@@ -87,7 +86,7 @@ export const getDiscoverRadioV3Query = (getParams: Getter<DiscoverV3RadioInput>)
 		if (params.count !== undefined) radioParams.count = params.count;
 		if (params.source !== undefined) radioParams.source = params.source;
 		return {
-			staleTime: ttl('discover', CACHE_TTL.DISCOVER),
+			staleTime: CACHE_TTL.DISCOVER,
 			queryKey: DiscoverQueryKeyFactory.v3.radio(
 				authStore.user?.id,
 				params.seedType,
@@ -122,7 +121,7 @@ export const getDiscoverPlaylistSuggestionsV3Query = (
 	createQuery(() => {
 		const params = getParams();
 		return {
-			staleTime: ttl('discover', CACHE_TTL.DISCOVER),
+			staleTime: CACHE_TTL.DISCOVER,
 			queryKey: DiscoverQueryKeyFactory.v3.playlistSuggestions(
 				authStore.user?.id,
 				params.playlistId,

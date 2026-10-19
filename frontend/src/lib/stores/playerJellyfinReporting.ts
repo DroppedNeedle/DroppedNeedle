@@ -1,6 +1,5 @@
 import { beaconAvailable, sendJsonBeacon } from '$lib/api/channels';
 import type { QueueItem } from '$lib/player/types';
-import { isPlexScrobbleEnabled } from '$lib/player/plexPlaybackApi';
 
 interface ProgressReporterState {
 	jellyfinItem: QueueItem | null;
@@ -104,12 +103,7 @@ export function createBeforeUnloadHandler(
 			beacon(scrobbleUrl, scrobbleBodyFrom(currentItem));
 		}
 
-		if (
-			currentItem?.sourceType === 'plex' &&
-			currentItem.plexRatingKey &&
-			progress > 30 &&
-			isPlexScrobbleEnabled()
-		) {
+		if (currentItem?.sourceType === 'plex' && currentItem.plexRatingKey && progress > 30) {
 			beacon(scrobbleUrl, scrobbleBodyFrom(currentItem));
 		}
 	};

@@ -40,7 +40,7 @@
 	const hasAcoustid = $derived(Boolean(libQuery.data?.acoustid_api_key));
 	// Done once ANY scan run has terminalized (completed, cancelled,
 	// superseded, or failed all count - the scan ran). Derived from run
-	// history, never from last_scan (no server scan-path writer exists).
+	// history.
 	const hasTerminalScanRun = $derived(
 		(runHistoryQuery.data?.pages ?? []).some((page) =>
 			(page.items ?? []).some(

@@ -7,7 +7,9 @@
 //! - every known top-level key whose value is not JSON `null` becomes a row
 //!   at revision 1, its value copied unchanged (parsed and written back as
 //!   compact JSON, never decoded into its section, normalized, validated or
-//!   decrypted, so every secret stays the ciphertext it was);
+//!   decrypted, so every secret stays the ciphertext it was), except that
+//!   each download policy recipe step loses `target_bitrate_kbps`, a field
+//!   that was removed and that the step's strict decode would refuse;
 //! - unknown and dropped keys are not copied, and the record names them;
 //! - the record (`config_ingests`) is written in the same transaction, so a
 //!   crash before the commit repeats the copy and one after it stops it.
@@ -34,6 +36,7 @@ use sha2::{Digest, Sha256};
 use crate::db::{Db, DbError, DurableLane};
 
 use super::error::ConfigError;
+use super::sections::{DownloadPolicy, Section as _};
 use super::store::encode_text;
 use super::{KNOWN_TOP_LEVEL_KEYS, sql};
 use crate::clock::Clock;
@@ -189,7 +192,10 @@ fn parse_file(path: &Path) -> Result<LegacyFile, ConfigError> {
     };
     let mut rows = Vec::new();
     let mut left_behind = Vec::new();
-    for (key, value) in object {
+    for (key, mut value) in object {
+        if key == DownloadPolicy::KEY {
+            strip_removed_recipe_fields(&mut value);
+        }
         if KNOWN_TOP_LEVEL_KEYS.contains(&key.as_str()) && !value.is_null() {
             rows.push((key, encode_text(&value)?));
         } else {
@@ -204,6 +210,23 @@ fn parse_file(path: &Path) -> Result<LegacyFile, ConfigError> {
         rows,
         left_behind,
     })
+}
+
+/// Drop `target_bitrate_kbps` from every recipe step of a stored download
+/// policy. Older files wrote it on every step, and a step refuses unknown
+/// fields, so copied as it was the whole policy would not read.
+fn strip_removed_recipe_fields(policy: &mut serde_json::Value) {
+    let Some(steps) = policy
+        .get_mut("quality_recipe")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    for step in steps {
+        if let Some(step) = step.as_object_mut() {
+            step.remove("target_bitrate_kbps");
+        }
+    }
 }
 
 /// Run the one-time copy for a store opening on `db`. See the module doc.

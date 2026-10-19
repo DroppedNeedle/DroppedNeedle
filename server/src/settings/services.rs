@@ -171,6 +171,7 @@ impl SettingsService {
         Ok(LibraryScanScheduleResponse {
             schedule: self.get()?,
             server_timezone: server_timezone(self.timezone.as_deref()),
+            last_scan_at: None,
         })
     }
 
@@ -182,6 +183,7 @@ impl SettingsService {
         Ok(LibraryScanScheduleResponse {
             schedule: self.save(schedule).await?,
             server_timezone: server_timezone(self.timezone.as_deref()),
+            last_scan_at: None,
         })
     }
 
@@ -266,21 +268,10 @@ impl SettingsService {
         Ok(AdvancedSettingsForm::from_section(&saved))
     }
 
-    /// The frontend cache TTLs in stored units (milliseconds).
+    /// The advanced settings the web app reads at start.
     pub fn get_cache_ttls(&self) -> Result<FrontendCacheTTLs, SettingsError> {
         let stored: Masked<AdvancedSettings> = self.get_masked()?;
         Ok(FrontendCacheTTLs {
-            home: stored.frontend_ttl_home,
-            discover: stored.frontend_ttl_discover,
-            library: stored.frontend_ttl_library,
-            recently_added: stored.frontend_ttl_recently_added,
-            discover_queue: stored.frontend_ttl_discover_queue,
-            search: stored.frontend_ttl_search,
-            local_files_sidebar: stored.frontend_ttl_local_files_sidebar,
-            jellyfin_sidebar: stored.frontend_ttl_jellyfin_sidebar,
-            plex_sidebar: stored.frontend_ttl_plex_sidebar,
-            playlist_sources: stored.frontend_ttl_playlist_sources,
-            discover_queue_polling_interval: stored.discover_queue_polling_interval,
             discover_queue_auto_generate: stored.discover_queue_auto_generate,
         })
     }
@@ -470,8 +461,8 @@ impl SettingsService {
         Ok(policy_view(self.save(policy).await?))
     }
 
-    /// A submitted recipe owns the legacy fields: the range, the order,
-    /// the FLAC/MP3 switch, and (on save) the cutoff clamp.
+    /// A submitted recipe owns the legacy fields: the range, the FLAC/MP3
+    /// switch, and (on save) the cutoff clamp.
     fn apply_recipe(
         &self,
         mut policy: DownloadPolicy,
@@ -490,7 +481,6 @@ impl SettingsService {
         let (quality_min, quality_max) = quality::legacy_range_from_recipe(&policy.quality_recipe);
         policy.quality_min = quality_min;
         policy.quality_max = quality_max;
-        policy.quality_preference_order = quality::legacy_recipe_order(&policy.quality_recipe);
         policy.flac_mp3_only = true;
         if clamp_cutoff {
             policy.quality_cutoff = quality::clamp_cutoff(
@@ -503,22 +493,12 @@ impl SettingsService {
     }
 
     /// Safe acquisition-policy summary for any signed-in user: the
-    /// composed contract sentence plus the source-mode label, no admin
+    /// composed contract sentence and the recipe verdict, no admin
     /// internals.
     pub fn policy_summary(&self) -> Result<PolicySummaryResponse, SettingsError> {
         let stored: DownloadPolicy = self.get()?;
         let inputs = summary_inputs(&stored);
         let summary = quality::compose_summary(&inputs);
-        let order = if inputs.quality_recipe.is_empty() || !inputs.flac_mp3_only {
-            if stored.quality_preference_order.is_empty() {
-                derive_default_order(&stored.quality_min, &stored.quality_max)
-            } else {
-                stored.quality_preference_order.clone()
-            }
-        } else {
-            Vec::new()
-        };
-        let legacy_shape = is_legacy_default_shape(&stored, &order);
         let recipe_error = validate_quality_recipe(&stored.quality_recipe)
             .err()
             .map(|error| error.to_string());
@@ -530,8 +510,7 @@ impl SettingsService {
         );
         Ok(PolicySummaryResponse {
             summary,
-            source_mode: stored.source_selection_mode.clone(),
-            legacy_rollback_compatible: stored.quality_recipe.is_empty() && legacy_shape,
+            legacy_rollback_compatible: stored.quality_recipe.is_empty(),
             quality_recipe_status: status,
             quality_recipe_error: error,
         })
@@ -547,13 +526,16 @@ impl SettingsService {
     ) -> Result<PolicyImpactResponse, SettingsError> {
         let candidate = self.apply_recipe(policy, false)?;
         candidate.validate().map_err(|error| self.config(error))?;
-        let order = if candidate.quality_preference_order.is_empty() {
+        let order = if candidate.quality_recipe.is_empty() {
             derive_default_order(&candidate.quality_min, &candidate.quality_max)
         } else {
-            candidate.quality_preference_order.clone()
+            quality::legacy_recipe_order(&candidate.quality_recipe)
         };
-        let legacy_representable = is_legacy_default_shape(&candidate, &order)
-            && candidate.source_selection_mode == "source_first";
+        let legacy_representable = quality::is_legacy_default_shape(
+            &order,
+            &candidate.quality_min,
+            &candidate.quality_max,
+        );
         let counts = buckets
             .counts()
             .await
@@ -589,9 +571,6 @@ impl SettingsService {
         let mut indexer = incoming.into_inner();
         if let Some(id) = path_id {
             indexer.id = id;
-        }
-        if indexer.indexer_type.trim().is_empty() {
-            indexer.indexer_type = "newznab".to_owned();
         }
         let id = self
             .write(move |store| store.save_indexer_blocking(indexer))
@@ -894,34 +873,11 @@ fn policy_view(policy: DownloadPolicy) -> DownloadPolicyView {
     }
 }
 
-fn is_legacy_default_shape(policy: &DownloadPolicy, order: &[String]) -> bool {
-    quality::is_legacy_default_shape(
-        order,
-        &policy.quality_min,
-        &policy.quality_max,
-        &policy.lossless_preference,
-        policy.lossless_max_bit_depth,
-        policy.lossless_max_sample_rate_hz,
-        policy.preferred_lossy_bitrate_kbps,
-        policy.lossy_min_bitrate_kbps,
-        policy.lossy_max_bitrate_kbps,
-        &policy.unknown_quality_behavior,
-    )
-}
-
 fn summary_inputs(policy: &DownloadPolicy) -> quality::SummaryInputs {
-    let mut order = policy.quality_preference_order.clone();
-    if order.is_empty() && policy.quality_recipe.is_empty() {
-        order = derive_default_order(&policy.quality_min, &policy.quality_max);
-    }
     quality::SummaryInputs {
-        quality_preference_order: order,
+        quality_preference_order: derive_default_order(&policy.quality_min, &policy.quality_max),
         quality_recipe: policy.quality_recipe.clone(),
         flac_mp3_only: policy.flac_mp3_only,
-        lossless_preference: policy.lossless_preference.clone(),
-        lossless_max_bit_depth: policy.lossless_max_bit_depth,
-        lossless_max_sample_rate_hz: policy.lossless_max_sample_rate_hz,
-        unknown_quality_behavior: policy.unknown_quality_behavior.clone(),
     }
 }
 

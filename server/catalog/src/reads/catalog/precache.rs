@@ -7,8 +7,6 @@
 //! the catalog's own caches and provider pacing, so a precache run fills
 //! exactly what a page visit would, at the pace the providers allow.
 
-use std::time::Duration;
-
 use crate::reads::platform::artwork::{ArtistImageCandidates, ArtistImageSource, ArtworkService};
 use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::precache_phases::{
@@ -175,8 +173,8 @@ pub struct CatalogPrecache {
 }
 
 impl CatalogPrecache {
-    /// Bundle the catalog, the artwork service, and the precache tuning
-    /// in the advanced settings, read per run.
+    /// Bundle the catalog, the artwork service, and the advanced settings
+    /// whose AudioDB switch is read per run.
     pub fn new(
         catalog: Catalog,
         artwork: ArtworkService,
@@ -190,22 +188,10 @@ impl CatalogPrecache {
     }
 }
 
-fn clamp_workers(value: i64) -> usize {
-    usize::try_from(value.clamp(1, 8)).unwrap_or(1)
-}
-
-fn clamp_batch(value: i64) -> usize {
-    usize::try_from(value.clamp(1, 20)).unwrap_or(1)
-}
-
-fn seconds(value: f64) -> Duration {
-    Duration::from_secs_f64(value.clamp(0.0, 5.0))
-}
-
 impl PrecacheSources for CatalogPrecache {
     fn tuning(&self) -> PrecacheTuning {
-        // Unreadable settings keep the default pacing but never prewarm
-        // AudioDB, whose switch and key live in this section.
+        // Unreadable settings never prewarm AudioDB, whose switch and key
+        // live in this section.
         let settings = self
             .settings
             .read()
@@ -213,15 +199,8 @@ impl PrecacheSources for CatalogPrecache {
                 (**settings).clone()
             });
         PrecacheTuning {
-            artist_batch: clamp_batch(settings.batch_artist_images),
-            artist_delay: seconds(settings.delay_artist),
-            album_batch: clamp_batch(settings.batch_albums),
-            album_delay: seconds(settings.delay_albums),
-            discovery_workers: clamp_workers(settings.artist_discovery_precache_concurrency),
-            discovery_delay: seconds(settings.artist_discovery_precache_delay),
             audiodb_enabled: settings.audiodb_enabled,
-            audiodb_workers: clamp_workers(settings.audiodb_prewarm_concurrency),
-            audiodb_delay: seconds(settings.audiodb_prewarm_delay),
+            ..PrecacheTuning::default()
         }
     }
 

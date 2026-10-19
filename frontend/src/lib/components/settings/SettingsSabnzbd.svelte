@@ -36,7 +36,6 @@
 	let category = $state('*');
 	let downloadsMount = $state('/sabnzbd-downloads');
 	let priority = $state(0);
-	let postProcessing = $state(3);
 	let seeded = $state(false);
 	let testResult = $state<SabnzbdTestResult | null>(null);
 
@@ -49,7 +48,6 @@
 			category = d.category || '*';
 			downloadsMount = d.downloads_mount || '/sabnzbd-downloads';
 			priority = d.priority ?? 0;
-			postProcessing = d.post_processing ?? 3;
 			seeded = true;
 		}
 	});
@@ -80,12 +78,10 @@
 	function current(): SabnzbdConnectionSettings {
 		return {
 			enabled,
-			client_type: 'sabnzbd',
 			url,
 			api_key: apiKey,
 			category,
 			priority,
-			post_processing: postProcessing,
 			downloads_mount: downloadsMount
 		};
 	}

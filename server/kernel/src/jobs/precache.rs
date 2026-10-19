@@ -109,8 +109,7 @@ pub trait PrecacheWork: Send + Sync + 'static {
     fn run(&self, progress: Progress) -> BoxFuture<'_, Result<(), String>>;
 }
 
-/// Watchdog limits, from the advanced settings in production
-/// (`sync_stall_timeout_minutes`, `sync_max_timeout_hours`).
+/// Watchdog limits: fixed in production, short in tests.
 #[derive(Debug, Clone, Copy)]
 pub struct PrecacheLimits {
     /// No progress for this long trips the run.
@@ -122,7 +121,7 @@ pub struct PrecacheLimits {
 }
 
 impl PrecacheLimits {
-    /// Limits from plain settings values plus the default tick.
+    /// Limits from the two timeouts plus the default tick.
     pub fn new(stall_timeout: Duration, max_timeout: Duration) -> Self {
         Self {
             stall_timeout,

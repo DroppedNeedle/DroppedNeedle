@@ -724,11 +724,7 @@ impl QueueSources for LiveSources {
         limit: u32,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         Box::pin(async move {
-            let ttl = Duration::from_secs(
-                u64::try_from(self.upstream.settings().advanced().cache_ttl_search)
-                    .unwrap_or(3600)
-                    .saturating_mul(2),
-            );
+            let ttl = crate::reads::catalog::SEARCH_TTL * 2;
             let key = format!(
                 "mb_rg_by_tag:{}:{}:{limit}",
                 self.source_key(),

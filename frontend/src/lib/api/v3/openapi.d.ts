@@ -7771,7 +7771,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read the frontend cache TTLs in stored units (milliseconds). */
+        /** Read the advanced settings the web app reads at start. */
         get: operations["get_cache_ttls"];
         put?: never;
         post?: never;
@@ -8053,24 +8053,6 @@ export interface paths {
         get: operations["get_get_it"];
         /** Save the store-region settings. */
         put: operations["put_get_it"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/settings/home": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read the home page settings. */
-        get: operations["get_home_settings"];
-        /** Save the home page settings. The save clears the cached home rows. */
-        put: operations["put_home"];
         post?: never;
         delete?: never;
         options?: never;
@@ -9124,24 +9106,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/settings/scrobble": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read the scrobble targets. */
-        get: operations["get_scrobble"];
-        /** Save the scrobble targets. */
-        put: operations["put_scrobble"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v3/settings/security": {
         parameters: {
             query?: never;
@@ -9780,27 +9744,12 @@ export interface components {
             users: components["schemas"]["UserResponse"][];
         };
         /**
-         * @description Advanced tunables in the form's units. This is not a copy of the
-         *     section: the form shows human units (hours, minutes, seconds) while
-         *     the section stores seconds and milliseconds, v2's
-         *     `AdvancedSettingsFrontend` contract minus the dropped internal-tuning
-         *     fields. It is a closed allowlist: unknown JSON fields are rejected at
-         *     decode (400), so a client holding a dropped tuning field learns it is
-         *     gone instead of believing it saved.
+         * @description Advanced tunables as the settings form shows them. It is a closed
+         *     allowlist: unknown JSON fields are rejected at decode (400), so a client
+         *     holding a dropped tuning field learns it is gone instead of believing it
+         *     saved.
          */
         AdvancedSettingsForm: {
-            /**
-             * Format: int64
-             * @description Discovery precache workers (1-8).
-             * @default 5
-             */
-            artist_discovery_precache_concurrency: number;
-            /**
-             * Format: double
-             * @description Pause after each discovery precache artist, seconds (0-5).
-             * @default 0.2
-             */
-            artist_discovery_precache_delay: number;
             /**
              * @description AudioDB API key (masked unless unset).
              * @default
@@ -9816,204 +9765,6 @@ export interface components {
              * @default false
              */
             audiodb_name_search_fallback: boolean;
-            /**
-             * Format: int64
-             * @description AudioDB precache workers (1-8).
-             * @default 4
-             */
-            audiodb_prewarm_concurrency: number;
-            /**
-             * Format: double
-             * @description Pause before each AudioDB precache lookup, seconds (0-5).
-             * @default 0.3
-             */
-            audiodb_prewarm_delay: number;
-            /**
-             * Format: int64
-             * @description Album batch size (1-20).
-             * @default 8
-             */
-            batch_albums: number;
-            /**
-             * Format: int64
-             * @description Artist-image batch size (1-20).
-             * @default 10
-             */
-            batch_artist_images: number;
-            /**
-             * Format: int64
-             * @description Album cache TTL for library albums, hours (1-168).
-             * @default 24
-             */
-            cache_ttl_album_library: number;
-            /**
-             * Format: int64
-             * @description Album cache TTL for non-library albums, hours (1-24).
-             * @default 6
-             */
-            cache_ttl_album_non_library: number;
-            /**
-             * Format: int64
-             * @description Discovery cache TTL for library artists, hours (1-168).
-             * @default 6
-             */
-            cache_ttl_artist_discovery_library: number;
-            /**
-             * Format: int64
-             * @description Discovery cache TTL for non-library artists, hours (1-168).
-             * @default 1
-             */
-            cache_ttl_artist_discovery_non_library: number;
-            /**
-             * Format: int64
-             * @description Artist cache TTL for library artists, hours (1-168).
-             * @default 6
-             */
-            cache_ttl_artist_library: number;
-            /**
-             * Format: int64
-             * @description Artist cache TTL for non-library artists, hours (1-168).
-             * @default 6
-             */
-            cache_ttl_artist_non_library: number;
-            /**
-             * Format: int64
-             * @description AudioDB found TTL, hours (1-720).
-             * @default 168
-             */
-            cache_ttl_audiodb_found: number;
-            /**
-             * Format: int64
-             * @description AudioDB library TTL, hours (24-720).
-             * @default 336
-             */
-            cache_ttl_audiodb_library: number;
-            /**
-             * Format: int64
-             * @description AudioDB not-found TTL, hours (1-168).
-             * @default 24
-             */
-            cache_ttl_audiodb_not_found: number;
-            /**
-             * Format: int64
-             * @description Jellyfin favorites TTL, minutes (1-60).
-             * @default 5
-             */
-            cache_ttl_jellyfin_favorites: number;
-            /**
-             * Format: int64
-             * @description Jellyfin genres TTL, minutes (1-1440).
-             * @default 60
-             */
-            cache_ttl_jellyfin_genres: number;
-            /**
-             * Format: int64
-             * @description Jellyfin library-stats TTL, minutes (1-60).
-             * @default 10
-             */
-            cache_ttl_jellyfin_library_stats: number;
-            /**
-             * Format: int64
-             * @description Jellyfin recently-played TTL, minutes (1-60).
-             * @default 5
-             */
-            cache_ttl_jellyfin_recently_played: number;
-            /**
-             * Format: int64
-             * @description Navidrome albums TTL, minutes (1-60).
-             * @default 5
-             */
-            cache_ttl_navidrome_albums: number;
-            /**
-             * Format: int64
-             * @description Navidrome artists TTL, minutes (1-60).
-             * @default 5
-             */
-            cache_ttl_navidrome_artists: number;
-            /**
-             * Format: int64
-             * @description Navidrome favorites TTL, minutes (1-60).
-             * @default 2
-             */
-            cache_ttl_navidrome_favorites: number;
-            /**
-             * Format: int64
-             * @description Navidrome genres TTL, minutes (1-1440).
-             * @default 60
-             */
-            cache_ttl_navidrome_genres: number;
-            /**
-             * Format: int64
-             * @description Navidrome recent TTL, minutes (1-60).
-             * @default 2
-             */
-            cache_ttl_navidrome_recent: number;
-            /**
-             * Format: int64
-             * @description Navidrome search TTL, minutes (1-60).
-             * @default 2
-             */
-            cache_ttl_navidrome_search: number;
-            /**
-             * Format: int64
-             * @description Navidrome stats TTL, minutes (1-60).
-             * @default 10
-             */
-            cache_ttl_navidrome_stats: number;
-            /**
-             * Format: int64
-             * @description Plex albums TTL, minutes (1-60).
-             * @default 5
-             */
-            cache_ttl_plex_albums: number;
-            /**
-             * Format: int64
-             * @description Plex genres TTL, minutes (1-1440).
-             * @default 60
-             */
-            cache_ttl_plex_genres: number;
-            /**
-             * Format: int64
-             * @description Plex search TTL, minutes (1-60).
-             * @default 2
-             */
-            cache_ttl_plex_search: number;
-            /**
-             * Format: int64
-             * @description Plex stats TTL, minutes (1-60).
-             * @default 10
-             */
-            cache_ttl_plex_stats: number;
-            /**
-             * Format: int64
-             * @description Search cache TTL, minutes (1-1440).
-             * @default 60
-             */
-            cache_ttl_search: number;
-            /**
-             * Format: int64
-             * @description Cover memory-cache entries (16-2048).
-             * @default 128
-             */
-            cover_memory_cache_max_entries: number;
-            /**
-             * Format: int64
-             * @description Cover memory-cache MB (1-1024).
-             * @default 16
-             */
-            cover_memory_cache_max_size_mb: number;
-            /**
-             * Format: double
-             * @description Album delay, seconds (0-5).
-             * @default 0.3
-             */
-            delay_albums: number;
-            /**
-             * Format: double
-             * @description Artist delay, seconds (0-5).
-             * @default 0.5
-             */
-            delay_artist: number;
             /**
              * @description Serve remote images directly.
              * @default true
@@ -10044,22 +9795,10 @@ export interface components {
             discover_queue_auto_generate: boolean;
             /**
              * Format: int64
-             * @description Queue card details cache, hours (1-168).
-             * @default 24
-             */
-            discover_queue_enrich_ttl: number;
-            /**
-             * Format: int64
              * @description MusicBrainz lookups per Last.fm album batch (1-50).
              * @default 10
              */
             discover_queue_lastfm_mbid_max_lookups: number;
-            /**
-             * Format: int64
-             * @description Discover queue polling, seconds (1-30).
-             * @default 4
-             */
-            discover_queue_polling_interval: number;
             /**
              * Format: int64
              * @description Discover seed artists (1-10).
@@ -10079,12 +9818,6 @@ export interface components {
              */
             discover_queue_size: number;
             /**
-             * Format: int64
-             * @description Discover queue TTL, hours (1-168).
-             * @default 24
-             */
-            discover_queue_ttl: number;
-            /**
              * @description Let the background warm cycle build queue decks.
              * @default true
              */
@@ -10097,147 +9830,15 @@ export interface components {
             discover_queue_wildcard_slots: number;
             /**
              * Format: int64
-             * @description Disk-cache cleanup cadence, minutes (1-60).
-             * @default 10
-             */
-            disk_cache_cleanup_interval: number;
-            /**
-             * Format: int64
-             * @description Discover frontend TTL, minutes (1-1440).
-             * @default 30
-             */
-            frontend_ttl_discover: number;
-            /**
-             * Format: int64
-             * @description Discover-queue frontend TTL, minutes (60-10080).
-             * @default 1440
-             */
-            frontend_ttl_discover_queue: number;
-            /**
-             * Format: int64
-             * @description Home frontend TTL, minutes (1-60).
-             * @default 5
-             */
-            frontend_ttl_home: number;
-            /**
-             * Format: int64
-             * @description Jellyfin sidebar TTL, minutes (1-60).
-             * @default 2
-             */
-            frontend_ttl_jellyfin_sidebar: number;
-            /**
-             * Format: int64
-             * @description Library frontend TTL, minutes (1-60).
-             * @default 5
-             */
-            frontend_ttl_library: number;
-            /**
-             * Format: int64
-             * @description Local-files sidebar TTL, minutes (1-60).
-             * @default 2
-             */
-            frontend_ttl_local_files_sidebar: number;
-            /**
-             * Format: int64
-             * @description Playlist-sources frontend TTL, minutes (1-60).
-             * @default 15
-             */
-            frontend_ttl_playlist_sources: number;
-            /**
-             * Format: int64
-             * @description Plex sidebar TTL, minutes (1-60).
-             * @default 2
-             */
-            frontend_ttl_plex_sidebar: number;
-            /**
-             * Format: int64
-             * @description Recently-added frontend TTL, minutes (1-60).
-             * @default 5
-             */
-            frontend_ttl_recently_added: number;
-            /**
-             * Format: int64
-             * @description Search frontend TTL, minutes (1-60).
-             * @default 5
-             */
-            frontend_ttl_search: number;
-            /**
-             * Format: int64
-             * @description Genre section TTL, hours (1-168).
-             * @default 6
-             */
-            genre_section_ttl: number;
-            /**
-             * Format: int64
-             * @description Outbound connect timeout, seconds (1-30).
-             * @default 5
-             */
-            http_connect_timeout: number;
-            /**
-             * Format: int64
-             * @description Outbound pool size (50-500).
-             * @default 200
-             */
-            http_max_connections: number;
-            /**
-             * Format: int64
-             * @description Outbound HTTP timeout, seconds (5-60).
-             * @default 10
-             */
-            http_timeout: number;
-            /**
-             * Format: int64
              * @description Ignored-releases retention, days (30-3650).
              * @default 365
              */
             ignored_releases_retention_days: number;
             /**
-             * Format: int64
-             * @description Memory-cache cleanup cadence, seconds (60-3600).
-             * @default 300
-             */
-            memory_cache_cleanup_interval: number;
-            /**
-             * Format: int64
-             * @description Memory-cache entries (1000-100000).
-             * @default 10000
-             */
-            memory_cache_max_entries: number;
-            /**
-             * Format: int64
-             * @description Orphan-cover demote cadence, hours (1-168).
-             * @default 24
-             */
-            orphan_cover_demote_interval_hours: number;
-            /**
-             * Format: int64
-             * @description Persistent-metadata TTL, hours (1-168).
-             * @default 24
-             */
-            persistent_metadata_ttl_hours: number;
-            /**
              * @description Prefer local cover art.
              * @default true
              */
             prefer_local_cover_art: boolean;
-            /**
-             * Format: int64
-             * @description Recent-covers cap, MB (100-10000).
-             * @default 1024
-             */
-            recent_covers_max_size_mb: number;
-            /**
-             * Format: int64
-             * @description Recent-metadata cap, MB (100-5000).
-             * @default 500
-             */
-            recent_metadata_max_size_mb: number;
-            /**
-             * Format: int64
-             * @description Request concurrency (1-5).
-             * @default 2
-             */
-            request_concurrency: number;
             /**
              * Format: int64
              * @description Request history retention, days (30-3650).
@@ -10250,18 +9851,6 @@ export interface components {
              * @default 6
              */
             store_prune_interval_hours: number;
-            /**
-             * Format: int64
-             * @description Sync max timeout, hours (1-48).
-             * @default 8
-             */
-            sync_max_timeout_hours: number;
-            /**
-             * Format: int64
-             * @description Sync stall timeout, minutes (2-30).
-             * @default 10
-             */
-            sync_stall_timeout_minutes: number;
         };
         /** @description `GET /albums/{album_id}/basic`: the album header. */
         AlbumBasicInfo: {
@@ -12226,13 +11815,6 @@ export interface components {
              * @default 10.10.6
              */
             advertise_server_version: string;
-            /** @default local-only */
-            discover_mode: components["schemas"]["DiscoverMode"];
-            /**
-             * @description Capability flag for the approval-safe exact-track endpoint.
-             * @default true
-             */
-            exact_track_approval_supported: boolean;
             /**
              * @description Serve the Jellyfin API.
              * @default false
@@ -12626,11 +12208,6 @@ export interface components {
             /** @description The MusicBrainz source tier the activity was recorded under. */
             source_mode: string;
         };
-        /**
-         * @description Compat discovery mode.
-         * @enum {string}
-         */
-        DiscoverMode: "local-only" | "lazy-mb" | "use-scrobble-targets";
         /** @description A discover teaser on home: one seed artist plus similar artists. */
         DiscoverPreview: {
             /** @description Similar artists. */
@@ -13066,35 +12643,6 @@ export interface components {
             ignored_terms: string[];
             /**
              * Format: int64
-             * @description Lossless bit-depth ceiling.
-             * @default null
-             */
-            lossless_max_bit_depth: number | null;
-            /**
-             * Format: int64
-             * @description Lossless sample-rate ceiling.
-             * @default null
-             */
-            lossless_max_sample_rate_hz: number | null;
-            /**
-             * @description Lossless edition preference.
-             * @default highest
-             */
-            lossless_preference: string;
-            /**
-             * Format: int64
-             * @description Lossy upper bound.
-             * @default null
-             */
-            lossy_max_bitrate_kbps: number | null;
-            /**
-             * Format: int64
-             * @description Lossy lower bound.
-             * @default null
-             */
-            lossy_min_bitrate_kbps: number | null;
-            /**
-             * Format: int64
              * @description Concurrent downloads.
              * @default 3
              */
@@ -13117,12 +12665,6 @@ export interface components {
              * @default 0
              */
             max_size_mb: number;
-            /**
-             * Format: int64
-             * @description Preferred lossy bitrate target.
-             * @default null
-             */
-            preferred_lossy_bitrate_kbps: number | null;
             /**
              * Format: int64
              * @description Preferred-quality wait.
@@ -13157,11 +12699,6 @@ export interface components {
              */
             quality_min: string;
             /**
-             * @description Tier preference order, most preferred first.
-             * @default []
-             */
-            quality_preference_order: string[];
-            /**
              * @description Closed v2 quality recipe (empty means a v1 policy).
              * @default []
              */
@@ -13190,37 +12727,16 @@ export interface components {
              */
             search_review: string;
             /**
-             * @description Source-vs-quality selection.
-             * @default source_first
-             */
-            source_selection_mode: string;
-            /**
-             * @description Unknown-quality handling.
-             * @default allow_as_fallback
-             */
-            unknown_quality_behavior: string;
-            /**
              * @description Background upgrades switch.
              * @default false
              */
             upgrade_allowed: boolean;
             /**
              * Format: int64
-             * @description Minimum Usenet release age.
-             * @default 30
-             */
-            usenet_min_release_age_minutes: number;
-            /**
-             * Format: int64
              * @description Usenet retention in days (0 unknown).
              * @default 0
              */
             usenet_retention_days: number;
-            /**
-             * @description Verify downloads after landing.
-             * @default true
-             */
-            verify_downloads: boolean;
         };
         /**
          * @description GET view of the acquisition policy: the stored policy plus the
@@ -14309,82 +13825,15 @@ export interface components {
             wav_tag_policy: components["schemas"]["WavTagPolicy"];
         };
         /**
-         * @description Frontend cache TTLs in backend units (milliseconds), verbatim from
-         *     the stored advanced section. The SPA reads this one endpoint instead
-         *     of the whole advanced surface.
+         * @description The advanced settings the web app reads at start. The browser's cache
+         *     lifetimes and the queue's polling interval are fixed in the web app.
          */
         FrontendCacheTTLs: {
-            /**
-             * Format: int64
-             * @description Discover TTL, ms.
-             * @default 1800000
-             */
-            discover: number;
-            /**
-             * Format: int64
-             * @description Discover-queue TTL, ms.
-             * @default 86400000
-             */
-            discover_queue: number;
             /**
              * @description Discover-queue auto-generate switch.
              * @default true
              */
             discover_queue_auto_generate: boolean;
-            /**
-             * Format: int64
-             * @description Discover-queue polling interval, ms.
-             * @default 4000
-             */
-            discover_queue_polling_interval: number;
-            /**
-             * Format: int64
-             * @description Home TTL, ms.
-             * @default 300000
-             */
-            home: number;
-            /**
-             * Format: int64
-             * @description Jellyfin sidebar TTL, ms.
-             * @default 120000
-             */
-            jellyfin_sidebar: number;
-            /**
-             * Format: int64
-             * @description Library TTL, ms.
-             * @default 300000
-             */
-            library: number;
-            /**
-             * Format: int64
-             * @description Local-files sidebar TTL, ms.
-             * @default 120000
-             */
-            local_files_sidebar: number;
-            /**
-             * Format: int64
-             * @description Playlist-sources TTL, ms.
-             * @default 900000
-             */
-            playlist_sources: number;
-            /**
-             * Format: int64
-             * @description Plex sidebar TTL, ms.
-             * @default 120000
-             */
-            plex_sidebar: number;
-            /**
-             * Format: int64
-             * @description Recently-added TTL, ms.
-             * @default 300000
-             */
-            recently_added: number;
-            /**
-             * Format: int64
-             * @description Search TTL, ms.
-             * @default 300000
-             */
-            search: number;
         };
         /** @description One genre alias. */
         GenreAlias: {
@@ -14827,34 +14276,6 @@ export interface components {
             trending_artists?: null | components["schemas"]["ChartSection"];
             weekly_exploration?: null | components["schemas"]["WeeklyExploration"];
             your_top_albums?: null | components["schemas"]["ChartSection"];
-        };
-        /**
-         * @description Home page cache lifetimes and the two trending rows (v2
-         *     `HomeSettings`). The ranges are v2's, enforced on save.
-         */
-        HomeSettings: {
-            /**
-             * Format: int64
-             * @description Personal rows cache lifetime, seconds (60-3600).
-             * @default 300
-             */
-            cache_ttl_personal: number;
-            /**
-             * Format: int64
-             * @description Trending rows cache lifetime, seconds (300-86400).
-             * @default 3600
-             */
-            cache_ttl_trending: number;
-            /**
-             * @description Show the "Globally trending" row.
-             * @default true
-             */
-            show_globally_trending: boolean;
-            /**
-             * @description Show the "What's hot" row.
-             * @default true
-             */
-            show_whats_hot: boolean;
         };
         /**
          * @description The hub: one screen of highlights per source. Sections a source lacks
@@ -16303,26 +15724,21 @@ export interface components {
              * @default 03:00
              */
             daily_scan_time: string;
-            /**
-             * Format: int64
-             * @description Unix time of the last scan, if any.
-             * @default null
-             */
-            last_scan: number | null;
-            /**
-             * @description Whether the last scan succeeded.
-             * @default true
-             */
-            last_scan_success: boolean;
             /** @default 24hr */
             scan_frequency: components["schemas"]["ScanFrequency"];
         };
         /**
          * @description GET payload: the persisted schedule plus the server's timezone label, so
-         *     the UI can show what "daily at HH:MM" is relative to. The label is
-         *     computed per request and never persisted.
+         *     the UI can show what "daily at HH:MM" is relative to, and when the last
+         *     scan finished, from the scan history. Both are computed per request and
+         *     never persisted.
          */
         LibraryScanScheduleResponse: components["schemas"]["LibraryScanSchedule"] & {
+            /**
+             * Format: double
+             * @description When the last scan finished successfully, unix seconds.
+             */
+            last_scan_at?: number | null;
             /** @description Server-local timezone label for the daily-scan picker. */
             server_timezone: string;
         };
@@ -17643,12 +17059,6 @@ export interface components {
             community_acknowledged: boolean;
             /**
              * Format: int64
-             * @description Concurrent searches.
-             * @default 1
-             */
-            concurrent_searches: number;
-            /**
-             * Format: int64
              * @description Source generation.
              * @default 1
              */
@@ -17681,12 +17091,6 @@ export interface components {
              * @default false
              */
             community_acknowledged: boolean | null;
-            /**
-             * Format: int64
-             * @description Concurrent searches.
-             * @default 6
-             */
-            concurrent_searches: number;
             /**
              * Format: double
              * @description Requests per second.
@@ -17865,11 +17269,6 @@ export interface components {
              * @default 1
              */
             priority: number;
-            /**
-             * @description Indexer type tag (stored as `type`; renamed for the keyword).
-             * @default newznab
-             */
-            type: string;
             /**
              * @description Indexer base URL.
              * @default
@@ -18688,11 +18087,6 @@ export interface components {
              * @default
              */
             plex_url: string;
-            /**
-             * @description Scrobble back to Plex.
-             * @default true
-             */
-            scrobble_to_plex: boolean;
         };
         /** @description One Plex music-library section. */
         PlexLibrarySectionInfo: {
@@ -19064,7 +18458,7 @@ export interface components {
         PolicyNodeKind: "root" | "rule";
         /**
          * @description Safe, signed-in-user projection of the acquisition policy: the quality
-         *     summary sentence plus the source-mode label only, no admin internals.
+         *     summary sentence and the recipe verdict only, no admin internals.
          */
         PolicySummaryResponse: {
             /** @description Whether a down-level image reproduces acquisition behavior. */
@@ -19073,8 +18467,6 @@ export interface components {
             quality_recipe_error?: string | null;
             /** @description Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`. */
             quality_recipe_status: string;
-            /** @description Source-mode label. */
-            source_mode: string;
             /** @description Backend-composed contract sentence. */
             summary: string;
         };
@@ -19321,11 +18713,6 @@ export interface components {
              * @description Custom FLAC sample rate.
              */
             sample_rate_hz?: number | null;
-            /**
-             * Format: int64
-             * @description Custom MP3 target, or canonical standard bound.
-             */
-            target_bitrate_kbps?: number | null;
         };
         /** @description One blocklisted release. */
         QuarantineEntry: {
@@ -21028,11 +20415,6 @@ export interface components {
              */
             category: string;
             /**
-             * @description Client type tag.
-             * @default sabnzbd
-             */
-            client_type: string;
-            /**
              * @description Where DroppedNeedle sees SABnzbd's completed dir.
              * @default /sabnzbd-downloads
              */
@@ -21042,12 +20424,6 @@ export interface components {
              * @default false
              */
             enabled: boolean;
-            /**
-             * Format: int64
-             * @description Post-processing level.
-             * @default 3
-             */
-            post_processing: number;
             /**
              * Format: int64
              * @description Job priority.
@@ -21432,19 +20808,6 @@ export interface components {
             services?: {
                 [key: string]: components["schemas"]["ServiceResult"];
             };
-        };
-        /** @description Scrobble targets. */
-        ScrobbleSettings: {
-            /**
-             * @description Scrobble to Last.fm (per-user credentials).
-             * @default false
-             */
-            scrobble_to_lastfm: boolean;
-            /**
-             * @description Scrobble to ListenBrainz.
-             * @default false
-             */
-            scrobble_to_listenbrainz: boolean;
         };
         /** @description One native scrobble, by name (v2 `ScrobbleRequest` fields). */
         ScrobbleSubmitRequest: {
@@ -21979,47 +21342,16 @@ export interface components {
             /** @description Free user-lane permits. */
             user_slots_available: number;
         };
-        /** @description slskd download-client connection. */
+        /**
+         * @description slskd download-client connection. Quality, timeouts and retries live in
+         *     the download policy.
+         */
         SlskdConnection: {
             /**
              * @description API key (encrypted at rest).
              * @default
              */
             api_key: string;
-            /**
-             * Format: int64
-             * @description Retry base interval.
-             * @default 15
-             */
-            auto_retry_base_interval_minutes: number;
-            /**
-             * @description Automatic retry switch.
-             * @default true
-             */
-            auto_retry_enabled: boolean;
-            /**
-             * Format: int64
-             * @description Retry attempts.
-             * @default 6
-             */
-            auto_retry_max_attempts: number;
-            /**
-             * @description Client type tag.
-             * @default slskd
-             */
-            client_type: string;
-            /**
-             * Format: int64
-             * @description Remote-queue wait timeout.
-             * @default 120
-             */
-            download_queued_timeout_minutes: number;
-            /**
-             * Format: int64
-             * @description Frozen-transfer stall timeout.
-             * @default 30
-             */
-            download_stall_timeout_minutes: number;
             /**
              * @description Relative subpath inside the mount where slskd saves (confined).
              * @default
@@ -22031,51 +21363,6 @@ export interface components {
              */
             enabled: boolean;
             /**
-             * @description FLAC/MP3 only.
-             * @default true
-             */
-            flac_mp3_only: boolean;
-            /**
-             * Format: int64
-             * @description Concurrent downloads.
-             * @default 3
-             */
-            max_concurrent_downloads: number;
-            /**
-             * Format: int64
-             * @description Failover attempts per request.
-             * @default 3
-             */
-            max_failover_attempts: number;
-            /**
-             * Format: int64
-             * @description Preferred-quality wait.
-             * @default 15
-             */
-            preferred_quality_wait_minutes: number;
-            /**
-             * Format: double
-             * @description Preflight auto-accept score.
-             * @default 0.7
-             */
-            preflight_score_auto_accept: number;
-            /**
-             * Format: double
-             * @description Preflight manual-review floor.
-             * @default 0.5
-             */
-            preflight_score_manual_min: number;
-            /**
-             * @description Best accepted tier label.
-             * @default lossless
-             */
-            quality_max: string;
-            /**
-             * @description Worst accepted tier label.
-             * @default mp3_320
-             */
-            quality_min: string;
-            /**
              * @description Absolute incomplete-downloads dir ("" disables the fallback).
              * @default
              */
@@ -22085,11 +21372,6 @@ export interface components {
              * @default
              */
             url: string;
-            /**
-             * @description Verify downloads after landing.
-             * @default true
-             */
-            verify_downloads: boolean;
         };
         /**
          * @description Live slskd client status (v2 `DownloadClientStatusResponse`, trimmed to
@@ -23351,12 +22633,6 @@ export interface components {
              * @default true
              */
             auto_download_on_find: boolean;
-            /**
-             * Format: int64
-             * @description Days before a watch goes dormant.
-             * @default 365
-             */
-            dormant_after_days: number;
             /**
              * @description Master switch (rollback lever, read per sweep).
              * @default true
@@ -43249,7 +42525,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Frontend cache TTLs */
+            /** @description Web app settings */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -43801,59 +43077,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GetIt"];
-                };
-            };
-        };
-    };
-    get_home_settings: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Home page settings */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HomeSettings"];
-                };
-            };
-        };
-    };
-    put_home: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["HomeSettings"];
-            };
-        };
-        responses: {
-            /** @description Saved settings */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HomeSettings"];
-                };
-            };
-            /** @description A value is out of range */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -46043,50 +45266,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    get_scrobble: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Scrobble targets */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScrobbleSettings"];
-                };
-            };
-        };
-    };
-    put_scrobble: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ScrobbleSettings"];
-            };
-        };
-        responses: {
-            /** @description Saved targets */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScrobbleSettings"];
                 };
             };
         };

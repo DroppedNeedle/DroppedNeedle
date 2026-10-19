@@ -17,7 +17,6 @@
 	let autoDownloadOnFind = $state(true);
 	let watchPartialAlbums = $state(true);
 	let maxChecksPerSweep = $state(3);
-	let dormantAfterDays = $state(365);
 	let seeded = $state(false);
 
 	$effect(() => {
@@ -27,7 +26,6 @@
 			autoDownloadOnFind = d.auto_download_on_find;
 			watchPartialAlbums = d.watch_partial_albums;
 			maxChecksPerSweep = d.max_checks_per_sweep;
-			dormantAfterDays = d.dormant_after_days;
 			seeded = true;
 		}
 	});
@@ -37,8 +35,7 @@
 			enabled,
 			auto_download_on_find: autoDownloadOnFind,
 			watch_partial_albums: watchPartialAlbums,
-			max_checks_per_sweep: maxChecksPerSweep,
-			dormant_after_days: dormantAfterDays
+			max_checks_per_sweep: maxChecksPerSweep
 		};
 		try {
 			await save.mutateAsync(settings);
@@ -83,14 +80,6 @@
 				min={1}
 				max={20}
 				bind:value={maxChecksPerSweep}
-				disabled={!enabled}
-			/>
-			<NumberField
-				label="Go dormant after (days)"
-				size="sm"
-				min={30}
-				max={3650}
-				bind:value={dormantAfterDays}
 				disabled={!enabled}
 			/>
 		</div>

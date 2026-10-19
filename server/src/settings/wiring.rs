@@ -17,10 +17,12 @@ use std::sync::Arc;
 use crate::bootstrap::Outbound;
 use crate::settings::effects::Effects;
 use crate::settings::library_policy_service::LibraryPolicyService;
+use crate::settings::models::LibraryScanScheduleResponse;
 use crate::settings::musicbrainz::MusicBrainzLifecycle;
 use crate::settings::section_prefs::{LinkStatus, SectionPrefsStore};
 use crate::settings::services::{PolicyImpactBuckets, SettingsService};
 use crate::settings::verify::{LiveProbes, VerifyProbes};
+use droppedneedle_catalog::reads::library::stores::LibraryLookups;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::platform::Platform;
@@ -46,6 +48,9 @@ pub struct SettingsSetup {
     prefs: Option<Arc<SectionPrefsDeps>>,
     buckets: Option<Arc<dyn PolicyImpactBuckets>>,
     policy: Arc<LibraryPolicyService>,
+    /// The scan history the schedule shows its last scan from; test
+    /// bundles have none.
+    scans: Option<Arc<dyn LibraryLookups>>,
     /// Test bundles own their scratch config directory and remove it
     /// when the last clone drops.
     #[cfg(any(test, feature = "test-support"))]
@@ -57,14 +62,15 @@ impl SettingsSetup {
     /// deployment timezone, with the wired fan-out in `effects`. The
     /// Library Management routes save through `management`, the library's
     /// own service, so an activation dry run and a page save never save
-    /// over each other.
+    /// over each other. The schedule reads its last scan from `scans`.
     pub fn build(
         platform: &Platform,
         effects: Effects,
         outbound: &Outbound,
         management: Arc<LibraryManagementService>,
+        scans: Arc<dyn LibraryLookups>,
     ) -> Self {
-        Self::assemble(
+        let mut setup = Self::assemble(
             platform.settings.clone(),
             effects,
             platform.ids.clone(),
@@ -72,7 +78,9 @@ impl SettingsSetup {
             platform.config.timezone.clone(),
             outbound.clone(),
             management,
-        )
+        );
+        setup.scans = Some(scans);
+        setup
     }
 
     fn assemble(
@@ -101,6 +109,7 @@ impl SettingsSetup {
             management,
             prefs: None,
             buckets: None,
+            scans: None,
             #[cfg(any(test, feature = "test-support"))]
             _scratch: None,
         }
@@ -230,6 +239,24 @@ impl SettingsSetup {
         }
     }
 
+    /// Fill in when the last scan finished, from the scan history. The
+    /// value is shown only: a history that cannot be read leaves it absent
+    /// and is logged, and never fails the read or a save that already landed.
+    pub async fn with_last_scan(
+        &self,
+        mut schedule: LibraryScanScheduleResponse,
+    ) -> LibraryScanScheduleResponse {
+        if let Some(scans) = &self.scans {
+            match scans.stats_extras().await {
+                Ok(extras) => schedule.last_scan_at = extras.last_scan_at,
+                Err(error) => {
+                    tracing::warn!(%error, "could not read the last scan for the schedule");
+                }
+            }
+        }
+        schedule
+    }
+
     /// The section-prefs backends, when wired.
     pub fn prefs(&self) -> Option<&Arc<SectionPrefsDeps>> {
         self.prefs.as_ref()
@@ -279,7 +306,6 @@ pub fn routes() -> Routes<SettingsSetup> {
         .admin(routes!(h::test_ticketmaster))
         .admin(routes!(h::test_skiddle))
         .admin(routes!(h::get_wrapped, h::put_wrapped))
-        .admin(routes!(h::get_scrobble, h::put_scrobble))
         .admin(routes!(h::get_lyrics_settings, h::put_lyrics_settings))
         .admin(routes!(h::get_primary_source, h::put_primary_source))
         .admin(routes!(h::get_security, h::put_security))
@@ -314,7 +340,6 @@ pub fn routes() -> Routes<SettingsSetup> {
             h::dropped_library_sync,
             h::dropped_library_sync_put
         ))
-        .admin(routes!(h::get_home, h::put_home))
         .admin(routes!(
             h::get_library_management,
             h::put_library_management

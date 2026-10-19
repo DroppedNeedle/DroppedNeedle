@@ -22,9 +22,8 @@ use super::verify::{VerifyProbes, require_service_url};
 use crate::bootstrap::Outbound;
 use droppedneedle_kernel::db::DurableLane;
 use droppedneedle_kernel::runtime_config::sections::{
-    BRAINZMASH_CONCURRENT_SEARCHES, BRAINZMASH_ENDPOINT, BRAINZMASH_RATE_LIMIT, MbSourceMode,
-    MusicBrainzSettings, OFFICIAL_MB_API_BASE, OFFICIAL_MB_CONCURRENT_SEARCHES,
-    OFFICIAL_MB_RATE_LIMIT, exact_nonblank,
+    BRAINZMASH_ENDPOINT, BRAINZMASH_RATE_LIMIT, MbSourceMode, MusicBrainzSettings,
+    OFFICIAL_MB_API_BASE, OFFICIAL_MB_RATE_LIMIT, exact_nonblank,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Section as _, UpdateError};
@@ -213,7 +212,6 @@ impl MusicBrainzLifecycle {
             });
         }
         let rate_limit = update.rate_limit;
-        let concurrent_searches = update.concurrent_searches;
         let community_acknowledged = update.community_acknowledged.unwrap_or(false);
         *self.pending_mut()? = None;
         let saved = self
@@ -233,7 +231,6 @@ impl MusicBrainzLifecycle {
                     source_mode: mode,
                     api_url,
                     rate_limit,
-                    concurrent_searches,
                     community_acknowledged,
                     selected_source_mode: mode,
                     source_id,
@@ -268,7 +265,6 @@ impl MusicBrainzLifecycle {
                     source_mode: MbSourceMode::Official,
                     api_url: OFFICIAL_MB_API_BASE.to_owned(),
                     rate_limit: OFFICIAL_MB_RATE_LIMIT,
-                    concurrent_searches: OFFICIAL_MB_CONCURRENT_SEARCHES,
                     community_acknowledged: false,
                     selected_source_mode: MbSourceMode::Official,
                     source_id,
@@ -303,7 +299,6 @@ impl MusicBrainzLifecycle {
                     source_mode: MbSourceMode::Brainzmash,
                     api_url: BRAINZMASH_ENDPOINT.to_owned(),
                     rate_limit: BRAINZMASH_RATE_LIMIT,
-                    concurrent_searches: BRAINZMASH_CONCURRENT_SEARCHES,
                     community_acknowledged: previous.community_acknowledged,
                     selected_source_mode: MbSourceMode::Brainzmash,
                     source_id,
@@ -326,29 +321,14 @@ impl MusicBrainzLifecycle {
         Ok((view, proposal))
     }
 
-    /// Record consent for the exact staged proposal and the consenting
-    /// admin. A stale proposal or an outdated disclosure is a 409.
+    /// Record consent for the exact staged proposal. A stale proposal or
+    /// an outdated disclosure is a 409.
     pub async fn consent(
         &self,
         binding: &MusicBrainzBindingRequest,
-        admin: &droppedneedle_auth::Admin,
     ) -> Result<MusicBrainzSettingsView, SettingsError> {
         let _op = self.begin_op().await;
         self.mark_consented(binding)?;
-        let admin_id = admin.user_id().to_owned();
-        self.store
-            .update::<droppedneedle_kernel::runtime_config::sections::InternalState, SettingsError, _>(
-                DurableLane::Foreground,
-                move |mut internal| {
-                    internal.brainzmash_consent_admin = Some(admin_id);
-                    Ok(internal)
-                },
-            )
-            .await
-            .map_err(|error| match error {
-                UpdateError::Rejected(error) => error,
-                UpdateError::Config(error) => self.config(error),
-            })?;
         let stored: MusicBrainzSettings = self.store.get().map_err(|e| self.config(e))?;
         Ok(self.view(stored))
     }
@@ -491,7 +471,6 @@ impl MusicBrainzLifecycle {
             source_mode: MbSourceMode::Brainzmash,
             api_url: proposal.endpoint.trim_end_matches('/').to_owned(),
             rate_limit: BRAINZMASH_RATE_LIMIT,
-            concurrent_searches: BRAINZMASH_CONCURRENT_SEARCHES,
             community_acknowledged: false,
             selected_source_mode: MbSourceMode::Brainzmash,
             source_id: proposal.source_id.clone(),

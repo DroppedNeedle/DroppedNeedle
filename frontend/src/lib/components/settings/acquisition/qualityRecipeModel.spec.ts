@@ -15,9 +15,7 @@ import {
 const basePolicy = {
 	quality_min: 'mp3_192',
 	quality_max: 'lossless',
-	flac_mp3_only: true,
-	quality_preference_order: ['lossless', 'mp3_320', 'mp3_256', 'mp3_192'],
-	lossless_preference: 'cd'
+	flac_mp3_only: true
 } as DownloadPolicySettings;
 
 describe('quality recipe model', () => {
@@ -25,33 +23,29 @@ describe('quality recipe model', () => {
 		const result = recipeFromPolicy(basePolicy);
 		expect(result.status).toBe('projected');
 		expect(result.recipe.map(({ format, quality }) => ({ format, quality }))).toEqual([
-			{ format: 'flac', quality: 'cd' },
-			{ format: 'flac', quality: '24_48' },
-			{ format: 'flac', quality: '24_96' },
-			{ format: 'flac', quality: '24_192' },
 			{ format: 'flac', quality: 'hi_res' },
+			{ format: 'flac', quality: '24_192' },
+			{ format: 'flac', quality: '24_96' },
+			{ format: 'flac', quality: '24_48' },
+			{ format: 'flac', quality: 'cd' },
 			{ format: 'mp3', quality: '320_plus' },
 			{ format: 'mp3', quality: '256_319' },
 			{ format: 'mp3', quality: '192_255' }
 		]);
 		expect(standardRecipeEntry('mp3', 'below_192')).toMatchObject({
 			min_bitrate_kbps: 16,
-			target_bitrate_kbps: 128,
 			max_bitrate_kbps: 191
 		});
 		expect(standardRecipeEntry('mp3', '192_255')).toMatchObject({
 			min_bitrate_kbps: 192,
-			target_bitrate_kbps: 192,
 			max_bitrate_kbps: 255
 		});
 		expect(standardRecipeEntry('mp3', '256_319')).toMatchObject({
 			min_bitrate_kbps: 256,
-			target_bitrate_kbps: 256,
 			max_bitrate_kbps: 319
 		});
 		expect(standardRecipeEntry('mp3', '320_plus')).toMatchObject({
 			min_bitrate_kbps: 320,
-			target_bitrate_kbps: 320,
 			max_bitrate_kbps: null
 		});
 	});
@@ -78,9 +72,9 @@ describe('quality recipe model', () => {
 		expect(customFlacError(0, 48_000)).toContain('1 to 64');
 		expect(customFlacError(24, 768_001)).toContain('8000 to 768000');
 		const standard = standardRecipeEntry('mp3', '192_255');
-		expect(customMp3Error(16, 160, 191, [standard])).toBeNull();
-		expect(customMp3Error(191, 192, 193, [standard])).toContain('overlaps');
-		expect(customMp3Error(16, 320, 200, [])).toContain('in order');
+		expect(customMp3Error(16, 191, [standard])).toBeNull();
+		expect(customMp3Error(191, 193, [standard])).toContain('overlaps');
+		expect(customMp3Error(320, 200, [])).toContain('not be above');
 	});
 
 	it('rejects duplicate exact FLAC custom resolution with its existing position', () => {
@@ -109,7 +103,6 @@ describe('quality recipe model', () => {
 					format: 'mp3',
 					quality: 'custom',
 					min_bitrate_kbps: 180,
-					target_bitrate_kbps: 224,
 					max_bitrate_kbps: 400
 				}
 			])
@@ -120,7 +113,6 @@ describe('quality recipe model', () => {
 					format: 'mp3',
 					quality: 'custom',
 					min_bitrate_kbps: 400,
-					target_bitrate_kbps: 512,
 					max_bitrate_kbps: 1024
 				}
 			])

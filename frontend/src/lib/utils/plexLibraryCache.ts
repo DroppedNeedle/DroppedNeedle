@@ -28,9 +28,7 @@ const plexAlbumsListCache = createLocalStorageCache<PlexAlbumsListData>(
 export const getPlexSidebarCachedData = plexSidebarCache.get;
 export const setPlexSidebarCachedData = plexSidebarCache.set;
 export const isPlexSidebarCacheStale = plexSidebarCache.isStale;
-export const updatePlexSidebarCacheTTL = plexSidebarCache.updateTTL;
 
 export const getPlexAlbumsListCachedData = plexAlbumsListCache.get;
 export const setPlexAlbumsListCachedData = plexAlbumsListCache.set;
 export const isPlexAlbumsListCacheStale = plexAlbumsListCache.isStale;
-export const updatePlexAlbumsListCacheTTL = plexAlbumsListCache.updateTTL;

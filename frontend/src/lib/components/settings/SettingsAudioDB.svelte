@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { SECRET_MASK } from '$lib/ui/secretMask';
 	import type { AdvancedSettingsForm } from './advanced-settings-types';
-	import NumberField from '$lib/ui/NumberField.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
@@ -46,32 +45,5 @@
 		label="Prefer Local Cover Art"
 		description="When enabled, covers come from folder images (cover.jpg and similar) or art embedded in the audio files before any online source is checked. Local art still works when an image provider is down."
 		bind:checked={data.prefer_local_cover_art}
-	/>
-
-	<NumberField
-		label="Found Images TTL"
-		help="Default: 168 hours (7 days)"
-		bind:value={data.cache_ttl_audiodb_found}
-		min={1}
-		max={720}
-		unit="hrs"
-	/>
-
-	<NumberField
-		label="Not Found TTL"
-		help="Default: 24 hours"
-		bind:value={data.cache_ttl_audiodb_not_found}
-		min={1}
-		max={168}
-		unit="hrs"
-	/>
-
-	<NumberField
-		label="Library Items TTL"
-		help="Default: 336 hours (14 days)"
-		bind:value={data.cache_ttl_audiodb_library}
-		min={24}
-		max={720}
-		unit="hrs"
 	/>
 </div>

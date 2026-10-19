@@ -37,10 +37,6 @@
 	let apiKey = $state('');
 	let downloadsSubpath = $state('');
 	let incompleteMount = $state('');
-	// Quality/verification/resilience now live in the shared Download policy block, but the
-	// slskd config struct still carries them, so seed + round-trip them on save to avoid
-	// resetting the stored values (the orchestrator reads them from download_policy).
-	let policyFields = $state<Partial<DownloadClientConfig>>({});
 	let seeded = $state(false);
 	let testResult = $state<TestConnectionResult | null>(null);
 
@@ -52,19 +48,6 @@
 			apiKey = d.api_key;
 			downloadsSubpath = d.downloads_subpath ?? '';
 			incompleteMount = d.slskd_incomplete_mount ?? '';
-			policyFields = {
-				verify_downloads: d.verify_downloads,
-				quality_min: d.quality_min,
-				quality_max: d.quality_max,
-				flac_mp3_only: d.flac_mp3_only,
-				preflight_score_auto_accept: d.preflight_score_auto_accept,
-				preflight_score_manual_min: d.preflight_score_manual_min,
-				download_stall_timeout_minutes: d.download_stall_timeout_minutes,
-				download_queued_timeout_minutes: d.download_queued_timeout_minutes,
-				preferred_quality_wait_minutes: d.preferred_quality_wait_minutes,
-				max_failover_attempts: d.max_failover_attempts,
-				max_concurrent_downloads: d.max_concurrent_downloads
-			};
 			seeded = true;
 		}
 	});
@@ -127,27 +110,8 @@
 	function currentConfig(): DownloadClientConfig | null {
 		const d = configQuery.data;
 		if (!d) return null;
-		// The seeded snapshot round-trips the policy-owned fields; each falls
-		// back to the live query value so a partial snapshot never wipes a
-		// stored setting with undefined.
 		return {
 			...d,
-			verify_downloads: policyFields.verify_downloads ?? d.verify_downloads,
-			quality_min: policyFields.quality_min ?? d.quality_min,
-			quality_max: policyFields.quality_max ?? d.quality_max,
-			flac_mp3_only: policyFields.flac_mp3_only ?? d.flac_mp3_only,
-			preflight_score_auto_accept:
-				policyFields.preflight_score_auto_accept ?? d.preflight_score_auto_accept,
-			preflight_score_manual_min:
-				policyFields.preflight_score_manual_min ?? d.preflight_score_manual_min,
-			download_stall_timeout_minutes:
-				policyFields.download_stall_timeout_minutes ?? d.download_stall_timeout_minutes,
-			download_queued_timeout_minutes:
-				policyFields.download_queued_timeout_minutes ?? d.download_queued_timeout_minutes,
-			preferred_quality_wait_minutes:
-				policyFields.preferred_quality_wait_minutes ?? d.preferred_quality_wait_minutes,
-			max_failover_attempts: policyFields.max_failover_attempts ?? d.max_failover_attempts,
-			max_concurrent_downloads: policyFields.max_concurrent_downloads ?? d.max_concurrent_downloads,
 			enabled,
 			url,
 			api_key: apiKey,

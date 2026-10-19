@@ -12,8 +12,7 @@ const h = vi.hoisted(() => ({
 		transcode_default_format: 'mp3',
 		transcode_max_bitrate_kbps: 320,
 		advertise_server_name: 'DroppedNeedle',
-		advertise_server_version: '10.10.6',
-		discover_mode: 'local-only'
+		advertise_server_version: '10.10.6'
 	},
 	passwords: [
 		{
@@ -76,8 +75,7 @@ beforeEach(() => {
 		transcode_default_format: 'mp3',
 		transcode_max_bitrate_kbps: 320,
 		advertise_server_name: 'DroppedNeedle',
-		advertise_server_version: '10.10.6',
-		discover_mode: 'local-only'
+		advertise_server_version: '10.10.6'
 	};
 	h.passwords = [
 		{

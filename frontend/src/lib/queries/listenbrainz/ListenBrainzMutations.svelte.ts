@@ -4,7 +4,7 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { setQueryDataWithPersister } from '../QueryClient';
 import { ListenBrainzQueryKeyFactory } from './ListenBrainzQueryKeyFactory';
 import { LISTENBRAINZ_ENDPOINTS } from './endpoints';
-import type { ListenBrainzConnection, ScrobbleSettings } from './types';
+import type { ListenBrainzConnection } from './types';
 
 // Save mutations refresh the cache and stay quiet: the settings tab shows
 // inline receipts, which read better than toasts on a form.
@@ -16,18 +16,6 @@ export const createSaveListenBrainzMutation = () =>
 		onSuccess: async (saved, _vars, context) => {
 			if (context.admin && authStore.isAdmin) {
 				await setQueryDataWithPersister(ListenBrainzQueryKeyFactory.connection(), saved);
-			}
-		}
-	}));
-
-export const createSaveScrobbleTargetsMutation = () =>
-	createMutation(() => ({
-		mutationFn: (vars: ScrobbleSettings) =>
-			api.global.v3.PUT(LISTENBRAINZ_ENDPOINTS.scrobble, vars),
-		onMutate: () => ({ admin: authStore.isAdmin }),
-		onSuccess: async (saved, _vars, context) => {
-			if (context.admin && authStore.isAdmin) {
-				await setQueryDataWithPersister(ListenBrainzQueryKeyFactory.scrobble(), saved);
 			}
 		}
 	}));

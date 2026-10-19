@@ -293,21 +293,6 @@ impl Section for PublicAddress {
 
 // --- connect_apps ---------------------------------------------------------
 
-/// Compat discovery mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
-pub enum DiscoverMode {
-    /// Local library only.
-    #[serde(rename = "local-only")]
-    #[default]
-    LocalOnly,
-    /// Lazy MusicBrainz enrichment.
-    #[serde(rename = "lazy-mb")]
-    LazyMb,
-    /// Use scrobble targets.
-    #[serde(rename = "use-scrobble-targets")]
-    UseScrobbleTargets,
-}
-
 /// Inbound Connect Apps config. Both protocols default off.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
@@ -316,8 +301,6 @@ pub struct ConnectApps {
     pub subsonic_enabled: bool,
     /// Serve the Jellyfin API.
     pub jellyfin_enabled: bool,
-    /// Capability flag for the approval-safe exact-track endpoint.
-    pub exact_track_approval_supported: bool,
     /// Allow transcoding for compat clients.
     pub transcoding_enabled: bool,
     /// Default transcode format.
@@ -328,8 +311,6 @@ pub struct ConnectApps {
     pub advertise_server_name: String,
     /// Advertised server version.
     pub advertise_server_version: String,
-    /// Compat discovery mode.
-    pub discover_mode: DiscoverMode,
 }
 
 impl Default for ConnectApps {
@@ -337,13 +318,11 @@ impl Default for ConnectApps {
         Self {
             subsonic_enabled: false,
             jellyfin_enabled: false,
-            exact_track_approval_supported: true,
             transcoding_enabled: true,
             transcode_default_format: AudioFormat::Mp3,
             transcode_max_bitrate_kbps: 320,
             advertise_server_name: "DroppedNeedle".to_owned(),
             advertise_server_version: "10.10.6".to_owned(),
-            discover_mode: DiscoverMode::LocalOnly,
         }
     }
 }

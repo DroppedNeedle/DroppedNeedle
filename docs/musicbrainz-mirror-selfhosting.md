@@ -358,7 +358,6 @@ In DroppedNeedle, open **Settings > MusicBrainz** and choose **Self-hosted mirro
   the URL and port chosen for your deployment.
 - **Rate limit:** 0.1 to 500 requests/second, or `0` for the local Unlimited sentinel on
   non-official sources.
-- **Concurrent searches:** 1 to 64, as local queue capacity.
 
 On hardware you operate, raised limits or the Unlimited sentinel can be appropriate. They do not
 create a provider guarantee. Be reasonable with servers you do not own. In particular, do not set

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { userStorageSegment } from '$lib/queries/userKeySegment';
 	import { goto } from '$app/navigation';
+	import { CACHE_TTL } from '$lib/constants';
 	import { onDestroy, untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { requestMissingTracks, type PlaylistDetail } from '$lib/api/playlists';
@@ -8,7 +9,6 @@
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { getCacheTTL } from '$lib/stores/cacheTtl.svelte';
 	import {
 		getPlaylistDetailV3Query,
 		type PlaylistDetailV3
@@ -107,7 +107,7 @@
 			const raw = localStorage.getItem(key);
 			if (!raw) return null;
 			const cached = JSON.parse(raw) as { ts: number; data: Record<string, string[]> };
-			const ttl = getCacheTTL('playlistSources');
+			const ttl = CACHE_TTL.PLAYLIST_SOURCES;
 			if (Date.now() - cached.ts > ttl) {
 				localStorage.removeItem(key);
 				return null;

@@ -18,7 +18,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
     LidarrImportConnection, NewznabIndexer, WrappedSettings,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    FilesystemWatcher, InternalState, PluginConfig, Plugins, UserPreferences,
+    DownloadPolicy, FilesystemWatcher, InternalState, PluginConfig, Plugins, UserPreferences,
 };
 use droppedneedle_kernel::runtime_config::{
     ConfigError, Crypto, Secret, Section as _, UpdateError,
@@ -610,4 +610,42 @@ async fn a_restored_backup_brings_its_settings() {
         .await;
     assert_eq!(wrapped.api_key.expose(), "wrapped-plaintext");
     restored.stop().await;
+}
+
+/// An older `config.json` wrote `target_bitrate_kbps` on every recipe step.
+/// The copy drops that removed field, so the download policy still reads.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_old_recipe_step_still_reads_after_the_copy() {
+    let app = TestApp::start_prepared("settings-ingest-recipe", |config| {
+        Crypto::load_or_generate(&config.config_dir()).unwrap();
+        let file = json!({"download_policy": {
+            "flac_mp3_only": true,
+            "quality_recipe": [
+                {"format": "flac", "quality": "cd", "min_bitrate_kbps": null,
+                 "target_bitrate_kbps": null, "max_bitrate_kbps": null,
+                 "bit_depth": null, "sample_rate_hz": null},
+                {"format": "mp3", "quality": "320_plus", "min_bitrate_kbps": 320,
+                 "target_bitrate_kbps": 320, "max_bitrate_kbps": null,
+                 "bit_depth": null, "sample_rate_hz": null},
+            ],
+        }});
+        std::fs::write(legacy_file(config), file.to_string()).unwrap();
+    })
+    .await;
+    let (_app, ()) = app
+        .while_stopped(|config| {
+            let policy: DownloadPolicy = app_settings(config).get().expect("the policy reads");
+            assert_eq!(policy.quality_recipe.len(), 2);
+            assert_eq!(policy.quality_recipe[1].min_bitrate_kbps, Some(320));
+            let stored: String = rusqlite::Connection::open(&config.library_db_path)
+                .unwrap()
+                .query_row(
+                    "SELECT value_json FROM config_sections WHERE key = 'download_policy'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(!stored.contains("target_bitrate_kbps"), "{stored}");
+        })
+        .await;
 }

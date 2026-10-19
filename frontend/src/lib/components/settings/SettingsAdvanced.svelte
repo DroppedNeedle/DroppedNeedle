@@ -1,23 +1,10 @@
 <script lang="ts">
 	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
-	import {
-		CircleCheck,
-		CircleAlert,
-		Clock,
-		Archive,
-		Globe,
-		Database,
-		RotateCcw,
-		Save,
-		ImageIcon
-	} from 'lucide-svelte';
+	import { CircleCheck, CircleAlert, Database, RotateCcw, Save, ImageIcon } from 'lucide-svelte';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { onDestroy } from 'svelte';
 	import type { AdvancedSettingsForm } from './advanced-settings-types';
 	import SettingsSectionCollapse from './SettingsSectionCollapse.svelte';
-	import SettingsFrontendCache from './SettingsFrontendCache.svelte';
-	import SettingsBackendCache from './SettingsBackendCache.svelte';
-	import SettingsNetworkBatch from './SettingsNetworkBatch.svelte';
 	import SettingsStorageQueue from './SettingsStorageQueue.svelte';
 	import SettingsAudioDB from './SettingsAudioDB.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
@@ -43,10 +30,7 @@
 		load();
 	});
 
-	let openFrontendCache = $state(true);
-	let openBackendCache = $state(false);
-	let openNetworkBatch = $state(false);
-	let openStorageQueue = $state(false);
+	let openStorageQueue = $state(true);
 	let openAudioDB = $state(false);
 
 	onDestroy(() => form.cleanup());
@@ -55,9 +39,7 @@
 <div class="space-y-6">
 	<div>
 		<h2 class="text-2xl font-bold">Advanced Settings</h2>
-		<p class="text-base-content/60 mt-1">
-			Control cache freshness, background work, and image loading.
-		</p>
+		<p class="text-base-content/60 mt-1">Control the Discover Queue and image loading.</p>
 	</div>
 
 	{#if form.loading}
@@ -79,44 +61,8 @@
 		{/if}
 
 		<SettingsSectionCollapse
-			title="Page Cache Freshness"
-			description="Choose how long pages stay fresh before checking for updates"
-			icon={Clock}
-			iconBgClass="bg-primary/10"
-			iconTextClass="text-primary"
-			bind:isOpen={openFrontendCache}
-			name="advanced-settings"
-		>
-			<SettingsFrontendCache bind:data={form.data} />
-		</SettingsSectionCollapse>
-
-		<SettingsSectionCollapse
-			title="Server Cache Lifetime"
-			description="Choose how long the server keeps data before refreshing it from external services"
-			icon={Archive}
-			iconBgClass="bg-secondary/10"
-			iconTextClass="text-secondary"
-			bind:isOpen={openBackendCache}
-			name="advanced-settings"
-		>
-			<SettingsBackendCache bind:data={form.data} />
-		</SettingsSectionCollapse>
-
-		<SettingsSectionCollapse
-			title="Network & Batch Processing"
-			description="Set request timeouts, connection limits, and background workload size"
-			icon={Globe}
-			iconBgClass="bg-accent/10"
-			iconTextClass="text-accent"
-			bind:isOpen={openNetworkBatch}
-			name="advanced-settings"
-		>
-			<SettingsNetworkBatch bind:data={form.data} />
-		</SettingsSectionCollapse>
-
-		<SettingsSectionCollapse
-			title="Storage & Discover Queue"
-			description="Set cache sizes, disk limits, and Discover Queue background behavior"
+			title="Discover Queue"
+			description="Set how the Discover Queue and Discover Picks are built"
 			icon={Database}
 			iconBgClass="bg-warning/10"
 			iconTextClass="text-warning"

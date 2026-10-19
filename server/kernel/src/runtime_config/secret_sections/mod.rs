@@ -33,7 +33,7 @@ use crate::runtime_config::error::ConfigError;
 use crate::runtime_config::secret::Secret;
 use crate::runtime_config::sections::{
     Section, check_range, is_valid_hhmm, normalize_http_url, sanitize_absolute_mount,
-    sanitize_subpath, strip_api_suffix, tier_rank,
+    sanitize_subpath, strip_api_suffix,
 };
 
 /// One mutable secret field.

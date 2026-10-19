@@ -728,7 +728,6 @@ async fn plex_pins_are_bound_to_their_starter_and_gate_membership() {
         enabled: true,
         login_enabled: true,
         music_library_ids: Vec::new(),
-        scrobble_to_plex: true,
     };
     e2e.store
         .save_secret_blocking(settings.clone())

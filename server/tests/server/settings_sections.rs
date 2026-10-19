@@ -281,24 +281,22 @@ impl VerifyProbes for FakeProbes {
 
 // --- service round-trips -----------------------------------------------------
 
-/// Advanced tunables scale frontend units to backend units, mask the
-/// AudioDB key, and fire the Advanced fan-out.
+/// Advanced tunables save, mask the AudioDB key, and fire the Advanced
+/// fan-out.
 #[tokio::test]
-async fn advanced_round_trip_scales_and_masks() {
+async fn advanced_round_trip_masks() {
     use droppedneedle_kernel::runtime_config::Section as _;
     use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 
     let (service, effects, _scratch) = scratch_service();
     let form = AdvancedSettingsForm {
-        cache_ttl_album_library: 48,
-        cache_ttl_search: 30,
-        frontend_ttl_home: 10,
-        discover_queue_polling_interval: 8,
+        discover_queue_size: 15,
+        discover_queue_auto_generate: false,
         audiodb_api_key: "audiodb-secret".to_owned(),
         ..Default::default()
     };
     let echoed = service.save_advanced(form).await.expect("saves");
-    assert_eq!(echoed.cache_ttl_album_library, 48);
+    assert_eq!(echoed.discover_queue_size, 15);
     assert_eq!(echoed.audiodb_api_key, SECRET_MASK);
     assert_eq!(
         effects.calls(),
@@ -309,10 +307,7 @@ async fn advanced_round_trip_scales_and_masks() {
         .store
         .get_raw::<AdvancedSettings>()
         .expect("raw reads");
-    assert_eq!(stored.cache_ttl_album_library, 48 * 3600);
-    assert_eq!(stored.cache_ttl_search, 30 * 60);
-    assert_eq!(stored.frontend_ttl_home, 10 * 60000);
-    assert_eq!(stored.discover_queue_polling_interval, 8 * 1000);
+    assert_eq!(stored.discover_queue_size, 15);
     assert_eq!(stored.audiodb_api_key.expose(), "audiodb-secret");
 
     // The echo re-saves cleanly: the mask keeps the stored key, the row is
@@ -328,7 +323,7 @@ async fn advanced_round_trip_scales_and_masks() {
     assert_eq!(stored.audiodb_api_key.expose(), "audiodb-secret");
 
     let ttls = service.get_cache_ttls().expect("reads ttls");
-    assert_eq!(ttls.home, 10 * 60000);
+    assert!(!ttls.discover_queue_auto_generate);
 }
 
 /// Library settings round-trip with CAS: a stale token is a 409, and
@@ -532,7 +527,6 @@ async fn settings_routes_are_admin_gated() {
         ("GET", "/api/v3/settings/musicbrainz"),
         ("POST", "/api/v3/settings/musicbrainz/brainzmash/stage"),
         ("GET", "/api/v3/settings/library/sync"),
-        ("GET", "/api/v3/settings/home"),
         ("GET", "/api/v3/settings/library-management"),
         (
             "POST",
@@ -739,22 +733,10 @@ async fn lyrics_lookup_on_by_default_off_stays_off() {
     assert_eq!(read["enabled"], false);
 }
 
-/// The dropped catalog-sync section answers 410 on both methods; the
-/// home section is back and enforces v2's ranges.
+/// The dropped catalog-sync section answers 410 on both methods.
 #[tokio::test]
 async fn dropped_routes_answer_gone() {
     let rig = Rig::open(true).await;
-    let (status, home) = call(rig.admin_app(), "GET", "/api/v3/settings/home", None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(home["cache_ttl_trending"], 3600);
-    let (status, _) = call(
-        rig.admin_app(),
-        "PUT",
-        "/api/v3/settings/home",
-        Some(json!({"cache_ttl_trending": 10})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
     for (method, uri) in [
         ("GET", "/api/v3/settings/library/sync"),
         ("PUT", "/api/v3/settings/library/sync"),

@@ -134,13 +134,9 @@ pub trait HomeSources: Send + Sync {
     ) -> BoxFuture<'a, SourceResult<Vec<TagAlbum>>>;
 }
 
-/// How long a tag search is reused (v2 doubled the search TTL).
-fn tag_ttl(sources: &LiveSources) -> Duration {
-    Duration::from_secs(
-        u64::try_from(sources.upstream.settings().advanced().cache_ttl_search)
-            .unwrap_or(3600)
-            .saturating_mul(2),
-    )
+/// How long a tag search is reused: twice the search lifetime.
+fn tag_ttl() -> Duration {
+    crate::reads::catalog::SEARCH_TTL * 2
 }
 
 fn loved_from_lastfm(row: droppedneedle_providers::lastfm::TopItem) -> LovedTrack {
@@ -300,7 +296,7 @@ impl HomeSources for LiveSources {
                 QueueSources::source_key(self),
                 tag.trim().to_lowercase()
             );
-            self.cached(key, tag_ttl(self).max(ARTIST_TTL), async {
+            self.cached(key, tag_ttl().max(ARTIST_TTL), async {
                 let page = self
                     .musicbrainz(RequestPriority::BackgroundSync)
                     .search_artists_by_tag_from(tag, limit, offset, Criticality::BestEffort)
@@ -336,7 +332,7 @@ impl HomeSources for LiveSources {
                 QueueSources::source_key(self),
                 tag.trim().to_lowercase()
             );
-            self.cached(key, tag_ttl(self), async {
+            self.cached(key, tag_ttl(), async {
                 // Ask for extra rows: the type exclusions drop some (v2).
                 let asked = ((limit as f64 * 1.5) as u32).clamp(25, 100);
                 let page = self

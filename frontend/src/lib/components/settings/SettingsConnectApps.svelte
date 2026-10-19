@@ -31,7 +31,6 @@
 	let transcodingEnabled = $state(true);
 	let transcodeFormat = $state<'mp3' | 'opus'>('mp3');
 	let transcodeMaxKbps = $state(320);
-	let discoverMode = $state<'local-only' | 'lazy-mb' | 'use-scrobble-targets'>('local-only');
 	let seeded = $state(false);
 
 	let pendingRevoke = $state<AdminAppPasswordView | null>(null);
@@ -44,7 +43,6 @@
 			transcodingEnabled = d.transcoding_enabled;
 			transcodeFormat = d.transcode_default_format;
 			transcodeMaxKbps = d.transcode_max_bitrate_kbps;
-			discoverMode = d.discover_mode;
 			seeded = true;
 		}
 	});
@@ -58,9 +56,7 @@
 			// a cleared number input binds to null; fall back so we never PUT null
 			transcode_max_bitrate_kbps: transcodeMaxKbps ?? 320,
 			advertise_server_name: settingsQuery.data?.advertise_server_name ?? 'DroppedNeedle',
-			advertise_server_version: settingsQuery.data?.advertise_server_version ?? '10.10.6',
-			discover_mode: discoverMode,
-			exact_track_approval_supported: settingsQuery.data?.exact_track_approval_supported ?? false
+			advertise_server_version: settingsQuery.data?.advertise_server_version ?? '10.10.6'
 		};
 	}
 
@@ -161,16 +157,6 @@
 						/>
 					</div>
 				{/if}
-
-				<SelectField
-					label="Similar-songs discovery"
-					bind:value={discoverMode}
-					options={[
-						{ value: 'local-only', label: 'Local only - same artist, no outbound calls' },
-						{ value: 'lazy-mb', label: 'Lazy MusicBrainz - fetch related artists once, cached' },
-						{ value: 'use-scrobble-targets', label: 'Use Last.fm / ListenBrainz when linked' }
-					]}
-				/>
 
 				<div class="flex justify-end">
 					<Button variant="accent" loading={save.isPending} onclick={handleSave}>Save</Button>

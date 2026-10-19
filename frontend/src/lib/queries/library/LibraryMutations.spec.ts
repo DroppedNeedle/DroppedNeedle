@@ -100,9 +100,7 @@ describe('library scan mutations', () => {
 		const m = saveLibraryScanSchedule();
 		await (m as unknown as { mutationFn: (s: unknown) => Promise<unknown> }).mutationFn({
 			scan_frequency: '6hr',
-			daily_scan_time: '03:00',
-			last_scan: null,
-			last_scan_success: true
+			daily_scan_time: '03:00'
 		});
 		expect(vi.mocked(api.global.v3.PUT).mock.calls[0][0]).toBe('/api/v3/settings/library/schedule');
 	});

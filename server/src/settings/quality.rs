@@ -37,9 +37,8 @@ fn recipe_entry_label(entry: &QualityRecipeEntry) -> String {
     }
     if entry.quality == "custom" {
         return format!(
-            "MP3 {}-{}-{} kbps",
+            "MP3 {}-{} kbps",
             entry.min_bitrate_kbps.unwrap_or(0),
-            entry.target_bitrate_kbps.unwrap_or(0),
             entry.max_bitrate_kbps.unwrap_or(0)
         );
     }
@@ -171,75 +170,34 @@ pub fn clamp_cutoff(cutoff: &str, quality_min: &str, quality_max: &str) -> Strin
 /// Inputs the summary sentence needs (duck-typed policy projection).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct SummaryInputs {
-    /// Submitted preference order (v1).
+    /// Accepted tiers, best first (v1).
     pub quality_preference_order: Vec<String>,
     /// Canonical recipe (v2).
     pub quality_recipe: Vec<QualityRecipeEntry>,
     /// FLAC/MP3-only gate.
     pub flac_mp3_only: bool,
-    /// Within-lossless target.
-    pub lossless_preference: String,
-    /// Lossless bit-depth ceiling.
-    pub lossless_max_bit_depth: Option<i64>,
-    /// Lossless sample-rate ceiling.
-    pub lossless_max_sample_rate_hz: Option<i64>,
-    /// Unknown-quality handling.
-    pub unknown_quality_behavior: String,
 }
 
 /// Compose the saved product contract shown to users.
 pub fn compose_summary(inputs: &SummaryInputs) -> String {
-    let mut sentence = if !inputs.quality_recipe.is_empty() && inputs.flac_mp3_only {
-        let mut sentence = format!("Try {}", recipe_entry_label(&inputs.quality_recipe[0]));
-        for entry in &inputs.quality_recipe[1..] {
-            sentence += &format!(", then {}", recipe_entry_label(entry));
-        }
-        sentence += ".";
-        sentence
+    let (first, rest) = if !inputs.quality_recipe.is_empty() && inputs.flac_mp3_only {
+        let mut labels = inputs.quality_recipe.iter().map(recipe_entry_label);
+        (labels.next(), labels.collect::<Vec<_>>())
     } else {
-        let order = &inputs.quality_preference_order;
-        if order.is_empty() {
-            return "No quality preference configured.".to_owned();
-        }
-        let mut sentence = format!("Try {}", tier_label(&order[0]));
-        for tier in &order[1..] {
-            sentence += &format!(", then {}", tier_label(tier));
-        }
-        sentence += ".";
-        let pref = inputs.lossless_preference.as_str();
-        if pref != "highest"
-            && order.iter().any(|t| t == "lossless")
-            && matches!(pref, "cd" | "24_48" | "24_96" | "24_192")
-        {
-            let detail = match pref {
-                "cd" => "CD-quality (16-bit/48 kHz)",
-                "24_48" => "up-to-24-bit/48 kHz",
-                "24_96" => "up-to-24-bit/96 kHz",
-                _ => "up-to-24-bit/192 kHz",
-            };
-            sentence += &format!(" Lossless prefers {detail} copies.");
-        }
-        sentence
+        let mut labels = inputs
+            .quality_preference_order
+            .iter()
+            .map(|tier| tier_label(tier).to_owned());
+        (labels.next(), labels.collect::<Vec<_>>())
     };
-    let mut cap_bits = Vec::new();
-    if let Some(depth) = inputs.lossless_max_bit_depth {
-        cap_bits.push(format!("{depth}-bit maximum bit depth"));
+    let Some(first) = first else {
+        return "No quality preference configured.".to_owned();
+    };
+    let mut sentence = format!("Try {first}");
+    for label in rest {
+        sentence += &format!(", then {label}");
     }
-    if let Some(rate) = inputs.lossless_max_sample_rate_hz {
-        cap_bits.push(format!(
-            "{} kHz maximum sample rate",
-            (rate as f64 / 1000.0).round() as i64
-        ));
-    }
-    if !cap_bits.is_empty() {
-        sentence += &format!(" Never acquire above {}.", cap_bits.join(" or "));
-    }
-    match inputs.unknown_quality_behavior.as_str() {
-        "review" => sentence += " Never acquire unknown-quality audio automatically.",
-        "reject" => sentence += " Unknown-quality copies are excluded.",
-        _ => sentence += " Unknown-quality copies are a last resort.",
-    }
-    sentence
+    sentence + "."
 }
 
 /// Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`.
@@ -274,28 +232,9 @@ pub fn recipe_status(
     }
 }
 
-/// Whether the candidate order reproduces the legacy default shape
-/// (summary `legacy_rollback_compatible` / impact `legacy_representable`).
-#[allow(clippy::too_many_arguments)]
-pub fn is_legacy_default_shape(
-    order: &[String],
-    quality_min: &str,
-    quality_max: &str,
-    lossless_preference: &str,
-    lossless_max_bit_depth: Option<i64>,
-    lossless_max_sample_rate_hz: Option<i64>,
-    preferred_lossy_bitrate_kbps: Option<i64>,
-    lossy_min_bitrate_kbps: Option<i64>,
-    lossy_max_bitrate_kbps: Option<i64>,
-    unknown_quality_behavior: &str,
-) -> bool {
-    let derived = derive_default_order(quality_min, quality_max);
-    order == derived.as_slice()
-        && lossless_preference == "highest"
-        && lossless_max_bit_depth.is_none()
-        && lossless_max_sample_rate_hz.is_none()
-        && preferred_lossy_bitrate_kbps.is_none()
-        && lossy_min_bitrate_kbps.is_none()
-        && lossy_max_bitrate_kbps.is_none()
-        && unknown_quality_behavior == "allow_as_fallback"
+/// Whether the order reproduces the legacy default shape: every accepted
+/// tier, best first (summary `legacy_rollback_compatible` / impact
+/// `legacy_representable`).
+pub fn is_legacy_default_shape(order: &[String], quality_min: &str, quality_max: &str) -> bool {
+    order == derive_default_order(quality_min, quality_max).as_slice()
 }

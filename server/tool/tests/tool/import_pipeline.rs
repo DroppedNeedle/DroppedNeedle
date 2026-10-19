@@ -1240,3 +1240,75 @@ async fn v2_profile_that_ticked_other_gets_the_role_fields() {
         );
     }
 }
+
+/// A v2 export carrying settings v3 removed imports, never refused: the
+/// report names each removed setting as dropped, the fields kept beside
+/// them land, and the stored download policy still decodes.
+#[tokio::test]
+async fn removed_settings_import_and_are_reported() {
+    use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
+
+    let fixture = Fixture::shared();
+    let mut export = fixture.shell();
+    export["settings"]["advanced_settings"] = json!({
+        "discover_queue_size": 12,
+        "http_timeout": 30,
+        "batch_albums": 4,
+        "cache_ttl_album_library": 86400,
+        "frontend_ttl_home": 300000,
+    });
+    export["settings"]["download_policy"] = json!({
+        "flac_mp3_only": true,
+        "verify_downloads": true,
+        "quality_recipe": [
+            {"format": "mp3", "quality": "custom", "min_bitrate_kbps": 192,
+             "target_bitrate_kbps": 256, "max_bitrate_kbps": 320},
+        ],
+    });
+    export["settings"]["download_clients"] =
+        json!({"sabnzbd": {"url": "http://sab:8080", "post_processing": 3}});
+    export["settings"]["indexers"] =
+        json!([{"name": "one", "url": "https://one.example", "type": "newznab"}]);
+    export["settings"]["_internal"] =
+        json!({"plex_client_id": "plex-1", "brainzmash_consent_admin": "u1"});
+    export["settings"]["scrobble_settings"] = json!({"scrobble_to_lastfm": true});
+
+    let pool = migrated_pool().await;
+    let (_dir, config_path, crypto) = scratch_config("removed");
+    let report = run_import(import_request(&export, pool.clone(), config_path, crypto)).await;
+
+    assert_eq!(report.exit.code, ExitCode::Ok, "{}", report.to_json());
+    let mut dropped: Vec<&str> = report
+        .items
+        .iter()
+        .filter(|item| item.entity == "settings" && item.outcome == "dropped_setting")
+        .map(|item| item.key.as_str())
+        .collect();
+    dropped.sort_unstable();
+    assert_eq!(
+        dropped,
+        [
+            "_internal.brainzmash_consent_admin",
+            "advanced_settings.batch_albums",
+            "advanced_settings.cache_ttl_album_library",
+            "advanced_settings.frontend_ttl_home",
+            "advanced_settings.http_timeout",
+            "download_clients.sabnzbd.post_processing",
+            "download_policy.quality_recipe[0].target_bitrate_kbps",
+            "download_policy.verify_downloads",
+            "indexers[0].type",
+            "scrobble_settings",
+        ]
+    );
+
+    let stored = stored_settings(&pool).await;
+    assert_eq!(
+        stored["advanced_settings"],
+        json!({"discover_queue_size": 12})
+    );
+    assert_eq!(stored["_internal"], json!({"plex_client_id": "plex-1"}));
+    assert!(stored.get("scrobble_settings").is_none());
+    let policy: DownloadPolicy =
+        serde_json::from_value(stored["download_policy"].clone()).expect("the policy decodes");
+    assert_eq!(policy.quality_recipe[0].max_bitrate_kbps, Some(320));
+}

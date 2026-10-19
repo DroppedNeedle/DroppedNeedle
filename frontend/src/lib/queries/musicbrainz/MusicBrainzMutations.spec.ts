@@ -66,7 +66,6 @@ const settings: MusicBrainzSettingsResponse = {
 	source_mode: 'official',
 	api_url: 'https://musicbrainz.org/ws/2',
 	rate_limit: 1,
-	concurrent_searches: 1,
 	community_acknowledged: null,
 	selected_source_mode: 'brainzmash',
 	source_id: 'official-source',
@@ -78,7 +77,6 @@ const update: MusicBrainzSettingsUpdate = {
 	source_mode: 'brainzmash',
 	api_url: null,
 	rate_limit: 1,
-	concurrent_searches: 1,
 	community_acknowledged: null
 };
 

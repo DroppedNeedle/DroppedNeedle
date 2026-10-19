@@ -92,13 +92,11 @@ macro_rules! section_list {
 section_list! {
     plain: [
         UserPreferences,
-        HomeSettings,
         LibraryScanSchedule,
         FilesystemWatcher,
         WantedWatcher,
         SourcePriority,
         UsenetBackendSetting,
-        ScrobbleSettings,
         PrimaryMusicSource,
         GetIt,
         SecuritySettings,

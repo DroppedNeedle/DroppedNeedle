@@ -66,29 +66,33 @@ pub struct PrecacheLibrary {
     pub albums: Vec<LibraryAlbum>,
 }
 
-/// Pacing from the advanced settings.
+/// Pacing for one run. Production uses the defaults, with the AudioDB
+/// switch from the advanced settings; tests pass their own.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PrecacheTuning {
-    /// Artists warmed at once (`batch_artist_images`).
+    /// Artists warmed at once.
     pub artist_batch: usize,
-    /// Pause after each artist batch (`delay_artist`).
+    /// Pause after each artist batch.
     pub artist_delay: Duration,
-    /// Starting album batch (`batch_albums`).
+    /// Starting album batch.
     pub album_batch: usize,
-    /// Pause after each album batch (`delay_albums`).
+    /// Pause after each album batch.
     pub album_delay: Duration,
-    /// Discovery workers (`artist_discovery_precache_concurrency`).
+    /// Discovery workers.
     pub discovery_workers: usize,
-    /// Pause after each discovery artist (`artist_discovery_precache_delay`).
+    /// Pause after each discovery artist.
     pub discovery_delay: Duration,
     /// Whether TheAudioDB is on (`audiodb_enabled`).
     pub audiodb_enabled: bool,
-    /// AudioDB workers (`audiodb_prewarm_concurrency`).
+    /// AudioDB workers.
     pub audiodb_workers: usize,
-    /// Pause before each AudioDB lookup (`audiodb_prewarm_delay`).
+    /// Pause before each AudioDB lookup.
     pub audiodb_delay: Duration,
 }
 
+/// The shipped pacing. It is fixed, not a setting: the provider rate
+/// limits pace the outbound calls, and these only keep a run from flooding
+/// them.
 impl Default for PrecacheTuning {
     fn default() -> Self {
         Self {
@@ -108,7 +112,7 @@ impl Default for PrecacheTuning {
 /// The lookups behind the phases. Every warm call fails soft: a source
 /// that cannot answer is logged by the implementation and the run moves on.
 pub trait PrecacheSources: Send + Sync + 'static {
-    /// Current pacing, read from the settings on every call.
+    /// Pacing for the next run, with the AudioDB switch read on every call.
     fn tuning(&self) -> PrecacheTuning;
     /// The library's identified artists and albums.
     fn library(&self) -> BoxFuture<'_, Result<PrecacheLibrary, String>>;

@@ -15,13 +15,11 @@
 		legacyRangeFromRecipe,
 		recipeFingerprint,
 		recipeFromPolicy,
-		resolvePreferenceOrderForRange,
 		stripRecipeIds,
 		validateRecipeEntry,
 		type RecipeDraftEntry
 	} from './acquisition/qualityRecipeModel';
 	import SearchReviewSection from './acquisition/SearchReviewSection.svelte';
-	import SourceSelectionSection from './acquisition/SourceSelectionSection.svelte';
 	import UpgradesSection from './acquisition/UpgradesSection.svelte';
 	import type { DownloadPolicySettings } from '$lib/types';
 
@@ -48,15 +46,11 @@
 	let backgroundScan = $state(false);
 	let qualityRecipe = $state<RecipeDraftEntry[]>([]);
 	let baselineRecipe = $state<RecipeDraftEntry[]>([]);
-	let unknownQualityBehavior = $state('allow_as_fallback');
-	let baselineUnknownQualityBehavior = $state('allow_as_fallback');
 	let migrationStatus = $state<
 		'v1' | 'v2' | 'current' | 'projected' | 'non_convertible' | 'invalid' | null
 	>(null);
 	let migrationMessage = $state<string | null>(null);
-	let sourceSelectionMode = $state('source_first');
 	let searchReview = $state('when_unsure');
-	let verifyDownloads = $state(true);
 	let autoAccept = $state(0.7);
 	let manualMin = $state(0.5);
 	let maxConcurrent = $state(3);
@@ -64,9 +58,6 @@
 	let preferredQualityWait = $state(15);
 	let autoRetryEnabled = $state(true);
 	let autoRetryMax = $state(6);
-	let usenetMinAge = $state(30);
-	let lossyMinBitrateKbps = $state<number | null>(null);
-	let lossyMaxBitrateKbps = $state<number | null>(null);
 	let baselineFingerprint = $state<string | null>(null);
 	let seeded = $state(false);
 
@@ -95,18 +86,14 @@
 		const d = policyQuery.data as DownloadPolicySettings | undefined;
 		if (!d || seeded) return;
 		const migration = recipeFromPolicy(d);
-		const unknown = d.unknown_quality_behavior ?? 'allow_as_fallback';
 		untrack(() => {
 			qualityCutoff = d.quality_cutoff;
 			upgradeAllowed = d.upgrade_allowed;
 			backgroundScan = d.background_upgrade_scan_enabled;
 			qualityRecipe = migration.recipe;
 			baselineRecipe = migration.recipe.map((entry) => ({ ...entry }));
-			unknownQualityBehavior = unknown;
-			baselineUnknownQualityBehavior = unknown;
 			migrationStatus = migration.status;
 			migrationMessage = migration.message || null;
-			verifyDownloads = d.verify_downloads;
 			autoAccept = d.preflight_score_auto_accept;
 			manualMin = d.preflight_score_manual_min;
 			maxConcurrent = d.max_concurrent_downloads;
@@ -114,25 +101,19 @@
 			preferredQualityWait = d.preferred_quality_wait_minutes;
 			autoRetryEnabled = d.auto_retry_enabled;
 			autoRetryMax = d.auto_retry_max_attempts;
-			usenetMinAge = d.usenet_min_release_age_minutes;
-			lossyMinBitrateKbps = d.lossy_min_bitrate_kbps ?? null;
-			lossyMaxBitrateKbps = d.lossy_max_bitrate_kbps ?? null;
-			sourceSelectionMode = d.source_selection_mode ?? 'source_first';
 			searchReview = d.search_review ?? 'when_unsure';
-			baselineFingerprint = recipeFingerprint(migration.recipe, unknown);
+			baselineFingerprint = recipeFingerprint(migration.recipe);
 			seeded = true;
 		});
 	});
 
 	function discardRecipe() {
 		qualityRecipe = baselineRecipe.map((entry) => ({ ...entry }));
-		unknownQualityBehavior = baselineUnknownQualityBehavior;
 	}
 
 	async function onSave() {
 		const raw = policyQuery.data;
 		if (!raw) return;
-		const d = raw as DownloadPolicySettings;
 		if (!qualityRecipe.length) {
 			toastStore.show({
 				message: 'Add at least one quality recipe entry before saving',
@@ -145,11 +126,6 @@
 		const nextQualityMax = legacyRange?.quality_max ?? qualityMax;
 		const nextCutoff = clampCutoff(qualityCutoff, nextQualityMin, nextQualityMax);
 		if (nextCutoff !== qualityCutoff) qualityCutoff = nextCutoff;
-		const nextPreferenceOrder = resolvePreferenceOrderForRange(
-			d.quality_preference_order,
-			nextQualityMin,
-			nextQualityMax
-		);
 		// The save payload round-trips the full v3 DTO (which carries fields the
 		// recipe model does not know, like ignored terms and the recycle bin)
 		// with the edited fields overlaid.
@@ -161,7 +137,6 @@
 			upgrade_allowed: upgradeAllowed,
 			background_upgrade_scan_enabled: backgroundScan,
 			flac_mp3_only: true,
-			verify_downloads: verifyDownloads,
 			preflight_score_auto_accept: autoAccept,
 			preflight_score_manual_min: manualMin,
 			max_concurrent_downloads: maxConcurrent,
@@ -169,17 +144,7 @@
 			preferred_quality_wait_minutes: preferredQualityWait,
 			auto_retry_enabled: autoRetryEnabled,
 			auto_retry_max_attempts: autoRetryMax,
-			usenet_min_release_age_minutes: usenetMinAge,
 			quality_recipe: stripRecipeIds(qualityRecipe),
-			quality_preference_order: nextPreferenceOrder,
-			preferred_lossy_bitrate_kbps: d.preferred_lossy_bitrate_kbps ?? null,
-			lossy_min_bitrate_kbps: lossyMinBitrateKbps,
-			lossy_max_bitrate_kbps: lossyMaxBitrateKbps,
-			lossless_preference: d.lossless_preference ?? 'highest',
-			lossless_max_bit_depth: d.lossless_max_bit_depth ?? null,
-			lossless_max_sample_rate_hz: d.lossless_max_sample_rate_hz ?? null,
-			unknown_quality_behavior: unknownQualityBehavior,
-			source_selection_mode: sourceSelectionMode,
 			search_review: searchReview,
 			quality_recipe_status: 'v2',
 			quality_recipe_error: null
@@ -187,8 +152,7 @@
 		try {
 			await save.mutateAsync(policy);
 			baselineRecipe = qualityRecipe.map((entry) => ({ ...entry }));
-			baselineUnknownQualityBehavior = unknownQualityBehavior;
-			baselineFingerprint = recipeFingerprint(qualityRecipe, unknownQualityBehavior);
+			baselineFingerprint = recipeFingerprint(qualityRecipe);
 			migrationStatus = 'v2';
 			migrationMessage = null;
 			toastStore.show({
@@ -240,10 +204,8 @@
 
 			<QualityOrderSection
 				bind:qualityRecipe
-				bind:unknownQualityBehavior
 				baseline={baselineFingerprint}
 				{baselineRecipe}
-				{baselineUnknownQualityBehavior}
 				migrationStatus={migrationStatus === 'v1' ? 'projected' : migrationStatus}
 				{migrationMessage}
 				saving={save.isPending}
@@ -264,11 +226,6 @@
 			</div>
 
 			<div>
-				<h3 class="font-medium">Source selection</h3>
-				<SourceSelectionSection bind:sourceSelectionMode />
-			</div>
-
-			<div>
 				<h3 class="font-medium">Picking a copy</h3>
 				<p class="text-xs text-base-content/60">
 					When an album should wait for you to pick which copy to download.
@@ -284,10 +241,6 @@
 				bind:preferredQualityWait
 				bind:autoRetryEnabled
 				bind:autoRetryMax
-				bind:usenetMinAge
-				bind:verifyDownloads
-				bind:lossyMinBitrateKbps
-				bind:lossyMaxBitrateKbps
 			/>
 			<div class="flex justify-end border-t border-base-300 pt-4">
 				<Button

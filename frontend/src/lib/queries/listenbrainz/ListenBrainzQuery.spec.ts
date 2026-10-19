@@ -30,13 +30,10 @@ import { ListenBrainzQueryKeyFactory } from './ListenBrainzQueryKeyFactory';
 import { LISTENBRAINZ_ENDPOINTS } from './endpoints';
 import {
 	getListenBrainzConnectionQuery,
-	getListenBrainzConnectionQueryOptions,
-	getScrobbleTargetsQuery,
-	getScrobbleTargetsQueryOptions
+	getListenBrainzConnectionQueryOptions
 } from './ListenBrainzQuery.svelte';
 import {
 	createSaveListenBrainzMutation,
-	createSaveScrobbleTargetsMutation,
 	createVerifyListenBrainzMutation
 } from './ListenBrainzMutations.svelte';
 
@@ -77,10 +74,9 @@ beforeEach(() => {
 });
 
 describe('ListenBrainzQueryKeyFactory', () => {
-	it('keys the connection and scrobble targets under settings', () => {
+	it('keys the connection under settings', () => {
 		expect(ListenBrainzQueryKeyFactory.prefix).toEqual(['settings']);
 		expect(ListenBrainzQueryKeyFactory.connection()).toEqual(['settings', 'listenbrainz']);
-		expect(ListenBrainzQueryKeyFactory.scrobble()).toEqual(['settings', 'scrobble']);
 	});
 });
 
@@ -97,24 +93,11 @@ describe('ListenBrainz queries', () => {
 		});
 	});
 
-	it('reads the scrobble-targets endpoint', async () => {
-		mockGet.mockResolvedValue({ scrobble_to_lastfm: false, scrobble_to_listenbrainz: false });
-		const options = getScrobbleTargetsQueryOptions() as QueryResult;
-		await options.queryFn?.({ signal: new AbortController().signal });
-
-		expect(mockGet).toHaveBeenCalledWith(LISTENBRAINZ_ENDPOINTS.scrobble, {
-			signal: expect.any(AbortSignal),
-			timeoutMs: expect.any(Number)
-		});
-	});
-
-	it('enables both queries for admins only', () => {
+	it('enables the query for admins only', () => {
 		expect((getListenBrainzConnectionQuery() as QueryResult).enabled).toBe(true);
-		expect((getScrobbleTargetsQuery() as QueryResult).enabled).toBe(true);
 
 		setAdmin(false);
 		expect((getListenBrainzConnectionQuery() as QueryResult).enabled).toBe(false);
-		expect((getScrobbleTargetsQuery() as QueryResult).enabled).toBe(false);
 	});
 });
 
@@ -131,19 +114,6 @@ describe('ListenBrainz mutations', () => {
 		const context = mutation.onMutate?.(connection) ?? { admin: true };
 		await mutation.onSuccess?.(connection, connection, context);
 		expect(mockSetData).toHaveBeenCalledWith(ListenBrainzQueryKeyFactory.connection(), connection);
-	});
-
-	it('saves the scrobble targets then refreshes the cached targets', async () => {
-		const targets = { scrobble_to_lastfm: true, scrobble_to_listenbrainz: true };
-		mockPut.mockResolvedValue(targets);
-		const mutation = createSaveScrobbleTargetsMutation() as unknown as MutationResult;
-
-		await mutation.mutationFn(targets);
-		expect(mockPut).toHaveBeenCalledWith(LISTENBRAINZ_ENDPOINTS.scrobble, targets);
-
-		const context = mutation.onMutate?.(targets) ?? { admin: true };
-		await mutation.onSuccess?.(targets, targets, context);
-		expect(mockSetData).toHaveBeenCalledWith(ListenBrainzQueryKeyFactory.scrobble(), targets);
 	});
 
 	it('tests the submitted values without touching the cache', async () => {

@@ -4,6 +4,5 @@
 // admins, so a persisted payload can never surface to a signed-out user.
 export const ListenBrainzQueryKeyFactory = {
 	prefix: ['settings'] as const,
-	connection: () => [...ListenBrainzQueryKeyFactory.prefix, 'listenbrainz'] as const,
-	scrobble: () => [...ListenBrainzQueryKeyFactory.prefix, 'scrobble'] as const
+	connection: () => [...ListenBrainzQueryKeyFactory.prefix, 'listenbrainz'] as const
 };

@@ -132,7 +132,7 @@ impl SecretSection for NavidromeConnection {
 // --- plex_settings ----------------------------------------------------------
 
 /// Plex connection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(default)]
 pub struct PlexConnection {
     /// Plex base URL.
@@ -146,21 +146,6 @@ pub struct PlexConnection {
     pub login_enabled: bool,
     /// Music library ids.
     pub music_library_ids: Vec<String>,
-    /// Scrobble back to Plex.
-    pub scrobble_to_plex: bool,
-}
-
-impl Default for PlexConnection {
-    fn default() -> Self {
-        Self {
-            plex_url: String::new(),
-            plex_token: Secret::default(),
-            enabled: false,
-            login_enabled: false,
-            music_library_ids: Vec::new(),
-            scrobble_to_plex: true,
-        }
-    }
 }
 
 impl Section for PlexConnection {

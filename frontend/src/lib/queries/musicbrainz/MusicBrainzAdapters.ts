@@ -24,7 +24,6 @@ export function toMusicBrainzSettings(view: View): MusicBrainzSettingsResponse {
 		selected_source_mode: view.selected_source_mode,
 		api_url: view.api_url ?? null,
 		rate_limit: view.rate_limit ?? 1,
-		concurrent_searches: view.concurrent_searches ?? 1,
 		community_acknowledged: view.community_acknowledged ?? null,
 		source_id: view.source_id ?? '',
 		generation: view.generation ?? 0,

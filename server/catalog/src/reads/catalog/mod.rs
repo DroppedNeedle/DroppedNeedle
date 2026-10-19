@@ -297,10 +297,16 @@ pub fn is_mbid(value: &str) -> bool {
     droppedneedle_providers::musicbrainz::is_valid_mbid(value)
 }
 
-/// Seconds from a settings value, never negative.
-fn secs(value: i64) -> Duration {
-    Duration::from_secs(u64::try_from(value).unwrap_or(0))
-}
+// Cache lifetimes are fixed in code, not settings: one policy for every
+// install, at the values v2 shipped as defaults.
+
+/// A MusicBrainz search result, reused for an hour. Tag and album
+/// searches keep theirs for twice as long.
+pub const SEARCH_TTL: Duration = Duration::from_secs(3600);
+/// A TheAudioDB hit, kept for a week: artwork rarely changes.
+const AUDIODB_FOUND_TTL: Duration = Duration::from_secs(7 * 86400);
+/// A TheAudioDB miss, kept for a day so new artwork shows up soon.
+const AUDIODB_MISSING_TTL: Duration = Duration::from_secs(86400);
 
 /// Dependencies the routes need. Clone shares them.
 #[derive(Clone)]

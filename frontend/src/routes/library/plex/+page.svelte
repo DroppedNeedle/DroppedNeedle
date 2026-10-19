@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { PLEX_ENDPOINTS } from '$lib/queries/plex/endpoints';
 	import { api, ApiError } from '$lib/api/client';
 	import { REMOTE_ENDPOINTS } from '$lib/queries/remotes/endpoints';
 	import {
@@ -10,7 +9,6 @@
 	} from '$lib/queries/remotes/RemoteQueries.svelte';
 	import type { RemoteAlbum, RemoteHub, RemoteTrack } from '$lib/queries/remotes/types';
 	import { getSourcePlaylistsQuery } from '$lib/queries/source-playlists/SourcePlaylistQueries.svelte';
-	import { resetPlexScrobblePreference } from '$lib/player/plexPlaybackApi';
 	import SourceAlbumCardCompact from '$lib/components/SourceAlbumCardCompact.svelte';
 	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
 	import SourceHubHeader from '$lib/components/SourceHubHeader.svelte';
@@ -29,13 +27,11 @@
 	import ArtistIndexSidebar from '$lib/components/ArtistIndexSidebar.svelte';
 	import { nowPlayingMerged } from '$lib/stores/nowPlayingMerged.svelte';
 	import { SvelteMap } from 'svelte/reactivity';
-	import { toastStore } from '$lib/stores/toast';
 	import { buildDiscoveryQueueFromPlex } from '$lib/player/queueHelpers';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import { reveal } from '$lib/actions/reveal';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import type {
 		PlexAlbumSummary,
@@ -53,9 +49,6 @@
 				? 'SOURCE_PLAYLISTS_UNAVAILABLE'
 				: ''
 	);
-
-	let scrobbleEnabled = $state(true);
-	let scrobbleLoading = $state(false);
 
 	let selectedAlbum = $state<PlexAlbumSummary | null>(null);
 	let modalOpen = $state(false);
@@ -236,37 +229,6 @@
 			minute: '2-digit'
 		});
 	}
-
-	// The scrobble toggle writes the shared Plex connection settings.
-	onMount(() => {
-		(async () => {
-			try {
-				const settings = await api.v3.GET(PLEX_ENDPOINTS.settings());
-				scrobbleEnabled = settings.scrobble_to_plex ?? false;
-			} catch (err) {
-				console.warn('[Hub] scrobble setting load failed:', err);
-			}
-		})();
-	});
-
-	async function toggleScrobble() {
-		scrobbleLoading = true;
-		try {
-			const settings = await api.v3.GET(PLEX_ENDPOINTS.settings());
-			settings.scrobble_to_plex = !scrobbleEnabled;
-			await api.global.v3.PUT(PLEX_ENDPOINTS.settings(), settings);
-			scrobbleEnabled = settings.scrobble_to_plex;
-			resetPlexScrobblePreference();
-		} catch (err) {
-			console.warn('[Hub] secondary load failed:', err);
-			toastStore.show({
-				message: "Couldn't update the Plex scrobble setting.",
-				type: 'error'
-			});
-		} finally {
-			scrobbleLoading = false;
-		}
-	}
 </script>
 
 <div class="container mx-auto space-y-6 p-6">
@@ -282,20 +244,6 @@
 	>
 		{#snippet icon()}
 			<PlexIcon class="h-8 w-8 text-plex" />
-		{/snippet}
-		{#snippet settingsSnippet()}
-			<div class="tooltip tooltip-left" data-tip="Send play history back to Plex">
-				<label class="label cursor-pointer gap-2 px-0">
-					<span class="text-sm opacity-70">Scrobble to Plex</span>
-					<input
-						type="checkbox"
-						class="toggle toggle-sm toggle-primary"
-						checked={scrobbleEnabled}
-						disabled={scrobbleLoading}
-						onchange={toggleScrobble}
-					/>
-				</label>
-			</div>
 		{/snippet}
 	</SourceHubHeader>
 

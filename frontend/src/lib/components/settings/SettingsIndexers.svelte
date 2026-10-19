@@ -91,7 +91,6 @@
 	function blankIndexer(): IndexerSettings {
 		return {
 			id: '',
-			type: 'newznab',
 			name: '',
 			url: '',
 			api_key: '',

@@ -69,6 +69,12 @@ pub struct QueueSettings {
     pub prune_interval_secs: f64,
 }
 
+/// How long a built queue deck is served, seconds: a day. Fixed, not a
+/// setting, like every cache lifetime.
+const QUEUE_TTL_SECS: f64 = 86400.0;
+/// How long a queue card's details are reused: a day.
+const QUEUE_ENRICH_TTL: Duration = Duration::from_secs(86400);
+
 fn bounded(value: i64, min: i64, max: i64) -> usize {
     value.clamp(min, max) as usize
 }
@@ -79,14 +85,12 @@ impl QueueSettings {
     pub fn from_advanced(advanced: &AdvancedSettings) -> Self {
         Self {
             queue_size: bounded(advanced.discover_queue_size, 1, 20),
-            ttl_secs: advanced.discover_queue_ttl.max(60) as f64,
+            ttl_secs: QUEUE_TTL_SECS,
             seed_artists: bounded(advanced.discover_queue_seed_artists, 1, 10),
             wildcard_slots: bounded(advanced.discover_queue_wildcard_slots, 0, 10),
             similar_artists_limit: bounded(advanced.discover_queue_similar_artists_limit, 5, 50),
             albums_per_similar: bounded(advanced.discover_queue_albums_per_similar, 1, 20),
-            enrich_ttl: Duration::from_secs(
-                advanced.discover_queue_enrich_ttl.clamp(60, 604_800) as u64
-            ),
+            enrich_ttl: QUEUE_ENRICH_TTL,
             lastfm_mbid_max_lookups: bounded(
                 advanced.discover_queue_lastfm_mbid_max_lookups,
                 1,

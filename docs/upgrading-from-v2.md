@@ -288,6 +288,34 @@ machine and its data folders can run it.
   button. Those parts no longer exist. Settings > Cache in v3 counts cached
   provider responses and cached images, and clears one provider, the
   images, or everything.
+- **Settings nothing used, and the cache and pacing knobs.** These v2
+  settings are gone. Most were never read; the cache lifetimes and the
+  library image pacing now use fixed values equal to v2's defaults. An
+  import of a v2 export carrying them goes ahead, and its report lists
+  each one as `dropped_setting`.
+  - Settings > Advanced: every server and browser cache lifetime
+    (including TheAudioDB's), the memory and disk cache limits, the HTTP
+    timeouts and pool size, the library image batch sizes, delays and
+    workers, the image refresh's stall and run timeouts, the Discover
+    queue's lifetime, card details cache and status polling interval, the
+    genre section lifetime, request concurrency and the orphan cover
+    cadence.
+  - Settings > Download Client: slskd's own copies of the quality,
+    verification, scoring, timeout, retry and concurrency settings (the
+    download policy's are the ones that apply), and SABnzbd's client type
+    and post-processing level.
+  - Download policy: "Verify downloads", the Usenet release age before
+    blocklisting, the source selection mode, the legacy quality order,
+    lossy bounds and lossless preferences, the unknown-quality choice, and
+    the target bitrate of a custom MP3 recipe step.
+  - The server-wide scrobble targets (each user's own scrobble switches
+    stay), the home page section settings, "Scrobble to Plex" (a Plex track
+    that ends is always reported), Connect Apps' exact-track approval flag,
+    MusicBrainz's concurrent searches, and the scan schedule's stored "last
+    scan" (it now comes from the scan history).
+
+  The outbound HTTP timeouts are environment variables, `HTTP_TIMEOUT` and
+  `HTTP_CONNECT_TIMEOUT`, as before.
 - **Max connections.** v2 had a "max connections" setting for outbound HTTP,
   also read from `HTTP_MAX_CONNECTIONS`. v3 has neither. The nearest is the
   `HTTP_MAX_KEEPALIVE` environment variable, the number of idle connections

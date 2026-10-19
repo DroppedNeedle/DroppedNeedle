@@ -302,7 +302,7 @@ Where things live in the UI:
 |-|-|
 | Library paths, import naming script, scan schedule, AcoustID key | Settings > Library |
 | Library Management profiles, previews, recovery | Library Management (admin) |
-| Download clients (slskd, SABnzbd), source priority, quality tiers, verification, picking a copy, wanted watcher | Settings > Download Client |
+| Download clients (slskd, SABnzbd), source priority, quality tiers, picking a copy, wanted watcher | Settings > Download Client |
 | Newznab indexers or Prowlarr | Settings > Indexers / Prowlarr |
 | Edition preferences, managing unconfirmed matches | Settings > Editions |
 | Lidarr import | Settings > Lidarr Import |

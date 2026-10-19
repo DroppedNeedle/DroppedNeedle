@@ -25,10 +25,14 @@ use super::models::{
     DiscoveryAlbum, DiscoverySource, MoreByArtistResponse, SimilarAlbumsResponse, SimilarArtist,
     SimilarArtistsResponse, TopAlbum, TopAlbumsResponse, TopSong, TopSongsResponse,
 };
-use super::{Catalog, MISS_TTL, is_mbid, mb_error, mb_retry, record_mb_down, secs};
+use super::{Catalog, MISS_TTL, is_mbid, mb_error, mb_retry, record_mb_down};
 
 /// Empty answers are kept ten minutes (v2 `DISCOVERY_EMPTY_CACHE_TTL`).
 const EMPTY_TTL: Duration = Duration::from_secs(600);
+/// Similar artists for a library artist, kept for six hours.
+const LIBRARY_DISCOVERY_TTL: Duration = Duration::from_secs(6 * 3600);
+/// Similar artists for any other artist, kept for an hour.
+const OTHER_DISCOVERY_TTL: Duration = Duration::from_secs(3600);
 /// Partial answers (a deadline hit) are kept a minute.
 const PARTIAL_TTL: Duration = Duration::from_secs(60);
 /// Releases whose tracklists top songs look up, at most.
@@ -86,12 +90,11 @@ impl Catalog {
         if empty {
             return EMPTY_TTL;
         }
-        let advanced = self.upstream().settings().advanced();
-        secs(if in_library {
-            advanced.cache_ttl_artist_discovery_library
+        if in_library {
+            LIBRARY_DISCOVERY_TTL
         } else {
-            advanced.cache_ttl_artist_discovery_non_library
-        })
+            OTHER_DISCOVERY_TTL
+        }
     }
 
     fn preferred_source(&self, asked: Option<DiscoverySource>) -> DiscoverySource {

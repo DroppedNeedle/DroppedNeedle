@@ -112,7 +112,6 @@ fn wanted(db: &AcquireDb) -> Wanted {
             watch_partial_albums: false,
             max_checks_per_sweep: 20,
             auto_download_on_find: true,
-            ..WantedWatcher::default()
         })
         .expect("watcher settings save");
     let search = Arc::new(ScriptedSearch::new());

@@ -20,7 +20,10 @@ use super::models::{
     PurchaseLink, PurchaseOptionsResponse,
 };
 use super::ports::PurchaseQuery;
-use super::{Catalog, MISS_TTL, is_mbid, mb_error, mb_retry, record_mb_down, secs};
+use super::{
+    AUDIODB_FOUND_TTL, AUDIODB_MISSING_TTL, Catalog, MISS_TTL, is_mbid, mb_error, mb_retry,
+    record_mb_down,
+};
 
 /// Includes for the release-group lookup: one call serves the header, the
 /// edition list (with track counts) and the group's store links.
@@ -224,13 +227,17 @@ fn audiodb_album_key(mbid: &str) -> String {
     format!("audiodb_album:{}", mbid.to_ascii_lowercase())
 }
 
-fn album_ttl(catalog: &Catalog, in_library: bool) -> Duration {
-    let advanced = catalog.upstream().settings().advanced();
-    secs(if in_library {
-        advanced.cache_ttl_album_library
+/// An album page in the library, kept for a day.
+const LIBRARY_ALBUM_TTL: Duration = Duration::from_secs(86400);
+/// Any other album page, kept for six hours.
+const OTHER_ALBUM_TTL: Duration = Duration::from_secs(6 * 3600);
+
+fn album_ttl(in_library: bool) -> Duration {
+    if in_library {
+        LIBRARY_ALBUM_TTL
     } else {
-        advanced.cache_ttl_album_non_library
-    })
+        OTHER_ALBUM_TTL
+    }
 }
 
 /// The edition an album page shows and why.
@@ -301,7 +308,7 @@ impl Catalog {
                         let (owned, _) = catalog
                             .album_flags(std::slice::from_ref(&detail.mbid))
                             .await;
-                        let ttl = album_ttl(&catalog, !owned.is_empty());
+                        let ttl = album_ttl(!owned.is_empty());
                         Ok((Some(detail), Some(ttl)))
                     }
                 }
@@ -338,7 +345,7 @@ impl Catalog {
                     None => (None, Some(MISS_TTL)),
                     Some(lookup) => (
                         Some(ReleaseDetail::from_wire(lookup.entity)),
-                        Some(album_ttl(&catalog, false)),
+                        Some(album_ttl(false)),
                     ),
                 })
             },
@@ -715,11 +722,9 @@ impl Catalog {
                     album_3d_face_url: album.face_3d,
                     album_3d_thumb_url: album.thumb_3d,
                 }),
-                secs(advanced.cache_ttl_audiodb_found),
+                AUDIODB_FOUND_TTL,
             ),
-            droppedneedle_providers::audiodb::Outcome::Missing => {
-                (None, secs(advanced.cache_ttl_audiodb_not_found))
-            }
+            droppedneedle_providers::audiodb::Outcome::Missing => (None, AUDIODB_MISSING_TTL),
             droppedneedle_providers::audiodb::Outcome::Unavailable { .. } => return None,
         };
         if let Ok(bytes) = serde_json::to_vec(&AudioDbAlbumEntry {
@@ -820,7 +825,7 @@ impl Catalog {
                         }
                     }
                     let (owned, _) = catalog.album_flags(std::slice::from_ref(&group)).await;
-                    let ttl = album_ttl(&catalog, !owned.is_empty());
+                    let ttl = album_ttl(!owned.is_empty());
                     let value = serde_json::to_value(&items)
                         .map_err(|error| CatalogError::Internal(error.to_string()))?;
                     Ok((value, Some(ttl)))

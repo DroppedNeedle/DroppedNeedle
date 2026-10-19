@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { Check, X } from 'lucide-svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
@@ -32,8 +31,7 @@
 	const dirty = $derived(
 		seeded && (scheduleQuery.data?.scan_frequency !== frequency || timeChanged)
 	);
-	const lastScan = $derived(scheduleQuery.data?.last_scan ?? null);
-	const lastScanOk = $derived(scheduleQuery.data?.last_scan_success ?? true);
+	const lastScan = $derived(scheduleQuery.data?.last_scan_at ?? null);
 
 	// Hide the legacy 5/10-minute options unless one is already selected.
 	const options = $derived(
@@ -46,9 +44,7 @@
 		try {
 			await save.mutateAsync({
 				scan_frequency: frequency,
-				daily_scan_time: dailyTime,
-				last_scan: scheduleQuery.data?.last_scan ?? null,
-				last_scan_success: scheduleQuery.data?.last_scan_success ?? true
+				daily_scan_time: dailyTime
 			});
 			toastStore.show({ message: 'Scan schedule saved', type: 'success' });
 		} catch (e) {
@@ -93,13 +89,6 @@
 		</p>
 	{/if}
 	{#if lastScan != null}
-		<p class="flex items-center gap-1 text-xs text-base-content/60">
-			Last automatic scan: {formatLastScan(lastScan)}
-			{#if lastScanOk}
-				<Check class="h-3 w-3 text-success" />
-			{:else}
-				<X class="h-3 w-3 text-error" />
-			{/if}
-		</p>
+		<p class="text-xs text-base-content/60">Last scan: {formatLastScan(lastScan)}</p>
 	{/if}
 </div>

@@ -410,12 +410,10 @@ fn musicbrainz_official_clamp_and_mirror_rules() {
         source_mode: droppedneedle_kernel::runtime_config::sections::MbSourceMode::Mirror,
         api_url: "https://musicbrainz.org/ws/2".to_owned(),
         rate_limit: 50.0,
-        concurrent_searches: 32,
         ..Default::default()
     };
     let saved = store.save_blocking(settings).unwrap();
     assert_eq!(saved.rate_limit, 1.0);
-    assert_eq!(saved.concurrent_searches, 6);
     assert!(saved.clamped_to_official_limits);
     let reread: MusicBrainzSettings = store.get().unwrap();
     assert_eq!(reread.rate_limit, 1.0);

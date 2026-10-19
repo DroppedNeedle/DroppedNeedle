@@ -28683,11 +28683,11 @@
         "tags": [
           "settings"
         ],
-        "summary": "Read the frontend cache TTLs in stored units (milliseconds).",
+        "summary": "Read the advanced settings the web app reads at start.",
         "operationId": "get_cache_ttls",
         "responses": {
           "200": {
-            "description": "Frontend cache TTLs",
+            "description": "Web app settings",
             "content": {
               "application/json": {
                 "schema": {
@@ -29496,80 +29496,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GetIt"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
-    "/api/v3/settings/home": {
-      "get": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Read the home page settings.",
-        "operationId": "get_home_settings",
-        "responses": {
-          "200": {
-            "description": "Home page settings",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HomeSettings"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      },
-      "put": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Save the home page settings. The save clears the cached home rows.",
-        "operationId": "put_home",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HomeSettings"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Saved settings",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HomeSettings"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "A value is out of range",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
@@ -32767,70 +32693,6 @@
         ]
       }
     },
-    "/api/v3/settings/scrobble": {
-      "get": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Read the scrobble targets.",
-        "operationId": "get_scrobble",
-        "responses": {
-          "200": {
-            "description": "Scrobble targets",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScrobbleSettings"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      },
-      "put": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Save the scrobble targets.",
-        "operationId": "put_scrobble",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ScrobbleSettings"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Saved targets",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ScrobbleSettings"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "session": [
-              "admin"
-            ]
-          }
-        ]
-      }
-    },
     "/api/v3/settings/security": {
       "get": {
         "tags": [
@@ -34877,20 +34739,8 @@
       },
       "AdvancedSettingsForm": {
         "type": "object",
-        "description": "Advanced tunables in the form's units. This is not a copy of the\nsection: the form shows human units (hours, minutes, seconds) while\nthe section stores seconds and milliseconds, v2's\n`AdvancedSettingsFrontend` contract minus the dropped internal-tuning\nfields. It is a closed allowlist: unknown JSON fields are rejected at\ndecode (400), so a client holding a dropped tuning field learns it is\ngone instead of believing it saved.",
+        "description": "Advanced tunables as the settings form shows them. It is a closed\nallowlist: unknown JSON fields are rejected at decode (400), so a client\nholding a dropped tuning field learns it is gone instead of believing it\nsaved.",
         "properties": {
-          "artist_discovery_precache_concurrency": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Discovery precache workers (1-8).",
-            "default": 5
-          },
-          "artist_discovery_precache_delay": {
-            "type": "number",
-            "format": "double",
-            "description": "Pause after each discovery precache artist, seconds (0-5).",
-            "default": 0.2
-          },
           "audiodb_api_key": {
             "type": "string",
             "description": "AudioDB API key (masked unless unset).",
@@ -34905,204 +34755,6 @@
             "type": "boolean",
             "description": "AudioDB name-search fallback.",
             "default": false
-          },
-          "audiodb_prewarm_concurrency": {
-            "type": "integer",
-            "format": "int64",
-            "description": "AudioDB precache workers (1-8).",
-            "default": 4
-          },
-          "audiodb_prewarm_delay": {
-            "type": "number",
-            "format": "double",
-            "description": "Pause before each AudioDB precache lookup, seconds (0-5).",
-            "default": 0.3
-          },
-          "batch_albums": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Album batch size (1-20).",
-            "default": 8
-          },
-          "batch_artist_images": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Artist-image batch size (1-20).",
-            "default": 10
-          },
-          "cache_ttl_album_library": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Album cache TTL for library albums, hours (1-168).",
-            "default": 24
-          },
-          "cache_ttl_album_non_library": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Album cache TTL for non-library albums, hours (1-24).",
-            "default": 6
-          },
-          "cache_ttl_artist_discovery_library": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Discovery cache TTL for library artists, hours (1-168).",
-            "default": 6
-          },
-          "cache_ttl_artist_discovery_non_library": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Discovery cache TTL for non-library artists, hours (1-168).",
-            "default": 1
-          },
-          "cache_ttl_artist_library": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Artist cache TTL for library artists, hours (1-168).",
-            "default": 6
-          },
-          "cache_ttl_artist_non_library": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Artist cache TTL for non-library artists, hours (1-168).",
-            "default": 6
-          },
-          "cache_ttl_audiodb_found": {
-            "type": "integer",
-            "format": "int64",
-            "description": "AudioDB found TTL, hours (1-720).",
-            "default": 168
-          },
-          "cache_ttl_audiodb_library": {
-            "type": "integer",
-            "format": "int64",
-            "description": "AudioDB library TTL, hours (24-720).",
-            "default": 336
-          },
-          "cache_ttl_audiodb_not_found": {
-            "type": "integer",
-            "format": "int64",
-            "description": "AudioDB not-found TTL, hours (1-168).",
-            "default": 24
-          },
-          "cache_ttl_jellyfin_favorites": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Jellyfin favorites TTL, minutes (1-60).",
-            "default": 5
-          },
-          "cache_ttl_jellyfin_genres": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Jellyfin genres TTL, minutes (1-1440).",
-            "default": 60
-          },
-          "cache_ttl_jellyfin_library_stats": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Jellyfin library-stats TTL, minutes (1-60).",
-            "default": 10
-          },
-          "cache_ttl_jellyfin_recently_played": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Jellyfin recently-played TTL, minutes (1-60).",
-            "default": 5
-          },
-          "cache_ttl_navidrome_albums": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Navidrome albums TTL, minutes (1-60).",
-            "default": 5
-          },
-          "cache_ttl_navidrome_artists": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Navidrome artists TTL, minutes (1-60).",
-            "default": 5
-          },
-          "cache_ttl_navidrome_favorites": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Navidrome favorites TTL, minutes (1-60).",
-            "default": 2
-          },
-          "cache_ttl_navidrome_genres": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Navidrome genres TTL, minutes (1-1440).",
-            "default": 60
-          },
-          "cache_ttl_navidrome_recent": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Navidrome recent TTL, minutes (1-60).",
-            "default": 2
-          },
-          "cache_ttl_navidrome_search": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Navidrome search TTL, minutes (1-60).",
-            "default": 2
-          },
-          "cache_ttl_navidrome_stats": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Navidrome stats TTL, minutes (1-60).",
-            "default": 10
-          },
-          "cache_ttl_plex_albums": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Plex albums TTL, minutes (1-60).",
-            "default": 5
-          },
-          "cache_ttl_plex_genres": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Plex genres TTL, minutes (1-1440).",
-            "default": 60
-          },
-          "cache_ttl_plex_search": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Plex search TTL, minutes (1-60).",
-            "default": 2
-          },
-          "cache_ttl_plex_stats": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Plex stats TTL, minutes (1-60).",
-            "default": 10
-          },
-          "cache_ttl_search": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Search cache TTL, minutes (1-1440).",
-            "default": 60
-          },
-          "cover_memory_cache_max_entries": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Cover memory-cache entries (16-2048).",
-            "default": 128
-          },
-          "cover_memory_cache_max_size_mb": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Cover memory-cache MB (1-1024).",
-            "default": 16
-          },
-          "delay_albums": {
-            "type": "number",
-            "format": "double",
-            "description": "Album delay, seconds (0-5).",
-            "default": 0.3
-          },
-          "delay_artist": {
-            "type": "number",
-            "format": "double",
-            "description": "Artist delay, seconds (0-5).",
-            "default": 0.5
           },
           "direct_remote_images_enabled": {
             "type": "boolean",
@@ -35132,23 +34784,11 @@
             "description": "Discover queue auto-generate.",
             "default": true
           },
-          "discover_queue_enrich_ttl": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Queue card details cache, hours (1-168).",
-            "default": 24
-          },
           "discover_queue_lastfm_mbid_max_lookups": {
             "type": "integer",
             "format": "int64",
             "description": "MusicBrainz lookups per Last.fm album batch (1-50).",
             "default": 10
-          },
-          "discover_queue_polling_interval": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Discover queue polling, seconds (1-30).",
-            "default": 4
           },
           "discover_queue_seed_artists": {
             "type": "integer",
@@ -35168,12 +34808,6 @@
             "description": "Discover queue size (1-20).",
             "default": 10
           },
-          "discover_queue_ttl": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Discover queue TTL, hours (1-168).",
-            "default": 24
-          },
           "discover_queue_warm_cycle_build": {
             "type": "boolean",
             "description": "Let the background warm cycle build queue decks.",
@@ -35185,148 +34819,16 @@
             "description": "Discover wildcard slots (0-10).",
             "default": 2
           },
-          "disk_cache_cleanup_interval": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Disk-cache cleanup cadence, minutes (1-60).",
-            "default": 10
-          },
-          "frontend_ttl_discover": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Discover frontend TTL, minutes (1-1440).",
-            "default": 30
-          },
-          "frontend_ttl_discover_queue": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Discover-queue frontend TTL, minutes (60-10080).",
-            "default": 1440
-          },
-          "frontend_ttl_home": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Home frontend TTL, minutes (1-60).",
-            "default": 5
-          },
-          "frontend_ttl_jellyfin_sidebar": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Jellyfin sidebar TTL, minutes (1-60).",
-            "default": 2
-          },
-          "frontend_ttl_library": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Library frontend TTL, minutes (1-60).",
-            "default": 5
-          },
-          "frontend_ttl_local_files_sidebar": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Local-files sidebar TTL, minutes (1-60).",
-            "default": 2
-          },
-          "frontend_ttl_playlist_sources": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Playlist-sources frontend TTL, minutes (1-60).",
-            "default": 15
-          },
-          "frontend_ttl_plex_sidebar": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Plex sidebar TTL, minutes (1-60).",
-            "default": 2
-          },
-          "frontend_ttl_recently_added": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Recently-added frontend TTL, minutes (1-60).",
-            "default": 5
-          },
-          "frontend_ttl_search": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Search frontend TTL, minutes (1-60).",
-            "default": 5
-          },
-          "genre_section_ttl": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Genre section TTL, hours (1-168).",
-            "default": 6
-          },
-          "http_connect_timeout": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Outbound connect timeout, seconds (1-30).",
-            "default": 5
-          },
-          "http_max_connections": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Outbound pool size (50-500).",
-            "default": 200
-          },
-          "http_timeout": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Outbound HTTP timeout, seconds (5-60).",
-            "default": 10
-          },
           "ignored_releases_retention_days": {
             "type": "integer",
             "format": "int64",
             "description": "Ignored-releases retention, days (30-3650).",
             "default": 365
           },
-          "memory_cache_cleanup_interval": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Memory-cache cleanup cadence, seconds (60-3600).",
-            "default": 300
-          },
-          "memory_cache_max_entries": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Memory-cache entries (1000-100000).",
-            "default": 10000
-          },
-          "orphan_cover_demote_interval_hours": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Orphan-cover demote cadence, hours (1-168).",
-            "default": 24
-          },
-          "persistent_metadata_ttl_hours": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Persistent-metadata TTL, hours (1-168).",
-            "default": 24
-          },
           "prefer_local_cover_art": {
             "type": "boolean",
             "description": "Prefer local cover art.",
             "default": true
-          },
-          "recent_covers_max_size_mb": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Recent-covers cap, MB (100-10000).",
-            "default": 1024
-          },
-          "recent_metadata_max_size_mb": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Recent-metadata cap, MB (100-5000).",
-            "default": 500
-          },
-          "request_concurrency": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Request concurrency (1-5).",
-            "default": 2
           },
           "request_history_retention_days": {
             "type": "integer",
@@ -35339,18 +34841,6 @@
             "format": "int64",
             "description": "Store prune cadence, hours (1-168).",
             "default": 6
-          },
-          "sync_max_timeout_hours": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Sync max timeout, hours (1-48).",
-            "default": 8
-          },
-          "sync_stall_timeout_minutes": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Sync stall timeout, minutes (2-30).",
-            "default": 10
           }
         },
         "additionalProperties": false
@@ -39776,20 +39266,6 @@
             "description": "Advertised server version.",
             "default": "10.10.6"
           },
-          "discover_mode": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/DiscoverMode",
-                "description": "Compat discovery mode."
-              }
-            ],
-            "default": "local-only"
-          },
-          "exact_track_approval_supported": {
-            "type": "boolean",
-            "description": "Capability flag for the approval-safe exact-track endpoint.",
-            "default": true
-          },
           "jellyfin_enabled": {
             "type": "boolean",
             "description": "Serve the Jellyfin API.",
@@ -40926,15 +40402,6 @@
           }
         }
       },
-      "DiscoverMode": {
-        "type": "string",
-        "description": "Compat discovery mode.",
-        "enum": [
-          "local-only",
-          "lazy-mb",
-          "use-scrobble-targets"
-        ]
-      },
       "DiscoverPreview": {
         "type": "object",
         "description": "A discover teaser on home: one seed artist plus similar artists.",
@@ -41947,47 +41414,6 @@
             "description": "Terms that reject a candidate.",
             "default": []
           },
-          "lossless_max_bit_depth": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Lossless bit-depth ceiling.",
-            "default": null
-          },
-          "lossless_max_sample_rate_hz": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Lossless sample-rate ceiling.",
-            "default": null
-          },
-          "lossless_preference": {
-            "type": "string",
-            "description": "Lossless edition preference.",
-            "default": "highest"
-          },
-          "lossy_max_bitrate_kbps": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Lossy upper bound.",
-            "default": null
-          },
-          "lossy_min_bitrate_kbps": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Lossy lower bound.",
-            "default": null
-          },
           "max_concurrent_downloads": {
             "type": "integer",
             "format": "int64",
@@ -42011,15 +41437,6 @@
             "format": "int64",
             "description": "Max download size in MB (0 unlimited).",
             "default": 0
-          },
-          "preferred_lossy_bitrate_kbps": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Preferred lossy bitrate target.",
-            "default": null
           },
           "preferred_quality_wait_minutes": {
             "type": "integer",
@@ -42054,14 +41471,6 @@
             "description": "Worst accepted tier label.",
             "default": "mp3_320"
           },
-          "quality_preference_order": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Tier preference order, most preferred first.",
-            "default": []
-          },
           "quality_recipe": {
             "type": "array",
             "items": {
@@ -42094,37 +41503,16 @@
             "description": "When an automatic download waits for a hand pick: `when_unsure`\n(no candidate looks like the whole album in an accepted quality),\n`always`, or `off` (grab the best guess).",
             "default": "when_unsure"
           },
-          "source_selection_mode": {
-            "type": "string",
-            "description": "Source-vs-quality selection.",
-            "default": "source_first"
-          },
-          "unknown_quality_behavior": {
-            "type": "string",
-            "description": "Unknown-quality handling.",
-            "default": "allow_as_fallback"
-          },
           "upgrade_allowed": {
             "type": "boolean",
             "description": "Background upgrades switch.",
             "default": false
-          },
-          "usenet_min_release_age_minutes": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Minimum Usenet release age.",
-            "default": 30
           },
           "usenet_retention_days": {
             "type": "integer",
             "format": "int64",
             "description": "Usenet retention in days (0 unknown).",
             "default": 0
-          },
-          "verify_downloads": {
-            "type": "boolean",
-            "description": "Verify downloads after landing.",
-            "default": true
           }
         }
       },
@@ -44543,78 +43931,12 @@
       },
       "FrontendCacheTTLs": {
         "type": "object",
-        "description": "Frontend cache TTLs in backend units (milliseconds), verbatim from\nthe stored advanced section. The SPA reads this one endpoint instead\nof the whole advanced surface.",
+        "description": "The advanced settings the web app reads at start. The browser's cache\nlifetimes and the queue's polling interval are fixed in the web app.",
         "properties": {
-          "discover": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Discover TTL, ms.",
-            "default": 1800000
-          },
-          "discover_queue": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Discover-queue TTL, ms.",
-            "default": 86400000
-          },
           "discover_queue_auto_generate": {
             "type": "boolean",
             "description": "Discover-queue auto-generate switch.",
             "default": true
-          },
-          "discover_queue_polling_interval": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Discover-queue polling interval, ms.",
-            "default": 4000
-          },
-          "home": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Home TTL, ms.",
-            "default": 300000
-          },
-          "jellyfin_sidebar": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Jellyfin sidebar TTL, ms.",
-            "default": 120000
-          },
-          "library": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Library TTL, ms.",
-            "default": 300000
-          },
-          "local_files_sidebar": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Local-files sidebar TTL, ms.",
-            "default": 120000
-          },
-          "playlist_sources": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Playlist-sources TTL, ms.",
-            "default": 900000
-          },
-          "plex_sidebar": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Plex sidebar TTL, ms.",
-            "default": 120000
-          },
-          "recently_added": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Recently-added TTL, ms.",
-            "default": 300000
-          },
-          "search": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Search TTL, ms.",
-            "default": 300000
           }
         }
       },
@@ -45738,34 +45060,6 @@
                 "description": "The user's top albums teaser."
               }
             ]
-          }
-        }
-      },
-      "HomeSettings": {
-        "type": "object",
-        "description": "Home page cache lifetimes and the two trending rows (v2\n`HomeSettings`). The ranges are v2's, enforced on save.",
-        "properties": {
-          "cache_ttl_personal": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Personal rows cache lifetime, seconds (60-3600).",
-            "default": 300
-          },
-          "cache_ttl_trending": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Trending rows cache lifetime, seconds (300-86400).",
-            "default": 3600
-          },
-          "show_globally_trending": {
-            "type": "boolean",
-            "description": "Show the \"Globally trending\" row.",
-            "default": true
-          },
-          "show_whats_hot": {
-            "type": "boolean",
-            "description": "Show the \"What's hot\" row.",
-            "default": true
           }
         }
       },
@@ -48665,20 +47959,6 @@
             "description": "Server-local `HH:MM` used when `scan_frequency` is `daily`.",
             "default": "03:00"
           },
-          "last_scan": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Unix time of the last scan, if any.",
-            "default": null
-          },
-          "last_scan_success": {
-            "type": "boolean",
-            "description": "Whether the last scan succeeded.",
-            "default": true
-          },
           "scan_frequency": {
             "oneOf": [
               {
@@ -48702,6 +47982,14 @@
               "server_timezone"
             ],
             "properties": {
+              "last_scan_at": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double",
+                "description": "When the last scan finished successfully, unix seconds."
+              },
               "server_timezone": {
                 "type": "string",
                 "description": "Server-local timezone label for the daily-scan picker."
@@ -48709,7 +47997,7 @@
             }
           }
         ],
-        "description": "GET payload: the persisted schedule plus the server's timezone label, so\nthe UI can show what \"daily at HH:MM\" is relative to. The label is\ncomputed per request and never persisted."
+        "description": "GET payload: the persisted schedule plus the server's timezone label, so\nthe UI can show what \"daily at HH:MM\" is relative to, and when the last\nscan finished, from the scan history. Both are computed per request and\nnever persisted."
       },
       "LibrarySettings": {
         "type": "object",
@@ -51899,12 +51187,6 @@
             "description": "Community-tier disclosure acknowledged.",
             "default": false
           },
-          "concurrent_searches": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Concurrent searches.",
-            "default": 1
-          },
           "generation": {
             "type": "integer",
             "format": "int64",
@@ -51960,12 +51242,6 @@
             ],
             "description": "Community-tier disclosure acknowledged.",
             "default": false
-          },
-          "concurrent_searches": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Concurrent searches.",
-            "default": 6
           },
           "rate_limit": {
             "type": "number",
@@ -52248,11 +51524,6 @@
             "format": "int64",
             "description": "Priority (lower first).",
             "default": 1
-          },
-          "type": {
-            "type": "string",
-            "description": "Indexer type tag (stored as `type`; renamed for the keyword).",
-            "default": "newznab"
           },
           "url": {
             "type": "string",
@@ -54031,11 +53302,6 @@
             "type": "string",
             "description": "Plex base URL.",
             "default": ""
-          },
-          "scrobble_to_plex": {
-            "type": "boolean",
-            "description": "Scrobble back to Plex.",
-            "default": true
           }
         }
       },
@@ -54824,10 +54090,9 @@
       },
       "PolicySummaryResponse": {
         "type": "object",
-        "description": "Safe, signed-in-user projection of the acquisition policy: the quality\nsummary sentence plus the source-mode label only, no admin internals.",
+        "description": "Safe, signed-in-user projection of the acquisition policy: the quality\nsummary sentence and the recipe verdict only, no admin internals.",
         "required": [
           "summary",
-          "source_mode",
           "legacy_rollback_compatible",
           "quality_recipe_status"
         ],
@@ -54846,10 +54111,6 @@
           "quality_recipe_status": {
             "type": "string",
             "description": "Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`."
-          },
-          "source_mode": {
-            "type": "string",
-            "description": "Source-mode label."
           },
           "summary": {
             "type": "string",
@@ -55314,14 +54575,6 @@
             ],
             "format": "int64",
             "description": "Custom FLAC sample rate."
-          },
-          "target_bitrate_kbps": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Custom MP3 target, or canonical standard bound."
           }
         },
         "additionalProperties": false
@@ -59278,11 +58531,6 @@
             "description": "Category (`*`: a fresh SABnzbd has no `droppedneedle` category).",
             "default": "*"
           },
-          "client_type": {
-            "type": "string",
-            "description": "Client type tag.",
-            "default": "sabnzbd"
-          },
           "downloads_mount": {
             "type": "string",
             "description": "Where DroppedNeedle sees SABnzbd's completed dir.",
@@ -59292,12 +58540,6 @@
             "type": "boolean",
             "description": "Master switch.",
             "default": false
-          },
-          "post_processing": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Post-processing level.",
-            "default": 3
           },
           "priority": {
             "type": "integer",
@@ -60198,22 +59440,6 @@
             "propertyNames": {
               "type": "string"
             }
-          }
-        }
-      },
-      "ScrobbleSettings": {
-        "type": "object",
-        "description": "Scrobble targets.",
-        "properties": {
-          "scrobble_to_lastfm": {
-            "type": "boolean",
-            "description": "Scrobble to Last.fm (per-user credentials).",
-            "default": false
-          },
-          "scrobble_to_listenbrainz": {
-            "type": "boolean",
-            "description": "Scrobble to ListenBrainz.",
-            "default": false
           }
         }
       },
@@ -61494,46 +60720,12 @@
       },
       "SlskdConnection": {
         "type": "object",
-        "description": "slskd download-client connection.",
+        "description": "slskd download-client connection. Quality, timeouts and retries live in\nthe download policy.",
         "properties": {
           "api_key": {
             "type": "string",
             "description": "API key (encrypted at rest).",
             "default": ""
-          },
-          "auto_retry_base_interval_minutes": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Retry base interval.",
-            "default": 15
-          },
-          "auto_retry_enabled": {
-            "type": "boolean",
-            "description": "Automatic retry switch.",
-            "default": true
-          },
-          "auto_retry_max_attempts": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Retry attempts.",
-            "default": 6
-          },
-          "client_type": {
-            "type": "string",
-            "description": "Client type tag.",
-            "default": "slskd"
-          },
-          "download_queued_timeout_minutes": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Remote-queue wait timeout.",
-            "default": 120
-          },
-          "download_stall_timeout_minutes": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Frozen-transfer stall timeout.",
-            "default": 30
           },
           "downloads_subpath": {
             "type": "string",
@@ -61545,51 +60737,6 @@
             "description": "Master switch.",
             "default": false
           },
-          "flac_mp3_only": {
-            "type": "boolean",
-            "description": "FLAC/MP3 only.",
-            "default": true
-          },
-          "max_concurrent_downloads": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Concurrent downloads.",
-            "default": 3
-          },
-          "max_failover_attempts": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Failover attempts per request.",
-            "default": 3
-          },
-          "preferred_quality_wait_minutes": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Preferred-quality wait.",
-            "default": 15
-          },
-          "preflight_score_auto_accept": {
-            "type": "number",
-            "format": "double",
-            "description": "Preflight auto-accept score.",
-            "default": 0.7
-          },
-          "preflight_score_manual_min": {
-            "type": "number",
-            "format": "double",
-            "description": "Preflight manual-review floor.",
-            "default": 0.5
-          },
-          "quality_max": {
-            "type": "string",
-            "description": "Best accepted tier label.",
-            "default": "lossless"
-          },
-          "quality_min": {
-            "type": "string",
-            "description": "Worst accepted tier label.",
-            "default": "mp3_320"
-          },
           "slskd_incomplete_mount": {
             "type": "string",
             "description": "Absolute incomplete-downloads dir (\"\" disables the fallback).",
@@ -61599,11 +60746,6 @@
             "type": "string",
             "description": "slskd base URL.",
             "default": ""
-          },
-          "verify_downloads": {
-            "type": "boolean",
-            "description": "Verify downloads after landing.",
-            "default": true
           }
         }
       },
@@ -64663,12 +63805,6 @@
             "type": "boolean",
             "description": "Off means badge-only even for auto-tier finds.",
             "default": true
-          },
-          "dormant_after_days": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Days before a watch goes dormant.",
-            "default": 365
           },
           "enabled": {
             "type": "boolean",

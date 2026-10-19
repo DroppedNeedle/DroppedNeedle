@@ -3562,7 +3562,7 @@ async fn settings_tables_arrive_empty() {
     }
     sqlx::query(
         "INSERT INTO config_sections (key, value_json, revision, updated_at) \
-         VALUES ('home_settings', '{}', 1, 1700000000000)",
+         VALUES ('user_preferences', '{}', 1, 1700000000000)",
     )
     .execute(&pool)
     .await
@@ -4349,4 +4349,87 @@ async fn contribution_verification_moves_onto_jobs() {
     .await
     .unwrap();
     assert!(left.is_empty(), "{left:?}");
+}
+
+/// Migration 0073 deletes the rows of the two removed settings sections and
+/// takes `target_bitrate_kbps` out of each stored quality recipe step, so
+/// the download policy still decodes. Every other settings row is left
+/// byte for byte.
+#[tokio::test]
+async fn removed_settings_leave_the_stored_rows() {
+    use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
+
+    let pool = scratch_pool().await;
+    migrator_through(72).run(&pool).await.unwrap();
+    let policy = r#"{"quality_min":"mp3_320","flac_mp3_only":true,"quality_recipe":[{"format":"flac","quality":"cd","min_bitrate_kbps":null,"target_bitrate_kbps":null,"max_bitrate_kbps":null,"bit_depth":null,"sample_rate_hz":null},{"format":"mp3","quality":"custom","min_bitrate_kbps":192,"target_bitrate_kbps":256,"max_bitrate_kbps":320,"bit_depth":null,"sample_rate_hz":null}],"verify_downloads":false}"#;
+    let kept = [
+        (
+            "advanced_settings",
+            r#"{"http_timeout":30,"discover_queue_size":12}"#,
+        ),
+        ("wanted", r#"{"enabled":true,"dormant_after_days":90}"#),
+    ];
+    let mut rows = vec![
+        ("home_settings", r#"{"show_whats_hot":false}"#),
+        ("scrobble_settings", r#"{"scrobble_to_lastfm":true}"#),
+        ("download_policy", policy),
+    ];
+    rows.extend(kept);
+    for (key, value) in &rows {
+        sqlx::query(
+            "INSERT INTO config_sections (key, value_json, revision, updated_at) \
+             VALUES (?, ?, 4, 1700000000000)",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stored: BTreeMap<String, (String, i64, i64)> =
+        sqlx::query_as::<_, (String, String, i64, i64)>(
+            "SELECT key, value_json, revision, updated_at FROM config_sections",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(key, value, revision, at)| (key, (value, revision, at)))
+        .collect();
+    let keys: Vec<&str> = stored.keys().map(String::as_str).collect();
+    assert_eq!(keys, ["advanced_settings", "download_policy", "wanted"]);
+    for (key, value) in kept {
+        assert_eq!(
+            stored[key],
+            (value.to_owned(), 4, 1_700_000_000_000),
+            "{key}"
+        );
+    }
+    let (value, revision, _) = &stored["download_policy"];
+    assert_eq!(*revision, 5);
+    assert!(!value.contains("target_bitrate_kbps"), "{value}");
+    let decoded: DownloadPolicy = serde_json::from_str(value).expect("the policy decodes");
+    let steps: Vec<(&str, &str, Option<i64>, Option<i64>)> = decoded
+        .quality_recipe
+        .iter()
+        .map(|step| {
+            (
+                step.format.as_str(),
+                step.quality.as_str(),
+                step.min_bitrate_kbps,
+                step.max_bitrate_kbps,
+            )
+        })
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            ("flac", "cd", None, None),
+            ("mp3", "custom", Some(192), Some(320))
+        ]
+    );
 }

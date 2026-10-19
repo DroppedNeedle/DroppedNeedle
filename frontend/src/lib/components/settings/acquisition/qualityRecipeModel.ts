@@ -19,7 +19,6 @@ export interface PresetFill {
 	label: string;
 	descriptor: string;
 	recipe: readonly QualityRecipeEntry[];
-	unknown_quality_behavior: 'reject' | 'review' | 'allow_as_fallback';
 }
 
 export type PresetKey = 'balanced' | 'mp3_only' | 'efficient_192' | 'best_available';
@@ -43,29 +42,6 @@ export const MP3_OPTIONS: readonly RecipeOption[] = [
 	{ quality: '320_plus', label: '320+', detail: '320 kbps and above' }
 ];
 
-export const UNKNOWN_BEHAVIOR_OPTIONS = [
-	{ value: 'reject', label: 'Exclude', detail: 'Do not acquire it automatically.' },
-	{ value: 'review', label: 'Send to review', detail: 'Hold it for a decision before acquiring.' },
-	{
-		value: 'allow_as_fallback',
-		label: 'Use only as a last resort',
-		detail: 'Use it only when no recipe entry can match.'
-	}
-] as const;
-
-export const SOURCE_MODE_OPTIONS = [
-	{
-		value: 'source_first',
-		label: 'Source order first',
-		hint: 'Walk configured sources in order and use the first with an automatic candidate.'
-	},
-	{
-		value: 'quality_first',
-		label: 'Best quality across sources',
-		hint: 'Search enabled sources concurrently (opt-in) and take the earliest preference step globally.'
-	}
-] as const;
-
 export const SEARCH_REVIEW_OPTIONS = [
 	{
 		value: 'when_unsure',
@@ -88,14 +64,13 @@ const MP3_REGIONS: Record<
 	Exclude<QualityRecipeQuality, 'custom' | 'cd' | '24_48' | '24_96' | '24_192' | 'hi_res'>,
 	{
 		min_bitrate_kbps: number | null;
-		target_bitrate_kbps: number;
 		max_bitrate_kbps: number | null;
 	}
 > = {
-	below_192: { min_bitrate_kbps: 16, target_bitrate_kbps: 128, max_bitrate_kbps: 191 },
-	'192_255': { min_bitrate_kbps: 192, target_bitrate_kbps: 192, max_bitrate_kbps: 255 },
-	'256_319': { min_bitrate_kbps: 256, target_bitrate_kbps: 256, max_bitrate_kbps: 319 },
-	'320_plus': { min_bitrate_kbps: 320, target_bitrate_kbps: 320, max_bitrate_kbps: null }
+	below_192: { min_bitrate_kbps: 16, max_bitrate_kbps: 191 },
+	'192_255': { min_bitrate_kbps: 192, max_bitrate_kbps: 255 },
+	'256_319': { min_bitrate_kbps: 256, max_bitrate_kbps: 319 },
+	'320_plus': { min_bitrate_kbps: 320, max_bitrate_kbps: null }
 };
 
 const LEGACY_TO_RECIPE: Record<string, QualityRecipeQuality> = {
@@ -125,8 +100,7 @@ export const PRESETS: Record<PresetKey, PresetFill> = {
 			{ format: 'mp3', quality: '320_plus', ...MP3_REGIONS['320_plus'] },
 			{ format: 'mp3', quality: '256_319', ...MP3_REGIONS['256_319'] },
 			{ format: 'mp3', quality: '192_255', ...MP3_REGIONS['192_255'] }
-		],
-		unknown_quality_behavior: 'review'
+		]
 	},
 	mp3_only: {
 		label: 'MP3 only',
@@ -135,8 +109,7 @@ export const PRESETS: Record<PresetKey, PresetFill> = {
 			{ format: 'mp3', quality: '320_plus', ...MP3_REGIONS['320_plus'] },
 			{ format: 'mp3', quality: '256_319', ...MP3_REGIONS['256_319'] },
 			{ format: 'mp3', quality: '192_255', ...MP3_REGIONS['192_255'] }
-		],
-		unknown_quality_behavior: 'review'
+		]
 	},
 	efficient_192: {
 		label: 'Efficient 192+',
@@ -146,8 +119,7 @@ export const PRESETS: Record<PresetKey, PresetFill> = {
 			{ format: 'mp3', quality: '256_319', ...MP3_REGIONS['256_319'] },
 			{ format: 'mp3', quality: '320_plus', ...MP3_REGIONS['320_plus'] },
 			{ format: 'flac', quality: 'cd' }
-		],
-		unknown_quality_behavior: 'review'
+		]
 	},
 	best_available: {
 		label: 'Best available',
@@ -162,8 +134,7 @@ export const PRESETS: Record<PresetKey, PresetFill> = {
 			{ format: 'mp3', quality: '256_319', ...MP3_REGIONS['256_319'] },
 			{ format: 'mp3', quality: '192_255', ...MP3_REGIONS['192_255'] },
 			{ format: 'mp3', quality: 'below_192', ...MP3_REGIONS['below_192'] }
-		],
-		unknown_quality_behavior: 'allow_as_fallback'
+		]
 	}
 };
 
@@ -191,7 +162,6 @@ export function recipeEntryKey(
 		entry.format,
 		entry.quality,
 		entry.min_bitrate_kbps ?? null,
-		entry.target_bitrate_kbps ?? null,
 		entry.max_bitrate_kbps ?? null,
 		entry.bit_depth ?? null,
 		entry.sample_rate_hz ?? null
@@ -238,13 +208,7 @@ export function standardRecipeEntry(
 export function recipeEntryLabel(
 	entry: Pick<
 		QualityRecipeEntry,
-		| 'format'
-		| 'quality'
-		| 'min_bitrate_kbps'
-		| 'target_bitrate_kbps'
-		| 'max_bitrate_kbps'
-		| 'bit_depth'
-		| 'sample_rate_hz'
+		'format' | 'quality' | 'min_bitrate_kbps' | 'max_bitrate_kbps' | 'bit_depth' | 'sample_rate_hz'
 	>
 ): string {
 	if (entry.format === 'flac') {
@@ -261,7 +225,7 @@ export function recipeEntryLabel(
 		return FLAC_OPTIONS.find((option) => option.quality === entry.quality)?.label ?? entry.quality;
 	}
 	if (entry.quality === 'custom') {
-		return `Custom · ${entry.min_bitrate_kbps ?? '?'}-${entry.target_bitrate_kbps ?? '?'}-${entry.max_bitrate_kbps ?? '?'} kbps`;
+		return `Custom · ${entry.min_bitrate_kbps ?? '?'}-${entry.max_bitrate_kbps ?? '?'} kbps`;
 	}
 	return `${MP3_OPTIONS.find((option) => option.quality === entry.quality)?.label ?? entry.quality} kbps`;
 }
@@ -269,13 +233,7 @@ export function recipeEntryLabel(
 export function recipeEntrySummary(
 	entry: Pick<
 		QualityRecipeEntry,
-		| 'format'
-		| 'quality'
-		| 'min_bitrate_kbps'
-		| 'target_bitrate_kbps'
-		| 'max_bitrate_kbps'
-		| 'bit_depth'
-		| 'sample_rate_hz'
+		'format' | 'quality' | 'min_bitrate_kbps' | 'max_bitrate_kbps' | 'bit_depth' | 'sample_rate_hz'
 	>
 ): string {
 	return `${entry.format.toUpperCase()} · ${recipeEntryLabel(entry)}`;
@@ -286,28 +244,12 @@ export function recipeSummary(recipe: readonly QualityRecipeEntry[]): string {
 	return `Try ${recipe.map(recipeEntrySummary).join(' → ')}.`;
 }
 
-export function unknownQualitySummary(value: string): string {
-	if (value === 'reject') return 'Unknown or incomplete quality is excluded.';
-	if (value === 'review') return 'Unknown or incomplete quality is sent to review.';
-	return 'Unknown or incomplete quality is used only as a last resort.';
+export function recipeFingerprint(recipe: readonly QualityRecipeEntry[]): string {
+	return JSON.stringify(recipe.map((entry) => recipeEntryKey(entry)));
 }
 
-export function recipeFingerprint(
-	recipe: readonly QualityRecipeEntry[],
-	unknownQualityBehavior: string
-): string {
-	return JSON.stringify([recipe.map((entry) => recipeEntryKey(entry)), unknownQualityBehavior]);
-}
-
-export function presetMatches(
-	recipe: readonly QualityRecipeEntry[],
-	unknownQualityBehavior: string,
-	preset: PresetFill
-): boolean {
-	return (
-		recipeFingerprint(recipe, unknownQualityBehavior) ===
-		recipeFingerprint(preset.recipe, preset.unknown_quality_behavior)
-	);
+export function presetMatches(recipe: readonly QualityRecipeEntry[], preset: PresetFill): boolean {
+	return recipeFingerprint(recipe) === recipeFingerprint(preset.recipe);
 }
 export function customFlacError(
 	bitDepth: number | string | null | undefined,
@@ -338,24 +280,20 @@ export function customFlacError(
 
 export function customMp3Error(
 	minBitrate: number | string | null | undefined,
-	targetBitrate: number | string | null | undefined,
 	maxBitrate: number | string | null | undefined,
 	existing: readonly QualityRecipeEntry[] = [],
 	excludeId?: string
 ): string | null {
 	const min = wholeNumber(minBitrate);
-	const target = wholeNumber(targetBitrate);
 	const max = wholeNumber(maxBitrate);
-	if (min === null || target === null || max === null)
-		return 'Enter whole-number minimum, target, and maximum bitrates.';
-	if (min < 16 || min > 2048 || target < 16 || target > 2048 || max < 16 || max > 2048)
+	if (min === null || max === null) return 'Enter whole-number minimum and maximum bitrates.';
+	if (min < 16 || min > 2048 || max < 16 || max > 2048)
 		return 'MP3 bitrates must be whole numbers from 16 to 2048 kbps.';
-	if (min > target || target > max) return 'MP3 minimum, target, and maximum must be in order.';
+	if (min > max) return 'MP3 minimum must not be above the maximum.';
 	const candidate = {
 		format: 'mp3' as const,
 		quality: 'custom' as const,
 		min_bitrate_kbps: min,
-		target_bitrate_kbps: target,
 		max_bitrate_kbps: max
 	};
 	const overlap = existing.find((entry) => {
@@ -390,13 +328,7 @@ export function standardEntryDuplicate(
 export function validateRecipeEntry(
 	entry: Pick<
 		QualityRecipeEntry,
-		| 'format'
-		| 'quality'
-		| 'min_bitrate_kbps'
-		| 'target_bitrate_kbps'
-		| 'max_bitrate_kbps'
-		| 'bit_depth'
-		| 'sample_rate_hz'
+		'format' | 'quality' | 'min_bitrate_kbps' | 'max_bitrate_kbps' | 'bit_depth' | 'sample_rate_hz'
 	>,
 	existing: readonly RecipeDraftEntry[] = [],
 	excludeId?: string
@@ -405,13 +337,7 @@ export function validateRecipeEntry(
 		return customFlacError(entry.bit_depth, entry.sample_rate_hz, existing, excludeId);
 	}
 	if (entry.format === 'mp3' && entry.quality === 'custom') {
-		return customMp3Error(
-			entry.min_bitrate_kbps,
-			entry.target_bitrate_kbps,
-			entry.max_bitrate_kbps,
-			existing,
-			excludeId
-		);
+		return customMp3Error(entry.min_bitrate_kbps, entry.max_bitrate_kbps, existing, excludeId);
 	}
 	const duplicate = standardEntryDuplicate(entry, existing, excludeId);
 	return duplicate ? `Already in the recipe at position ${existing.indexOf(duplicate) + 1}.` : null;
@@ -445,62 +371,7 @@ export function migrationStatusFromPolicy(
 	return null;
 }
 
-type LegacyLosslessPreference = FlacStandardQuality | 'highest';
-
-function legacyLosslessQuality(policy: DownloadPolicySettings): LegacyLosslessPreference {
-	const preference = policy.lossless_preference;
-	if (
-		preference === 'highest' ||
-		preference === 'cd' ||
-		preference === '24_48' ||
-		preference === '24_96' ||
-		preference === '24_192' ||
-		preference === 'hi_res'
-	)
-		return preference;
-	const depth = policy.lossless_max_bit_depth;
-	const rate = policy.lossless_max_sample_rate_hz;
-	if (
-		depth !== null &&
-		depth !== undefined &&
-		depth <= 16 &&
-		rate !== null &&
-		rate !== undefined &&
-		rate <= 48000
-	)
-		return 'cd';
-	if (
-		depth !== null &&
-		depth !== undefined &&
-		depth <= 24 &&
-		rate !== null &&
-		rate !== undefined &&
-		rate <= 48000
-	)
-		return '24_48';
-	if (
-		depth !== null &&
-		depth !== undefined &&
-		depth <= 24 &&
-		rate !== null &&
-		rate !== undefined &&
-		rate <= 96000
-	)
-		return '24_96';
-	if (
-		depth !== null &&
-		depth !== undefined &&
-		depth <= 24 &&
-		rate !== null &&
-		rate !== undefined &&
-		rate <= 192000
-	)
-		return '24_192';
-	return 'hi_res';
-}
-
 function legacyOrder(policy: DownloadPolicySettings): string[] {
-	if (policy.quality_preference_order?.length) return [...policy.quality_preference_order];
 	const keys = ['low', 'mp3_192', 'mp3_256', 'mp3_320', 'lossless'];
 	const low = keys.indexOf(policy.quality_min);
 	const high = keys.indexOf(policy.quality_max);
@@ -510,22 +381,18 @@ function legacyOrder(policy: DownloadPolicySettings): string[] {
 
 type FlacStandardQuality = 'cd' | '24_48' | '24_96' | '24_192' | 'hi_res';
 
-const LOSSLESS_PROJECTIONS: Record<LegacyLosslessPreference, readonly FlacStandardQuality[]> = {
-	highest: ['hi_res', '24_192', '24_96', '24_48', 'cd'],
-	cd: ['cd', '24_48', '24_96', '24_192', 'hi_res'],
-	'24_48': ['24_48', '24_96', '24_192', 'hi_res', 'cd'],
-	'24_96': ['24_96', '24_192', 'hi_res', 'cd', '24_48'],
-	'24_192': ['24_192', 'hi_res', 'cd', '24_48', '24_96'],
-	hi_res: ['hi_res', '24_192', '24_96', '24_48', 'cd']
-};
+/** A v1 policy's lossless tier projects to every FLAC detail, best first. */
+const LOSSLESS_PROJECTION: readonly FlacStandardQuality[] = [
+	'hi_res',
+	'24_192',
+	'24_96',
+	'24_48',
+	'cd'
+];
 
-function migrateLegacyEntries(
-	key: string,
-	policy: DownloadPolicySettings
-): QualityRecipeEntry[] | null {
+function migrateLegacyEntries(key: string): QualityRecipeEntry[] | null {
 	if (key === 'lossless') {
-		const preference = legacyLosslessQuality(policy);
-		return LOSSLESS_PROJECTIONS[preference].map((quality) => ({
+		return LOSSLESS_PROJECTION.map((quality) => ({
 			format: 'flac',
 			quality
 		}));
@@ -559,7 +426,6 @@ function validStoredEntry(entry: QualityRecipeEntry): boolean {
 	}
 	if (entry.format === 'flac') {
 		if (entry.min_bitrate_kbps !== null && entry.min_bitrate_kbps !== undefined) return false;
-		if (entry.target_bitrate_kbps !== null && entry.target_bitrate_kbps !== undefined) return false;
 		if (entry.max_bitrate_kbps !== null && entry.max_bitrate_kbps !== undefined) return false;
 		if (entry.quality === 'custom') {
 			return customFlacError(entry.bit_depth, entry.sample_rate_hz) === null;
@@ -569,21 +435,15 @@ function validStoredEntry(entry: QualityRecipeEntry): boolean {
 	if (entry.bit_depth !== null && entry.bit_depth !== undefined) return false;
 	if (entry.sample_rate_hz !== null && entry.sample_rate_hz !== undefined) return false;
 	if (entry.quality === 'custom') {
-		return (
-			customMp3Error(entry.min_bitrate_kbps, entry.target_bitrate_kbps, entry.max_bitrate_kbps) ===
-			null
-		);
+		return customMp3Error(entry.min_bitrate_kbps, entry.max_bitrate_kbps) === null;
 	}
 	const canonical = standardRecipeEntry(
 		'mp3',
 		entry.quality as Exclude<QualityRecipeQuality, 'custom'>
 	);
 	return (
-		(entry.min_bitrate_kbps == null &&
-			entry.target_bitrate_kbps == null &&
-			entry.max_bitrate_kbps == null) ||
+		(entry.min_bitrate_kbps == null && entry.max_bitrate_kbps == null) ||
 		(entry.min_bitrate_kbps === canonical.min_bitrate_kbps &&
-			entry.target_bitrate_kbps === canonical.target_bitrate_kbps &&
 			entry.max_bitrate_kbps === canonical.max_bitrate_kbps)
 	);
 }
@@ -620,7 +480,7 @@ export function recipeFromPolicy(policy: DownloadPolicySettings): RecipeMigratio
 			message: metadata?.message ?? statusMessage(status)
 		};
 	}
-	const legacyEntries = legacyOrder(policy).map((key) => migrateLegacyEntries(key, policy));
+	const legacyEntries = legacyOrder(policy).map((key) => migrateLegacyEntries(key));
 	if (legacyEntries.some((entries) => entries === null)) {
 		return { recipe: [], status: 'invalid', message: statusMessage('invalid') };
 	}
@@ -681,52 +541,6 @@ export function legacyRangeFromRecipe(
 		if (LEGACY_TIER_RANK[tier] > LEGACY_TIER_RANK[maximum]) maximum = tier;
 	}
 	return { quality_min: minimum, quality_max: maximum };
-}
-
-/**
- * Canonical legacy tiers, best-first. Mirrors backend derive_default_order in
- * backend/services/native/acquisition/quality.py: slicing from quality_max
- * down to quality_min yields the exact accepted tier set for a range.
- */
-export const LEGACY_TIERS_BEST_FIRST = [
-	'lossless',
-	'mp3_320',
-	'mp3_256',
-	'mp3_192',
-	'low'
-] as const;
-
-export function deriveDefaultOrder(qualityMin: string, qualityMax: string): string[] {
-	const lo = LEGACY_TIERS_BEST_FIRST.indexOf(
-		qualityMax as (typeof LEGACY_TIERS_BEST_FIRST)[number]
-	);
-	const hi = LEGACY_TIERS_BEST_FIRST.indexOf(
-		qualityMin as (typeof LEGACY_TIERS_BEST_FIRST)[number]
-	);
-	if (lo === -1 || hi === -1 || lo > hi) return [];
-	return [...LEGACY_TIERS_BEST_FIRST.slice(lo, hi + 1)];
-}
-
-/**
- * Keep the stored preference order only when it contains exactly the tiers
- * accepted for the new range (any permutation, mirroring backend
- * normalize_order). Otherwise return [] so the backend derives/heals the
- * default instead of rejecting the save with a 400.
- */
-export function resolvePreferenceOrderForRange(
-	stored: readonly string[] | null | undefined,
-	qualityMin: string,
-	qualityMax: string
-): string[] {
-	const expected = deriveDefaultOrder(qualityMin, qualityMax);
-	const current = stored ?? [];
-	if (
-		current.length === expected.length &&
-		[...current].sort().join(',') === [...expected].sort().join(',')
-	) {
-		return [...current];
-	}
-	return [];
 }
 
 export function isRecipeMigrationStatus(

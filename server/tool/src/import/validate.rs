@@ -37,65 +37,189 @@ const VESTIGIAL_FIELDS: &[&str] = &[
     "cache_cleanup_interval",
 ];
 
-/// Explicit `advanced_settings` allowlist. The `cache_ttl_*` and
-/// `frontend_ttl_*` families are prefix rules handled separately.
+/// Explicit `advanced_settings` allowlist. Fields v3 removed are accepted
+/// too and reported as dropped ([`REMOVED_FIELDS`], [`REMOVED_PREFIXES`]).
 const ADVANCED_SETTINGS_KEPT: &[&str] = &[
-    "http_timeout",
-    "http_connect_timeout",
-    "http_max_connections",
-    "batch_artist_images",
-    "batch_albums",
-    "delay_artist",
-    "delay_albums",
-    "memory_cache_max_entries",
-    "memory_cache_cleanup_interval",
-    "cover_memory_cache_max_entries",
-    "cover_memory_cache_max_size_mb",
-    "disk_cache_cleanup_interval",
-    "recent_metadata_max_size_mb",
-    "recent_covers_max_size_mb",
-    "persistent_metadata_ttl_hours",
     "discover_queue_size",
-    "discover_queue_ttl",
     "discover_queue_auto_generate",
-    "discover_queue_polling_interval",
     "discover_queue_seed_artists",
     "discover_queue_wildcard_slots",
     "discover_queue_warm_cycle_build",
     "discover_queue_similar_artists_limit",
     "discover_queue_albums_per_similar",
-    "discover_queue_enrich_ttl",
     "discover_queue_lastfm_mbid_max_lookups",
     "discover_picks_count",
     "discover_picks_genre_affinity_weight",
     "audiodb_enabled",
     "audiodb_name_search_fallback",
     "audiodb_api_key",
-    "cache_ttl_audiodb_found",
-    "cache_ttl_audiodb_not_found",
-    "cache_ttl_audiodb_library",
     "prefer_local_cover_art",
     "direct_remote_images_enabled",
-    "genre_section_ttl",
-    "request_concurrency",
     "request_history_retention_days",
     "ignored_releases_retention_days",
-    "orphan_cover_demote_interval_hours",
     "store_prune_interval_hours",
-    "sync_stall_timeout_minutes",
-    "sync_max_timeout_hours",
-    "artist_discovery_precache_delay",
-    "artist_discovery_precache_concurrency",
-    "audiodb_prewarm_concurrency",
-    "audiodb_prewarm_delay",
 ];
 
 /// `_internal` allowlist.
-const INTERNAL_KEPT: &[&str] = &[
-    "plex_client_id",
-    "droppedneedle_device_id",
-    "brainzmash_consent_admin",
+const INTERNAL_KEPT: &[&str] = &["plex_client_id", "droppedneedle_device_id"];
+
+/// v2 settings sections v3 removed. An export carrying one imports, and
+/// the report lists it as a dropped setting.
+pub(crate) const REMOVED_SECTIONS: &[&str] = &["home_settings", "scrobble_settings"];
+
+/// v2 settings fields v3 removed from sections it keeps, as dotted paths
+/// from the section key. `name[]` walks every element of a list. An export
+/// carrying one imports without it, and the report lists each one dropped.
+pub(crate) const REMOVED_FIELDS: &[&str] = &[
+    "advanced_settings.http_timeout",
+    "advanced_settings.http_connect_timeout",
+    "advanced_settings.http_max_connections",
+    "advanced_settings.batch_artist_images",
+    "advanced_settings.batch_albums",
+    "advanced_settings.delay_artist",
+    "advanced_settings.delay_albums",
+    "advanced_settings.memory_cache_max_entries",
+    "advanced_settings.memory_cache_cleanup_interval",
+    "advanced_settings.cover_memory_cache_max_entries",
+    "advanced_settings.cover_memory_cache_max_size_mb",
+    "advanced_settings.disk_cache_cleanup_interval",
+    "advanced_settings.recent_metadata_max_size_mb",
+    "advanced_settings.recent_covers_max_size_mb",
+    "advanced_settings.persistent_metadata_ttl_hours",
+    "advanced_settings.discover_queue_ttl",
+    "advanced_settings.discover_queue_polling_interval",
+    "advanced_settings.discover_queue_enrich_ttl",
+    "advanced_settings.genre_section_ttl",
+    "advanced_settings.request_concurrency",
+    "advanced_settings.orphan_cover_demote_interval_hours",
+    "advanced_settings.sync_stall_timeout_minutes",
+    "advanced_settings.sync_max_timeout_hours",
+    "advanced_settings.artist_discovery_precache_delay",
+    "advanced_settings.artist_discovery_precache_concurrency",
+    "advanced_settings.audiodb_prewarm_concurrency",
+    "advanced_settings.audiodb_prewarm_delay",
+    "connect_apps.exact_track_approval_supported",
+    "connect_apps.discover_mode",
+    "wanted.dormant_after_days",
+    "download_policy.verify_downloads",
+    "download_policy.usenet_min_release_age_minutes",
+    "download_policy.source_selection_mode",
+    "download_policy.quality_preference_order",
+    "download_policy.preferred_lossy_bitrate_kbps",
+    "download_policy.lossy_min_bitrate_kbps",
+    "download_policy.lossy_max_bitrate_kbps",
+    "download_policy.lossless_preference",
+    "download_policy.lossless_max_bit_depth",
+    "download_policy.lossless_max_sample_rate_hz",
+    "download_policy.unknown_quality_behavior",
+    "download_policy.quality_recipe[].target_bitrate_kbps",
+    "download_client.client_type",
+    "download_client.verify_downloads",
+    "download_client.quality_min",
+    "download_client.quality_max",
+    "download_client.flac_mp3_only",
+    "download_client.preflight_score_auto_accept",
+    "download_client.preflight_score_manual_min",
+    "download_client.download_stall_timeout_minutes",
+    "download_client.download_queued_timeout_minutes",
+    "download_client.preferred_quality_wait_minutes",
+    "download_client.max_failover_attempts",
+    "download_client.max_concurrent_downloads",
+    "download_client.auto_retry_enabled",
+    "download_client.auto_retry_max_attempts",
+    "download_client.auto_retry_base_interval_minutes",
+    "download_clients.sabnzbd.client_type",
+    "download_clients.sabnzbd.post_processing",
+    "indexers[].type",
+    "library_scan_schedule.last_scan",
+    "library_scan_schedule.last_scan_success",
+    "musicbrainz_settings.concurrent_searches",
+    "plex_settings.scrobble_to_plex",
+    "_internal.brainzmash_consent_admin",
 ];
+
+/// Field families v3 removed whole, as (section, field prefix): every
+/// server and browser cache lifetime is fixed in code now.
+pub(crate) const REMOVED_PREFIXES: &[(&str, &str)] = &[
+    ("advanced_settings", "cache_ttl_"),
+    ("advanced_settings", "frontend_ttl_"),
+];
+
+/// True when `field`, directly under `section`, is a removed setting.
+fn is_removed_field(section: &str, field: &str) -> bool {
+    REMOVED_PREFIXES
+        .iter()
+        .any(|(owner, prefix)| *owner == section && field.starts_with(prefix))
+        || REMOVED_FIELDS.iter().any(|path| {
+            path.strip_prefix(section)
+                .and_then(|rest| rest.strip_prefix('.'))
+                == Some(field)
+        })
+}
+
+/// Take every removed setting out of one exported section, returning the
+/// path of each one taken (`download_policy.quality_recipe[0].target_bitrate_kbps`).
+pub(crate) fn strip_removed(section: &str, value: &mut Value) -> Vec<String> {
+    let mut taken = Vec::new();
+    for path in REMOVED_FIELDS {
+        let mut segments = path.split('.');
+        let Some(head) = segments.next() else {
+            continue;
+        };
+        let rest: Vec<&str> = segments.collect();
+        if head == section {
+            strip_path(value, &rest, section.to_owned(), &mut taken);
+        } else if head.strip_suffix("[]") == Some(section)
+            && let Some(items) = value.as_array_mut()
+        {
+            for (index, item) in items.iter_mut().enumerate() {
+                strip_path(item, &rest, format!("{section}[{index}]"), &mut taken);
+            }
+        }
+    }
+    if let Some(object) = value.as_object_mut() {
+        let family: Vec<String> = object
+            .keys()
+            .filter(|field| {
+                REMOVED_PREFIXES
+                    .iter()
+                    .any(|(owner, prefix)| *owner == section && field.starts_with(prefix))
+            })
+            .cloned()
+            .collect();
+        for field in family {
+            object.remove(&field);
+            taken.push(format!("{section}.{field}"));
+        }
+    }
+    taken
+}
+
+fn strip_path(value: &mut Value, segments: &[&str], at: String, taken: &mut Vec<String>) {
+    let Some((first, rest)) = segments.split_first() else {
+        return;
+    };
+    if let Some(list) = first.strip_suffix("[]") {
+        let Some(items) = value.get_mut(list).and_then(Value::as_array_mut) else {
+            return;
+        };
+        for (index, item) in items.iter_mut().enumerate() {
+            strip_path(item, rest, format!("{at}.{list}[{index}]"), taken);
+        }
+        return;
+    }
+    if rest.is_empty() {
+        if let Some(object) = value.as_object_mut()
+            && object.remove(*first).is_some()
+        {
+            taken.push(format!("{at}.{first}"));
+        }
+        return;
+    }
+    if let Some(child) = value.get_mut(*first) {
+        strip_path(child, rest, format!("{at}.{first}"), taken);
+    }
+}
 
 /// Known secret leaves: (section, dotted path inside the section). A
 /// non-empty bare string at one of these is an error; empties mean
@@ -818,6 +942,9 @@ fn validate_settings(settings: Option<&Value>, report: &mut ValidationReport) {
             ));
             continue;
         }
+        if REMOVED_SECTIONS.contains(&name.as_str()) {
+            continue;
+        }
         if !super::pipeline::REPLACE_UNIVERSE.contains(&name.as_str()) {
             report.warnings.push(ValidationIssue::new(
                 "UNKNOWN_SETTINGS_SECTION",
@@ -827,14 +954,10 @@ fn validate_settings(settings: Option<&Value>, report: &mut ValidationReport) {
             continue;
         }
         match name.as_str() {
-            "advanced_settings" => validate_allowlist(
-                section,
-                &path,
-                ADVANCED_SETTINGS_KEPT,
-                &["cache_ttl_", "frontend_ttl_"],
-                report,
-            ),
-            "_internal" => validate_allowlist(section, &path, INTERNAL_KEPT, &[], report),
+            "advanced_settings" => {
+                validate_allowlist(name, section, &path, ADVANCED_SETTINGS_KEPT, report)
+            }
+            "_internal" => validate_allowlist(name, section, &path, INTERNAL_KEPT, report),
             "indexers" => {
                 if !section.is_array() {
                     report.errors.push(ValidationIssue::new(
@@ -853,18 +976,17 @@ fn validate_settings(settings: Option<&Value>, report: &mut ValidationReport) {
 }
 
 fn validate_allowlist(
+    name: &str,
     section: &Value,
     path: &str,
     kept: &[&str],
-    prefixes: &[&str],
     report: &mut ValidationReport,
 ) {
     let Some(object) = section.as_object() else {
         return;
     };
     for field in object.keys() {
-        let allowed = kept.contains(&field.as_str())
-            || prefixes.iter().any(|prefix| field.starts_with(prefix));
+        let allowed = kept.contains(&field.as_str()) || is_removed_field(name, field);
         if !allowed {
             report.errors.push(ValidationIssue::new(
                 "SETTINGS_FIELD_NOT_ALLOWED",

@@ -455,47 +455,30 @@ async fn wrong_key_health_message_is_uniform_and_leaks_nothing() {
 
 #[test]
 fn recipe_validation_rejects_duplicates_and_overlaps() {
-    let flac_cd =
-        QualityRecipeEntry::new("flac", "cd", None, None, None, None, None).expect("valid");
+    let flac_cd = QualityRecipeEntry::new("flac", "cd", None, None, None, None).expect("valid");
     // Duplicate standard entries rejected (v2 `validate_quality_recipe`).
     assert!(validate_quality_recipe(&[flac_cd.clone(), flac_cd.clone()]).is_err());
     // MP3 ranges must not overlap.
-    let low = QualityRecipeEntry::new("mp3", "custom", Some(192), Some(200), Some(255), None, None)
-        .expect("valid");
+    let low =
+        QualityRecipeEntry::new("mp3", "custom", Some(192), Some(255), None, None).expect("valid");
     let overlapping =
-        QualityRecipeEntry::new("mp3", "custom", Some(200), Some(220), Some(256), None, None)
-            .expect("valid");
+        QualityRecipeEntry::new("mp3", "custom", Some(200), Some(256), None, None).expect("valid");
     assert!(validate_quality_recipe(&[low, overlapping]).is_err());
     // Closed formats only.
-    assert!(QualityRecipeEntry::new("ogg", "cd", None, None, None, None, None).is_err());
+    assert!(QualityRecipeEntry::new("ogg", "cd", None, None, None, None).is_err());
     // FLAC entries cannot define a bitrate; MP3 entries cannot define FLAC
     // resolution (v2).
     assert!(
-        QualityRecipeEntry::new("flac", "custom", Some(1), None, None, Some(16), Some(44100))
-            .is_err()
+        QualityRecipeEntry::new("flac", "custom", Some(1), None, Some(16), Some(44100)).is_err()
     );
     assert!(
-        QualityRecipeEntry::new(
-            "mp3",
-            "custom",
-            Some(192),
-            Some(192),
-            Some(255),
-            Some(16),
-            None
-        )
-        .is_err()
+        QualityRecipeEntry::new("mp3", "custom", Some(192), Some(255), Some(16), None).is_err()
     );
     // Standard MP3 entries canonicalise to their fixed bounds (v2).
-    let high =
-        QualityRecipeEntry::new("mp3", "320_plus", None, None, None, None, None).expect("valid");
+    let high = QualityRecipeEntry::new("mp3", "320_plus", None, None, None, None).expect("valid");
     assert_eq!(
-        (
-            high.min_bitrate_kbps,
-            high.target_bitrate_kbps,
-            high.max_bitrate_kbps
-        ),
-        (Some(320), Some(320), None)
+        (high.min_bitrate_kbps, high.max_bitrate_kbps),
+        (Some(320), None)
     );
 }
 

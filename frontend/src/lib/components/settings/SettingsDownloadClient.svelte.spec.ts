@@ -14,13 +14,8 @@ vi.mock('$lib/queries/downloads/DownloadClientQueries.svelte', () => ({
 	getDownloadClientConfigQuery: () => ({
 		data: {
 			enabled: false,
-			client_type: 'slskd',
 			url: 'http://slskd:5030',
 			api_key: '********',
-			verify_downloads: true,
-			min_bitrate_kbps: 128,
-			preflight_score_auto_accept: 0.7,
-			preflight_score_manual_min: 0.5,
 			downloads_subpath: '',
 			slskd_incomplete_mount: ''
 		},

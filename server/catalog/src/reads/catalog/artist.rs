@@ -20,7 +20,10 @@ use super::models::{
     CatalogSource, ExternalLink, LastFmArtistEnrichment, LastFmSimilarArtist, LastFmTag, LifeSpan,
     PluginDetails, PurchaseLink, ReleaseItem,
 };
-use super::{Catalog, MISS_TTL, is_mbid, mb_error, mb_retry, record_mb_down, secs};
+use super::{
+    AUDIODB_FOUND_TTL, AUDIODB_MISSING_TTL, Catalog, MISS_TTL, is_mbid, mb_error, mb_retry,
+    record_mb_down,
+};
 use crate::reads::collections::state::AutoDownloadState;
 
 /// Most discography pages fetched per artist (v2 `_MAX_RG_PAGES`).
@@ -198,14 +201,8 @@ struct AudioDbArtistEntry {
     images: Option<ArtistImages>,
 }
 
-fn artist_ttl(catalog: &Catalog, in_library: bool) -> Duration {
-    let advanced = catalog.upstream().settings().advanced();
-    secs(if in_library {
-        advanced.cache_ttl_artist_library
-    } else {
-        advanced.cache_ttl_artist_non_library
-    })
-}
+/// An artist page, in the library or not, kept for six hours.
+const ARTIST_TTL: Duration = Duration::from_secs(6 * 3600);
 
 /// Validate and lowercase an MBID from a path.
 pub(super) fn checked_mbid(raw: &str, what: &str) -> Result<String, CatalogError> {
@@ -254,11 +251,7 @@ impl Catalog {
                 None => Ok((None, Some(MISS_TTL))),
                 Some(lookup) => {
                     let detail = ArtistDetail::from_wire(lookup.entity);
-                    let owned = catalog
-                        .artist_flags(std::slice::from_ref(&detail.mbid))
-                        .await;
-                    let ttl = artist_ttl(&catalog, !owned.is_empty());
-                    Ok((Some(detail), Some(ttl)))
+                    Ok((Some(detail), Some(ARTIST_TTL)))
                 }
             }
         })
@@ -450,11 +443,9 @@ impl Catalog {
                     clearart_url: artist.clearart,
                     cutout_url: artist.cutout,
                 }),
-                secs(advanced.cache_ttl_audiodb_found),
+                AUDIODB_FOUND_TTL,
             ),
-            droppedneedle_providers::audiodb::Outcome::Missing => {
-                (None, secs(advanced.cache_ttl_audiodb_not_found))
-            }
+            droppedneedle_providers::audiodb::Outcome::Missing => (None, AUDIODB_MISSING_TTL),
             // Already recorded by the client; nothing cached so the next
             // visit tries again.
             droppedneedle_providers::audiodb::Outcome::Unavailable { .. } => return None,
@@ -545,7 +536,7 @@ impl Catalog {
                     description: description.ok().flatten().filter(|text| !text.is_empty()),
                     image: image.ok().flatten(),
                 };
-                let ttl = (!failed).then(|| artist_ttl(&catalog, false));
+                let ttl = (!failed).then_some(ARTIST_TTL);
                 Ok((biography, ttl))
             })
             .await;
@@ -588,7 +579,7 @@ impl Catalog {
                     .map(ReleaseGroupItem::from_wire)
                     .collect();
                 if total <= items.len() as u64 {
-                    let ttl = artist_ttl(&catalog, false);
+                    let ttl = ARTIST_TTL;
                     return Ok((
                         ReleaseGroupList {
                             items,
@@ -694,7 +685,7 @@ impl Catalog {
             .map_err(|error| CatalogError::Internal(format!("discography encode: {error}")))?;
         self.upstream()
             .cache()
-            .set_bytes(key, bytes, artist_ttl(self, false))
+            .set_bytes(key, bytes, ARTIST_TTL)
             .await;
         Ok(())
     }

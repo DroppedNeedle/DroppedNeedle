@@ -63,6 +63,7 @@ use droppedneedle_catalog::reads::{
         CollectionsState, db::CollectionsDb, remote_import::PlaylistImportSink, store::Stores,
     },
     enrichment::{library::LiveEnrichment, live::production_enrichment},
+    library::{lookups::SqliteLookups, sqlite::LibraryDb},
     platform::artwork::ArtworkService,
 };
 use droppedneedle_compat::{CompatSetup, setup::CompatDeps};
@@ -469,20 +470,27 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     {
         tracing::warn!("the settings effects loop was already running");
     }
-    let settings = SettingsSetup::build(p, effects, &outbound, library.management_settings.clone())
-        .with_section_prefs(
-            Arc::new(SqliteSectionPrefsStore { db: db.clone() }),
-            Arc::new(SqliteLinkStatus {
-                pool: db.sqlx().clone(),
-                lastfm: auth.users.lastfm.clone(),
-            }),
-        )
-        .with_impact_buckets(Arc::new(SqliteImpactBuckets {
+    let scans = Arc::new(SqliteLookups::new(&LibraryDb::new(db.sqlx())));
+    let settings = SettingsSetup::build(
+        p,
+        effects,
+        &outbound,
+        library.management_settings.clone(),
+        scans,
+    )
+    .with_section_prefs(
+        Arc::new(SqliteSectionPrefsStore { db: db.clone() }),
+        Arc::new(SqliteLinkStatus {
             pool: db.sqlx().clone(),
-        }))
-        .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
-            pool: db.sqlx().clone(),
-        }));
+            lastfm: auth.users.lastfm.clone(),
+        }),
+    )
+    .with_impact_buckets(Arc::new(SqliteImpactBuckets {
+        pool: db.sqlx().clone(),
+    }))
+    .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
+        pool: db.sqlx().clone(),
+    }));
     let plugins = PluginsSetup::build(
         p,
         plugin_host,

@@ -61,10 +61,6 @@ pub struct LibraryScanSchedule {
     pub scan_frequency: ScanFrequency,
     /// Server-local `HH:MM` used when `scan_frequency` is `daily`.
     pub daily_scan_time: String,
-    /// Unix time of the last scan, if any.
-    pub last_scan: Option<i64>,
-    /// Whether the last scan succeeded.
-    pub last_scan_success: bool,
 }
 
 impl Default for LibraryScanSchedule {
@@ -72,8 +68,6 @@ impl Default for LibraryScanSchedule {
         Self {
             scan_frequency: ScanFrequency::Hr24,
             daily_scan_time: "03:00".to_owned(),
-            last_scan: None,
-            last_scan_success: true,
         }
     }
 }

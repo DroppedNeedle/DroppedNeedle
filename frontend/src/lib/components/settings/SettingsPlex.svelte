@@ -5,7 +5,6 @@
 	import { api } from '$lib/api/client';
 	import { PLEX_ENDPOINTS } from '$lib/queries/plex/endpoints';
 	import { pollPlexFlow, startPlexFlow } from '$lib/queries/plex/PlexFlowApi';
-	import { resetPlexScrobblePreference } from '$lib/player/plexPlaybackApi';
 	import type { components } from '$lib/api/v3/openapi';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
@@ -49,7 +48,6 @@
 
 	async function save() {
 		await form.save();
-		resetPlexScrobblePreference();
 	}
 
 	async function test() {
@@ -210,12 +208,6 @@
 					</p>
 				</fieldset>
 			{/if}
-
-			<ToggleRow
-				label="Scrobble to Plex"
-				description="Send your listening history back to Plex."
-				bind:checked={form.data.scrobble_to_plex}
-			/>
 
 			{#if form.testResult}
 				<div

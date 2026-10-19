@@ -31,8 +31,6 @@
 		recipeWithIds,
 		standardEntryDuplicate,
 		standardRecipeEntry,
-		UNKNOWN_BEHAVIOR_OPTIONS,
-		unknownQualitySummary,
 		validateRecipeEntry,
 		type PresetKey,
 		type RecipeDraftEntry,
@@ -45,10 +43,8 @@
 	const FORMAT_ICONS = { flac: Disc3, mp3: Music2 } as const;
 	interface Props {
 		qualityRecipe: RecipeDraftEntry[];
-		unknownQualityBehavior: string;
 		baseline?: string | null;
 		baselineRecipe?: readonly QualityRecipeEntry[];
-		baselineUnknownQualityBehavior?: string;
 		migrationStatus?: RecipeMigrationStatus | null;
 		migrationMessage?: string | null;
 		saving?: boolean;
@@ -57,10 +53,8 @@
 
 	let {
 		qualityRecipe = $bindable(),
-		unknownQualityBehavior = $bindable(),
 		baseline = null,
 		baselineRecipe = [],
-		baselineUnknownQualityBehavior = 'allow_as_fallback',
 		migrationStatus = null,
 		migrationMessage = null,
 		saving = false,
@@ -72,7 +66,6 @@
 	let customFlacBitDepth = $state('');
 	let customFlacSampleRate = $state('');
 	let customMp3Min = $state('');
-	let customMp3Target = $state('');
 	let customMp3Max = $state('');
 	let editingId = $state<string | null>(null);
 	let editingFormat = $state<'flac' | 'mp3' | null>(null);
@@ -82,22 +75,19 @@
 	let focusId = $state<string | null>(null);
 	let recipeSequence = $state(0);
 
-	const currentFingerprint = $derived(recipeFingerprint(qualityRecipe, unknownQualityBehavior));
+	const currentFingerprint = $derived(recipeFingerprint(qualityRecipe));
 	const dirty = $derived(baseline !== null && currentFingerprint !== baseline);
 	const selectedPreset = $derived(
-		PRESET_KEYS.find((key) => presetMatches(qualityRecipe, unknownQualityBehavior, PRESETS[key]))
+		PRESET_KEYS.find((key) => presetMatches(qualityRecipe, PRESETS[key]))
 	);
 	const savedPreset = $derived.by(() => {
 		if (baseline === null) return undefined;
 		return PRESET_KEYS.find(
-			(key) =>
-				recipeFingerprint(baselineRecipe, baselineUnknownQualityBehavior) ===
-				recipeFingerprint(PRESETS[key].recipe, PRESETS[key].unknown_quality_behavior)
+			(key) => recipeFingerprint(baselineRecipe) === recipeFingerprint(PRESETS[key].recipe)
 		);
 	});
 	const pendingPresetLabel = $derived(pendingPresetKey ? PRESETS[pendingPresetKey].label : '');
 	const summary = $derived(recipeSummary(qualityRecipe));
-	const liveSummary = $derived(`${summary} ${unknownQualitySummary(unknownQualityBehavior)}`);
 	const migrationAlert = $derived(
 		migrationStatus === 'v1' ||
 			migrationStatus === 'invalid' ||
@@ -132,7 +122,6 @@
 				format: 'mp3',
 				quality: 'custom',
 				min_bitrate_kbps: Number(customMp3Min),
-				target_bitrate_kbps: Number(customMp3Target),
 				max_bitrate_kbps: Number(customMp3Max)
 			};
 		}
@@ -174,7 +163,6 @@
 	function applyPreset(key: PresetKey) {
 		const preset = PRESETS[key];
 		qualityRecipe = recipeWithIds(preset.recipe);
-		unknownQualityBehavior = preset.unknown_quality_behavior;
 		editingId = null;
 		editingFormat = null;
 		resetForm();
@@ -191,7 +179,6 @@
 		customFlacBitDepth = '';
 		customFlacSampleRate = '';
 		customMp3Min = '';
-		customMp3Target = '';
 		customMp3Max = '';
 	}
 
@@ -208,7 +195,6 @@
 			mp3Quality = entry.quality as Mp3Quality;
 			if (entry.quality === 'custom') {
 				customMp3Min = String(entry.min_bitrate_kbps ?? '');
-				customMp3Target = String(entry.target_bitrate_kbps ?? '');
 				customMp3Max = String(entry.max_bitrate_kbps ?? '');
 			}
 		}
@@ -289,7 +275,6 @@
 		if (ondiscard) ondiscard();
 		else {
 			qualityRecipe = recipeWithIds(baselineRecipe);
-			unknownQualityBehavior = baselineUnknownQualityBehavior;
 		}
 		editingId = null;
 		editingFormat = null;
@@ -314,7 +299,7 @@
 </script>
 
 <div class="flex min-w-0 flex-col gap-5" data-motion="quality-recipe">
-	<p class="sr-only" role="status" aria-live="polite">{liveSummary}</p>
+	<p class="sr-only" role="status" aria-live="polite">{summary}</p>
 
 	{#if migrationAlert}
 		<div class="alert alert-warning items-start" role="alert">
@@ -395,10 +380,6 @@
 		{:else}
 			<p class="mt-2 text-xs text-base-content/55">No recipe entries yet.</p>
 		{/if}
-		<p class="mt-2 text-xs leading-5 text-base-content/55">
-			{unknownQualitySummary(unknownQualityBehavior)} This applies when a complete album cannot map to
-			exactly one recipe entry; it is not another preference position.
-		</p>
 	</section>
 
 	<section aria-label="Ordered quality recipe">
@@ -471,9 +452,7 @@
 										>{/if}
 								</div>
 								{#if entry.format === 'mp3' && entry.quality === 'custom'}
-									<p class="mt-1 text-xs text-base-content/55">
-										Inclusive range; target {entry.target_bitrate_kbps} kbps
-									</p>
+									<p class="mt-1 text-xs text-base-content/55">Inclusive range</p>
 								{:else if entry.format === 'flac' && entry.quality === 'custom'}
 									<p class="mt-1 text-xs text-base-content/55">Exact detail match</p>
 								{/if}
@@ -660,13 +639,13 @@
 					<span class="min-w-0"
 						><span class="block text-sm font-medium">Custom</span><span
 							class="block text-xs leading-4 text-base-content/55"
-							>Inclusive minimum, target, and maximum</span
+							>Inclusive minimum and maximum</span
 						></span
 					>
 				</label>
 			</div>
 			{#if mp3Quality === 'custom'}
-				<div class="grid min-w-0 gap-2 sm:grid-cols-3">
+				<div class="grid min-w-0 gap-2 sm:grid-cols-2">
 					<label class="flex min-w-0 flex-col gap-1"
 						><span class="text-xs text-base-content/70">Minimum (kbps)</span><Input
 							label="Custom MP3 minimum bitrate"
@@ -678,19 +657,6 @@
 							step="1"
 							placeholder="16-2048"
 							bind:value={customMp3Min}
-						/></label
-					>
-					<label class="flex min-w-0 flex-col gap-1"
-						><span class="text-xs text-base-content/70">Target (kbps)</span><Input
-							label="Custom MP3 target bitrate"
-							type="number"
-							size="sm"
-							class="w-full"
-							min="16"
-							max="2048"
-							step="1"
-							placeholder="16-2048"
-							bind:value={customMp3Target}
 						/></label
 					>
 					<label class="flex min-w-0 flex-col gap-1"
@@ -727,31 +693,6 @@
 			</div>
 		</fieldset>
 	</div>
-
-	<fieldset class="fieldset min-w-0 border-t border-base-300 pt-4">
-		<legend class="fieldset-legend">Unknown or incomplete quality</legend>
-		<div class="grid gap-2 lg:grid-cols-3">
-			{#each UNKNOWN_BEHAVIOR_OPTIONS as option (option.value)}
-				<label
-					class="flex min-w-0 cursor-pointer items-start gap-2 rounded-lg border border-base-300 px-3 py-2 min-h-11 transition-colors motion-reduce:transition-none hover:border-primary/50"
-				>
-					<input
-						type="radio"
-						class="radio radio-sm mt-0.5"
-						name="unknown-quality-behavior"
-						value={option.value}
-						checked={unknownQualityBehavior === option.value}
-						onchange={() => (unknownQualityBehavior = option.value)}
-					/>
-					<span class="min-w-0"
-						><span class="block text-sm font-medium">{option.label}</span><span
-							class="block text-xs leading-4 text-base-content/55">{option.detail}</span
-						></span
-					>
-				</label>
-			{/each}
-		</div>
-	</fieldset>
 
 	{#if editingId}
 		<div
