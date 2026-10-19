@@ -44,7 +44,7 @@
 		}
 		if (method === 'search.preview') {
 			const query = typeof params.query === 'string' ? params.query.slice(0, 200) : '';
-			return api.global.get<unknown>(
+			return api.global.v3.GET(
 				PLUGIN_ENDPOINTS.ext(pluginName, 'search', query ? { query } : undefined),
 				{ signal }
 			);

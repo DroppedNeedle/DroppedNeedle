@@ -1573,20 +1573,7 @@ export interface ContributionSourceSelection {
 	alignments: ContributionTrackAlignment[];
 }
 
-export interface DiscogsReleaseCandidate {
-	release_id: string;
-	title: string;
-	artist_name: string;
-	canonical_url: string;
-	year: number | null;
-	country: string | null;
-	label: string | null;
-	catalogue_number: string | null;
-	format_summary: string | null;
-	track_count: number | null;
-	master_id: string | null;
-	fetched_at: number;
-}
+export type DiscogsReleaseCandidate = components['schemas']['DiscogsReleaseCandidate'];
 
 export interface DiscogsArtistCredit {
 	name: string;
@@ -1675,18 +1662,9 @@ export interface ContributionDuplicateResult {
 	different_edition_confirmed: boolean;
 }
 
-export interface MusicBrainzSeedField {
-	name: string;
-	value: string;
-}
+export type MusicBrainzSeedField = components['schemas']['MusicBrainzSeedField'];
 
-export interface MusicBrainzSeed {
-	action_url: string;
-	method: 'POST';
-	fields: MusicBrainzSeedField[];
-	contribution_revision: number;
-	expires_at: number;
-}
+export type MusicBrainzSeed = components['schemas']['MusicBrainzSeed'];
 
 export interface ContributionValidationIssue {
 	code: string;
@@ -1818,26 +1796,11 @@ export interface TargetCatalogRemovalResponse {
 export type AlbumEditionItem = components['schemas']['AlbumEditionItem'];
 export type AlbumEditionsResponse = components['schemas']['AlbumEditionsResponse'];
 
-export interface CutoffUnmetItem {
-	release_group_mbid: string;
-	current_tier: string;
-	track_count: number;
-	artist_name: string | null;
-	artist_mbid: string | null;
-	album_title: string | null;
-	year: number | null;
-}
+export type CutoffUnmetItem = components['schemas']['CutoffUnmetItem'];
 
-export interface CutoffUnmetResponse {
-	items: CutoffUnmetItem[];
-	cutoff: string;
-	upgrade_allowed: boolean;
-}
+export type CutoffUnmetResponse = components['schemas']['CutoffUnmetResponse'];
 
-export interface UpgradeRequestResponse {
-	status: 'queued' | 'satisfied';
-	task_id: string | null;
-}
+export type UpgradeRequestResponse = components['schemas']['UpgradeRequestResponse'];
 
 export interface LibraryStats {
 	total_albums: number;
@@ -2121,151 +2084,29 @@ export interface PluginUiRpcResponse {
 
 export type DownloadStatus = components['schemas']['TaskStatus'];
 
-// mirrors backend DownloadTaskResponse (api/v1/schemas/download.py)
-export interface DownloadTask {
-	id: string;
-	user_id: string;
-	download_type: string;
-	// "soulseek" | "usenet" - drives the source badge + the "via album NZB" label.
-	// Optional for backward-compat with cached/older responses.
-	source?: string;
-	release_group_mbid: string;
-	release_mbid: string | null;
-	release_track_mbid: string | null;
-	recording_mbid: string | null;
-	// Backfilled from the release group at request time; older tasks predating the
-	// backfill (or one MusicBrainz couldn't resolve) have no artist link.
-	artist_mbid?: string | null;
-	artist_name: string;
-	album_title: string;
-	track_title: string | null;
-	year: number | null;
-	status: DownloadStatus;
-	progress_percent: number;
-	total_size_bytes: number | null;
-	downloaded_bytes: number;
-	files_total: number;
-	files_completed: number;
-	files_failed: number;
-	source_username: string | null;
-	search_job_id: string | null;
-	candidate_index: number | null;
-	preflight_score: number | null;
-	final_path: string | null;
-	error_message: string | null;
-	retry_count: number;
-	created_at: number;
-	updated_at: number;
-	completed_at: number | null;
-	next_retry_at: number | null;
-	retry_max: number;
-	// The full auto-retry backoff schedule in minutes for this task's max attempts, e.g.
-	// [15, 30, 60, 120, 240, 480]. Empty when auto-retry is off. Drives the Wanted ladder.
-	retry_ladder_minutes: number[];
-	acquisition_cleanup_state:
-		'not_tracked' | 'in_use' | 'pending' | 'complete' | 'preserved' | 'needs_attention';
-	quality_format: string | null;
-	quality_bitrate?: number | null;
-	quality_bit_depth: number | null;
-	quality_sample_rate: number | null;
-	/** Acquisition-quality projection (Acquisition plan). */
+// The source status still reads the quality projection and the fallback time,
+// which the server does not send; they stay optional until it does or the
+// screen stops reading them.
+export type DownloadTask = components['schemas']['DownloadTaskResponse'] & {
+	preferred_quality_fallback_at?: number | null;
 	quality_snapshot_summary?: string | null;
-	quality_snapshot_hash?: string | null;
 	quality_preference_step?: number | null;
 	quality_certainty?: string | null;
 	quality_provenance?: string | null;
 	manual_quality_override?: boolean;
-	advertised_queue_depth: number | null;
-	queue_position_start: number | null;
-	queue_position_end: number | null;
-	remote_queued: boolean;
-	preferred_quality_fallback_at: number | null;
-	attempt_number: number;
-	attempt_total: number;
-	has_next_source: boolean;
-	held_for_review: boolean;
-	// Wrong-product verdict (Slice 2). Optional for backward-compat with cached responses.
-	wrong_product_verdict_at?: number | null;
-	wrong_product_detail?: string | null;
-	// Why the task sits where it does: one stable code, one plain sentence and what
-	// to do about it. Shown instead of the raw error_message.
-	reason?: DownloadReason | null;
-	// What the import decided about the newest landing.
-	decision?: DownloadImportDecision | null;
-}
+};
 
-export interface DownloadReason {
-	code: string;
-	text: string;
-	action: string;
-}
+export type DownloadReason = components['schemas']['DownloadReason'];
 
-export interface DownloadImportDecision {
-	outcome: 'imported' | 'partial' | 'held' | 'rejected' | 'deferred' | string;
-	reason_code: string | null;
-	reason_text: string | null;
-	reason_action: string | null;
-	detail: string | null;
-	files_total: number;
-	files_imported: number;
-	files_held: number;
-	decided_at: number;
-}
+export type DownloadImportDecision = components['schemas']['ImportDecisionView'];
 
-export interface DownloadListResponse {
-	items: DownloadTask[];
-	page: number;
-	page_size: number;
-}
+export type DownloadListResponse = components['schemas']['DownloadListResponse'];
 
-// mirrors backend DownloadActivitySummaryResponse (api/v1/schemas/download.py)
-export interface DownloadActivitySummary {
-	revision: number;
-	active_count: number;
-	held_count: number;
-	failed_count: number;
-	landed_release_group_mbids: string[];
-}
+export type DownloadActivitySummary = components['schemas']['DownloadActivitySummaryResponse'];
 
-// A downloaded track that matched by duration but failed the AcoustID recording-identity
-// check (usually wrong MusicBrainz metadata). Held for a human "import anyway" / "discard"
-// decision instead of being dropped. `evidence_*` is what AcoustID heard.
-export interface HeldImport {
-	id: number;
-	release_group_mbid: string | null;
-	release_mbid: string | null;
-	release_track_mbid: string | null;
-	recording_mbid: string | null;
-	track_number: number | null;
-	disc_number: number | null;
-	track_title: string | null;
-	artist_name: string | null;
-	album_title: string | null;
-	year: number | null;
-	original_filename: string | null;
-	file_format: string | null;
-	duration_seconds: number | null;
-	expected_duration_seconds: number | null;
-	reason: string;
-	/** The reason as one plain sentence, and what to do about it. */
-	reason_text: string | null;
-	reason_action: string | null;
-	reason_detail: string | null;
-	source: string;
-	source_task_id: string | null;
-	/** `upgrade` files replace the library's copy only when better. */
-	origin: string;
-	created_at: number;
-	evidence_title: string | null;
-	evidence_artist: string | null;
-	evidence_score: number | null;
-	management_retry_count: number;
-	management_next_retry_at: number | null;
-}
+export type HeldImport = components['schemas']['HeldImportResponse'];
 
-export interface HeldListResponse {
-	items: HeldImport[];
-}
+export type HeldListResponse = components['schemas']['HeldListResponse'];
 
 export interface DownloadSourceUpdate {
 	candidate_index: number | null;
@@ -2339,39 +2180,7 @@ export interface TrackRequestResponse {
 	task_id?: string | null;
 }
 
-export interface CancelDownloadResponse {
-	success: boolean;
-	status?: string;
-}
-
-export interface NextSourceResponse {
-	success: boolean;
-	status: string;
-	candidate_index: number;
-}
-
-export interface RetryDownloadResponse {
-	success: boolean;
-	task_id: string;
-}
-
-export interface QuarantineEntry {
-	id: number;
-	source?: string;
-	client_id: string;
-	username: string;
-	filename: string;
-	reason: string;
-	// The reason as a plain sentence.
-	reason_text?: string;
-	quarantined_at: number;
-	release_group_mbid?: string | null;
-}
-
-export interface QuarantineListResponse {
-	items: QuarantineEntry[];
-	page: number;
-}
+export type QuarantineListResponse = components['schemas']['QuarantineListResponse'];
 
 // Connect Apps (inbound OpenSubsonic + Jellyfin compatibility)
 export interface ConnectAppsSettings {

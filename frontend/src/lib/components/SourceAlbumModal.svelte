@@ -174,19 +174,17 @@
 		try {
 			if (sourceType === 'jellyfin') {
 				const jfAlbum = album as JellyfinAlbumSummary;
-				const page = await remoteApi.albumTracks('jellyfin', jfAlbum.jellyfin_id, { limit: 500 });
+				const page = await remoteApi.albumTracks('jellyfin', jfAlbum.jellyfin_id);
 				if (id !== fetchId) return;
 				jellyfinTracks = page.items.map(toJellyfinTrack);
 			} else if (sourceType === 'navidrome') {
 				const ndAlbum = album as NavidromeAlbumSummary;
-				const page = await remoteApi.albumTracks('navidrome', ndAlbum.navidrome_id, {
-					limit: 500
-				});
+				const page = await remoteApi.albumTracks('navidrome', ndAlbum.navidrome_id);
 				if (id !== fetchId) return;
 				navidromeTracks = page.items.map(toNavidromeTrack);
 			} else if (sourceType === 'plex') {
 				const plexAlbum = album as PlexAlbumSummary;
-				const page = await remoteApi.albumTracks('plex', plexAlbum.plex_id, { limit: 500 });
+				const page = await remoteApi.albumTracks('plex', plexAlbum.plex_id);
 				if (id !== fetchId) return;
 				plexTracks = page.items.map(toPlexTrack);
 			} else {

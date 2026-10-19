@@ -9,7 +9,7 @@ import { toastStore } from '$lib/stores/toast';
 
 import { DropImportQueryKeyFactory } from './DropImportQueryKeyFactory';
 import { DROP_IMPORT_ENDPOINTS } from './endpoints';
-import type { DropImportItem, DropImportJob } from './types';
+import type { DropImportJob } from './types';
 
 const invalidateJobs = () =>
 	invalidateQueriesWithPersister({ queryKey: DropImportQueryKeyFactory.prefix });
@@ -41,7 +41,7 @@ export const uploadDropMutation = () =>
 export const matchDropItemMutation = () =>
 	createMutation(() => ({
 		mutationFn: ({ itemId, releaseGroupMbid }: { itemId: number; releaseGroupMbid: string }) =>
-			api.global.post<DropImportItem>(DROP_IMPORT_ENDPOINTS.match(itemId), {
+			api.global.v3.POST(DROP_IMPORT_ENDPOINTS.match(itemId), {
 				release_group_mbid: releaseGroupMbid
 			}),
 		onSuccess: async (item) => {
@@ -62,8 +62,7 @@ export const matchDropItemMutation = () =>
 
 export const discardDropItemMutation = () =>
 	createMutation(() => ({
-		mutationFn: (itemId: number) =>
-			api.global.post<DropImportItem>(DROP_IMPORT_ENDPOINTS.discard(itemId)),
+		mutationFn: (itemId: number) => api.global.v3.POST(DROP_IMPORT_ENDPOINTS.discard(itemId)),
 		onSuccess: async () => {
 			toastStore.show({ message: 'Discarded.', type: 'info' });
 			await invalidateJobs();

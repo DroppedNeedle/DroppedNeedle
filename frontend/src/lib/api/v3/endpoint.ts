@@ -11,31 +11,36 @@ type ExtractPathParams<T extends string> = T extends `${string}{${infer Param}}$
 /** Exact path params parsed from the template: missing or spare keys fail the build. */
 export type V3PathParams<T extends V3Path> = Record<ExtractPathParams<T>, string | number>;
 
-export type V3QueryValue =
-	| string
-	| number
-	| boolean
-	| null
-	| undefined
-	| ReadonlyArray<string | number | boolean | null | undefined>;
-export type V3Query = Record<string, V3QueryValue>;
+type V3Method = 'get' | 'put' | 'post' | 'delete' | 'patch' | 'head';
+
+type OperationQuery<Op> = Op extends { parameters: { query?: infer Q } } ? Q : never;
 
 /**
- * Params for one endpoint: path values are exact per the template, query
- * values stay a free-form record (schemas vary by method; the serializer
- * still encodes them correctly).
+ * The query parameters the contract lists for a route, across its methods
+ * (the builder does not know which method will send the URL). `never` when
+ * no method takes a query.
  */
-export type V3RequestParams<T extends V3Path> = [ExtractPathParams<T>] extends [never]
-	? { path?: never; query?: V3Query }
-	: { path: V3PathParams<T>; query?: V3Query };
+export type V3QueryOf<T extends V3Path> = NonNullable<
+	{ [M in V3Method]: OperationQuery<paths[T][M]> }[V3Method]
+>;
+
+type V3QueryParam<T extends V3Path> = [V3QueryOf<T>] extends [never]
+	? { query?: never }
+	: { query?: V3QueryOf<T> };
+
+/** Params for one endpoint: path values exact per the template, query typed from the contract. */
+export type V3RequestParams<T extends V3Path> = ([ExtractPathParams<T>] extends [never]
+	? { path?: never }
+	: { path: V3PathParams<T> }) &
+	V3QueryParam<T>;
 
 declare const v3Brand: unique symbol;
 
 /**
  * A ready-to-send v3 URL string, branded with its generated template. It is
- * an ordinary string at runtime, so it flows through the untyped api client
- * and every string context unchanged; the typed v3 client reads the brand to
- * infer the response type.
+ * an ordinary string at runtime, so it flows through `raw`, `head` and every
+ * string context unchanged; the typed v3 client reads the brand to infer the
+ * response type.
  */
 export type V3Url<T extends V3Path = V3Path> = string & { readonly [v3Brand]: T };
 
@@ -67,4 +72,17 @@ export function v3<const T extends V3Path>(template: T, ...args: V3EndpointArgs<
 		pathSerializer: defaultPathSerializer,
 		querySerializer
 	}) as V3Url<T>;
+}
+
+/**
+ * Append a query the contract does not list, for a pass-through route whose
+ * server forwards the query unchanged. Serializes like `v3()` and keeps the
+ * URL's brand.
+ */
+export function withRawQuery<T extends V3Path>(
+	url: V3Url<T>,
+	query: Record<string, string | number | boolean | undefined> | undefined
+): V3Url<T> {
+	const search = query ? querySerializer(query) : '';
+	return (search ? `${url}?${search}` : url) as V3Url<T>;
 }

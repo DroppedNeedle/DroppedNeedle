@@ -24,7 +24,7 @@
 	import { Tv } from 'lucide-svelte';
 
 	async function fetchAlbumTracks(albumId: string) {
-		const page = await remoteApi.albumTracks('jellyfin', albumId, { limit: 500 });
+		const page = await remoteApi.albumTracks('jellyfin', albumId);
 		return page.items.map(toJellyfinTrack);
 	}
 

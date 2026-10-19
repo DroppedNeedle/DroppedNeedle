@@ -11,8 +11,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use std::collections::HashMap;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 use super::super::federated::users::{PROVIDER_JELLYFIN, PROVIDER_PLEX};
 use super::UsersDeps;
@@ -472,25 +471,43 @@ pub async fn lastfm_unlink(
         .map_err(ApiError::from)
 }
 
+/// Paging for the admin user list. A value that is not a whole number is
+/// ignored, the same as leaving it out.
+#[derive(Debug, serde::Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct AdminUsersQuery {
+    /// Rows per page, 1 to 100 (default 100).
+    #[serde(default, deserialize_with = "lenient_u64")]
+    #[param(value_type = Option<u64>)]
+    pub limit: Option<u64>,
+    /// Rows to skip (default 0).
+    #[serde(default, deserialize_with = "lenient_u64")]
+    #[param(value_type = Option<u64>)]
+    pub offset: Option<u64>,
+}
+
+fn lenient_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value: Option<String> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(value.and_then(|value| value.parse::<u64>().ok()))
+}
+
 /// Admin user listing, paged.
 #[utoipa::path(
     get,
     tag = "users",
     path = "/api/v3/admin/users",
+    params(AdminUsersQuery),
     responses((status = 200, description = "User page", body = AdminUserListResponse))
 )]
 pub async fn admin_list_users(
     State(deps): State<UsersDeps>,
     admin: Admin,
-    ValidQuery(query): ValidQuery<HashMap<String, String>>,
+    ValidQuery(query): ValidQuery<AdminUsersQuery>,
 ) -> Result<Json<AdminUserListResponse>, ApiError> {
-    let limit = query
-        .get("limit")
-        .and_then(|value| value.parse::<u64>().ok());
-    let offset = query
-        .get("offset")
-        .and_then(|value| value.parse::<u64>().ok());
-    let (limit, offset) = services::clamp_admin_page(limit, offset);
+    let (limit, offset) = services::clamp_admin_page(query.limit, query.offset);
     services::admin_list_users(&deps, &admin, limit, offset)
         .await
         .map(Json)

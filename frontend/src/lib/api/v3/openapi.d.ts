@@ -24513,7 +24513,12 @@ export interface operations {
     };
     admin_list_users: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Rows per page, 1 to 100 (default 100). */
+                limit?: number;
+                /** @description Rows to skip (default 0). */
+                offset?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -42185,7 +42190,10 @@ export interface operations {
     };
     cancel_one_handler: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description `album` (default) or `track`. */
+                kind?: components["schemas"]["RequestKind"];
+            };
             header?: never;
             path: {
                 /** @description Album or recording MBID */
@@ -42268,7 +42276,10 @@ export interface operations {
     };
     approve_handler: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description `album` (default) or `track`. */
+                kind?: components["schemas"]["RequestKind"];
+            };
             header?: never;
             path: {
                 /** @description Album or recording MBID */
@@ -42290,7 +42301,10 @@ export interface operations {
     };
     reject_handler: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description `album` (default) or `track`. */
+                kind?: components["schemas"]["RequestKind"];
+            };
             header?: never;
             path: {
                 /** @description Album or recording MBID */
@@ -42550,7 +42564,18 @@ export interface operations {
     };
     history_handler: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 1-based page. */
+                page?: number;
+                /** @description Rows per page (1..=100). */
+                page_size?: number;
+                /** @description Status filter. */
+                status?: string;
+                /** @description `newest` (default), `oldest`, or `status`. */
+                sort?: string;
+                /** @description `album` or `track`; unset means both. */
+                kind?: components["schemas"]["RequestKind"];
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -42569,7 +42594,10 @@ export interface operations {
     };
     clear_history_handler: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description `album` (default) or `track`. */
+                kind?: components["schemas"]["RequestKind"];
+            };
             header?: never;
             path: {
                 /** @description Album or recording MBID */
@@ -42713,7 +42741,10 @@ export interface operations {
     };
     retry_one_handler: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description `album` (default) or `track`. */
+                kind?: components["schemas"]["RequestKind"];
+            };
             header?: never;
             path: {
                 /** @description Album or recording MBID */

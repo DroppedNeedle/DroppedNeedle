@@ -10,11 +10,8 @@ vi.mock('@tanstack/svelte-query', () => ({
 
 vi.mock('$lib/api/client', () => ({
 	api: {
-		post: vi.fn(),
 		v3: { POST: vi.fn() },
 		global: {
-			get: vi.fn(),
-			post: vi.fn(),
 			v3: { GET: vi.fn(), POST: vi.fn() }
 		}
 	}
@@ -26,7 +23,6 @@ import { createMutation, createQuery } from '@tanstack/svelte-query';
 const mockV3Get = vi.mocked(api.global.v3.GET) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
-const mockPost = vi.mocked(api.global.post);
 const mockV3Post = vi.mocked(api.global.v3.POST) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
 >;
@@ -107,13 +103,13 @@ describe('auth mutations route through api.global', () => {
 	});
 
 	it('oidc exchange posts the authorization code', async () => {
-		mockPost.mockResolvedValue({ user: {} });
+		mockV3Post.mockResolvedValue({ user: {} });
 		const { createOidcExchangeMutation } = await import('./AuthMutations.svelte');
 		createOidcExchangeMutation();
 
 		await lastMutationFn()({ code: 'abc' });
 
-		expect(mockPost).toHaveBeenCalledWith(AUTH_ENDPOINTS.oidcExchange, { code: 'abc' });
+		expect(mockV3Post).toHaveBeenCalledWith(AUTH_ENDPOINTS.oidcExchange, { code: 'abc' });
 	});
 
 	it('password recovery posts the code and new password without a session', async () => {

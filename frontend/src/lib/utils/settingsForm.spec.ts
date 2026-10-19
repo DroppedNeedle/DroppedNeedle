@@ -22,10 +22,7 @@ vi.mock('$lib/api/client', () => {
 	}
 	return {
 		api: {
-			global: { get: mockApiGet, put: mockApiPut, post: mockApiPost, v3: { GET: mockApiGet } },
-			get: mockApiGet,
-			put: mockApiPut,
-			post: mockApiPost
+			global: { v3: { GET: mockApiGet, PUT: mockApiPut, POST: mockApiPost } }
 		},
 		ApiError
 	};
@@ -43,8 +40,9 @@ vi.mock('$lib/stores/integration', () => ({
 import { createSettingsForm } from './settingsForm.svelte';
 import type { V3Url } from '$lib/api/v3/endpoint';
 
-// Plain test URLs; the form only passes them through to the client.
-const url = (path: string) => path as V3Url;
+// Plain test URLs; the form only passes them through to the client, so they
+// stand in for any route.
+const url = (path: string) => path as V3Url<never>;
 
 interface TestSettings {
 	url: string;

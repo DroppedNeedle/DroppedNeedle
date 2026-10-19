@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 import type { NowPlaying } from '$lib/player/types';
 
 vi.mock('@tanstack/svelte-query', () => ({
@@ -22,7 +22,7 @@ vi.mock('$lib/api/client', async () => {
 		ApiError: ApiErrorMock,
 		api: {
 			global: {
-				get: vi.fn()
+				v3: { GET: vi.fn() }
 			}
 		}
 	};
@@ -32,7 +32,7 @@ import { api, ApiError } from '$lib/api/client';
 import { fetchLyrics } from '$lib/queries/lyrics/LyricsQuery.svelte';
 import { LyricsQueryKeyFactory } from '$lib/queries/lyrics/LyricsQueryKeyFactory';
 
-const mockGet = vi.mocked(api.global.get);
+const mockGet = vi.mocked(api.global.v3.GET) as unknown as Mock;
 
 function makeNowPlaying(overrides: Partial<NowPlaying> = {}): NowPlaying {
 	return {

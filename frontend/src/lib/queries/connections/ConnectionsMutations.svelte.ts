@@ -13,7 +13,6 @@ import type {
 	LastFmAuthTokenResponse,
 	ListenBrainzConnectVars,
 	MediaServerConnectVars,
-	MediaServerConnectionStatus,
 	PlexLinkPinResponse
 } from './types';
 import { SourcePlaylistQueryKeyFactory } from '$lib/queries/source-playlists/SourcePlaylistQueryKeyFactory';
@@ -108,21 +107,18 @@ export const createConnectSpotifyMutation = () =>
 	}));
 
 // media-server account links (issue #138): credentials are validated live by the
-// backend and never echoed back. Untyped by necessity: the PUT connection
-// route takes a username/password JSON body, but the spec annotates no
-// requestBody, so the typed client would reject the body. The URL still
-// comes from the remotes registry entry. Revisit once the backend annotates it.
+// backend and never echoed back.
 export const createConnectNavidromeMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: MediaServerConnectVars) =>
-			api.global.put<MediaServerConnectionStatus>(REMOTE_ENDPOINTS.connection('navidrome'), vars),
+			api.global.v3.PUT(REMOTE_ENDPOINTS.connection('navidrome'), vars),
 		onSuccess: () => invalidateConnectionAndPlaylists('navidrome')
 	}));
 
 export const createConnectJellyfinMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: MediaServerConnectVars) =>
-			api.global.put<MediaServerConnectionStatus>(REMOTE_ENDPOINTS.connection('jellyfin'), vars),
+			api.global.v3.PUT(REMOTE_ENDPOINTS.connection('jellyfin'), vars),
 		onSuccess: () => invalidateConnectionAndPlaylists('jellyfin')
 	}));
 

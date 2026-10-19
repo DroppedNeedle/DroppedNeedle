@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 
 vi.mock('@tanstack/svelte-query', () => ({
 	createMutation: vi.fn((factory: () => Record<string, unknown>) => factory()),
@@ -83,10 +83,7 @@ vi.mock('idb-keyval', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: (() => {
-		const global = { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() };
-		return { global: { ...global, v3: { GET: global.get, POST: global.post, PUT: global.put } } };
-	})()
+	api: { global: { v3: { GET: vi.fn(), POST: vi.fn(), PUT: vi.fn() } } }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -110,8 +107,8 @@ import {
 import { createSetAutoDownloadMutation } from './FollowMutations.svelte';
 import type { FollowStatus } from './types';
 
-const mockGet = vi.mocked(api.global.get);
-const mockPut = vi.mocked(api.global.put);
+const mockGet = vi.mocked(api.global.v3.GET) as unknown as Mock;
+const mockPut = vi.mocked(api.global.v3.PUT) as unknown as Mock;
 type Opts = {
 	queryKey?: unknown;
 	queryFn?: (ctx: { signal: AbortSignal }) => Promise<unknown>;

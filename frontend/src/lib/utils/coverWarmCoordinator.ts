@@ -55,8 +55,7 @@ async function poll(key: string, entry: WarmEntry) {
 	entry.controller = new AbortController();
 
 	try {
-		const response = await api.global.get<Response>(retryUrl(entry.url, generation), {
-			raw: true,
+		const response = await api.global.raw(retryUrl(entry.url, generation), {
 			cache: 'no-store',
 			signal: entry.controller.signal,
 			timeoutMs: REQUEST_TIMEOUT_MS

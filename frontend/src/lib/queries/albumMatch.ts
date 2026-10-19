@@ -44,9 +44,7 @@ export async function fetchLocalAlbumMatch(
 	signal?: AbortSignal
 ): Promise<LocalAlbumMatch> {
 	try {
-		// `match_album` is shared with the remotes route in the contract, so
-		// the typed client cannot infer this read; it names the page type.
-		const page = await api.global.get<components['schemas']['TrackPage']>(localMatchUrl(mbid), {
+		const page = await api.global.v3.GET(localMatchUrl(mbid), {
 			signal
 		});
 		const tracks = page.items.map(toLocalTrack);

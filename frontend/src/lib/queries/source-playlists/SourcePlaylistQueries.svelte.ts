@@ -31,11 +31,10 @@ function toSummary(playlist: PlaylistSummaryView): SourcePlaylistSummary {
 // The playlist list and the account it belongs to come from two v3 reads.
 async function fetchCollection(
 	source: SourcePlaylistSource,
-	limit: number,
 	signal: AbortSignal
 ): Promise<SourcePlaylistCollection> {
 	const [playlists, connection] = await Promise.all([
-		api.global.v3.GET(REMOTE_ENDPOINTS.playlists(source, { limit }), { signal }),
+		api.global.v3.GET(REMOTE_ENDPOINTS.playlists(source), { signal }),
 		api.global.v3.GET(REMOTE_ENDPOINTS.connection(source), { signal })
 	]);
 	return {
@@ -78,7 +77,7 @@ export const getSourcePlaylistsQuery = (
 ) =>
 	createQuery(() => ({
 		queryKey: SourcePlaylistQueryKeyFactory.list(authStore.user?.id, getSource(), getLimit()),
-		queryFn: ({ signal }) => fetchCollection(getSource(), getLimit(), signal),
+		queryFn: ({ signal }) => fetchCollection(getSource(), signal),
 		enabled: getEnabled() && !!authStore.user?.id
 	}));
 

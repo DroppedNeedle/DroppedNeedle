@@ -122,14 +122,17 @@ pub struct BatchCancelBody {
 }
 
 /// `kind` query shared by the per-request mutations.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct KindQuery {
     /// `album` (default) or `track`.
+    #[param(value_type = Option<RequestKind>)]
     pub kind: Option<String>,
 }
 
 /// History paging and filter query.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct HistoryQuery {
     /// 1-based page.
     pub page: Option<u32>,
@@ -140,6 +143,7 @@ pub struct HistoryQuery {
     /// `newest` (default), `oldest`, or `status`.
     pub sort: Option<String>,
     /// `album` or `track`; unset means both.
+    #[param(value_type = Option<RequestKind>)]
     pub kind: Option<String>,
 }
 

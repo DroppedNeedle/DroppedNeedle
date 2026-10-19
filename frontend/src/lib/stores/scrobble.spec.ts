@@ -4,8 +4,7 @@ const mockGet = vi.fn();
 vi.mock('$lib/api/client', () => ({
 	api: {
 		global: {
-			get: (...args: unknown[]) => mockGet(...args),
-			post: vi.fn()
+			v3: { GET: (...args: unknown[]) => mockGet(...args), POST: vi.fn() }
 		}
 	},
 	ApiError: class extends Error {}

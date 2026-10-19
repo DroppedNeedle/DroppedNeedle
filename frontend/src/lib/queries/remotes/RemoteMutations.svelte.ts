@@ -9,7 +9,7 @@ import { LibraryQueryKeyFactory } from '../library/LibraryQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '../QueryClient';
 import { REMOTE_ENDPOINTS } from './endpoints';
 import { RemoteQueryKeyFactory } from './RemoteQueryKeyFactory';
-import type { RemoteFolderSave, RemoteFolders } from './types';
+import type { RemoteFolderSave } from './types';
 
 function errorMessage(err: unknown, fallback: string): string {
 	return err instanceof Error && err.message ? err.message : fallback;
@@ -21,11 +21,7 @@ function sameUser(contextUserId: string | null | undefined): boolean {
 
 export const createSaveRemoteFoldersMutation = () =>
 	createMutation(() => ({
-		// Untyped by necessity: the handler takes a FolderSave JSON body, but
-		// the generated spec omits the request_body annotation, so the typed
-		// client would reject the body. Revisit once the backend annotates it.
-		mutationFn: (vars: RemoteFolderSave) =>
-			api.global.put<RemoteFolders>(REMOTE_ENDPOINTS.folders(), vars),
+		mutationFn: (vars: RemoteFolderSave) => api.global.v3.PUT(REMOTE_ENDPOINTS.folders(), vars),
 		onMutate: () => ({ userId: authStore.user?.id }),
 		onSuccess: async (_data, _vars, context) => {
 			if (!sameUser(context.userId)) return;

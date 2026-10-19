@@ -72,6 +72,7 @@ pub async fn active_count_handler(
     get,
     tag = "requests",
     path = "/api/v3/requests/history",
+    params(HistoryQuery),
     responses((status = 200, body = HistoryResponse))
 )]
 pub async fn history_handler(
@@ -129,7 +130,7 @@ pub async fn approvals_count_handler(
     post,
     tag = "requests",
     path = "/api/v3/requests/approvals/{musicbrainz_id}/approve",
-    params(("musicbrainz_id" = String, Path, description = "Album or recording MBID")),
+    params(("musicbrainz_id" = String, Path, description = "Album or recording MBID"), KindQuery),
     responses((status = 200, body = ActionResponse))
 )]
 pub async fn approve_handler(
@@ -152,7 +153,7 @@ pub async fn approve_handler(
     post,
     tag = "requests",
     path = "/api/v3/requests/approvals/{musicbrainz_id}/reject",
-    params(("musicbrainz_id" = String, Path, description = "Album or recording MBID")),
+    params(("musicbrainz_id" = String, Path, description = "Album or recording MBID"), KindQuery),
     responses((status = 200, body = ActionResponse))
 )]
 pub async fn reject_handler(

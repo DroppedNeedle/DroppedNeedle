@@ -2,6 +2,7 @@ import { createMutation } from '@tanstack/svelte-query';
 import { get } from 'svelte/store';
 
 import { api } from '$lib/api/client';
+import type { components } from '$lib/api/v3/openapi';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
@@ -20,20 +21,6 @@ import {
 import { albumRequestOutcome } from '$lib/utils/requestOutcome';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_HELD_ENDPOINTS, DOWNLOAD_TASKS_ENDPOINTS } from './endpoints';
-
-// Response mirrors for the consolidated request paths that are not shared with
-// the application-wide type contract.
-interface CancelDownloadResponse {
-	status?: string;
-}
-
-interface NextSourceResponse {
-	started?: boolean;
-}
-
-interface RetryDownloadResponse {
-	started?: boolean;
-}
 
 interface AlbumRequestInput {
 	release_group_mbid: string;
@@ -245,8 +232,7 @@ export function requestTrack() {
 
 export function cancelDownload() {
 	return createMutation(() => ({
-		mutationFn: (id: string) =>
-			api.global.post<CancelDownloadResponse>(DOWNLOAD_TASKS_ENDPOINTS.cancel(id), {}),
+		mutationFn: (id: string) => api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.cancel(id)),
 		onSuccess: () => {
 			toastStore.show({ message: 'Download cancelled', type: 'info' });
 			void invalidateTasks();
@@ -264,7 +250,7 @@ interface NextSourceInput {
 export function tryNextSource() {
 	return createMutation(() => ({
 		mutationFn: (input: NextSourceInput) =>
-			api.global.post<NextSourceResponse>(DOWNLOAD_TASKS_ENDPOINTS.nextSource(input.id), {
+			api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.nextSource(input.id), {
 				expected_candidate_index: input.candidateIndex
 			}),
 		onSuccess: () => {
@@ -285,8 +271,7 @@ export function tryNextSource() {
 // retry sweep (status -> cancelled); a manual Retry is still available afterwards.
 export function stopAutoRetry() {
 	return createMutation(() => ({
-		mutationFn: (id: string) =>
-			api.global.post<CancelDownloadResponse>(DOWNLOAD_TASKS_ENDPOINTS.cancel(id), {}),
+		mutationFn: (id: string) => api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.cancel(id)),
 		onSuccess: () => {
 			toastStore.show({ message: 'Stopped retrying', type: 'info' });
 			void invalidateTasks();
@@ -298,8 +283,7 @@ export function stopAutoRetry() {
 
 export function retryDownload() {
 	return createMutation(() => ({
-		mutationFn: (id: string) =>
-			api.global.post<RetryDownloadResponse>(DOWNLOAD_TASKS_ENDPOINTS.retry(id), {}),
+		mutationFn: (id: string) => api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.retry(id)),
 		onSuccess: () => {
 			toastStore.show({ message: 'Download retry initiated', type: 'info' });
 			void invalidateTasks();
@@ -317,7 +301,7 @@ function pluralDownloads(n: number): string {
 
 export function clearFinished() {
 	return createMutation(() => ({
-		mutationFn: () => api.global.post<{ cleared: number }>(DOWNLOAD_TASKS_ENDPOINTS.clear(), {}),
+		mutationFn: () => api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.clear()),
 		onSuccess: (data: { cleared: number }) => {
 			toastStore.show({
 				message: data.cleared > 0 ? `Cleared ${pluralDownloads(data.cleared)}` : 'Nothing to clear',
@@ -332,8 +316,7 @@ export function clearFinished() {
 
 export function stopAllRetries() {
 	return createMutation(() => ({
-		mutationFn: () =>
-			api.global.post<{ stopped: number }>(DOWNLOAD_TASKS_ENDPOINTS.stopAllRetries(), {}),
+		mutationFn: () => api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.stopAllRetries()),
 		onSuccess: (data: { stopped: number }) => {
 			toastStore.show({
 				message:
@@ -351,8 +334,7 @@ export function stopAllRetries() {
 
 export function retryAllFailed() {
 	return createMutation(() => ({
-		mutationFn: () =>
-			api.global.post<{ retried: number }>(DOWNLOAD_TASKS_ENDPOINTS.retryAllFailed(), {}),
+		mutationFn: () => api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.retryAllFailed()),
 		onSuccess: (data: { retried: number }) => {
 			toastStore.show({
 				message:
@@ -385,11 +367,8 @@ function invalidateAlbum(releaseGroupMbid?: string | null) {
 export function importHeldTrack() {
 	return createMutation(() => ({
 		mutationFn: (input: HeldActionInput) =>
-			api.global.post<{ status: string; final_path: string | null; message: string | null }>(
-				DOWNLOAD_HELD_ENDPOINTS.import(input.id),
-				{}
-			),
-		onSuccess: (data: { message: string | null }, input: HeldActionInput) => {
+			api.global.v3.POST(DOWNLOAD_HELD_ENDPOINTS.import(input.id)),
+		onSuccess: (data: { message?: string | null }, input: HeldActionInput) => {
 			// An upgrade file no better than the library's copy is dropped and
 			// the copy kept; the server says so in `message`.
 			toastStore.show({
@@ -407,7 +386,7 @@ export function importHeldTrack() {
 export function discardHeldTrack() {
 	return createMutation(() => ({
 		mutationFn: (input: HeldActionInput) =>
-			api.global.post<{ status: string }>(DOWNLOAD_HELD_ENDPOINTS.discard(input.id), {}),
+			api.global.v3.POST(DOWNLOAD_HELD_ENDPOINTS.discard(input.id)),
 		onSuccess: () => {
 			toastStore.show({ message: 'Discarded', type: 'info' });
 			void invalidateTasks();
@@ -421,15 +400,12 @@ export function discardHeldTrack() {
 // longer disagrees imports through the same settle path as "import anyway"; anything
 // else stays held. invalidateTasks covers the held prefix nested under tasks; only an
 // import places a track, so the album key refreshes solely on 'imported'.
-export interface HeldReverifyResponse {
-	status: 'imported' | 'still_held';
-	final_path: string | null;
-}
+export type HeldReverifyResponse = components['schemas']['HeldReverifyResponse'];
 
 export function reverifyHeldTrack() {
 	return createMutation(() => ({
 		mutationFn: (input: HeldActionInput) =>
-			api.global.post<HeldReverifyResponse>(DOWNLOAD_HELD_ENDPOINTS.reverify(input.id), {}),
+			api.global.v3.POST(DOWNLOAD_HELD_ENDPOINTS.reverify(input.id)),
 		onSuccess: (data: HeldReverifyResponse, input: HeldActionInput) => {
 			if (data.status === 'imported') {
 				toastStore.show({ message: 'Re-check confirmed it: imported', type: 'success' });
@@ -447,17 +423,9 @@ export function reverifyHeldTrack() {
 	}));
 }
 
-export interface HeldBulkReverifyItem {
-	held_id: number;
-	status: 'imported' | 'still_held' | 'skipped' | 'error';
-	final_path: string | null;
-	release_group_mbid: string | null;
-	message: string | null;
-}
+export type HeldBulkReverifyItem = components['schemas']['HeldBulkReverifyItem'];
 
-export interface HeldBulkReverifyResponse {
-	results: HeldBulkReverifyItem[];
-}
+export type HeldBulkReverifyResponse = components['schemas']['HeldBulkReverifyResponse'];
 
 export interface HeldBulkReverifyInput {
 	held_ids?: number[] | null;
@@ -468,7 +436,7 @@ export interface HeldBulkReverifyInput {
 export function reverifyHeldBulk() {
 	return createMutation(() => ({
 		mutationFn: (input: HeldBulkReverifyInput) =>
-			api.global.post<HeldBulkReverifyResponse>(DOWNLOAD_HELD_ENDPOINTS.reverifyBulk(), {
+			api.global.v3.POST(DOWNLOAD_HELD_ENDPOINTS.reverifyBulk(), {
 				held_ids: input.held_ids ?? null
 			}),
 		onSuccess: (data: HeldBulkReverifyResponse) => {
@@ -511,10 +479,7 @@ interface HeldManagementActionInput {
 export function retryHeldManagementUnit() {
 	return createMutation(() => ({
 		mutationFn: (input: HeldManagementActionInput) =>
-			api.global.post<{ status: string; files: number }>(
-				DOWNLOAD_HELD_ENDPOINTS.managementRetry(input.taskId),
-				{}
-			),
+			api.global.v3.POST(DOWNLOAD_HELD_ENDPOINTS.managementRetry(input.taskId)),
 		onSuccess: (data: { files: number }, input: HeldManagementActionInput) => {
 			toastStore.show({
 				message: `${data.files} secured ${data.files === 1 ? 'file' : 'files'} organized and imported`,
@@ -546,10 +511,7 @@ export function retryHeldManagementUnit() {
 export function discardHeldManagementUnit() {
 	return createMutation(() => ({
 		mutationFn: (input: HeldManagementActionInput) =>
-			api.global.post<{ status: string; files: number }>(
-				DOWNLOAD_HELD_ENDPOINTS.managementDiscard(input.taskId),
-				{}
-			),
+			api.global.v3.POST(DOWNLOAD_HELD_ENDPOINTS.managementDiscard(input.taskId)),
 		onSuccess: (data: { files: number }) => {
 			toastStore.show({
 				message: `${data.files} secured ${data.files === 1 ? 'file' : 'files'} discarded`,
@@ -573,10 +535,7 @@ export function discardHeldManagementUnit() {
 export function discardHeldVerdict() {
 	return createMutation(() => ({
 		mutationFn: (input: HeldManagementActionInput) =>
-			api.global.post<{ status: string; files: number }>(
-				DOWNLOAD_HELD_ENDPOINTS.verdictDiscard(input.taskId),
-				{}
-			),
+			api.global.v3.POST(DOWNLOAD_HELD_ENDPOINTS.verdictDiscard(input.taskId)),
 		onSuccess: (data: { files: number }) => {
 			toastStore.show({
 				message: `${data.files} held ${data.files === 1 ? 'file' : 'files'} discarded`,

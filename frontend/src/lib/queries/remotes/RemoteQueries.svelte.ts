@@ -21,8 +21,8 @@ const userId = () => authStore.user?.id;
 const authed = (getEnabled: Enabled) => getEnabled() && !!userId();
 
 // Each call site passes its own load closure so the typed client infers
-// the response from that call's registry URL; the reads the typed client
-// cannot infer yet go through remoteApi (see there).
+// the response from that call's registry URL; reads shared with the screens
+// live in remoteApi.
 function query<T>(
 	build: () => {
 		key: readonly unknown[];

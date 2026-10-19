@@ -84,7 +84,7 @@ vi.mock('idb-keyval', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { put: vi.fn(), v3: { GET: vi.fn(), PUT: vi.fn() } } }
+	api: { global: { v3: { GET: vi.fn(), PUT: vi.fn() } } }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -107,7 +107,6 @@ import { musicSourceStore } from '$lib/stores/musicSource';
 // so resolves typecheck (assertions still pin URLs + bodies).
 const mockV3Get = vi.mocked(api.global.v3.GET) as unknown as Mock;
 const mockV3Put = vi.mocked(api.global.v3.PUT) as unknown as Mock;
-const mockPut = vi.mocked(api.global.put);
 
 type Opts = {
 	queryKey?: unknown;
@@ -132,15 +131,6 @@ beforeEach(() => {
 		primary_music_source: 'listenbrainz'
 	});
 	mockV3Put.mockResolvedValue({
-		scrobble_to_lastfm: false,
-		scrobble_to_listenbrainz: false,
-		navidrome_handles_external_scrobbles: true,
-		primary_music_source: 'lastfm',
-		now_playing_visibility: 'full',
-		auto_request_personal_mix: false,
-		auto_request_state: 'none'
-	});
-	mockPut.mockResolvedValue({
 		scrobble_to_lastfm: false,
 		scrobble_to_listenbrainz: false,
 		navidrome_handles_external_scrobbles: true,
@@ -220,7 +210,7 @@ describe('update scrobble preferences', () => {
 
 	it('does not repopulate source state or cache when save resolves after an account switch', async () => {
 		let resolveSave: (preferences: ScrobblePreferences) => void = () => undefined;
-		mockPut.mockImplementationOnce(
+		mockV3Put.mockImplementationOnce(
 			() =>
 				new Promise<ScrobblePreferences>((resolve) => {
 					resolveSave = resolve;

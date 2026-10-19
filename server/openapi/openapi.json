@@ -998,6 +998,30 @@
         ],
         "summary": "Admin user listing, paged.",
         "operationId": "admin_list_users",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Rows per page, 1 to 100 (default 100).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Rows to skip (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "User page",
@@ -26920,6 +26944,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "`album` (default) or `track`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RequestKind"
+            }
           }
         ],
         "responses": {
@@ -27053,6 +27086,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "`album` (default) or `track`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RequestKind"
+            }
           }
         ],
         "responses": {
@@ -27091,6 +27133,15 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "`album` (default) or `track`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RequestKind"
             }
           }
         ],
@@ -27516,6 +27567,57 @@
         ],
         "summary": "Paged history. `GET /api/v3/requests/history`. Admins see every row.",
         "operationId": "history_handler",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "1-based page.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "Rows per page (1..=100).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Status filter.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "`newest` (default), `oldest`, or `status`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "`album` or `track`; unset means both.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RequestKind"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -27552,6 +27654,15 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "`album` (default) or `track`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RequestKind"
             }
           }
         ],
@@ -27784,6 +27895,15 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "`album` (default) or `track`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/RequestKind"
             }
           }
         ],

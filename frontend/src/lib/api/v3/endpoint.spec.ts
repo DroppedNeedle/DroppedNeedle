@@ -14,9 +14,9 @@ describe('v3 endpoint builder', () => {
 	});
 
 	it('serializes query params', () => {
-		const url = v3('/api/v3/acquire/lidarr-import/artists', { query: { q: 'a b', limit: 5 } });
+		const url = v3('/api/v3/requests/history', { query: { status: 'a b', page_size: 5 } });
 
-		expect(url).toBe('/api/v3/acquire/lidarr-import/artists?q=a%20b&limit=5');
+		expect(url).toBe('/api/v3/requests/history?status=a%20b&page_size=5');
 	});
 
 	it('requires every path param from the template', () => {

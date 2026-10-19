@@ -40,7 +40,7 @@
 	});
 
 	async function fetchAlbumTracks(albumId: string) {
-		const page = await remoteApi.albumTracks('navidrome', albumId, { limit: 500 });
+		const page = await remoteApi.albumTracks('navidrome', albumId);
 		return page.items.map(toNavidromeTrack);
 	}
 

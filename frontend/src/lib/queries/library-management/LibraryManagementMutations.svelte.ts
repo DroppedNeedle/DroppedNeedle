@@ -29,7 +29,6 @@ import type {
 	LibraryManagementProfileImportPreviewRequest,
 	LibraryManagementProfileImportRequest,
 	LibraryManagementSettingsImpactRequest,
-	LibraryManagementSettingsResponse,
 	LibraryManagementSettingsUpdateRequest,
 	LibraryManagementTagEditPreviewRequest,
 	LibraryManagementUndoPreviewRequest
@@ -73,13 +72,7 @@ export const copyLibraryManagementProfileMutation = () =>
 export const deleteLibraryManagementProfileMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { profileId: string; request: LibraryManagementProfileDeleteRequest }) =>
-			// The typed client sends no DELETE body, so this one call names its type.
-			api.global.delete<LibraryManagementSettingsResponse>(
-				LIBRARY_MANAGEMENT_ENDPOINTS.profile(input.profileId),
-				{
-					body: input.request
-				}
-			),
+			api.global.v3.DELETE(LIBRARY_MANAGEMENT_ENDPOINTS.profile(input.profileId), input.request),
 		onSuccess: invalidateLibraryManagementSurfaces
 	}));
 

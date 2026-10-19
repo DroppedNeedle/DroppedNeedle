@@ -2,12 +2,15 @@ import { api, ApiError } from '$lib/api/client';
 import { isAbortError } from '$lib/utils/errorHandling';
 import { integrationStore } from '$lib/stores/integration';
 import type { V3Url } from '$lib/api/v3/endpoint';
+import type { V3Body, V3PathsWith } from '$lib/api/v3/client';
 import { HOME_ENDPOINTS } from '$lib/queries/charts/endpoints';
 
+// The endpoints must take the method the form sends. The caller's `T` names
+// the section's shape, and the form trusts it to match the endpoints.
 export interface SettingsFormConfig<T> {
-	loadEndpoint: V3Url;
-	saveEndpoint: V3Url;
-	testEndpoint?: V3Url;
+	loadEndpoint: V3Url<V3PathsWith<'get'>>;
+	saveEndpoint: V3Url<V3PathsWith<'put'>>;
+	testEndpoint?: V3Url<V3PathsWith<'post'>>;
 	defaultValue?: T;
 	enabledField?: keyof T;
 	/** A second toggle (e.g. "allow login") that should also stay locked until a test succeeds. */
@@ -57,7 +60,7 @@ export function createSettingsForm<T>(config: SettingsFormConfig<T>) {
 		loading = true;
 		message = '';
 		try {
-			const result = await api.global.get<T>(config.loadEndpoint);
+			const result = (await api.global.v3.GET(config.loadEndpoint)) as T | undefined;
 			data = result ?? config.defaultValue ?? null;
 			if (config.enabledField && data) {
 				wasAlreadyEnabled = Boolean(data[config.enabledField]);
@@ -81,7 +84,10 @@ export function createSettingsForm<T>(config: SettingsFormConfig<T>) {
 		saving = true;
 		message = '';
 		try {
-			const result = await api.global.put<T>(config.saveEndpoint, data);
+			const result = (await api.global.v3.PUT(
+				config.saveEndpoint,
+				data as V3Body<V3PathsWith<'put'>, 'put'>
+			)) as T | undefined;
 			if (result) data = result;
 			if (config.enabledField && data) {
 				wasAlreadyEnabled = Boolean(data[config.enabledField]);
@@ -109,7 +115,10 @@ export function createSettingsForm<T>(config: SettingsFormConfig<T>) {
 		testing = true;
 		testResult = null;
 		try {
-			const result = await api.global.post(config.testEndpoint, data);
+			const result: unknown = await api.global.v3.POST(
+				config.testEndpoint,
+				data as V3Body<V3PathsWith<'post'>, 'post'>
+			);
 			testResult = result;
 			if (config.afterTest) config.afterTest(result);
 		} catch (e) {

@@ -128,7 +128,7 @@ pub async fn cancel_batch_handler(
     delete,
     tag = "requests",
     path = "/api/v3/requests/active/{musicbrainz_id}",
-    params(("musicbrainz_id" = String, Path, description = "Album or recording MBID")),
+    params(("musicbrainz_id" = String, Path, description = "Album or recording MBID"), KindQuery),
     responses((status = 200, body = ActionResponse))
 )]
 pub async fn cancel_one_handler(
@@ -151,7 +151,7 @@ pub async fn cancel_one_handler(
     post,
     tag = "requests",
     path = "/api/v3/requests/retry/{musicbrainz_id}",
-    params(("musicbrainz_id" = String, Path, description = "Album or recording MBID")),
+    params(("musicbrainz_id" = String, Path, description = "Album or recording MBID"), KindQuery),
     responses((status = 200, body = ActionResponse))
 )]
 pub async fn retry_one_handler(
@@ -173,7 +173,7 @@ pub async fn retry_one_handler(
     delete,
     tag = "requests",
     path = "/api/v3/requests/history/{musicbrainz_id}",
-    params(("musicbrainz_id" = String, Path, description = "Album or recording MBID")),
+    params(("musicbrainz_id" = String, Path, description = "Album or recording MBID"), KindQuery),
     responses((status = 200, body = ClearHistoryResponse))
 )]
 pub async fn clear_history_handler(

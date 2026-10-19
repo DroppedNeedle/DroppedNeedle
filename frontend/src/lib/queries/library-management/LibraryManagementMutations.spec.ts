@@ -14,12 +14,10 @@ vi.mock('@tanstack/svelte-query', async (importOriginal) => ({
 vi.mock('$lib/api/client', () => ({
 	api: {
 		global: {
-			delete: vi.fn().mockResolvedValue({}),
-			post: vi.fn().mockResolvedValue({}),
-			put: vi.fn().mockResolvedValue({}),
 			v3: {
 				POST: vi.fn().mockResolvedValue({}),
-				PUT: vi.fn().mockResolvedValue({})
+				PUT: vi.fn().mockResolvedValue({}),
+				DELETE: vi.fn().mockResolvedValue({})
 			}
 		}
 	}
@@ -87,9 +85,9 @@ describe('Library Management mutations', () => {
 
 		await mutation.mutationFn(input);
 
-		expect(api.global.delete).toHaveBeenCalledWith(
+		expect(api.global.v3.DELETE).toHaveBeenCalledWith(
 			'/api/v3/settings/library-management/profiles/profile%2F1',
-			{ body: input.request }
+			input.request
 		);
 	});
 

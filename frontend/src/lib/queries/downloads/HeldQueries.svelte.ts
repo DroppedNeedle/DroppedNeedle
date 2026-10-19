@@ -3,7 +3,6 @@ import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type { HeldListResponse } from '$lib/types';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_HELD_ENDPOINTS } from './endpoints';
@@ -22,6 +21,5 @@ export const getHeldImportsQuery = (
 		enabled: getEnabled(),
 		staleTime: 30_000,
 		queryKey: DownloadQueryKeyFactory.held(authStore.user?.id, getMbid()),
-		queryFn: ({ signal }) =>
-			api.global.get<HeldListResponse>(DOWNLOAD_HELD_ENDPOINTS.list(getMbid()), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_HELD_ENDPOINTS.list(getMbid()), { signal })
 	}));

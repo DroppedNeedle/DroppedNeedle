@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 vi.mock('@tanstack/svelte-query', () => ({
 	createInfiniteQuery: vi.fn((factory: () => Record<string, unknown>) => factory()),
@@ -7,14 +7,14 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { get: vi.fn().mockResolvedValue({}) } }
+	api: { global: { v3: { GET: vi.fn().mockResolvedValue({}) } } }
 }));
 
 import { api } from '$lib/api/client';
 import { LibraryManagementQueryKeyFactory } from './LibraryManagementQueryKeyFactory';
 import { getLibraryManagementActivationPreviewQuery } from './LibraryManagementQueries.svelte';
 
-const mockGet = vi.mocked(api.global.get);
+const mockGet = vi.mocked(api.global.v3.GET) as unknown as Mock;
 
 beforeEach(() => {
 	vi.clearAllMocks();

@@ -10,14 +10,13 @@ vi.mock('@tanstack/svelte-query', () => ({
 
 const mockGet = vi.fn();
 const mockPost = vi.fn();
-const mockPut = vi.fn();
 vi.mock('$lib/api/client', () => ({
 	api: {
 		global: {
-			get: (...args: unknown[]) => mockGet(...args),
-			post: (...args: unknown[]) => mockPost(...args),
-			put: (...args: unknown[]) => mockPut(...args),
-			v3: { POST: (...args: unknown[]) => mockPost(...args) }
+			v3: {
+				GET: (...args: unknown[]) => mockGet(...args),
+				POST: (...args: unknown[]) => mockPost(...args)
+			}
 		}
 	}
 }));
@@ -68,7 +67,6 @@ describe('download queue queries', () => {
 		authStoreUser.current.id = 'user-1';
 		mockGet.mockClear();
 		mockPost.mockClear();
-		mockPut.mockClear();
 		mockInvalidate.mockClear();
 		mockToast.mockClear();
 		mockAddRequested.mockClear();

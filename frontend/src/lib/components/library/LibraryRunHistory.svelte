@@ -92,9 +92,7 @@
 		if (!exportRun) return;
 		exporting = true;
 		try {
-			const response = await api.global.get<Response>(LibraryV3Api.scanDiagnostics(exportRun.id), {
-				raw: true
-			});
+			const response = await api.global.raw(LibraryV3Api.scanDiagnostics(exportRun.id));
 			if (!response.ok) throw new Error('Diagnostic export failed');
 			const blob = await response.blob();
 			const disposition = response.headers.get('content-disposition') ?? '';

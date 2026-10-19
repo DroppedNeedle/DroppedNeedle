@@ -22,7 +22,11 @@ vi.mock('$lib/utils/userSessionCleanup', () => ({
 }));
 
 import { api, ApiError, SessionExpiredError, TransportError } from './client';
+import { v3 } from './v3/endpoint';
 import { pageFetch } from '$lib/utils/navigationAbort';
+
+const HEALTH = v3('/api/v3/acquire/health');
+const LOGIN = v3('/api/v3/auth/login');
 
 const mockPageFetch = vi.mocked(pageFetch);
 const mockGlobalFetch = vi.fn();
@@ -73,12 +77,12 @@ beforeEach(() => {
 });
 
 describe('api client', () => {
-	describe('api.get (navigation-aware)', () => {
+	describe('api.v3 (navigation-aware)', () => {
 		it('calls pageFetch with GET and returns parsed JSON', async () => {
 			mockPageFetch.mockResolvedValue(jsonResponse({ name: 'test' }));
-			const result = await api.get<{ name: string }>('/api/v1/test');
+			const result = await api.v3.GET(HEALTH);
 			expect(mockPageFetch).toHaveBeenCalledWith(
-				'/api/v1/test',
+				'/api/v3/acquire/health',
 				expect.objectContaining({ method: 'GET' })
 			);
 			expect(result).toEqual({ name: 'test' });
@@ -88,7 +92,7 @@ describe('api client', () => {
 			const controller = new AbortController();
 			mockPageFetch.mockResolvedValue(jsonResponse({ ok: true }));
 
-			await api.get('/api/v1/test', { signal: controller.signal, timeoutMs: 10_000 });
+			await api.v3.GET(HEALTH, { signal: controller.signal, timeoutMs: 10_000 });
 
 			const init = mockPageFetch.mock.calls[0]![1]!;
 			expect(init).not.toHaveProperty('timeoutMs');
@@ -98,12 +102,12 @@ describe('api client', () => {
 		});
 	});
 
-	describe('api.global.get (no navigation abort)', () => {
+	describe('api.global.v3 (no navigation abort)', () => {
 		it('calls globalThis.fetch instead of pageFetch', async () => {
 			mockGlobalFetch.mockResolvedValue(jsonResponse({ name: 'global' }));
-			const result = await api.global.get<{ name: string }>('/api/v1/global');
+			const result = await api.global.v3.GET(HEALTH);
 			expect(mockGlobalFetch).toHaveBeenCalledWith(
-				'/api/v1/global',
+				'/api/v3/acquire/health',
 				expect.objectContaining({ method: 'GET' })
 			);
 			expect(mockPageFetch).not.toHaveBeenCalled();
@@ -111,15 +115,15 @@ describe('api client', () => {
 		});
 	});
 
-	describe('api.post', () => {
+	describe('POST', () => {
 		it('sends JSON body with Content-Type header', async () => {
 			mockPageFetch.mockResolvedValue(jsonResponse({ id: 1 }, 201));
-			const result = await api.post<{ id: number }>('/api/v1/items', { name: 'new' });
+			const result = await api.v3.POST(LOGIN, { username: 'a', password: 'b' });
 			expect(mockPageFetch).toHaveBeenCalledWith(
-				'/api/v1/items',
+				'/api/v3/auth/login',
 				expect.objectContaining({
 					method: 'POST',
-					body: JSON.stringify({ name: 'new' })
+					body: JSON.stringify({ username: 'a', password: 'b' })
 				})
 			);
 			const sentHeaders = new Headers(mockPageFetch.mock.calls[0]![1]!.headers as HeadersInit);
@@ -129,7 +133,11 @@ describe('api client', () => {
 
 		it('sends no body when body is undefined', async () => {
 			mockPageFetch.mockResolvedValue(jsonResponse({ ok: true }));
-			await api.post('/api/v1/trigger');
+			await api.v3.POST(
+				v3('/api/v3/requests/approvals/{musicbrainz_id}/approve', {
+					path: { musicbrainz_id: 'mbid-1' }
+				})
+			);
 			const call = mockPageFetch.mock.calls[0];
 			expect(call[1]).not.toHaveProperty('body');
 		});
@@ -137,7 +145,7 @@ describe('api client', () => {
 		it('preserves caller-supplied Headers instance when adding Content-Type', async () => {
 			mockPageFetch.mockResolvedValue(jsonResponse({ ok: true }));
 			const headers = new Headers({ Authorization: 'Bearer token123' });
-			await api.post('/api/v1/data', { key: 'val' }, { headers });
+			await api.v3.POST(LOGIN, { username: 'a', password: 'b' }, { headers });
 			const call = mockPageFetch.mock.calls[0]!;
 			const sentHeaders = new Headers(call[1]!.headers as HeadersInit);
 			expect(sentHeaders.get('Authorization')).toBe('Bearer token123');
@@ -145,19 +153,35 @@ describe('api client', () => {
 		});
 	});
 
-	describe('api.delete', () => {
-		it('supports an explicit JSON body for revision-guarded deletes', async () => {
+	describe('DELETE', () => {
+		it('sends the JSON body of a revision-guarded delete', async () => {
 			mockPageFetch.mockResolvedValue(jsonResponse({ deleted: true }));
-			await api.delete('/api/v1/items/1', {
-				body: { expected_revision: 'revision-1' }
-			});
+			await api.v3.DELETE(
+				v3('/api/v3/settings/library-management/profiles/{profile_id}', {
+					path: { profile_id: 'p1' }
+				}),
+				{ expected_settings_revision: 'revision-1' }
+			);
 			expect(mockPageFetch).toHaveBeenCalledWith(
-				'/api/v1/items/1',
+				'/api/v3/settings/library-management/profiles/p1',
 				expect.objectContaining({
 					method: 'DELETE',
-					body: JSON.stringify({ expected_revision: 'revision-1' })
+					body: JSON.stringify({ expected_settings_revision: 'revision-1' })
 				})
 			);
+		});
+	});
+
+	describe('api.raw', () => {
+		it('answers the raw Response without reading the body', async () => {
+			const response = jsonResponse({ ignored: true });
+			mockPageFetch.mockResolvedValue(response);
+			const result = await api.raw('/api/v3/files/1');
+			expect(mockPageFetch).toHaveBeenCalledWith(
+				'/api/v3/files/1',
+				expect.objectContaining({ method: 'GET' })
+			);
+			expect(result).toBe(response);
 		});
 	});
 
@@ -177,7 +201,7 @@ describe('api client', () => {
 	describe('handleResponse', () => {
 		it('returns undefined for 204 responses', async () => {
 			mockPageFetch.mockResolvedValue(emptyResponse(204));
-			const result = await api.get('/api/v1/empty');
+			const result = await api.v3.GET(HEALTH);
 			expect(result).toBeUndefined();
 		});
 
@@ -188,7 +212,7 @@ describe('api client', () => {
 				})
 			);
 			try {
-				await api.get('/api/v1/test');
+				await api.v3.GET(HEALTH);
 				expect.unreachable('should have thrown');
 			} catch (e) {
 				expect(e).toBeInstanceOf(ApiError);
@@ -210,7 +234,7 @@ describe('api client', () => {
 			} as unknown as Response;
 			mockPageFetch.mockResolvedValue(res);
 			try {
-				await api.get('/api/v1/test');
+				await api.v3.GET(HEALTH);
 				expect.unreachable('should have thrown');
 			} catch (e) {
 				expect(e).toBeInstanceOf(ApiError);
@@ -227,7 +251,7 @@ describe('api client', () => {
 			} as unknown as Response;
 			mockPageFetch.mockResolvedValue(res);
 			try {
-				await api.get('/api/v1/test');
+				await api.v3.GET(HEALTH);
 				expect.unreachable('should have thrown');
 			} catch (e) {
 				expect(e).toBeInstanceOf(ApiError);
@@ -242,13 +266,18 @@ describe('api client', () => {
 			mockGlobalFetch.mockRejectedValue(new TypeError('Failed to fetch'));
 
 			await expect(
-				api.global.post('/api/v1/library/reviews/bulk-apply?token=secret', {})
+				api.global.v3.POST(
+					v3('/api/v3/requests/approvals/{musicbrainz_id}/approve', {
+						path: { musicbrainz_id: 'mbid-1' },
+						query: { kind: 'track' }
+					})
+				)
 			).rejects.toMatchObject({
 				name: 'TransportError',
 				code: 'TRANSPORT_NETWORK',
 				method: 'POST',
-				path: '/api/v1/library/reviews/bulk-apply',
-				details: { method: 'POST', path: '/api/v1/library/reviews/bulk-apply' }
+				path: '/api/v3/requests/approvals/mbid-1/approve',
+				details: { method: 'POST', path: '/api/v3/requests/approvals/mbid-1/approve' }
 			});
 			expect(authMock.clear).not.toHaveBeenCalled();
 		});
@@ -263,14 +292,14 @@ describe('api client', () => {
 			);
 
 			try {
-				await api.global.get('/api/v1/slow', { timeoutMs: 1 });
+				await api.global.v3.GET(HEALTH, { timeoutMs: 1 });
 				expect.unreachable('should have timed out');
 			} catch (cause) {
 				expect(cause).toBeInstanceOf(TransportError);
 				expect(cause).toMatchObject({
 					code: 'TRANSPORT_TIMEOUT',
 					method: 'GET',
-					path: '/api/v1/slow'
+					path: '/api/v3/acquire/health'
 				});
 			}
 			expect(authMock.clear).not.toHaveBeenCalled();
@@ -285,7 +314,7 @@ describe('api client', () => {
 			mockPageFetch.mockResolvedValue(errorResponse(401, { detail: 'expired' }));
 
 			try {
-				await api.get('/api/v1/auth/me');
+				await api.v3.GET(HEALTH);
 				expect.unreachable('should have thrown');
 			} catch (e) {
 				expect(e).toBeInstanceOf(SessionExpiredError);
@@ -311,7 +340,7 @@ describe('api client', () => {
 			vi.stubGlobal('window', win);
 			mockPageFetch.mockResolvedValue(errorResponse(401, { detail: 'expired' }));
 
-			const request = api.get('/api/v1/auth/me');
+			const request = api.v3.GET(HEALTH);
 			await vi.waitFor(() => expect(sessionCleanupMock.run).toHaveBeenCalledOnce());
 			expect(authMock.clear).toHaveBeenCalledOnce();
 			expect(win.location.href).toBe('');
@@ -336,7 +365,7 @@ describe('api client', () => {
 			vi.stubGlobal('window', win);
 			mockPageFetch.mockResolvedValue(errorResponse(401, { detail: 'expired' }));
 
-			const request = api.get('/api/v1/auth/me');
+			const request = api.v3.GET(HEALTH);
 			await vi.waitFor(() => expect(sessionCleanupMock.run).toHaveBeenCalledOnce());
 			expect(authMock.clear).toHaveBeenCalledOnce();
 			expect(win.location.href).toBe('');
@@ -357,7 +386,7 @@ describe('api client', () => {
 			vi.stubGlobal('window', win);
 			mockPageFetch.mockResolvedValue(errorResponse(401, { detail: 'expired' }));
 
-			await expect(api.get('/api/v1/auth/me')).rejects.toBeInstanceOf(SessionExpiredError);
+			await expect(api.v3.GET(HEALTH)).rejects.toBeInstanceOf(SessionExpiredError);
 			expect(sessionCleanupMock.run).toHaveBeenCalledOnce();
 			expect(authMock.clear).toHaveBeenCalledOnce();
 			expect(win.location.href).toBe('/login');
@@ -370,7 +399,7 @@ describe('api client', () => {
 			);
 
 			try {
-				await api.global.post('/api/v1/auth/login', { email: 'a', password: 'b' });
+				await api.global.v3.POST(LOGIN, { username: 'a', password: 'b' });
 				expect.unreachable('should have thrown');
 			} catch (e) {
 				expect(e).toBeInstanceOf(ApiError);

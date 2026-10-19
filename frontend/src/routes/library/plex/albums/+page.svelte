@@ -25,7 +25,7 @@
 	import type { PlexAlbumSummary, PlexLibraryStats } from '$lib/types';
 
 	async function fetchAlbumTracks(albumId: string) {
-		const page = await remoteApi.albumTracks('plex', albumId, { limit: 500 });
+		const page = await remoteApi.albumTracks('plex', albumId);
 		return page.items.map(toPlexTrack);
 	}
 

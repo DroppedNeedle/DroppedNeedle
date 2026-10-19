@@ -24,12 +24,11 @@ export type ScrobbleSubmission = ScrobbleSubmitRequest;
 export type ScrobbleResponse = components['schemas']['ScrobbleResponse'];
 
 // The manager only reads the three forwarding flags out of the full
-// per-user scrobble-preferences DTO.
-export interface ScrobbleSettings {
-	scrobble_to_lastfm?: boolean;
-	scrobble_to_listenbrainz?: boolean;
-	navidrome_handles_external_scrobbles?: boolean;
-}
+// per-user scrobble preferences.
+export type ScrobbleSettings = Pick<
+	components['schemas']['ScrobblePreferences'],
+	'scrobble_to_lastfm' | 'scrobble_to_listenbrainz' | 'navidrome_handles_external_scrobbles'
+>;
 
 type ScrobbleStatus = 'idle' | 'tracking' | 'scrobbled' | 'error';
 
@@ -111,7 +110,7 @@ function createScrobbleManager() {
 		const now = Date.now();
 		if (settingsCache && now - lastSettingsFetch < 60_000) return settingsCache;
 		try {
-			settingsCache = await api.global.get<ScrobbleSettings>(SCROBBLE_PREFERENCES_ENDPOINTS.get());
+			settingsCache = await api.global.v3.GET(SCROBBLE_PREFERENCES_ENDPOINTS.get());
 			lastSettingsFetch = now;
 			return settingsCache;
 		} catch {

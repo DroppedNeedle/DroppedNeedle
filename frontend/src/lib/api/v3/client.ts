@@ -13,6 +13,9 @@ type V3LowerMethod = 'get' | 'post' | 'put' | 'patch' | 'delete' | 'head';
 /** The generated contract as an openapi-fetch client shape (JSON only, like the spec). */
 type V3ClientShape = Client<paths, 'application/json'>;
 
+/** Every route that answers one method. */
+export type V3PathsWith<M extends V3LowerMethod> = ClientPathsWithMethod<V3ClientShape, M>;
+
 type V3SuccessCodes = 200 | 201 | 202 | 203 | 205 | 206 | 207 | 208 | 226;
 
 type V3HasSuccessBody<T extends V3Path, M extends V3LowerMethod> =
@@ -68,7 +71,7 @@ export interface V3Client {
 	): Promise<V3Response<T, 'get'>>;
 	DELETE<T extends ClientPathsWithMethod<V3ClientShape, 'delete'>>(
 		url: V3Url<T>,
-		opts?: V3RequestOptions
+		...args: V3BodyArgs<T, 'delete'>
 	): Promise<V3Response<T, 'delete'>>;
 	HEAD<T extends ClientPathsWithMethod<V3ClientShape, 'head'>>(
 		url: V3Url<T>,
@@ -93,16 +96,16 @@ type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respons
 /**
  * Typed v3 client over the generated contract: endpoint URLs come from the
  * API registry builders, response and body types infer from each URL's brand,
- * and requests run through the shared api pipeline, so typed and untyped
- * calls share timeouts, aborts, and the ApiError taxonomy. Plain strings are
+ * and requests run through the shared api pipeline, so every call shares
+ * timeouts, aborts, and the ApiError taxonomy. Plain strings are
  * not endpoints; the brand is what carries the contract link.
  */
 export function createV3Client(fetchFn: FetchFn): V3Client {
 	return {
 		GET: (url: V3Url<V3Path>, opts?: V3RequestOptions) =>
 			executeRequest(fetchFn, 'GET', url, undefined, opts),
-		DELETE: (url: V3Url<V3Path>, opts?: V3RequestOptions) =>
-			executeRequest(fetchFn, 'DELETE', url, undefined, opts),
+		DELETE: (url: V3Url<V3Path>, ...args: [body?: unknown, opts?: V3RequestOptions]) =>
+			executeRequest(fetchFn, 'DELETE', url, args[0], args[1]),
 		HEAD: (url: V3Url<V3Path>, opts?: V3RequestOptions) =>
 			executeRequest(fetchFn, 'HEAD', url, undefined, opts),
 		POST: (url: V3Url<V3Path>, ...args: [body?: unknown, opts?: V3RequestOptions]) =>

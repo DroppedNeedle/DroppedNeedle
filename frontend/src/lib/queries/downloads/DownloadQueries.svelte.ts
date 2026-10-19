@@ -23,7 +23,7 @@ export const getDownloadActivitySummaryQueryOptions = () =>
 		enabled: !!authStore.user?.id,
 		queryKey: DownloadQueryKeyFactory.activity(authStore.user?.id),
 		queryFn: ({ signal }) =>
-			api.global.get<DownloadActivitySummary>(DOWNLOAD_TASKS_ENDPOINTS.activitySummary(), {
+			api.global.v3.GET(DOWNLOAD_TASKS_ENDPOINTS.activitySummary(), {
 				signal
 			}),
 		refetchInterval: (query: { state: { data?: DownloadActivitySummary } }) =>
@@ -48,7 +48,7 @@ export const getDownloadsQueryOptions = () =>
 		staleTime: 30_000,
 		queryKey: DownloadQueryKeyFactory.tasks(authStore.user?.id),
 		queryFn: ({ signal }) =>
-			api.global.get<DownloadListResponse>(DOWNLOAD_TASKS_ENDPOINTS.list(undefined, 1, 100), {
+			api.global.v3.GET(DOWNLOAD_TASKS_ENDPOINTS.list(undefined, 1, 100), {
 				signal
 			})
 	});
@@ -77,12 +77,9 @@ export const getAlbumDownloadsQuery = (
 		enabled: getEnabled() && !!getMbid(),
 		queryKey: DownloadQueryKeyFactory.albumTasks(authStore.user?.id, getMbid()),
 		queryFn: ({ signal }) =>
-			api.global.get<DownloadListResponse>(
-				DOWNLOAD_TASKS_ENDPOINTS.list(undefined, 1, 100, getMbid()),
-				{
-					signal
-				}
-			),
+			api.global.v3.GET(DOWNLOAD_TASKS_ENDPOINTS.list(undefined, 1, 100, getMbid()), {
+				signal
+			}),
 		refetchInterval: (query: { state: { data?: DownloadListResponse | undefined } }) =>
 			hasActiveTask(query.state.data?.items ?? []) ? 2500 : false
 	}));

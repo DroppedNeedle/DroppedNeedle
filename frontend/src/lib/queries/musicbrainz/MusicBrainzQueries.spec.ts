@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 vi.mock('@tanstack/svelte-query', () => ({
 	createQuery: vi.fn((factory: () => Record<string, unknown>) => factory())
@@ -6,10 +6,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 
 vi.mock('$lib/api/client', () => ({
 	api: {
-		global: (() => {
-			const g = { get: vi.fn() };
-			return { ...g, v3: { GET: g.get } };
-		})()
+		global: { v3: { GET: vi.fn() } }
 	}
 }));
 vi.mock('$app/environment', () => ({ browser: true }));
@@ -21,7 +18,7 @@ import { MusicBrainzQueryKeyFactory } from './MusicBrainzQueryKeyFactory';
 import { getMusicBrainzSourceScope, resetMusicBrainzSourceScope } from './sourceScope.svelte';
 import type { MusicBrainzSettingsResponse } from './types';
 
-const mockGet = vi.mocked(api.global.get);
+const mockGet = vi.mocked(api.global.v3.GET) as unknown as Mock;
 
 const storage = new Map<string, string>();
 

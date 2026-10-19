@@ -4,7 +4,6 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type { CutoffUnmetResponse, UpgradeRequestResponse } from '$lib/types';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
 import { DOWNLOAD_UPGRADE_ENDPOINTS } from './endpoints';
@@ -16,8 +15,7 @@ export const getCutoffUnmetQuery = (getEnabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		enabled: getEnabled(),
 		queryKey: DownloadQueryKeyFactory.cutoffUnmet(),
-		queryFn: ({ signal }) =>
-			api.global.get<CutoffUnmetResponse>(DOWNLOAD_UPGRADE_ENDPOINTS.cutoffUnmet(), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_UPGRADE_ENDPOINTS.cutoffUnmet(), { signal })
 	}));
 
 async function invalidateAfterUpgrade() {
@@ -38,7 +36,7 @@ export interface UpgradeAlbumInput {
 export function requestUpgradeAlbum() {
 	return createMutation(() => ({
 		mutationFn: (input: UpgradeAlbumInput) =>
-			api.global.post<UpgradeRequestResponse>(DOWNLOAD_UPGRADE_ENDPOINTS.album(), input),
+			api.global.v3.POST(DOWNLOAD_UPGRADE_ENDPOINTS.album(), input),
 		onSuccess: invalidateAfterUpgrade
 	}));
 }
@@ -56,7 +54,7 @@ export interface UpgradeTrackInput {
 export function requestUpgradeTrack() {
 	return createMutation(() => ({
 		mutationFn: (input: UpgradeTrackInput) =>
-			api.global.post<UpgradeRequestResponse>(DOWNLOAD_UPGRADE_ENDPOINTS.track(), input),
+			api.global.v3.POST(DOWNLOAD_UPGRADE_ENDPOINTS.track(), input),
 		onSuccess: invalidateAfterUpgrade
 	}));
 }

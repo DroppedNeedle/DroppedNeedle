@@ -60,10 +60,6 @@ export interface RequestOptions extends Omit<RequestInit, 'method' | 'body'> {
 	timeoutMs?: number;
 }
 
-interface DeleteRequestOptions extends RequestOptions {
-	body?: unknown;
-}
-
 async function handleResponse<T = void>(res: Response): Promise<T> {
 	if (!res.ok) {
 		// Session expired mid-use: hard redirect so layout re-initialises cleanly
@@ -111,12 +107,9 @@ async function handleResponse<T = void>(res: Response): Promise<T> {
 type FetchFn = typeof fetch;
 
 interface ApiClient {
-	get<T = unknown>(url: string, opts?: RequestOptions): Promise<T>;
-	post<T = unknown>(url: string, body?: unknown, opts?: RequestOptions): Promise<T>;
-	put<T = unknown>(url: string, body?: unknown, opts?: RequestOptions): Promise<T>;
-	patch<T = unknown>(url: string, body?: unknown, opts?: RequestOptions): Promise<T>;
-	delete<T = void>(url: string, opts?: DeleteRequestOptions): Promise<T>;
 	head(url: string, opts?: RequestOptions): Promise<Response>;
+	/** GET answering the raw Response, for binary bodies (downloads, images). */
+	raw(url: string, opts?: RequestOptions): Promise<Response>;
 	upload<T = unknown>(url: string, body: FormData, opts?: RequestOptions): Promise<T>;
 	/** Typed v3 client over the generated contract (same fetch flavor as the host). */
 	v3: V3Client;
@@ -132,8 +125,8 @@ function transportPath(url: string): string {
 
 /**
  * The one request pipeline: timeout/abort mapping, session-cookie fetch, and
- * the ApiError taxonomy. Both the untyped client methods and the typed v3
- * client run through here, so their failure behavior cannot drift apart.
+ * the ApiError taxonomy. The typed v3 client and the head, raw and upload
+ * methods run through here, so their failure behavior cannot drift apart.
  */
 export async function executeRequest<T>(
 	fetchFn: FetchFn,
@@ -192,20 +185,10 @@ export async function executeRequest<T>(
 
 function createClient(fetchFn: FetchFn): ApiClient {
 	return {
-		get: <T = unknown>(url: string, opts?: RequestOptions) =>
-			executeRequest<T>(fetchFn, 'GET', url, undefined, opts),
-		post: <T = unknown>(url: string, body?: unknown, opts?: RequestOptions) =>
-			executeRequest<T>(fetchFn, 'POST', url, body, opts),
-		put: <T = unknown>(url: string, body?: unknown, opts?: RequestOptions) =>
-			executeRequest<T>(fetchFn, 'PUT', url, body, opts),
-		patch: <T = unknown>(url: string, body?: unknown, opts?: RequestOptions) =>
-			executeRequest<T>(fetchFn, 'PATCH', url, body, opts),
-		delete: <T = void>(url: string, opts?: DeleteRequestOptions) => {
-			const { body, ...requestOptions } = opts ?? {};
-			return executeRequest<T>(fetchFn, 'DELETE', url, body, requestOptions);
-		},
 		head: (url: string, opts?: RequestOptions) =>
 			executeRequest<Response>(fetchFn, 'HEAD', url, undefined, { ...opts, raw: true }),
+		raw: (url: string, opts?: RequestOptions) =>
+			executeRequest<Response>(fetchFn, 'GET', url, undefined, { ...opts, raw: true }),
 		upload: <T = unknown>(url: string, body: FormData, opts?: RequestOptions) =>
 			executeRequest<T>(fetchFn, 'POST', url, body, opts),
 		v3: createV3Client(fetchFn)

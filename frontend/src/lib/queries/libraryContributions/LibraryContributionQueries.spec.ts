@@ -1,11 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 vi.mock('@tanstack/svelte-query', () => ({
 	createQuery: vi.fn((factory: () => Record<string, unknown>) => factory())
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { get: vi.fn() } }
+	api: { global: { v3: { GET: vi.fn() } } }
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -21,9 +21,11 @@ import { invalidateLibraryCatalog } from '$lib/queries/library/LibraryCatalogInv
 import { LibraryContributionQueryKeyFactory } from './LibraryContributionQueryKeyFactory';
 import { getLibraryContributionQuery } from './LibraryContributionQueries.svelte';
 
+const mockGet = vi.mocked(api.global.v3.GET) as unknown as Mock;
+
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.mocked(api.global.get).mockResolvedValue({});
+	mockGet.mockResolvedValue({});
 });
 
 describe('library contribution queries', () => {
@@ -46,7 +48,7 @@ describe('library contribution queries', () => {
 		};
 		const signal = new AbortController().signal;
 		await query.queryFn({ signal });
-		expect(api.global.get).toHaveBeenCalledWith('/api/v3/library/contributions/draft-1', {
+		expect(mockGet).toHaveBeenCalledWith('/api/v3/library/contributions/draft-1', {
 			signal
 		});
 		expect(query.refetchInterval({ state: { data: { state: 'seeded' } } })).toBe(2_000);
@@ -55,7 +57,7 @@ describe('library contribution queries', () => {
 	});
 
 	it('leaves catalog sweeping to the page transition guard, even when linked', async () => {
-		vi.mocked(api.global.get).mockResolvedValue({ state: 'linked' });
+		mockGet.mockResolvedValue({ state: 'linked' });
 		const query = getLibraryContributionQuery(() => 'draft-1') as unknown as {
 			queryFn: (context: { signal: AbortSignal }) => Promise<unknown>;
 			refetchOnMount?: unknown;

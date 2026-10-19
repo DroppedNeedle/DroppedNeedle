@@ -45,7 +45,7 @@ const h = vi.hoisted(() => ({
 		isFetchingNextPage: false,
 		fetchNextPage: vi.fn()
 	} as Record<string, unknown>,
-	get: vi.fn(),
+	raw: vi.fn(),
 	toast: vi.fn(),
 	anchorClick: vi.fn()
 }));
@@ -54,7 +54,7 @@ vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
 	getLibraryRunHistoryQuery: () => h.history,
 	getLibraryRunFailuresQuery: () => h.failures
 }));
-vi.mock('$lib/api/client', () => ({ api: { global: { get: h.get } } }));
+vi.mock('$lib/api/client', () => ({ api: { global: { raw: h.raw } } }));
 vi.mock('$lib/stores/toast', () => ({ toastStore: { show: h.toast } }));
 
 import LibraryRunHistory from './LibraryRunHistory.svelte';
@@ -84,7 +84,7 @@ beforeEach(() => {
 
 describe('LibraryRunHistory', () => {
 	it('confirms redaction and honors the streamed safe filename', async () => {
-		h.get.mockResolvedValue(
+		h.raw.mockResolvedValue(
 			new Response('{"safe":true}', {
 				status: 200,
 				headers: {
@@ -100,15 +100,13 @@ describe('LibraryRunHistory', () => {
 			.element(page.getByText(/excludes credentials, raw provider responses/))
 			.toBeVisible();
 		await page.getByRole('button', { name: 'Export report' }).click();
-		expect(h.get).toHaveBeenCalledWith('/api/v3/library/scan/runs/run-safe-1/diagnostics', {
-			raw: true
-		});
+		expect(h.raw).toHaveBeenCalledWith('/api/v3/library/scan/runs/run-safe-1/diagnostics');
 		expect(h.anchorClick).toHaveBeenCalledOnce();
 		expect(h.toast).toHaveBeenCalledWith({ message: 'Diagnostic report ready', type: 'success' });
 	});
 
 	it('uses fixed user-safe copy when an export fails', async () => {
-		h.get.mockRejectedValue(new Error('/secret/path/provider-token'));
+		h.raw.mockRejectedValue(new Error('/secret/path/provider-token'));
 		await render(LibraryRunHistory);
 		await page.getByText('Details').first().click();
 		await page.getByRole('button', { name: /Export diagnostics/ }).click();

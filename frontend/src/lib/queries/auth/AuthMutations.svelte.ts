@@ -14,6 +14,10 @@ import type {
 
 /** Recovery redemption is public; code generation uses the authenticated admin client. */
 
+// The federated sign-ins answer the session user, but the contract lists no
+// body for them, so the typed client infers void.
+const sessionResponse = (body: unknown): AuthSessionResponse => body as AuthSessionResponse;
+
 export const createLocalLoginMutation = () =>
 	createMutation(() => ({
 		mutationFn: (vars: LocalLoginVars) => api.global.v3.POST(AUTH_ENDPOINTS.login, vars)
@@ -33,11 +37,8 @@ export const createPasswordRecoveryCodeMutation = () =>
 
 export const createJellyfinLoginMutation = () =>
 	createMutation(() => ({
-		// Untyped by necessity: the route answers the session user but its
-		// spec entry carries no response schema, so the typed client would
-		// infer void. Revisit once the backend annotates it.
-		mutationFn: (vars: JellyfinLoginVars): Promise<AuthSessionResponse> =>
-			api.global.post<AuthSessionResponse>(AUTH_ENDPOINTS.jellyfinLogin, vars)
+		mutationFn: async (vars: JellyfinLoginVars): Promise<AuthSessionResponse> =>
+			sessionResponse(await api.global.v3.POST(AUTH_ENDPOINTS.jellyfinLogin, vars))
 	}));
 
 export const createSetupMutation = () =>
@@ -47,10 +48,8 @@ export const createSetupMutation = () =>
 
 export const createOidcExchangeMutation = () =>
 	createMutation(() => ({
-		// Untyped by necessity: same missing response schema as the Jellyfin
-		// login above.
-		mutationFn: (vars: OidcExchangeVars): Promise<AuthSessionResponse> =>
-			api.global.post<AuthSessionResponse>(AUTH_ENDPOINTS.oidcExchange, vars)
+		mutationFn: async (vars: OidcExchangeVars): Promise<AuthSessionResponse> =>
+			sessionResponse(await api.global.v3.POST(AUTH_ENDPOINTS.oidcExchange, vars))
 	}));
 
 export const createOidcAuthorizeMutation = () =>
