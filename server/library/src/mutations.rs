@@ -23,6 +23,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use droppedneedle_kernel::db::Lane;
 use rusqlite::{OptionalExtension, Transaction, params};
 
+use super::catalog_revision::bump_catalog;
 use super::management::takeover;
 use super::operations::reasons::Reason;
 use super::scan::coordinator::ScanRequestError;
@@ -695,7 +696,6 @@ impl<'a> Mutations<'a> {
         drop(guards);
         match marked {
             Ok(changed) => {
-                self.setup.events.poke_activity();
                 tracing::info!(
                     tracks = ids.len(),
                     recycled = moved.len(),
@@ -975,19 +975,6 @@ fn record_action(
             reason_code,
             now_secs(),
         ],
-    )?;
-    Ok(())
-}
-
-fn bump_catalog(tx: &Transaction<'_>) -> rusqlite::Result<()> {
-    tx.execute(
-        "INSERT INTO library_catalog_revision (singleton, value) VALUES (1, 0) \
-         ON CONFLICT (singleton) DO NOTHING",
-        [],
-    )?;
-    tx.execute(
-        "UPDATE library_catalog_revision SET value = value + 1 WHERE singleton = 1",
-        [],
     )?;
     Ok(())
 }

@@ -21,13 +21,14 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::choice::{self, CHOSEN_FITS_NO_FILE, undo_point};
 use super::decisions::{
-    CatalogAction, TrackRow, bump_catalog, indexed_track_ids, record_action, restore_track_row,
+    CatalogAction, TrackRow, indexed_track_ids, record_action, restore_track_row,
     upsert_track_identity,
 };
 use super::models::{OperationError, ReidentificationCandidate};
 use super::plan::{StoredPlacement, seat};
 use super::reasons;
 use super::store::PROVIDER;
+use crate::catalog_revision::bump_catalog;
 use crate::corrections::continuation::{Scope, continue_tracks};
 use crate::corrections::release_join::join_replaced;
 use crate::identify::models::PriorTrackIdentity;

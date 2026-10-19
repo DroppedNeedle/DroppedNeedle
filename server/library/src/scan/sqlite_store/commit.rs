@@ -35,6 +35,7 @@ use super::hands_off::hold_replacements;
 use super::held_scopes::{self, held_back};
 use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
+use crate::catalog_revision::bump_catalog;
 use crate::corrections::artist_convergence::converge_artists;
 use crate::corrections::continuation::{Scope, continue_tracks};
 use crate::corrections::placement::place_scanned;
@@ -45,7 +46,7 @@ use crate::identify::sqlite::{
     settle_followed_match,
 };
 use crate::management::{automatic, takeover};
-use crate::operations::decisions::{CatalogAction, bump_catalog, record_action};
+use crate::operations::decisions::{CatalogAction, record_action};
 use crate::publish::HIDDEN_PREFIX;
 use crate::scan::naming::{
     album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
@@ -2695,6 +2696,11 @@ fn write_window(
     changed.dedup();
     for album_id in &changed {
         automatic::queue(tx, album_id, window.now)?;
+    }
+    // New music shows as the scan goes: a window that wrote a catalog row
+    // moves the revision with it.
+    if outcome.committed > 0 {
+        bump_catalog(tx)?;
     }
     mark_window(tx, window, &indexed, &failed, &adjust)?;
     Ok(outcome)

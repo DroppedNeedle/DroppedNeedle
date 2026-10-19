@@ -7,12 +7,13 @@ use rusqlite::{Connection, Transaction, params};
 
 use super::edition::drop_edition;
 use super::membership::retire;
+use crate::catalog_revision::bump_catalog;
 use crate::identify::sqlite::{
     chosen_matches_differ, match_chosen, merge_moves_match, offer_album, release_chosen,
     settle_merged_match,
 };
 use crate::management::{automatic, takeover};
-use crate::operations::decisions::{CatalogAction, bump_catalog, record_action};
+use crate::operations::decisions::{CatalogAction, record_action};
 use crate::scan::sqlite_store::retag_pairs::RetagPairReason;
 use droppedneedle_kernel::db::savepoint;
 

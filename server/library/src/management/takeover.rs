@@ -17,8 +17,9 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::models::{ManagementError, PlannedItem};
 use super::reasons::ItemReason;
+use crate::catalog_revision::bump_catalog;
 use crate::clock::now_unix;
-use crate::operations::decisions::{CatalogAction, bump_catalog, record_action};
+use crate::operations::decisions::{CatalogAction, record_action};
 use crate::publish::record::changed_since_written;
 pub use crate::publish::record::record_sql;
 use crate::publish::snapshots::sha256_hex;

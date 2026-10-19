@@ -607,13 +607,10 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
         Ok((run, stream_revision))
     }
 
-    /// The terminal flush: drop the classify snapshot and bump the catalog
-    /// revision if the run changed the catalog. One that fails keeps the
-    /// catalog dirty for the next terminal flush, and is logged.
+    /// The terminal flush: drop the classify snapshot. The catalog
+    /// revision moved with each window that wrote a row.
     fn flush_terminal(&self) {
-        if let Err(error) = self.store.flush_invalidation(&RunStop::never(), true) {
-            tracing::error!(%error, "scan catalog revision not bumped; the next run end tries again");
-        }
+        self.store.drop_classify_snapshot();
     }
 
     /// Boot recovery (v2 `recover` / `recover_stopping`).
@@ -949,7 +946,6 @@ impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
             if !self.check(&run.id, &frozen_policy_revision) {
                 return or_halt!(self.store.reread_run(stop, &run.id)).0;
             }
-            or_halt!(self.store.flush_invalidation(stop, false));
             self.log_progress(&run, "phase_indexing_end", true);
             run = or_halt!(self.store.transition(
                 stop,

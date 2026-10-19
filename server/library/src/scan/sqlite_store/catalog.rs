@@ -93,7 +93,6 @@ impl SqliteScanStore {
             }
         }
         if outcome.committed > 0 {
-            guard.catalog_dirty = true;
             guard.catalog_version += 1;
         }
     }
@@ -170,13 +169,15 @@ impl SqliteScanStore {
                 "UPDATE library_scan_runs SET missing_count = missing_count + ?1 WHERE id = ?2",
                 params![marked as i64, run_id],
             )?;
+            if marked > 0 {
+                crate::catalog_revision::bump_catalog(tx)?;
+            }
             Ok(marked)
         });
         let mut guard = self.lock();
         // Chunks that committed before a stop stay marked: drop what the
         // snapshot knows of the paths either way.
         if marked.as_ref().map_or(true, |marked| *marked > 0) {
-            guard.catalog_dirty = true;
             guard.catalog_version += 1;
             if let Some(cached) = guard.catalog_cache.get_mut(root_id) {
                 for path in relative_paths {

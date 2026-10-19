@@ -84,7 +84,7 @@ impl Corrections {
                     },
                     ..Applied::default()
                 };
-                applied.catalog_revision = bump_catalog(tx)?;
+                applied.catalog_revision = crate::catalog_revision::bump_catalog(tx)?;
                 let album = applied
                     .target_album_id
                     .clone()
@@ -153,7 +153,7 @@ impl Corrections {
                     retired_artist_ids: run.outcome.retired_artist_ids.clone(),
                     ..Applied::default()
                 };
-                applied.catalog_revision = bump_catalog(tx)?;
+                applied.catalog_revision = crate::catalog_revision::bump_catalog(tx)?;
                 let mut all = vec![run.outcome.surviving_artist_id.clone()];
                 all.extend(run.outcome.retired_artist_ids.iter().cloned());
                 record(
@@ -285,21 +285,6 @@ fn replay(tx: &Transaction<'_>, key: Option<&str>) -> Result<Option<Applied>, Co
         }),
         None => Ok(None),
     }
-}
-
-/// Move the catalog revision so cached reads refresh; returns the new one.
-fn bump_catalog(tx: &Transaction<'_>) -> rusqlite::Result<i64> {
-    tx.execute(
-        "INSERT INTO library_catalog_revision (singleton, value) VALUES (1, 0) \
-         ON CONFLICT (singleton) DO NOTHING",
-        [],
-    )?;
-    tx.query_row(
-        "UPDATE library_catalog_revision SET value = value + 1 WHERE singleton = 1 \
-         RETURNING value",
-        [],
-        |row| row.get(0),
-    )
 }
 
 struct Audit<'a> {

@@ -12,11 +12,10 @@
 use rusqlite::{OptionalExtension as _, Transaction, params};
 
 use super::store::{self, OpenFinding};
+use crate::catalog_revision::bump_catalog;
 use crate::identify::sqlite::offer_album;
 use crate::operations::choice;
-use crate::operations::decisions::{
-    CatalogAction, TrackRow, bump_catalog, record_action, upsert_track_identity,
-};
+use crate::operations::decisions::{CatalogAction, TrackRow, record_action, upsert_track_identity};
 use crate::operations::models::OperationError;
 
 /// Reason an album's match state carries after a recheck detached it.

@@ -43,10 +43,11 @@ use rusqlite::{Connection, Transaction, params};
 
 use super::continuation::Pair;
 use super::release_join::{Verdict, judge};
+use crate::catalog_revision::bump_catalog;
 use crate::identify::sqlite::{release_chosen, stored_release};
 use crate::management::{automatic, takeover};
 use crate::matching::Release;
-use crate::operations::decisions::{TrackRow, bump_catalog, upsert_track_identity};
+use crate::operations::decisions::{TrackRow, upsert_track_identity};
 use crate::publish::record::record_sql;
 use droppedneedle_kernel::db::savepoint;
 

@@ -14,9 +14,10 @@
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::choice;
-use super::decisions::{CatalogAction, bump_catalog, record_action};
+use super::decisions::{CatalogAction, record_action};
 use super::models::OperationError;
 use super::reasons;
+use crate::catalog_revision::bump_catalog;
 use crate::identify::models::{ReviewItem, ReviewState};
 use crate::identify::sqlite::{bump_identification_stream, map_review};
 

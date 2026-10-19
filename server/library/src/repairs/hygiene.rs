@@ -18,9 +18,10 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_from_iter};
 
+use crate::catalog_revision::bump_catalog;
 use crate::corrections::membership::retire;
 use crate::identify::sqlite::offer_album;
-use crate::operations::decisions::{CatalogAction, bump_catalog, record_action};
+use crate::operations::decisions::{CatalogAction, record_action};
 use crate::scan::sqlite_store::awaits_retag;
 use droppedneedle_kernel::db::fold::fold_text;
 

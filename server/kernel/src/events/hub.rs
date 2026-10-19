@@ -21,7 +21,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-use tokio::sync::{Notify, broadcast, watch};
+use tokio::sync::{broadcast, watch};
 
 use super::model::{Audience, Event, Frame, Replay, UserNotice};
 
@@ -44,7 +44,6 @@ pub struct EventHub {
 struct Inner {
     sender: broadcast::Sender<Arc<Frame>>,
     retained: Mutex<Retained>,
-    activity_poke: Notify,
     closed: watch::Sender<bool>,
 }
 
@@ -71,7 +70,6 @@ impl EventHub {
             inner: Arc::new(Inner {
                 sender,
                 retained: Mutex::new(HashMap::new()),
-                activity_poke: Notify::new(),
                 closed,
             }),
         }
@@ -119,18 +117,6 @@ impl EventHub {
             closed: self.inner.closed.subscribe(),
             hub: self.clone(),
         }
-    }
-
-    /// Ask the library revision poller to look now instead of at its next
-    /// tick (a scan just changed state).
-    pub fn poke_activity(&self) {
-        self.inner.activity_poke.notify_one();
-    }
-
-    /// Resolves once someone pokes activity. A poke with nobody waiting is
-    /// kept for the next wait.
-    pub async fn activity_poked(&self) {
-        self.inner.activity_poke.notified().await;
     }
 
     /// End every open stream (server shutdown), so connection draining
@@ -250,13 +236,6 @@ impl EventSink {
     pub fn notify(&self, user_id: &str, notice: UserNotice) {
         if let Some(hub) = self.hub() {
             hub.notify(user_id, notice);
-        }
-    }
-
-    /// Poke the library revision poller through the attached hub, if any.
-    pub fn poke_activity(&self) {
-        if let Some(hub) = self.hub() {
-            hub.poke_activity();
         }
     }
 

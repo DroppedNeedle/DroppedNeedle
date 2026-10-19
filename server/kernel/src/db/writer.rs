@@ -77,7 +77,7 @@ use std::{
 };
 
 use rusqlite::{Connection, Transaction, TransactionBehavior};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 
 use super::{
     error::{ChunkedError, DbError, rusqlite_is_busy},
@@ -585,6 +585,10 @@ struct Shared {
     drained: Condvar,
     idle: Arc<LaneIdle>,
     hold: Arc<WalHold>,
+    /// Moves after each commit that changed a row. Taken when the lane
+    /// closes, so every receiver sees the end. Kept apart from `state`:
+    /// announcing a commit never touches the turn-taking.
+    commits: Mutex<Option<watch::Sender<u64>>>,
 }
 
 /// The lane's bookkeeping. Locked briefly, never while a closure runs.
@@ -649,6 +653,18 @@ impl State {
 impl Shared {
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn commits(&self) -> MutexGuard<'_, Option<watch::Sender<u64>>> {
+        self.commits.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Tell every listener a commit changed rows. Nothing to tell once the
+    /// lane has closed.
+    fn announce_commit(&self) {
+        if let Some(commits) = self.commits().as_ref() {
+            commits.send_modify(|count| *count = count.wrapping_add(1));
+        }
     }
 
     /// Queue a waiter and, if the lane is free, grant it at once.
@@ -864,6 +880,7 @@ impl Shared {
         };
         drop(connection);
         drop(runner);
+        drop(self.commits().take());
         let refused = unserved.len();
         refuse_all(unserved, Refused::Closed);
         match stuck {
@@ -1047,6 +1064,11 @@ impl Turn {
             };
         };
         let outcome = connection.transact(budget, name, durable, op);
+        // `Ok` only once the lane's commit went through: a rollback, an
+        // abort or a panic never gets here with one.
+        if outcome.value.is_ok() && outcome.changes > 0 {
+            self.shared.announce_commit();
+        }
         // `elapsed` runs from before `BEGIN`, so it includes the wait for
         // the file lock, which the abort budget does not count, and for a
         // durable write the sync at commit.
@@ -1135,6 +1157,7 @@ impl WriteLane {
                 drained: Condvar::new(),
                 idle: Arc::new(LaneIdle::default()),
                 hold: Arc::new(WalHold::default()),
+                commits: Mutex::new(Some(watch::channel(0).0)),
             }),
         })
     }
@@ -1153,6 +1176,15 @@ impl WriteLane {
     /// set.
     pub fn wal_hold(&self) -> Arc<WalHold> {
         Arc::clone(&self.shared.hold)
+    }
+
+    /// Moves after each write that committed a changed row; closed once
+    /// the lane has shut down.
+    pub(crate) fn commits(&self) -> watch::Receiver<u64> {
+        match self.shared.commits().as_ref() {
+            Some(commits) => commits.subscribe(),
+            None => watch::channel(0).1,
+        }
     }
 
     /// The database this lane writes, as the per-thread record of open

@@ -227,6 +227,13 @@ impl Db {
             .write_chunked_blocking(name, items, chunk_rows, cancel, chunk)
     }
 
+    /// Moves after each write that committed a changed row, so a listener
+    /// can wait for the database to change instead of polling it. Closed
+    /// once the lane has shut down.
+    pub fn commits(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.lane.commits()
+    }
+
     /// The sqlx reader pool, for the areas that have not moved their reads
     /// to [`Db::read`] yet.
     pub fn sqlx(&self) -> &SqlitePool {

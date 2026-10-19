@@ -65,7 +65,6 @@ struct CachedCatalog {
 /// waits for a lane turn or a pool connection.
 struct Inner {
     deferred: HashSet<(String, String)>,
-    catalog_dirty: bool,
     catalog_version: u64,
     catalog_cache: HashMap<String, CachedCatalog>,
 }
@@ -83,7 +82,6 @@ impl SqliteScanStore {
             db,
             inner: Mutex::new(Inner {
                 deferred: HashSet::new(),
-                catalog_dirty: false,
                 catalog_version: 0,
                 catalog_cache: HashMap::new(),
             }),

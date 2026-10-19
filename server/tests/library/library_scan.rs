@@ -519,6 +519,137 @@ async fn shutdown_mid_index_resumes_without_double_counting() {
     );
 }
 
+/// Tag reader that holds one nominated read until the test lets it go,
+/// then signals shutdown before the read returns, so nothing after it
+/// commits.
+struct HoldOnRead {
+    shutdown: watch::Sender<bool>,
+    hold_at: u64,
+    reads: AtomicU64,
+    reached: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl TagReader for HoldOnRead {
+    fn read_tags(&self, _path: &Path) -> Result<ScannedTags, TagReadError> {
+        if self.reads.fetch_add(1, Ordering::SeqCst) + 1 == self.hold_at {
+            if let Ok(reached) = self.reached.lock() {
+                let _ = reached.send(());
+            }
+            if let Ok(release) = self.release.lock() {
+                let _ = release.recv();
+            }
+            let _ = self.shutdown.send(true);
+        }
+        Ok(ScannedTags::default())
+    }
+}
+
+/// New music shows as a scan goes: each window that writes catalog rows
+/// moves the catalog revision in its own transaction, open tabs hear of it
+/// while the scan is still running, and the move outlives a shutdown that
+/// leaves the run unfinished.
+#[tokio::test]
+async fn a_scan_moves_the_catalog_revision_as_it_goes() {
+    use droppedneedle_kernel::db::{DbConfig, open_runtime};
+    use droppedneedle_kernel::events::{EventHub, revisions};
+
+    let scratch = ScratchDir::new("scan-revision");
+    let root = scratch.join("music");
+    std::fs::create_dir_all(&root).expect("root");
+    // One window of 256 files, and the first read of the next is held.
+    for n in 0..300 {
+        std::fs::write(root.join(format!("t{n:04}.flac")), b"junk").expect("plant");
+    }
+    let path = scratch.join("scan.db");
+    migrated_db(&path);
+    let runtime = open_runtime(&DbConfig::new(&path))
+        .await
+        .expect("database opens");
+    let db = runtime.db().clone();
+    let revision = |db: &Db| {
+        db.query_i64("SELECT value FROM library_catalog_revision WHERE singleton = 1")
+            .expect("revision reads")
+    };
+    let before = revision(&db);
+
+    let hub = EventHub::new();
+    let mut listener = hub.subscribe("listener");
+    let (stop_tx, stop_rx) = watch::channel(false);
+    let events = tokio::spawn(revisions::run(hub.clone(), db.clone(), stop_rx));
+
+    let (shutdown, signal) = watch::channel(false);
+    let (reached_tx, reached) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let reader = Arc::new(HoldOnRead {
+        shutdown,
+        hold_at: 257,
+        reads: AtomicU64::new(0),
+        reached: std::sync::Mutex::new(reached_tx),
+        release: std::sync::Mutex::new(release_rx),
+    });
+    let (coordinator, paths) = coordinator_on(db.clone(), &root, reader);
+    let requested = coordinator.request_run(&request(&root)).expect("requested");
+
+    let held = async {
+        tokio::task::spawn_blocking(move || reached.recv_timeout(Duration::from_secs(30)))
+            .await
+            .expect("waits")
+            .expect("the second window's first read is reached");
+        let (run, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
+        assert_eq!(
+            count(&run, counter_names::INDEXED),
+            256,
+            "held after the first window"
+        );
+        let moved = revision(&db);
+        assert!(
+            moved > before,
+            "the first window moved the catalog revision: {before} -> {moved}"
+        );
+        let heard = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let frame = listener.next().await.expect("the hub stays open");
+                if frame.name() != "activity.changed" {
+                    continue;
+                }
+                let data: serde_json::Value =
+                    serde_json::from_str(frame.data()).expect("data is JSON");
+                if data["revisions"]["catalog"].as_i64().unwrap_or(0) > before {
+                    return;
+                }
+            }
+        })
+        .await;
+        assert!(heard.is_ok(), "a tab hears the moved catalog mid-scan");
+        release.send(()).expect("released");
+        moved
+    };
+    let (drive, moved) = tokio::join!(coordinator.run_once_with_shutdown(&paths, &signal), held);
+    assert!(drive.is_none(), "shutdown abandons the drive");
+    let (run, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
+    assert_eq!(run.state, ScanState::Indexing, "the run never ended");
+    drop(coordinator);
+
+    // A closed lane ends the event loop, with `stop` never flipped.
+    runtime.shutdown().await;
+    tokio::time::timeout(Duration::from_secs(5), events)
+        .await
+        .expect("the event loop ends with the lane")
+        .expect("the event loop ran");
+    drop(stop_tx);
+
+    let runtime = open_runtime(&DbConfig::new(&path))
+        .await
+        .expect("database opens again");
+    assert_eq!(
+        revision(runtime.db()),
+        moved,
+        "the bump outlived a shutdown before the run's end"
+    );
+    runtime.shutdown().await;
+}
+
 /// A run that has ended but still owes its end passes counts as a scan
 /// in progress for the work that must never run beside one, until a drive
 /// settles it.

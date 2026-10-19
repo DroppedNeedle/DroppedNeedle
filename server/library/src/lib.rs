@@ -23,6 +23,7 @@
 
 pub mod activity;
 pub mod adapters;
+mod catalog_revision;
 mod clock;
 pub mod contrib;
 pub mod corrections;
@@ -56,5 +57,6 @@ pub fn statement_files() -> Vec<droppedneedle_kernel::db::statement::StatementFi
         identify::sql::registered(),
         contrib::sql::registered(),
         publish::sql::registered(),
+        catalog_revision::sql::registered(),
     ]
 }

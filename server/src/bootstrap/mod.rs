@@ -244,7 +244,8 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let ids = Arc::new(UuidGenerator);
     let clock = Arc::new(SystemClock);
     // One live event hub for the process. Bundles built below publish into
-    // it once the state attaches it; the revision poller feeds it too.
+    // it once the state attaches it; the revision loops feed it after
+    // each commit.
     let events = EventHub::new();
     // The plugin host exists early so playback, acquisition and streaming
     // can hold it; no plugin starts until `PluginsSetup::build` loads it.
@@ -718,7 +719,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         "event-revisions",
         tokio::spawn(droppedneedle_kernel::events::revisions::run(
             events.clone(),
-            db.sqlx().clone(),
+            db.clone(),
             stop.clone(),
         )),
     );
@@ -727,7 +728,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         "event-downloads",
         tokio::spawn(droppedneedle_kernel::events::downloads::run(
             events.clone(),
-            db.sqlx().clone(),
+            db.clone(),
             stop,
         )),
     );

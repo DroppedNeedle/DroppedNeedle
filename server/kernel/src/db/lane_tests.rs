@@ -1520,6 +1520,41 @@ fn a_refusal_that_panics_still_answers_the_rest_of_the_pass() {
     current_thread_runtime().block_on(lane.shutdown(DRAIN));
 }
 
+/// Listeners hear of a commit only when it changed a row: a write that
+/// changes nothing or rolls back leaves the counter alone, and shutting
+/// the lane down closes it.
+#[tokio::test]
+async fn the_lane_announces_only_commits_that_changed_rows() {
+    let (lane, _dir) = scratch_lane("announce");
+    let mut commits = lane.commits();
+    let start = *commits.borrow_and_update();
+
+    lane.write_blocking(Lane::Foreground, "brief-insert", |tx| {
+        insert_label(tx, "kept")
+    })
+    .unwrap();
+    assert_eq!(*commits.borrow_and_update(), start + 1, "a commit is heard");
+
+    lane.write_blocking(Lane::Foreground, "brief-nothing", |tx| {
+        tx.execute("DELETE FROM scratch_turns WHERE label = 'absent'", [])?;
+        Ok::<_, DbError>(())
+    })
+    .unwrap();
+    lane.write_blocking(Lane::Foreground, "brief-rolled-back", |tx| {
+        insert_label(tx, "rolled back")?;
+        Err::<(), _>(DbError::LaneClosed)
+    })
+    .unwrap_err();
+    assert!(
+        !commits.has_changed().unwrap(),
+        "a write that changed nothing, or rolled back, is not heard"
+    );
+
+    lane.shutdown(DRAIN).await;
+    assert!(commits.changed().await.is_err(), "a closed lane ends it");
+    assert!(lane.commits().has_changed().is_err(), "and stays closed");
+}
+
 /// Log output collected for a brief.
 struct LogSink(Arc<Mutex<Vec<u8>>>);
 

@@ -26,8 +26,9 @@
 use rusqlite::{OptionalExtension as _, Transaction, params};
 
 use super::artists::retire_artist;
+use crate::catalog_revision::bump_catalog;
 use crate::identify::artist_links::{CURRENT_PROOF, settle};
-use crate::operations::decisions::{ArtistAction, bump_catalog, record_artist_action};
+use crate::operations::decisions::{ArtistAction, record_artist_action};
 use crate::scan::sqlite_store::artists::{SENTINEL_ARTIST_IDS, proven_rows};
 use droppedneedle_kernel::db::savepoint;
 

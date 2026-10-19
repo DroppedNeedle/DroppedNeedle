@@ -729,20 +729,6 @@ pub(crate) fn record_artist_action(
     Ok(id)
 }
 
-/// Move the catalog revision so cached reads of the album refresh.
-pub(crate) fn bump_catalog(tx: &Transaction<'_>) -> rusqlite::Result<()> {
-    tx.execute(
-        "INSERT INTO library_catalog_revision (singleton, value) VALUES (1, 0) \
-         ON CONFLICT (singleton) DO NOTHING",
-        [],
-    )?;
-    tx.execute(
-        "UPDATE library_catalog_revision SET value = value + 1 WHERE singleton = 1",
-        [],
-    )?;
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // Undoing an automatic edition.
 // ---------------------------------------------------------------------------
@@ -923,7 +909,7 @@ pub fn undo_automatic_edition(
     // An identity check's acceptance also kept the album's match state:
     // put it back, as the album page's undo would.
     super::choice::restore_match_state(tx, album_id, post_identity_revision)?;
-    bump_catalog(tx)?;
+    crate::catalog_revision::bump_catalog(tx)?;
     Ok(UndoOutcome {
         local_album_id: album_id.to_owned(),
         outcome: outcome.to_owned(),

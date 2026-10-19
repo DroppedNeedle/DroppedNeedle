@@ -114,7 +114,6 @@ impl AppState {
     fn attach_events(self) -> Self {
         self.media.playback.presence.attach_events(&self.events);
         self.acquire.attach_events(&self.events);
-        self.library.events.attach(&self.events);
         self.jobs.cache_sync().sink().attach(&self.events);
         self
     }

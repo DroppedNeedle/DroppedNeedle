@@ -187,16 +187,7 @@ impl Catalog for SqliteCatalog {
                 commit.bundle_id
             )));
         }
-        let changed = conn.execute(
-            "UPDATE library_catalog_revision SET value = value + 1 WHERE singleton = 1",
-            [],
-        )?;
-        if changed != 1 {
-            return Err(PublishError::Catalog(format!(
-                "no catalog revision to bump for bundle {}",
-                commit.bundle_id
-            )));
-        }
+        crate::catalog_revision::bump_catalog(conn)?;
         let now = now_secs();
         // `written_sha256` is the app's record of the bytes it placed: a
         // file that no longer has them was changed outside the app. A write
@@ -274,10 +265,7 @@ impl Catalog for SqliteCatalog {
             "UPDATE local_tracks SET availability = 'missing', missing_since = ?2 WHERE id = ?1",
             rusqlite::params![track_id, now_secs()],
         )?;
-        conn.execute(
-            "UPDATE library_catalog_revision SET value = value + 1 WHERE singleton = 1",
-            [],
-        )?;
+        crate::catalog_revision::bump_catalog(conn)?;
         Ok(())
     }
 }

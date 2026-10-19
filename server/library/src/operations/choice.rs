@@ -17,12 +17,13 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use serde::{Deserialize, Serialize};
 
 use super::decisions::{
-    CatalogAction, TrackRow, bump_catalog, indexed_track_ids, record_action, restore_track_row,
-    seal_album, settle_reviews, upsert_track_identity,
+    CatalogAction, TrackRow, indexed_track_ids, record_action, restore_track_row, seal_album,
+    settle_reviews, upsert_track_identity,
 };
 use super::models::{EditionChoice, OperationError, PlacedFile, ReidentificationCandidate};
 use super::reasons;
 use super::store::PROVIDER;
+use crate::catalog_revision::bump_catalog;
 use crate::corrections::continuation::{Scope, continue_replaced, continue_tracks};
 use crate::corrections::release_join::join_replaced;
 use crate::identify::models::{EvidenceClass, PriorAlbumIdentity, PriorTrackIdentity};

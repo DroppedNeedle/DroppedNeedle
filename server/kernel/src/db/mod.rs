@@ -48,6 +48,10 @@
 //! Its closure gets the transaction as a [`Durable`], which only the lane
 //! makes, so a write that must be durable can ask for one.
 //!
+//! After each commit that changed a row the lane moves a counter that
+//! `Db::commits` hands out, so a listener waits for a change rather than
+//! polling. Rolled-back, refused and timed-out writes leave it alone.
+//!
 //! Many rows go through `write_chunked` or `write_chunked_blocking`, one
 //! `Lane::Bulk` turn per chunk. Bulk writes are the only ones that wait
 //! while the checkpoint service reports the WAL too large or stalled, and

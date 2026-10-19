@@ -812,7 +812,9 @@ impl Operations {
                     Err(error) => Err(error),
                 };
                 match placed {
-                    Ok(()) => decisions::bump_catalog(tx)?,
+                    Ok(()) => {
+                        crate::catalog_revision::bump_catalog(tx)?;
+                    }
                     Err(OperationError::Unavailable(_)) => {
                         choice::retry_remap(tx, &pending, reasons::MUSICBRAINZ_UNAVAILABLE, now)?
                     }
@@ -835,20 +837,20 @@ impl Operations {
                             choice::CHOSEN_NOT_LISTED,
                             now,
                         )?;
-                        decisions::bump_catalog(tx)?;
+                        crate::catalog_revision::bump_catalog(tx)?;
                     }
                     Err(OperationError::NotFound(reason))
                         if reason.code == reasons::EDITION_NOT_FOUND.code =>
                     {
                         choice::give_up_remap(tx, &pending, reason.code, now)?;
-                        decisions::bump_catalog(tx)?;
+                        crate::catalog_revision::bump_catalog(tx)?;
                     }
                     Err(OperationError::Invalid(reason))
                         if reason.code == reasons::EDITION_FITS_NO_FILE.code
                             && pending.origin == RemapOrigin::GroupPin =>
                     {
                         choice::give_up_remap(tx, &pending, reason.code, now)?;
-                        decisions::bump_catalog(tx)?;
+                        crate::catalog_revision::bump_catalog(tx)?;
                     }
                     Err(OperationError::Invalid(reason) | OperationError::NotFound(reason)) => {
                         choice::keep_unplaceable_choice(
@@ -858,7 +860,7 @@ impl Operations {
                             choice::CHOSEN_FITS_NO_FILE,
                             now,
                         )?;
-                        decisions::bump_catalog(tx)?;
+                        crate::catalog_revision::bump_catalog(tx)?;
                     }
                     Err(other) => return Err(other),
                 }

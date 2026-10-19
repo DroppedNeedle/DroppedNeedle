@@ -154,8 +154,6 @@ pub struct LibrarySetup {
     pub watcher_state: Arc<std::sync::Mutex<WatcherState>>,
     /// Shared root-directory lookup.
     pub root_dirs: RootDirs,
-    /// Live event hub handle (scan events poke the revision poller).
-    pub events: droppedneedle_kernel::events::EventSink,
     /// Download and wanted cleanup after an album removal, set at boot.
     pub removal_hook: super::mutations::AlbumRemovalSlot,
     /// Called after each scan run completes (the library image refresh
@@ -306,8 +304,6 @@ impl LibrarySetup {
         let pool = BlockingPool::new(4);
         let wakeups = WorkWakeups::new();
         let fs = FsCoordinator::new();
-        let events = droppedneedle_kernel::events::EventSink::default();
-        let scan_events = events.clone();
         let scan_completed: ScanCompletedSlot = Default::default();
         let completed_hook = Arc::clone(&scan_completed);
         let coordinator = Arc::new(
@@ -319,16 +315,12 @@ impl LibrarySetup {
             )
             .with_filesystem(fs.clone())
             .with_wakeups(wakeups.clone())
-            // A scan event follows a run write: the revision poller
-            // reads at once, so a moved revision goes out as
-            // `activity.changed` without waiting for its next tick.
             .with_events(ScanEventPublisher::new(Arc::new(move |event| {
                 tracing::debug!(
                     run_id = event.run_id,
                     event = event.event,
                     "library scan event"
                 );
-                scan_events.poke_activity();
                 if event.state == crate::scan::models::ScanState::Completed
                     && event.event == "scan.transition"
                     && event.changed
@@ -387,7 +379,6 @@ impl LibrarySetup {
             previews: Arc::new(std::sync::Mutex::new(HashMap::new())),
             watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
             root_dirs,
-            events,
             removal_hook: Default::default(),
             scan_completed,
             http: None,

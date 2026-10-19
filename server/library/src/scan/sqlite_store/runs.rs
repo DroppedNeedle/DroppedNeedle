@@ -247,35 +247,10 @@ impl SqliteScanStore {
         })
     }
 
-    /// Drop the classify snapshot at a terminal flush, and bump the shared
-    /// catalog revision when the run changed the catalog. A bump that fails
-    /// keeps the catalog dirty, so the next terminal flush bumps it.
-    pub fn flush_invalidation(&self, stop: &RunStop, terminal: bool) -> Result<(), ScanStoreError> {
-        {
-            let mut guard = self.lock();
-            if terminal {
-                // The classify snapshot is a within-scan accelerator: drop it
-                // at every terminal flush so idle scans hold no catalog memory.
-                guard.catalog_cache.clear();
-            }
-            if !terminal || !guard.catalog_dirty {
-                return Ok(());
-            }
-        }
-        self.write(stop, Lane::Background, "scan_catalog_revision", |tx| {
-            tx.execute(
-                "INSERT INTO library_catalog_revision (singleton, value) VALUES (1, 0) \
-                 ON CONFLICT (singleton) DO NOTHING",
-                [],
-            )?;
-            tx.execute(
-                "UPDATE library_catalog_revision SET value = value + 1 WHERE singleton = 1",
-                [],
-            )?;
-            Ok(())
-        })?;
-        self.lock().catalog_dirty = false;
-        Ok(())
+    /// Drop the classify snapshot when a run ends. It is a within-scan
+    /// accelerator, so an idle scanner holds no catalog memory.
+    pub fn drop_classify_snapshot(&self) {
+        self.lock().catalog_cache.clear();
     }
 
     pub fn recover(&self, stop: &RunStop, now: f64) -> Result<Vec<ScanRun>, ScanStoreError> {

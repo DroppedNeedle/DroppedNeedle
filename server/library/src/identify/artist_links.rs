@@ -27,9 +27,9 @@ use sha2::{Digest as _, Sha256};
 
 use super::merged_ids;
 use super::sqlite::stored_release;
+use crate::catalog_revision::bump_catalog;
 use crate::corrections::continuation::accepted_release;
 use crate::matching::model::{ArtistNames, CreditedArtist, Release, VARIOUS_ARTISTS_MBID};
-use crate::operations::decisions::bump_catalog;
 use crate::scan::sqlite_store::artists::SENTINEL_ARTIST_IDS;
 use droppedneedle_kernel::db::fold_text;
 

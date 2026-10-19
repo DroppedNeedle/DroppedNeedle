@@ -32,8 +32,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use serde_json::{Value, json};
 
+use crate::catalog_revision::bump_catalog;
 use crate::identify::sqlite::retarget_references;
-use crate::operations::decisions::{CatalogAction, bump_catalog, record_action};
+use crate::operations::decisions::{CatalogAction, record_action};
 use droppedneedle_kernel::db::savepoint;
 
 /// The track a local id names now: the track itself while its file is
