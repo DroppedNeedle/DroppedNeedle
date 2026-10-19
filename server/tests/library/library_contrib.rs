@@ -1668,13 +1668,12 @@ async fn brief_worker_spawn_loop_links_then_shuts_down() {
     ));
     let (shutdown_tx, shutdown_rx) = shutdown_channel();
     let handle = spawn_verification_worker(worker, shutdown_rx);
-    // Virtual time only: each sleep lets the loop pass its interval and
-    // gives the pass, whose store calls run on blocking threads, its turns.
+    // Each sleep lets the loop pass its interval. The pass's store calls run
+    // on blocking threads, and the paused clock jumps ahead while they run,
+    // so the bound is wall-clock time, not a count of virtual sleeps.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     let mut linked = rig.service.get(&verifying.id).await.unwrap();
-    for _ in 0..20 {
-        if linked.state == ContributionState::Linked {
-            break;
-        }
+    while linked.state != ContributionState::Linked && std::time::Instant::now() < deadline {
         tokio::time::sleep(POLL_INTERVAL).await;
         linked = rig.service.get(&verifying.id).await.unwrap();
     }
