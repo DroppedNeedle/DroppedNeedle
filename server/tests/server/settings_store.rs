@@ -9,6 +9,7 @@ use std::sync::{Arc, Barrier, Mutex};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
+use crate::common::logs::capture_logs;
 use crate::common::{ScratchDir, TestApp, app_settings, closed_outbound, config_store};
 use droppedneedle::bootstrap::{self, BootError, data_dirs::BootRefusal};
 use droppedneedle_kernel::config::AppConfig;
@@ -285,16 +286,6 @@ async fn config_json_is_copied_in_once() {
 /// plaintext nor its ciphertext reaches the log, at any level.
 #[test]
 fn the_copy_logs_no_secret() {
-    struct Capture(Arc<Mutex<Vec<u8>>>);
-    impl std::io::Write for Capture {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
     let dir = ScratchDir::new("settings-ingest-log");
     let crypto = Crypto::from_key_bytes(&[7u8; 32]).unwrap();
     let config = old_config(&crypto);
@@ -303,23 +294,9 @@ fn the_copy_logs_no_secret() {
         .unwrap()
         .to_owned();
     std::fs::write(dir.join("config.json"), config.to_string()).unwrap();
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer({
-            let buffer = buffer.clone();
-            move || Capture(buffer.clone())
-        })
-        .with_max_level(tracing::level_filters::LevelFilter::TRACE)
-        .finish();
-    let store = tracing::dispatcher::with_default(&tracing::Dispatch::new(subscriber), || {
-        // Tests on other threads share the log call sites: settle their
-        // interest against this capture before the copy logs.
-        tracing::callsite::rebuild_interest_cache();
-        config_store(&dir)
-    });
+    let (store, text) = capture_logs(|| config_store(&dir));
     let lidarr: LidarrImportConnection = store.get_raw().unwrap();
     assert_eq!(lidarr.api_key.expose(), "lidarr-plaintext");
-    let text = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
     assert!(text.contains("future_section"), "{text}");
     for secret in ["lidarr-plaintext", "indexer-plaintext", "plugin-plaintext"] {
         assert!(!text.contains(secret), "leaked {secret}: {text}");

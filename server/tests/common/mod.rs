@@ -11,6 +11,7 @@ pub mod auth;
 pub mod auth_fakes;
 pub mod compat;
 pub mod library;
+pub mod logs;
 pub mod sources;
 
 pub use app::TestApp;

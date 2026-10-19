@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use crate::common::ScratchDir;
+use crate::common::logs::capture_logs;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_kernel::runtime_config::mask::{
     ACOUSTID_KEY_MASK, AUDIODB_API_KEY_MASK, INDEXER_API_KEY_MASK, JELLYFIN_API_KEY_MASK,
@@ -303,26 +304,8 @@ fn secrets_never_appear_in_debug_output() {
 
 #[test]
 fn secrets_never_reach_structured_logs() {
-    struct Capture(Arc<Mutex<Vec<u8>>>);
-    impl std::io::Write for Capture {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let buffer = Arc::new(Mutex::new(Vec::new()));
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer({
-            let buffer = buffer.clone();
-            move || Capture(buffer.clone())
-        })
-        .with_max_level(tracing::level_filters::LevelFilter::TRACE)
-        .finish();
     let (_dir, store) = test_store("log_capture");
-    tracing::dispatcher::with_default(&tracing::Dispatch::new(subscriber), || {
+    let (_, text) = capture_logs(|| {
         let mut slskd = SlskdConnection::default();
         *slskd.api_key.expose_mut() = "log-live-slskd-secret".to_owned();
         store.save_secret_blocking(slskd).unwrap();
@@ -330,7 +313,6 @@ fn secrets_never_reach_structured_logs() {
         let _: SlskdConnection = store.get_masked::<SlskdConnection>().unwrap().into_inner();
         tracing::info!("round-trip done");
     });
-    let text = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
     assert!(text.contains("round-trip done"));
     assert!(!text.contains("log-live-slskd-secret"), "leaked: {text}");
     assert!(!text.contains(SLSKD_API_KEY_MASK), "mask leaked: {text}");
