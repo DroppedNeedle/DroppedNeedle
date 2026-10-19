@@ -5245,3 +5245,76 @@ async def test_collision_does_not_quarantine_through_import(tmp_path: Path):
 
     assert (await store.get_task(task.id)).status == "failed"
     assert await store.load_quarantine_set() == set()
+
+
+class _RemoteQueuedClient(_StubClient):
+    """A peer that sits in its remote upload queue forever: nothing ever lands on the
+    downloads mount, so the #131 disk fallback must find nothing (unlike ``_StubClient``,
+    whose phantom ``get_file_path`` stands in for a finished transfer)."""
+
+    def __init__(self) -> None:
+        super().__init__(_status("queued", active=False, bytes_=0, matched=1))
+
+    async def list_completed_files(self, handle):
+        return []
+
+    async def get_file_path(self, handle, remote_filename, size=None):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_queued_timeout_quarantines_the_peer_files_for_the_album(tmp_path: Path):
+    """A peer that never starts sending within ``queued_timeout`` must not stay
+    top-ranked for the next search: without a quarantine row the re-search picks it
+    again and the task loops through the whole queued window instead of reaching the
+    next peer or the next source. The rows are per-file (what the scorers consult for
+    albums AND singles), RG-scoped (a manual retry clears them) and carry the
+    "never arrived" reason."""
+    client = _RemoteQueuedClient()
+    store, orch, fp, lib = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[_candidate(0.9)],
+        queued_minutes=0.0,
+        max_failover=1,
+    )
+    _coupled_fp(fp, lib)
+    task = await _new_task(store)
+
+    await orch.process_task(task.id)
+
+    assert (await store.get_task(task.id)).status == "failed"
+    qset = await store.load_quarantine_set()
+    assert ("soulseek", soulseek_identity("peer", "peer/01.flac")) in qset
+    assert ("soulseek", "peer") not in qset  # the peer is not blocked for other albums
+    rows = await store.list_quarantine(1, 50)
+    row = next(r for r in rows if r["identity"] == soulseek_identity("peer", "peer/01.flac"))
+    assert row["reason"] == "download_failed"
+    assert row["release_group_mbid"] == task.release_group_mbid
+
+
+@pytest.mark.asyncio
+async def test_queued_timeout_quarantine_is_cleared_by_manual_retry(tmp_path: Path):
+    """Retry is an explicit "try again": the album-scoped rows written by the queued
+    timeout are cleared like any other quarantine of that album."""
+    client = _RemoteQueuedClient()
+    store, orch, fp, lib = _build(
+        tmp_path,
+        client=client,
+        scorer_result=[_candidate(0.9)],
+        queued_minutes=0.0,
+        max_failover=1,
+    )
+    _coupled_fp(fp, lib)
+    task = await _new_task(store)
+    await orch.process_task(task.id)
+    assert ("soulseek", soulseek_identity("peer", "peer/01.flac")) in (
+        await store.load_quarantine_set()
+    )
+
+    orch.dispatch = MagicMock()
+    await orch.retry_task(task.id, task.user_id, "admin")
+
+    assert ("soulseek", soulseek_identity("peer", "peer/01.flac")) not in (
+        await store.load_quarantine_set()
+    )
