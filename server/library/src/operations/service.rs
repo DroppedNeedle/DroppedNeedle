@@ -30,7 +30,8 @@ use crate::matching::model::Release;
 use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::db::{Db, Lane, savepoint};
 use droppedneedle_kernel::ids::IdGenerator;
-use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 
 /// Most reviews one "retry all" or bulk action takes on.
 pub const BULK_MAX: u32 = 5_000;
@@ -45,7 +46,7 @@ pub struct Operations {
     store: Arc<SqliteIdentifyStore>,
     identify: Arc<IdentifyService>,
     ids: Arc<dyn IdGenerator>,
-    config: Arc<ConfigStore>,
+    management: Live<LibraryManagement>,
 }
 
 impl Operations {
@@ -55,7 +56,7 @@ impl Operations {
             store: setup.identify_store.clone(),
             identify: setup.identify.clone(),
             ids: setup.ids.clone(),
-            config: setup.config.clone(),
+            management: setup.settings.management.clone(),
         }
     }
 
@@ -213,7 +214,7 @@ impl Operations {
                 )? {
                     return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
                 }
-                store::create_reidentification(tx, &self.config, &new, now_unix())
+                store::create_reidentification(tx, &self.management, &new, now_unix())
             })
     }
 
@@ -255,8 +256,13 @@ impl Operations {
                     |tx| {
                         let tried = savepoint(tx, "preview", || {
                             Err::<(), _>(
-                                store::create_reidentification(tx, &self.config, &new, now_unix())
-                                    .map(|_| ()),
+                                store::create_reidentification(
+                                    tx,
+                                    &self.management,
+                                    &new,
+                                    now_unix(),
+                                )
+                                .map(|_| ()),
                             )
                         })?;
                         Ok::<_, OperationError>(tried.err().unwrap_or(Ok(())))
@@ -982,7 +988,7 @@ impl Operations {
                 };
                 let gate = store::retry_gate(
                     tx,
-                    &self.config,
+                    &self.management,
                     &snap.local_album_id,
                     snap.one_off_local_metadata,
                 );

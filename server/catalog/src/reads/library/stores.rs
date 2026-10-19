@@ -292,9 +292,31 @@ pub struct UpgradePolicy {
     pub upgrade_allowed: bool,
 }
 
-/// Reads the current upgrade settings. A closure so production can read the
-/// config store per call and tests can pin a value.
-pub type UpgradePolicySource = std::sync::Arc<dyn Fn() -> UpgradePolicy + Send + Sync>;
+impl UpgradePolicy {
+    /// The download policy's upgrade settings now; upgrades off when there
+    /// is no policy (test builds) or it cannot be read.
+    pub fn read(
+        policy: Option<
+            &droppedneedle_kernel::runtime_config::Live<
+                droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
+            >,
+        >,
+    ) -> Self {
+        let Some(policy) = policy else {
+            return Self::default();
+        };
+        match policy.get() {
+            Ok(policy) => Self {
+                quality_cutoff: Some(policy.quality_cutoff.clone()),
+                upgrade_allowed: policy.upgrade_allowed,
+            },
+            Err(error) => {
+                tracing::warn!(%error, "download policy unreadable; album status shows no upgrades");
+                Self::default()
+            }
+        }
+    }
+}
 
 /// One genre with streamable-only counts.
 #[derive(Debug, Clone, PartialEq)]

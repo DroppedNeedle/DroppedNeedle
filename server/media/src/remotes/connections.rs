@@ -20,12 +20,12 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::{Crypto, CryptoError};
 use droppedneedle_kernel::runtime_config::secret_sections::{
     JellyfinConnection, NavidromeConnection, PlexConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::InternalState;
+use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 
 use super::adapter::{AdapterError, BoxFuture};
 use super::models::SourceName;
@@ -518,16 +518,24 @@ pub trait ServerConfig: Send + Sync {
     fn server(&self, source: SourceName) -> Result<Option<ServerSettings>, String>;
 }
 
-/// Server settings from the config store.
+/// Server settings, read live on every call.
 #[derive(Clone)]
 pub struct ConfigServers {
-    store: Arc<ConfigStore>,
+    jellyfin: Live<JellyfinConnection>,
+    navidrome: Live<NavidromeConnection>,
+    plex: Live<PlexConnection>,
+    internal: Live<InternalState>,
 }
 
 impl ConfigServers {
-    /// Read servers from the shared config store.
-    pub fn new(store: Arc<ConfigStore>) -> Self {
-        Self { store }
+    /// Live handles on the server sections in `config`.
+    pub fn new(config: &ConfigStore) -> Self {
+        Self {
+            jellyfin: config.live(),
+            navidrome: config.live(),
+            plex: config.live(),
+            internal: config.live(),
+        }
     }
 }
 
@@ -540,15 +548,13 @@ impl ServerConfig for ConfigServers {
                 user_id,
             })
         };
-        let internal = || self.store.get::<InternalState>().unwrap_or_default();
+        let internal = || self.internal.get().unwrap_or_default();
         let settings = match source {
             SourceName::Jellyfin => {
-                let section = self
-                    .store
-                    .get_raw::<JellyfinConnection>()
-                    .map_err(|error| error.to_string())?;
+                let section = self.jellyfin.get().map_err(|error| error.to_string())?;
                 let device_id = internal()
                     .droppedneedle_device_id
+                    .clone()
                     .unwrap_or_else(|| "droppedneedle".to_owned());
                 (section.enabled && !section.jellyfin_url.is_empty()).then(|| ServerSettings {
                     base_url: section.jellyfin_url.trim_end_matches('/').to_owned(),
@@ -562,10 +568,7 @@ impl ServerConfig for ConfigServers {
                 })
             }
             SourceName::Navidrome => {
-                let section = self
-                    .store
-                    .get_raw::<NavidromeConnection>()
-                    .map_err(|error| error.to_string())?;
+                let section = self.navidrome.get().map_err(|error| error.to_string())?;
                 (section.enabled && !section.navidrome_url.is_empty()).then(|| ServerSettings {
                     base_url: section.navidrome_url.trim_end_matches('/').to_owned(),
                     shared: if section.username.is_empty() {
@@ -582,11 +585,8 @@ impl ServerConfig for ConfigServers {
                 })
             }
             SourceName::Plex => {
-                let section = self
-                    .store
-                    .get_raw::<PlexConnection>()
-                    .map_err(|error| error.to_string())?;
-                let client_id = internal().plex_client_id.unwrap_or_default();
+                let section = self.plex.get().map_err(|error| error.to_string())?;
+                let client_id = internal().plex_client_id.clone().unwrap_or_default();
                 (section.enabled && !section.plex_url.is_empty()).then(|| ServerSettings {
                     base_url: section.plex_url.trim_end_matches('/').to_owned(),
                     shared: shared(

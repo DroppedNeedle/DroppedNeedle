@@ -9,6 +9,9 @@
 use std::sync::Arc;
 
 use crate::reads::enrichment as enrich;
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::secret_sections::ListenBrainzConnection;
+use droppedneedle_kernel::runtime_config::sections::LyricsSettings;
 use droppedneedle_providers::{
     Providers,
     adapters::{CorePacer, CoreSink, ReqwestGet},
@@ -59,12 +62,32 @@ impl From<enrich::IntegrationStatus> for CoreStatus {
 #[derive(Clone)]
 pub struct LiveListenBrainz {
     client: ListenBrainzClient<CorePacer, CoreSink>,
-    enabled: Switch,
+    settings: Option<Live<ListenBrainzConnection>>,
 }
 
-/// A live settings switch, read on every call so a change in Settings
-/// takes effect without a restart.
-pub type Switch = Arc<dyn Fn() -> bool + Send + Sync>;
+/// Whether ListenBrainz is switched on now. Off when the section cannot
+/// be read.
+fn listenbrainz_on(settings: &Live<ListenBrainzConnection>) -> bool {
+    settings
+        .get()
+        .map(|settings| settings.enabled)
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "cannot read listenbrainz settings; popularity enrichment off");
+            false
+        })
+}
+
+/// Whether lyrics are switched on now. Off when the section cannot be
+/// read.
+pub(crate) fn lyrics_on(settings: &Live<LyricsSettings>) -> bool {
+    settings
+        .get()
+        .map(|settings| settings.enabled)
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "cannot read lyrics settings; lyrics enrichment off");
+            false
+        })
+}
 
 impl std::fmt::Debug for LiveListenBrainz {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -79,19 +102,25 @@ impl LiveListenBrainz {
     pub fn with_base(http: reqwest::Client, base_url: &str, pacer: CorePacer) -> Self {
         Self {
             client: ListenBrainzClient::new(http, base_url, pacer, CoreSink),
-            enabled: Arc::new(|| true),
+            settings: None,
         }
     }
 
-    /// Serve only while `enabled` reads true; off reads as unavailable.
+    /// Serve only while the ListenBrainz settings are switched on; off
+    /// reads as unavailable. Read on every call, so a change in Settings
+    /// takes effect at once.
     #[must_use]
-    pub fn with_switch(mut self, enabled: Switch) -> Self {
-        self.enabled = enabled;
+    pub fn with_settings(mut self, settings: Live<ListenBrainzConnection>) -> Self {
+        self.settings = Some(settings);
         self
     }
 
+    fn enabled(&self) -> bool {
+        self.settings.as_ref().is_none_or(listenbrainz_on)
+    }
+
     fn switched_off(&self) -> Option<enrich::ProviderError> {
-        (!(self.enabled)()).then(|| {
+        (!self.enabled()).then(|| {
             enrich::ProviderError::new("listenbrainz", "listenbrainz is switched off".to_owned())
         })
     }
@@ -99,7 +128,7 @@ impl LiveListenBrainz {
 
 impl enrich::ListenBrainzClient for LiveListenBrainz {
     fn is_available(&self) -> bool {
-        (self.enabled)()
+        self.enabled()
     }
 
     fn artist_top_release_groups<'a>(
@@ -394,22 +423,22 @@ pub struct ProductionEnrichment {
     /// Live lyrics role behind the reads `LyricsPort` (via
     /// `ProviderLyrics`).
     pub lyrics: Arc<LiveLrclib>,
-    /// The lyrics setting, read per call: while it reads false, lyrics
-    /// read as absent and touch no network.
-    pub lyrics_enabled: Switch,
+    /// The lyrics setting, read per call: while it is off, lyrics read as
+    /// absent and touch no network.
+    pub lyrics_settings: Live<LyricsSettings>,
 }
 
-/// The live lyrics role behind a per-call switch: while the switch reads
-/// false it answers as [`UnconfiguredLyrics`] without touching the wire.
+/// The live lyrics role behind the lyrics setting, read per call: while it
+/// is off it answers as [`UnconfiguredLyrics`] without touching the wire.
 pub struct SwitchedLyrics {
     live: Arc<LiveLrclib>,
-    enabled: Switch,
+    settings: Live<LyricsSettings>,
 }
 
 impl SwitchedLyrics {
-    /// `live` while `enabled` reads true.
-    pub fn new(live: Arc<LiveLrclib>, enabled: Switch) -> Self {
-        Self { live, enabled }
+    /// `live` while the lyrics setting is on.
+    pub fn new(live: Arc<LiveLrclib>, settings: Live<LyricsSettings>) -> Self {
+        Self { live, settings }
     }
 }
 
@@ -418,7 +447,7 @@ impl enrich::LyricsClient for SwitchedLyrics {
         &'a self,
         query: &'a enrich::LyricsQuery,
     ) -> enrich::BoxFuture<'a, Result<enrich::LyricsLookup, enrich::ProviderError>> {
-        if (self.enabled)() {
+        if lyrics_on(&self.settings) {
             self.live.exact_lyrics(query)
         } else {
             UnconfiguredLyrics.exact_lyrics(query)
@@ -447,9 +476,9 @@ impl enrich::LyricsClient for UnconfiguredLyrics {
 }
 
 /// Build the production enrichment pair over the shared HTTP client and
-/// provider deps. ListenBrainz popularity serves only while the live
-/// `listenbrainz_enabled` switch reads true, and lyrics serve only while
-/// the `lyrics_enabled` switch does;
+/// provider deps. ListenBrainz popularity serves only while the
+/// ListenBrainz settings are switched on, and lyrics only while the lyrics
+/// setting is, both read per call;
 /// Last.fm stays unconfigured (per-user credentials), the events feed stays
 /// unconfigured (no persistence), and MusicBrainz identity stays
 /// unconfigured (no route serves it).
@@ -457,14 +486,14 @@ pub fn production_enrichment(
     http: &reqwest::Client,
     providers: &Arc<Providers>,
     endpoints: &crate::reads::catalog::upstream::Endpoints,
-    listenbrainz_enabled: Switch,
-    lyrics_enabled: Switch,
+    listenbrainz: Live<ListenBrainzConnection>,
+    lyrics: Live<LyricsSettings>,
 ) -> ProductionEnrichment {
     let lb: Arc<dyn enrich::ListenBrainzClient> =
         match CorePacer::for_source(providers.clone(), "listenbrainz") {
             Some(pacer) => Arc::new(
                 LiveListenBrainz::with_base(http.clone(), &endpoints.listenbrainz, pacer)
-                    .with_switch(listenbrainz_enabled),
+                    .with_settings(listenbrainz),
             ),
             None => Arc::new(UnconfiguredListenBrainz),
         };
@@ -472,10 +501,8 @@ pub fn production_enrichment(
         ReqwestGet::new(http.clone()),
         &endpoints.lrclib,
     ));
-    let lyrics_role: Arc<dyn enrich::LyricsClient> = Arc::new(SwitchedLyrics::new(
-        live_lyrics.clone(),
-        lyrics_enabled.clone(),
-    ));
+    let lyrics_role: Arc<dyn enrich::LyricsClient> =
+        Arc::new(SwitchedLyrics::new(live_lyrics.clone(), lyrics.clone()));
     let aggregator = enrich::EnrichmentAggregator::new(
         Arc::new(UnconfiguredMusicBrainz),
         lb,
@@ -486,7 +513,7 @@ pub fn production_enrichment(
     ProductionEnrichment {
         search: Arc::new(enrich::AggregatingEnrichment::new(Arc::new(aggregator))),
         lyrics: live_lyrics,
-        lyrics_enabled,
+        lyrics_settings: lyrics,
     }
 }
 
@@ -687,13 +714,22 @@ mod tests {
             musicbrainz: closed(),
             brainzmash: closed(),
         };
+        let dir = std::env::temp_dir().join(format!("dn-enrich-off-{}", std::process::id()));
+        let crypto = droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]);
+        let store =
+            droppedneedle_kernel::runtime_config::ConfigStore::scratch(&dir, crypto.unwrap())
+                .unwrap();
+        store
+            .save_blocking(LyricsSettings { enabled: false })
+            .unwrap();
         let pair = production_enrichment(
             http.shared(),
             &providers,
             &endpoints,
-            Arc::new(|| false),
-            Arc::new(|| false),
+            store.live(),
+            store.live(),
         );
+        let _ = std::fs::remove_dir_all(&dir);
         let response = pair
             .search
             .enrich_batch(EnrichmentBatchRequest {
@@ -720,15 +756,20 @@ mod tests {
     #[tokio::test]
     async fn switched_lyrics_follow_the_setting_per_call() {
         use enrich::LyricsClient;
-        use std::sync::atomic::{AtomicBool, Ordering};
         let http = HttpClientFactory::new().unwrap();
         let live = Arc::new(LiveLrclib::with_base(
             ReqwestGet::new(http.shared().clone()),
             "http://127.0.0.1:9",
         ));
-        let flag = Arc::new(AtomicBool::new(false));
-        let reader = flag.clone();
-        let role = SwitchedLyrics::new(live, Arc::new(move || reader.load(Ordering::SeqCst)));
+        let dir = std::env::temp_dir().join(format!("dn-lyrics-switch-{}", std::process::id()));
+        let crypto = droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]);
+        let store =
+            droppedneedle_kernel::runtime_config::ConfigStore::scratch(&dir, crypto.unwrap())
+                .unwrap();
+        store
+            .save_blocking(LyricsSettings { enabled: false })
+            .unwrap();
+        let role = SwitchedLyrics::new(live, store.live());
         let query = enrich::LyricsQuery {
             artist: "Radiohead".to_owned(),
             title: "Airbag".to_owned(),
@@ -737,11 +778,14 @@ mod tests {
         };
         let off = role.exact_lyrics(&query).await.unwrap_err();
         assert_eq!(off.message, "lrclib is not configured");
-        flag.store(true, Ordering::SeqCst);
+        store
+            .save_blocking(LyricsSettings { enabled: true })
+            .unwrap();
         let on = role.exact_lyrics(&query).await.unwrap_err();
         assert_ne!(
             on.message, "lrclib is not configured",
             "switching on dials out"
         );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

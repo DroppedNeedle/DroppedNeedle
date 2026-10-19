@@ -59,6 +59,8 @@ impl ReadsSetup {
     /// (through its sqlx pool) and discover's writes;
     /// `users` gives wrapped its display names and discover its batch
     /// callers and Last.fm links;
+    /// `settings` hands out the live handles the reads hold on their
+    /// settings sections;
     /// `inputs` carries what cover art, the version check, wrapped and
     /// discover read from the composition root; `enrichment`
     /// carries the live provider pair (`None` keeps the
@@ -67,32 +69,33 @@ impl ReadsSetup {
         db: &droppedneedle_kernel::db::Db,
         users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
+        settings: &droppedneedle_kernel::runtime_config::ConfigStore,
         inputs: ReadsInputs,
         enrichment: Option<enrichment::live::ProductionEnrichment>,
     ) -> Self {
         let pool = db.sqlx();
-        let inputs_config = inputs.config.clone();
         let discover_requests = discover::adapters::batches::RequestsSlot::default();
         let discover_inputs = discover::adapters::DiscoverInputs {
             db: db.clone(),
-            config: inputs.config.clone(),
             http: inputs.http.clone(),
             no_redirect: inputs.no_redirect.clone(),
             providers: inputs.providers.clone(),
             listenbrainz_links: inputs.listenbrainz_links.clone(),
             youtube_quota_path: inputs.youtube_quota_path.clone(),
             users: users.clone(),
-            lastfm_key: inputs.lastfm_key.clone(),
             discover_warmer: inputs.discover_warmer,
             endpoints: inputs.endpoints.clone(),
             batch_requests: discover_requests.clone(),
             artwork: None,
         };
-        let (platform, artwork) = platform_state(pool, &users, inputs);
-        let discover = discover::adapters::production_deps(discover::adapters::DiscoverInputs {
-            artwork: Some(artwork.clone()),
-            ..discover_inputs
-        });
+        let (platform, artwork) = platform_state(pool, &users, settings, inputs);
+        let discover = discover::adapters::production_deps(
+            discover::adapters::DiscoverInputs {
+                artwork: Some(artwork.clone()),
+                ..discover_inputs
+            },
+            settings,
+        );
         let youtube = unwired_youtube(&discover, ids.clone());
         let library_db = library::sqlite::LibraryDb::new(pool);
         let catalog: Arc<dyn library::stores::LibraryCatalog> =
@@ -108,7 +111,7 @@ impl ReadsSetup {
                     pair.lyrics.clone(),
                     enrichment::SourceBudgets::default(),
                 )
-                .with_switch(pair.lyrics_enabled.clone()),
+                .with_settings(pair.lyrics_settings.clone()),
             ),
             None => Arc::new(library::memory::MemoryLyrics::new()),
         };
@@ -117,7 +120,7 @@ impl ReadsSetup {
             favorites: Arc::new(library::sqlite::SqliteFavorites::new(&library_db)),
             lyrics,
             lookups: Arc::new(library::lookups::SqliteLookups::new(&library_db)),
-            upgrade_policy: upgrade_policy_source(inputs_config.clone()),
+            upgrade_policy: Some(settings.live()),
             tags: Arc::new(library::tags::UnwiredTagReader),
         };
         let search_enrichment: Arc<dyn search::ports::EnrichmentPort> = match &enrichment {
@@ -156,7 +159,7 @@ impl ReadsSetup {
                 favorites: Arc::new(library::memory::MemoryFavorites::new()),
                 lyrics: Arc::new(library::memory::MemoryLyrics::new()),
                 lookups: Arc::new(library::memory::EmptyLookups),
-                upgrade_policy: Arc::new(library::stores::UpgradePolicy::default),
+                upgrade_policy: None,
                 tags: Arc::new(library::tags::UnwiredTagReader),
             },
             search: search::SearchDeps::new(
@@ -248,26 +251,6 @@ impl ReadsSetup {
     }
 }
 
-/// The upgrade cutoff from the download policy, read on every call so a
-/// settings change applies at once. A section that fails to read is
-/// logged and treated as upgrades off.
-fn upgrade_policy_source(
-    config: Arc<droppedneedle_kernel::runtime_config::ConfigStore>,
-) -> library::stores::UpgradePolicySource {
-    Arc::new(move || {
-        match config.get::<droppedneedle_kernel::runtime_config::sections::DownloadPolicy>() {
-            Ok(policy) => library::stores::UpgradePolicy {
-                quality_cutoff: Some(policy.quality_cutoff),
-                upgrade_allowed: policy.upgrade_allowed,
-            },
-            Err(error) => {
-                tracing::warn!(%error, "download policy unreadable; album status shows no upgrades");
-                library::stores::UpgradePolicy::default()
-            }
-        }
-    })
-}
-
 /// YouTube links with no database yet, searching through discover's
 /// YouTube client so both spend from one daily budget.
 fn unwired_youtube(
@@ -305,9 +288,6 @@ fn test_discover_deps() -> discover::ReadsDeps {
 
 /// What the reads take from the composition root beyond the database.
 pub struct ReadsInputs {
-    /// Runtime settings, read per request (wrapped key, local-art
-    /// preference, YouTube and integration settings).
-    pub config: Arc<droppedneedle_kernel::runtime_config::ConfigStore>,
     /// Root of the cover cache (`<cache_dir>/covers`).
     pub covers_dir: std::path::PathBuf,
     /// Size bound of the cover cache in bytes.
@@ -322,8 +302,6 @@ pub struct ReadsInputs {
     pub listenbrainz_links: Arc<dyn droppedneedle_plugins::scrobble::ListenBrainzLinkStore>,
     /// The YouTube quota file (`<cache_dir>/youtube_quota.json`).
     pub youtube_quota_path: std::path::PathBuf,
-    /// The instance Last.fm API key, read per call (Last.fm charts).
-    pub lastfm_key: catalog::upstream::InstanceLastFmKey,
     /// Whether the discover warm cycle runs (`DISCOVER_WARMER_ENABLED`).
     pub discover_warmer: bool,
     /// Base URLs of the upstreams fixed in code. Production uses the real
@@ -339,6 +317,7 @@ pub struct ReadsInputs {
 fn platform_state(
     pool: &sqlx::SqlitePool,
     users: &UsersDeps,
+    settings: &droppedneedle_kernel::runtime_config::ConfigStore,
     inputs: ReadsInputs,
 ) -> (platform::PlatformState, platform::artwork::ArtworkService) {
     use droppedneedle_providers::adapters::{CorePacer, CoreSink};
@@ -358,18 +337,6 @@ fn platform_state(
         wrapped::{ConfigWrappedKey, WrappedData, WrappedState},
     };
 
-    let config = inputs.config.clone();
-    let prefer_local: platform::artwork::PreferLocal = Arc::new(move || {
-        match config
-            .get_raw::<droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings>()
-        {
-            Ok(settings) => settings.prefer_local_cover_art,
-            Err(error) => {
-                tracing::warn!(%error, "cannot read advanced settings; preferring local art");
-                true
-            }
-        }
-    });
     let artwork = ArtworkService::new(
         ArtworkCache::new(inputs.covers_dir, inputs.cover_cache_max_bytes),
         LocalArtwork::new(pool.clone()),
@@ -377,7 +344,7 @@ fn platform_state(
             cover_client(ReqwestCaaTransport::new(inputs.no_redirect.clone()))
                 .with_base(&inputs.endpoints.cover_art_archive),
         )),
-        prefer_local,
+        settings.live(),
     )
     .with_images(Arc::new(HttpImages::new(inputs.no_redirect)));
     let wrapped: Arc<dyn WrappedData> =
@@ -403,7 +370,7 @@ fn platform_state(
             inputs.http,
             inputs.endpoints.github_releases,
         )))),
-        WrappedState::new(ConfigWrappedKey::new(inputs.config), wrapped),
+        WrappedState::new(ConfigWrappedKey::new(settings.live()), wrapped),
     );
     (state, artwork)
 }

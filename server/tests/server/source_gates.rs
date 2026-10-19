@@ -465,6 +465,103 @@ fn every_spawn_is_supervised_or_listed() {
     );
 }
 
+/// Where the settings store itself is held. Every other service reads its
+/// sections through live handles (`Live<S>`), so a saved change reaches it
+/// without a restart. Each place names why it needs the store.
+const SETTINGS_STORE: &[Place] = &[
+    place(
+        "kernel/src/runtime_config/",
+        "the store, its live handles and the sections",
+    ),
+    place(
+        "src/settings/",
+        "the settings service, which saves the sections the settings pages edit",
+    ),
+    place(
+        "src/bootstrap/",
+        "boot, which opens the store and hands each service its handles",
+    ),
+    place(
+        "library/src/settings.rs",
+        "adds a root, builds Library Management's settings service and signs correction previews with the data key",
+    ),
+    place(
+        "library/src/management/settings/service.rs",
+        "Library Management's settings, which it migrates and saves",
+    ),
+    place(
+        "acquire/src/wiring.rs",
+        "acquire's composition point, which makes its live handles",
+    ),
+    place(
+        "acquire/src/settings.rs",
+        "the Lidarr and Spotify settings, which save through the store",
+    ),
+    place(
+        "plugins/src/host.rs",
+        "the plugin host, which stores each plugin's settings",
+    ),
+    place(
+        "plugins/src/handlers.rs",
+        "the plugin routes, which show each plugin's masked settings; plugin settings have no live handle",
+    ),
+    place(
+        "plugins/src/wiring.rs",
+        "builds the plugin host over the store",
+    ),
+    place(
+        "auth/src/wiring.rs",
+        "builds the sign-in clients, which read the install ids through the store",
+    ),
+    place(
+        "auth/src/federated/",
+        "the install ids, read from the internal state section through the store",
+    ),
+];
+
+/// Services hold a live handle on each section they read, never the store
+/// or a copy of a section taken through it.
+#[test]
+fn settings_are_read_through_live_handles() {
+    let patterns = [
+        Regex::new(r"Arc<(?:\w+::)*ConfigStore>").unwrap(),
+        Regex::new(r"\b\w+:\s*(?:\w+::)*ConfigStore\s*[,)}]").unwrap(),
+        Regex::new(r"\.get_raw::<").unwrap(),
+    ];
+    let mut used = vec![false; SETTINGS_STORE.len()];
+    let mut wrong = Vec::new();
+    for source in workspace_sources() {
+        let code = shipping_code(&source);
+        for pattern in &patterns {
+            for found in pattern.find_iter(&code) {
+                match SETTINGS_STORE
+                    .iter()
+                    .position(|place| source.path.starts_with(place.path))
+                {
+                    Some(at) => used[at] = true,
+                    None => {
+                        let line = code[..found.start()].matches('\n').count() + 1;
+                        wrong.push(format!("{}:{line}: {}", source.path, found.as_str()));
+                    }
+                }
+            }
+        }
+    }
+    for (place, used) in SETTINGS_STORE.iter().zip(used) {
+        if !used {
+            wrong.push(format!(
+                "{}: allowed to hold the settings store, but none there does; remove the entry ({})",
+                place.path, place.why
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "read settings through `ConfigStore::live`, or list the place with its reason:\n{}",
+        wrong.join("\n")
+    );
+}
+
 /// One stop: the supervisor's token. No loop keeps a stop flag, a sleep
 /// seam or a jitter seam of its own.
 #[test]

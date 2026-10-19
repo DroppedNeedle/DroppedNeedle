@@ -420,7 +420,7 @@ impl JobsSetup {
                 droppedneedle_catalog::reads::catalog::precache::CatalogPrecache::new(
                     catalog.catalog.clone(),
                     artwork.clone(),
-                    Arc::clone(config),
+                    config.live(),
                 ),
             )),
             _ => {

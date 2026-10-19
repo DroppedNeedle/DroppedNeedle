@@ -86,14 +86,7 @@ pub(crate) fn remap_gate(
 
 /// Whether management may touch unconfirmed matches, read per call.
 pub(crate) fn manage_unconfirmed(setup: &LibrarySetup) -> bool {
-    setup
-        .config
-        .get::<droppedneedle_kernel::runtime_config::sections::EditionPreferences>()
-        .map(|prefs| prefs.manage_unconfirmed)
-        .unwrap_or_else(|error| {
-            tracing::warn!(%error, "edition preferences unreadable; unconfirmed albums wait");
-            false
-        })
+    setup.settings.editions.manage_unconfirmed()
 }
 
 /// Per-file tag overrides an administrator saved (album-wide and for the

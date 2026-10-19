@@ -50,7 +50,7 @@ use droppedneedle_catalog::reads::{
         Catalog,
         library::LocalCatalog,
         plugin_sources::{PluginDetailsSource, PluginPurchaseLinks},
-        upstream::{Upstream, instance_lastfm_key},
+        upstream::{LiveCatalogSettings, Upstream},
     },
     collections::{db::CollectionsDb, remote_import::PlaylistImportSink},
     enrichment::{library::LiveEnrichment, live::production_enrichment},
@@ -75,8 +75,7 @@ use droppedneedle_kernel::{
         crypto::{CryptoError, KEY_FILE_NAME},
         ingest::mark_skip,
         quota::QUOTA_FILE_NAME,
-        secret_sections::ListenBrainzConnection,
-        sections::{LyricsSettings, MusicBrainzSettings},
+        sections::MusicBrainzSettings,
     },
 };
 use droppedneedle_library::wiring::LibrarySetup;
@@ -185,7 +184,7 @@ where
 pub fn sign_in_links(
     db: droppedneedle_kernel::db::Db,
     crypto: Arc<Crypto>,
-    config_store: Arc<ConfigStore>,
+    config_store: &ConfigStore,
 ) -> MediaLinks {
     MediaLinks::new(Arc::new(SignInLinks::new(Arc::new(
         ConnectionResolver::new(
@@ -298,9 +297,10 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         &outbound.sign_in(),
         Arc::new(ConfiguredPlexServer::new(
             http.shared().clone(),
-            config_store.clone(),
+            config_store.live(),
+            InstallIds::new(config_store.clone()),
         )),
-        sign_in_links(db.clone(), crypto.clone(), config_store.clone()),
+        sign_in_links(db.clone(), crypto.clone(), &config_store),
     )
     .with_trusted_proxies(config.trusted_proxies.clone());
 
@@ -309,44 +309,21 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // cache stays shared with the admin stats and clear routes.
     let provider_cache = Arc::new(InMemoryProviderCache::new());
     let providers = Arc::new(Providers::new(provider_cache.clone()));
-    // Read live so turning ListenBrainz on or off takes effect at once.
-    let listenbrainz = config_store.live::<ListenBrainzConnection>();
-    let listenbrainz_enabled: droppedneedle_catalog::reads::enrichment::live::Switch = Arc::new(
-        move || {
-            listenbrainz
-                .get()
-                .map(|settings| settings.enabled)
-                .unwrap_or_else(|error| {
-                    tracing::warn!(%error, "cannot read listenbrainz settings; popularity enrichment off");
-                    false
-                })
-        },
-    );
-    // Read live so turning lyrics on or off takes effect at once.
-    let lyrics = config_store.live::<LyricsSettings>();
-    let lyrics_enabled: droppedneedle_catalog::reads::enrichment::live::Switch =
-        Arc::new(move || {
-            lyrics
-                .get()
-                .map(|settings| settings.enabled)
-                .unwrap_or_else(|error| {
-                    tracing::warn!(%error, "cannot read lyrics settings; lyrics enrichment off");
-                    false
-                })
-        });
+    // Read live so turning ListenBrainz or lyrics on or off takes effect
+    // at once.
     let enrichment = production_enrichment(
         http.shared(),
         &providers,
         &endpoints,
-        listenbrainz_enabled,
-        lyrics_enabled,
+        config_store.live(),
+        config_store.live(),
     );
     let mut reads = ReadsSetup::build(
         &db,
         auth.users.clone(),
         ids.clone(),
+        &config_store,
         ReadsInputs {
-            config: config_store.clone(),
             covers_dir: config.cache_dir.join("covers"),
             cover_cache_max_bytes: config.cover_cache_max_bytes,
             http: http.shared().clone(),
@@ -357,7 +334,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
                 crypto.clone(),
             )),
             youtube_quota_path: config.cache_dir.join(QUOTA_FILE_NAME),
-            lastfm_key: instance_lastfm_key(auth.users.lastfm_switch.clone()),
             discover_warmer: config.discover_warmer,
             endpoints: endpoints.clone(),
         },
@@ -369,11 +345,10 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             Upstream::new(
                 &http,
                 providers.clone(),
-                config_store.clone(),
+                Arc::new(LiveCatalogSettings::new(&config_store)),
                 auth.users.clone(),
                 endpoints.clone(),
-            )
-            .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone())),
+            ),
             LocalCatalog::new(db.sqlx().clone()),
         )
         .with_purchase_links(Arc::new(PluginPurchaseLinks(plugin_host.clone())))
@@ -381,17 +356,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     );
     // Read live, so a source switch in Settings reaches the long-lived
     // clients without a restart.
-    let mb_source: droppedneedle_providers::musicbrainz::SourceFn = {
-        let settings = config_store.live::<MusicBrainzSettings>();
-        let outbound = outbound.clone();
-        Arc::new(move || {
-            let current = settings.get().unwrap_or_else(|error| {
-                tracing::warn!(%error, "cannot read musicbrainz settings; using the defaults");
-                Arc::default()
-            });
-            outbound.musicbrainz_source(&current)
-        })
-    };
+    let mb_source = outbound.musicbrainz_source(config_store.live());
     let library = LibrarySetup::build(
         &http,
         ids.clone(),
@@ -399,7 +364,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         mb_source.clone(),
         &db,
         queues.queue().clone(),
-        config_store.clone(),
+        &config_store,
         outbound.library(),
     )
     .map_err(stage("library setup"))?;
@@ -417,7 +382,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         &http,
         ids.clone(),
         Some(library.root_source()),
-        config_store.clone(),
+        &config_store,
         // Remote playlist imports land in the user's playlists.
         Arc::new(PlaylistImportSink::new(reads.collections.clone())),
         outbound.plex_tv.clone(),
@@ -526,7 +491,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         media.stream.engine.clone(),
         library.clone(),
         &reads,
-        LiveSettings::from_config(config_store.clone()),
+        LiveSettings::from_config(&config_store),
         ListenerConfig {
             port: config.port,
             trusted_proxies: config.trusted_proxies.clone(),
@@ -622,15 +587,14 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             acoustid_pacer,
             droppedneedle_providers::adapters::HealthSink::new(&providers),
         ),
-        config: config_store.clone(),
+        library: config_store.live(),
         upstream: Upstream::new(
             &http,
             providers.clone(),
-            config_store.clone(),
+            Arc::new(LiveCatalogSettings::new(&config_store)),
             auth.users.clone(),
             endpoints,
-        )
-        .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone())),
+        ),
         http: http.shared().clone(),
         artwork: reads.artwork.clone(),
         lrclib: Default::default(),

@@ -33,6 +33,7 @@ use crate::reads::discover::models::{
 use crate::reads::discover::ports::{
     BoxFuture, ProviderFailure, QueueDeck, QueueStore, QueueTrigger, YouTubeSource,
 };
+use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_providers::ProviderCache;
 use droppedneedle_providers::singleflight::Singleflight;
@@ -104,8 +105,19 @@ impl Default for QueueSettings {
     }
 }
 
-/// Reads the queue settings per call.
-pub type SettingsFn = Arc<dyn Fn() -> QueueSettings + Send + Sync>;
+impl QueueSettings {
+    /// The queue settings in the advanced settings now, or the defaults
+    /// when they cannot be read.
+    pub fn read(advanced: &Live<AdvancedSettings>) -> Self {
+        match advanced.get() {
+            Ok(advanced) => Self::from_advanced(&advanced),
+            Err(error) => {
+                tracing::warn!(%error, "cannot read advanced settings; the queue uses defaults");
+                Self::default()
+            }
+        }
+    }
+}
 
 /// The deck as saved, in v2's snapshot shape so migrated decks load.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -245,7 +257,7 @@ struct Inner {
     db: QueueDb,
     youtube: Arc<dyn YouTubeSource>,
     cache: Arc<dyn ProviderCache>,
-    settings: SettingsFn,
+    settings: Live<AdvancedSettings>,
     states: Mutex<HashMap<String, UserState>>,
     last_prune: Mutex<f64>,
     enrichments: Singleflight<QueueEnrichment, String>,
@@ -266,7 +278,7 @@ impl LiveQueue {
         db: QueueDb,
         youtube: Arc<dyn YouTubeSource>,
         cache: Arc<dyn ProviderCache>,
-        settings: SettingsFn,
+        settings: Live<AdvancedSettings>,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -352,7 +364,7 @@ impl Inner {
 
     async fn status(&self, user_id: &str) -> DiscoverQueueStatusResponse {
         self.ensure_loaded(user_id).await;
-        let settings = (self.settings)();
+        let settings = QueueSettings::read(&self.settings);
         let source = self.sources.source_key();
         let mut states = self.states();
         Self::state(&mut states, user_id, &source).status(&settings, now_secs())
@@ -374,7 +386,7 @@ impl Inner {
         trigger: QueueTrigger,
     ) -> QueueGenerateResponse {
         self.ensure_loaded(user_id).await;
-        let settings = (self.settings)();
+        let settings = QueueSettings::read(&self.settings);
         let source = self.sources.source_key();
         let scheduled = trigger == QueueTrigger::Scheduled;
         let force = trigger == QueueTrigger::Request { force: true };
@@ -416,7 +428,7 @@ impl Inner {
     /// One background build. Its result lands only if no newer build or
     /// source switch replaced it meanwhile.
     async fn run_build(self: Arc<Self>, user_id: String, source: String, run: u64) {
-        let settings = (self.settings)();
+        let settings = QueueSettings::read(&self.settings);
         self.prune_if_due(&settings).await;
         let ctx = BuildContext {
             sources: self.sources.as_ref(),
@@ -433,7 +445,7 @@ impl Inner {
                 return;
             }
             state.task = None;
-            if state.scheduled && !(self.settings)().warm_cycle_build {
+            if state.scheduled && !QueueSettings::read(&self.settings).warm_cycle_build {
                 // The warm cycle was switched off while this ran.
                 state.phase = if state.deck.is_some() {
                     Phase::Ready
@@ -522,7 +534,7 @@ impl Inner {
         user_id: &str,
         count: Option<usize>,
     ) -> Result<QueueDeck, ProviderFailure> {
-        let settings = (self.settings)();
+        let settings = QueueSettings::read(&self.settings);
         let ctx = BuildContext {
             sources: self.sources.as_ref(),
             db: &self.db,
@@ -565,7 +577,7 @@ impl Inner {
                     &group,
                 )
                 .await;
-                let ttl = (inner.settings)().enrich_ttl;
+                let ttl = QueueSettings::read(&inner.settings).enrich_ttl;
                 match serde_json::to_vec(&enrichment) {
                     Ok(bytes) => inner.cache.set_bytes(&flight_key, bytes, ttl).await,
                     Err(error) => tracing::debug!(%error, "queue card details not cached"),

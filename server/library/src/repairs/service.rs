@@ -36,7 +36,7 @@ use crate::wiring::{LibrarySetup, ScanCoordinator};
 use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
-use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 
 /// How long one worker turn may run before the job goes back to the
@@ -88,7 +88,7 @@ pub struct Repairs {
     /// The latest ended scan when the one-time track id re-look was last
     /// checked; `None` until the first look after a server start.
     track_id_scan: Arc<Mutex<Option<Option<String>>>>,
-    config: Arc<ConfigStore>,
+    management: Live<LibraryManagement>,
 }
 
 impl Repairs {
@@ -105,7 +105,7 @@ impl Repairs {
             hygiene_identified: Arc::new(Mutex::new(crate::clock::now_ms() as i64)),
             plays_scan: Arc::new(Mutex::new(None)),
             track_id_scan: Arc::new(Mutex::new(None)),
-            config: setup.config.clone(),
+            management: setup.settings.management.clone(),
         }
     }
 
@@ -568,7 +568,7 @@ impl Repairs {
     /// root's Library Management profile with its overrides, or the
     /// default profile for a root without an assignment.
     fn auto_accept_enabled(&self, root_id: &str) -> bool {
-        let settings = match self.config.get::<LibraryManagement>() {
+        let settings = match self.management.get() {
             Ok(settings) => settings,
             Err(error) => {
                 tracing::warn!(%error, "library management settings unreadable; no automatic edition acceptance");

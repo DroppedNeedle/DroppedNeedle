@@ -26,7 +26,7 @@
 //! a view needs without its `ratingKey` is an upstream error.
 
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 use std::time::Duration;
 
 use super::adapter::{
@@ -43,7 +43,7 @@ use super::plex_models::{Container, Envelope, Metadata};
 use droppedneedle_auth::federated::FederatedError;
 use droppedneedle_auth::federated::plex::PlexServerIdentity;
 use droppedneedle_auth::federated::settings::InstallIds;
-use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::PlexConnection;
 use droppedneedle_providers::plextv::Resource;
 
@@ -1453,17 +1453,18 @@ impl PlexServerTokens for PlexTokenProbe {
 #[derive(Clone)]
 pub struct ConfiguredPlexServer {
     http: reqwest::Client,
-    store: Arc<ConfigStore>,
+    settings: Live<PlexConnection>,
     ids: InstallIds,
 }
 
 impl ConfiguredPlexServer {
-    /// Read the server saved in `store` over `http`.
-    pub fn new(http: reqwest::Client, store: Arc<ConfigStore>) -> Self {
+    /// Ask the server saved in `settings` over `http`, presenting this
+    /// install's Plex client id from `ids`.
+    pub fn new(http: reqwest::Client, settings: Live<PlexConnection>, ids: InstallIds) -> Self {
         Self {
-            ids: InstallIds::new(store.clone()),
             http,
-            store,
+            settings,
+            ids,
         }
     }
 }
@@ -1476,7 +1477,7 @@ impl PlexServerIdentity for ConfiguredPlexServer {
                     "Could not reach the configured Plex server".to_owned(),
                 )
             };
-            let section = self.store.get_raw::<PlexConnection>().map_err(|error| {
+            let section = self.settings.get().map_err(|error| {
                 tracing::warn!(%error, "cannot read plex settings");
                 unreadable()
             })?;

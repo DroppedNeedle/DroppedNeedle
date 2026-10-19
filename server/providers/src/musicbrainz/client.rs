@@ -18,7 +18,7 @@ use super::redirects::{
 };
 use super::transport::{MbRequest, MbTransport, RawResponse};
 use super::{
-    Criticality, MAX_PAGE_LIMIT, MAX_REDIRECT_HOPS, MbError, MbSource, SourceFn,
+    Criticality, LiveSource, MAX_PAGE_LIMIT, MAX_REDIRECT_HOPS, MbError, MbSource,
     build_release_search_query, escape_lucene_phrase, is_valid_mbid, normalize_mb_id,
     parse_retry_after_secs,
 };
@@ -41,7 +41,7 @@ pub struct MusicBrainzClient<T: MbTransport, S: DegradationSink = NoopSink> {
     transport: T,
     sink: S,
     source: MbSource,
-    resolve: Option<SourceFn>,
+    resolve: Option<LiveSource>,
     pacing: MbPacing,
     priority: RequestPriority,
 }
@@ -101,10 +101,10 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         self
     }
 
-    /// Read the source from `resolve` at every request instead of the
+    /// Read the source from the settings at every request instead of the
     /// one fixed at construction.
     #[must_use]
-    pub fn with_source_fn(mut self, resolve: SourceFn) -> Self {
+    pub fn with_live_source(mut self, resolve: LiveSource) -> Self {
         self.resolve = Some(resolve);
         self
     }
@@ -113,7 +113,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
     pub fn source(&self) -> MbSource {
         self.resolve
             .as_ref()
-            .map_or_else(|| self.source.clone(), |resolve| resolve())
+            .map_or_else(|| self.source.clone(), LiveSource::current)
     }
 
     /// Search artists by free text, the way v2's artist search asked:

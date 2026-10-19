@@ -211,7 +211,9 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     let home = LiveHome::new(
         sources.clone(),
         pool.clone(),
-        crate::common::config_store(&dir),
+        droppedneedle_catalog::reads::discover::adapters::content::IntegrationSettings::new(
+            &crate::common::config_store(&dir),
+        ),
         art.clone(),
         None,
     );

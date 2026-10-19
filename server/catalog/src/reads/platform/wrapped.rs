@@ -28,7 +28,7 @@ use sha2::{Digest, Sha256};
 
 use droppedneedle_auth::session::tokens::constant_time_eq;
 use droppedneedle_kernel::error::ApiError;
-use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::WrappedSettings};
+use droppedneedle_kernel::runtime_config::{Live, secret_sections::WrappedSettings};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -288,22 +288,22 @@ impl WrappedKeySource for String {
     }
 }
 
-/// The live `wrapped_settings` secret from the config store. A store that
-/// cannot be read denies every request (logged) rather than guessing.
+/// The live `wrapped_settings` secret. A section that cannot be read
+/// denies every request (logged) rather than guessing.
 pub struct ConfigWrappedKey {
-    store: Arc<ConfigStore>,
+    settings: Live<WrappedSettings>,
 }
 
 impl ConfigWrappedKey {
-    /// Read the secret from `store` on every request.
-    pub fn new(store: Arc<ConfigStore>) -> Self {
-        Self { store }
+    /// Read the secret from `settings` on every request.
+    pub fn new(settings: Live<WrappedSettings>) -> Self {
+        Self { settings }
     }
 }
 
 impl WrappedKeySource for ConfigWrappedKey {
     fn current(&self) -> String {
-        match self.store.get_raw::<WrappedSettings>() {
+        match self.settings.get() {
             Ok(settings) => settings.api_key.expose().to_owned(),
             Err(error) => {
                 tracing::error!(%error, "cannot read the wrapped API key; denying");
@@ -512,11 +512,11 @@ mod tests {
 
     #[test]
     fn rotated_key_applies_without_a_restart() {
-        use droppedneedle_kernel::runtime_config::{Crypto, Secret};
+        use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
         let dir = std::env::temp_dir().join(format!("dn-wrapped-key-{}", std::process::id()));
         let crypto = || Crypto::from_key_bytes(&[7u8; 32]).unwrap();
-        let store = Arc::new(ConfigStore::scratch(&dir, crypto()).unwrap());
-        let source = ConfigWrappedKey::new(store.clone());
+        let store = ConfigStore::scratch(&dir, crypto()).unwrap();
+        let source = ConfigWrappedKey::new(store.live());
         for key in ["first-key", "rotated-key"] {
             store
                 .save_secret_blocking(WrappedSettings {

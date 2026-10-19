@@ -25,6 +25,37 @@ impl LastFmSwitch for StaticLastFmSwitch {
     }
 }
 
+/// Last.fm switched on, with an instance key pair once a test sets one.
+#[derive(Debug, Default)]
+pub struct InstanceKeySwitch(std::sync::Mutex<Option<String>>);
+
+impl InstanceKeySwitch {
+    /// Save `api_key` as the instance key.
+    pub fn set(&self, api_key: &str) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(api_key.to_owned());
+    }
+}
+
+impl LastFmSwitch for InstanceKeySwitch {
+    fn enabled(&self) -> bool {
+        true
+    }
+
+    fn instance_keys(&self) -> Option<LastFmKeys> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .map(|api_key| LastFmKeys {
+                api_key,
+                shared_secret: "instance-secret".to_owned(),
+            })
+    }
+}
+
 /// Scripted Last.fm auth client. Unknown tokens exchange as unapproved,
 /// exactly like the real flow before browser approval.
 #[derive(Debug, Default)]

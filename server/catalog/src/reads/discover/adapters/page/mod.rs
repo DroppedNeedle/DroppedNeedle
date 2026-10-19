@@ -28,6 +28,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use crate::reads::discover::adapters::content::IntegrationSettings;
 use crate::reads::discover::adapters::queue::QueueSettings;
 use crate::reads::discover::adapters::queue::store::QueueDb;
 use crate::reads::discover::models::{
@@ -35,7 +36,7 @@ use crate::reads::discover::models::{
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure, QueueStore, QueueTrigger};
 use build::{Builder, PageSettings};
-use droppedneedle_kernel::runtime_config::{ConfigStore, Plain, secret_sections::AdvancedSettings};
+use droppedneedle_kernel::runtime_config::{Live, Plain, secret_sections::AdvancedSettings};
 use library::LibraryReads;
 use memo::BuildMemo;
 use sources::PageSources;
@@ -158,7 +159,8 @@ struct Inner {
     library: LibraryReads,
     db: PageDb,
     memo: BuildMemo,
-    config: Arc<ConfigStore>,
+    advanced: Live<AdvancedSettings>,
+    integrations: IntegrationSettings,
     queues: Arc<dyn QueueStore>,
     warmer_enabled: bool,
     home: OnceLock<Arc<dyn FeatureWarmer>>,
@@ -179,8 +181,10 @@ pub struct PageInputs {
     pub queue_db: QueueDb,
     /// The page tables.
     pub db: PageDb,
-    /// Runtime settings.
-    pub config: Arc<ConfigStore>,
+    /// The discover tuning, read per build.
+    pub advanced: Live<AdvancedSettings>,
+    /// The integration flags, read per build.
+    pub integrations: IntegrationSettings,
     /// The queue deck, which the warm cycle also rebuilds.
     pub queues: Arc<dyn QueueStore>,
     /// The deployment kill switch for the warm cycle.
@@ -230,7 +234,8 @@ impl LiveDiscover {
                 library,
                 db: inputs.db,
                 memo: BuildMemo::default(),
-                config: inputs.config,
+                advanced: inputs.advanced,
+                integrations: inputs.integrations,
                 queues: inputs.queues,
                 warmer_enabled: inputs.warmer_enabled,
                 home: OnceLock::new(),
@@ -421,14 +426,10 @@ impl LiveDiscover {
     }
 
     fn settings(&self, download_client: bool) -> PageSettings {
-        let advanced = self
-            .inner
-            .config
-            .get_raw::<AdvancedSettings>()
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "cannot read advanced settings; discover uses defaults");
-                Plain::default()
-            });
+        let advanced = self.inner.advanced.get().unwrap_or_else(|error| {
+            tracing::warn!(%error, "cannot read advanced settings; discover uses defaults");
+            Arc::new(Plain::default())
+        });
         PageSettings {
             picks_count: advanced.discover_picks_count.clamp(4, 30) as usize,
             genre_weight: advanced
@@ -462,8 +463,7 @@ impl LiveDiscover {
             key: key.clone(),
         };
         let source = self.inner.sources.source_context();
-        let download_client =
-            crate::reads::discover::adapters::content::download_client_ready(&self.inner.config);
+        let download_client = self.inner.integrations.download_client_ready();
         let now = now_secs();
         let (today, year) = today(now);
         let builder = Builder {

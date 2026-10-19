@@ -32,6 +32,8 @@ use std::sync::Arc;
 use super::leases::DirectGate;
 use super::local_files::{LibraryFiles, LocateError, PathRefusal};
 use super::plugin_url;
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::sections::ConnectApps;
 use droppedneedle_plugins::capabilities::stream::{open_url, proxy_chunks};
 use futures_util::StreamExt as _;
 
@@ -81,10 +83,6 @@ pub trait RemoteReader: Send + Sync {
     ) -> impl Future<Output = Result<StreamMedia, StreamFault>> + Send;
 }
 
-/// Where the transcode policy comes from: read again on every open, so a
-/// settings change applies to the next stream without a restart.
-pub type SettingsSource = Arc<dyn Fn() -> TranscodeSettings + Send + Sync>;
-
 /// One source-keyed gateway: sandboxed local reads, injected remote reads,
 /// and injected ffmpeg execution behind the routes' engine seam.
 pub struct Gateway<R, T> {
@@ -96,15 +94,17 @@ pub struct Gateway<R, T> {
     )>,
     remote: R,
     transcoder: T,
-    settings: SettingsSource,
+    fixed: TranscodeSettings,
+    settings: Option<Live<ConnectApps>>,
     ffmpeg_present: bool,
     direct: Arc<DirectGate>,
 }
 
 impl<R, T> Gateway<R, T> {
     /// Build a gateway over one local root, one remote reader, and one
-    /// ffmpeg service. Production passes the real transcode settings and
-    /// [`ffmpeg_available()`]; tests script every seam.
+    /// ffmpeg service. Production passes [`ffmpeg_available()`] and reads
+    /// the transcode policy live ([`Self::with_settings`]); tests script
+    /// every seam.
     pub fn new(
         local_root: PathBuf,
         remote: R,
@@ -118,16 +118,18 @@ impl<R, T> Gateway<R, T> {
             plugins: std::sync::OnceLock::new(),
             remote,
             transcoder,
-            settings: Arc::new(move || settings.clone()),
+            fixed: settings,
+            settings: None,
             ffmpeg_present,
             direct: Arc::new(DirectGate::new()),
         }
     }
 
-    /// Read the transcode policy from `source` on every open instead of
-    /// the fixed settings the gateway was built with.
-    pub fn with_settings_source(mut self, source: SettingsSource) -> Self {
-        self.settings = source;
+    /// Read the transcode policy from `settings` on every open instead of
+    /// the fixed settings the gateway was built with, so a change applies
+    /// to the next stream without a restart.
+    pub fn with_settings(mut self, settings: Live<ConnectApps>) -> Self {
+        self.settings = Some(settings);
         self
     }
 
@@ -373,7 +375,10 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             .as_deref()
             .is_some_and(|format| format.eq_ignore_ascii_case("raw"));
         let start_seconds = request.params.start_seconds;
-        let settings = (self.settings)();
+        let settings = self
+            .settings
+            .as_ref()
+            .map_or_else(|| self.fixed.clone(), crate::transcode_policy);
         // Compat verdict carry: the protocol modules decide with real source
         // bitrate facts, while this re-run sees `bitrate_kbps: None`, so a
         // bitrate-triggered same-codec plan would land direct here. When the

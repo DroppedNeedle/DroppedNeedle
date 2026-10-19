@@ -16,6 +16,7 @@ use super::scan::selection::{UnknownScopes, select_scopes};
 use super::scan::store::ScanStoreError;
 use super::service::ServiceError;
 use super::wiring::LibrarySetup;
+use droppedneedle_kernel::runtime_config::Plain;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 
 /// Most finished runs one history page carries.
@@ -99,12 +100,12 @@ impl LibrarySetup {
     fn guarded_registry(
         &self,
         expected: Option<&str>,
-    ) -> Result<(TypedLibrary, RootRegistry), ServiceError> {
+    ) -> Result<(std::sync::Arc<Plain<TypedLibrary>>, RootRegistry), ServiceError> {
         let settings = self
-            .config
-            .get_masked::<TypedLibrary>()
-            .map_err(|error| ServiceError::internal(&error))?
-            .into_inner();
+            .settings
+            .library
+            .get()
+            .map_err(|error| ServiceError::internal(&error))?;
         let resolved = crate::policy::resolve(&settings)
             .map_err(|error| ServiceError::internal(&format!("{error:?}")))?;
         let stale = || ServiceError::Conflict {

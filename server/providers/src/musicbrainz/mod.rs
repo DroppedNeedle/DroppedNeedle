@@ -131,9 +131,43 @@ impl MbSource {
     }
 }
 
-/// Reads the configured source at each request, so a source switch in
-/// settings reaches long-lived clients without a restart.
-pub type SourceFn = std::sync::Arc<dyn Fn() -> MbSource + Send + Sync>;
+/// The source the saved settings select, read at each request so a source
+/// switch reaches long-lived clients without a restart.
+#[derive(Clone)]
+pub struct LiveSource {
+    settings: droppedneedle_kernel::runtime_config::Live<
+        droppedneedle_kernel::runtime_config::sections::MusicBrainzSettings,
+    >,
+    official: String,
+    brainzmash: String,
+}
+
+impl LiveSource {
+    /// The source `settings` selects, with `official` and `brainzmash` as
+    /// the roots of the two built-in sources.
+    pub fn new(
+        settings: droppedneedle_kernel::runtime_config::Live<
+            droppedneedle_kernel::runtime_config::sections::MusicBrainzSettings,
+        >,
+        official: &str,
+        brainzmash: &str,
+    ) -> Self {
+        Self {
+            settings,
+            official: official.to_owned(),
+            brainzmash: brainzmash.to_owned(),
+        }
+    }
+
+    /// The source now. Unreadable settings fall back to the defaults.
+    pub fn current(&self) -> MbSource {
+        let settings = self.settings.get().unwrap_or_else(|error| {
+            tracing::warn!(%error, "cannot read musicbrainz settings; using the defaults");
+            std::sync::Arc::default()
+        });
+        MbSource::from_settings(&settings, &self.official, &self.brainzmash)
+    }
+}
 
 /// Operation class from the degradation matrix. A dead MusicBrainz fails
 /// identity-critical work with a typed error and degrades everything else

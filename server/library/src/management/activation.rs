@@ -72,7 +72,7 @@ impl Management {
             .management_settings
             .get()
             .cloned()
-            .unwrap_or_else(|| Arc::new(LibraryManagementService::new(self.setup.config.clone())))
+            .unwrap_or_else(|| Arc::new(self.setup.settings.management_service()))
     }
 
     /// Start a dry run of one folder under proposed settings. Blocking.

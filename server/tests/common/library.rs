@@ -13,7 +13,6 @@ use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
-use droppedneedle_kernel::runtime_config::sections::MusicBrainzSettings;
 use droppedneedle_library::contrib::ContribProviders;
 use droppedneedle_library::contrib::scripted::{ScriptedDiscogs, ScriptedMusicBrainz};
 use droppedneedle_library::identify::models::{LocalAlbumFacts, RecallResult};
@@ -23,7 +22,7 @@ use droppedneedle_library::identify::sources::{
 };
 use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_providers::Providers;
-use droppedneedle_providers::musicbrainz::{Criticality, SourceFn};
+use droppedneedle_providers::musicbrainz::Criticality;
 
 type Recall = Box<dyn Fn(&LocalAlbumFacts) -> RecallResult + Send>;
 
@@ -176,21 +175,17 @@ pub fn library_asking(
     let mut outbound = super::closed_outbound();
     outbound.identify_providers = Port::given(identify);
     outbound.contribution_providers = Port::given(ScriptedContrib::default().providers());
-    let mb_source: SourceFn = {
-        let outbound = outbound.clone();
-        Arc::new(move || outbound.musicbrainz_source(&MusicBrainzSettings::default()))
-    };
     LibrarySetup::build(
         &HttpClientFactory::new().expect("http factory builds"),
         Arc::new(UuidGenerator),
         Arc::new(Providers::unpaced()),
-        mb_source,
+        outbound.musicbrainz_source(config.live()),
         db,
         droppedneedle_kernel::jobs::queue::JobQueue::new(
             db.clone(),
             Arc::new(droppedneedle_kernel::clock::SystemClock),
         ),
-        config,
+        &config,
         outbound.library(),
     )
     .expect("library bundle builds")

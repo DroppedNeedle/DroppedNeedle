@@ -83,7 +83,7 @@ impl LibrarySetup {
             });
         }
         let root = LibraryRoot::new(&id, dir, policy);
-        super::settings::add_root(&self.config, &root)?;
+        self.settings.add_root(&root)?;
         // The refresh swaps the new root in and marks it dirty, so the
         // supervisor gives it an initial scan.
         let registry = self.refresh_registry();

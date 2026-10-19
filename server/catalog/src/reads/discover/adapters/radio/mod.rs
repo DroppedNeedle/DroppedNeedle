@@ -36,6 +36,7 @@ use super::page::build::daily_shuffler;
 use super::page::library::{LibraryReads, fold};
 use super::page::shelves;
 use super::page::sources::PageSources;
+use super::queue::QueueSettings;
 use super::queue::build::{
     BuildContext, VARIOUS_ARTISTS_MBID, cover_url, is_various_artists, lastfm_pools, normalize,
     similar_artist_pools, timed,
@@ -43,7 +44,6 @@ use super::queue::build::{
 use super::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
 use super::queue::sources::{ArtistRow, MusicSource, UserMusic};
 use super::queue::store::QueueDb;
-use super::queue::{QueueSettings, SettingsFn};
 use crate::reads::catalog::Catalog;
 use crate::reads::catalog::error::CatalogError;
 use crate::reads::catalog::library::LocalCatalog;
@@ -54,6 +54,8 @@ use crate::reads::discover::models::{
     RadioPlanTrack, RadioRequest, RadioSeedItem, SectionItem,
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure, RadioFailure, RadioPlanner};
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_providers::adapters::ReqwestGet;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use droppedneedle_providers::preview::PreviewClient;
@@ -78,8 +80,8 @@ pub struct RadioInputs {
     pub sources: Arc<dyn PageSources>,
     /// The queue tables (the Last.fm release-group map).
     pub queue_db: QueueDb,
-    /// The queue settings, read per call.
-    pub settings: SettingsFn,
+    /// The advanced settings the queue settings come from, read per call.
+    pub settings: Live<AdvancedSettings>,
     /// The catalog database.
     pub pool: sqlx::SqlitePool,
     /// Album pages: similar albums, more by the artist, top songs.
@@ -92,7 +94,7 @@ pub struct RadioInputs {
 pub struct LiveRadio {
     sources: Arc<dyn PageSources>,
     queue_db: QueueDb,
-    settings: SettingsFn,
+    settings: Live<AdvancedSettings>,
     pool: sqlx::SqlitePool,
     genres: LibraryReads,
     tracks: RadioLibrary,
@@ -245,7 +247,7 @@ impl LiveRadio {
         let settings = QueueSettings {
             similar_artists_limit: similar_limit,
             albums_per_similar: albums_per,
-            ..(self.settings)()
+            ..QueueSettings::read(&self.settings)
         };
         let ctx = BuildContext {
             sources: self.sources.as_ref(),

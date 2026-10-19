@@ -28,7 +28,7 @@ use std::time::Duration;
 
 use sqlx::SqlitePool;
 
-use super::content::integration_status;
+use super::content::IntegrationSettings;
 use super::ownership;
 use super::page::build::genre_list;
 use super::page::shelves::SHELF_SIZE;
@@ -40,7 +40,6 @@ use crate::reads::discover::models::{
 };
 use crate::reads::discover::ports::BoxFuture;
 use artwork::GenreArt;
-use droppedneedle_kernel::runtime_config::ConfigStore;
 use library::HomeLibrary;
 use sources::HomeSources;
 
@@ -215,7 +214,7 @@ struct Inner {
     pool: SqlitePool,
     art: Arc<GenreArt>,
     discover: Option<LiveDiscover>,
-    config: Arc<ConfigStore>,
+    integrations: IntegrationSettings,
     state: Mutex<State>,
 }
 
@@ -251,13 +250,13 @@ fn key_for(user_id: &str, music: &UserMusic) -> String {
 
 impl LiveHome {
     /// Home over the provider reads in `sources`, the library in `pool`
-    /// and the settings in `config`, with genre art from `art`.
+    /// and the integration flags in `integrations`, with genre art from `art`.
     /// `discover`, when given, supplies the discover teaser from its last
     /// built page.
     pub fn new(
         sources: Arc<dyn HomeSources>,
         pool: SqlitePool,
-        config: Arc<ConfigStore>,
+        integrations: IntegrationSettings,
         art: Arc<GenreArt>,
         discover: Option<LiveDiscover>,
     ) -> Self {
@@ -268,7 +267,7 @@ impl LiveHome {
                 pool,
                 art,
                 discover,
-                config,
+                integrations,
                 state: Mutex::new(State::default()),
             }),
         }
@@ -316,7 +315,7 @@ impl LiveHome {
                     self.trigger_build(user_id);
                     building = true;
                 }
-                let status = integration_status(&self.inner.config);
+                let status = self.inner.integrations.status();
                 self.build_local(user_id, &music, status).await
             }
         };
@@ -352,7 +351,7 @@ impl LiveHome {
         let source = self.inner.sources.source_key();
         let music = self.inner.sources.user_music(user_id).await;
         let key = key_for(user_id, &music);
-        let status = integration_status(&self.inner.config);
+        let status = self.inner.integrations.status();
         let page = self.build_full(user_id, &music, status).await;
         let ok = self.inner.sources.source_key() == source;
         if !ok {
@@ -580,8 +579,8 @@ impl FeatureWarmer for LiveHome {
 pub struct HomeWiring {
     /// The reader pool.
     pub pool: SqlitePool,
-    /// Runtime settings.
-    pub config: Arc<ConfigStore>,
+    /// The integration flags, read per build.
+    pub integrations: IntegrationSettings,
     /// The live provider reads the discover page also uses.
     pub sources: Arc<dyn HomeSources>,
     /// The discover page (teaser source, and its warm cycle warms home).
@@ -605,7 +604,7 @@ pub fn wire(
     let home = LiveHome::new(
         wiring.sources.clone(),
         wiring.pool.clone(),
-        wiring.config,
+        wiring.integrations,
         art.clone(),
         Some(wiring.discover.clone()),
     );

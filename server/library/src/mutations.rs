@@ -30,7 +30,6 @@ use super::scan::coordinator::ScanRequestError;
 use super::scan::models::{ScanKind, ScanRequest, ScanRequestResult, ScanScope, ScanTrigger};
 use super::scan::roots::RootRegistry;
 use super::wiring::LibrarySetup;
-use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 
 /// Most hops followed through merged (retired) albums.
 const MAX_RETIRED_HOPS: usize = 8;
@@ -714,8 +713,8 @@ impl<'a> Mutations<'a> {
 
     /// The configured recycle bin, when it is an absolute path.
     fn configured_bin(&self) -> Option<PathBuf> {
-        let configured = match self.setup.config.get::<DownloadPolicy>() {
-            Ok(section) => section.recycle_bin_path,
+        let configured = match self.setup.settings.download_policy.get() {
+            Ok(section) => section.recycle_bin_path.clone(),
             Err(error) => {
                 tracing::warn!(%error, "download settings unreadable; using root bins");
                 return None;

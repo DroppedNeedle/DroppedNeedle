@@ -62,7 +62,6 @@ use super::publish::snapshots::sha256_hex;
 use super::publish::{HIDDEN_PREFIX, PublishError};
 use super::scan::models::EffectivePolicy;
 use super::wiring::LibrarySetup;
-use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_kernel::runtime_config::sections::DEFAULT_NAMING_TEMPLATE;
 
 /// Revisions the seal pins while profiles and naming have no store (the
@@ -201,8 +200,9 @@ impl LibrarySetup {
             .cloned()
             .ok_or_else(|| fault("no library root takes imports".to_owned()))?;
         let template = self
-            .config
-            .get_raw::<TypedLibrary>()
+            .settings
+            .library
+            .get()
             .map(|settings| settings.naming_template.clone())
             .ok()
             .filter(|template| !template.trim().is_empty())

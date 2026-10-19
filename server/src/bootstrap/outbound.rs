@@ -217,12 +217,14 @@ impl Outbound {
         }
     }
 
-    /// The MusicBrainz source the saved settings select, with the two
-    /// built-in roots taken from here.
+    /// The MusicBrainz source the saved settings select, read at each
+    /// request, with the two built-in roots taken from here.
     pub fn musicbrainz_source(
         &self,
-        settings: &droppedneedle_kernel::runtime_config::sections::MusicBrainzSettings,
-    ) -> musicbrainz::MbSource {
-        musicbrainz::MbSource::from_settings(settings, &self.musicbrainz, &self.brainzmash)
+        settings: droppedneedle_kernel::runtime_config::Live<
+            droppedneedle_kernel::runtime_config::sections::MusicBrainzSettings,
+        >,
+    ) -> musicbrainz::LiveSource {
+        musicbrainz::LiveSource::new(settings, &self.musicbrainz, &self.brainzmash)
     }
 }

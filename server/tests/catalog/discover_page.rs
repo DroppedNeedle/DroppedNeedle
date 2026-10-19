@@ -14,7 +14,7 @@ use axum::{
 };
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_catalog::reads::discover::adapters::content::LiveContent;
+use droppedneedle_catalog::reads::discover::adapters::content::{IntegrationSettings, LiveContent};
 use droppedneedle_catalog::reads::discover::adapters::page::sources::{
     LastFmChartAlbum, PageSources, PlayedArtist, RankedAlbum, ScoredArtist, SourceContext,
     WeeklyPlaylist,
@@ -401,13 +401,18 @@ fn page_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
         sources: Arc::new(Scripted),
         queue_db: QueueDb::new(runtime.db().clone()),
         db: PageDb::new(runtime.db().clone()),
-        config: config.clone(),
+        advanced: config.live(),
+        integrations: IntegrationSettings::new(&config),
         queues: Arc::new(FakeQueues),
         warmer_enabled: false,
     });
     let clock = ManualClock::at(1_790_000_000_000);
     let deps = ReadsDeps {
-        content: Arc::new(LiveContent::new(config, pool, page)),
+        content: Arc::new(LiveContent::new(
+            IntegrationSettings::new(&config),
+            pool,
+            page,
+        )),
         queues: Arc::new(FakeQueues),
         batches: Arc::new(FakeBatches::new(clock)),
         charts: Arc::new(FakeCharts::new()),

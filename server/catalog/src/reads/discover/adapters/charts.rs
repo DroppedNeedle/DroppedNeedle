@@ -27,7 +27,7 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use super::ownership::{owned_albums, owned_artists};
-use crate::reads::catalog::upstream::{InstanceLastFmKey, user_lastfm};
+use crate::reads::catalog::upstream::{instance_lastfm_key, user_lastfm};
 use crate::reads::discover::{
     models::{
         ChartAlbum, ChartArtist, ChartRange, ChartSource, GenreDetailResponse, PopularAlbumsPage,
@@ -58,23 +58,15 @@ pub struct LiveCharts {
 /// The Last.fm half of the charts.
 pub struct LastFmCharts {
     client: LastFmClient<CorePacer, CoreSink>,
-    instance_key: InstanceLastFmKey,
     users: UsersDeps,
 }
 
 impl LastFmCharts {
-    /// Last.fm charts over one paced client. `instance_key` is read on
-    /// every call; `users` holds the Last.fm switch and the users' links.
-    pub fn new(
-        client: LastFmClient<CorePacer, CoreSink>,
-        instance_key: InstanceLastFmKey,
-        users: UsersDeps,
-    ) -> Self {
-        Self {
-            client,
-            instance_key,
-            users,
-        }
+    /// Last.fm charts over one paced client. `users` holds the Last.fm
+    /// switch with the instance key, read on every call, and the users'
+    /// links.
+    pub fn new(client: LastFmClient<CorePacer, CoreSink>, users: UsersDeps) -> Self {
+        Self { client, users }
     }
 
     /// The instance key, while Last.fm is switched on and a key is saved.
@@ -82,7 +74,7 @@ impl LastFmCharts {
         if !self.users.lastfm_switch.enabled() {
             return None;
         }
-        (self.instance_key)().filter(|key| !key.trim().is_empty())
+        instance_lastfm_key(&self.users)
     }
 
     /// The user's Last.fm username and the key to read it with (their own,

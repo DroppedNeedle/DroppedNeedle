@@ -14,6 +14,7 @@ use droppedneedle_catalog::reads::platform::artwork::{
 };
 use droppedneedle_catalog::reads::platform::covers::{self, CoversState};
 use droppedneedle_kernel::db::{DbError, DbRuntime, Lane};
+use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_library::scan::SqliteScanStore;
 use droppedneedle_providers::coverart::{CaaRequest, CaaTransport, RawResponse, TransportError};
 use tower::ServiceExt as _;
@@ -115,11 +116,19 @@ async fn rig(seed_track: Option<&Path>) -> Rig {
 
 impl Rig {
     fn app(&self, prefer_local: bool) -> Router {
+        let config =
+            crate::common::config_store(&self.dir.join(format!("settings-{prefer_local}")));
+        config
+            .save_secret_blocking(AdvancedSettings {
+                prefer_local_cover_art: prefer_local,
+                ..AdvancedSettings::default()
+            })
+            .expect("art preference saves");
         let service = ArtworkService::new(
             ArtworkCache::new(self.dir.join("covers"), 1024 * 1024),
             LocalArtwork::new(self.runtime.db().sqlx().clone()),
             Some(Arc::new(cover_client(self.archive.clone()))),
-            Arc::new(move || prefer_local),
+            config.live(),
         );
         covers::routes(CoversState::new(Arc::new(service)))
     }

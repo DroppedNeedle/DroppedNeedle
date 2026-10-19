@@ -2,26 +2,106 @@
 //!
 //! The library roots, their path rules, the scan schedule, and the
 //! filesystem watcher all live in the runtime [`ConfigStore`], the same
-//! sections the settings pages edit. The engine re-reads them on every
-//! supervisor and watcher tick, so a saved change takes effect without a
-//! restart, and the roots survive restarts with the config file.
+//! sections the settings pages edit. The engine holds a live handle on
+//! each and reads it on every supervisor and watcher tick, so a saved
+//! change takes effect without a restart, and the roots survive restarts.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use super::scan::models::EffectivePolicy;
 use super::scan::roots::{LibraryRoot, PolicyRule, RootRegistry, fingerprint_roots};
 use super::scan::scheduler::{InclusionRule, ScheduleSettings};
 use super::scan::watcher::WatcherSettings;
 use super::service::ServiceError;
+use crate::edition_prefs::LivePreferences;
+use crate::management::settings::service::LibraryManagementService;
 use crate::policy::{self as library_policy, clean_absolute};
 use droppedneedle_kernel::runtime_config::secret_sections::{
-    IdentificationPolicy, LibraryRoot as StoredRoot, TypedLibrary,
+    IdentificationPolicy, JellyfinConnection, LibraryRoot as StoredRoot, TypedLibrary,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    FilesystemWatcher, LibraryScanSchedule, ScanFrequency,
+    DownloadPolicy, FilesystemWatcher, LibraryManagement, LibraryScanSchedule, ScanFrequency,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
-use droppedneedle_kernel::runtime_config::{ConfigStore, UpdateError};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Live, UpdateError};
+
+/// The settings sections the library reads, each a live handle, plus the
+/// store for the few things the library writes or signs.
+#[derive(Clone)]
+pub struct LibrarySettings {
+    /// Roots, path rules, the naming template and the AcoustID key.
+    pub library: Live<TypedLibrary>,
+    /// The automatic-scan schedule.
+    pub schedule: Live<LibraryScanSchedule>,
+    /// The filesystem watcher.
+    pub watcher: Live<FilesystemWatcher>,
+    /// Library Management's profiles and undo retention.
+    pub management: Live<LibraryManagement>,
+    /// The recycle bin.
+    pub download_policy: Live<DownloadPolicy>,
+    /// Edition preferences, for identification and management.
+    pub editions: LivePreferences,
+    /// The Jellyfin server refreshed after a management run.
+    pub jellyfin: Live<JellyfinConnection>,
+    /// Adding a root and Library Management's settings write here, and
+    /// correction previews are signed with its data key.
+    store: ConfigStore,
+}
+
+impl LibrarySettings {
+    /// Live handles on the library's sections in `config`.
+    pub fn new(config: &ConfigStore) -> Self {
+        Self {
+            library: config.live(),
+            schedule: config.live(),
+            watcher: config.live(),
+            management: config.live(),
+            download_policy: config.live(),
+            editions: LivePreferences::new(config),
+            jellyfin: config.live(),
+            store: config.clone(),
+        }
+    }
+
+    /// The store, for tests that save a section the library then reads.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn store(&self) -> &ConfigStore {
+        &self.store
+    }
+
+    /// Library Management's settings service over the same store.
+    pub(crate) fn management_service(&self) -> LibraryManagementService {
+        LibraryManagementService::new(Arc::new(self.store.clone()))
+    }
+
+    /// Sign `message` for `purpose` with the server's data key.
+    pub(crate) fn mac(&self, purpose: &str, message: &[u8]) -> [u8; 32] {
+        self.store.mac(purpose, message)
+    }
+
+    /// Add one root to the stored settings. The id must be new; the
+    /// settings resolver the settings page saves through then refuses a
+    /// path that equals, holds, or sits inside another root (or staging).
+    /// The label is the directory name, made unique against the other
+    /// roots. The checks and the write run as one settings transaction,
+    /// like every settings-page library save. Blocking: call it off the
+    /// async workers.
+    pub fn add_root(&self, root: &LibraryRoot) -> Result<(), ServiceError> {
+        self.store
+            .update_secret_blocking::<TypedLibrary, ServiceError, _>(|stored| {
+                with_root(stored.into_inner(), root)
+            })
+            .map(|_| ())
+            .map_err(|error| match error {
+                UpdateError::Rejected(error) => error,
+                UpdateError::Config(error) if error.is_busy() => ServiceError::Busy {
+                    cause: error.to_string(),
+                },
+                UpdateError::Config(error) => ServiceError::internal(&error),
+            })
+    }
+}
 
 /// Timezone daily schedules resolve against. The scheduler has no tz
 /// database, so daily times read as UTC.
@@ -94,12 +174,11 @@ pub fn registry_from(settings: &TypedLibrary) -> RootRegistry {
     RootRegistry::new(roots, enabled, &revision)
 }
 
-/// Current registry from the config store.
-pub fn registry(config: &ConfigStore) -> Result<RootRegistry, ServiceError> {
-    let settings = config
-        .get_masked::<TypedLibrary>()
-        .map_err(|error| ServiceError::internal(&error))?
-        .into_inner();
+/// The registry the saved settings describe now.
+pub fn registry(settings: &Live<TypedLibrary>) -> Result<RootRegistry, ServiceError> {
+    let settings = settings
+        .get()
+        .map_err(|error| ServiceError::internal(&error))?;
     Ok(registry_from(&settings))
 }
 
@@ -136,8 +215,8 @@ fn frequency(value: ScanFrequency) -> &'static str {
 }
 
 /// Automatic-scan schedule. An unreadable section schedules nothing.
-pub fn schedule(config: &ConfigStore) -> ScheduleSettings {
-    match config.get::<LibraryScanSchedule>() {
+pub fn schedule(settings: &Live<LibraryScanSchedule>) -> ScheduleSettings {
+    match settings.get() {
         Ok(stored) => ScheduleSettings::new(
             frequency(stored.scan_frequency),
             &stored.daily_scan_time,
@@ -151,8 +230,8 @@ pub fn schedule(config: &ConfigStore) -> ScheduleSettings {
 }
 
 /// Filesystem watcher settings. An unreadable section turns it off.
-pub fn watcher(config: &ConfigStore) -> WatcherSettings {
-    match config.get::<FilesystemWatcher>() {
+pub fn watcher(settings: &Live<FilesystemWatcher>) -> WatcherSettings {
+    match settings.get() {
         Ok(stored) => WatcherSettings {
             enabled: stored.enabled,
             poll_interval_seconds: stored.poll_interval_seconds,
@@ -166,27 +245,6 @@ pub fn watcher(config: &ConfigStore) -> WatcherSettings {
             }
         }
     }
-}
-
-/// Add one root to the stored settings. The id must be new; the settings
-/// resolver the settings page saves through then refuses a path that
-/// equals, holds, or sits inside another root (or staging). The label is
-/// the directory name, made unique against the other roots. The checks
-/// and the write run as one settings transaction, like every
-/// settings-page library save. Blocking: call it off the async workers.
-pub fn add_root(config: &ConfigStore, root: &LibraryRoot) -> Result<(), ServiceError> {
-    config
-        .update_secret_blocking::<TypedLibrary, ServiceError, _>(|stored| {
-            with_root(stored.into_inner(), root)
-        })
-        .map(|_| ())
-        .map_err(|error| match error {
-            UpdateError::Rejected(error) => error,
-            UpdateError::Config(error) if error.is_busy() => ServiceError::Busy {
-                cause: error.to_string(),
-            },
-            UpdateError::Config(error) => ServiceError::internal(&error),
-        })
 }
 
 /// The stored settings with `root` added and normalized. The masked

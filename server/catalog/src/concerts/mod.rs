@@ -35,7 +35,7 @@ use axum::Router;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
-use droppedneedle_kernel::runtime_config::{ConfigStore, Plain, Secret};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Live as LiveSettings, Plain, Secret};
 
 pub use events::{ConcertsEvents, ConcertsNew, NoEventStream};
 pub use service::ConcertsService;
@@ -53,41 +53,36 @@ pub struct ConcertsSetup {
 #[derive(Clone)]
 struct Live {
     store: store::ConcertsStore,
-    config: Arc<ConfigStore>,
+    settings: LiveSettings<EventsSettings>,
     sources: Arc<sources::Sources>,
     events: Arc<dyn ConcertsEvents>,
 }
 
 impl ConcertsSetup {
     /// Production wiring over the database, the shared outbound client, the
-    /// settings store and the sources' addresses. `concerts_new` goes
-    /// nowhere until the event stream is wired through
+    /// events settings in `config` and the sources' addresses.
+    /// `concerts_new` goes nowhere until the event stream is wired through
     /// [`ConcertsSetup::with_events`].
     pub fn from_db(
         db: &Db,
         http: &HttpClientFactory,
-        config: &Arc<ConfigStore>,
+        config: &ConfigStore,
         endpoints: Endpoints,
     ) -> Self {
-        Self::new(
-            db.clone(),
-            http.shared().clone(),
-            Arc::clone(config),
-            endpoints,
-        )
+        Self::new(db.clone(), http.shared().clone(), config.live(), endpoints)
     }
 
     /// Wiring from parts; tests point `endpoints` at local fakes.
     pub fn new(
         db: Db,
         http: reqwest::Client,
-        config: Arc<ConfigStore>,
+        settings: LiveSettings<EventsSettings>,
         endpoints: Endpoints,
     ) -> Self {
         Self {
             live: Some(Live {
                 store: store::ConcertsStore::new(db),
-                config,
+                settings,
                 sources: Arc::new(sources::Sources::new(http, endpoints)),
                 events: Arc::new(NoEventStream),
             }),
@@ -115,7 +110,7 @@ impl ConcertsSetup {
         self.live.as_ref().map(|live| {
             ConcertsSweep::new(
                 live.store.clone(),
-                Arc::clone(&live.config),
+                live.settings.clone(),
                 Arc::clone(&live.sources),
                 Arc::clone(&live.events),
             )
@@ -130,7 +125,7 @@ impl ConcertsSetup {
             .map(|live| {
                 handlers::router(ConcertsService::new(
                     live.store.clone(),
-                    Arc::clone(&live.config),
+                    live.settings.clone(),
                     Arc::clone(&live.sources),
                 ))
             })
@@ -152,8 +147,8 @@ pub(crate) struct ActiveSources {
 impl ActiveSources {
     /// The ready sources, or `None` when the feature is off or no source
     /// is both enabled and keyed (v2 `is_events_source_ready`).
-    pub fn read(config: &ConfigStore) -> Option<Self> {
-        let settings = read_settings(config)?;
+    pub fn read(settings: &LiveSettings<EventsSettings>) -> Option<Self> {
+        let settings = read_settings(settings)?;
         if !settings.enabled {
             return None;
         }
@@ -170,16 +165,16 @@ impl ActiveSources {
     }
 
     /// The configured sweep scope, whether or not a source is ready.
-    pub fn scope(config: &ConfigStore) -> EventsSweepScope {
-        read_settings(config)
+    pub fn scope(settings: &LiveSettings<EventsSettings>) -> EventsSweepScope {
+        read_settings(settings)
             .map(|settings| settings.sweep_scope)
             .unwrap_or_default()
     }
 }
 
-fn read_settings(config: &ConfigStore) -> Option<Plain<EventsSettings>> {
-    config
-        .get_raw::<EventsSettings>()
+fn read_settings(settings: &LiveSettings<EventsSettings>) -> Option<Arc<Plain<EventsSettings>>> {
+    settings
+        .get()
         .inspect_err(|error| tracing::debug!(%error, "cannot read events settings; concerts off"))
         .ok()
 }

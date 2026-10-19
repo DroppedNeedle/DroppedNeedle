@@ -3,31 +3,30 @@
 //! and pushed into the client, so a new key or limit applies at once.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::reads::discover::{
     models::YouTubeQuotaResponse,
     ports::{BoxFuture, ProviderFailure, YouTubeSource},
 };
-use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::YouTubeConnection};
+use droppedneedle_kernel::runtime_config::{Live, secret_sections::YouTubeConnection};
 use droppedneedle_providers::youtube::{SearchKind, YouTubeClient, YouTubeSettings, YoutubeError};
 
 /// Live YouTube search.
 pub struct LiveYouTube {
     client: YouTubeClient,
-    config: Arc<ConfigStore>,
+    settings: Live<YouTubeConnection>,
 }
 
 impl LiveYouTube {
-    /// Search through `client`, configured from `config` on every call.
-    pub fn new(client: YouTubeClient, config: Arc<ConfigStore>) -> Self {
-        Self { client, config }
+    /// Search through `client`, configured from `settings` on every call.
+    pub fn new(client: YouTubeClient, settings: Live<YouTubeConnection>) -> Self {
+        Self { client, settings }
     }
 
     /// Push the current settings into the client. An unreadable or invalid
     /// section leaves the previous settings in place, with a log line.
     fn refresh(&self) {
-        let settings = match self.config.get_raw::<YouTubeConnection>() {
+        let settings = match self.settings.get() {
             Ok(section) => section,
             Err(error) => {
                 tracing::warn!(%error, "cannot read youtube settings; keeping the last ones");

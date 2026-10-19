@@ -457,7 +457,8 @@ impl Rig {
             runtime.db(),
             auth.deps.clone(),
             ids,
-            crate::common::reads_inputs(crate::common::config_store(&dir), &dir),
+            &crate::common::config_store(&dir),
+            crate::common::reads_inputs(&dir),
             None,
         )
         .with_collections(CollectionsDb::new(runtime.db().clone()));

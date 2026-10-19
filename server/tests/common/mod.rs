@@ -187,16 +187,11 @@ pub async fn loop_row(
 }
 
 /// Reads inputs for production-shaped rigs: covers and the YouTube quota
-/// under `dir`, settings from `config`, no linked ListenBrainz accounts and
-/// no instance Last.fm key.
+/// under `dir` and no linked ListenBrainz accounts.
 /// Nothing dials out unless a test asks for a cover or a chart.
-pub fn reads_inputs(
-    config: Arc<droppedneedle_kernel::runtime_config::ConfigStore>,
-    dir: &Path,
-) -> droppedneedle_catalog::reads::ReadsInputs {
+pub fn reads_inputs(dir: &Path) -> droppedneedle_catalog::reads::ReadsInputs {
     let http = test_http();
     droppedneedle_catalog::reads::ReadsInputs {
-        config,
         covers_dir: dir.join("covers"),
         cover_cache_max_bytes: 16 * 1024 * 1024,
         http: http.shared().clone(),
@@ -209,7 +204,6 @@ pub fn reads_inputs(
             )),
         ),
         youtube_quota_path: dir.join("youtube_quota.json"),
-        lastfm_key: Arc::new(|| None),
         discover_warmer: false,
         // Nothing listens on the discard port, so no test reaches a real
         // chart or discovery provider.

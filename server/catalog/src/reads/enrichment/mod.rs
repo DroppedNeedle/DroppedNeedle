@@ -1349,7 +1349,11 @@ pub struct ProviderLyrics {
     catalog: Arc<dyn LibraryCatalog>,
     lyrics: Arc<dyn LyricsClient>,
     budgets: SourceBudgets,
-    enabled: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    settings: Option<
+        droppedneedle_kernel::runtime_config::Live<
+            droppedneedle_kernel::runtime_config::sections::LyricsSettings,
+        >,
+    >,
 }
 
 impl ProviderLyrics {
@@ -1363,15 +1367,21 @@ impl ProviderLyrics {
             catalog,
             lyrics,
             budgets,
-            enabled: None,
+            settings: None,
         }
     }
 
-    /// Serve only while `enabled` reads true; otherwise lyrics read as
-    /// absent without a catalog read or a provider call.
+    /// Serve only while the lyrics setting is on (read per call);
+    /// otherwise lyrics read as absent without a catalog read or a
+    /// provider call.
     #[must_use]
-    pub fn with_switch(mut self, enabled: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
-        self.enabled = Some(enabled);
+    pub fn with_settings(
+        mut self,
+        settings: droppedneedle_kernel::runtime_config::Live<
+            droppedneedle_kernel::runtime_config::sections::LyricsSettings,
+        >,
+    ) -> Self {
+        self.settings = Some(settings);
         self
     }
 }
@@ -1382,7 +1392,11 @@ impl LyricsPort for ProviderLyrics {
         track_id: &'a str,
     ) -> crate::reads::library::stores::BoxFuture<'a, Result<Option<LyricDoc>, StoreError>> {
         Box::pin(async move {
-            if self.enabled.as_ref().is_some_and(|enabled| !enabled()) {
+            if self
+                .settings
+                .as_ref()
+                .is_some_and(|settings| !live::lyrics_on(settings))
+            {
                 return Ok(None);
             }
             let track = self

@@ -26,7 +26,7 @@ use super::rules::retracts_on_contradiction;
 use super::sources::{EditionPage, EditionQuery, SourceError};
 use super::sqlite::SqliteIdentifyStore;
 use super::stores::{Approval, AttemptLanding, StoreError, keep_releases, land_job};
-use crate::edition_prefs::Preferences;
+use crate::edition_prefs::{LivePreferences, Preferences};
 use crate::matching::decide::{EDITION_COHORT, eligible};
 use crate::matching::{EditionPrefs, LocalAlbum, ReleaseMatch, Verdict, decide, match_release};
 
@@ -36,12 +36,11 @@ pub struct IdentifyDeps {
     pub providers: Arc<dyn IdentifyProviders>,
 }
 
-/// Reads the saved edition preferences, per call.
-pub type PreferenceSource = Arc<dyn Fn() -> Preferences + Send + Sync>;
-
 pub struct IdentifyService {
     deps: IdentifyDeps,
-    preferences: PreferenceSource,
+    /// The saved edition preferences, read per attempt; the defaults when
+    /// none are given.
+    preferences: Option<LivePreferences>,
     /// When artist id lookups may run again after MusicBrainz could not
     /// answer. In memory only: a restart asks again at once.
     artist_hold: Mutex<ArtistHold>,
@@ -63,7 +62,7 @@ impl IdentifyService {
     pub fn new(deps: IdentifyDeps) -> Self {
         Self {
             deps,
-            preferences: Arc::new(Preferences::default),
+            preferences: None,
             artist_hold: Mutex::new(ArtistHold {
                 until: None,
                 failures: 0,
@@ -75,8 +74,8 @@ impl IdentifyService {
     /// Break ties between equally fitting editions with these saved
     /// preferences (read on every attempt).
     #[must_use]
-    pub fn with_preferences(mut self, preferences: PreferenceSource) -> Self {
-        self.preferences = preferences;
+    pub fn with_preferences(mut self, preferences: LivePreferences) -> Self {
+        self.preferences = Some(preferences);
         self
     }
 
@@ -307,7 +306,10 @@ impl IdentifyService {
             .map(|release| match_release(&local, release, &recall.recording_aliases))
             .collect();
         let tagged = local.tagged_release();
-        let preferences = (self.preferences)();
+        let preferences = self
+            .preferences
+            .as_ref()
+            .map_or_else(Preferences::default, LivePreferences::current);
         let verdict = decide(
             &local,
             &recall.releases,

@@ -8,7 +8,7 @@
 
 use super::reasons;
 use crate::operations::reasons::Reason;
-use droppedneedle_kernel::runtime_config::ConfigStore;
+use crate::settings::LibrarySettings;
 
 /// How long a preview stays good, as in v2.
 pub const TTL_SECS: i64 = 15 * 60;
@@ -17,7 +17,7 @@ pub const TTL_SECS: i64 = 15 * 60;
 /// signs.
 const PURPOSE: &str = "catalog-correction-preview";
 
-fn mac(signer: &ConfigStore, actor: &str, material: &str, issued_at: i64) -> String {
+fn mac(signer: &LibrarySettings, actor: &str, material: &str, issued_at: i64) -> String {
     let message = format!("{actor}\0{issued_at}\0{material}");
     signer
         .mac(PURPOSE, message.as_bytes())
@@ -28,13 +28,13 @@ fn mac(signer: &ConfigStore, actor: &str, material: &str, issued_at: i64) -> Str
 
 /// A token for `material`, previewed by `actor` at `issued_at` (unix
 /// seconds).
-pub fn issue(signer: &ConfigStore, actor: &str, material: &str, issued_at: i64) -> String {
+pub fn issue(signer: &LibrarySettings, actor: &str, material: &str, issued_at: i64) -> String {
     format!("{issued_at}.{}", mac(signer, actor, material, issued_at))
 }
 
 /// Check a token against the material recomputed now.
 pub fn verify(
-    signer: &ConfigStore,
+    signer: &LibrarySettings,
     actor: &str,
     token: &str,
     material: &str,

@@ -11,14 +11,14 @@
 use std::sync::Arc;
 
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_auth::users::stores::LastFmSwitch;
-use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, ListenBrainzConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    GetIt, MusicBrainzSettings, MusicSource, PrimaryMusicSource, UserPreferences,
+    MusicBrainzSettings, MusicSource, PrimaryMusicSource, UserPreferences,
 };
+use droppedneedle_kernel::runtime_config::{ConfigStore, Listed, Live};
+use droppedneedle_library::edition_prefs::LivePreferences;
 use droppedneedle_providers::adapters::{CorePacer, HealthSink, ReqwestGet};
 use droppedneedle_providers::audiodb::{self, AudioDbClient};
 use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials};
@@ -48,57 +48,69 @@ pub trait CatalogSettings: Send + Sync {
     }
 }
 
-/// Read one section, falling back to its default with a log line: a
+/// Read one section now, falling back to its default with a log line: a
 /// broken settings file must not take the artist pages down.
-fn or_default<S: Default>(section: &'static str, read: Result<S, impl std::fmt::Display>) -> S {
-    read.unwrap_or_else(|error| {
-        tracing::warn!(section, %error, "settings read failed; catalog uses defaults");
-        S::default()
-    })
+fn or_default<S: Listed + Default + Clone>(settings: &Live<S>) -> S {
+    settings.get().map_or_else(
+        |error| {
+            tracing::warn!(section = S::KEY, %error, "settings read failed; catalog uses defaults");
+            S::default()
+        },
+        |section| S::clone(&section),
+    )
 }
 
-impl CatalogSettings for ConfigStore {
+/// The catalog's settings, each a live handle read per call.
+pub struct LiveCatalogSettings {
+    musicbrainz: Live<MusicBrainzSettings>,
+    preferences: Live<UserPreferences>,
+    advanced: Live<AdvancedSettings>,
+    listenbrainz: Live<ListenBrainzConnection>,
+    primary: Live<PrimaryMusicSource>,
+    editions: LivePreferences,
+}
+
+impl LiveCatalogSettings {
+    /// Live handles on the catalog's sections in `config`.
+    pub fn new(config: &ConfigStore) -> Self {
+        Self {
+            musicbrainz: config.live(),
+            preferences: config.live(),
+            advanced: config.live(),
+            listenbrainz: config.live(),
+            primary: config.live(),
+            editions: LivePreferences::new(config),
+        }
+    }
+}
+
+impl CatalogSettings for LiveCatalogSettings {
     fn musicbrainz(&self) -> MusicBrainzSettings {
-        or_default("musicbrainz_settings", self.get::<MusicBrainzSettings>())
+        or_default(&self.musicbrainz)
     }
 
     fn preferences(&self) -> UserPreferences {
-        or_default("user_preferences", self.get::<UserPreferences>())
+        or_default(&self.preferences)
     }
 
     fn advanced(&self) -> AdvancedSettings {
-        or_default(
-            "advanced_settings",
-            self.get_raw::<AdvancedSettings>()
-                .map(|plain| (*plain).clone()),
-        )
+        or_default(&self.advanced)
     }
 
     fn listenbrainz_enabled(&self) -> bool {
-        or_default(
-            "listenbrainz_settings",
-            self.get_raw::<ListenBrainzConnection>(),
-        )
-        .enabled
+        or_default(&self.listenbrainz).enabled
     }
 
     fn primary_source(&self) -> MusicSource {
-        or_default("primary_music_source", self.get::<PrimaryMusicSource>()).source
+        or_default(&self.primary).source
     }
 
     fn store_region(&self) -> String {
-        or_default("get_it", self.get::<GetIt>()).store_region
+        self.editions.store_region()
     }
 
     fn edition_preferences(&self) -> droppedneedle_library::edition_prefs::Preferences {
-        let saved = or_default(
-            "edition_preferences",
-            self.get::<droppedneedle_kernel::runtime_config::sections::EditionPreferences>(),
-        );
-        droppedneedle_library::edition_prefs::Preferences::from_settings(
-            &saved,
-            &self.store_region(),
-        )
+        self.editions.current()
     }
 }
 
@@ -155,20 +167,19 @@ pub struct Upstream {
     settings: Arc<dyn CatalogSettings>,
     users: UsersDeps,
     endpoints: Endpoints,
-    instance_lastfm_key: InstanceLastFmKey,
 }
-
-/// Reads the instance-wide Last.fm API key, per call. Last.fm reads use a
-/// user's own key first and fall back to this one; `None` means no
-/// instance key is saved. The default has none; boot plugs in
-/// [`instance_lastfm_key`] through [`Upstream::with_instance_lastfm_key`].
-pub type InstanceLastFmKey = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 
 /// The API key the admin saved under Settings > Last.fm (the sealed
 /// `lastfm_settings` pair), read on every call through the same switch the
-/// scrobble forwarder uses, so a new key applies without a restart.
-pub fn instance_lastfm_key(switch: Arc<dyn LastFmSwitch>) -> InstanceLastFmKey {
-    Arc::new(move || switch.instance_keys().map(|keys| keys.api_key))
+/// scrobble forwarder uses, so a new key applies without a restart. Last.fm
+/// reads use a user's own key first and fall back to this one; `None`
+/// means no usable instance key is saved.
+pub fn instance_lastfm_key(users: &UsersDeps) -> Option<String> {
+    users
+        .lastfm_switch
+        .instance_keys()
+        .map(|keys| keys.api_key)
+        .filter(|key| !key.trim().is_empty())
 }
 
 /// A user's Last.fm link as the reads use it.
@@ -244,15 +255,7 @@ impl Upstream {
             settings,
             users,
             endpoints,
-            instance_lastfm_key: Arc::new(|| None),
         }
-    }
-
-    /// Fall back to this instance Last.fm key for users without their own.
-    #[must_use]
-    pub fn with_instance_lastfm_key(mut self, key: InstanceLastFmKey) -> Self {
-        self.instance_lastfm_key = key;
-        self
     }
 
     /// The live settings.
@@ -320,7 +323,7 @@ impl Upstream {
         }
         let api_key = match self.user_lastfm_key(user_id).await {
             Some(key) => key,
-            None => (self.instance_lastfm_key)().filter(|key| !key.trim().is_empty())?,
+            None => instance_lastfm_key(&self.users)?,
         };
         let pacer = CorePacer::for_source(self.providers.clone(), lastfm::SOURCE)?;
         Some((

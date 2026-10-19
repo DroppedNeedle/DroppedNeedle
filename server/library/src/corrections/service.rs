@@ -6,8 +6,6 @@
 //! read and the result; an apply runs the change again and commits only
 //! when the token still matches.
 
-use std::sync::Arc;
-
 use rusqlite::{OptionalExtension as _, Transaction, params};
 
 use super::artists;
@@ -20,23 +18,23 @@ use super::reset;
 use super::retag_pairs;
 use super::token::{self, TokenFault};
 use crate::clock::{now_ms, now_unix};
+use crate::settings::LibrarySettings;
 use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::db::{Db, Lane, savepoint};
-use droppedneedle_kernel::runtime_config::ConfigStore;
 
 /// Catalog corrections over the library's store. Preview tokens are signed
 /// with the server's data key, held by the settings store.
 #[derive(Clone)]
 pub struct Corrections {
     db: Db,
-    signer: Arc<ConfigStore>,
+    signer: LibrarySettings,
 }
 
 impl Corrections {
     pub fn new(setup: &LibrarySetup) -> Self {
         Self {
             db: setup.db.clone(),
-            signer: setup.config.clone(),
+            signer: setup.settings.clone(),
         }
     }
 

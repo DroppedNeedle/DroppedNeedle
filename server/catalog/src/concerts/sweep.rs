@@ -30,8 +30,8 @@ use super::store::{ConcertsStore, StoreError};
 use super::{ActiveSources, now_unix, today};
 use droppedneedle_kernel::jobs::events_watcher::{EventsWatcher, SweepEnd};
 use droppedneedle_kernel::jobs::{BoxFuture, CancellationToken};
-use droppedneedle_kernel::runtime_config::ConfigStore;
-use droppedneedle_kernel::runtime_config::secret_sections::EventsSweepScope;
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
 use droppedneedle_providers::error::ProviderError;
 
 /// Source resolutions older than this are looked up again, from v2.
@@ -84,7 +84,7 @@ impl From<ProviderError> for ArtistError {
 #[derive(Clone)]
 pub struct ConcertsSweep {
     store: ConcertsStore,
-    config: Arc<ConfigStore>,
+    settings: Live<EventsSettings>,
     sources: Arc<Sources>,
     events: Arc<dyn ConcertsEvents>,
     inter_artist_delay: Duration,
@@ -94,13 +94,13 @@ impl ConcertsSweep {
     /// Sweep over the shared store, settings, sources and event sink.
     pub fn new(
         store: ConcertsStore,
-        config: Arc<ConfigStore>,
+        settings: Live<EventsSettings>,
         sources: Arc<Sources>,
         events: Arc<dyn ConcertsEvents>,
     ) -> Self {
         Self {
             store,
-            config,
+            settings,
             sources,
             events,
             inter_artist_delay: INTER_ARTIST_DELAY,
@@ -121,7 +121,7 @@ impl ConcertsSweep {
         skip_recent_hours: Option<f64>,
         stop: &CancellationToken,
     ) -> Result<(SweepEnd, SweepSummary), StoreError> {
-        let Some(active) = ActiveSources::read(&self.config) else {
+        let Some(active) = ActiveSources::read(&self.settings) else {
             tracing::debug!("events sweep skipped: no enabled source with a key");
             return Ok((SweepEnd::Finished, SweepSummary::default()));
         };

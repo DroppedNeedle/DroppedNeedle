@@ -11,7 +11,6 @@ use super::service::Management;
 use super::store::{self, ManagedMark, Snapshot};
 use super::takeover;
 use crate::clock::now_unix;
-use droppedneedle_kernel::runtime_config::secret_sections::JellyfinConnection;
 
 impl Management {
     /// Bookkeeping for one album the job just wrote. The files are
@@ -346,8 +345,9 @@ impl Management {
         };
         let connection = self
             .setup
-            .config
-            .get_raw::<JellyfinConnection>()
+            .settings
+            .jellyfin
+            .get()
             .map_err(|_| "NOT_CONFIGURED")?;
         let key = connection.api_key.expose().to_owned();
         if !connection.enabled || key.is_empty() || connection.jellyfin_url.is_empty() {

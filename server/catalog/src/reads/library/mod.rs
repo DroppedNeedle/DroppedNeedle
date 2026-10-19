@@ -35,9 +35,7 @@ use axum::{
     Router,
     routing::{get, post},
 };
-use stores::{
-    FavoriteReads, LibraryCatalog, LibraryLookups, LyricsPort, TrackTagReader, UpgradePolicySource,
-};
+use stores::{FavoriteReads, LibraryCatalog, LibraryLookups, LyricsPort, TrackTagReader};
 
 /// Every dependency the library reads need, injected by constructor.
 #[derive(Clone)]
@@ -50,8 +48,13 @@ pub struct LibraryDeps {
     pub lyrics: Arc<dyn LyricsPort>,
     /// Membership, album status, track resolution and stats extras.
     pub lookups: Arc<dyn LibraryLookups>,
-    /// Upgrade cutoff for album status, read per call.
-    pub upgrade_policy: UpgradePolicySource,
+    /// The download policy album status reads its upgrade cutoff from, per
+    /// call; `None` shows no upgrades.
+    pub upgrade_policy: Option<
+        droppedneedle_kernel::runtime_config::Live<
+            droppedneedle_kernel::runtime_config::sections::DownloadPolicy,
+        >,
+    >,
     /// Tag reads from the files on disk (admin tag view).
     pub tags: Arc<dyn TrackTagReader>,
 }

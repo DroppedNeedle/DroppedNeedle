@@ -220,7 +220,7 @@ impl<T: MbTransport, S: DegradationSink> ReleasePoll for MusicBrainzReleasePoll<
 pub fn live_release_poll(
     http: &droppedneedle_kernel::http_client::HttpClientFactory,
     providers: Arc<droppedneedle_providers::Providers>,
-    source: droppedneedle_providers::musicbrainz::SourceFn,
+    source: droppedneedle_providers::musicbrainz::LiveSource,
 ) -> MusicBrainzReleasePoll<ReqwestMbTransport, HealthSink> {
     let health = HealthSink::new(&providers);
     MusicBrainzReleasePoll::new(
@@ -228,7 +228,7 @@ pub fn live_release_poll(
             ReqwestMbTransport::new(http.no_redirect().clone()),
             MbPacing::new(providers),
         )
-        .with_source_fn(source)
+        .with_live_source(source)
         .with_priority(RequestPriority::BackgroundSync)
         .with_sink(health),
     )

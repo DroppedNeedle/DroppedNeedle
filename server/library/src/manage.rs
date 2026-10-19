@@ -1255,8 +1255,9 @@ impl LibrarySetup {
 
     /// How long undo keeps before-states, read from the settings per call.
     fn undo_retention_days(&self) -> i64 {
-        self.config
-            .get::<droppedneedle_kernel::runtime_config::sections::LibraryManagement>()
+        self.settings
+            .management
+            .get()
             .map(|settings| settings.undo_retention_days)
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "management settings unreadable; default undo retention");

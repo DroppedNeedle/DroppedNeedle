@@ -14,7 +14,7 @@ impl Management {
     /// it, which covers a root saved since the session opened. Reads the
     /// settings, so blocking.
     pub fn placement_modes(&self) -> Vec<(String, PlacementMode)> {
-        let registry = match crate::settings::registry(&self.setup.config) {
+        let registry = match crate::settings::registry(&self.setup.settings.library) {
             Ok(registry) => registry,
             Err(error) => {
                 tracing::warn!(%error, "cannot read the library roots for the placement modes");

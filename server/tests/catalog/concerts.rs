@@ -201,7 +201,7 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
     let setup = ConcertsSetup::new(
         runtime.db().clone(),
         reqwest::Client::new(),
-        Arc::clone(&config),
+        config.live(),
         Endpoints {
             ticketmaster: format!("{base}/tm"),
             skiddle: format!("{base}/sk"),

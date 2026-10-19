@@ -14,8 +14,8 @@ use std::path::{Component, Path, PathBuf};
 use sqlx::{Row as _, SqlitePool};
 
 use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
+use droppedneedle_library::scan::coordinator::{ResolverSource as _, SharedResolver};
 use droppedneedle_library::scan::roots::RootRegistry;
-use droppedneedle_library::wiring::RootSource;
 
 /// One catalog file playback or a download may serve.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,13 +214,13 @@ pub enum LocateError {
 #[derive(Clone)]
 pub struct LibraryFiles {
     catalog: FileCatalog,
-    roots: RootSource,
+    roots: SharedResolver,
 }
 
 impl LibraryFiles {
     /// Catalog reads over `pool`, paths resolved against `roots`, which is
     /// read again on every lookup so root changes apply without a restart.
-    pub fn new(pool: SqlitePool, roots: RootSource) -> Self {
+    pub fn new(pool: SqlitePool, roots: SharedResolver) -> Self {
         Self {
             catalog: FileCatalog::new(pool),
             roots,
@@ -234,7 +234,7 @@ impl LibraryFiles {
 
     /// The root registry as configured right now.
     pub fn registry(&self) -> RootRegistry {
-        (self.roots)()
+        self.roots.resolver().registry().clone()
     }
 
     /// The file of one streamable catalog track, confined to the library
@@ -249,9 +249,9 @@ impl LibraryFiles {
             .await
             .map_err(|error| LocateError::Internal(error.to_string()))?
             .ok_or(LocateError::Unknown)?;
-        let roots = std::sync::Arc::clone(&self.roots);
+        let roots = self.roots.clone();
         tokio::task::spawn_blocking(move || {
-            let registry = roots();
+            let registry = roots.resolver().registry().clone();
             resolve(&registry, &file).map(|path| (file, path))
         })
         .await

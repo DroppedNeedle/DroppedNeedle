@@ -17,8 +17,8 @@ use super::models::{
 use super::sources::Sources;
 use super::store::{ConcertsStore, StoreError};
 use super::{ActiveSources, now_unix, today};
-use droppedneedle_kernel::runtime_config::ConfigStore;
-use droppedneedle_kernel::runtime_config::secret_sections::EventsSweepScope;
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
 use droppedneedle_providers::error::ProviderError;
 
 /// Cities kept per user, from v2.
@@ -60,23 +60,27 @@ impl From<StoreError> for ConcertsError {
 #[derive(Clone)]
 pub struct ConcertsService {
     store: ConcertsStore,
-    config: Arc<ConfigStore>,
+    settings: Live<EventsSettings>,
     sources: Arc<Sources>,
 }
 
 impl ConcertsService {
     /// Service over the shared store, settings and sources.
-    pub fn new(store: ConcertsStore, config: Arc<ConfigStore>, sources: Arc<Sources>) -> Self {
+    pub fn new(
+        store: ConcertsStore,
+        settings: Live<EventsSettings>,
+        sources: Arc<Sources>,
+    ) -> Self {
         Self {
             store,
-            config,
+            settings,
             sources,
         }
     }
 
     /// The events settings for this call; `None` when no source is ready.
     fn active(&self) -> Option<ActiveSources> {
-        ActiveSources::read(&self.config)
+        ActiveSources::read(&self.settings)
     }
 
     /// Candidate rows for the user, optionally only those first seen after
@@ -87,7 +91,7 @@ impl ConcertsService {
         discovered_after: Option<f64>,
     ) -> Result<Vec<super::matching::StoredConcert>, ConcertsError> {
         let min_date = today().to_string();
-        let library_scope = ActiveSources::scope(&self.config) == EventsSweepScope::Library;
+        let library_scope = ActiveSources::scope(&self.settings) == EventsSweepScope::Library;
         let user = (!library_scope).then_some(user_id);
         Ok(self
             .store

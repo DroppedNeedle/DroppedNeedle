@@ -5078,7 +5078,8 @@ async fn a_busy_database_leaves_a_management_job_runnable() {
         )
         .expect("admin row");
     let settings = library
-        .config
+        .settings
+        .store()
         .save_blocking(lm::initial_settings(""))
         .expect("settings saved");
     let management = Management::new(&library);
@@ -5216,7 +5217,8 @@ async fn library_management_preview_apply_undo() {
     in_place.organization.multi_disc_naming_script_id = None;
     settings.profiles.push(in_place);
     let settings = library
-        .config
+        .settings
+        .store()
         .save_blocking(settings)
         .expect("settings saved");
 
@@ -5873,11 +5875,12 @@ async fn library_management_tools_journey() {
         }
     }
     library
-        .config
+        .settings
+        .store()
         .save_blocking(settings)
         .expect("settings saved");
     // The settings page reads them first, which stores them normalized.
-    lm::service::LibraryManagementService::new(library.config.clone())
+    lm::service::LibraryManagementService::new(Arc::new(library.settings.store().clone()))
         .get_settings()
         .expect("settings normalized");
     let original = read_fields(&file).expect("original tags");
@@ -5888,7 +5891,8 @@ async fn library_management_tools_journey() {
     let revision = || {
         lm::settings_revision(
             &library
-                .config
+                .settings
+                .store()
                 .get::<droppedneedle_kernel::runtime_config::sections::LibraryManagement>()
                 .expect("settings read"),
         )
@@ -5952,7 +5956,7 @@ async fn library_management_tools_journey() {
         .expect("custom tag planted");
         rescan(&library).await;
         let before = read_document(&file).expect("tags before");
-        let stored: LibraryManagement = library.config.get().expect("settings");
+        let stored: LibraryManagement = library.settings.store().get().expect("settings");
         let mut enriched = stored.clone();
         for profile in enriched
             .profiles
@@ -5970,11 +5974,12 @@ async fn library_management_tools_journey() {
             profile.metadata.scrub_unmanaged_tags = true;
         }
         library
-            .config
+            .settings
+            .store()
             .save_blocking(enriched)
             .expect("profile saved");
         let normalize = || {
-            lm::service::LibraryManagementService::new(library.config.clone())
+            lm::service::LibraryManagementService::new(Arc::new(library.settings.store().clone()))
                 .get_settings()
                 .expect("settings normalized");
         };
@@ -6092,7 +6097,11 @@ async fn library_management_tools_journey() {
         );
         assert!(!lrc.exists(), "the lyrics file is gone");
         assert!(!cover_file.exists(), "the cover file is gone");
-        library.config.save_blocking(stored).expect("profile back");
+        library
+            .settings
+            .store()
+            .save_blocking(stored)
+            .expect("profile back");
         normalize();
     }
 
@@ -6212,7 +6221,8 @@ async fn library_management_tools_journey() {
 
     // A confirmed dry run turns automatic management on for the folder.
     let mut proposed = library
-        .config
+        .settings
+        .store()
         .get::<droppedneedle_kernel::runtime_config::sections::LibraryManagement>()
         .expect("settings read");
     let assignment = proposed
@@ -6602,10 +6612,11 @@ async fn library_management_custom_edition_journey() {
         .confirm_match(&album, "admin")
         .expect("match confirmed");
     library
-        .config
+        .settings
+        .store()
         .save_blocking(lm::initial_settings(""))
         .expect("settings saved");
-    lm::service::LibraryManagementService::new(library.config.clone())
+    lm::service::LibraryManagementService::new(Arc::new(library.settings.store().clone()))
         .get_settings()
         .expect("settings normalized");
     // Seal the album as a custom edition: its release is let go, and the
@@ -6637,7 +6648,8 @@ async fn library_management_custom_edition_journey() {
     let management = Management::new(&library);
     let revision = lm::settings_revision(
         &library
-            .config
+            .settings
+            .store()
             .get::<droppedneedle_kernel::runtime_config::sections::LibraryManagement>()
             .expect("settings read"),
     );
@@ -6776,11 +6788,12 @@ async fn library_management_artwork_journey() {
         profile.metadata.scrub_unmanaged_tags = true;
     }
     library
-        .config
+        .settings
+        .store()
         .save_blocking(settings)
         .expect("settings saved");
     let original = read_document(&file).expect("original tags");
-    lm::service::LibraryManagementService::new(library.config.clone())
+    lm::service::LibraryManagementService::new(Arc::new(library.settings.store().clone()))
         .get_settings()
         .expect("settings normalized");
     let cover = {
@@ -6821,7 +6834,8 @@ async fn library_management_artwork_journey() {
         profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
         expected_settings_revision: lm::settings_revision(
             &library
-                .config
+                .settings
+                .store()
                 .get::<LibraryManagement>()
                 .expect("settings read"),
         ),
@@ -6942,7 +6956,8 @@ async fn library_management_artwork_journey() {
                 },
                 expected_settings_revision: lm::settings_revision(
                     &library
-                        .config
+                        .settings
+                        .store()
                         .get::<LibraryManagement>()
                         .expect("settings read"),
                 ),
@@ -7018,10 +7033,11 @@ impl ManagedLibrary {
             configure(profile);
         }
         library
-            .config
+            .settings
+            .store()
             .save_blocking(settings)
             .expect("settings saved");
-        lm::service::LibraryManagementService::new(library.config.clone())
+        lm::service::LibraryManagementService::new(Arc::new(library.settings.store().clone()))
             .get_settings()
             .expect("settings normalized");
         Self {
@@ -7045,7 +7061,8 @@ impl ManagedLibrary {
         droppedneedle_library::management::settings::settings_revision(
             &self
                 .library
-                .config
+                .settings
+                .store()
                 .get::<droppedneedle_kernel::runtime_config::sections::LibraryManagement>()
                 .expect("settings read"),
         )
@@ -7204,7 +7221,8 @@ impl ManagedLibrary {
         while automatic_next(&self.library).await {}
         let mut proposed = self
             .library
-            .config
+            .settings
+            .store()
             .get::<LibraryManagement>()
             .expect("settings read");
         match proposed
@@ -8091,7 +8109,7 @@ async fn the_picard_profile_writes_its_fields_in_every_format() {
 
     // Artist sort off: a hand edit to it stays, while one to the ISRC
     // beside it is put back.
-    let mut settings: LibraryManagement = managed.library.config.get().expect("settings");
+    let mut settings: LibraryManagement = managed.library.settings.store().get().expect("settings");
     for profile in &mut settings.profiles {
         for field in &mut profile.metadata.fields {
             if field.field == "artist_sort" {
@@ -8101,7 +8119,8 @@ async fn the_picard_profile_writes_its_fields_in_every_format() {
     }
     managed
         .library
-        .config
+        .settings
+        .store()
         .save_blocking(settings)
         .expect("settings saved");
     let by_hand = vec!["By Hand".to_owned()];
@@ -9275,7 +9294,8 @@ impl ManagedLibrary {
         use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
         let mut settings = self
             .library
-            .config
+            .settings
+            .store()
             .get::<LibraryManagement>()
             .expect("settings read");
         for assignment in settings
@@ -9287,7 +9307,8 @@ impl ManagedLibrary {
             assignment.automatic_acquisitions = acquisitions;
         }
         self.library
-            .config
+            .settings
+            .store()
             .save_blocking(settings)
             .expect("settings saved");
     }
@@ -13355,13 +13376,15 @@ async fn a_held_album_matched_after_its_folder_is_let_go_is_judged_at_its_look()
                 );
                 let mut preferences = managed
                     .library
-                    .config
+                    .settings
+                    .store()
                     .get::<EditionPreferences>()
                     .expect("preferences read");
                 preferences.manage_unconfirmed = true;
                 managed
                     .library
-                    .config
+                    .settings
+                    .store()
                     .save_blocking(preferences)
                     .expect("preferences saved");
             }

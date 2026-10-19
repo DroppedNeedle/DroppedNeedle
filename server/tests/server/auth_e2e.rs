@@ -32,7 +32,7 @@ use droppedneedle_catalog::reads::ReadsSetup;
 use droppedneedle_catalog::reads::catalog::{
     Catalog,
     library::LocalCatalog,
-    upstream::{CatalogSettings, Upstream},
+    upstream::{CatalogSettings, LiveCatalogSettings, Upstream},
 };
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::config::AppConfig;
@@ -166,13 +166,16 @@ impl E2e {
             Arc::new(
                 droppedneedle_media::remotes::plex::ConfiguredPlexServer::new(
                     self.http.shared().clone(),
-                    Arc::clone(&self.store),
+                    self.store.live(),
+                    droppedneedle_auth::federated::settings::InstallIds::new(Arc::clone(
+                        &self.store,
+                    )),
                 ),
             ),
             droppedneedle::bootstrap::sign_in_links(
                 self.runtime.db().clone(),
                 Arc::clone(&self.crypto),
-                Arc::clone(&self.store),
+                &self.store,
             ),
         )
     }
@@ -191,15 +194,13 @@ impl E2e {
             self.runtime.db(),
             auth.users.clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
+            &self.store,
             droppedneedle_catalog::reads::ReadsInputs {
                 // Unpaced: every provider sits on the discard port, so
                 // pacing would only add whole seconds of waiting to rows
                 // that are bound to answer "provider down" anyway.
                 providers: Arc::new(Providers::unpaced()),
-                ..crate::common::reads_inputs(
-                    Arc::clone(&self.store),
-                    self.db_path.parent().expect("db dir"),
-                )
+                ..crate::common::reads_inputs(self.db_path.parent().expect("db dir"))
             },
             None,
         )
@@ -212,7 +213,7 @@ impl E2e {
             Upstream::new(
                 &self.http,
                 Arc::new(Providers::unpaced()),
-                Arc::clone(&self.store) as Arc<dyn CatalogSettings>,
+                Arc::new(LiveCatalogSettings::new(&self.store)) as Arc<dyn CatalogSettings>,
                 auth.users.clone(),
                 droppedneedle::bootstrap::Outbound::live().catalog(),
             ),
@@ -234,7 +235,7 @@ impl E2e {
             &self.http,
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             Some(library.root_source()),
-            Arc::clone(&self.store),
+            &self.store,
             Arc::new(
                 droppedneedle_catalog::reads::collections::remote_import::PlaylistImportSink::new(
                     reads.collections.clone(),
@@ -264,7 +265,7 @@ impl E2e {
                 media.stream.engine.clone(),
                 library.clone(),
                 &reads,
-                droppedneedle_compat::settings::LiveSettings::from_config(Arc::clone(&self.store)),
+                droppedneedle_compat::settings::LiveSettings::from_config(&self.store),
                 droppedneedle_compat::shared::address::ListenerConfig {
                     port: app_config.port,
                     trusted_proxies: app_config.trusted_proxies.clone(),
@@ -290,7 +291,7 @@ impl E2e {
         let concerts = droppedneedle_catalog::concerts::ConcertsSetup::new(
             self.runtime.db().clone(),
             self.http.shared().clone(),
-            Arc::clone(&self.store),
+            self.store.live(),
             droppedneedle_catalog::concerts::Endpoints {
                 ticketmaster: "http://127.0.0.1:9".to_owned(),
                 skiddle: "http://127.0.0.1:9".to_owned(),

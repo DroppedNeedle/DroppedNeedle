@@ -16,7 +16,7 @@ use droppedneedle_kernel::jobs::precache_phases::{
     LibraryAlbum, LibraryArtist, PrecacheLibrary, PrecacheSources, PrecacheTuning,
 };
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
-use droppedneedle_kernel::runtime_config::{ConfigStore, Plain};
+use droppedneedle_kernel::runtime_config::{Live, Plain};
 
 use super::Catalog;
 
@@ -172,16 +172,21 @@ impl ArtistImageSource for CatalogArtistImages {
 pub struct CatalogPrecache {
     catalog: Catalog,
     artwork: ArtworkService,
-    config: Arc<ConfigStore>,
+    settings: Live<AdvancedSettings>,
 }
 
 impl CatalogPrecache {
-    /// Bundle the catalog, the artwork service, and the settings store.
-    pub fn new(catalog: Catalog, artwork: ArtworkService, config: Arc<ConfigStore>) -> Self {
+    /// Bundle the catalog, the artwork service, and the precache tuning
+    /// in the advanced settings, read per run.
+    pub fn new(
+        catalog: Catalog,
+        artwork: ArtworkService,
+        settings: Live<AdvancedSettings>,
+    ) -> Self {
         Self {
             catalog,
             artwork,
-            config,
+            settings,
         }
     }
 }
@@ -200,13 +205,10 @@ fn seconds(value: f64) -> Duration {
 
 impl PrecacheSources for CatalogPrecache {
     fn tuning(&self) -> PrecacheTuning {
-        let settings = self
-            .config
-            .get_raw::<AdvancedSettings>()
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "cannot read advanced settings; precache uses defaults");
-                Plain::default()
-            });
+        let settings = self.settings.get().unwrap_or_else(|error| {
+            tracing::warn!(%error, "cannot read advanced settings; precache uses defaults");
+            Arc::new(Plain::default())
+        });
         PrecacheTuning {
             artist_batch: clamp_batch(settings.batch_artist_images),
             artist_delay: seconds(settings.delay_artist),

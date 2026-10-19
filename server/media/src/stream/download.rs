@@ -47,6 +47,7 @@ use super::routes::{
 };
 use droppedneedle_auth::{Role, User};
 use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 
 use droppedneedle_library::scan::roots::RootRegistry;
@@ -55,9 +56,6 @@ use archive::{Entry, Layout};
 
 /// v2's refusal text when the access setting excludes the caller's role.
 const RESTRICTED_MESSAGE: &str = "Library downloads are restricted by the administrator";
-
-/// Reads the security section, per call.
-pub type AccessSource = Arc<dyn Fn() -> Result<SecuritySettings, String> + Send + Sync>;
 
 /// Whether the caller may download library files.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -70,26 +68,16 @@ pub struct LibraryDownloadAccess {
 #[derive(Clone)]
 pub struct DownloadState {
     library: Option<LibraryFiles>,
-    access: AccessSource,
+    access: Live<SecuritySettings>,
 }
 
 impl DownloadState {
     /// Downloads from the library catalog and roots. `None` (unwired
-    /// builds) serves nothing.
-    pub fn new(library: Option<LibraryFiles>, access: AccessSource) -> Self {
+    /// builds) serves nothing. The access setting in `access` is read per
+    /// call.
+    pub fn new(library: Option<LibraryFiles>, access: Live<SecuritySettings>) -> Self {
         Self { library, access }
     }
-}
-
-/// The security section from a config store, read per call.
-pub fn access_from_config(
-    config: Arc<droppedneedle_kernel::runtime_config::ConfigStore>,
-) -> AccessSource {
-    Arc::new(move || {
-        config
-            .get::<SecuritySettings>()
-            .map_err(|error| error.to_string())
-    })
 }
 
 /// Relative-path router for the `/api/v3` nest inside the session gate.
@@ -153,7 +141,9 @@ impl From<DownloadError> for ApiError {
 
 /// Whether the access setting admits `role`.
 fn allowed(state: &DownloadState, role: Role) -> Result<bool, DownloadError> {
-    (state.access)()
+    state
+        .access
+        .get()
         .map(|security| security.download_allowed(role.as_str()))
         .map_err(DownloadError::internal)
 }

@@ -970,7 +970,7 @@ pub async fn album_status(
     };
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "track", &ids).await?;
-    let policy = (deps.upgrade_policy)();
+    let policy = UpgradePolicy::read(deps.upgrade_policy.as_ref());
     let tracks: Vec<LibraryStatusTrack> = records
         .iter()
         .map(|record| {

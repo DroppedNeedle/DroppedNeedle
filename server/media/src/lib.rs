@@ -36,7 +36,7 @@ use crate::remotes::handlers::{RemotesDeps, remotes_router};
 use crate::remotes::plex::PlexTokenProbe;
 use crate::remotes::reader::RemotesRemoteReader;
 use crate::remotes::service::RemotesService;
-use crate::stream::download::{DownloadState, access_from_config, download_routes};
+use crate::stream::download::{DownloadState, download_routes};
 use crate::stream::gateway::Gateway;
 use crate::stream::local_files::LibraryFiles;
 use crate::stream::routes::{StreamState, stream_routes};
@@ -50,9 +50,9 @@ use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::CancellationToken;
-use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_kernel::runtime_config::sections::{AudioFormat, ConnectApps};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 use droppedneedle_plugins::scrobble::SqliteListenBrainzLinkStore;
 
 /// Production stream engine: gateway over stored-connection remote reads
@@ -105,8 +105,9 @@ impl MediaWorkers {
 impl MediaSetup {
     /// Build the production bundle. `db` backs the connection and folder
     /// rows, and the playback stores open their own connections on its
-    /// file; `config` holds the admin's server settings and the transcode
-    /// policy (read per stream); `crypto` seals linked credentials;
+    /// file; `config` hands out live handles on the admin's server
+    /// settings, the download access and the transcode policy (read per
+    /// stream); `crypto` seals linked credentials;
     /// `library_roots` plus the catalog in `db` turn local stream keys
     /// and download ids (track ids) into files under the live library
     /// roots (`None` keeps the constructor fallback for unwired builds and
@@ -121,8 +122,8 @@ impl MediaSetup {
         crypto: Arc<Crypto>,
         http_factory: &droppedneedle_kernel::http_client::HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
-        library_roots: Option<droppedneedle_library::wiring::RootSource>,
-        config: Arc<ConfigStore>,
+        library_roots: Option<droppedneedle_library::scan::coordinator::SharedResolver>,
+        config: &ConfigStore,
         imports: Arc<dyn ImportSink>,
         plex_tv: String,
         scrobbles: crate::playback::forwarding::Endpoints,
@@ -130,12 +131,12 @@ impl MediaSetup {
         let http = http_factory.shared().clone();
         crate::stream::plugin_url::sweep_stale_spools();
         let library = library_roots.map(|roots| LibraryFiles::new(db.sqlx().clone(), roots));
-        let download = DownloadState::new(library.clone(), access_from_config(config.clone()));
+        let download = DownloadState::new(library.clone(), config.live());
         let resolver = Arc::new(
             ConnectionResolver::new(
                 Arc::new(SqliteConnectionStore::new(db.clone())),
                 Arc::new(CredentialCoder::new(crypto.clone())),
-                Arc::new(ConfigServers::new(config.clone())),
+                Arc::new(ConfigServers::new(config)),
             )
             .with_plex_tokens(Arc::new(PlexTokenProbe::with_plex_tv(
                 http.clone(),
@@ -169,7 +170,7 @@ impl MediaSetup {
             TranscodeSettings::default(),
             ffmpeg_available(),
         )
-        .with_settings_source(settings_source(config.clone()));
+        .with_settings(config.live());
         let engine = match library {
             Some(library) => gateway.with_library(library),
             None => gateway,
@@ -230,16 +231,16 @@ impl MediaSetup {
     }
 }
 
-/// The transcode policy, read from the `connect_apps` section on every
+/// The transcode policy in the `connect_apps` section now, read on every
 /// stream open. An unreadable section falls back to the defaults.
-fn settings_source(config: Arc<ConfigStore>) -> crate::stream::gateway::SettingsSource {
-    Arc::new(move || match config.get::<ConnectApps>() {
+pub(crate) fn transcode_policy(settings: &Live<ConnectApps>) -> TranscodeSettings {
+    match settings.get() {
         Ok(section) => transcode_settings(&section),
         Err(error) => {
             tracing::warn!(%error, "cannot read connect_apps settings; transcode defaults apply");
             TranscodeSettings::default()
         }
-    })
+    }
 }
 
 /// Map the `connect_apps` section onto the transcode policy. `Flac` cannot

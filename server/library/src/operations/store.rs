@@ -23,7 +23,7 @@ use super::models::{
 use super::reasons;
 use crate::identify::sqlite::{album_identity_row, album_input_revision, decision_from};
 use crate::management::profile::root_assignment;
-use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 
 /// How long a worker holds a claimed job before recovery requeues it.
@@ -259,7 +259,7 @@ fn identity_revision(conn: &Connection, album_id: &str) -> rusqlite::Result<Stri
 /// again when the worker hands the album to identification.
 pub(super) fn retry_gate(
     conn: &Connection,
-    config: &ConfigStore,
+    management: &Live<LibraryManagement>,
     album_id: &str,
     one_off_local_metadata: bool,
 ) -> Result<AlbumRevisions, OperationError> {
@@ -275,7 +275,7 @@ pub(super) fn retry_gate(
     {
         // A lookup's result could reach the files through management, in
         // a folder that keeps its own tags.
-        if local_metadata_managed(conn, config, album_id)? {
+        if local_metadata_managed(conn, management, album_id)? {
             return Err(OperationError::Conflict(reasons::LOCAL_METADATA_MANAGED));
         }
         if !one_off_local_metadata {
@@ -300,7 +300,7 @@ pub(super) fn retry_gate(
 /// Library Management turned on.
 fn local_metadata_managed(
     conn: &Connection,
-    config: &ConfigStore,
+    management: &Live<LibraryManagement>,
     album_id: &str,
 ) -> Result<bool, OperationError> {
     let mut stmt = conn.prepare(
@@ -310,8 +310,8 @@ fn local_metadata_managed(
     let roots = stmt
         .query_map(params![album_id], |row| row.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    let settings = config
-        .get::<LibraryManagement>()
+    let settings = management
+        .get()
         .map_err(|error| OperationError::Store(error.to_string()))?;
     Ok(roots
         .iter()
@@ -335,7 +335,7 @@ pub struct NewReidentification {
 /// album's that is still to run.
 pub fn create_reidentification(
     tx: &Transaction<'_>,
-    config: &ConfigStore,
+    management: &Live<LibraryManagement>,
     new: &NewReidentification,
     now: f64,
 ) -> Result<OperationJob, OperationError> {
@@ -348,7 +348,12 @@ pub fn create_reidentification(
     {
         return Ok(existing);
     }
-    let revisions = retry_gate(tx, config, &new.local_album_id, new.one_off_local_metadata)?;
+    let revisions = retry_gate(
+        tx,
+        management,
+        &new.local_album_id,
+        new.one_off_local_metadata,
+    )?;
     if key.is_none()
         && let Some(existing) = live_reidentification(tx, &new.local_album_id)?
     {

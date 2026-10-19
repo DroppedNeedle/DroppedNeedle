@@ -19,83 +19,111 @@ use crate::reads::discover::{
     ports::{BoxFuture, DiscoverContent, ProviderFailure},
 };
 use droppedneedle_kernel::runtime_config::{
-    ConfigStore,
+    ConfigStore, Listed, Live, Plain,
     secret_sections::{
         DownloadClients, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
         NavidromeConnection, PlexConnection, SlskdConnection, YouTubeConnection,
     },
 };
 
-fn read<T: Default>(
-    name: &str,
-    value: Result<T, droppedneedle_kernel::runtime_config::ConfigError>,
-) -> T {
-    value.unwrap_or_else(|error| {
-        tracing::warn!(%error, section = name, "cannot read settings; treating as off");
-        T::default()
+/// One section now; a section that cannot be read counts as off, with a
+/// log line.
+fn read<S: Listed + Default>(settings: &Live<S>) -> Arc<Plain<S>> {
+    settings.get().unwrap_or_else(|error| {
+        tracing::warn!(%error, section = S::KEY, "cannot read settings; treating as off");
+        Arc::default()
     })
 }
 
-/// Whether some download client is set up: slskd or SABnzbd with a URL
-/// and a key.
-pub fn download_client_ready(config: &ConfigStore) -> bool {
-    let slskd = read("slskd", config.get_raw::<SlskdConnection>());
-    let sabnzbd = read("download_clients", config.get_raw::<DownloadClients>())
-        .sabnzbd
-        .clone();
-    (slskd.enabled && !slskd.url.is_empty() && !slskd.api_key.is_empty())
-        || (sabnzbd.enabled && !sabnzbd.url.is_empty() && !sabnzbd.api_key.is_empty())
+/// The sections the v2 integration flags are read from, each a live
+/// handle.
+#[derive(Clone)]
+pub struct IntegrationSettings {
+    slskd: Live<SlskdConnection>,
+    download_clients: Live<DownloadClients>,
+    listenbrainz: Live<ListenBrainzConnection>,
+    lastfm: Live<LastFmSettings>,
+    youtube: Live<YouTubeConnection>,
+    jellyfin: Live<JellyfinConnection>,
+    navidrome: Live<NavidromeConnection>,
+    plex: Live<PlexConnection>,
 }
 
-/// The v2 integration flags, read from the current settings. A section
-/// that cannot be read counts as off, with a log line.
-pub fn integration_status(config: &ConfigStore) -> IntegrationStatus {
-    let lb = read("listenbrainz", config.get_raw::<ListenBrainzConnection>());
-    let lastfm = read("lastfm", config.get_raw::<LastFmSettings>());
-    let youtube = read("youtube", config.get_raw::<YouTubeConnection>());
-    let jellyfin = read("jellyfin", config.get_raw::<JellyfinConnection>());
-    let navidrome = read("navidrome", config.get_raw::<NavidromeConnection>());
-    let plex = read("plex", config.get_raw::<PlexConnection>());
-    IntegrationStatus {
-        listenbrainz: lb.enabled && !lb.username.is_empty(),
-        jellyfin: jellyfin.enabled
-            && !jellyfin.jellyfin_url.is_empty()
-            && !jellyfin.api_key.is_empty(),
-        download_client: download_client_ready(config),
-        youtube: youtube.enabled,
-        lastfm: lastfm.enabled,
-        navidrome: navidrome.enabled
-            && !navidrome.navidrome_url.is_empty()
-            && !navidrome.username.is_empty()
-            && !navidrome.password.is_empty(),
-        youtube_api: youtube.enabled
-            && youtube.api_enabled
-            && !youtube.api_key.expose().trim().is_empty(),
-        plex: plex.enabled
-            && !plex.plex_url.is_empty()
-            && !plex.plex_token.is_empty()
-            && !plex.music_library_ids.is_empty(),
-        // The native library and its scanner are always present (v2).
-        library: true,
-        localfiles: true,
+impl IntegrationSettings {
+    /// Live handles on the integration sections in `config`.
+    pub fn new(config: &ConfigStore) -> Self {
+        Self {
+            slskd: config.live(),
+            download_clients: config.live(),
+            listenbrainz: config.live(),
+            lastfm: config.live(),
+            youtube: config.live(),
+            jellyfin: config.live(),
+            navidrome: config.live(),
+            plex: config.live(),
+        }
+    }
+
+    /// Whether some download client is set up: slskd or SABnzbd with a
+    /// URL and a key.
+    pub fn download_client_ready(&self) -> bool {
+        let slskd = read(&self.slskd);
+        let clients = read(&self.download_clients);
+        let sabnzbd = &clients.sabnzbd;
+        (slskd.enabled && !slskd.url.is_empty() && !slskd.api_key.is_empty())
+            || (sabnzbd.enabled && !sabnzbd.url.is_empty() && !sabnzbd.api_key.is_empty())
+    }
+
+    /// The v2 integration flags, read from the current settings.
+    pub fn status(&self) -> IntegrationStatus {
+        let lb = read(&self.listenbrainz);
+        let lastfm = read(&self.lastfm);
+        let youtube = read(&self.youtube);
+        let jellyfin = read(&self.jellyfin);
+        let navidrome = read(&self.navidrome);
+        let plex = read(&self.plex);
+        IntegrationStatus {
+            listenbrainz: lb.enabled && !lb.username.is_empty(),
+            jellyfin: jellyfin.enabled
+                && !jellyfin.jellyfin_url.is_empty()
+                && !jellyfin.api_key.is_empty(),
+            download_client: self.download_client_ready(),
+            youtube: youtube.enabled,
+            lastfm: lastfm.enabled,
+            navidrome: navidrome.enabled
+                && !navidrome.navidrome_url.is_empty()
+                && !navidrome.username.is_empty()
+                && !navidrome.password.is_empty(),
+            youtube_api: youtube.enabled
+                && youtube.api_enabled
+                && !youtube.api_key.expose().trim().is_empty(),
+            plex: plex.enabled
+                && !plex.plex_url.is_empty()
+                && !plex.plex_token.is_empty()
+                && !plex.music_library_ids.is_empty(),
+            // The native library and its scanner are always present (v2).
+            library: true,
+            localfiles: true,
+        }
     }
 }
 
 /// The live discover page and, once attached, the live home page, with
 /// the real integration status.
 pub struct LiveContent {
-    config: Arc<ConfigStore>,
+    settings: IntegrationSettings,
     pool: SqlitePool,
     page: LiveDiscover,
     home: Option<(LiveHome, Arc<GenreArt>)>,
 }
 
 impl LiveContent {
-    /// Read settings from `config` and the catalog from `pool`; discover
-    /// comes from `page`. Home has no shelves until [`Self::with_home`].
-    pub fn new(config: Arc<ConfigStore>, pool: SqlitePool, page: LiveDiscover) -> Self {
+    /// Read the integration flags from `settings` and the catalog from
+    /// `pool`; discover comes from `page`. Home has no shelves until
+    /// [`Self::with_home`].
+    pub fn new(settings: IntegrationSettings, pool: SqlitePool, page: LiveDiscover) -> Self {
         Self {
-            config,
+            settings,
             pool,
             page,
             home: None,
@@ -127,7 +155,7 @@ impl LiveContent {
     }
 
     fn status(&self) -> IntegrationStatus {
-        integration_status(&self.config)
+        self.settings.status()
     }
 }
 

@@ -13,12 +13,12 @@ use axum::{
 };
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_catalog::reads::discover::adapters::queue::LiveQueue;
 use droppedneedle_catalog::reads::discover::adapters::queue::sources::{
     AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
     QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
 };
 use droppedneedle_catalog::reads::discover::adapters::queue::store::QueueDb;
-use droppedneedle_catalog::reads::discover::adapters::queue::{LiveQueue, QueueSettings};
 use droppedneedle_catalog::reads::discover::fakes::{
     FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeRadio, FakeYouTube,
 };
@@ -26,6 +26,7 @@ use droppedneedle_catalog::reads::discover::ports::BoxFuture;
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
 use droppedneedle_kernel::clock::{ManualClock, SystemClock};
 use droppedneedle_kernel::db::DbRuntime;
+use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_providers::Providers;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -266,18 +267,21 @@ impl QueueSources for Scripted {
     }
 }
 
-fn queue_app(runtime: &DbRuntime) -> Router {
-    let settings = QueueSettings {
-        queue_size: 5,
-        wildcard_slots: 1,
-        ..QueueSettings::default()
-    };
+fn queue_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
+    let config = crate::common::config_store(dir);
+    config
+        .save_secret_blocking(AdvancedSettings {
+            discover_queue_size: 5,
+            discover_queue_wildcard_slots: 1,
+            ..AdvancedSettings::default()
+        })
+        .expect("queue settings save");
     let queue = LiveQueue::new(
         Arc::new(Scripted),
         QueueDb::new(runtime.db().clone()),
         Arc::new(FakeYouTube::unconfigured()),
         Providers::with_memory_cache().cache.clone(),
-        Arc::new(move || settings.clone()),
+        config.live(),
     );
     let clock = ManualClock::at(1_790_000_000_000);
     let deps = ReadsDeps {
@@ -349,7 +353,7 @@ fn deck_ids(body: &Value) -> Vec<String> {
 async fn queue_builds_honours_ignores_and_survives_restart() {
     let dir = crate::common::ScratchDir::new("discover-queue");
     let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
-    let app = queue_app(&runtime);
+    let app = queue_app(&runtime, &dir);
 
     let (_, idle) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;
     assert_eq!(idle["status"], "idle");
@@ -447,7 +451,7 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
     );
 
     // A restart: a new queue over the same database.
-    let restarted = queue_app(&runtime);
+    let restarted = queue_app(&runtime, &dir);
     let (_, ledger) = call(&restarted, "GET", "/api/v3/discover/queue/ignored", None).await;
     assert_eq!(ledger["items"][0]["release_group_mbid"], ignored.as_str());
     let (_, reloaded) = call(&restarted, "GET", "/api/v3/discover/queue/status", None).await;

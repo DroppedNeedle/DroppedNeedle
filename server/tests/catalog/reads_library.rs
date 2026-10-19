@@ -216,7 +216,7 @@ fn deps(
         favorites,
         lyrics,
         lookups: Arc::new(library::memory::EmptyLookups),
-        upgrade_policy: Arc::new(library::stores::UpgradePolicy::default),
+        upgrade_policy: None,
         tags: Arc::new(library::tags::UnwiredTagReader),
     }
 }

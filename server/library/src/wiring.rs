@@ -33,9 +33,11 @@ use super::scan::roots::RootRegistry;
 use super::scan::sqlite_store::SqliteScanStore;
 use super::scan::watcher::{DirtyScopes, WatcherState, WorkWakeups};
 use super::service::ServiceError;
+use super::settings::LibrarySettings;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+use droppedneedle_kernel::runtime_config::{Live, Plain};
 
 /// Scan coordinator over the wired seams.
 pub type ScanCoordinator = LibraryScanCoordinator<LoftyTagReader>;
@@ -56,9 +58,6 @@ pub struct Endpoints {
     pub contribution_providers: Option<ContribProviders>,
 }
 
-/// Live root-registry source shared with the stream gateway.
-pub type RootSource = Arc<dyn Fn() -> RootRegistry + Send + Sync>;
-
 /// Shared root-directory lookup for the space probe.
 pub(crate) type RootDirs = Arc<dyn Fn() -> HashMap<String, PathBuf> + Send + Sync>;
 
@@ -67,8 +66,8 @@ pub(crate) type RootDirs = Arc<dyn Fn() -> HashMap<String, PathBuf> + Send + Syn
 struct ProviderParts {
     store: Arc<SqliteIdentifyStore>,
     pool: BlockingPool,
-    roots: super::identify::sources::Roots,
-    config: Arc<ConfigStore>,
+    roots: SharedResolver,
+    library: Live<TypedLibrary>,
 }
 
 type ProviderFactory =
@@ -95,9 +94,9 @@ pub type ScanCompletedSlot = Arc<std::sync::OnceLock<Arc<dyn Fn() + Send + Sync>
 pub struct LibrarySetup {
     /// Id generator for jobs, runs, and preview tokens.
     pub ids: Arc<dyn IdGenerator>,
-    /// Runtime settings: roots, schedule, and watcher are re-read from
-    /// here every tick.
-    pub config: Arc<ConfigStore>,
+    /// Live handles on the settings the library reads: roots, schedule
+    /// and watcher are read every tick.
+    pub settings: LibrarySettings,
     /// Root registry the scan checkpoints and the stream gateway read;
     /// refreshed from the settings on every tick.
     pub registry: Arc<SharedResolver>,
@@ -184,10 +183,10 @@ impl LibrarySetup {
         http: &droppedneedle_kernel::http_client::HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
         providers: Arc<droppedneedle_providers::Providers>,
-        mb_source: droppedneedle_providers::musicbrainz::SourceFn,
+        mb_source: droppedneedle_providers::musicbrainz::LiveSource,
         db: &droppedneedle_kernel::db::Db,
         queue: droppedneedle_kernel::jobs::queue::JobQueue,
-        config: Arc<ConfigStore>,
+        config: &ConfigStore,
         endpoints: Endpoints,
     ) -> Result<Self, String> {
         use droppedneedle_providers::RequestPriority;
@@ -207,7 +206,7 @@ impl LibrarySetup {
                 ReqwestMbTransport::new(http.no_redirect().clone()),
                 MbPacing::new(providers.clone()),
             )
-            .with_source_fn(mb_source.clone())
+            .with_live_source(mb_source.clone())
             .with_priority(priority)
             .with_sink(health.clone())
         };
@@ -250,7 +249,7 @@ impl LibrarySetup {
             None => Box::new(move |parts| {
                 let fingerprints = super::identify::sources::AcoustIdFingerprints::new(
                     acoustid,
-                    parts.config,
+                    parts.library,
                     parts.roots,
                     parts.pool,
                     parts.store.clone(),
@@ -262,15 +261,15 @@ impl LibrarySetup {
                 ))
             }),
         };
-        let mut setup = Self::assemble(ids, make, contrib, db, queue, config)?;
+        let mut setup =
+            Self::assemble(ids, make, contrib, db, queue, LibrarySettings::new(config))?;
         setup.releases = Some(imports);
         setup.http = Some(http.shared().clone());
-        let registry = setup.registry.clone();
         setup.fingerprints = Some(Arc::new(
             super::identify::sources::AcoustIdFingerprints::new(
                 import_acoustid,
-                setup.config.clone(),
-                Arc::new(move || registry.resolver().registry().clone()),
+                setup.settings.library.clone(),
+                setup.root_source(),
                 setup.pool.clone(),
                 setup.identify_store.clone(),
             ),
@@ -284,13 +283,13 @@ impl LibrarySetup {
         contrib_providers: ContribProviders,
         db: &droppedneedle_kernel::db::Db,
         queue: droppedneedle_kernel::jobs::queue::JobQueue,
-        config: Arc<ConfigStore>,
+        settings: LibrarySettings,
     ) -> Result<Self, String> {
         let scan_store = Arc::new(SqliteScanStore::new(db.clone()));
         // The roots load before anything can scan or stream: a restart
         // comes back with exactly the roots the settings hold.
         let registry: Arc<SharedResolver> = Arc::new(SharedResolver::new(
-            super::settings::registry(&config)
+            super::settings::registry(&settings.library)
                 .map_err(|error| format!("library roots: {error}"))?,
         ));
         let root_dirs: RootDirs = {
@@ -330,18 +329,15 @@ impl LibrarySetup {
         let providers = make_providers(ProviderParts {
             store: identify_store.clone(),
             pool: pool.clone(),
-            roots: {
-                let registry = registry.clone();
-                Arc::new(move || registry.resolver().registry().clone())
-            },
-            config: config.clone(),
+            roots: (*registry).clone(),
+            library: settings.library.clone(),
         });
         let identify = Arc::new(
             IdentifyService::new(IdentifyDeps {
                 store: identify_store.clone(),
                 providers,
             })
-            .with_preferences(edition_preferences(config.clone())),
+            .with_preferences(settings.editions.clone()),
         );
         let (contrib, contrib_worker) = super::contrib::assemble(
             db,
@@ -355,7 +351,7 @@ impl LibrarySetup {
         let placement = publish.placement();
         Ok(Self {
             ids,
-            config,
+            settings,
             registry,
             db: db.clone(),
             scan_store,
@@ -411,12 +407,11 @@ impl LibrarySetup {
         Ok(current.then_some(live))
     }
 
-    fn library_settings(&self) -> Result<TypedLibrary, ServiceError> {
-        Ok(self
-            .config
-            .get_masked::<TypedLibrary>()
-            .map_err(|error| ServiceError::internal(&error))?
-            .into_inner())
+    fn library_settings(&self) -> Result<Arc<Plain<TypedLibrary>>, ServiceError> {
+        self.settings
+            .library
+            .get()
+            .map_err(|error| ServiceError::internal(&error))
     }
 
     /// Re-read the roots from the settings and swap them in when they
@@ -425,7 +420,7 @@ impl LibrarySetup {
     /// current registry.
     pub fn refresh_registry(&self) -> RootRegistry {
         let current = self.registry.resolver().registry().clone();
-        let fresh = match super::settings::registry(&self.config) {
+        let fresh = match super::settings::registry(&self.settings.library) {
             Ok(fresh) => fresh,
             Err(error) => {
                 tracing::warn!(%error, "cannot read the library roots; keeping the current set");
@@ -449,10 +444,10 @@ impl LibrarySetup {
         fresh
     }
 
-    /// Root source the stream gateway resolves local reads against.
-    pub fn root_source(&self) -> RootSource {
-        let registry = self.registry.clone();
-        Arc::new(move || registry.resolver().registry().clone())
+    /// The shared root registry the stream gateway resolves local reads
+    /// against; every refresh swaps the roots in for all its holders.
+    pub fn root_source(&self) -> SharedResolver {
+        (*self.registry).clone()
     }
 
     /// Relative-path routers for nesting under `/api/v3` inside the
@@ -532,22 +527,4 @@ impl LibrarySetup {
     ) -> Result<(), droppedneedle_kernel::jobs::AlreadyRunning> {
         super::loops::start_loops(self, supervisor)
     }
-}
-
-/// The saved edition preferences, read on every identification so a saved
-/// change applies to the next album. A broken settings file falls back to
-/// the defaults with a log line.
-pub fn edition_preferences(config: Arc<ConfigStore>) -> crate::identify::service::PreferenceSource {
-    use droppedneedle_kernel::runtime_config::sections::{EditionPreferences, GetIt};
-    Arc::new(move || {
-        let saved = config.get::<EditionPreferences>().unwrap_or_else(|error| {
-            tracing::warn!(%error, "edition preferences unreadable; using the defaults");
-            EditionPreferences::default()
-        });
-        let region = config
-            .get::<GetIt>()
-            .map(|section| section.store_region)
-            .unwrap_or_else(|_| GetIt::default().store_region);
-        crate::edition_prefs::Preferences::from_settings(&saved, &region)
-    })
 }

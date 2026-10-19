@@ -99,8 +99,8 @@ impl LibrarySetup {
         SupervisorInputs {
             root_paths: self.root_dirs.clone(),
             schedule: {
-                let config = self.config.clone();
-                Arc::new(move || super::settings::schedule(&config))
+                let schedule = self.settings.schedule.clone();
+                Arc::new(move || super::settings::schedule(&schedule))
             },
             inclusion_rules: {
                 let registry = self.registry.clone();
@@ -114,7 +114,7 @@ impl LibrarySetup {
 
     /// Watcher settings, re-read from the config store every tick.
     pub(crate) fn watcher_settings(&self) -> WatcherSettings {
-        super::settings::watcher(&self.config)
+        super::settings::watcher(&self.settings.watcher)
     }
 
     /// One-shot scan startup reconciliation (Hook A). The loop runs

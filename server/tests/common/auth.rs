@@ -116,14 +116,11 @@ impl AuthRig {
             Arc::new(
                 droppedneedle_media::remotes::plex::ConfiguredPlexServer::new(
                     http.shared().clone(),
-                    Arc::clone(&config),
+                    config.live(),
+                    droppedneedle_auth::federated::settings::InstallIds::new(Arc::clone(&config)),
                 ),
             ),
-            droppedneedle::bootstrap::sign_in_links(
-                runtime.db().clone(),
-                crypto,
-                Arc::clone(&config),
-            ),
+            droppedneedle::bootstrap::sign_in_links(runtime.db().clone(), crypto, &config),
         );
         Self {
             deps: setup.users,

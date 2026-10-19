@@ -2,8 +2,6 @@
 //! catalog's ListenBrainz and Last.fm clients, LRCLIB, the shared artwork
 //! cache and AcoustID, behind the library's [`EnrichmentPort`].
 
-use std::sync::Arc;
-
 use futures_util::future::BoxFuture;
 
 use crate::reads::catalog::upstream::Upstream;
@@ -27,15 +25,16 @@ pub struct LiveEnrichment {
         droppedneedle_providers::adapters::CorePacer,
         droppedneedle_providers::adapters::HealthSink,
     >,
-    /// Where the AcoustID key is read, per lookup.
-    pub config: Arc<droppedneedle_kernel::runtime_config::ConfigStore>,
+    /// The library settings the AcoustID key is read from, per lookup.
+    pub library: droppedneedle_kernel::runtime_config::Live<
+        droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary,
+    >,
 }
 
 impl LiveEnrichment {
     /// The AcoustID key from the settings; blank when none is set.
     fn acoustid_key(&self) -> String {
-        use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
-        match self.config.get_raw::<TypedLibrary>() {
+        match self.library.get() {
             Ok(settings) => settings.acoustid_api_key.expose().trim().to_owned(),
             Err(error) => {
                 tracing::warn!(%error, "cannot read the AcoustID key; AcoustID IDs wait");

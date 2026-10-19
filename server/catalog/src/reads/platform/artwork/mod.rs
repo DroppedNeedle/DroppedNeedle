@@ -55,6 +55,8 @@ use droppedneedle_providers::coverart::{
 use self::cache::{ArtworkCache, KeyEntry, unix_now};
 use self::local::{LocalArt, LocalArtwork, read_local_art};
 use self::remote::{ImageFetch, RemoteCovers, RemoteImages};
+use droppedneedle_kernel::runtime_config::Live;
+use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 
 /// Source label for Cover Art Archive bytes; the routes give these the
 /// short cache window, as v2 did.
@@ -107,9 +109,17 @@ pub trait ArtistImageSource: Send + Sync {
 /// first).
 pub type ArtistSourceSlot = Arc<OnceLock<Arc<dyn ArtistImageSource>>>;
 
-/// Reads `prefer_local_cover_art` per call, so a settings change applies
-/// to the next request.
-pub type PreferLocal = Arc<dyn Fn() -> bool + Send + Sync>;
+/// Whether `prefer_local_cover_art` is on now, so a settings change applies
+/// to the next request. Local art wins when the section cannot be read.
+fn prefers_local(settings: &Live<AdvancedSettings>) -> bool {
+    match settings.get() {
+        Ok(settings) => settings.prefer_local_cover_art,
+        Err(error) => {
+            tracing::warn!(%error, "cannot read advanced settings; preferring local art");
+            true
+        }
+    }
+}
 
 /// The production [`CoverArt`].
 #[derive(Clone)]
@@ -117,7 +127,7 @@ pub struct ArtworkService {
     cache: ArtworkCache,
     local: LocalArtwork,
     remote: Option<Arc<dyn RemoteCovers>>,
-    prefer_local: PreferLocal,
+    settings: Live<AdvancedSettings>,
     flights: Singleflight<Option<CoverBytes>>,
     resizes: Singleflight<Option<Rendition>>,
     resize_permits: Arc<tokio::sync::Semaphore>,
@@ -137,18 +147,19 @@ struct Rendition {
 
 impl ArtworkService {
     /// Wire the service. `remote` is `None` only where no network source
-    /// should be used (tests of the local path).
+    /// should be used (tests of the local path). `settings` says, per
+    /// request, whether local art comes first.
     pub fn new(
         cache: ArtworkCache,
         local: LocalArtwork,
         remote: Option<Arc<dyn RemoteCovers>>,
-        prefer_local: PreferLocal,
+        settings: Live<AdvancedSettings>,
     ) -> Self {
         Self {
             cache,
             local,
             remote,
-            prefer_local,
+            settings,
             flights: Singleflight::new(),
             resizes: Singleflight::new(),
             resize_permits: Arc::new(tokio::sync::Semaphore::new(RESIZE_PERMITS)),
@@ -195,7 +206,8 @@ impl ArtworkService {
     /// art (when preferred), or an archive answer that has not expired.
     pub async fn release_group_cover_cached(&self, mbid: &str) -> bool {
         let mbid = mbid.trim().to_ascii_lowercase();
-        if (self.prefer_local)() && matches!(self.local.by_release_group(&mbid).await, Ok(Some(_)))
+        if prefers_local(&self.settings)
+            && matches!(self.local.by_release_group(&mbid).await, Ok(Some(_)))
         {
             return true;
         }
@@ -352,7 +364,7 @@ impl ArtworkService {
         if !droppedneedle_providers::coverart::is_valid_mbid(&mbid) {
             return CoverLookup::Missing;
         }
-        let prefer_local = (self.prefer_local)();
+        let prefer_local = prefers_local(&self.settings);
         if prefer_local && let Some(cover) = self.local_for(entity, &mbid, size).await {
             return CoverLookup::Found(cover);
         }
@@ -763,7 +775,7 @@ impl CoverArt for ArtworkService {
                     return None;
                 }
             };
-            let prefer_local = (self.prefer_local)();
+            let prefer_local = prefers_local(&self.settings);
             if prefer_local
                 && let Some(art) = &context.local
                 && let Some(cover) = self.serve_local(art, size).await

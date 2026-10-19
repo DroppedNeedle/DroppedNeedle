@@ -13,8 +13,9 @@
 use std::cmp::Reverse;
 
 use droppedneedle_kernel::runtime_config::sections::{
-    EditionDatePreference, EditionPreferences, EditionVersionPreference,
+    EditionDatePreference, EditionPreferences, EditionVersionPreference, GetIt,
 };
+use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 
 /// Words that mark an expanded edition in a title or disambiguation.
 const EXPANDED: [&str; 7] = [
@@ -41,6 +42,57 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self::from_settings(&EditionPreferences::default(), "US")
+    }
+}
+
+/// The saved edition preferences and the store region they fall back to,
+/// read on every use so a saved change applies to the next album.
+#[derive(Debug, Clone)]
+pub struct LivePreferences {
+    saved: Live<EditionPreferences>,
+    get_it: Live<GetIt>,
+}
+
+impl LivePreferences {
+    /// Live handles on the two sections in `config`.
+    pub fn new(config: &ConfigStore) -> Self {
+        Self {
+            saved: config.live(),
+            get_it: config.live(),
+        }
+    }
+
+    /// The preferences now. An unreadable section falls back to its
+    /// defaults with a log line.
+    pub fn current(&self) -> Preferences {
+        let saved = self.saved.get().unwrap_or_else(|error| {
+            tracing::warn!(%error, "edition preferences unreadable; using the defaults");
+            std::sync::Arc::default()
+        });
+        Preferences::from_settings(&saved, &self.store_region())
+    }
+
+    /// Whether management may touch unconfirmed matches now. No when the
+    /// section cannot be read.
+    pub fn manage_unconfirmed(&self) -> bool {
+        self.saved
+            .get()
+            .map(|prefs| prefs.manage_unconfirmed)
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "edition preferences unreadable; unconfirmed albums wait");
+                false
+            })
+    }
+
+    /// The saved store region now, or the default one.
+    pub fn store_region(&self) -> String {
+        self.get_it.get().map_or_else(
+            |error| {
+                tracing::warn!(%error, "store region unreadable; using the default");
+                GetIt::default().store_region
+            },
+            |section| section.store_region.clone(),
+        )
     }
 }
 

@@ -12,11 +12,11 @@ use std::sync::Arc;
 
 use crate::jellyfin::seams::JellyfinSettings;
 use crate::subsonic::Settings;
-use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::origin::Origin;
 use droppedneedle_kernel::runtime_config::sections::{
     AudioFormat, ConnectApps, DownloadAccess, PublicAddress, SecuritySettings,
 };
+use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 
 /// Where the compat settings come from.
 pub trait SettingsSource: Send + Sync {
@@ -33,10 +33,12 @@ pub trait SettingsSource: Send + Sync {
 pub struct LiveSettings(Arc<dyn SettingsSource>);
 
 impl LiveSettings {
-    /// Settings read from the config store on every call.
-    pub fn from_config(store: Arc<ConfigStore>) -> Self {
+    /// Settings read through live handles on `config` on every call.
+    pub fn from_config(config: &ConfigStore) -> Self {
         Self(Arc::new(ConfigSettings {
-            store,
+            connect_apps: config.live(),
+            security: config.live(),
+            public_address: config.live(),
             ffmpeg_available: droppedneedle_media::stream::transcode::ffmpeg_available(),
         }))
     }
@@ -109,7 +111,9 @@ impl SettingsSource for Fixed {
 }
 
 struct ConfigSettings {
-    store: Arc<ConfigStore>,
+    connect_apps: Live<ConnectApps>,
+    security: Live<SecuritySettings>,
+    public_address: Live<PublicAddress>,
     ffmpeg_available: bool,
 }
 
@@ -117,10 +121,13 @@ impl ConfigSettings {
     /// The section, or the defaults (both protocols off) when it cannot
     /// be read: a broken config must never open the compat APIs.
     fn section(&self) -> ConnectApps {
-        self.store.get::<ConnectApps>().unwrap_or_else(|error| {
-            tracing::warn!(%error, "connect_apps settings unreadable; compat APIs stay off");
-            ConnectApps::default()
-        })
+        self.connect_apps.get().map_or_else(
+            |error| {
+                tracing::warn!(%error, "connect_apps settings unreadable; compat APIs stay off");
+                ConnectApps::default()
+            },
+            |section| ConnectApps::clone(&section),
+        )
     }
 }
 
@@ -128,7 +135,7 @@ impl ConfigSettings {
     /// Who may download library files. Admins only when the setting cannot
     /// be read: a broken config must never widen a permission.
     fn download_access(&self) -> DownloadAccess {
-        match self.store.get::<SecuritySettings>() {
+        match self.security.get() {
             Ok(security) => security.library_download_access,
             Err(error) => {
                 tracing::warn!(%error, "security settings unreadable; compat downloads are admin-only");
@@ -177,7 +184,7 @@ impl SettingsSource for ConfigSettings {
     /// Empty when the list cannot be read: then every app gets the address
     /// it used, as with no list.
     fn public_addresses(&self) -> Vec<Origin> {
-        match self.store.get::<PublicAddress>() {
+        match self.public_address.get() {
             Ok(section) => section.stated(),
             Err(error) => {
                 tracing::warn!(%error, "public address settings unreadable; apps get the address they used");
@@ -200,7 +207,7 @@ mod tests {
         std::fs::write(dir.join("config.json"), config).expect("config writes");
         let crypto = Crypto::from_key_bytes(&[7u8; 32]).expect("test key");
         let store = ConfigStore::scratch(&dir, crypto).expect("store opens");
-        let live = LiveSettings::from_config(Arc::new(store));
+        let live = LiveSettings::from_config(&store);
         std::fs::remove_dir_all(&dir).expect("scratch folder removed");
         [
             live.jellyfin().download_access,

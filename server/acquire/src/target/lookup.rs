@@ -174,7 +174,7 @@ impl<T: MbTransport, S: DegradationSink> AlbumLookup for MusicBrainzAlbums<T, S>
 pub fn live_albums(
     http: &droppedneedle_kernel::http_client::HttpClientFactory,
     providers: std::sync::Arc<droppedneedle_providers::Providers>,
-    source: droppedneedle_providers::musicbrainz::SourceFn,
+    source: droppedneedle_providers::musicbrainz::LiveSource,
 ) -> MusicBrainzAlbums<
     droppedneedle_providers::musicbrainz::ReqwestMbTransport,
     droppedneedle_providers::adapters::HealthSink,
@@ -189,7 +189,7 @@ pub fn live_albums(
             ReqwestMbTransport::new(http.no_redirect().clone()),
             MbPacing::new(providers),
         )
-        .with_source_fn(source)
+        .with_live_source(source)
         .with_priority(RequestPriority::BackgroundSync)
         .with_sink(health),
     )

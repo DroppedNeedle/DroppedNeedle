@@ -24,9 +24,9 @@ use crate::matching::model::{
 };
 use crate::matching::model::{VARIOUS_ARTISTS_MBID, credit_text};
 use crate::matching::{CreditedArtist, Genre, Release, ReleaseMedium, ReleaseTrack};
+use crate::scan::coordinator::{ResolverSource as _, SharedResolver};
 use crate::scan::pool::BlockingPool;
-use crate::scan::roots::RootRegistry;
-use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_providers::acoustid::{AcoustIdClient, BatchQuery};
 use droppedneedle_providers::degradation::DegradationSink;
@@ -814,30 +814,29 @@ impl FingerprintSource for NoFingerprints {
     }
 }
 
-/// Live roots, read when a job needs them.
-pub type Roots = Arc<dyn Fn() -> RootRegistry + Send + Sync>;
-
 /// Chromaprint on the blocking pool plus batched AcoustID lookups. Prints
 /// are kept per track and file revision, so a file is decoded once.
 pub struct AcoustIdFingerprints<P, S> {
     client: AcoustIdClient<P, S>,
-    config: Arc<ConfigStore>,
-    roots: Roots,
+    library: Live<TypedLibrary>,
+    roots: SharedResolver,
     pool: BlockingPool,
     store: Arc<SqliteIdentifyStore>,
 }
 
 impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
+    /// Fingerprints with the AcoustID key in `library` and the files under
+    /// the live `roots`, both read when a job needs them.
     pub fn new(
         client: AcoustIdClient<P, S>,
-        config: Arc<ConfigStore>,
-        roots: Roots,
+        library: Live<TypedLibrary>,
+        roots: SharedResolver,
         pool: BlockingPool,
         store: Arc<SqliteIdentifyStore>,
     ) -> Self {
         Self {
             client,
-            config,
+            library,
             roots,
             pool,
             store,
@@ -847,7 +846,7 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
     /// The AcoustID key from the settings, read per job so a change
     /// applies without a restart. Blank means fingerprinting is off.
     fn api_key(&self) -> String {
-        match self.config.get_raw::<TypedLibrary>() {
+        match self.library.get() {
             Ok(settings) => settings.acoustid_api_key.expose().trim().to_owned(),
             Err(error) => {
                 tracing::warn!(%error, "cannot read the AcoustID key; fingerprints skipped");
@@ -886,7 +885,7 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
             tracing::warn!(%error, "reading stored fingerprints failed");
             HashMap::new()
         });
-        let registry = (self.roots)();
+        let registry = self.roots.resolver().registry().clone();
         let jobs: Vec<(String, PathBuf)> = tracks
             .iter()
             .filter(|track| !stored.contains_key(&track.local_track_id))

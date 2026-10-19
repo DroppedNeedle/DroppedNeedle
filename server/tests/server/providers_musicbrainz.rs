@@ -4,6 +4,7 @@
 //! (redirects, ranking without substitution), the mirror's path and URL
 //! allowlists, and CAA URL and image-type checks.
 
+use droppedneedle_kernel::runtime_config::sections::{MbSourceMode, MusicBrainzSettings};
 use droppedneedle_providers::DegradationSink;
 use droppedneedle_providers::{coverart, musicbrainz};
 
@@ -1040,7 +1041,7 @@ async fn user_requests_fail_fast_during_a_long_brainzmash_cooldown() {
 }
 
 #[tokio::test]
-async fn source_fn_is_read_at_every_request() {
+async fn the_source_is_read_at_every_request() {
     let (fake, sink) = fast_mb(vec![]);
     let mirror_base = "http://mirror.test/ws/2";
     for base in [musicbrainz::MB_API_BASE, mirror_base] {
@@ -1049,20 +1050,23 @@ async fn source_fn_is_read_at_every_request() {
             Ok(musicbrainz::RawResponse::new(404, vec![], Vec::new())),
         );
     }
-    let use_mirror = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let flag = use_mirror.clone();
-    let client = official_client(fake.clone(), sink).with_source_fn(Arc::new(move || {
-        if flag.load(std::sync::atomic::Ordering::SeqCst) {
-            musicbrainz::MbSource::Mirror {
-                base_url: mirror_base.to_owned(),
-                rate_per_sec: 0.0,
-            }
-        } else {
-            musicbrainz::MbSource::official()
-        }
-    }));
-    for switch in [false, true] {
-        use_mirror.store(switch, std::sync::atomic::Ordering::SeqCst);
+    let dir = crate::common::ScratchDir::new("mb-live-source");
+    let config = crate::common::config_store(&dir);
+    let client =
+        official_client(fake.clone(), sink).with_live_source(musicbrainz::LiveSource::new(
+            config.live(),
+            musicbrainz::MB_API_BASE,
+            "http://127.0.0.1:9",
+        ));
+    for mode in [MbSourceMode::Official, MbSourceMode::Mirror] {
+        config
+            .save_blocking(MusicBrainzSettings {
+                source_mode: mode,
+                selected_source_mode: mode,
+                api_url: mirror_base.to_owned(),
+                ..MusicBrainzSettings::default()
+            })
+            .expect("source saves");
         client
             .lookup_release(RELEASE_MBID, &[], musicbrainz::Criticality::BestEffort)
             .await
