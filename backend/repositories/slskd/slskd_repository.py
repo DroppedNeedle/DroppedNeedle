@@ -43,6 +43,10 @@ _DISC_DIR = re.compile(r"\b(?:Disc|CD)\s*\d+\b", re.IGNORECASE)
 _LOSSLESS_EXT = {"flac", "alac", "wav", "ape", "wv"}
 _NO_TIMESTAMP = datetime.min.replace(tzinfo=timezone.utc)
 _MAX_WALK_ENTRIES = 10_000
+# A hit or two is not a usable album candidate pool: the same rung without its
+# release year routinely returns an order of magnitude more (15 vs 2 in #576).
+# Widen once before accepting a thin pool.
+_ALBUM_LADDER_MIN_RESULTS = 3
 
 
 def _normalised_filename(value: str) -> str:
@@ -229,10 +233,24 @@ class SlskdRepository:
         # escalating query breadth: a specific query sometimes returns nothing on
         # Soulseek when a broader one returns thousands (verified live). Fall back to
         # broader queries on empty; the preflight scorer narrows back down by title.
-        for query in self._album_query_ladder(artist_name, album_title, year):
+        # A year-qualified rung that returns only a hit or two gets one widening
+        # attempt without the year before it is accepted - peers commonly share
+        # album folders without the release year (#576). The ladder ends with
+        # artist-only rungs; never strip a year from those, because the artist
+        # name itself can end in one ("The 1975").
+        queries = self._album_query_ladder(artist_name, album_title, year)
+        artist_only_at = max(0, len(queries) - 2)
+        for index, query in enumerate(queries):
             results = await self._run_search(query, timeout)
-            if results:
-                return results
+            if not results:
+                continue
+            if index < artist_only_at and len(results) < _ALBUM_LADDER_MIN_RESULTS:
+                wider_query = self._query_without_year(query, year)
+                if wider_query:
+                    wider = await self._run_search(wider_query, timeout)
+                    if len(wider) > len(results):
+                        results = wider
+            return results
         return []
 
     async def search_track(
@@ -1094,6 +1112,21 @@ class SlskdRepository:
         if album:
             parts.append(album)
         return SlskdRepository._sanitize_query(" - ".join(parts))
+
+    @staticmethod
+    def _query_without_year(query: str, year: int | None) -> str | None:
+        """The same rung with its trailing release year dropped.
+
+        ``_build_album_query`` appends the year as the final term, so the suffix
+        match is exact: ``Artist Album 1998`` -> ``Artist Album``. Returns None
+        for rungs that carry no year, so only year-qualified rungs are widened.
+        """
+        if year is None:
+            return None
+        suffix = f" {year}"
+        if not query.endswith(suffix):
+            return None
+        return query[: -len(suffix)]
 
     @staticmethod
     def _primary_artist(artist: str) -> str:

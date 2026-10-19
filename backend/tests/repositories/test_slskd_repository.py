@@ -224,6 +224,19 @@ def _one_file(username="bob", filename="bob\\Folder\\01.flac"):
     ]
 
 
+def _files(count, username="bob", folder="bob\\Folder"):
+    return [
+        SlskdUserSearchResponse(
+            username=username,
+            file_count=count,
+            files=[
+                SlskdFile(filename=f"{folder}\\{index:02d}.flac", size=1)
+                for index in range(count)
+            ],
+        )
+    ]
+
+
 def test_album_query_ladder_escalates_and_dedupes():
     with_year = SlskdRepository._album_query_ladder("Artist", "Album", 2000)
     assert with_year == [
@@ -237,6 +250,20 @@ def test_album_query_ladder_escalates_and_dedupes():
     # year=None collapses the with-year rungs into the no-year ones.
     no_year = SlskdRepository._album_query_ladder("Artist", "Album", None)
     assert no_year == ["Artist Album", "*rtist Album", "Artist", "*rtist"]
+
+
+def test_query_without_year_strips_only_the_trailing_year():
+    assert (
+        SlskdRepository._query_without_year("Artist Album 1998", 1998)
+        == "Artist Album"
+    )
+    # an album titled with its own year still keeps one copy of it.
+    assert (
+        SlskdRepository._query_without_year("Taylor Swift 1989 1989", 1989)
+        == "Taylor Swift 1989"
+    )
+    assert SlskdRepository._query_without_year("Artist Album", 1998) is None
+    assert SlskdRepository._query_without_year("Artist Album 1998", None) is None
 
 
 def test_album_query_ladder_skips_wildcards_for_unwildcardable_artist():
@@ -320,15 +347,63 @@ async def test_search_album_issues_primary_artist_query_first():
 
 
 @pytest.mark.asyncio
-async def test_search_album_stops_at_first_nonempty():
+async def test_search_album_stops_at_a_usable_pool():
     q0 = SlskdRepository._build_album_query("Artist", "Album", 2000)
-    fake = _LadderFake({q0: _one_file()})
+    fake = _LadderFake({q0: _files(3)})
+    repo = SlskdRepository(
+        client=fake, url="u", api_key="k", downloads_mount=Path("/dl")
+    )
+    results = await repo.search_album("Artist", "Album", 2000)
+    assert len(results) == 3
+    assert fake.queries == [q0]  # usable pool -> no wasted broad search
+
+
+@pytest.mark.asyncio
+async def test_search_album_widens_a_thin_year_rung():
+    # Issue #576: two hits behind the year rung, 15 behind the same query
+    # without it. The thin pool must not end the ladder.
+    q_year = SlskdRepository._build_album_query(
+        "Navajita Platea", "Desde mi azotea", 1998
+    )
+    q_plain = SlskdRepository._build_album_query(
+        "Navajita Platea", "Desde mi azotea", None
+    )
+    fake = _LadderFake({q_year: _files(2), q_plain: _files(15)})
+    repo = SlskdRepository(
+        client=fake, url="u", api_key="k", downloads_mount=Path("/dl")
+    )
+    results = await repo.search_album("Navajita Platea", "Desde mi azotea", 1998)
+    assert len(results) == 15
+    assert fake.queries == [q_year, q_plain]
+
+
+@pytest.mark.asyncio
+async def test_search_album_keeps_a_thin_pool_when_widening_finds_nothing():
+    q_year = SlskdRepository._build_album_query("Artist", "Album", 2000)
+    q_plain = SlskdRepository._build_album_query("Artist", "Album", None)
+    fake = _LadderFake({q_year: _one_file()})
     repo = SlskdRepository(
         client=fake, url="u", api_key="k", downloads_mount=Path("/dl")
     )
     results = await repo.search_album("Artist", "Album", 2000)
     assert len(results) == 1
-    assert fake.queries == [q0]  # first rung had results -> no wasted broad search
+    assert fake.queries == [q_year, q_plain]
+
+
+@pytest.mark.asyncio
+async def test_search_album_never_strips_a_year_like_artist_name():
+    # "The 1975" is an artist, not a release year: the artist-only rung must
+    # not be widened into a bare "The" search.
+    fake = _LadderFake({"The 1975": _one_file(filename="bob\\The 1975\\01.flac")})
+    repo = SlskdRepository(
+        client=fake, url="u", api_key="k", downloads_mount=Path("/dl")
+    )
+    results = await repo.search_album(
+        "The 1975", "Notes on a Conditional Form", 2020
+    )
+    assert len(results) == 1
+    assert fake.queries[-1] == "The 1975"
+    assert "The" not in fake.queries
 
 
 @pytest.mark.asyncio
@@ -368,8 +443,8 @@ async def test_search_album_wildcard_rung_bypasses_blocked_artist():
     # sibling defeats the filter and must be tried before broadening.
     fake = _LadderFake(
         {
-            "*nter *hikari Take to the Skies 2007": _one_file(
-                filename="bob\\Take to the Skies\\01.flac"
+            "*nter *hikari Take to the Skies 2007": _files(
+                3, folder="bob\\Take to the Skies"
             )
         }
     )
@@ -377,7 +452,7 @@ async def test_search_album_wildcard_rung_bypasses_blocked_artist():
         client=fake, url="u", api_key="k", downloads_mount=Path("/dl")
     )
     results = await repo.search_album("Enter Shikari", "Take to the Skies", 2007)
-    assert len(results) == 1
+    assert len(results) == 3
     # wildcard sibling right after the exact rung, before dropping specificity.
     assert fake.queries == [
         "Enter Shikari Take to the Skies 2007",
