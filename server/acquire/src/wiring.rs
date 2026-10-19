@@ -24,11 +24,11 @@ use super::downloads::watchdog::{RetryPolicy, WatchdogConfig};
 use super::drop_import::DropImports;
 use super::drop_import::store::DropStore;
 use super::flows::loops::{
-    FollowDeps, PruneDeps, PruneSettings, SweepDeps, SyncDeps, ThreadJitter, TokioSleeper,
-    WantedDeps, WantedSettings, register_ephemeral_loop, spawn_follow_loop, spawn_prune_loop,
+    FOLLOW_JOB, FollowDeps, PRUNE_JOB, PruneDeps, PruneSettings, SYNC_JOB, SweepDeps, SyncDeps,
+    UPGRADE_JOB, WANTED_JOB, WantedDeps, WantedSettings, spawn_follow_loop, spawn_prune_loop,
     spawn_sweep_loop, spawn_sync_loop, spawn_wanted_loop,
 };
-use super::flows::seams::{Candidate, CandidateSearch, Clock, SystemClock, TickSink};
+use super::flows::seams::{Candidate, CandidateSearch, TickSink};
 use super::flows::stores::{
     AdminDirectory, FollowStore as FlowsFollowStore, LibraryPresence, UpgradePolicy,
     UpgradeWorklist,
@@ -74,9 +74,9 @@ use super::worker::{DownloadWorker, Source, SourceSet, WorkerConfig, run_startup
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::collections::state::CollectionsState;
 use droppedneedle_kernel::config::AppConfig;
-use droppedneedle_kernel::db::{Db, JobRegistryRows, JobState};
 use droppedneedle_kernel::events::{EventSink, PlaylistImported, UserNotice, new_event_id};
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::jobs::{AlreadyRunning, FnTick, Next, Schedule, Supervisor};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, DownloadClients, LidarrImportConnection, NewznabIndexer as ConfigIndexer,
@@ -103,8 +103,19 @@ pub struct SpotifyEndpoints {
 /// Health-probe refresh cadence.
 const PROBE_INTERVAL: Duration = Duration::from_secs(300);
 
-/// Registry name for the probe refresh loop.
-const PROBE_JOB: &str = "acquire-probe-refresh";
+/// Job name of the probe refresh loop.
+pub const PROBE_JOB: &str = "acquire-probe-refresh";
+
+/// Every loop [`AcquireSetup::spawn_loops`] starts, by job name.
+pub const ACQUIRE_LOOPS: &[&str] = &[
+    WANTED_JOB,
+    FOLLOW_JOB,
+    UPGRADE_JOB,
+    SYNC_JOB,
+    PRUNE_JOB,
+    super::worker::DOWNLOAD_WORKER_JOB,
+    PROBE_JOB,
+];
 
 /// Clamp a config integer to a non-negative `u32` (0 = unlimited).
 fn clamp_u32(value: i64) -> u32 {
@@ -1147,115 +1158,35 @@ impl AcquireSetup {
         Ok(report)
     }
 
-    /// Spawn the flows loops, the download worker, and the probe refresh
-    /// loop. Returns `(scope, task)` pairs the caller awaits after serve.
-    pub async fn spawn_loops(
-        &self,
-        job_rows: JobRegistryRows,
-        db: Db,
-        shutdown: tokio::sync::watch::Receiver<bool>,
-    ) -> Result<Vec<(&'static str, tokio::task::JoinHandle<()>)>, String> {
-        let system_clock: Arc<dyn Clock> = Arc::new(SystemClock);
-        let mut out = Vec::new();
-        let (handle, _) = spawn_wanted_loop(
-            TokioSleeper::new(shutdown.clone()),
-            ThreadJitter,
-            job_rows.clone(),
-            db.clone(),
-            system_clock.clone(),
-            self.flows.wanted_deps.clone(),
-        )
-        .await?;
-        out.push((handle.name, handle.task));
-        let (handle, _) = spawn_follow_loop(
-            TokioSleeper::new(shutdown.clone()),
-            ThreadJitter,
-            job_rows.clone(),
-            db.clone(),
-            system_clock.clone(),
-            self.flows.follow_deps.clone(),
-        )
-        .await?;
-        out.push((handle.name, handle.task));
-        let (handle, _) = spawn_sweep_loop(
-            TokioSleeper::new(shutdown.clone()),
-            job_rows.clone(),
-            db.clone(),
-            system_clock.clone(),
-            self.flows.sweep_deps.clone(),
-        )
-        .await?;
-        out.push((handle.name, handle.task));
-        let (handle, _) = spawn_sync_loop(
-            TokioSleeper::new(shutdown.clone()),
-            job_rows.clone(),
-            db.clone(),
-            system_clock.clone(),
-            self.flows.sync_deps.clone(),
-        )
-        .await?;
-        out.push((handle.name, handle.task));
-        let (handle, _) = spawn_prune_loop(
-            TokioSleeper::new(shutdown.clone()),
-            job_rows.clone(),
-            db.clone(),
-            system_clock,
-            self.prune.clone(),
-        )
-        .await?;
-        out.push((handle.name, handle.task));
-        let worker = super::worker::spawn_download_worker(
-            self.worker.clone(),
-            job_rows.clone(),
-            db.clone(),
-            shutdown.clone(),
-        )
-        .await?;
-        out.push((super::worker::DOWNLOAD_WORKER_JOB, worker));
-        out.push((
-            PROBE_JOB,
-            self.spawn_probe_loop(job_rows, db, shutdown).await?,
-        ));
-        Ok(out)
+    /// Start the flows loops, the download worker and the probe refresh on
+    /// the loop supervisor, which stops them at shutdown.
+    pub fn spawn_loops(&self, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
+        spawn_wanted_loop(supervisor, self.flows.wanted_deps.clone())?;
+        spawn_follow_loop(supervisor, self.flows.follow_deps.clone())?;
+        spawn_sweep_loop(supervisor, self.flows.sweep_deps.clone())?;
+        spawn_sync_loop(supervisor, self.flows.sync_deps.clone())?;
+        spawn_prune_loop(supervisor, self.prune.clone())?;
+        super::worker::spawn_download_worker(self.worker.clone(), supervisor)?;
+        self.spawn_probe_loop(supervisor)
     }
 
-    /// Probe refresh loop: one pass now, then every five minutes until
-    /// shutdown, each pass over the clients the current settings build.
-    /// Registered ephemeral for liveness.
-    async fn spawn_probe_loop(
-        &self,
-        job_rows: JobRegistryRows,
-        db: Db,
-        mut shutdown: tokio::sync::watch::Receiver<bool>,
-    ) -> Result<tokio::task::JoinHandle<()>, String> {
-        register_ephemeral_loop(&job_rows, &db, PROBE_JOB).await?;
+    /// Probe refresh: one pass now, then every five minutes, each over the
+    /// clients the current settings build.
+    fn spawn_probe_loop(&self, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
         let cache = self.probe_cache.clone();
         let clients = self.clients.clone();
-        Ok(tokio::spawn(async move {
-            // A pre-signaled shutdown skips the first pass entirely.
-            if !*shutdown.borrow() {
-                loop {
-                    let inputs = clients.current().probe_inputs.clone();
+        supervisor.periodic(
+            PROBE_JOB,
+            Schedule::new(PROBE_INTERVAL),
+            FnTick(move |_| {
+                let cache = cache.clone();
+                let inputs = clients.current().probe_inputs.clone();
+                async move {
                     refresh_probes(&cache, &inputs).await;
-                    if let Err(error) = job_rows.heartbeat(&db, PROBE_JOB).await {
-                        tracing::warn!(%error, "probe refresh heartbeat failed");
-                    }
-                    tokio::select! {
-                        () = tokio::time::sleep(PROBE_INTERVAL) => {}
-                        _ = shutdown.changed() => break,
-                    }
-                    if *shutdown.borrow() {
-                        break;
-                    }
+                    Ok(Next::Continue)
                 }
-            }
-            if let Err(error) = job_rows
-                .set_job_state(&db, PROBE_JOB, JobState::Stopped)
-                .await
-            {
-                tracing::warn!(%error, "probe refresh stop state write failed");
-            }
-        }))
+            }),
+        )
     }
 }
 
@@ -1534,7 +1465,6 @@ fn worker_config(
         .filter_map(|root| RecycleBin::guarded(root, retention, &protected))
         .collect();
     WorkerConfig {
-        interval: super::worker::WORKER_INTERVAL,
         max_concurrent_downloads: clamp_usize(policy.max_concurrent_downloads).max(1),
         max_failover_attempts: policy.max_failover_attempts.max(0),
         retry: retry_policy_from(policy),

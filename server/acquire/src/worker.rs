@@ -16,10 +16,9 @@
 //! - orphans (hourly): complete-dir debris with no owner is removed.
 //!
 //! Sources and tuning are resolved at the start of every pass, so saved
-//! settings take effect on the next pass without a restart. The loop
-//! registers as the durable `download-worker` job, heartbeats every pass
-//! and stops on the shared shutdown watch. Journal failures are logged and
-//! skip the affected item; a read error never stands in for "no rows".
+//! settings take effect on the next pass without a restart. The loop runs
+//! on the loop supervisor as `download-worker`. Journal failures are logged
+//! and skip the affected item; a read error never stands in for "no rows".
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -49,7 +48,9 @@ use super::search_jobs::review::ReviewMode;
 use super::sources::{JournalOwnership, SabnzbdSource, SlskdSource};
 use super::target::Targets;
 use super::target::reasons::TrackReason;
-use droppedneedle_kernel::db::{Db, JobRegistryRows, JobState};
+use droppedneedle_kernel::jobs::{
+    AlreadyRunning, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
+};
 
 mod controls;
 mod landings;
@@ -58,10 +59,13 @@ mod review;
 pub use controls::{NextSourceError, RetryError};
 pub use landings::ReimportError;
 
-/// Registry name for the worker loop.
+/// Job name of the worker loop.
 pub const DOWNLOAD_WORKER_JOB: &str = "download-worker";
 
-/// Steady-state pass cadence.
+/// Job name of the wait, at shutdown, for the landings the worker started.
+pub const DOWNLOAD_LANDINGS_JOB: &str = "download-landings";
+
+/// Longest gap between passes when nothing wakes the worker.
 pub const WORKER_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Orphan sweep runs every Nth pass (hourly at the 30s cadence).
@@ -413,8 +417,6 @@ impl Source {
 /// Worker tuning, read at the start of every pass.
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
-    /// Pass cadence.
-    pub interval: Duration,
     /// Concurrent live downloads.
     pub max_concurrent_downloads: usize,
     /// Failover attempts per task across all sources.
@@ -442,7 +444,6 @@ pub struct WorkerConfig {
 impl Default for WorkerConfig {
     fn default() -> Self {
         Self {
-            interval: WORKER_INTERVAL,
             max_concurrent_downloads: 3,
             max_failover_attempts: 3,
             retry: RetryPolicy::default(),
@@ -543,7 +544,7 @@ pub struct DownloadWorker {
     /// Live progress for the web UI (`download_progress`).
     events: droppedneedle_kernel::events::EventSink,
     /// Wakes the loop early after a queue action (retry, next source).
-    wake: tokio::sync::Notify,
+    wake: tokio::sync::watch::Sender<u64>,
     /// Album targets for the look before an automatic grab; without them
     /// every source grabs its own best guess.
     targets: Option<Arc<Targets>>,
@@ -576,7 +577,7 @@ impl DownloadWorker {
             in_flight: Arc::new(Mutex::new(HashSet::new())),
             landing_tasks: Mutex::new(Vec::new()),
             events: droppedneedle_kernel::events::EventSink::default(),
-            wake: tokio::sync::Notify::new(),
+            wake: tokio::sync::watch::Sender::new(0),
             targets: None,
             reviews: review::Reviews::default(),
         }
@@ -617,7 +618,8 @@ impl DownloadWorker {
 
     /// Run the next pass now instead of at the next interval.
     pub fn wake(&self) {
-        self.wake.notify_one();
+        self.wake
+            .send_modify(|count| *count = count.wrapping_add(1));
     }
 
     /// Import finished downloads through the landing instead of settling
@@ -1835,56 +1837,52 @@ fn hex_task_id(planned: &str) -> String {
     format!("{first:016x}{second:016x}")
 }
 
-/// Spawn the worker loop: register the durable job, run passes on the
-/// configured cadence until shutdown, then mark the job stopped. The
-/// first pass runs immediately so redispatches do not wait a full
-/// interval after boot.
-pub async fn spawn_download_worker(
+/// Run the worker on the supervisor: a pass at once, then one on every
+/// wake and at least every [`WORKER_INTERVAL`]. At shutdown the landings it
+/// started finish within the grace, under [`DOWNLOAD_LANDINGS_JOB`].
+pub fn spawn_download_worker(
     worker: Arc<DownloadWorker>,
-    job_rows: JobRegistryRows,
-    db: Db,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
-) -> Result<tokio::task::JoinHandle<()>, String> {
-    job_rows
-        .register_job(&db, DOWNLOAD_WORKER_JOB)
-        .await
-        .map_err(|error| error.to_string())?;
-    let task = tokio::spawn(async move {
-        // A pre-signaled shutdown skips the first pass entirely.
-        if *shutdown.borrow() {
-            mark(&job_rows, &db, JobState::Stopped).await;
-            return;
-        }
-        mark(&job_rows, &db, JobState::Running).await;
-        let mut pass: u64 = 0;
-        loop {
-            worker.run_once(pass).await;
-            if let Err(error) = job_rows.heartbeat(&db, DOWNLOAD_WORKER_JOB).await {
-                tracing::warn!(%error, "download worker heartbeat failed");
-            }
-            pass += 1;
-            let interval = (worker.config)().interval;
-            tokio::select! {
-                () = tokio::time::sleep(jittered_interval(interval)) => {}
-                () = worker.wake.notified() => {}
-                _ = shutdown.changed() => break,
-            }
-            if *shutdown.borrow() {
-                break;
-            }
-        }
-        // A landing mid-publish finishes (or reaches a durable step)
-        // before the worker reports stopped.
+    supervisor: &Supervisor,
+) -> Result<(), AlreadyRunning> {
+    let mut wake = worker.wake.subscribe();
+    wake.mark_changed();
+    let gate = Arc::new(tokio::sync::Mutex::new(()));
+    supervisor.on_wakeup(
+        DOWNLOAD_WORKER_JOB,
+        wake,
+        Schedule::new(WORKER_INTERVAL),
+        WorkerTick {
+            worker: Arc::clone(&worker),
+            gate: Arc::clone(&gate),
+            pass: 0,
+        },
+    )?;
+    supervisor.one_shot(DOWNLOAD_LANDINGS_JOB, move |ctx| async move {
+        ctx.token().cancelled().await;
+        // A pass still running may start a landing: wait for it first.
+        let _pass = gate.lock().await;
         worker.wait_for_landings().await;
-        mark(&job_rows, &db, JobState::Stopped).await;
-    });
-    Ok(task)
+        Ok(())
+    })
 }
 
-/// Record the worker job's state, logging a failed write.
-async fn mark(job_rows: &JobRegistryRows, db: &Db, state: JobState) {
-    if let Err(error) = job_rows.set_job_state(db, DOWNLOAD_WORKER_JOB, state).await {
-        tracing::warn!(%error, "download worker state write failed");
+/// One worker pass. The gate keeps a pass and the shutdown wait for
+/// landings apart, so no landing starts after that wait began.
+struct WorkerTick {
+    worker: Arc<DownloadWorker>,
+    gate: Arc<tokio::sync::Mutex<()>>,
+    pass: u64,
+}
+
+impl Tick for WorkerTick {
+    async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
+        let _pass = self.gate.lock().await;
+        if ctx.token().is_cancelled() {
+            return Ok(Next::Finish);
+        }
+        self.worker.run_once(self.pass).await;
+        self.pass = self.pass.wrapping_add(1);
+        Ok(Next::Continue)
     }
 }
 
@@ -1892,17 +1890,6 @@ async fn mark(job_rows: &JobRegistryRows, db: &Db, state: JobState) {
 /// root and must not be a symlink.
 fn orphan_remove_allowed(root: &Path, path: &Path, is_symlink: bool) -> bool {
     !is_symlink && path != root && path.starts_with(root)
-}
-
-/// Pass cadence with ±10% jitter so a fleet of workers does not beat in
-/// lockstep after a shared restart.
-fn jittered_interval(base: Duration) -> Duration {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|span| span.subsec_nanos())
-        .unwrap_or(0);
-    let factor = 0.9 + f64::from(nanos % 201) / 1000.0;
-    Duration::from_secs_f64((base.as_secs_f64() * factor).max(1.0))
 }
 
 #[cfg(test)]

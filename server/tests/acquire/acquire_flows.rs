@@ -1,9 +1,9 @@
 //! Acquisition flows over the durable stores: the wanted watcher, status
 //! sync, follow poll, upgrade sweep and drop import.
 //!
-//! Time is a manual clock throughout: cadences assert by advancing the
-//! clock, never by sleeping. Stores sit on a scratch database; downloads,
-//! search and polls are scripted seams.
+//! Ticks take an explicit `now`; the loop test runs on paused tokio time
+//! and bounds its waits in wall-clock time. Stores sit on a scratch
+//! database; downloads, search and polls are scripted seams.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,13 +12,12 @@ use droppedneedle_acquire::db::AcquireDb;
 use droppedneedle_acquire::flows::{
     self,
     loops::{
-        FollowDeps, LoopState, ManualSleeper, PruneDeps, PruneSettings, SYNC_INITIAL_DELAY,
-        SYNC_INTERVAL, SYNC_JOB, SweepDeps, SyncDeps, WantedDeps, WantedSettings, follow_tick,
-        interval_seconds, prune_tick, spawn_sync_loop, sweep_tick, sync_tick, wanted_tick,
+        FollowDeps, PruneDeps, PruneSettings, SYNC_INITIAL_DELAY, SYNC_INTERVAL, SYNC_JOB,
+        SweepDeps, SyncDeps, WantedDeps, WantedSettings, follow_tick, interval_seconds, prune_tick,
+        spawn_sync_loop, sweep_tick, sync_tick, wanted_tick,
     },
     seams::{
         Candidate, MemoryTicks, ObservedRelease, ScriptedDownloads, ScriptedPoll, ScriptedSearch,
-        SystemClock,
     },
     stores::{
         AdminDirectory, FollowStore, LibraryPresence, MemoryWorklist, UpgradeItem, UpgradePolicy,
@@ -31,6 +30,7 @@ use droppedneedle_acquire::requests::{
 };
 use droppedneedle_acquire::search_jobs::store::JobStore;
 use droppedneedle_kernel::db::{DbRuntime, JobState};
+use droppedneedle_kernel::jobs::Supervisor;
 use droppedneedle_kernel::runtime_config::sections::UserPreferences;
 
 const NOW: i64 = 1_700_000_000;
@@ -129,7 +129,7 @@ async fn wanted_enrols_then_auto_downloads() {
     let rig = wanted(&db);
     seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
 
-    let first = wanted_tick(NOW, &mut LoopState::new(), &rig.deps).await;
+    let first = wanted_tick(NOW, &rig.deps).await;
     assert_eq!(first.enrolled, 1);
     let watch = WantedStore::new(db.clone())
         .get("rg-blue")
@@ -138,7 +138,7 @@ async fn wanted_enrols_then_auto_downloads() {
         .expect("watch persisted");
     assert_eq!(watch.state, "watching");
     // A second sweep never enrols the same request twice.
-    let again = wanted_tick(NOW, &mut LoopState::new(), &rig.deps).await;
+    let again = wanted_tick(NOW, &rig.deps).await;
     assert_eq!(again.enrolled, 0);
 
     rig.search.set(
@@ -150,7 +150,7 @@ async fn wanted_enrols_then_auto_downloads() {
         }]),
     );
     let due = watch.next_check_at as i64;
-    let checked = wanted_tick(due, &mut LoopState::new(), &rig.deps).await;
+    let checked = wanted_tick(due, &rig.deps).await;
     assert_eq!((checked.checked, checked.dispatched), (1, 1));
     assert_eq!(rig.downloads.dispatched()[0].origin, "wanted");
     let row = rig
@@ -170,10 +170,10 @@ async fn wanted_satisfied_from_the_library() {
     let db = AcquireDb::scratch().unwrap();
     let rig = wanted(&db);
     seed_request(&rig.deps.ledger, "rg-blue", "failed", None).await;
-    wanted_tick(NOW, &mut LoopState::new(), &rig.deps).await;
+    wanted_tick(NOW, &rig.deps).await;
     rig.library.add(&["rg-blue"]);
     let due = NOW + interval_seconds(None, 0, NOW);
-    let summary = wanted_tick(due, &mut LoopState::new(), &rig.deps).await;
+    let summary = wanted_tick(due, &rig.deps).await;
     assert_eq!(summary.fulfilled, 1);
     assert_eq!(status_of(&rig.deps.ledger, "rg-blue").await, "imported");
     let watch = rig.deps.watches.get("rg-blue").await.unwrap().unwrap();
@@ -208,7 +208,7 @@ async fn status_sync_maps_and_stamps() {
         library: Arc::new(LibraryPresence::new()),
         ticks: ticks.clone(),
     };
-    let summary = sync_tick(NOW, &mut LoopState::new(), &deps).await;
+    let summary = sync_tick(NOW, &deps).await;
     assert_eq!((summary.reconciled, summary.imported), (3, 1));
     assert_eq!(status_of(&ledger, "rg-done").await, "imported");
     assert_eq!(status_of(&ledger, "rg-short").await, "incomplete");
@@ -267,10 +267,10 @@ async fn follow_poll_baselines_then_emits() {
         preferences: Arc::new(UserPreferences::default),
         today: Arc::new(|| "2024-06-01".to_owned()),
     };
-    let first = follow_tick(NOW, &mut LoopState::new(), &deps).await;
+    let first = follow_tick(NOW, &deps).await;
     assert_eq!(first.baselined, 1);
     assert!(downloads.dispatched().is_empty());
-    let again = follow_tick(NOW + 3_600, &mut LoopState::new(), &deps).await;
+    let again = follow_tick(NOW + 3_600, &deps).await;
     assert_eq!(again.artists_polled, 0, "a polled artist waits a day");
 
     poll.set(
@@ -284,7 +284,7 @@ async fn follow_poll_baselines_then_emits() {
             release("rg-owned", "2024-06-01", "Album", &[]),
         ]),
     );
-    let second = follow_tick(NOW + 86_400, &mut LoopState::new(), &deps).await;
+    let second = follow_tick(NOW + 86_400, &deps).await;
     assert_eq!(
         second.new_releases, 2,
         "rg-new and rg-future reach the feed"
@@ -343,77 +343,96 @@ async fn upgrade_sweep_gates_and_cap() {
         downloads: downloads.clone(),
         ticks: Arc::new(MemoryTicks::new()),
     };
-    let idle = sweep_tick(NOW, &mut LoopState::new(), &deps).await;
+    let idle = sweep_tick(NOW, &deps).await;
     assert!(idle.skipped_no_admin);
     db.add_user("admin-1", "Admin", "admin").await.unwrap();
-    let swept = sweep_tick(NOW, &mut LoopState::new(), &deps).await;
+    let swept = sweep_tick(NOW, &deps).await;
     assert_eq!(swept.enqueued, 2, "already-in-library never counts");
     let grabs = downloads.upgrades();
     assert_eq!(grabs[0].mbid, "rg-1");
     assert_eq!(grabs[0].user_id, "admin-1");
 }
 
-// The sync loop waits its startup delay, runs a pass, sleeps the honest
-// interval and parks the job stopped on shutdown; a shutdown during the
-// delay still parks it stopped without running a pass.
+// The sync loop waits its startup delay, runs a pass, waits the honest
+// interval and parks the job stopped on shutdown; a stop during the delay
+// still parks it stopped without running a pass.
 #[tokio::test]
 async fn loop_cadence_and_shutdown() {
     let (runtime, db, _dir) = runtime("loops").await;
     let ledger = RequestStore::new(db.clone());
     seed_request(&ledger, "rg-1", "downloading", Some("task-9")).await;
+    seed_request(&ledger, "rg-2", "downloading", Some("task-10")).await;
     let downloads = Arc::new(ScriptedDownloads::new());
     downloads.set_status("task-9", "completed");
+    downloads.set_status("task-10", "downloading");
+    let ticks = Arc::new(MemoryTicks::new());
     let deps = Arc::new(SyncDeps {
         ledger: ledger.clone(),
-        downloads,
+        downloads: downloads.clone(),
         library: Arc::new(LibraryPresence::new()),
-        ticks: Arc::new(MemoryTicks::new()),
+        ticks: ticks.clone(),
     });
-
-    let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
+    let imported = || ticks.of_kind("request_fulfilled").len();
+    let supervisor = Supervisor::start(
         runtime.db().clone(),
         Arc::new(droppedneedle_kernel::clock::SystemClock),
         droppedneedle_kernel::jobs::CancellationToken::new(),
     )
     .await
     .unwrap();
-    let early = ManualSleeper::new();
-    early.shut_down();
-    let (handle, _) = spawn_sync_loop(
-        early,
-        supervisor.job_rows(),
-        runtime.db().clone(),
-        Arc::new(SystemClock),
-        deps.clone(),
-    )
-    .await
-    .unwrap();
-    handle.task.await.unwrap();
-    assert_eq!(status_of(&ledger, "rg-1").await, "downloading");
+    tokio::time::pause();
 
-    let sleeper = ManualSleeper::new();
-    let (handle, _) = spawn_sync_loop(
-        sleeper.clone(),
-        supervisor.job_rows(),
-        runtime.db().clone(),
-        Arc::new(SystemClock),
-        deps,
-    )
-    .await
-    .unwrap();
-    wait_for_requests(&sleeper, 1).await;
-    sleeper.wake();
-    wait_for_requests(&sleeper, 2).await;
+    spawn_sync_loop(&supervisor, deps.clone()).unwrap();
+    settle().await;
+    tokio::time::advance(SYNC_INITIAL_DELAY - Duration::from_secs(1)).await;
+    settle().await;
+    supervisor.cancel(SYNC_JOB, GRACE).await;
+    assert_eq!(imported(), 0, "a pass ran inside the startup delay");
+    let row =
+        crate::common::loop_row(runtime.db(), SYNC_JOB, |row| row.state != JobState::Running).await;
+    assert_eq!(row.state, JobState::Stopped);
+
+    spawn_sync_loop(&supervisor, deps).unwrap();
+    settle().await;
+    tokio::time::advance(SYNC_INITIAL_DELAY).await;
+    until("the first pass", || imported() == 1).await;
+    downloads.set_status("task-10", "completed");
+    tokio::time::advance(SYNC_INTERVAL - Duration::from_secs(1)).await;
+    settle().await;
+    assert_eq!(imported(), 1, "a pass ran inside the interval");
+    tokio::time::advance(Duration::from_secs(1)).await;
+    until("the second pass", || imported() == 2).await;
+
+    supervisor.shutdown(GRACE).await;
+    let row =
+        crate::common::loop_row(runtime.db(), SYNC_JOB, |row| row.state != JobState::Running).await;
+    assert_eq!(row.state, JobState::Stopped);
     assert_eq!(status_of(&ledger, "rg-1").await, "imported");
-    sleeper.shut_down();
-    handle.task.await.unwrap();
-    assert_eq!(sleeper.requested(), vec![SYNC_INITIAL_DELAY, SYNC_INTERVAL]);
-    let jobs = droppedneedle_kernel::db::list_loops(runtime.db())
-        .await
-        .unwrap();
-    let job = jobs.iter().find(|job| job.name == SYNC_JOB).unwrap();
-    assert_eq!(job.state, JobState::Stopped);
+    assert_eq!(status_of(&ledger, "rg-2").await, "imported");
     runtime.shutdown().await;
+}
+
+const GRACE: Duration = Duration::from_secs(5);
+
+/// Let the loop run what is due now, or start its wait. Yields instead of
+/// sleeping, so the paused clock stays put.
+async fn settle() {
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// Wait until `done`, bounded in wall-clock time. The pass's database
+/// calls wait on tokio timers too, so each turn moves the paused clock by a
+/// millisecond.
+async fn until(what: &str, done: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !done() {
+        assert!(std::time::Instant::now() < deadline, "{what} never came");
+        tokio::time::advance(Duration::from_millis(1)).await;
+        std::thread::sleep(Duration::from_millis(2));
+    }
 }
 
 // The wanted recheck table matches v2's age bands.
@@ -426,17 +445,6 @@ fn recheck_bands() {
     assert_eq!(interval_seconds(Some("2020-01-01"), 0, now), 14 * 86_400);
     assert_eq!(interval_seconds(Some("2020-01-01"), 10, now), 28 * 86_400);
     assert_eq!(interval_seconds(None, 0, now), 14 * 86_400);
-}
-
-/// Spin until the loop records `count` sleep requests.
-async fn wait_for_requests(sleeper: &ManualSleeper, count: usize) {
-    for _ in 0..500 {
-        if sleeper.requested().len() >= count && sleeper.waits() > 0 {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    panic!("loop never requested {count} sleep(s)");
 }
 
 // The store prune drops settled requests past retention, never an active

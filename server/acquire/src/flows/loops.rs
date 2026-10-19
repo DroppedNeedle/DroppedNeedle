@@ -1,27 +1,29 @@
-//! Registered ephemeral loops: wanted watcher, follow poll, upgrade sweep,
-//! request-status-sync.
+//! The acquire flow loops: wanted watcher, follow poll, upgrade sweep,
+//! request-status sync and store prune.
 //!
-//! Each loop is a small cadence contract: a `tick` function that runs one
-//! pass when due (pure over an explicit `now`, so tests drive it with a
-//! [`ManualClock`](super::seams::ManualClock) and never sleep), plus a
-//! `spawn_*` constructor (single-flight registry, log-and-continue passes,
-//! shutdown through the sleeper) that registers the loop's liveness row and
-//! returns a handle the caller awaits at shutdown.
+//! Each loop is a `*_tick` function that runs one pass at an explicit
+//! `now`, so tests call it directly, plus a `spawn_*` function that runs it
+//! on the loop supervisor under its job name. The supervisor owns the
+//! waiting, jitter, liveness rows and stop; every wake runs a pass.
 //!
 //! Cadences match v2's task schedule; each constant cites its source.
-//! Loops that v2 jitters (wanted, follow) take a [`Jitter`]; loops v2
-//! sleeps plainly (sync, upgrade) sleep the exact interval.
+//! Loops that v2 jitters (wanted, follow) spread each wait over 0.8 to 1.2
+//! of the interval; loops v2 sleeps plainly (sync, prune) wait the exact
+//! interval.
 
 use std::collections::HashSet;
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use droppedneedle_kernel::db::{Db, JobRegistryRows, JobState};
+use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::jobs::{
+    AlreadyRunning, Next, Schedule, Supervisor, Tick, TickCtx, TickError, TickResult,
+};
 
 use super::seams::{
-    CandidateSearch, Clock, DispatchKind, DispatchRequest, DownloadDispatch, FlowEvent,
-    ObservedRelease, ReleasePoll, TickSink,
+    CandidateSearch, DispatchKind, DispatchRequest, DownloadDispatch, FlowEvent, ObservedRelease,
+    ReleasePoll, TickSink,
 };
 use super::stores::{
     AdminDirectory, CutoffList, FeedRelease, FollowCursor, FollowStore, LibraryPresence,
@@ -74,228 +76,9 @@ pub const PRUNE_JOB: &str = "store-prune";
 pub const PRUNE_INITIAL_DELAY: Duration = Duration::from_secs(600);
 /// How often the prune loop checks whether its configured interval passed.
 pub const PRUNE_TICK: Duration = Duration::from_secs(3600);
-
-/// Sleep seam so loops test without real waits.
-pub trait Sleeper: Send + Sync {
-    /// Sleep `duration`, returning false when shutdown won the race.
-    fn sleep(&self, duration: Duration) -> impl Future<Output = bool> + Send;
-}
-
-/// Production sleeper over tokio time and a shutdown watch.
-#[derive(Debug, Clone)]
-pub struct TokioSleeper {
-    shutdown: tokio::sync::watch::Receiver<bool>,
-}
-
-impl TokioSleeper {
-    /// Build a sleeper that wakes when `shutdown` flips true.
-    pub fn new(shutdown: tokio::sync::watch::Receiver<bool>) -> Self {
-        Self { shutdown }
-    }
-}
-
-impl Sleeper for TokioSleeper {
-    async fn sleep(&self, duration: Duration) -> bool {
-        let mut shutdown = self.shutdown.clone();
-        tokio::select! {
-            () = tokio::time::sleep(duration) => !*shutdown.borrow(),
-            _ = shutdown.changed() => false,
-        }
-    }
-}
-
-/// Manual sleeper for tests: `wake` releases one waiter, `shut_down`
-/// releases all with false. Requested durations are recorded so tests can
-/// assert the intervals.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Clone)]
-pub struct ManualSleeper {
-    inner: Arc<ManualSleeperInner>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug)]
-struct ManualSleeperInner {
-    state: Mutex<ManualSleepState>,
-    wake: tokio::sync::Notify,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-struct ManualSleepState {
-    waits: usize,
-    shutdown: bool,
-    requested: Vec<Duration>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ManualSleeper {
-    /// Fresh manual sleeper.
-    pub fn new() -> Self {
-        Self {
-            inner: Arc::new(ManualSleeperInner {
-                state: Mutex::new(ManualSleepState::default()),
-                wake: tokio::sync::Notify::new(),
-            }),
-        }
-    }
-
-    /// Release one waiter to continue the loop.
-    pub fn wake(&self) {
-        self.inner.wake.notify_one();
-    }
-
-    /// Shut the loop down: waiters return false.
-    pub fn shut_down(&self) {
-        if let Ok(mut state) = self.inner.state.lock() {
-            state.shutdown = true;
-        }
-        self.inner.wake.notify_waiters();
-    }
-
-    /// Durations the loop requested, in order.
-    pub fn requested(&self) -> Vec<Duration> {
-        self.inner
-            .state
-            .lock()
-            .map(|state| state.requested.clone())
-            .unwrap_or_default()
-    }
-
-    /// Waiters currently parked in `sleep`.
-    pub fn waits(&self) -> usize {
-        self.inner
-            .state
-            .lock()
-            .map(|state| state.waits)
-            .unwrap_or(0)
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Default for ManualSleeper {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl Sleeper for ManualSleeper {
-    async fn sleep(&self, duration: Duration) -> bool {
-        if let Ok(mut state) = self.inner.state.lock() {
-            if state.shutdown {
-                return false;
-            }
-            state.requested.push(duration);
-            state.waits += 1;
-        }
-        self.inner.wake.notified().await;
-        if let Ok(mut state) = self.inner.state.lock() {
-            state.waits = state.waits.saturating_sub(1);
-            if state.shutdown {
-                return false;
-            }
-        }
-        true
-    }
-}
-
-/// Jitter seam. v2 desynchronizes same-second ticks across instances with
-/// mean-preserving ±20% uniform jitter (`_jittered_sleep`); tests pin
-/// [`NoJitter`] so requested durations assert exactly.
-pub trait Jitter: Send + Sync {
-    /// Multiplicative factor for one sleep (0.8..=1.2 in production).
-    fn factor(&self) -> f64;
-}
-
-/// No jitter: every sleep runs its exact interval. For tests.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default, Clone, Copy)]
-pub struct NoJitter;
-
-#[cfg(any(test, feature = "test-support"))]
-impl Jitter for NoJitter {
-    fn factor(&self) -> f64 {
-        1.0
-    }
-}
-
-/// Production jitter: uniform over ±20%, drawn from a nanos seed.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ThreadJitter;
-
-impl Jitter for ThreadJitter {
-    fn factor(&self) -> f64 {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|span| span.subsec_nanos())
-            .unwrap_or(0);
-        0.8 + f64::from(nanos % 401) / 1000.0
-    }
-}
-
-/// Apply one jitter factor to a base interval.
-pub fn jittered(base: Duration, jitter: &dyn Jitter) -> Duration {
-    let scaled = base.as_secs_f64() * jitter.factor();
-    Duration::from_secs_f64(scaled.max(1.0))
-}
-
-/// Single-flight registry: one live pass per loop key. `begin` returns
-/// false when the loop already runs; holders must call `finish`.
-#[derive(Debug, Default)]
-pub struct FlowRegistry {
-    live: Mutex<HashSet<String>>,
-}
-
-impl FlowRegistry {
-    /// Empty registry.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Claim the loop. False means another pass holds it.
-    pub fn begin(&self, job: &str) -> bool {
-        self.live
-            .lock()
-            .map(|mut live| live.insert(job.to_owned()))
-            .unwrap_or(false)
-    }
-
-    /// Release the loop.
-    pub fn finish(&self, job: &str) {
-        if let Ok(mut live) = self.live.lock() {
-            live.remove(job);
-        }
-    }
-}
-
-/// Per-loop cadence cursor. The first tick always runs; later ticks run
-/// once the interval has elapsed since the last run.
-#[derive(Debug, Default, Clone)]
-pub struct LoopState {
-    /// Unix seconds of the last run, if any.
-    pub last_run: Option<i64>,
-    /// Runs so far.
-    pub runs: u64,
-}
-
-impl LoopState {
-    /// Fresh cursor.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// True when a tick at `now` should run given `interval` seconds.
-    pub fn due(&self, now: i64, interval_secs: i64) -> bool {
-        self.last_run.is_none_or(|last| now - last >= interval_secs)
-    }
-
-    /// Record a run at `now`.
-    pub fn ran(&mut self, now: i64) {
-        self.last_run = Some(now);
-        self.runs += 1;
-    }
-}
+/// How often the upgrade loop checks whether its configured interval
+/// passed; the interval itself is read on every check.
+pub const UPGRADE_TICK: Duration = Duration::from_secs(3600);
 
 /// Wanted-watcher settings, re-read every sweep so flipping the toggle
 /// needs no restart (v2 `run_sweep`).
@@ -361,14 +144,10 @@ fn epoch(now: i64) -> u64 {
     u64::try_from(now).unwrap_or(0)
 }
 
-/// Run one wanted sweep when due: enrol availability-dead requests, then
+/// Run one wanted sweep: enrol availability-dead requests, then
 /// check due watches. Disabled reads as an empty pass. One bad watch never
 /// kills the sweep (v2 `run_sweep` isolation).
-pub async fn wanted_tick(now: i64, state: &mut LoopState, deps: &WantedDeps) -> WantedSummary {
-    if !state.due(now, WANTED_INTERVAL.as_secs() as i64) {
-        return WantedSummary::default();
-    }
-    state.ran(now);
+pub async fn wanted_tick(now: i64, deps: &WantedDeps) -> WantedSummary {
     let settings = (deps.settings)();
     if !settings.enabled {
         return WantedSummary::default();
@@ -702,7 +481,7 @@ pub struct FollowDeps {
     pub today: Arc<dyn Fn() -> String + Send + Sync>,
 }
 
-/// Run one follow poll when due: poll at most
+/// Run one follow poll: poll at most
 /// [`FOLLOW_MAX_ARTISTS_PER_TICK`] due artists, each at most once a day
 /// ([`FOLLOW_ARTIST_REPOLL`]), an hour after a failure. A first poll
 /// records every release group as a baseline and emits nothing. Later
@@ -711,11 +490,7 @@ pub struct FollowDeps {
 /// complete date on or after the prior poll. When an auto-download
 /// follower exists, those releases are queued for download once their
 /// date arrives (v2 `NewReleaseService`).
-pub async fn follow_tick(now: i64, state: &mut LoopState, deps: &FollowDeps) -> FollowSummary {
-    if !state.due(now, FOLLOW_INTERVAL.as_secs() as i64) {
-        return FollowSummary::default();
-    }
-    state.ran(now);
+pub async fn follow_tick(now: i64, deps: &FollowDeps) -> FollowSummary {
     let mut summary = FollowSummary::default();
     let today = (deps.today)();
     let types = ReleaseTypes::from_preferences(&(deps.preferences)());
@@ -1023,18 +798,13 @@ pub struct SweepDeps {
     pub ticks: Arc<dyn TickSink>,
 }
 
-/// Run one background-upgrade sweep when due: while upgrades are allowed
+/// Run one background-upgrade sweep: while upgrades are allowed
 /// and the scan is enabled, walk the cutoff-unmet worklist and enqueue at
 /// most `max_per_run` origin-`upgrade` grabs owned by the oldest admin.
 /// `AlreadyInLibrary` answers never count as enqueued; a poison item never
 /// starves its siblings (v2 `run_background_upgrade_sweep`).
-pub async fn sweep_tick(now: i64, state: &mut LoopState, deps: &SweepDeps) -> SweepSummary {
+pub async fn sweep_tick(now: i64, deps: &SweepDeps) -> SweepSummary {
     let policy = (deps.policy)();
-    let interval = (policy.interval_hours.max(1) * 3600) as i64;
-    if !state.due(now, interval) {
-        return SweepSummary::default();
-    }
-    state.ran(now);
     if !(policy.upgrade_allowed && policy.scan_enabled) {
         return SweepSummary::default();
     }
@@ -1163,55 +933,6 @@ pub async fn prune_tick(now: i64, deps: &PruneDeps) -> Result<PruneSummary, Requ
     })
 }
 
-/// Store-prune pass: runs when the configured interval has passed since
-/// the last prune.
-pub struct PrunePass {
-    /// Prune deps.
-    pub deps: Arc<PruneDeps>,
-    last: Option<i64>,
-}
-
-impl FlowPass for PrunePass {
-    async fn run(&mut self, now: i64, _state: &mut LoopState) {
-        let hours = (self.deps.settings)().interval_hours.clamp(1, 168);
-        let interval = i64::try_from(hours * 3600).unwrap_or(i64::MAX);
-        if self.last.is_some_and(|last| now - last < interval) {
-            return;
-        }
-        self.last = Some(now);
-        match prune_tick(now, &self.deps).await {
-            Ok(summary) => tracing::info!(?summary, "store prune finished"),
-            Err(error) => tracing::warn!(?error, "store prune failed"),
-        }
-    }
-}
-
-/// Spawn the store prune: startup delay, then an hourly check that prunes
-/// once the configured interval has passed, until shutdown.
-pub async fn spawn_prune_loop<S>(
-    sleeper: S,
-    job_rows: JobRegistryRows,
-    db: Db,
-    clock: Arc<dyn Clock>,
-    deps: Arc<PruneDeps>,
-) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
-where
-    S: Sleeper + Clone + Send + 'static,
-{
-    spawn_flow(
-        PRUNE_JOB,
-        sleeper,
-        None,
-        PRUNE_INITIAL_DELAY,
-        PRUNE_TICK,
-        job_rows,
-        db,
-        clock,
-        PrunePass { deps, last: None },
-    )
-    .await
-}
-
 /// Status-sync dependencies.
 pub struct SyncDeps {
     /// Request ledger.
@@ -1245,17 +966,13 @@ pub fn is_terminal(status: &str) -> bool {
     )
 }
 
-/// Run one request-status-sync pass when due: reconcile every active row
+/// Run one request-status-sync pass: reconcile every active row
 /// with its native download task. Track rows resolve only through their
 /// linked task id (a recording MBID is not a library key), while album
 /// rows without a task fall back to library presence (v2 `_reconcile_request`
 /// quirk). Terminal moves stamp `completed_at`; a won race to `imported`
 /// ticks the notify. One bad row never stops the sweep.
-pub async fn sync_tick(now: i64, state: &mut LoopState, deps: &SyncDeps) -> SyncSummary {
-    if !state.due(now, SYNC_INTERVAL.as_secs() as i64) {
-        return SyncSummary::default();
-    }
-    state.ran(now);
+pub async fn sync_tick(now: i64, deps: &SyncDeps) -> SyncSummary {
     let mut summary = SyncSummary::default();
     let rows = match deps.ledger.active(None, None).await {
         Ok(rows) => rows,
@@ -1407,280 +1124,172 @@ async fn sync_one(
     Ok(())
 }
 
-/// Handle for one spawned loop: its registry name plus the task `main`
-/// awaits after serve.
-pub struct FlowHandle {
-    /// Registry name.
-    pub name: &'static str,
-    /// Loop task.
-    pub task: tokio::task::JoinHandle<()>,
+/// Waits of 0.8 to 1.2 times `base`, drawn fresh each time (v2
+/// `_jittered_sleep`).
+fn spread(base: Duration) -> Schedule {
+    Schedule::new(base.mul_f64(0.8)).with_jitter(base.mul_f64(0.4))
 }
 
-/// Register one loop's liveness row. Idempotent across restarts.
-pub async fn register_ephemeral_loop(
-    job_rows: &JobRegistryRows,
-    db: &Db,
-    job: &str,
-) -> Result<(), String> {
-    job_rows
-        .register_job(db, job)
-        .await
-        .map_err(|error| error.to_string())
+/// One pass per tick, at the supervisor clock's `now`.
+struct PassTick<D, F> {
+    clock: Arc<dyn Clock>,
+    deps: Arc<D>,
+    pass: F,
 }
 
-/// One loop pass behind the shared run skeleton.
-pub trait FlowPass: Send {
-    /// Run one pass when due. Per-item failures stay inside the tick.
-    fn run(&mut self, now: i64, state: &mut LoopState) -> impl Future<Output = ()> + Send;
-}
-
-/// Wanted-watcher pass over shared deps.
-pub struct WantedPass {
-    /// Tick deps.
-    pub deps: Arc<WantedDeps>,
-}
-
-impl FlowPass for WantedPass {
-    async fn run(&mut self, now: i64, state: &mut LoopState) {
-        let summary = wanted_tick(now, state, &self.deps).await;
-        if summary.errors > 0 {
-            tracing::warn!(?summary, "wanted sweep finished with errors");
-        }
+impl<D, F, Fut> Tick for PassTick<D, F>
+where
+    D: Send + Sync + 'static,
+    F: Fn(i64, Arc<D>) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send,
+{
+    async fn tick(&mut self, _ctx: &TickCtx) -> TickResult {
+        (self.pass)(self.clock.now_unix(), Arc::clone(&self.deps)).await;
+        Ok(Next::Continue)
     }
 }
 
-/// Follow-poll pass over shared deps.
-pub struct FollowPass {
-    /// Tick deps.
-    pub deps: Arc<FollowDeps>,
+/// A pass that runs once its configured interval, read on every check, has
+/// passed since the last one that finished.
+struct IntervalTick<D> {
+    clock: Arc<dyn Clock>,
+    deps: Arc<D>,
+    last: Option<i64>,
 }
 
-impl FlowPass for FollowPass {
-    async fn run(&mut self, now: i64, state: &mut LoopState) {
-        let summary = follow_tick(now, state, &self.deps).await;
-        if summary.errors > 0 {
-            tracing::warn!(?summary, "follow poll finished with errors");
+impl<D> IntervalTick<D> {
+    fn new(supervisor: &Supervisor, deps: Arc<D>) -> Self {
+        Self {
+            clock: Arc::clone(supervisor.clock()),
+            deps,
+            last: None,
         }
+    }
+
+    /// `now` when a pass is due after `hours`, else `None`.
+    fn due(&self, hours: u64) -> Option<i64> {
+        let now = self.clock.now_unix();
+        let interval = i64::try_from(hours.saturating_mul(3600)).unwrap_or(i64::MAX);
+        self.last
+            .is_none_or(|last| now - last >= interval)
+            .then_some(now)
     }
 }
 
-/// Upgrade-sweep pass over shared deps.
-pub struct SweepPass {
-    /// Tick deps.
-    pub deps: Arc<SweepDeps>,
+impl Tick for IntervalTick<PruneDeps> {
+    async fn tick(&mut self, _ctx: &TickCtx) -> TickResult {
+        let hours = (self.deps.settings)().interval_hours.clamp(1, 168);
+        let Some(now) = self.due(hours) else {
+            return Ok(Next::Continue);
+        };
+        let summary = prune_tick(now, &self.deps)
+            .await
+            .map_err(|error| TickError::new("STORE_PRUNE_FAILED", format!("{error:?}")))?;
+        self.last = Some(now);
+        tracing::info!(?summary, "store prune finished");
+        Ok(Next::Continue)
+    }
 }
 
-impl FlowPass for SweepPass {
-    async fn run(&mut self, now: i64, state: &mut LoopState) {
-        let summary = sweep_tick(now, state, &self.deps).await;
+impl Tick for IntervalTick<SweepDeps> {
+    async fn tick(&mut self, _ctx: &TickCtx) -> TickResult {
+        let hours = (self.deps.policy)().interval_hours.max(1);
+        let Some(now) = self.due(hours) else {
+            return Ok(Next::Continue);
+        };
+        self.last = Some(now);
+        let summary = sweep_tick(now, &self.deps).await;
         if summary.errors > 0 {
             tracing::warn!(?summary, "upgrade sweep finished with errors");
         }
+        Ok(Next::Continue)
     }
 }
 
-/// Status-sync pass over shared deps.
-pub struct SyncPass {
-    /// Tick deps.
-    pub deps: Arc<SyncDeps>,
-}
-
-impl FlowPass for SyncPass {
-    async fn run(&mut self, now: i64, state: &mut LoopState) {
-        let summary = sync_tick(now, state, &self.deps).await;
-        if summary.errors > 0 {
-            tracing::warn!(?summary, "status sync finished with errors");
-        }
+fn pass_tick<D, F, Fut>(supervisor: &Supervisor, deps: Arc<D>, pass: F) -> PassTick<D, F>
+where
+    F: Fn(i64, Arc<D>) -> Fut,
+{
+    PassTick {
+        clock: Arc::clone(supervisor.clock()),
+        deps,
+        pass,
     }
 }
 
-/// Spawn the wanted-watcher loop: startup delay, then a jittered 15-minute
-/// cadence until shutdown. Registers `wanted-watcher` as ephemeral first.
-pub async fn spawn_wanted_loop<S, J>(
-    sleeper: S,
-    jitter: J,
-    job_rows: JobRegistryRows,
-    db: Db,
-    clock: Arc<dyn Clock>,
+/// Run the wanted watcher: a startup delay, then a jittered 15-minute
+/// cadence.
+pub fn spawn_wanted_loop(
+    supervisor: &Supervisor,
     deps: Arc<WantedDeps>,
-) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
-where
-    S: Sleeper + Clone + Send + 'static,
-    J: Jitter + Clone + Send + 'static,
-{
-    spawn_flow(
+) -> Result<(), AlreadyRunning> {
+    supervisor.periodic(
         WANTED_JOB,
-        sleeper,
-        Some(Box::new(jitter)),
-        WANTED_INITIAL_DELAY,
-        WANTED_INTERVAL,
-        job_rows,
-        db,
-        clock,
-        WantedPass { deps },
+        spread(WANTED_INTERVAL).with_initial_delay(WANTED_INITIAL_DELAY),
+        pass_tick(supervisor, deps, |now, deps| async move {
+            let summary = wanted_tick(now, &deps).await;
+            if summary.errors > 0 {
+                tracing::warn!(?summary, "wanted sweep finished with errors");
+            }
+        }),
     )
-    .await
 }
 
-/// Spawn the follow new-release poll: startup delay, then a jittered
-/// 1-minute due-driven cadence until shutdown.
-pub async fn spawn_follow_loop<S, J>(
-    sleeper: S,
-    jitter: J,
-    job_rows: JobRegistryRows,
-    db: Db,
-    clock: Arc<dyn Clock>,
+/// Run the follow new-release poll: a startup delay, then a jittered
+/// 1-minute due-driven cadence.
+pub fn spawn_follow_loop(
+    supervisor: &Supervisor,
     deps: Arc<FollowDeps>,
-) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
-where
-    S: Sleeper + Clone + Send + 'static,
-    J: Jitter + Clone + Send + 'static,
-{
-    spawn_flow(
+) -> Result<(), AlreadyRunning> {
+    supervisor.periodic(
         FOLLOW_JOB,
-        sleeper,
-        Some(Box::new(jitter)),
-        FOLLOW_INITIAL_DELAY,
-        FOLLOW_INTERVAL,
-        job_rows,
-        db,
-        clock,
-        FollowPass { deps },
+        spread(FOLLOW_INTERVAL).with_initial_delay(FOLLOW_INITIAL_DELAY),
+        pass_tick(supervisor, deps, |now, deps| async move {
+            let summary = follow_tick(now, &deps).await;
+            if summary.errors > 0 {
+                tracing::warn!(?summary, "follow poll finished with errors");
+            }
+        }),
     )
-    .await
 }
 
-/// Spawn the background upgrade sweep: startup delay, then the policy
-/// cadence (default 12h, plain sleep like v2) until shutdown.
-pub async fn spawn_sweep_loop<S>(
-    sleeper: S,
-    job_rows: JobRegistryRows,
-    db: Db,
-    clock: Arc<dyn Clock>,
+/// Run the background upgrade sweep: a startup delay, then an hourly check
+/// that sweeps once the policy's interval (default 12h) has passed.
+pub fn spawn_sweep_loop(
+    supervisor: &Supervisor,
     deps: Arc<SweepDeps>,
-) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
-where
-    S: Sleeper + Clone + Send + 'static,
-{
-    let hours = (deps.policy)().interval_hours.max(1);
-    spawn_flow(
+) -> Result<(), AlreadyRunning> {
+    supervisor.periodic(
         UPGRADE_JOB,
-        sleeper,
-        None,
-        UPGRADE_INITIAL_DELAY,
-        Duration::from_secs(hours * 3600),
-        job_rows,
-        db,
-        clock,
-        SweepPass { deps },
+        Schedule::new(UPGRADE_TICK).with_initial_delay(UPGRADE_INITIAL_DELAY),
+        IntervalTick::new(supervisor, deps),
     )
-    .await
 }
 
-/// Spawn the request-status sync: startup delay, then a plain 1-minute
-/// cadence until shutdown.
-pub async fn spawn_sync_loop<S>(
-    sleeper: S,
-    job_rows: JobRegistryRows,
-    db: Db,
-    clock: Arc<dyn Clock>,
-    deps: Arc<SyncDeps>,
-) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
-where
-    S: Sleeper + Clone + Send + 'static,
-{
-    spawn_flow(
+/// Run the request-status sync: a startup delay, then a plain 1-minute
+/// cadence.
+pub fn spawn_sync_loop(supervisor: &Supervisor, deps: Arc<SyncDeps>) -> Result<(), AlreadyRunning> {
+    supervisor.periodic(
         SYNC_JOB,
-        sleeper,
-        None,
-        SYNC_INITIAL_DELAY,
-        SYNC_INTERVAL,
-        job_rows,
-        db,
-        clock,
-        SyncPass { deps },
+        Schedule::new(SYNC_INTERVAL).with_initial_delay(SYNC_INITIAL_DELAY),
+        pass_tick(supervisor, deps, |now, deps| async move {
+            let summary = sync_tick(now, &deps).await;
+            if summary.errors > 0 {
+                tracing::warn!(?summary, "status sync finished with errors");
+            }
+        }),
     )
-    .await
 }
 
-/// Register one loop and spawn its task.
-#[allow(clippy::too_many_arguments)]
-async fn spawn_flow<S, P>(
-    job: &'static str,
-    sleeper: S,
-    jitter: Option<Box<dyn Jitter>>,
-    initial_delay: Duration,
-    interval: Duration,
-    job_rows: JobRegistryRows,
-    db: Db,
-    clock: Arc<dyn Clock>,
-    mut pass: P,
-) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
-where
-    S: Sleeper + Clone + Send + 'static,
-    P: FlowPass + 'static,
-{
-    register_ephemeral_loop(&job_rows, &db, job).await?;
-    let registry = Arc::new(FlowRegistry::new());
-    let task_registry = registry.clone();
-    let task = tokio::spawn(async move {
-        run_loop(
-            &task_registry,
-            job,
-            sleeper,
-            jitter,
-            initial_delay,
-            interval,
-            &job_rows,
-            &db,
-            clock.as_ref(),
-            &mut pass,
-        )
-        .await;
-    });
-    Ok((FlowHandle { name: job, task }, registry))
-}
-
-/// Shared loop body: sleep the startup delay, run one guarded pass, then
-/// repeat on the (optionally jittered) interval until shutdown. Failures
-/// inside a pass are already isolated per item; the loop itself only exits
-/// on shutdown (v2 loop contract).
-#[allow(clippy::too_many_arguments)]
-async fn run_loop<S, P>(
-    registry: &FlowRegistry,
-    job: &'static str,
-    sleeper: S,
-    jitter: Option<Box<dyn Jitter>>,
-    initial_delay: Duration,
-    interval: Duration,
-    job_rows: &JobRegistryRows,
-    db: &Db,
-    clock: &dyn Clock,
-    pass: &mut P,
-) where
-    S: Sleeper,
-    P: FlowPass,
-{
-    if sleeper.sleep(initial_delay).await {
-        let mut state = LoopState::new();
-        loop {
-            let now = clock.now_unix();
-            if registry.begin(job) {
-                pass.run(now, &mut state).await;
-                registry.finish(job);
-                if let Err(error) = job_rows.heartbeat(db, job).await {
-                    tracing::warn!(job, %error, "flow heartbeat failed");
-                }
-            }
-            let wait = jitter
-                .as_deref()
-                .map_or(interval, |jitter| jittered(interval, jitter));
-            if !sleeper.sleep(wait).await {
-                break;
-            }
-        }
-    }
-    if let Err(error) = job_rows.set_job_state(db, job, JobState::Stopped).await {
-        tracing::warn!(job, %error, "flow stop state write failed");
-    }
+/// Run the store prune: a startup delay, then an hourly check that prunes
+/// once the configured interval has passed.
+pub fn spawn_prune_loop(
+    supervisor: &Supervisor,
+    deps: Arc<PruneDeps>,
+) -> Result<(), AlreadyRunning> {
+    supervisor.periodic(
+        PRUNE_JOB,
+        Schedule::new(PRUNE_TICK).with_initial_delay(PRUNE_INITIAL_DELAY),
+        IntervalTick::new(supervisor, deps),
+    )
 }

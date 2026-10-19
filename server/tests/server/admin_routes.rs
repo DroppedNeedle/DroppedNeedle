@@ -796,6 +796,7 @@ async fn queue_stats_shows_every_boot_loop_running() {
         let jobs = stats["jobs"].as_array()?;
         droppedneedle_kernel::jobs::BOOT_JOBS
             .iter()
+            .chain(droppedneedle_acquire::wiring::ACQUIRE_LOOPS)
             .all(|name| {
                 jobs.iter()
                     .any(|job| job["name"] == *name && job["state"] == "running")

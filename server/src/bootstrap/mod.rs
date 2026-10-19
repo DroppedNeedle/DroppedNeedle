@@ -720,12 +720,10 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         concerts,
     )
     .with_events(events.clone());
-    let acquire_loops = state
+    state
         .acquire
-        .spawn_loops(supervisor.job_rows(), db.clone(), stop.clone())
-        .await
-        .map_err(stage("acquire loops"))?;
-    background.extend(acquire_loops);
+        .spawn_loops(&supervisor)
+        .map_err(|error| stage("acquire loops")(error.to_string()))?;
     background.extend(state.library.spawn_loops(stop.clone()));
     // `activity.changed` for every open stream.
     background.push(
