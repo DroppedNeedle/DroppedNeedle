@@ -264,9 +264,9 @@ impl CompatSetup {
     }
 
     /// The mounted compat routers with the shared layers, ready to merge
-    /// outside the `/api` session gate. Case-variant paths and preflights
-    /// never match a route; the app fallbacks redispatch them here via
-    /// [`fallback_redispatch`](crate::http::fallback_redispatch).
+    /// outside the `/api` session gate. The app answers preflights with
+    /// [`preflight`](crate::http::preflight) and fixes path case with
+    /// [`canonicalize_case`](crate::http::canonicalize_case) first.
     pub fn router(&self) -> Router {
         self.router.clone()
     }

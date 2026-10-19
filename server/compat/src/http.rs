@@ -1,10 +1,10 @@
 //! Compat HTTP edge: the Subsonic axum adapter plus the shared layers.
 //!
-//! Layers on the compat routers, outermost first: case-insensitive path
-//! canonicalization (before routing), CORS (`*`, creds off, preflight
-//! short-circuit pre-auth), and rate limits (media and artwork exempt, a
-//! public-IP bucket for unauthenticated routes, principal buckets for
-//! signed-in callers, auth-failure backoff). Auth itself lives inside the
+//! Before routing, [`preflight`] answers preflights pre-auth and
+//! [`canonicalize_case`] fixes path case. Layers on the compat routers,
+//! outermost first: CORS (`*`, creds off), and rate limits (media and
+//! artwork exempt, a public-IP bucket for unauthenticated routes,
+//! principal buckets for signed-in callers, auth-failure backoff). Auth itself lives inside the
 //! protocol paths (Subsonic `dispatch`, Jellyfin handlers), never in the
 //! `/api` session middleware: compat mounts outside it.
 //!
@@ -103,8 +103,8 @@ pub fn compat_templates() -> Vec<&'static str> {
     out
 }
 
-/// Stamp the compat CORS headers on a response. Also used by the app
-/// fallbacks so native 404/405s on compat paths are indistinguishable
+/// Stamp the compat CORS headers on a response. The app also stamps every
+/// answer on a compat path, so native 404/405s there are indistinguishable
 /// from disabled-protocol 404s (no enablement enumeration via CORS).
 pub fn stamp_cors(response: &mut Response) {
     for (name, value) in cors::HEADERS {
@@ -117,49 +117,41 @@ pub fn stamp_cors(response: &mut Response) {
     }
 }
 
-/// Compat fallback redispatch, called from the app's 404/405 fallbacks:
-/// preflights short-circuit 204 (OPTIONS matches no route, so the CORS
-/// layer never sees them), and case-variant compat paths (Feishin posts
-/// lowercase Jellyfin paths) rewrite to registered casing and redispatch
-/// into the compat router. Returns `None` for non-compat paths so the
-/// native fallback answers.
-///
-/// A middleware layer cannot do this: axum layers run after route
-/// matching, so a rewritten URI never re-matches. The fallback only fires
-/// when nothing matched, which is exactly the rewrite case.
-pub async fn fallback_redispatch(router: &axum::Router, request: Request) -> Option<Response> {
-    use tower::ServiceExt as _;
+// The app calls the two functions below before routing. A layer cannot do
+// their work: axum layers run after route matching, so a rewritten URI
+// would never match again, and the app's 405 fallback takes OPTIONS before
+// any compat layer sees it.
 
-    let path = request.uri().path().to_owned();
-    let method = request.method().to_string();
-    if cors::is_preflight(&method, &path) {
-        let mut response = StatusCode::NO_CONTENT.into_response();
-        *response.status_mut() =
-            StatusCode::from_u16(cors::PREFLIGHT_STATUS).unwrap_or(StatusCode::NO_CONTENT);
-        stamp_cors(&mut response);
-        return Some(response);
-    }
-    // Case-insensitive gate: `/SUBSONIC/...` must redispatch exactly
-    // like `/subsonic/...` (the case-sensitive CORS spelling would strand
-    // it on the native 404).
-    if !path_case::is_compat_path(&path) {
+/// The answer to a compat preflight, 204 before auth, or `None` when
+/// `request` is not one.
+pub fn preflight(request: &Request) -> Option<Response> {
+    if !cors::is_preflight(request.method().as_str(), request.uri().path()) {
         return None;
     }
-    let canon = path_case::canonicalize(&compat_templates(), &path)?;
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    *response.status_mut() =
+        StatusCode::from_u16(cors::PREFLIGHT_STATUS).unwrap_or(StatusCode::NO_CONTENT);
+    stamp_cors(&mut response);
+    Some(response)
+}
+
+/// Rewrite a case-variant compat path (Feishin posts lowercase Jellyfin
+/// paths) to its registered casing, keeping the query.
+pub fn canonicalize_case(request: &mut Request) {
+    let Some(canon) = path_case::canonicalize(&compat_templates(), request.uri().path()) else {
+        return;
+    };
     let target = match request.uri().query() {
         Some(query) => format!("{canon}?{query}"),
         None => canon,
     };
-    let uri = target.parse().ok()?;
-    let (mut parts, body) = request.into_parts();
-    parts.uri = uri;
-    let rewritten = Request::from_parts(parts, body);
-    router.clone().oneshot(rewritten).await.ok()
+    if let Ok(uri) = target.parse() {
+        *request.uri_mut() = uri;
+    }
 }
 
 /// CORS layer: every compat response carries `*` with creds off.
-/// Preflights never reach this layer (OPTIONS matches no route); the
-/// fallback redispatch short-circuits them 204 pre-auth.
+/// Preflights never reach this layer: [`preflight`] answers them.
 pub async fn cors_layer(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     stamp_cors(&mut response);

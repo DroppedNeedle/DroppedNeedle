@@ -111,6 +111,29 @@ async fn base_path_moves_everything_and_the_gate_sees_routed_paths() {
     }
 }
 
+/// A browser preflight to an existing route reaches the debug CORS layer:
+/// preflights are handled before routing, where the router's 405 fallback
+/// cannot take them first.
+#[tokio::test]
+async fn debug_cors_answers_native_preflights() {
+    let app = TestApp::start_configured("web-debug-cors", |mut config| {
+        config.debug_cors = true;
+        config
+    })
+    .await;
+    let origin = "http://localhost:5173";
+    let (status, headers, _) = app
+        .raw(
+            "OPTIONS",
+            "/api/v3/auth/sessions",
+            &[("origin", origin), ("access-control-request-method", "GET")],
+            None,
+        )
+        .await;
+    assert!(status.is_success(), "{status}");
+    assert_eq!(text(&headers, "access-control-allow-origin"), Some(origin));
+}
+
 fn text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).map(|value| value.to_str().unwrap())
 }
