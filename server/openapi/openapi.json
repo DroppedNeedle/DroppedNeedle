@@ -28728,7 +28728,7 @@
         "security": [
           {
             "session": [
-              "admin"
+              "user"
             ]
           }
         ]

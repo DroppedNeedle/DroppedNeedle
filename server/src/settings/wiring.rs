@@ -8,9 +8,10 @@
 //! probes behind the verify endpoints, the MusicBrainz lifecycle and the
 //! Library Management service over the same store.
 //!
-//! [`routes`] declares `/api/v3/settings/*`, every handler there taking
-//! `Admin` like v2's whole-router guard, and the per-user section prefs
-//! (`/me/section-prefs`) for any signed-in user.
+//! [`routes`] declares `/api/v3/settings/*`, the plain sections from the
+//! section [`registry`](super::registry) and the rest by hand, every
+//! handler taking `Admin` except the Connect Apps read, plus the per-user
+//! section prefs (`/me/section-prefs`) for any signed-in user.
 
 use std::sync::Arc;
 
@@ -268,14 +269,12 @@ impl SettingsSetup {
     }
 }
 
-/// Every settings route: the admin-only `/settings/*` sections, like v2's
-/// whole-router guard, and the per-user section prefs.
+/// Every settings route: the section registry's, the hand-written
+/// admin-only `/settings/*` routes, and the per-user section prefs.
 pub fn routes() -> Routes<SettingsSetup> {
     use super::handlers as h;
-    Routes::new()
-        .admin(routes!(h::get_preferences, h::put_preferences))
+    super::registry::routes()
         .admin(routes!(h::get_schedule, h::put_schedule))
-        .admin(routes!(h::get_watcher, h::put_watcher))
         .admin(routes!(h::get_library, h::put_library))
         .admin(routes!(h::add_library_path, h::remove_library_path))
         .admin(routes!(h::get_library_policy_tree))
@@ -284,43 +283,22 @@ pub fn routes() -> Routes<SettingsSetup> {
         .admin(routes!(h::get_restorable_library_roots))
         .admin(routes!(h::restore_library_roots))
         .admin(routes!(h::get_library_path_mapping))
-        .admin(routes!(h::get_advanced, h::put_advanced))
         .admin(routes!(h::get_cache_ttls))
-        .admin(routes!(h::get_jellyfin, h::put_jellyfin))
         .admin(routes!(h::verify_jellyfin))
-        .admin(routes!(h::get_navidrome, h::put_navidrome))
         .admin(routes!(h::verify_navidrome))
-        .admin(routes!(h::get_plex, h::put_plex))
         .admin(routes!(h::verify_plex))
         .admin(routes!(h::get_plex_libraries))
-        .admin(routes!(h::get_listenbrainz, h::put_listenbrainz))
         .admin(routes!(h::verify_listenbrainz))
-        .admin(routes!(h::get_youtube, h::put_youtube))
         .admin(routes!(h::verify_youtube))
-        .admin(routes!(h::get_get_it, h::put_get_it))
-        .admin(routes!(
-            h::get_edition_preferences,
-            h::put_edition_preferences
-        ))
-        .admin(routes!(h::get_events, h::put_events))
         .admin(routes!(h::test_ticketmaster))
         .admin(routes!(h::test_skiddle))
-        .admin(routes!(h::get_wrapped, h::put_wrapped))
-        .admin(routes!(h::get_lyrics_settings, h::put_lyrics_settings))
-        .admin(routes!(h::get_primary_source, h::put_primary_source))
-        .admin(routes!(h::get_security, h::put_security))
         .admin(routes!(h::verify_hibp))
-        .admin(routes!(h::get_public_address, h::put_public_address))
-        .admin(routes!(h::get_oidc, h::put_oidc))
         .admin(routes!(h::verify_oidc))
-        .admin(routes!(h::get_lastfm, h::put_lastfm))
-        .admin(routes!(h::get_connect_apps, h::put_connect_apps))
         .admin(routes!(h::get_musicbrainz, h::put_musicbrainz))
         .admin(routes!(h::stage_brainzmash))
         .admin(routes!(h::consent_brainzmash))
         .admin(routes!(h::verify_musicbrainz))
         .admin(routes!(h::activate_brainzmash))
-        .admin(routes!(h::get_slskd, h::put_slskd))
         .admin(routes!(h::test_slskd))
         .admin(routes!(h::get_sabnzbd, h::put_sabnzbd))
         .admin(routes!(h::test_sabnzbd))
@@ -328,13 +306,11 @@ pub fn routes() -> Routes<SettingsSetup> {
         .admin(routes!(h::get_policy, h::put_policy))
         .admin(routes!(h::get_policy_summary))
         .admin(routes!(h::post_policy_impact))
-        .admin(routes!(h::get_wanted, h::put_wanted))
         .admin(routes!(h::list_indexers, h::create_indexer))
         .admin(routes!(h::get_search_backend, h::put_search_backend))
         .admin(routes!(h::update_indexer, h::delete_indexer))
         .admin(routes!(h::reorder_indexers))
         .admin(routes!(h::test_indexer))
-        .admin(routes!(h::get_prowlarr, h::put_prowlarr))
         .admin(routes!(h::test_prowlarr))
         .admin(routes!(
             h::dropped_library_sync,

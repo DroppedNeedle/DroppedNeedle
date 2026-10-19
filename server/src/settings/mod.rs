@@ -10,6 +10,7 @@ pub mod library_policy_service;
 pub mod models;
 pub mod musicbrainz;
 pub mod quality;
+pub mod registry;
 pub mod section_prefs;
 pub mod services;
 pub mod validator;

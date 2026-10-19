@@ -1,7 +1,9 @@
-//! Thin settings handlers. Each answers one route: decode, call the
-//! service, return its typed result. Sections cross the wire as their
-//! config types; secret sections as [`Masked`], so a decrypted section
-//! cannot be returned by accident.
+//! Thin settings handlers for the routes the section registry does not
+//! build: verify probes, sections with their own wire shapes or checks,
+//! indexers, the library policy, Library Management and the section
+//! prefs. Each answers one route: decode, call the service, return its
+//! typed result. Secret values cross the wire as [`Masked`], so a
+//! decrypted section cannot be returned by accident.
 
 use std::collections::BTreeMap;
 
@@ -31,14 +33,12 @@ use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::runtime_config::Masked;
 use droppedneedle_kernel::runtime_config::secret_sections::{
-    AdvancedSettings, EventsSettings, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
+    EventsSettings, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
     NavidromeConnection, NewznabIndexer, OidcConnection, PlexConnection, ProwlarrConnection,
-    SabnzbdConnection, SlskdConnection, WrappedSettings, YouTubeConnection,
+    SabnzbdConnection, SlskdConnection, YouTubeConnection,
 };
 use droppedneedle_kernel::runtime_config::sections::{
-    ConnectApps, DownloadPolicy, EditionPreferences, FilesystemWatcher, GetIt,
-    LibraryManagementProfile, LibraryScanSchedule, LyricsSettings, PrimaryMusicSource,
-    PublicAddress, SecuritySettings, UserPreferences, WantedWatcher,
+    DownloadPolicy, LibraryManagementProfile, LibraryScanSchedule, SecuritySettings,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::management::settings::{ActivationHealth, ChangeImpact, PresetDiff};
@@ -51,42 +51,7 @@ use droppedneedle_library::settings_models::{
 
 type JsonResult<T> = Result<Json<T>, ApiError>;
 
-// --- plain sections ------------------------------------------------------------
-
-/// Read the release-type filters.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/preferences",
-    responses((status = 200, description = "Release-type filters", body = UserPreferences))
-)]
-pub async fn get_preferences(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<UserPreferences> {
-    settings.service().get().map(Json).map_err(ApiError::from)
-}
-
-/// Save the release-type filters.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/preferences",
-    request_body = UserPreferences,
-    responses((status = 200, description = "Saved filters", body = UserPreferences))
-)]
-pub async fn put_preferences(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<UserPreferences>,
-) -> JsonResult<UserPreferences> {
-    settings
-        .service()
-        .save(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
+// --- schedule, security, source choices ------------------------------------------
 
 /// Read the scan schedule plus the server timezone label.
 #[utoipa::path(
@@ -120,257 +85,6 @@ pub async fn put_schedule(
     Ok(Json(settings.with_last_scan(schedule).await))
 }
 
-/// Read the filesystem poller knobs.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/library/watcher",
-    responses((status = 200, description = "Filesystem poller knobs", body = FilesystemWatcher))
-)]
-pub async fn get_watcher(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<FilesystemWatcher> {
-    settings.service().get().map(Json).map_err(ApiError::from)
-}
-
-/// Save the filesystem poller knobs.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/library/watcher",
-    request_body = FilesystemWatcher,
-    responses((status = 200, description = "Saved poller knobs", body = FilesystemWatcher))
-)]
-pub async fn put_watcher(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<FilesystemWatcher>,
-) -> JsonResult<FilesystemWatcher> {
-    settings
-        .service()
-        .save(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the online lyrics lookup switch.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/lyrics",
-    responses((status = 200, description = "Lyrics lookup switch", body = LyricsSettings))
-)]
-pub async fn get_lyrics_settings(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<LyricsSettings> {
-    settings.service().get().map(Json).map_err(ApiError::from)
-}
-
-/// Save the online lyrics lookup switch.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/lyrics",
-    request_body = LyricsSettings,
-    responses((status = 200, description = "Saved switch", body = LyricsSettings))
-)]
-pub async fn put_lyrics_settings(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<LyricsSettings>,
-) -> JsonResult<LyricsSettings> {
-    settings
-        .service()
-        .save(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the primary music source.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/primary-source",
-    responses((status = 200, description = "Primary music source", body = PrimaryMusicSource))
-)]
-pub async fn get_primary_source(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<PrimaryMusicSource> {
-    settings.service().get().map(Json).map_err(ApiError::from)
-}
-
-/// Save the primary music source.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/primary-source",
-    request_body = PrimaryMusicSource,
-    responses((status = 200, description = "Saved source", body = PrimaryMusicSource))
-)]
-pub async fn put_primary_source(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<PrimaryMusicSource>,
-) -> JsonResult<PrimaryMusicSource> {
-    settings
-        .service()
-        .save(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the Last.fm switch and the instance app key pair (masked unless
-/// unset).
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/lastfm",
-    responses((status = 200, description = "Last.fm settings", body = LastFmSettings))
-)]
-pub async fn get_lastfm(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<Masked<LastFmSettings>> {
-    settings
-        .service()
-        .get_masked()
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Save the Last.fm switch and the instance app key pair (a masked value
-/// keeps the stored one).
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/lastfm",
-    request_body = LastFmSettings,
-    responses((status = 200, description = "Saved settings", body = LastFmSettings))
-)]
-pub async fn put_lastfm(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<Masked<LastFmSettings>>,
-) -> JsonResult<Masked<LastFmSettings>> {
-    settings
-        .service()
-        .save_masked(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the store-region settings.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/get-it",
-    responses((status = 200, description = "Store-region settings", body = GetIt))
-)]
-pub async fn get_get_it(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<GetIt> {
-    settings.service().get().map(Json).map_err(ApiError::from)
-}
-
-/// Save the store-region settings.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/get-it",
-    request_body = GetIt,
-    responses((status = 200, description = "Saved settings", body = GetIt))
-)]
-pub async fn put_get_it(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<GetIt>,
-) -> JsonResult<GetIt> {
-    settings
-        .service()
-        .save(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the edition preferences.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/edition-preferences",
-    responses((status = 200, description = "Edition preferences", body = EditionPreferences))
-)]
-pub async fn get_edition_preferences(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<EditionPreferences> {
-    settings.service().get().map(Json).map_err(ApiError::from)
-}
-
-/// Save the edition preferences.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/edition-preferences",
-    request_body = EditionPreferences,
-    responses((status = 200, description = "Saved settings", body = EditionPreferences))
-)]
-pub async fn put_edition_preferences(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<EditionPreferences>,
-) -> JsonResult<EditionPreferences> {
-    settings
-        .service()
-        .save(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the security posture settings.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/security",
-    responses((status = 200, description = "Security settings", body = SecuritySettings))
-)]
-pub async fn get_security(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<SecuritySettings> {
-    settings.service().get().map(Json).map_err(ApiError::from)
-}
-
-/// Save the security posture settings.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/security",
-    request_body = SecuritySettings,
-    responses((status = 200, description = "Saved settings", body = SecuritySettings))
-)]
-pub async fn put_security(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<SecuritySettings>,
-) -> JsonResult<SecuritySettings> {
-    settings
-        .service()
-        .save(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
 /// Check the submitted HIBP hash-list path (must exist and start with
 /// a `40-char-SHA1:count` line).
 #[utoipa::path(
@@ -388,115 +102,6 @@ pub async fn verify_hibp(
     settings
         .service()
         .verify_hibp(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the addresses stated as this server's own.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/public-address",
-    responses((status = 200, description = "Stated public addresses", body = PublicAddress))
-)]
-pub async fn get_public_address(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<PublicAddress> {
-    settings.service().get().map(Json).map_err(ApiError::from)
-}
-
-/// Replace the addresses stated as this server's own. The session origin
-/// check accepts a change from a page at one of them.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/public-address",
-    request_body = PublicAddress,
-    responses(
-        (status = 200, description = "The list as stored", body = PublicAddress),
-        (status = 400, description = "An entry is not an address, or there are more than eight")
-    )
-)]
-pub async fn put_public_address(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<PublicAddress>,
-) -> JsonResult<PublicAddress> {
-    settings
-        .service()
-        .save(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the inbound Connect Apps config.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/connect-apps",
-    responses((status = 200, description = "Connect Apps config", body = ConnectApps))
-)]
-pub async fn get_connect_apps(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<ConnectApps> {
-    settings.service().get().map(Json).map_err(ApiError::from)
-}
-
-/// Save the inbound Connect Apps config.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/connect-apps",
-    request_body = ConnectApps,
-    responses((status = 200, description = "Saved config", body = ConnectApps))
-)]
-pub async fn put_connect_apps(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<ConnectApps>,
-) -> JsonResult<ConnectApps> {
-    settings
-        .service()
-        .save(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the wanted watcher toggles.
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/download-clients/wanted",
-    responses((status = 200, description = "Wanted watcher toggles", body = WantedWatcher))
-)]
-pub async fn get_wanted(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<WantedWatcher> {
-    settings.service().get().map(Json).map_err(ApiError::from)
-}
-
-/// Save the wanted watcher toggles.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/download-clients/wanted",
-    request_body = WantedWatcher,
-    responses((status = 200, description = "Saved toggles", body = WantedWatcher))
-)]
-pub async fn put_wanted(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<WantedWatcher>,
-) -> JsonResult<WantedWatcher> {
-    settings
-        .service()
-        .save(body)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -818,47 +423,7 @@ pub async fn get_library_path_mapping(
         .map_err(ApiError::from)
 }
 
-// --- advanced + cache TTLs ---------------------------------------------------------
-
-/// Read the advanced tunables (AudioDB key masked unless unset).
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/advanced",
-    responses((status = 200, description = "Advanced tunables", body = AdvancedSettings))
-)]
-pub async fn get_advanced(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<Masked<AdvancedSettings>> {
-    settings
-        .service()
-        .get_masked()
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Save the advanced tunables (a masked AudioDB key keeps the stored one,
-/// a blank one stores the free default).
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/advanced",
-    request_body = AdvancedSettings,
-    responses((status = 200, description = "Saved tunables", body = AdvancedSettings))
-)]
-pub async fn put_advanced(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<Masked<AdvancedSettings>>,
-) -> JsonResult<Masked<AdvancedSettings>> {
-    settings
-        .service()
-        .save_masked(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
+// --- cache TTLs ---------------------------------------------------------------------
 
 /// Read the advanced settings the web app reads at start.
 #[utoipa::path(
@@ -878,46 +443,7 @@ pub async fn get_cache_ttls(
         .map_err(ApiError::from)
 }
 
-// --- connections (secret sections) --------------------------------------------------
-
-/// Read the Jellyfin connection (key masked unless unset).
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/jellyfin",
-    responses((status = 200, description = "Jellyfin connection", body = JellyfinConnection))
-)]
-pub async fn get_jellyfin(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<Masked<JellyfinConnection>> {
-    settings
-        .service()
-        .get_masked()
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Save the Jellyfin connection (a masked key keeps the stored one).
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/jellyfin",
-    request_body = JellyfinConnection,
-    responses((status = 200, description = "Saved connection", body = JellyfinConnection))
-)]
-pub async fn put_jellyfin(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<Masked<JellyfinConnection>>,
-) -> JsonResult<Masked<JellyfinConnection>> {
-    settings
-        .service()
-        .save_masked(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
+// --- connection probes ---------------------------------------------------------------
 
 /// Test the submitted Jellyfin values (a masked key tests the stored
 /// one). The user list rides along on success for the admin picker.
@@ -941,45 +467,6 @@ pub async fn verify_jellyfin(
         .map_err(ApiError::from)
 }
 
-/// Read the Navidrome connection (password masked unless unset).
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/navidrome",
-    responses((status = 200, description = "Navidrome connection", body = NavidromeConnection))
-)]
-pub async fn get_navidrome(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<Masked<NavidromeConnection>> {
-    settings
-        .service()
-        .get_masked()
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Save the Navidrome connection (a masked password keeps the stored one).
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/navidrome",
-    request_body = NavidromeConnection,
-    responses((status = 200, description = "Saved connection", body = NavidromeConnection))
-)]
-pub async fn put_navidrome(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<Masked<NavidromeConnection>>,
-) -> JsonResult<Masked<NavidromeConnection>> {
-    settings
-        .service()
-        .save_masked(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
 /// Test the submitted Navidrome values (a masked password tests the
 /// stored one).
 #[utoipa::path(
@@ -997,45 +484,6 @@ pub async fn verify_navidrome(
     settings
         .service()
         .verify_navidrome(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the Plex connection (token masked unless unset).
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/plex",
-    responses((status = 200, description = "Plex connection", body = PlexConnection))
-)]
-pub async fn get_plex(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<Masked<PlexConnection>> {
-    settings
-        .service()
-        .get_masked()
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Save the Plex connection (a masked token keeps the stored one).
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/plex",
-    request_body = PlexConnection,
-    responses((status = 200, description = "Saved connection", body = PlexConnection))
-)]
-pub async fn put_plex(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<Masked<PlexConnection>>,
-) -> JsonResult<Masked<PlexConnection>> {
-    settings
-        .service()
-        .save_masked(body)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -1087,45 +535,6 @@ pub async fn get_plex_libraries(
         .map_err(ApiError::from)
 }
 
-/// Read the ListenBrainz connection (token masked unless unset).
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/listenbrainz",
-    responses((status = 200, description = "ListenBrainz connection", body = ListenBrainzConnection))
-)]
-pub async fn get_listenbrainz(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<Masked<ListenBrainzConnection>> {
-    settings
-        .service()
-        .get_masked()
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Save the ListenBrainz connection (a masked token keeps the stored one).
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/listenbrainz",
-    request_body = ListenBrainzConnection,
-    responses((status = 200, description = "Saved connection", body = ListenBrainzConnection))
-)]
-pub async fn put_listenbrainz(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<Masked<ListenBrainzConnection>>,
-) -> JsonResult<Masked<ListenBrainzConnection>> {
-    settings
-        .service()
-        .save_masked(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
 /// Test the submitted ListenBrainz values (a masked token tests the
 /// stored one). Rate limiting answers 429.
 #[utoipa::path(
@@ -1151,45 +560,6 @@ pub async fn verify_listenbrainz(
         .map_err(ApiError::from)
 }
 
-/// Read the YouTube connection (key masked unless unset).
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/youtube",
-    responses((status = 200, description = "YouTube connection", body = YouTubeConnection))
-)]
-pub async fn get_youtube(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<Masked<YouTubeConnection>> {
-    settings
-        .service()
-        .get_masked()
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Save the YouTube connection (a masked key keeps the stored one).
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/youtube",
-    request_body = YouTubeConnection,
-    responses((status = 200, description = "Saved connection", body = YouTubeConnection))
-)]
-pub async fn put_youtube(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<Masked<YouTubeConnection>>,
-) -> JsonResult<Masked<YouTubeConnection>> {
-    settings
-        .service()
-        .save_masked(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
 /// Test the submitted YouTube key (a masked key tests the stored one).
 #[utoipa::path(
     post,
@@ -1206,46 +576,6 @@ pub async fn verify_youtube(
     settings
         .service()
         .verify_youtube(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the events sources (keys masked unless unset).
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/events",
-    responses((status = 200, description = "Events sources", body = EventsSettings))
-)]
-pub async fn get_events(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<Masked<EventsSettings>> {
-    settings
-        .service()
-        .get_masked()
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Save the events sources (masked keys keep the stored ones) and kick
-/// the sweep.
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/events",
-    request_body = EventsSettings,
-    responses((status = 200, description = "Saved sources", body = EventsSettings))
-)]
-pub async fn put_events(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<Masked<EventsSettings>>,
-) -> JsonResult<Masked<EventsSettings>> {
-    settings
-        .service()
-        .save_masked(body)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -1293,84 +623,6 @@ pub async fn test_skiddle(
         .map_err(ApiError::from)
 }
 
-/// Read the wrapped settings (key masked unless unset).
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/wrapped",
-    responses((status = 200, description = "Wrapped settings", body = WrappedSettings))
-)]
-pub async fn get_wrapped(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<Masked<WrappedSettings>> {
-    settings
-        .service()
-        .get_masked()
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Save the wrapped settings (a masked key keeps the stored one).
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/wrapped",
-    request_body = WrappedSettings,
-    responses((status = 200, description = "Saved settings", body = WrappedSettings))
-)]
-pub async fn put_wrapped(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<Masked<WrappedSettings>>,
-) -> JsonResult<Masked<WrappedSettings>> {
-    settings
-        .service()
-        .save_masked(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the OIDC connection (secret masked unless unset).
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/oidc",
-    responses((status = 200, description = "OIDC connection", body = OidcConnection))
-)]
-pub async fn get_oidc(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<Masked<OidcConnection>> {
-    settings
-        .service()
-        .get_masked()
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Save the OIDC connection (a masked secret keeps the stored one).
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/oidc",
-    request_body = OidcConnection,
-    responses((status = 200, description = "Saved connection", body = OidcConnection))
-)]
-pub async fn put_oidc(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<Masked<OidcConnection>>,
-) -> JsonResult<Masked<OidcConnection>> {
-    settings
-        .service()
-        .save_masked(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
 /// Test the submitted OIDC issuer (fetches its discovery document).
 #[utoipa::path(
     post,
@@ -1387,45 +639,6 @@ pub async fn verify_oidc(
     settings
         .service()
         .verify_oidc(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the slskd connection (key masked unless unset).
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/download-client/config",
-    responses((status = 200, description = "slskd connection", body = SlskdConnection))
-)]
-pub async fn get_slskd(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<Masked<SlskdConnection>> {
-    settings
-        .service()
-        .get_masked()
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Save the slskd connection (a masked key keeps the stored one).
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/download-client/config",
-    request_body = SlskdConnection,
-    responses((status = 200, description = "Saved connection", body = SlskdConnection))
-)]
-pub async fn put_slskd(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<Masked<SlskdConnection>>,
-) -> JsonResult<Masked<SlskdConnection>> {
-    settings
-        .service()
-        .save_masked(body)
         .await
         .map(Json)
         .map_err(ApiError::from)
@@ -1508,45 +721,6 @@ pub async fn test_sabnzbd(
     settings
         .service()
         .verify_sabnzbd(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Read the Prowlarr connection (key masked unless unset).
-#[utoipa::path(
-    get,
-    tag = "settings",
-    path = "/api/v3/settings/prowlarr/config",
-    responses((status = 200, description = "Prowlarr connection", body = ProwlarrConnection))
-)]
-pub async fn get_prowlarr(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-) -> JsonResult<Masked<ProwlarrConnection>> {
-    settings
-        .service()
-        .get_masked()
-        .map(Json)
-        .map_err(ApiError::from)
-}
-
-/// Save the Prowlarr connection (a masked key keeps the stored one).
-#[utoipa::path(
-    put,
-    tag = "settings",
-    path = "/api/v3/settings/prowlarr/config",
-    request_body = ProwlarrConnection,
-    responses((status = 200, description = "Saved connection", body = ProwlarrConnection))
-)]
-pub async fn put_prowlarr(
-    State(settings): State<SettingsSetup>,
-    _caller: Admin,
-    ValidJson(body): ValidJson<Masked<ProwlarrConnection>>,
-) -> JsonResult<Masked<ProwlarrConnection>> {
-    settings
-        .service()
-        .save_masked(body)
         .await
         .map(Json)
         .map_err(ApiError::from)
