@@ -10,7 +10,8 @@ use super::store::{self, PROVIDER};
 use crate::identify::models::CandidateEvidence;
 
 /// Where an album's edition stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum EditionState {
     /// A person chose it; nothing automatic changes it.
     Chosen,
@@ -24,20 +25,9 @@ pub enum EditionState {
     Unidentified,
 }
 
-impl EditionState {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Chosen => "chosen",
-            Self::Confirmed => "confirmed",
-            Self::Unconfirmed => "unconfirmed",
-            Self::Unmatched => "unmatched",
-            Self::Unidentified => "unidentified",
-        }
-    }
-}
-
 /// What kind of edition the album has.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum EditionKind {
     /// A MusicBrainz release.
     Release,
@@ -47,17 +37,6 @@ pub enum EditionKind {
     GroupOnly,
     /// No edition at all.
     None,
-}
-
-impl EditionKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Release => "release",
-            Self::Custom => "custom",
-            Self::GroupOnly => "group_only",
-            Self::None => "none",
-        }
-    }
 }
 
 /// One album's edition, with the reason behind it.

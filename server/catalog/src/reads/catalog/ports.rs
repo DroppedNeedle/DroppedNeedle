@@ -3,6 +3,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use crate::reads::collections::state::AutoDownloadState;
+
 /// Boxed future for dyn-compatible port methods.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -13,9 +15,8 @@ pub struct FollowState {
     pub followed: bool,
     /// Whether the user wants new releases downloaded on their own.
     pub auto_download: bool,
-    /// Approval state of that ask: none, pending, approved, rejected or
-    /// revoked.
-    pub auto_download_state: String,
+    /// Approval state of that ask.
+    pub auto_download_state: AutoDownloadState,
 }
 
 /// Where the artist header reads the caller's follow state. The follow

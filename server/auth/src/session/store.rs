@@ -15,7 +15,7 @@ use thiserror::Error;
 use crate::users::roles::Role;
 
 /// Session kind, v2 `session_kind` values kept verbatim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionKind {
     /// Browser cookie session or Bearer-mode login session; may mint device sessions.

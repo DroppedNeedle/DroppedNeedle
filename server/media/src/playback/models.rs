@@ -220,7 +220,7 @@ pub struct NowPlayingHeartbeat {
 }
 
 /// Query for clearing presence: which device stopped.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NowPlayingDeleteQuery {
     /// Device slug (`web` default, the v2 spelling).
     #[serde(default)]

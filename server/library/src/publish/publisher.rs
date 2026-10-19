@@ -641,12 +641,23 @@ impl CrashPoint {
 }
 
 /// Outcome of one bundle publication.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum PublishOutcome {
     /// Committed and cleaned.
     Committed,
     /// Committed, but cleanup stays pending and retryable.
     CleanupPending,
+}
+
+impl PublishOutcome {
+    /// Wire name, the same as the serde form.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Committed => "committed",
+            Self::CleanupPending => "cleanup_pending",
+        }
+    }
 }
 
 /// Staged publisher. It holds the database and no connection of its own:

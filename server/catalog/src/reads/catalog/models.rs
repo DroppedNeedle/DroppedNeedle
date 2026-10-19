@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use crate::reads::collections::state::AutoDownloadState;
+
 /// How one optional source fared while a page was built. Sources that
 /// answered normally are left out of the map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -129,9 +131,8 @@ pub struct ArtistInfo {
     pub followed: bool,
     /// Whether the caller asked for new releases to download on their own.
     pub auto_download: bool,
-    /// Approval state of that ask: none, pending, approved, rejected or
-    /// revoked.
-    pub auto_download_state: String,
+    /// Approval state of that ask.
+    pub auto_download_state: AutoDownloadState,
     /// Where the page came from.
     pub source: CatalogSource,
     /// Sources that degraded while building the page.

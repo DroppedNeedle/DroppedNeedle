@@ -1130,7 +1130,7 @@
           "admin"
         ],
         "summary": "One user's quota standing.",
-        "operationId": "get_quota",
+        "operationId": "get_user_quota",
         "parameters": [
           {
             "name": "id",
@@ -7198,7 +7198,7 @@
           "events"
         ],
         "summary": "Live events for the signed-in user.",
-        "description": "Event names: `activity.changed` and `snapshot` (now playing) go to\neveryone; `wanted_new_candidates`, `wanted_auto_dispatched`,\n`wanted_fulfilled`, `auto_download_enqueued`, `request_imported`,\n`playlist_imported`, `drop_import_updated`,\n`personal_mix_refreshed`, `concerts_new` and `search_job_updated` go\nonly to the user they concern. Each `data:` line is one JSON payload (see the `ActivityChanged`,\n`NowPlayingSnapshot`, `WantedNotice`, `AutoDownloadEnqueued`,\n`RequestImported`, `PlaylistImported`, `DropImportUpdated`,\n`PersonalMixRefreshed`, `ConcertsNew` and\n`SearchJobUpdated` schemas).",
+        "description": "Each SSE frame is one `StreamEvent`: its `event:` line is the member's\n`event` and its `data:` line the member's `data` as JSON. Some events\ngo to everyone, the rest only to the user they concern.",
         "operationId": "events_stream",
         "responses": {
           "200": {
@@ -7206,7 +7206,7 @@
             "content": {
               "text/event-stream": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/StreamEvent"
                 }
               }
             }
@@ -34024,7 +34024,7 @@
           "youtube"
         ],
         "summary": "Today's YouTube search budget. A zero budget while search is off.",
-        "operationId": "get_quota",
+        "operationId": "get_youtube_quota",
         "responses": {
           "200": {
             "description": "Today's budget",
@@ -35947,7 +35947,7 @@
             "description": "Run id (fresh or merged into a waiting run)."
           },
           "state": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanState",
             "description": "Run state after the request."
           }
         }
@@ -37039,8 +37039,8 @@
             "description": "Whether the caller asked for new releases to download on their own."
           },
           "auto_download_state": {
-            "type": "string",
-            "description": "Approval state of that ask: none, pending, approved, rejected or\nrevoked."
+            "$ref": "#/components/schemas/AutoDownloadState",
+            "description": "Approval state of that ask."
           },
           "country": {
             "type": [
@@ -37978,6 +37978,17 @@
           }
         }
       },
+      "AutoDownloadState": {
+        "type": "string",
+        "description": "Auto-download state of one follow, as the routes show it.",
+        "enum": [
+          "none",
+          "pending",
+          "approved",
+          "rejected",
+          "revoked"
+        ]
+      },
       "AutomaticEditionUndoBody": {
         "type": "object",
         "description": "Undo the album's last automatic edition.",
@@ -38074,24 +38085,6 @@
             "items": {
               "type": "string"
             }
-          }
-        }
-      },
-      "AvatarUpload": {
-        "type": "object",
-        "description": "Avatar upload. JSON with base64 bytes: the server has no multipart\nsupport, and one JSON shape keeps every client on the same parser.",
-        "required": [
-          "content_type",
-          "image_base64"
-        ],
-        "properties": {
-          "content_type": {
-            "type": "string",
-            "description": "`image/jpeg`, `image/png`, `image/webp`, or `image/gif`."
-          },
-          "image_base64": {
-            "type": "string",
-            "description": "Base64 image bytes, at most 5 MiB decoded."
           }
         }
       },
@@ -38248,8 +38241,8 @@
             "description": "Restore operation bundle id."
           },
           "outcome": {
-            "type": "string",
-            "description": "`committed` or `cleanup_pending`."
+            "$ref": "#/components/schemas/PublishOutcome",
+            "description": "Whether cleanup finished."
           },
           "restored": {
             "type": "array",
@@ -39301,6 +39294,14 @@
           }
         }
       },
+      "CheckpointMode": {
+        "type": "string",
+        "description": "Which checkpoint mode produced an outcome record.",
+        "enum": [
+          "passive",
+          "truncate"
+        ]
+      },
       "CheckpointView": {
         "type": "object",
         "description": "One database checkpoint pass, for the queue stats.",
@@ -39336,8 +39337,8 @@
             "description": "`CHECKPOINT_FAILED` when the pass failed on something other than a\nlock. The cause is in the server log."
           },
           "mode": {
-            "type": "string",
-            "description": "`passive` or `truncate`."
+            "$ref": "#/components/schemas/CheckpointMode",
+            "description": "Mode that ran."
           },
           "suspended": {
             "type": "boolean",
@@ -40901,8 +40902,8 @@
             "description": "True when the deck is older than its TTL."
           },
           "status": {
-            "type": "string",
-            "description": "`ready`, `building`, `stale`, or `error`."
+            "$ref": "#/components/schemas/QueueBuildStatus",
+            "description": "Build state. A saved queue past its age is `ready` with `stale` set."
           }
         }
       },
@@ -41683,7 +41684,7 @@
             "format": "int64"
           },
           "status": {
-            "type": "string"
+            "$ref": "#/components/schemas/TaskStatus"
           },
           "task_id": {
             "type": "string"
@@ -42398,8 +42399,7 @@
             ]
           },
           "status": {
-            "type": "string",
-            "description": "`queued`, `downloading`, `processing`, `completed`, `partial`,\n`failed` or `cancelled`."
+            "$ref": "#/components/schemas/TaskStatus"
           },
           "total_size_bytes": {
             "type": [
@@ -43053,6 +43053,16 @@
           }
         }
       },
+      "EditionKind": {
+        "type": "string",
+        "description": "What kind of edition the album has.",
+        "enum": [
+          "release",
+          "custom",
+          "group_only",
+          "none"
+        ]
+      },
       "EditionPlacingView": {
         "type": "object",
         "description": "The chosen edition's files are still being placed on it.",
@@ -43357,6 +43367,17 @@
           }
         }
       },
+      "EditionState": {
+        "type": "string",
+        "description": "Where an album's edition stands.",
+        "enum": [
+          "chosen",
+          "confirmed",
+          "unconfirmed",
+          "unmatched",
+          "unidentified"
+        ]
+      },
       "EditionStatusView": {
         "type": "object",
         "description": "Where one album's edition stands.",
@@ -43399,7 +43420,7 @@
             "description": "Who chose the edition, for a chosen one."
           },
           "edition_kind": {
-            "type": "string",
+            "$ref": "#/components/schemas/EditionKind",
             "description": "`release` (a MusicBrainz release), `custom` (a custom edition),\n`group_only` (a release group with no release chosen) or `none`."
           },
           "files_by_itself": {
@@ -43443,7 +43464,7 @@
             ]
           },
           "state": {
-            "type": "string",
+            "$ref": "#/components/schemas/EditionState",
             "description": "`chosen` (by a person), `confirmed`, `unconfirmed` (a best guess),\n`unmatched` (keeps its own tags), or `unidentified`."
           },
           "undo_available": {
@@ -43937,19 +43958,6 @@
           }
         }
       },
-      "FavoriteQuery": {
-        "type": "object",
-        "description": "Favorite query: optional kind filter.",
-        "properties": {
-          "kind": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Kind filter: album, artist, or track."
-          }
-        }
-      },
       "FavoriteStatusResponse": {
         "type": "object",
         "description": "Favorite-status answer.",
@@ -44257,8 +44265,8 @@
             "description": "Whether auto-download is wanted."
           },
           "auto_download_state": {
-            "type": "string",
-            "description": "Approval state: none, pending, approved, rejected or revoked."
+            "$ref": "#/components/schemas/AutoDownloadState",
+            "description": "Approval state of the auto-download ask."
           },
           "followed": {
             "type": "boolean",
@@ -44286,8 +44294,8 @@
             "description": "Whether auto-download is wanted."
           },
           "auto_download_state": {
-            "type": "string",
-            "description": "Approval state: none, pending, approved, rejected or revoked."
+            "$ref": "#/components/schemas/AutoDownloadState",
+            "description": "Approval state of the auto-download ask."
           },
           "followed_at": {
             "type": "integer",
@@ -45327,51 +45335,6 @@
           }
         }
       },
-      "HistoryQuery": {
-        "type": "object",
-        "description": "History paging and filter query.",
-        "properties": {
-          "kind": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`album` or `track`; unset means both."
-          },
-          "page": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "description": "1-based page.",
-            "minimum": 0
-          },
-          "page_size": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32",
-            "description": "Rows per page (1..=100).",
-            "minimum": 0
-          },
-          "sort": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`newest` (default), `oldest`, or `status`."
-          },
-          "status": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Status filter."
-          }
-        }
-      },
       "HistoryResponse": {
         "type": "object",
         "description": "Paged history list.",
@@ -45823,6 +45786,17 @@
           }
         }
       },
+      "IdentifyJobState": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "deferred",
+          "succeeded",
+          "failed",
+          "attention"
+        ]
+      },
       "IdentifyResponse": {
         "type": "object",
         "description": "Enqueue answer.",
@@ -45841,7 +45815,7 @@
             "description": "Job id."
           },
           "state": {
-            "type": "string",
+            "$ref": "#/components/schemas/IdentifyJobState",
             "description": "Job state after enqueue."
           }
         }
@@ -46483,21 +46457,8 @@
             "description": "Loop name."
           },
           "state": {
-            "type": "string",
-            "description": "`idle`, `running`, `stopped`, or `failed`."
-          }
-        }
-      },
-      "KindQuery": {
-        "type": "object",
-        "description": "`kind` query shared by the per-request mutations.",
-        "properties": {
-          "kind": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`album` (default) or `track`."
+            "$ref": "#/components/schemas/LoopState",
+            "description": "Liveness now."
           }
         }
       },
@@ -49114,6 +49075,15 @@
           }
         }
       },
+      "LoopState": {
+        "type": "string",
+        "description": "Liveness of a loop row. The table's CHECK still allows `idle`, which\nnothing writes since every loop runs on the supervisor.",
+        "enum": [
+          "running",
+          "stopped",
+          "failed"
+        ]
+      },
       "LyricLine": {
         "type": "object",
         "description": "One lyric line.",
@@ -49265,8 +49235,8 @@
             "description": "Applied files."
           },
           "outcome": {
-            "type": "string",
-            "description": "`committed` or `cleanup_pending`."
+            "$ref": "#/components/schemas/PublishOutcome",
+            "description": "Whether cleanup finished."
           }
         }
       },
@@ -49457,8 +49427,8 @@
             "description": "Undo operation bundle id."
           },
           "outcome": {
-            "type": "string",
-            "description": "`committed` or `cleanup_pending`."
+            "$ref": "#/components/schemas/PublishOutcome",
+            "description": "Whether cleanup finished."
           },
           "restored": {
             "type": "array",
@@ -50080,8 +50050,8 @@
             }
           },
           "state": {
-            "type": "string",
-            "description": "The operation state: `queued`, `running`, `paused`, `ready`,\n`succeeded`, `failed`, `cancelled`, or `stopped`."
+            "$ref": "#/components/schemas/OperationState",
+            "description": "The operation state."
           },
           "succeeded_count": {
             "type": "integer",
@@ -52170,23 +52140,10 @@
             "format": "int64"
           },
           "status": {
-            "type": "string"
+            "$ref": "#/components/schemas/TaskStatus"
           },
           "success": {
             "type": "boolean"
-          }
-        }
-      },
-      "NowPlayingDeleteQuery": {
-        "type": "object",
-        "description": "Query for clearing presence: which device stopped.",
-        "properties": {
-          "device": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Device slug (`web` default, the v2 spelling)."
           }
         }
       },
@@ -52348,24 +52305,6 @@
           "authorize_url": {
             "type": "string",
             "description": "IdP authorize URL (PKCE + state baked in)."
-          }
-        }
-      },
-      "OidcCallbackQuery": {
-        "type": "object",
-        "description": "OIDC callback query (IdP redirect target).",
-        "required": [
-          "code",
-          "state"
-        ],
-        "properties": {
-          "code": {
-            "type": "string",
-            "description": "Authorization code from the IdP."
-          },
-          "state": {
-            "type": "string",
-            "description": "State echoed from the authorize step."
           }
         }
       },
@@ -52588,6 +52527,20 @@
           }
         }
       },
+      "OperationState": {
+        "type": "string",
+        "description": "Where a job is in its life.",
+        "enum": [
+          "queued",
+          "running",
+          "paused",
+          "ready",
+          "succeeded",
+          "failed",
+          "cancelled",
+          "stopped"
+        ]
+      },
       "OperationTrackEvidenceView": {
         "type": "object",
         "description": "One local file against one candidate release.",
@@ -52744,8 +52697,8 @@
             "format": "int64"
           },
           "state": {
-            "type": "string",
-            "description": "`queued`, `running`, `paused`, `ready`, `succeeded`, `failed`,\n`cancelled`, or `stopped`."
+            "$ref": "#/components/schemas/OperationState",
+            "description": "Where the job is in its life."
           },
           "succeeded_count": {
             "type": "integer",
@@ -55082,6 +55035,14 @@
           }
         }
       },
+      "PublishOutcome": {
+        "type": "string",
+        "description": "Outcome of one bundle publication.",
+        "enum": [
+          "committed",
+          "cleanup_pending"
+        ]
+      },
       "PurchaseKind": {
         "type": "string",
         "description": "What kind of purchase a link offers.",
@@ -55294,6 +55255,16 @@
           }
         }
       },
+      "QueueBuildStatus": {
+        "type": "string",
+        "description": "Where one user's queue build stands.",
+        "enum": [
+          "idle",
+          "building",
+          "ready",
+          "error"
+        ]
+      },
       "QueueDepthView": {
         "type": "object",
         "description": "How deep one job kind's queue is.",
@@ -55452,8 +55423,8 @@
             "description": "True when the deck is older than its TTL."
           },
           "status": {
-            "type": "string",
-            "description": "`ready`, `building`, `stale`, or `error`."
+            "$ref": "#/components/schemas/QueueBuildStatus",
+            "description": "Build state after the trigger."
           }
         }
       },
@@ -55983,6 +55954,15 @@
           }
         }
       },
+      "RatedKind": {
+        "type": "string",
+        "description": "What a rating is on: the table's `item_kind` values.",
+        "enum": [
+          "artist",
+          "album",
+          "track"
+        ]
+      },
       "RatingLookupBody": {
         "type": "object",
         "description": "Rating-lookup body: local ids of each kind, at most 1000 of each.",
@@ -56071,7 +56051,7 @@
             "description": "The id the rating is stored under: the item's current id, which\ndiffers from the one sent after a merge."
           },
           "kind": {
-            "type": "string",
+            "$ref": "#/components/schemas/RatedKind",
             "description": "Rated kind."
           },
           "rating": {
@@ -56272,8 +56252,8 @@
             "description": "Why the import did not complete, when it did not."
           },
           "status": {
-            "type": "string",
-            "description": "Task status after the import (`completed`, `partial`, `failed`)."
+            "$ref": "#/components/schemas/TaskStatus",
+            "description": "Task status after the import."
           },
           "success": {
             "type": "boolean",
@@ -57959,8 +57939,8 @@
             "description": "Picked candidate quality from the linked task, once picked."
           },
           "request_kind": {
-            "type": "string",
-            "description": "`album` or `track`."
+            "$ref": "#/components/schemas/RequestKind",
+            "description": "Whole album or one track."
           },
           "requested_at": {
             "type": "integer",
@@ -58071,6 +58051,14 @@
             "description": "Release year."
           }
         }
+      },
+      "RequestKind": {
+        "type": "string",
+        "description": "What kind of thing a request asks for.",
+        "enum": [
+          "album",
+          "track"
+        ]
       },
       "RequestStatusMessage": {
         "type": "object",
@@ -58758,6 +58746,16 @@
           }
         }
       },
+      "ReviewState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "approved",
+          "rejected",
+          "dismissed",
+          "excluded"
+        ]
+      },
       "ReviewView": {
         "type": "object",
         "description": "One identification review and the album it is about.",
@@ -58830,8 +58828,8 @@
             "description": "Selected candidate key, once approved."
           },
           "state": {
-            "type": "string",
-            "description": "`pending`, `approved`, `rejected`, `dismissed` or `excluded`."
+            "$ref": "#/components/schemas/ReviewState",
+            "description": "Review state."
           },
           "updated_ms": {
             "type": "integer",
@@ -59327,7 +59325,7 @@
             "type": "string"
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/ScanState"
           },
           "stream_revision": {
             "type": "integer",
@@ -59425,6 +59423,15 @@
           "daily"
         ]
       },
+      "ScanKind": {
+        "type": "string",
+        "description": "Scan kind. `rescan_files` re-reads every in-policy file even when its\nstat revision is unchanged; `policy_reconcile` walks but skips tag reads.",
+        "enum": [
+          "incremental",
+          "rescan_files",
+          "policy_reconcile"
+        ]
+      },
       "ScanKindBody": {
         "type": "string",
         "description": "Scan kind a caller can ask for.",
@@ -59432,6 +59439,16 @@
           "incremental",
           "rescan_files",
           "policy_reconcile"
+        ]
+      },
+      "ScanPhase": {
+        "type": "string",
+        "description": "Worker phase. Spelling matches v2 `ScanPhase` exactly.",
+        "enum": [
+          "queued",
+          "discovering",
+          "indexing",
+          "reconciling"
         ]
       },
       "ScanResponse": {
@@ -59452,7 +59469,7 @@
             "description": "Run id (fresh or coalesced)."
           },
           "state": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanState",
             "description": "Run state after the request."
           }
         }
@@ -59518,8 +59535,8 @@
             "description": "What happened, in plain words."
           },
           "phase": {
-            "type": "string",
-            "description": "`discovering`, `indexing` or `reconciling`."
+            "$ref": "#/components/schemas/ScanPhase",
+            "description": "Phase the file failed in."
           },
           "recorded_at": {
             "type": "number",
@@ -59615,11 +59632,15 @@
         ],
         "properties": {
           "conflicting_kind": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Kind of the run in the way, on a conflict."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScanKind",
+                "description": "Kind of the run in the way, on a conflict."
+              }
+            ]
           },
           "disposition": {
             "$ref": "#/components/schemas/ScanDisposition"
@@ -59642,7 +59663,7 @@
             "description": "The run that will do the work."
           },
           "state": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanState",
             "description": "That run's state."
           }
         }
@@ -59698,11 +59719,11 @@
             "description": "Run id."
           },
           "kind": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanKind",
             "description": "Run kind."
           },
           "phase": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanPhase",
             "description": "Current phase."
           },
           "phase_timings": {
@@ -59733,11 +59754,15 @@
             "description": "Pending control: `none`, `pause` or `stop`."
           },
           "resume_phase": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Phase a paused run picks up from."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScanPhase",
+                "description": "Phase a paused run picks up from."
+              }
+            ]
           },
           "row_revision": {
             "type": "integer",
@@ -59754,7 +59779,7 @@
             "description": "Start time, when started."
           },
           "state": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanState",
             "description": "Run state."
           },
           "terminal_action": {
@@ -59843,6 +59868,23 @@
             "description": "Root id."
           }
         }
+      },
+      "ScanState": {
+        "type": "string",
+        "description": "Durable run state. Spelling matches v2 `ScanState` exactly.",
+        "enum": [
+          "queued",
+          "discovering",
+          "indexing",
+          "reconciling",
+          "pausing",
+          "paused",
+          "stopping",
+          "completed",
+          "cancelled",
+          "superseded_policy_changed",
+          "failed"
+        ]
       },
       "ScrobbleNowPlayingRequest": {
         "type": "object",
@@ -60989,6 +61031,14 @@
           }
         }
       },
+      "SessionKind": {
+        "type": "string",
+        "description": "Session kind, v2 `session_kind` values kept verbatim.",
+        "enum": [
+          "standard",
+          "companion"
+        ]
+      },
       "SessionListResponse": {
         "type": "object",
         "description": "Own sessions.",
@@ -61037,8 +61087,8 @@
             "description": "Session id."
           },
           "kind": {
-            "type": "string",
-            "description": "`standard` or `companion`."
+            "$ref": "#/components/schemas/SessionKind",
+            "description": "Browser or companion-device session."
           },
           "label": {
             "type": "string",
@@ -61894,6 +61944,311 @@
           }
         }
       },
+      "StreamEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "To everyone: library activity revisions moved.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ActivityChanged",
+                "description": "To everyone: library activity revisions moved."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "activity.changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To everyone: live listening sessions.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/NowPlayingSnapshot",
+                "description": "To everyone: live listening sessions."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "snapshot"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To everyone: the download queue moved.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/DownloadsChanged",
+                "description": "To everyone: the download queue moved."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "downloads.changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To everyone: library image precache progress.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/CacheSyncProgress",
+                "description": "To everyone: library image precache progress."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "cache.sync"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To one user: the wanted watcher found new candidates.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/WantedNotice",
+                "description": "To one user: the wanted watcher found new candidates."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "wanted_new_candidates"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To one user: the wanted watcher started a download.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/WantedNotice",
+                "description": "To one user: the wanted watcher started a download."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "wanted_auto_dispatched"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To one user: a wanted album reached the library.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/WantedNotice",
+                "description": "To one user: a wanted album reached the library."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "wanted_fulfilled"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To one user: a followed artist's new release was queued.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/AutoDownloadEnqueued",
+                "description": "To one user: a followed artist's new release was queued."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "auto_download_enqueued"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To one user: someone else imported an album they requested.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/RequestImported",
+                "description": "To one user: someone else imported an album they requested."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "request_imported"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To one user: an imported playlist has its tracks.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PlaylistImported",
+                "description": "To one user: an imported playlist has its tracks."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "playlist_imported"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To one user: their drop-import job moved.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/DropImportUpdated",
+                "description": "To one user: their drop-import job moved."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "drop_import_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To one user: their weekly mix was rebuilt, or could not be.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PersonalMixRefreshed",
+                "description": "To one user: their weekly mix was rebuilt, or could not be."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "personal_mix_refreshed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To one user: new concerts for an artist they follow.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ConcertsNew",
+                "description": "To one user: new concerts for an artist they follow."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "concerts_new"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To one user: one of their downloads moved.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/DownloadProgress",
+                "description": "To one user: one of their downloads moved."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "download_progress"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "To one user: one of their manual album searches moved.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/SearchJobUpdated",
+                "description": "To one user: one of their manual album searches moved."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "search_job_updated"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "The events the stream sends, keyed by name, for the API document. On\nthe wire each one is an SSE frame whose `event:` line is `event` here\nand whose `data:` line is `data` as JSON. The hub encodes frames itself\n(`Frame::encode`); this type only describes them."
+      },
       "SuggestResponse": {
         "type": "object",
         "description": "Typeahead response: one merged list across buckets, best first.",
@@ -62235,6 +62590,19 @@
             "default": ""
           }
         }
+      },
+      "TaskStatus": {
+        "type": "string",
+        "description": "Persisted download-task status. Wire strings match v2 byte for byte.",
+        "enum": [
+          "queued",
+          "downloading",
+          "processing",
+          "completed",
+          "partial",
+          "failed",
+          "cancelled"
+        ]
       },
       "TestConnectionResponse": {
         "type": "object",
@@ -63809,7 +64177,7 @@
             ]
           },
           "state": {
-            "type": "string",
+            "$ref": "#/components/schemas/EditionState",
             "description": "`unconfirmed` or `unmatched`."
           },
           "title": {

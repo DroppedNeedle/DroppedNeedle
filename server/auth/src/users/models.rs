@@ -210,23 +210,13 @@ pub struct LocalPasswordSet {
     pub new_password: String,
 }
 
-/// Avatar upload. JSON with base64 bytes: the server has no multipart
-/// support, and one JSON shape keeps every client on the same parser.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct AvatarUpload {
-    /// `image/jpeg`, `image/png`, `image/webp`, or `image/gif`.
-    pub content_type: String,
-    /// Base64 image bytes, at most 5 MiB decoded.
-    pub image_base64: String,
-}
-
 /// One session row for the sessions UI.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub struct SessionView {
     /// Session id.
     pub id: String,
-    /// `standard` or `companion`.
-    pub kind: String,
+    /// Browser or companion-device session.
+    pub kind: SessionKind,
     /// Companion device name, or the browser user agent.
     pub label: String,
     /// Issue time, unix seconds.

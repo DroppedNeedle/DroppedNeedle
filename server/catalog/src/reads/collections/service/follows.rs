@@ -68,13 +68,13 @@ fn status(artist_mbid: &str, row: Option<&FollowRow>) -> FollowStatusResponse {
             artist_mbid: artist_mbid.to_owned(),
             followed: true,
             auto_download: row.auto_download,
-            auto_download_state: derive_state(row).as_str().to_owned(),
+            auto_download_state: derive_state(row),
         },
         None => FollowStatusResponse {
             artist_mbid: artist_mbid.to_owned(),
             followed: false,
             auto_download: false,
-            auto_download_state: AutoDownloadState::None.as_str().to_owned(),
+            auto_download_state: AutoDownloadState::None,
         },
     }
 }
@@ -194,7 +194,7 @@ impl CollectionsService<'_> {
             .await?
             .into_iter()
             .map(|row| FollowedArtist {
-                auto_download_state: derive_state(&row).as_str().to_owned(),
+                auto_download_state: derive_state(&row),
                 artist_mbid: row.artist_mbid,
                 name: row.artist_name,
                 auto_download: row.auto_download,

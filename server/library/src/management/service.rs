@@ -1874,7 +1874,7 @@ impl Management {
             })?;
         Ok(Some(
             match self.publish_album(snapshot, &items, undo, organizes, &bundle_id) {
-                Ok(applied) => (None, written(&applied.bundle_id, &applied.outcome)),
+                Ok(applied) => (None, written(&applied.bundle_id, applied.outcome.as_str())),
                 // The database was busy: the job goes back to the queue. The
                 // next pass finds this bundle empty and starts afresh, or
                 // finds the publish it stopped and waits for recovery.

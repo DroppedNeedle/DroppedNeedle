@@ -1,5 +1,6 @@
 //! Admin-UX wire shapes. Clean-slate v3; no v2 byte compatibility is kept.
 
+use droppedneedle_kernel::db::{CheckpointMode, JobState};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -122,8 +123,8 @@ pub struct CacheSyncCancelResponse {
 pub struct JobView {
     /// Loop name.
     pub name: String,
-    /// `idle`, `running`, `stopped`, or `failed`.
-    pub state: String,
+    /// Liveness now.
+    pub state: JobState,
     /// Last heartbeat as unix milliseconds, when the loop ever beat.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_heartbeat_at: Option<i64>,
@@ -253,8 +254,8 @@ pub struct PrecacheRunResponse {
 /// One database checkpoint pass, for the queue stats.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct CheckpointView {
-    /// `passive` or `truncate`.
-    pub mode: String,
+    /// Mode that ran.
+    pub mode: CheckpointMode,
     /// True when a lock contender blocked the pass.
     pub busy: bool,
     /// Uncheckpointed bytes, or -1 on an unmeasured pass.

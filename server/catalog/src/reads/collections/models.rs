@@ -5,6 +5,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use super::state::AutoDownloadState;
+use super::store::ratings::RatedKind;
+
 // Playlists.
 
 /// One track inside a playlist.
@@ -358,7 +361,7 @@ pub struct FavoriteListResponse {
 }
 
 /// Favorite query: optional kind filter.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FavoriteQuery {
     /// Kind filter: album, artist, or track.
     pub kind: Option<String>,
@@ -397,7 +400,7 @@ pub struct SetRatingBody {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RatingStatusResponse {
     /// Rated kind.
-    pub kind: String,
+    pub kind: RatedKind,
     /// The id the rating is stored under: the item's current id, which
     /// differs from the one sent after a merge.
     pub item_id: String,
@@ -442,8 +445,8 @@ pub struct FollowStatusResponse {
     pub followed: bool,
     /// Whether auto-download is wanted.
     pub auto_download: bool,
-    /// Approval state: none, pending, approved, rejected or revoked.
-    pub auto_download_state: String,
+    /// Approval state of the auto-download ask.
+    pub auto_download_state: AutoDownloadState,
 }
 
 /// Follow-toggle body.
@@ -471,8 +474,8 @@ pub struct FollowedArtist {
     pub name: String,
     /// Whether auto-download is wanted.
     pub auto_download: bool,
-    /// Approval state: none, pending, approved, rejected or revoked.
-    pub auto_download_state: String,
+    /// Approval state of the auto-download ask.
+    pub auto_download_state: AutoDownloadState,
     /// When the follow started, epoch seconds.
     pub followed_at: u64,
 }

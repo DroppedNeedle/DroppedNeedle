@@ -21,7 +21,8 @@ use super::error::refused;
 use super::models::PenaltyView;
 use crate::identify::models::EvidenceClass;
 use crate::operations::models::{
-    Control, OperationDetail, OperationError, OperationJob, ReidentificationCandidate,
+    Control, OperationDetail, OperationError, OperationJob, OperationState,
+    ReidentificationCandidate,
 };
 use crate::operations::reasons::{self, Reason};
 use crate::operations::service::{Operations, RELEASE_PAGE_MAX};
@@ -186,9 +187,8 @@ pub struct OperationView {
     /// `explicit_reidentification`, `bulk_review_apply`, `repair`, or
     /// `library_management`.
     pub kind: String,
-    /// `queued`, `running`, `paused`, `ready`, `succeeded`, `failed`,
-    /// `cancelled`, or `stopped`.
-    pub state: String,
+    /// Where the job is in its life.
+    pub state: OperationState,
     pub expected_work_count: i64,
     pub completed_count: i64,
     pub succeeded_count: i64,
@@ -375,7 +375,7 @@ pub(super) fn job_view(job: &OperationJob) -> OperationView {
     OperationView {
         id: job.id.clone(),
         kind: job.kind.clone(),
-        state: job.state.as_str().to_owned(),
+        state: job.state,
         expected_work_count: job.expected_work_count,
         completed_count: job.completed_count,
         succeeded_count: job.succeeded_count,

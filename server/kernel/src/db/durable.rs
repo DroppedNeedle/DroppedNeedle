@@ -12,7 +12,9 @@ use super::{error::DbError, handle::Db, sql, writer::Lane};
 
 /// Liveness of a loop row. The table's CHECK still allows `idle`, which
 /// nothing writes since every loop runs on the supervisor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = LoopState)]
 pub enum JobState {
     /// Running now.
     Running,

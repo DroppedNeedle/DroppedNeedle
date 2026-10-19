@@ -40,6 +40,6 @@ pub const LOOPS: &[&str] = &[revisions::JOB_NAME, downloads::JOB_NAME];
 pub use model::{
     ActivityChanged, AutoDownloadEnqueued, CacheSyncProgress, ConcertsNew, DownloadProgress,
     DownloadsChanged, DropImportUpdated, Event, NowPlayingEntry, NowPlayingSnapshot,
-    PersonalMixRefreshed, PlaylistImported, RequestImported, SearchJobUpdated, UserNotice,
-    WantedNotice, new_event_id,
+    PersonalMixRefreshed, PlaylistImported, RequestImported, SearchJobUpdated, StreamEvent,
+    UserNotice, WantedNotice, new_event_id,
 };

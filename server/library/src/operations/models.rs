@@ -41,7 +41,7 @@ impl OperationKind {
 }
 
 /// Where a job is in its life.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationState {
     Queued,

@@ -20,7 +20,7 @@ use super::models::{
     RootView, RootsResponse, RunDetailResponse, ScanBody, ScanFileView, ScanResponse, ScanRunView,
     ScanRunsResponse, ScanScopeView, snake,
 };
-use crate::identify::models::{IdentifyKind, JobState};
+use crate::identify::models::IdentifyKind;
 use crate::manage::{PreviewItemInput, plain_retag};
 use crate::publish::planner::PlanKind;
 use crate::scan::models::{EffectivePolicy, ScanRun, ScanScope};
@@ -67,10 +67,10 @@ pub(super) fn run_view(run: &ScanRun) -> ScanRunView {
         .map(crate::scan::reasons::scan_reason);
     ScanRunView {
         id: run.id.clone(),
-        kind: snake(&run.kind),
+        kind: run.kind,
         trigger: snake(&run.trigger),
-        state: snake(&run.state),
-        phase: snake(&run.phase),
+        state: run.state,
+        phase: run.phase,
         aggregate_scope: run.aggregate_scope.clone(),
         counters: run.counters.clone(),
         queued_at: run.queued_at,
@@ -81,7 +81,7 @@ pub(super) fn run_view(run: &ScanRun) -> ScanRunView {
         terminal_message: terminal.as_ref().map(|reason| reason.message.to_owned()),
         terminal_action: terminal.as_ref().map(|reason| reason.action.to_owned()),
         requested_by_user_id: run.requested_by_user_id.clone(),
-        resume_phase: run.resume_phase.as_ref().map(snake),
+        resume_phase: run.resume_phase,
         requested_control: snake(&run.requested_control),
         coalesced_request_count: run.coalesced_request_count,
         row_revision: run.row_revision,
@@ -253,7 +253,7 @@ pub async fn trigger_scan(
     Ok(Json(ScanResponse {
         run_id: result.run_id,
         disposition: snake(&result.disposition),
-        state: snake(&result.state),
+        state: result.state,
     }))
 }
 
@@ -346,14 +346,10 @@ pub async fn enqueue_identify(
     let kind = parse_identify_kind(body.kind.as_deref())?;
     let user_id = caller.user_id().to_owned();
     let job = blocking(move || state.enqueue_identify(&body.album_id, kind, &user_id)).await??;
-    let state_label: String = match job.state {
-        JobState::Queued => "queued".to_owned(),
-        other => snake(&other),
-    };
     Ok(Json(IdentifyResponse {
         job_id: job.id,
         album_id: job.local_album_id,
-        state: state_label,
+        state: job.state,
     }))
 }
 

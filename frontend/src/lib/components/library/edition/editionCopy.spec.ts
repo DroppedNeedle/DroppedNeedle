@@ -138,7 +138,7 @@ describe('the edition plate', () => {
 	});
 
 	it('gives the reason an album has no edition yet', () => {
-		const none = { edition_kind: 'none', release_mbid: null, release_group_mbid: null };
+		const none = { edition_kind: 'none' as const, release_mbid: null, release_group_mbid: null };
 		const unidentified = plateCopy(status({ ...none, state: 'unidentified' }), null, 4);
 		expect(unidentified.line1).toBe('No edition yet');
 		expect(unidentified.line2).toBe("DroppedNeedle hasn't matched it yet");

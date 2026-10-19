@@ -51,7 +51,8 @@ pub const ACTIVE_LOW_WATER_BYTES: i64 = 16 * 1024 * 1024;
 pub const TRUNCATE_MIN_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// Which checkpoint mode produced an outcome record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum CheckpointMode {
     /// Steady-state bounded pass.
     Passive,

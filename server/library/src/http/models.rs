@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 pub use super::operations::ReasonView;
+use crate::identify::models::{JobState as IdentifyJobState, ReviewState};
+use crate::publish::publisher::PublishOutcome;
+use crate::scan::models::{ScanKind, ScanPhase, ScanState};
 
 /// Snake-case label for a serializable engine enum. Falls back to
 /// `"unknown"` instead of failing the whole response.
@@ -75,7 +78,7 @@ pub struct ScanResponse {
     /// `expanded`, `conflict`.
     pub disposition: String,
     /// Run state after the request.
-    pub state: String,
+    pub state: ScanState,
 }
 
 /// One scan run.
@@ -84,13 +87,13 @@ pub struct ScanRunView {
     /// Run id.
     pub id: String,
     /// Run kind.
-    pub kind: String,
+    pub kind: ScanKind,
     /// What triggered the run.
     pub trigger: String,
     /// Run state.
-    pub state: String,
+    pub state: ScanState,
     /// Current phase.
-    pub phase: String,
+    pub phase: ScanPhase,
     /// Scope label: `all` or `selected`.
     pub aggregate_scope: String,
     /// Progress counters.
@@ -112,7 +115,7 @@ pub struct ScanRunView {
     /// Who asked for the run, when someone did.
     pub requested_by_user_id: Option<String>,
     /// Phase a paused run picks up from.
-    pub resume_phase: Option<String>,
+    pub resume_phase: Option<ScanPhase>,
     /// Pending control: `none`, `pause` or `stop`.
     pub requested_control: String,
     /// Requests folded into this run.
@@ -186,7 +189,7 @@ pub struct IdentifyResponse {
     /// Local album id.
     pub album_id: String,
     /// Job state after enqueue.
-    pub state: String,
+    pub state: IdentifyJobState,
 }
 
 /// One scored candidate inside a review.
@@ -266,8 +269,8 @@ pub struct ReviewView {
     pub reason_code: String,
     /// Why the review exists and what to do, in plain words.
     pub reason: ReasonView,
-    /// `pending`, `approved`, `rejected`, `dismissed` or `excluded`.
-    pub state: String,
+    /// Review state.
+    pub state: ReviewState,
     /// Resolving user, once settled.
     pub resolved_by: Option<String>,
     /// Selected candidate key, once approved.
@@ -479,8 +482,8 @@ pub struct ManageAppliedFile {
 pub struct ManageApplyResponse {
     /// Published bundle id.
     pub bundle_id: String,
-    /// `committed` or `cleanup_pending`.
-    pub outcome: String,
+    /// Whether cleanup finished.
+    pub outcome: PublishOutcome,
     /// Applied files.
     pub files: Vec<ManageAppliedFile>,
 }
@@ -497,8 +500,8 @@ pub struct ManageUndoBody {
 pub struct ManageUndoResponse {
     /// Undo operation bundle id.
     pub bundle_id: String,
-    /// `committed` or `cleanup_pending`.
-    pub outcome: String,
+    /// Whether cleanup finished.
+    pub outcome: PublishOutcome,
     /// Restored track ids.
     pub restored: Vec<String>,
 }
@@ -515,8 +518,8 @@ pub struct BaselineRestoreBody {
 pub struct BaselineRestoreResponse {
     /// Restore operation bundle id.
     pub bundle_id: String,
-    /// `committed` or `cleanup_pending`.
-    pub outcome: String,
+    /// Whether cleanup finished.
+    pub outcome: PublishOutcome,
     /// Restored track ids.
     pub restored: Vec<String>,
 }

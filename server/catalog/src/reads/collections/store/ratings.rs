@@ -12,7 +12,10 @@ use sqlx::Row as _;
 use super::super::db::{CollectionsDb, StoreError, placeholders};
 
 /// What a rating is on: the table's `item_kind` values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum RatedKind {
     /// A local artist.
     Artist,

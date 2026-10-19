@@ -16,9 +16,9 @@ use crate::reads::discover::{
         DiscoverQueuePreview, DiscoverQueueStatusResponse, DiscoverResponse, GenreArtwork,
         GenreArtworkAlbum, GenreDetailResponse, GenreLibrarySection, GenrePopularSection,
         HomeResponse, IgnoredRelease, IntegrationStatus, NowPlayingEntry, PopularAlbumsPage,
-        QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, SectionItem, ServicePrompt,
-        TopPicksSection, TrackPreviewResponse, TrendingArtistsPage, WeeklyExploration,
-        YouTubeQuotaResponse,
+        QueueBuildStatus, QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, SectionItem,
+        ServicePrompt, TopPicksSection, TrackPreviewResponse, TrendingArtistsPage,
+        WeeklyExploration, YouTubeQuotaResponse,
     },
     models::{
         DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchItemStatus,
@@ -363,7 +363,7 @@ impl QueueStore for FakeQueues {
     fn status<'a>(&'a self, _user_id: &'a str) -> BoxFuture<'a, DiscoverQueueStatusResponse> {
         Box::pin(async {
             DiscoverQueueStatusResponse {
-                status: "idle".to_owned(),
+                status: QueueBuildStatus::Idle,
                 queue_id: None,
                 item_count: None,
                 built_at: None,
@@ -381,7 +381,7 @@ impl QueueStore for FakeQueues {
         Box::pin(async {
             QueueGenerateResponse {
                 action: "disabled".to_owned(),
-                status: "idle".to_owned(),
+                status: QueueBuildStatus::Idle,
                 queue_id: None,
                 item_count: None,
                 built_at: None,

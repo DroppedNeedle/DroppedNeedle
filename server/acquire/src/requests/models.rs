@@ -122,14 +122,14 @@ pub struct BatchCancelBody {
 }
 
 /// `kind` query shared by the per-request mutations.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct KindQuery {
     /// `album` (default) or `track`.
     pub kind: Option<String>,
 }
 
 /// History paging and filter query.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct HistoryQuery {
     /// 1-based page.
     pub page: Option<u32>,
@@ -293,8 +293,8 @@ pub struct RequestItem {
     /// candidate still linked). None when not applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub can_reimport: Option<bool>,
-    /// `album` or `track`.
-    pub request_kind: String,
+    /// Whole album or one track.
+    pub request_kind: RequestKind,
     /// Track title for exact-track rows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub track_title: Option<String>,

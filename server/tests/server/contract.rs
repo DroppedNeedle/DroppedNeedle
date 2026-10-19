@@ -105,3 +105,41 @@ fn every_operation_has_one_named_tag() {
         "operations without exactly one named tag: {wrong:#?}"
     );
 }
+
+/// Operation ids name the generated client's operations, so two routes
+/// sharing one would collapse into a single typed entry.
+#[test]
+fn operation_ids_are_unique() {
+    let doc = serde_json::to_value(ApiDoc::openapi()).unwrap();
+    let mut seen = BTreeSet::new();
+    let mut repeated = Vec::new();
+    for (path, item) in doc["paths"].as_object().unwrap() {
+        for (method, operation) in item.as_object().unwrap() {
+            if let Some(id) = operation["operationId"].as_str()
+                && !seen.insert(id.to_owned())
+            {
+                repeated.push(format!("{method} {path}: {id}"));
+            }
+        }
+    }
+    assert!(repeated.is_empty(), "repeated operation ids: {repeated:#?}");
+}
+
+/// The event stream's documented union lists exactly the event names the
+/// hub sends.
+#[test]
+fn stream_event_union_names_every_event() {
+    let doc = serde_json::to_value(ApiDoc::openapi()).unwrap();
+    let members = doc["components"]["schemas"]["StreamEvent"]["oneOf"]
+        .as_array()
+        .expect("StreamEvent is a oneOf");
+    let documented: BTreeSet<&str> = members
+        .iter()
+        .filter_map(|member| member["properties"]["event"]["enum"][0].as_str())
+        .collect();
+    let sent: BTreeSet<&str> = droppedneedle_kernel::events::model::names::ALL
+        .into_iter()
+        .collect();
+    assert_eq!(documented, sent);
+    assert_eq!(members.len(), sent.len());
+}

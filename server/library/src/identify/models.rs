@@ -211,8 +211,9 @@ pub enum IdentifyKind {
     Historical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = IdentifyJobState)]
 pub enum JobState {
     Queued,
     Running,
@@ -234,7 +235,7 @@ pub struct ReviewItem {
     pub selected_candidate_key: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewState {
     Pending,

@@ -825,11 +825,25 @@ pub struct DiscoverQueueResponse {
     pub queue_id: String,
 }
 
+/// Where one user's queue build stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueBuildStatus {
+    /// No build has run since the server started.
+    Idle,
+    /// A build is running.
+    Building,
+    /// A built queue is saved.
+    Ready,
+    /// The last build failed.
+    Error,
+}
+
 /// Queue build state for polling.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverQueueStatusResponse {
-    /// `ready`, `building`, `stale`, or `error`.
-    pub status: String,
+    /// Build state. A saved queue past its age is `ready` with `stale` set.
+    pub status: QueueBuildStatus,
     /// Build id, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_id: Option<String>,
@@ -860,8 +874,8 @@ pub struct QueueGenerateRequest {
 pub struct QueueGenerateResponse {
     /// `started`, `already_building`, or `fresh`.
     pub action: String,
-    /// `ready`, `building`, `stale`, or `error`.
-    pub status: String,
+    /// Build state after the trigger.
+    pub status: QueueBuildStatus,
     /// Build id, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_id: Option<String>,

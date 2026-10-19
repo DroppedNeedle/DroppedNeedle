@@ -16,7 +16,7 @@ pub type Counters = HashMap<String, i64>;
 
 /// Scan kind. `rescan_files` re-reads every in-policy file even when its
 /// stat revision is unchanged; `policy_reconcile` walks but skips tag reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanKind {
     Incremental,
@@ -36,7 +36,7 @@ pub enum ScanTrigger {
 }
 
 /// Durable run state. Spelling matches v2 `ScanState` exactly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanState {
     Queued,
@@ -65,7 +65,7 @@ impl ScanState {
 }
 
 /// Worker phase. Spelling matches v2 `ScanPhase` exactly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanPhase {
     Queued,

@@ -115,7 +115,7 @@ pub struct JellyfinLoginBody {
 }
 
 /// OIDC callback query (IdP redirect target).
-#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct OidcCallbackQuery {
     /// Authorization code from the IdP.
     pub code: String,

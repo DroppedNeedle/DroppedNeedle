@@ -1,17 +1,5 @@
 import type { components } from '$lib/api/v3/openapi';
-import type { AutoDownloadState, FollowStatus, FollowedArtist, NewRelease } from './types';
-
-const AUTO_DOWNLOAD_STATES: readonly AutoDownloadState[] = [
-	'none',
-	'pending',
-	'approved',
-	'rejected',
-	'revoked'
-];
-
-function toAutoDownloadState(state: string): AutoDownloadState {
-	return AUTO_DOWNLOAD_STATES.find((known) => known === state) ?? 'none';
-}
+import type { FollowStatus, FollowedArtist, NewRelease } from './types';
 
 export function toFollowStatus(
 	status: components['schemas']['FollowStatusResponse']
@@ -19,7 +7,7 @@ export function toFollowStatus(
 	return {
 		followed: status.followed,
 		auto_download: status.auto_download,
-		auto_download_state: toAutoDownloadState(status.auto_download_state)
+		auto_download_state: status.auto_download_state
 	};
 }
 
@@ -29,7 +17,7 @@ export function toFollowedArtist(artist: components['schemas']['FollowedArtist']
 		name: artist.name,
 		image_url: null,
 		auto_download: artist.auto_download,
-		auto_download_state: toAutoDownloadState(artist.auto_download_state),
+		auto_download_state: artist.auto_download_state,
 		followed_at: artist.followed_at
 	};
 }

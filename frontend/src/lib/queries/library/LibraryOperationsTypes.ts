@@ -106,21 +106,22 @@ export interface LibraryActivityResponse {
 	revisions?: Record<string, number>;
 }
 
-export type ScanKind = 'incremental' | 'rescan_files' | 'policy_reconcile';
+export type ScanKind = components['schemas']['ScanKind'];
+export type ScanPhase = components['schemas']['ScanPhase'];
 
 export interface ScanRun {
 	id: string;
 	kind: ScanKind;
 	trigger: 'manual' | 'automatic' | 'subsonic' | 'startup_resume' | 'policy_apply';
 	state: LibraryWorkState;
-	phase: 'queued' | 'discovering' | 'indexing' | 'reconciling';
+	phase: ScanPhase;
 	requested_by_user_id: string | null;
 	aggregate_scope: string;
 	queued_at: number;
 	started_at: number | null;
 	updated_at: number;
 	terminal_at: number | null;
-	resume_phase: 'queued' | 'discovering' | 'indexing' | 'reconciling' | null;
+	resume_phase: ScanPhase | null;
 	requested_control: 'none' | 'pause' | 'stop';
 	terminal_code: string | null;
 	/** What the terminal code means, in plain words. */
@@ -244,8 +245,7 @@ export interface CandidateEvidence {
 	matcher_version: string;
 }
 
-export type OperationState =
-	'queued' | 'running' | 'paused' | 'ready' | 'succeeded' | 'failed' | 'cancelled' | 'stopped';
+export type OperationState = components['schemas']['OperationState'];
 
 export interface OperationWorkResult {
 	ordinal: number;

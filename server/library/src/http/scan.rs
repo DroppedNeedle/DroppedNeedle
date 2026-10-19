@@ -20,9 +20,9 @@ use utoipa::ToSchema;
 
 use super::error::LibraryError;
 use super::handlers::run_view;
-use super::models::{ScanRunView, snake};
+use super::models::ScanRunView;
 use crate::activity::feed::LibraryActivity;
-use crate::scan::models::{Disposition, ScanKind};
+use crate::scan::models::{Disposition, ScanKind, ScanPhase, ScanState};
 use crate::scan::reasons::scan_reason;
 use crate::scans::{MAX_FAILURE_PAGE, MAX_PAGE, RunControl};
 use crate::wiring::LibrarySetup;
@@ -130,7 +130,7 @@ pub struct ScanRunRequestedResponse {
     pub run_id: String,
     pub disposition: ScanDisposition,
     /// That run's state.
-    pub state: String,
+    pub state: ScanState,
     /// That run's row revision.
     pub row_revision: u64,
     /// Why the request waits, when it does.
@@ -138,7 +138,7 @@ pub struct ScanRunRequestedResponse {
     pub queued_reason: Option<String>,
     /// Kind of the run in the way, on a conflict.
     #[schema(required = true)]
-    pub conflicting_kind: Option<String>,
+    pub conflicting_kind: Option<ScanKind>,
 }
 
 /// The run holding the worker and the next queued one.
@@ -202,8 +202,8 @@ pub struct ScanRunFailureItem {
     pub action: String,
     /// Technical detail for diagnostics; not meant for display.
     pub failure_detail: String,
-    /// `discovering`, `indexing` or `reconciling`.
-    pub phase: String,
+    /// Phase the file failed in.
+    pub phase: ScanPhase,
     /// Unix seconds.
     pub recorded_at: f64,
 }
@@ -228,7 +228,7 @@ pub struct ScanControlBody {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ScanControlResponse {
     pub run_id: String,
-    pub state: String,
+    pub state: ScanState,
     pub row_revision: u64,
     pub event_revision: u64,
     pub stream_revision: u64,
@@ -297,10 +297,10 @@ pub async fn request_scan_run(
         Json(ScanRunRequestedResponse {
             run_id: result.run_id,
             disposition: result.disposition.into(),
-            state: snake(&result.state),
+            state: result.state,
             row_revision: result.row_revision,
             queued_reason: result.queued_reason,
-            conflicting_kind: result.conflicting_kind.as_ref().map(snake),
+            conflicting_kind: result.conflicting_kind,
         }),
     ))
 }
@@ -424,7 +424,7 @@ pub async fn scan_run_failures(
                 ScanRunFailureItem {
                     message: reason.message.to_owned(),
                     action: reason.action.to_owned(),
-                    phase: snake(&failure.phase),
+                    phase: failure.phase,
                     root_id: failure.root_id,
                     relative_path: failure.relative_path,
                     failure_code: failure.failure_code,
@@ -447,7 +447,7 @@ async fn control(
         blocking(move || state.control_scan_run(&id, control, body.expected_revision)).await??;
     let run = controlled.run;
     Ok(Json(ScanControlResponse {
-        state: snake(&run.state),
+        state: run.state,
         run_id: run.id,
         row_revision: run.row_revision,
         event_revision: run.event_revision,

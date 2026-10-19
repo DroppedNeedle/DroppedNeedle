@@ -21,6 +21,7 @@ use super::models::{
     PluginDetails, PurchaseLink, ReleaseItem,
 };
 use super::{Catalog, MISS_TTL, is_mbid, mb_error, mb_retry, record_mb_down, secs};
+use crate::reads::collections::state::AutoDownloadState;
 
 /// Most discography pages fetched per artist (v2 `_MAX_RG_PAGES`).
 const MAX_RELEASE_GROUP_PAGES: u32 = 10;
@@ -316,7 +317,7 @@ impl Catalog {
                         eps: discography.eps,
                         followed: false,
                         auto_download: false,
-                        auto_download_state: "none".to_owned(),
+                        auto_download_state: AutoDownloadState::None,
                         source: CatalogSource::Library,
                         service_status: None,
                     });
@@ -358,7 +359,7 @@ impl Catalog {
             release_group_count,
             followed: false,
             auto_download: false,
-            auto_download_state: "none".to_owned(),
+            auto_download_state: AutoDownloadState::None,
             source: CatalogSource::Musicbrainz,
             service_status: None,
         })

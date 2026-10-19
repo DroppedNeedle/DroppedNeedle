@@ -10,11 +10,10 @@
 # instead, which a working tree has usually built already; the make targets
 # use that, and CI keeps the shipping build.
 #
-# The TypeScript generator version is pinned here so local runs and CI
-# produce byte-identical output. Bump deliberately, with a regen + diff review.
+# The TypeScript generator is the frontend's pinned dev dependency, so local
+# runs and CI produce byte-identical output. Run pnpm install in frontend/
+# first. Bump it deliberately, with a regen and a diff review.
 set -eu
-
-OPENAPI_TS_VERSION="7.13.0"
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 SNAPSHOT="$ROOT/server/openapi/openapi.json"
@@ -47,7 +46,10 @@ if [ "$FROM_TESTS" = "1" ]; then
 else
   cargo run --quiet --manifest-path "$ROOT/server/Cargo.toml" --bin droppedneedle -- --print-openapi > "$FRESH_JSON"
 fi
-pnpm dlx "openapi-typescript@$OPENAPI_TS_VERSION" "$FRESH_JSON" -o "$FRESH_TS" >/dev/null
+if ! pnpm --dir "$ROOT/frontend" exec openapi-typescript "$FRESH_JSON" -o "$FRESH_TS" >/dev/null; then
+  echo "openapi-typescript failed; run pnpm install in frontend/ first" >&2
+  exit 1
+fi
 
 if [ "$WRITE" = "1" ]; then
   cp "$FRESH_JSON" "$SNAPSHOT"

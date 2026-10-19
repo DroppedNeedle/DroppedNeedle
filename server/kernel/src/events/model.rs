@@ -82,6 +82,79 @@ pub mod names {
     pub const DOWNLOADS_CHANGED: &str = "downloads.changed";
     /// Library image precache progress moved.
     pub const CACHE_SYNC: &str = "cache.sync";
+
+    /// Every event name the stream sends.
+    pub const ALL: [&str; 15] = [
+        ACTIVITY_CHANGED,
+        NOW_PLAYING,
+        WANTED_NEW_CANDIDATES,
+        WANTED_AUTO_DISPATCHED,
+        WANTED_FULFILLED,
+        AUTO_DOWNLOAD_ENQUEUED,
+        REQUEST_IMPORTED,
+        PLAYLIST_IMPORTED,
+        DROP_IMPORT_UPDATED,
+        PERSONAL_MIX_REFRESHED,
+        CONCERTS_NEW,
+        DOWNLOAD_PROGRESS,
+        SEARCH_JOB_UPDATED,
+        DOWNLOADS_CHANGED,
+        CACHE_SYNC,
+    ];
+}
+
+/// The events the stream sends, keyed by name, for the API document. On
+/// the wire each one is an SSE frame whose `event:` line is `event` here
+/// and whose `data:` line is `data` as JSON. The hub encodes frames itself
+/// (`Frame::encode`); this type only describes them.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(tag = "event", content = "data")]
+pub enum StreamEvent {
+    /// To everyone: library activity revisions moved.
+    #[serde(rename = "activity.changed")]
+    ActivityChanged(ActivityChanged),
+    /// To everyone: live listening sessions.
+    #[serde(rename = "snapshot")]
+    NowPlaying(NowPlayingSnapshot),
+    /// To everyone: the download queue moved.
+    #[serde(rename = "downloads.changed")]
+    DownloadsChanged(DownloadsChanged),
+    /// To everyone: library image precache progress.
+    #[serde(rename = "cache.sync")]
+    CacheSync(CacheSyncProgress),
+    /// To one user: the wanted watcher found new candidates.
+    #[serde(rename = "wanted_new_candidates")]
+    WantedNewCandidates(WantedNotice),
+    /// To one user: the wanted watcher started a download.
+    #[serde(rename = "wanted_auto_dispatched")]
+    WantedAutoDispatched(WantedNotice),
+    /// To one user: a wanted album reached the library.
+    #[serde(rename = "wanted_fulfilled")]
+    WantedFulfilled(WantedNotice),
+    /// To one user: a followed artist's new release was queued.
+    #[serde(rename = "auto_download_enqueued")]
+    AutoDownloadEnqueued(AutoDownloadEnqueued),
+    /// To one user: someone else imported an album they requested.
+    #[serde(rename = "request_imported")]
+    RequestImported(RequestImported),
+    /// To one user: an imported playlist has its tracks.
+    #[serde(rename = "playlist_imported")]
+    PlaylistImported(PlaylistImported),
+    /// To one user: their drop-import job moved.
+    #[serde(rename = "drop_import_updated")]
+    DropImportUpdated(DropImportUpdated),
+    /// To one user: their weekly mix was rebuilt, or could not be.
+    #[serde(rename = "personal_mix_refreshed")]
+    PersonalMixRefreshed(PersonalMixRefreshed),
+    /// To one user: new concerts for an artist they follow.
+    #[serde(rename = "concerts_new")]
+    ConcertsNew(ConcertsNew),
+    /// To one user: one of their downloads moved.
+    #[serde(rename = "download_progress")]
+    DownloadProgress(DownloadProgress),
+    /// To one user: one of their manual album searches moved.
+    #[serde(rename = "search_job_updated")]
+    SearchJobUpdated(SearchJobUpdated),
 }
 
 /// A fresh id the web UI uses to drop an event it has already shown (a

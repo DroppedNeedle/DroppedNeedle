@@ -28,20 +28,6 @@ use droppedneedle_kernel::{
         // answer after the operations are collected.
         ErrorEnvelope,
         droppedneedle_kernel::error::ErrorBody,
-        // Event stream payloads: the stream answers `text/event-stream`, so
-        // no operation names them, and the web UI types its events from
-        // these.
-        droppedneedle_kernel::events::ActivityChanged,
-        droppedneedle_kernel::events::WantedNotice,
-        droppedneedle_kernel::events::AutoDownloadEnqueued,
-        droppedneedle_kernel::events::RequestImported,
-        droppedneedle_kernel::events::PlaylistImported,
-        droppedneedle_kernel::events::DropImportUpdated,
-        droppedneedle_kernel::events::PersonalMixRefreshed,
-        droppedneedle_kernel::events::ConcertsNew,
-        droppedneedle_kernel::events::DownloadProgress,
-        droppedneedle_kernel::events::DownloadsChanged,
-        droppedneedle_kernel::events::SearchJobUpdated,
         // Chart query enums the web UI imports by name; no operation refers
         // to them.
         droppedneedle_catalog::reads::discover::models::ChartRange,
@@ -49,16 +35,6 @@ use droppedneedle_kernel::{
         // The value type of the `service_status` maps; no operation refers
         // to it by name.
         droppedneedle_catalog::reads::catalog::models::SourceStatus,
-        // Query structs: the operations list their fields as parameters,
-        // and the schemas stay so the document does not change here.
-        droppedneedle_catalog::reads::collections::models::FavoriteQuery,
-        droppedneedle_acquire::requests::models::HistoryQuery,
-        droppedneedle_acquire::requests::models::KindQuery,
-        droppedneedle_media::playback::models::NowPlayingDeleteQuery,
-        droppedneedle_auth::routes::models::OidcCallbackQuery,
-        // The avatar upload names its own `AvatarUploadBody`; this older
-        // shape stays so the document does not change here.
-        droppedneedle_auth::users::models::AvatarUpload,
     )),
     info(
         title = "DroppedNeedle v3",

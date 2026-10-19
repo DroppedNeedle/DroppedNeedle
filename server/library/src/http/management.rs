@@ -25,6 +25,7 @@ use crate::management::models::{
 };
 use crate::management::reasons::ItemReason;
 use crate::management::service::{ApplyRequest, Management, PreviewRequest};
+use crate::operations::models::OperationState;
 use crate::wiring::LibrarySetup;
 use droppedneedle_auth::Admin;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagementRootOverrides;
@@ -243,9 +244,8 @@ impl From<Summary> for ManagementSummaryView {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ManagementJobView {
     pub job_id: String,
-    /// The operation state: `queued`, `running`, `paused`, `ready`,
-    /// `succeeded`, `failed`, `cancelled`, or `stopped`.
-    pub state: String,
+    /// The operation state.
+    pub state: OperationState,
     /// `planning`, `ready`, `applying`, `undoing`, or `complete`.
     pub phase: String,
     /// `preview`, `apply`, or `undo` (v2 history may show others).
@@ -302,7 +302,7 @@ impl From<JobDetail> for ManagementJobView {
         let job = detail.job;
         Self {
             job_id: job.id.clone(),
-            state: job.state.as_str().to_owned(),
+            state: job.state,
             phase: detail.phase,
             mode: detail.mode,
             origin: detail.origin,

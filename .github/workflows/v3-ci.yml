@@ -245,6 +245,10 @@ jobs:
         with:
           node-version-file: .github/node-version
 
+      - name: Install the type generator
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
       - name: Check contract drift
         run: ./server/openapi/check.sh
 

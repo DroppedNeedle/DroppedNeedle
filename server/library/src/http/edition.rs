@@ -45,7 +45,7 @@ use crate::operations::models::{EditionChoice, OperationError};
 use crate::operations::plan::{FileFate, PlanReading};
 use crate::operations::reasons;
 use crate::operations::service::Operations;
-use crate::operations::status::{EditionStatus, WaitingAlbum};
+use crate::operations::status::{EditionKind, EditionState, EditionStatus, WaitingAlbum};
 use crate::wiring::LibrarySetup;
 use droppedneedle_auth::{Admin, Curator, User};
 
@@ -113,7 +113,7 @@ pub struct EditionStatusView {
     pub album_id: String,
     /// `chosen` (by a person), `confirmed`, `unconfirmed` (a best guess),
     /// `unmatched` (keeps its own tags), or `unidentified`.
-    pub state: String,
+    pub state: EditionState,
     pub release_group_mbid: Option<String>,
     pub release_mbid: Option<String>,
     /// Who chose the edition, for a chosen one.
@@ -131,7 +131,7 @@ pub struct EditionStatusView {
     pub identity_revision: i64,
     /// `release` (a MusicBrainz release), `custom` (a custom edition),
     /// `group_only` (a release group with no release chosen) or `none`.
-    pub edition_kind: String,
+    pub edition_kind: EditionKind,
     /// Set while the chosen edition's files are still being placed on it.
     pub placing: Option<EditionPlacingView>,
     /// An identification of the album is queued or running, as after
@@ -156,7 +156,7 @@ impl EditionStatusView {
     fn of(status: EditionStatus, writes: AutomaticWrites) -> Self {
         Self {
             identity_revision: status.identity_revision,
-            edition_kind: status.edition_kind.as_str().to_owned(),
+            edition_kind: status.edition_kind,
             placing: status
                 .placing_attempts
                 .map(|attempts| EditionPlacingView { attempts }),
@@ -164,7 +164,7 @@ impl EditionStatusView {
             files_by_itself: writes.by_itself,
             writing: writes.pending,
             album_id: status.local_album_id,
-            state: status.state.as_str().to_owned(),
+            state: status.state,
             release_group_mbid: status.release_group_mbid,
             release_mbid: status.release_mbid,
             chosen_by_user_id: status.chosen_by_user_id,
@@ -409,7 +409,7 @@ pub struct WaitingAlbumView {
     pub title: String,
     pub artist_name: String,
     /// `unconfirmed` or `unmatched`.
-    pub state: String,
+    pub state: EditionState,
     pub release_mbid: Option<String>,
     pub release_group_mbid: Option<String>,
     pub reason: ReasonView,
@@ -422,7 +422,7 @@ impl From<WaitingAlbum> for WaitingAlbumView {
             album_id: album.local_album_id,
             title: album.title,
             artist_name: album.artist_name,
-            state: album.state.as_str().to_owned(),
+            state: album.state,
             release_mbid: album.release_mbid,
             release_group_mbid: album.release_group_mbid,
             reason: album.reason.into(),

@@ -532,7 +532,7 @@ export interface paths {
             cookie?: never;
         };
         /** One user's quota standing. */
-        get: operations["get_quota"];
+        get: operations["get_user_quota"];
         /** Set (or, with all-`None`, clear) one user's quota overrides. */
         put: operations["set_quota"];
         post?: never;
@@ -2576,16 +2576,9 @@ export interface paths {
         };
         /**
          * Live events for the signed-in user.
-         * @description Event names: `activity.changed` and `snapshot` (now playing) go to
-         *     everyone; `wanted_new_candidates`, `wanted_auto_dispatched`,
-         *     `wanted_fulfilled`, `auto_download_enqueued`, `request_imported`,
-         *     `playlist_imported`, `drop_import_updated`,
-         *     `personal_mix_refreshed`, `concerts_new` and `search_job_updated` go
-         *     only to the user they concern. Each `data:` line is one JSON payload (see the `ActivityChanged`,
-         *     `NowPlayingSnapshot`, `WantedNotice`, `AutoDownloadEnqueued`,
-         *     `RequestImported`, `PlaylistImported`, `DropImportUpdated`,
-         *     `PersonalMixRefreshed`, `ConcertsNew` and
-         *     `SearchJobUpdated` schemas).
+         * @description Each SSE frame is one `StreamEvent`: its `event:` line is the member's
+         *     `event` and its `data:` line the member's `data` as JSON. Some events
+         *     go to everyone, the rest only to the user they concern.
          */
         get: operations["events_stream"];
         put?: never;
@@ -9512,7 +9505,7 @@ export interface paths {
             cookie?: never;
         };
         /** Today's YouTube search budget. A zero budget while search is off. */
-        get: operations["get_quota"];
+        get: operations["get_youtube_quota"];
         put?: never;
         post?: never;
         delete?: never;
@@ -10568,7 +10561,7 @@ export interface components {
             /** @description Run id (fresh or merged into a waiting run). */
             run_id: string;
             /** @description Run state after the request. */
-            state: string;
+            state: components["schemas"]["ScanState"];
         };
         /** @description One track on an album page. */
         AlbumTrack: {
@@ -10998,11 +10991,8 @@ export interface components {
             appears_in_library: boolean;
             /** @description Whether the caller asked for new releases to download on their own. */
             auto_download: boolean;
-            /**
-             * @description Approval state of that ask: none, pending, approved, rejected or
-             *     revoked.
-             */
-            auto_download_state: string;
+            /** @description Approval state of that ask. */
+            auto_download_state: components["schemas"]["AutoDownloadState"];
             /** @description ISO country code. */
             country?: string | null;
             /** @description Disambiguation comment. */
@@ -11460,6 +11450,11 @@ export interface components {
             /** @description Release title. */
             title: string;
         };
+        /**
+         * @description Auto-download state of one follow, as the routes show it.
+         * @enum {string}
+         */
+        AutoDownloadState: "none" | "pending" | "approved" | "rejected" | "revoked";
         /** @description Undo the album's last automatic edition. */
         AutomaticEditionUndoBody: {
             /** Format: int64 */
@@ -11495,16 +11490,6 @@ export interface components {
             reason_code: string;
             title: string;
             track_ids: string[];
-        };
-        /**
-         * @description Avatar upload. JSON with base64 bytes: the server has no multipart
-         *     support, and one JSON shape keeps every client on the same parser.
-         */
-        AvatarUpload: {
-            /** @description `image/jpeg`, `image/png`, `image/webp`, or `image/gif`. */
-            content_type: string;
-            /** @description Base64 image bytes, at most 5 MiB decoded. */
-            image_base64: string;
         };
         /** @description Avatar upload payload (parsed manually so the body cap applies). */
         AvatarUploadBody: {
@@ -11576,8 +11561,8 @@ export interface components {
         BaselineRestoreResponse: {
             /** @description Restore operation bundle id. */
             bundle_id: string;
-            /** @description `committed` or `cleanup_pending`. */
-            outcome: string;
+            /** @description Whether cleanup finished. */
+            outcome: components["schemas"]["PublishOutcome"];
             /** @description Restored track ids. */
             restored: string[];
         };
@@ -12090,6 +12075,11 @@ export interface components {
                 [key: string]: string[];
             };
         };
+        /**
+         * @description Which checkpoint mode produced an outcome record.
+         * @enum {string}
+         */
+        CheckpointMode: "passive" | "truncate";
         /** @description One database checkpoint pass, for the queue stats. */
         CheckpointView: {
             /**
@@ -12109,8 +12099,8 @@ export interface components {
              *     lock. The cause is in the server log.
              */
             error?: string | null;
-            /** @description `passive` or `truncate`. */
-            mode: string;
+            /** @description Mode that ran. */
+            mode: components["schemas"]["CheckpointMode"];
             /** @description True when background producers must yield. */
             suspended: boolean;
             /**
@@ -12684,8 +12674,8 @@ export interface components {
             queue_id?: string | null;
             /** @description True when the deck is older than its TTL. */
             stale?: boolean | null;
-            /** @description `ready`, `building`, `stale`, or `error`. */
-            status: string;
+            /** @description Build state. A saved queue past its age is `ready` with `stale` set. */
+            status: components["schemas"]["QueueBuildStatus"];
         };
         /**
          * @description Discover shelves. Every shelf is optional: absence means no data, never
@@ -12982,7 +12972,7 @@ export interface components {
             files_total: number;
             /** Format: int64 */
             progress_percent: number;
-            status: string;
+            status: components["schemas"]["TaskStatus"];
             task_id: string;
         };
         /** @description One page of the queue. */
@@ -13413,11 +13403,7 @@ export interface components {
             /** @description `soulseek`, `usenet` or `plugin:<key>`. */
             source: string;
             source_username?: string | null;
-            /**
-             * @description `queued`, `downloading`, `processing`, `completed`, `partial`,
-             *     `failed` or `cancelled`.
-             */
-            status: string;
+            status: components["schemas"]["TaskStatus"];
             /** Format: int64 */
             total_size_bytes?: number | null;
             track_title?: string | null;
@@ -13668,6 +13654,11 @@ export interface components {
             /** Format: int32 */
             track_count: number;
         };
+        /**
+         * @description What kind of edition the album has.
+         * @enum {string}
+         */
+        EditionKind: "release" | "custom" | "group_only" | "none";
         /** @description The chosen edition's files are still being placed on it. */
         EditionPlacingView: {
             /**
@@ -13820,6 +13811,11 @@ export interface components {
             /** @default standard */
             version: components["schemas"]["EditionVersionPreference"];
         };
+        /**
+         * @description Where an album's edition stands.
+         * @enum {string}
+         */
+        EditionState: "chosen" | "confirmed" | "unconfirmed" | "unmatched" | "unidentified";
         /** @description Where one album's edition stands. */
         EditionStatusView: {
             album_id: string;
@@ -13836,7 +13832,7 @@ export interface components {
              * @description `release` (a MusicBrainz release), `custom` (a custom edition),
              *     `group_only` (a release group with no release chosen) or `none`.
              */
-            edition_kind: string;
+            edition_kind: components["schemas"]["EditionKind"];
             /**
              * @description The app writes the edition's tags and file names by itself after a
              *     choice: the album's folder manages it automatically and nothing
@@ -13863,7 +13859,7 @@ export interface components {
              * @description `chosen` (by a person), `confirmed`, `unconfirmed` (a best guess),
              *     `unmatched` (keeps its own tags), or `unidentified`.
              */
-            state: string;
+            state: components["schemas"]["EditionState"];
             /** @description The last edition change can still be taken back. */
             undo_available: boolean;
             /** @description That write is still to happen. */
@@ -14120,11 +14116,6 @@ export interface components {
             /** @description Favorites, optionally filtered by kind. */
             items: components["schemas"]["FavoriteItem"][];
         };
-        /** @description Favorite query: optional kind filter. */
-        FavoriteQuery: {
-            /** @description Kind filter: album, artist, or track. */
-            kind?: string | null;
-        };
         /** @description Favorite-status answer. */
         FavoriteStatusResponse: {
             /** @description Current state. */
@@ -14263,8 +14254,8 @@ export interface components {
             artist_mbid: string;
             /** @description Whether auto-download is wanted. */
             auto_download: boolean;
-            /** @description Approval state: none, pending, approved, rejected or revoked. */
-            auto_download_state: string;
+            /** @description Approval state of the auto-download ask. */
+            auto_download_state: components["schemas"]["AutoDownloadState"];
             /** @description Whether the caller follows the artist. */
             followed: boolean;
         };
@@ -14274,8 +14265,8 @@ export interface components {
             artist_mbid: string;
             /** @description Whether auto-download is wanted. */
             auto_download: boolean;
-            /** @description Approval state: none, pending, approved, rejected or revoked. */
-            auto_download_state: string;
+            /** @description Approval state of the auto-download ask. */
+            auto_download_state: components["schemas"]["AutoDownloadState"];
             /**
              * Format: int64
              * @description When the follow started, epoch seconds.
@@ -14774,25 +14765,6 @@ export interface components {
              */
             total: number;
         };
-        /** @description History paging and filter query. */
-        HistoryQuery: {
-            /** @description `album` or `track`; unset means both. */
-            kind?: string | null;
-            /**
-             * Format: int32
-             * @description 1-based page.
-             */
-            page?: number | null;
-            /**
-             * Format: int32
-             * @description Rows per page (1..=100).
-             */
-            page_size?: number | null;
-            /** @description `newest` (default), `oldest`, or `status`. */
-            sort?: string | null;
-            /** @description Status filter. */
-            status?: string | null;
-        };
         /** @description Paged history list. */
         HistoryResponse: {
             /** @description Page rows. */
@@ -14949,6 +14921,8 @@ export interface components {
             /** @description Job kind: `automatic`, `manual`, `historical` (default: `manual`). */
             kind?: string | null;
         };
+        /** @enum {string} */
+        IdentifyJobState: "queued" | "running" | "deferred" | "succeeded" | "failed" | "attention";
         /** @description Enqueue answer. */
         IdentifyResponse: {
             /** @description Local album id. */
@@ -14956,7 +14930,7 @@ export interface components {
             /** @description Job id. */
             job_id: string;
             /** @description Job state after enqueue. */
-            state: string;
+            state: components["schemas"]["IdentifyJobState"];
         };
         /**
          * @description What the receiving album keeps when the combined albums name different
@@ -15246,13 +15220,8 @@ export interface components {
             last_heartbeat_at?: number | null;
             /** @description Loop name. */
             name: string;
-            /** @description `idle`, `running`, `stopped`, or `failed`. */
-            state: string;
-        };
-        /** @description `kind` query shared by the per-request mutations. */
-        KindQuery: {
-            /** @description `album` (default) or `track`. */
-            kind?: string | null;
+            /** @description Liveness now. */
+            state: components["schemas"]["LoopState"];
         };
         /** @description `GET /albums/{album_id}/lastfm`. */
         LastFmAlbumEnrichment: {
@@ -16604,6 +16573,12 @@ export interface components {
             /** @description Username, matched case-insensitively. */
             username: string;
         };
+        /**
+         * @description Liveness of a loop row. The table's CHECK still allows `idle`, which
+         *     nothing writes since every loop runs on the supervisor.
+         * @enum {string}
+         */
+        LoopState: "running" | "stopped" | "failed";
         /** @description One lyric line. */
         LyricLine: {
             /**
@@ -16684,8 +16659,8 @@ export interface components {
             bundle_id: string;
             /** @description Applied files. */
             files: components["schemas"]["ManageAppliedFile"][];
-            /** @description `committed` or `cleanup_pending`. */
-            outcome: string;
+            /** @description Whether cleanup finished. */
+            outcome: components["schemas"]["PublishOutcome"];
         };
         /** @description One planned file inside a preview. */
         ManageFileView: {
@@ -16787,8 +16762,8 @@ export interface components {
         ManageUndoResponse: {
             /** @description Undo operation bundle id. */
             bundle_id: string;
-            /** @description `committed` or `cleanup_pending`. */
-            outcome: string;
+            /** @description Whether cleanup finished. */
+            outcome: components["schemas"]["PublishOutcome"];
             /** @description Restored track ids. */
             restored: string[];
         };
@@ -17008,11 +16983,8 @@ export interface components {
             /** @description Why the preview can no longer be applied, in words. */
             stale_reasons: string[];
             stale_sample_relative_paths: string[];
-            /**
-             * @description The operation state: `queued`, `running`, `paused`, `ready`,
-             *     `succeeded`, `failed`, `cancelled`, or `stopped`.
-             */
-            state: string;
+            /** @description The operation state. */
+            state: components["schemas"]["OperationState"];
             /** Format: int64 */
             succeeded_count: number;
             summary: components["schemas"]["ManagementSummaryView"];
@@ -17916,13 +17888,8 @@ export interface components {
         NextSourceResponse: {
             /** Format: int64 */
             candidate_index?: number | null;
-            status: string;
+            status: components["schemas"]["TaskStatus"];
             success: boolean;
-        };
-        /** @description Query for clearing presence: which device stopped. */
-        NowPlayingDeleteQuery: {
-            /** @description Device slug (`web` default, the v2 spelling). */
-            device?: string | null;
         };
         /**
          * @description One live session, already privacy-projected (same JSON as the
@@ -17996,13 +17963,6 @@ export interface components {
         OidcAuthorizeBody: {
             /** @description IdP authorize URL (PKCE + state baked in). */
             authorize_url: string;
-        };
-        /** @description OIDC callback query (IdP redirect target). */
-        OidcCallbackQuery: {
-            /** @description Authorization code from the IdP. */
-            code: string;
-            /** @description State echoed from the authorize step. */
-            state: string;
         };
         /** @description OIDC connection. */
         OidcConnection: {
@@ -18102,6 +18062,11 @@ export interface components {
             /** @description Whether the operation succeeded. */
             success: boolean;
         };
+        /**
+         * @description Where a job is in its life.
+         * @enum {string}
+         */
+        OperationState: "queued" | "running" | "paused" | "ready" | "succeeded" | "failed" | "cancelled" | "stopped";
         /** @description One local file against one candidate release. */
         OperationTrackEvidenceView: {
             /** Format: int32 */
@@ -18156,11 +18121,8 @@ export interface components {
             selected_reidentification_candidate_key?: string | null;
             /** Format: int64 */
             skipped_count: number;
-            /**
-             * @description `queued`, `running`, `paused`, `ready`, `succeeded`, `failed`,
-             *     `cancelled`, or `stopped`.
-             */
-            state: string;
+            /** @description Where the job is in its life. */
+            state: components["schemas"]["OperationState"];
             /** Format: int64 */
             succeeded_count: number;
             terminal_code?: string | null;
@@ -19295,6 +19257,11 @@ export interface components {
             origins: string[];
         };
         /**
+         * @description Outcome of one bundle publication.
+         * @enum {string}
+         */
+        PublishOutcome: "committed" | "cleanup_pending";
+        /**
          * @description What kind of purchase a link offers.
          * @enum {string}
          */
@@ -19388,6 +19355,11 @@ export interface components {
             /** Format: int64 */
             page: number;
         };
+        /**
+         * @description Where one user's queue build stands.
+         * @enum {string}
+         */
+        QueueBuildStatus: "idle" | "building" | "ready" | "error";
         /** @description How deep one job kind's queue is. */
         QueueDepthView: {
             /**
@@ -19457,8 +19429,8 @@ export interface components {
             queue_id?: string | null;
             /** @description True when the deck is older than its TTL. */
             stale?: boolean | null;
-            /** @description `ready`, `building`, `stale`, or `error`. */
-            status: string;
+            /** @description Build state after the trigger. */
+            status: components["schemas"]["QueueBuildStatus"];
         };
         /** @description Body ignoring one queue card. */
         QueueIgnoreRequest: {
@@ -19686,6 +19658,11 @@ export interface components {
             /** @description Seed artist name. */
             artist_name?: string;
         };
+        /**
+         * @description What a rating is on: the table's `item_kind` values.
+         * @enum {string}
+         */
+        RatedKind: "artist" | "album" | "track";
         /** @description Rating-lookup body: local ids of each kind, at most 1000 of each. */
         RatingLookupBody: {
             /** @description Album ids. */
@@ -19721,7 +19698,7 @@ export interface components {
              */
             item_id: string;
             /** @description Rated kind. */
-            kind: string;
+            kind: components["schemas"]["RatedKind"];
             /**
              * Format: int32
              * @description The caller's rating now, 0 when cleared.
@@ -19811,8 +19788,8 @@ export interface components {
         ReimportResponse: {
             /** @description Why the import did not complete, when it did not. */
             error_message?: string | null;
-            /** @description Task status after the import (`completed`, `partial`, `failed`). */
-            status: string;
+            /** @description Task status after the import. */
+            status: components["schemas"]["TaskStatus"];
             /** @description Whether the files reached the library (`completed` or `partial`). */
             success: boolean;
         };
@@ -20496,8 +20473,8 @@ export interface components {
             protocol?: string | null;
             /** @description Picked candidate quality from the linked task, once picked. */
             quality?: string | null;
-            /** @description `album` or `track`. */
-            request_kind: string;
+            /** @description Whole album or one track. */
+            request_kind: components["schemas"]["RequestKind"];
             /**
              * Format: int64
              * @description Epoch seconds when asked.
@@ -20554,6 +20531,11 @@ export interface components {
              */
             year?: number | null;
         };
+        /**
+         * @description What kind of thing a request asks for.
+         * @enum {string}
+         */
+        RequestKind: "album" | "track";
         /**
          * @description One grouped status detail behind the request card's expander. Intake
          *     has no producer for these yet (v2 never sent them
@@ -20867,6 +20849,8 @@ export interface components {
             /** @description Makes a retried request return the same job (single review only). */
             idempotency_key?: string | null;
         };
+        /** @enum {string} */
+        ReviewState: "pending" | "approved" | "rejected" | "dismissed" | "excluded";
         /** @description One identification review and the album it is about. */
         ReviewView: {
             /** @description Local album id. */
@@ -20894,8 +20878,8 @@ export interface components {
             resolved_by?: string | null;
             /** @description Selected candidate key, once approved. */
             selected_candidate_key?: string | null;
-            /** @description `pending`, `approved`, `rejected`, `dismissed` or `excluded`. */
-            state: string;
+            /** @description Review state. */
+            state: components["schemas"]["ReviewState"];
             /**
              * Format: int64
              * @description When it last changed (Unix milliseconds).
@@ -21143,7 +21127,7 @@ export interface components {
             /** Format: int64 */
             row_revision: number;
             run_id: string;
-            state: string;
+            state: components["schemas"]["ScanState"];
             /** Format: int64 */
             stream_revision: number;
         };
@@ -21181,10 +21165,21 @@ export interface components {
          */
         ScanFrequency: "manual" | "5min" | "10min" | "30min" | "1hr" | "6hr" | "12hr" | "24hr" | "3d" | "7d" | "daily";
         /**
+         * @description Scan kind. `rescan_files` re-reads every in-policy file even when its
+         *     stat revision is unchanged; `policy_reconcile` walks but skips tag reads.
+         * @enum {string}
+         */
+        ScanKind: "incremental" | "rescan_files" | "policy_reconcile";
+        /**
          * @description Scan kind a caller can ask for.
          * @enum {string}
          */
         ScanKindBody: "incremental" | "rescan_files" | "policy_reconcile";
+        /**
+         * @description Worker phase. Spelling matches v2 `ScanPhase` exactly.
+         * @enum {string}
+         */
+        ScanPhase: "queued" | "discovering" | "indexing" | "reconciling";
         /** @description Scan request answer. */
         ScanResponse: {
             /**
@@ -21195,7 +21190,7 @@ export interface components {
             /** @description Run id (fresh or coalesced). */
             run_id: string;
             /** @description Run state after the request. */
-            state: string;
+            state: components["schemas"]["ScanState"];
         };
         /** @description The run holding the worker and the next queued one. */
         ScanRunCurrentResponse: {
@@ -21212,8 +21207,8 @@ export interface components {
             failure_detail: string;
             /** @description What happened, in plain words. */
             message: string;
-            /** @description `discovering`, `indexing` or `reconciling`. */
-            phase: string;
+            /** @description Phase the file failed in. */
+            phase: components["schemas"]["ScanPhase"];
             /**
              * Format: double
              * @description Unix seconds.
@@ -21251,8 +21246,7 @@ export interface components {
         };
         /** @description Answer to a scan request. */
         ScanRunRequestedResponse: {
-            /** @description Kind of the run in the way, on a conflict. */
-            conflicting_kind: string | null;
+            conflicting_kind: null | components["schemas"]["ScanKind"];
             disposition: components["schemas"]["ScanDisposition"];
             /** @description Why the request waits, when it does. */
             queued_reason: string | null;
@@ -21264,7 +21258,7 @@ export interface components {
             /** @description The run that will do the work. */
             run_id: string;
             /** @description That run's state. */
-            state: string;
+            state: components["schemas"]["ScanState"];
         };
         /** @description One scan run. */
         ScanRunView: {
@@ -21287,9 +21281,9 @@ export interface components {
             /** @description Run id. */
             id: string;
             /** @description Run kind. */
-            kind: string;
+            kind: components["schemas"]["ScanKind"];
             /** @description Current phase. */
-            phase: string;
+            phase: components["schemas"]["ScanPhase"];
             /** @description Seconds spent per phase. */
             phase_timings: {
                 [key: string]: number;
@@ -21303,8 +21297,7 @@ export interface components {
             requested_by_user_id?: string | null;
             /** @description Pending control: `none`, `pause` or `stop`. */
             requested_control: string;
-            /** @description Phase a paused run picks up from. */
-            resume_phase?: string | null;
+            resume_phase?: null | components["schemas"]["ScanPhase"];
             /**
              * Format: int64
              * @description Row revision; pause, resume and stop send it back.
@@ -21316,7 +21309,7 @@ export interface components {
              */
             started_at?: number | null;
             /** @description Run state. */
-            state: string;
+            state: components["schemas"]["ScanState"];
             /** @description What to do about the terminal code. */
             terminal_action?: string | null;
             /**
@@ -21352,6 +21345,11 @@ export interface components {
             /** @description Root id. */
             root_id: string;
         };
+        /**
+         * @description Durable run state. Spelling matches v2 `ScanState` exactly.
+         * @enum {string}
+         */
+        ScanState: "queued" | "discovering" | "indexing" | "reconciling" | "pausing" | "paused" | "stopping" | "completed" | "cancelled" | "superseded_policy_changed" | "failed";
         /** @description One native now-playing forward, by name (v2 `NowPlayingRequest` fields). */
         ScrobbleNowPlayingRequest: {
             /** @description Album title. */
@@ -21854,6 +21852,11 @@ export interface components {
              */
             success: boolean;
         };
+        /**
+         * @description Session kind, v2 `session_kind` values kept verbatim.
+         * @enum {string}
+         */
+        SessionKind: "standard" | "companion";
         /** @description Own sessions. */
         SessionListResponse: {
             /** @description All live sessions, current first. */
@@ -21875,8 +21878,8 @@ export interface components {
             expires_at: number;
             /** @description Session id. */
             id: string;
-            /** @description `standard` or `companion`. */
-            kind: string;
+            /** @description Browser or companion-device session. */
+            kind: components["schemas"]["SessionKind"];
             /** @description Companion device name, or the browser user agent. */
             label: string;
             /**
@@ -22327,6 +22330,88 @@ export interface components {
              */
             stopped: number;
         };
+        /**
+         * @description The events the stream sends, keyed by name, for the API document. On
+         *     the wire each one is an SSE frame whose `event:` line is `event` here
+         *     and whose `data:` line is `data` as JSON. The hub encodes frames itself
+         *     (`Frame::encode`); this type only describes them.
+         */
+        StreamEvent: {
+            /** @description To everyone: library activity revisions moved. */
+            data: components["schemas"]["ActivityChanged"];
+            /** @enum {string} */
+            event: "activity.changed";
+        } | {
+            /** @description To everyone: live listening sessions. */
+            data: components["schemas"]["NowPlayingSnapshot"];
+            /** @enum {string} */
+            event: "snapshot";
+        } | {
+            /** @description To everyone: the download queue moved. */
+            data: components["schemas"]["DownloadsChanged"];
+            /** @enum {string} */
+            event: "downloads.changed";
+        } | {
+            /** @description To everyone: library image precache progress. */
+            data: components["schemas"]["CacheSyncProgress"];
+            /** @enum {string} */
+            event: "cache.sync";
+        } | {
+            /** @description To one user: the wanted watcher found new candidates. */
+            data: components["schemas"]["WantedNotice"];
+            /** @enum {string} */
+            event: "wanted_new_candidates";
+        } | {
+            /** @description To one user: the wanted watcher started a download. */
+            data: components["schemas"]["WantedNotice"];
+            /** @enum {string} */
+            event: "wanted_auto_dispatched";
+        } | {
+            /** @description To one user: a wanted album reached the library. */
+            data: components["schemas"]["WantedNotice"];
+            /** @enum {string} */
+            event: "wanted_fulfilled";
+        } | {
+            /** @description To one user: a followed artist's new release was queued. */
+            data: components["schemas"]["AutoDownloadEnqueued"];
+            /** @enum {string} */
+            event: "auto_download_enqueued";
+        } | {
+            /** @description To one user: someone else imported an album they requested. */
+            data: components["schemas"]["RequestImported"];
+            /** @enum {string} */
+            event: "request_imported";
+        } | {
+            /** @description To one user: an imported playlist has its tracks. */
+            data: components["schemas"]["PlaylistImported"];
+            /** @enum {string} */
+            event: "playlist_imported";
+        } | {
+            /** @description To one user: their drop-import job moved. */
+            data: components["schemas"]["DropImportUpdated"];
+            /** @enum {string} */
+            event: "drop_import_updated";
+        } | {
+            /** @description To one user: their weekly mix was rebuilt, or could not be. */
+            data: components["schemas"]["PersonalMixRefreshed"];
+            /** @enum {string} */
+            event: "personal_mix_refreshed";
+        } | {
+            /** @description To one user: new concerts for an artist they follow. */
+            data: components["schemas"]["ConcertsNew"];
+            /** @enum {string} */
+            event: "concerts_new";
+        } | {
+            /** @description To one user: one of their downloads moved. */
+            data: components["schemas"]["DownloadProgress"];
+            /** @enum {string} */
+            event: "download_progress";
+        } | {
+            /** @description To one user: one of their manual album searches moved. */
+            data: components["schemas"]["SearchJobUpdated"];
+            /** @enum {string} */
+            event: "search_job_updated";
+        };
         /** @description Typeahead response: one merged list across buckets, best first. */
         SuggestResponse: {
             /** @description Suggestions, best first. */
@@ -22481,6 +22566,11 @@ export interface components {
              */
             source: string;
         };
+        /**
+         * @description Persisted download-task status. Wire strings match v2 byte for byte.
+         * @enum {string}
+         */
+        TaskStatus: "queued" | "downloading" | "processing" | "completed" | "partial" | "failed" | "cancelled";
         /** @description slskd test verdict: validity plus the reported version. */
         TestConnectionResponse: {
             /** @description Human summary. */
@@ -23108,7 +23198,7 @@ export interface components {
             release_group_mbid?: string | null;
             release_mbid?: string | null;
             /** @description `unconfirmed` or `unmatched`. */
-            state: string;
+            state: components["schemas"]["EditionState"];
             title: string;
             /** Format: double */
             updated_at: number;
@@ -24509,7 +24599,7 @@ export interface operations {
             };
         };
     };
-    get_quota: {
+    get_user_quota: {
         parameters: {
             query?: never;
             header?: never;
@@ -28705,7 +28795,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/event-stream": string;
+                    "text/event-stream": components["schemas"]["StreamEvent"];
                 };
             };
             /** @description Not authenticated */
@@ -46919,7 +47009,7 @@ export interface operations {
             };
         };
     };
-    get_quota: {
+    get_youtube_quota: {
         parameters: {
             query?: never;
             header?: never;

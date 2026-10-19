@@ -29,7 +29,7 @@ use crate::identify::models::{AlbumIdentity, CandidateEvidence};
 use crate::operations::models::OperationError;
 use crate::operations::reasons::{self, review_reason};
 use crate::operations::reviews::{
-    BulkAction, ReviewAction, ReviewFilter, ReviewOrder, ReviewRow, Tally, parse_state, state_name,
+    BulkAction, ReviewAction, ReviewFilter, ReviewOrder, ReviewRow, Tally, parse_state,
 };
 use crate::operations::service::Operations;
 use crate::wiring::LibrarySetup;
@@ -156,7 +156,7 @@ fn review_view(row: &ReviewRow) -> ReviewView {
         artist_name: row.artist_name.clone(),
         reason_code: review.reason_code.clone(),
         reason: review_reason(&review.reason_code).into(),
-        state: state_name(review.state).to_owned(),
+        state: review.state,
         resolved_by: review.resolved_by_user_id.clone(),
         selected_candidate_key: review.selected_candidate_key.clone(),
         candidates,

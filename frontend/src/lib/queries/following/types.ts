@@ -1,9 +1,8 @@
 import type { components } from '$lib/api/v3/openapi';
 
 // Page shapes for the following hub. The v3 wire types are adapted into
-// these in FollowAdapters.ts (state strings narrowed, `artist_mbid` read as
-// `mbid`).
-export type AutoDownloadState = 'none' | 'pending' | 'approved' | 'rejected' | 'revoked';
+// these in FollowAdapters.ts (`artist_mbid` read as `mbid`).
+export type AutoDownloadState = components['schemas']['AutoDownloadState'];
 
 export interface FollowStatus {
 	followed: boolean;

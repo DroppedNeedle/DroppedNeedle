@@ -27,8 +27,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::reads::discover::models::{
-    DiscoverQueuePreview, DiscoverQueueStatusResponse, IgnoredRelease, QueueEnrichment,
-    QueueGenerateResponse, QueueIgnoreRequest, QueueItem, QueueItemLight,
+    DiscoverQueuePreview, DiscoverQueueStatusResponse, IgnoredRelease, QueueBuildStatus,
+    QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, QueueItem, QueueItemLight,
 };
 use crate::reads::discover::ports::{
     BoxFuture, ProviderFailure, QueueDeck, QueueStore, QueueTrigger, YouTubeSource,
@@ -138,29 +138,10 @@ struct SavedCards {
     queue_id: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    Idle,
-    Building,
-    Ready,
-    Error,
-}
-
-impl Phase {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Idle => "idle",
-            Self::Building => "building",
-            Self::Ready => "ready",
-            Self::Error => "error",
-        }
-    }
-}
-
 /// One user's queue state.
 struct UserState {
     source: String,
-    phase: Phase,
+    phase: QueueBuildStatus,
     deck: Option<SavedQueue>,
     saved_stale: bool,
     error: Option<String>,
@@ -174,7 +155,7 @@ impl UserState {
     fn new(source: &str) -> Self {
         Self {
             source: source.to_owned(),
-            phase: Phase::Idle,
+            phase: QueueBuildStatus::Idle,
             deck: None,
             saved_stale: false,
             error: None,
@@ -200,7 +181,7 @@ impl UserState {
 
     fn status(&self, settings: &QueueSettings, now: f64) -> DiscoverQueueStatusResponse {
         let mut status = DiscoverQueueStatusResponse {
-            status: self.phase.as_str().to_owned(),
+            status: self.phase,
             queue_id: None,
             item_count: None,
             built_at: None,
@@ -208,13 +189,13 @@ impl UserState {
             error: None,
         };
         match (self.phase, &self.deck) {
-            (Phase::Ready, Some(deck)) => {
+            (QueueBuildStatus::Ready, Some(deck)) => {
                 status.queue_id = Some(deck.queue.queue_id.clone());
                 status.item_count = Some(deck.queue.items.len() as i64);
                 status.built_at = Some(deck.built_at as i64);
                 status.stale = Some(self.is_stale(settings, now));
             }
-            (Phase::Error, _) => status.error = self.error.clone(),
+            (QueueBuildStatus::Error, _) => status.error = self.error.clone(),
             _ => {}
         }
         status
@@ -355,10 +336,10 @@ impl Inner {
         if deck.source.as_deref().is_some_and(|built| built != source) {
             return;
         }
-        if state.deck.is_none() && state.phase != Phase::Building {
+        if state.deck.is_none() && state.phase != QueueBuildStatus::Building {
             state.deck = Some(deck);
             state.saved_stale = saved.stale;
-            state.phase = Phase::Ready;
+            state.phase = QueueBuildStatus::Ready;
         }
     }
 
@@ -396,23 +377,23 @@ impl Inner {
         if scheduled && !settings.warm_cycle_build {
             return generate_response("disabled", state.status(&settings, now));
         }
-        if state.phase == Phase::Building && state.scheduled && !scheduled {
+        if state.phase == QueueBuildStatus::Building && state.scheduled && !scheduled {
             // The person asking wins over the warm cycle.
             state.stop_task();
             state.phase = if state.deck.is_some() {
-                Phase::Ready
+                QueueBuildStatus::Ready
             } else {
-                Phase::Idle
+                QueueBuildStatus::Idle
             };
         }
-        if state.phase == Phase::Building {
+        if state.phase == QueueBuildStatus::Building {
             return generate_response("already_building", state.status(&settings, now));
         }
-        if !force && state.phase == Phase::Ready && !state.is_stale(&settings, now) {
+        if !force && state.phase == QueueBuildStatus::Ready && !state.is_stale(&settings, now) {
             return generate_response("already_ready", state.status(&settings, now));
         }
         state.stop_task();
-        state.phase = Phase::Building;
+        state.phase = QueueBuildStatus::Building;
         state.error = None;
         state.scheduled = scheduled;
         state.run += 1;
@@ -448,9 +429,9 @@ impl Inner {
             if state.scheduled && !QueueSettings::read(&self.settings).warm_cycle_build {
                 // The warm cycle was switched off while this ran.
                 state.phase = if state.deck.is_some() {
-                    Phase::Ready
+                    QueueBuildStatus::Ready
                 } else {
-                    Phase::Idle
+                    QueueBuildStatus::Idle
                 };
                 return;
             }
@@ -466,12 +447,12 @@ impl Inner {
                     };
                     state.deck = Some(deck.clone());
                     state.saved_stale = false;
-                    state.phase = Phase::Ready;
+                    state.phase = QueueBuildStatus::Ready;
                     deck
                 }
                 Err(cause) => {
                     tracing::error!(%cause, "discover queue build failed");
-                    state.phase = Phase::Error;
+                    state.phase = QueueBuildStatus::Error;
                     state.error =
                         Some("The queue could not be built. Try again in a moment.".to_owned());
                     return;

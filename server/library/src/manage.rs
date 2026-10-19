@@ -585,8 +585,8 @@ pub struct AppliedFile {
 pub struct AppliedBundle {
     /// Published bundle id.
     pub bundle_id: String,
-    /// `committed` or `cleanup_pending`.
-    pub outcome: String,
+    /// Whether cleanup finished.
+    pub outcome: PublishOutcome,
     /// Applied files.
     pub files: Vec<AppliedFile>,
 }
@@ -1166,10 +1166,7 @@ impl LibrarySetup {
             .map_err(publish_error)?;
         Ok(AppliedBundle {
             bundle_id: entry.sealed.bundle.id.clone(),
-            outcome: match outcome {
-                PublishOutcome::Committed => "committed".to_owned(),
-                PublishOutcome::CleanupPending => "cleanup_pending".to_owned(),
-            },
+            outcome,
             files: entry
                 .sealed
                 .bundle
@@ -1404,10 +1401,7 @@ impl LibrarySetup {
         let outcome = open.publisher.publish(&sealed, &live, &docs)?;
         Ok(AppliedBundle {
             bundle_id: sealed.bundle.id.clone(),
-            outcome: match outcome {
-                PublishOutcome::Committed => "committed".to_owned(),
-                PublishOutcome::CleanupPending => "cleanup_pending".to_owned(),
-            },
+            outcome,
             files: sealed
                 .bundle
                 .items
@@ -2053,10 +2047,7 @@ impl LibrarySetup {
             .map_err(publish_error)?;
         Ok(AppliedBundle {
             bundle_id: sealed.bundle.id.clone(),
-            outcome: match outcome {
-                PublishOutcome::Committed => "committed".to_owned(),
-                PublishOutcome::CleanupPending => "cleanup_pending".to_owned(),
-            },
+            outcome,
             files: sealed
                 .bundle
                 .items

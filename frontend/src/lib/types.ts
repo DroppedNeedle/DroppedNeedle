@@ -158,7 +158,7 @@ export type ArtistInfoBasic = ArtistImageFields & {
 	// per-user follow state; artist page reads it from the dedicated /follow query
 	followed?: boolean;
 	auto_download?: boolean;
-	auto_download_state?: 'none' | 'pending' | 'approved' | 'rejected' | 'revoked';
+	auto_download_state?: components['schemas']['AutoDownloadState'];
 	release_group_count?: number;
 	service_status?: Record<string, string> | null;
 };
@@ -567,7 +567,7 @@ export type StatusMessage = {
 	messages: string[];
 };
 
-export type RequestKind = 'album' | 'track';
+export type RequestKind = components['schemas']['RequestKind'];
 
 export type ActiveRequestItem = {
 	musicbrainz_id: string;
@@ -2119,8 +2119,7 @@ export interface PluginUiRpcResponse {
 	error: string | null;
 }
 
-export type DownloadStatus =
-	'queued' | 'downloading' | 'processing' | 'completed' | 'partial' | 'failed' | 'cancelled';
+export type DownloadStatus = components['schemas']['TaskStatus'];
 
 // mirrors backend DownloadTaskResponse (api/v1/schemas/download.py)
 export interface DownloadTask {

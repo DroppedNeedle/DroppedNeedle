@@ -7,7 +7,8 @@
 //! original stays terminal for audit.
 
 /// Persisted download-task status. Wire strings match v2 byte for byte.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     /// Created but never enqueued; startup re-dispatches these.
     Queued,

@@ -18,6 +18,7 @@ use utoipa::{IntoParams, ToSchema};
 use super::error::refused;
 use super::models::snake;
 use crate::mutations::{MutationError, Mutations};
+use crate::scan::models::ScanState;
 use crate::wiring::LibrarySetup;
 use droppedneedle_auth::{Admin, Curator};
 
@@ -79,7 +80,7 @@ pub struct AlbumRescanResponse {
     /// `started`, `queued`, `coalesced`, `expanded` or `conflict`.
     pub disposition: String,
     /// Run state after the request.
-    pub state: String,
+    pub state: ScanState,
     /// Why the run waits, when it does.
     pub queued_reason: Option<String>,
 }
@@ -239,7 +240,7 @@ pub async fn rescan_album(
         Json(AlbumRescanResponse {
             run_id: result.run_id,
             disposition: snake(&result.disposition),
-            state: snake(&result.state),
+            state: result.state,
             queued_reason: result.queued_reason,
         }),
     ))

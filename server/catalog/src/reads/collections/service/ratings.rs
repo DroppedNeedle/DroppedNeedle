@@ -85,7 +85,7 @@ impl CollectionsService<'_> {
         }
         self.set_rating(user_id, kind, &current, rating).await?;
         Ok(RatingStatusResponse {
-            kind: kind.as_str().to_owned(),
+            kind,
             item_id: current,
             rating,
         })

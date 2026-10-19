@@ -166,6 +166,7 @@ pub async fn provider_stats(
     get,
     tag = "admin",
     path = "/api/v3/admin/users/{id}/quota",
+    operation_id = "get_user_quota",
     params(("id" = String, Path, description = "User id")),
     responses((status = 200, description = "Quota standing", body = QuotaResponse))
 )]

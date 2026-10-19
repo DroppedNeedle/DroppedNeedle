@@ -16,7 +16,7 @@ use super::models::{
     LastFmStatusResponse, LastFmTokenResponse, LocalCredential, PasswordReset, ProfileResponse,
     RecoveryCode, RecoveryCodeResponse, SessionListResponse, SessionView, UserRecord, UserResponse,
 };
-use super::roles::{Admin, Principal, Role, SessionKind};
+use super::roles::{Admin, Principal, Role};
 use super::stores::{
     LastFmError, LastFmKeys, RecoveryStore, RoleChange, StoreError, UserDeletion, UserStore,
 };
@@ -508,10 +508,7 @@ pub async fn list_sessions(
         .iter()
         .map(|row| SessionView {
             id: row.id.clone(),
-            kind: match row.kind {
-                SessionKind::Standard => "standard".to_owned(),
-                SessionKind::Companion => "companion".to_owned(),
-            },
+            kind: row.kind,
             label: companion_label(&row.label).to_owned(),
             created_at: row.created_at,
             last_seen_at: row.last_seen_at,

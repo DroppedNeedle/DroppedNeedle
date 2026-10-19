@@ -32,7 +32,7 @@ use crate::reads::discover::adapters::content::IntegrationSettings;
 use crate::reads::discover::adapters::queue::QueueSettings;
 use crate::reads::discover::adapters::queue::store::QueueDb;
 use crate::reads::discover::models::{
-    DiscoverActivityResponse, DiscoverResponse, IntegrationStatus,
+    DiscoverActivityResponse, DiscoverResponse, IntegrationStatus, QueueBuildStatus,
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure, QueueStore, QueueTrigger};
 use build::{Builder, PageSettings};
@@ -686,10 +686,10 @@ impl LiveDiscover {
         loop {
             tokio::time::sleep(QUEUE_POLL).await;
             let status = self.inner.queues.status(user_id).await;
-            match status.status.as_str() {
-                "building" => continue,
-                "ready" => return true,
-                _ => return false,
+            match status.status {
+                QueueBuildStatus::Building => continue,
+                QueueBuildStatus::Ready => return true,
+                QueueBuildStatus::Idle | QueueBuildStatus::Error => return false,
             }
         }
     }

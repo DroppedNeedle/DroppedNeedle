@@ -32,7 +32,7 @@ use super::{
     tokens::hash_token,
 };
 use crate::users::roles::User;
-use droppedneedle_kernel::events::{EventHub, Subscription};
+use droppedneedle_kernel::events::{EventHub, StreamEvent, Subscription};
 use droppedneedle_kernel::mount::{Routes, routes};
 
 /// Reconnect delay the stream asks browsers for (v2 `_MUX_RETRY_MS`).
@@ -97,23 +97,16 @@ pub fn routes() -> Routes<StreamRoute> {
 
 /// Live events for the signed-in user.
 ///
-/// Event names: `activity.changed` and `snapshot` (now playing) go to
-/// everyone; `wanted_new_candidates`, `wanted_auto_dispatched`,
-/// `wanted_fulfilled`, `auto_download_enqueued`, `request_imported`,
-/// `playlist_imported`, `drop_import_updated`,
-/// `personal_mix_refreshed`, `concerts_new` and `search_job_updated` go
-/// only to the user they concern. Each `data:` line is one JSON payload (see the `ActivityChanged`,
-/// `NowPlayingSnapshot`, `WantedNotice`, `AutoDownloadEnqueued`,
-/// `RequestImported`, `PlaylistImported`, `DropImportUpdated`,
-/// `PersonalMixRefreshed`, `ConcertsNew` and
-/// `SearchJobUpdated` schemas).
+/// Each SSE frame is one `StreamEvent`: its `event:` line is the member's
+/// `event` and its `data:` line the member's `data` as JSON. Some events
+/// go to everyone, the rest only to the user they concern.
 #[utoipa::path(
     get,
     path = "/api/v3/events/stream",
     operation_id = "events_stream",
     tag = "events",
     responses(
-        (status = 200, description = "Server-Sent Events stream", content_type = "text/event-stream", body = String),
+        (status = 200, description = "Server-Sent Events stream", content_type = "text/event-stream", body = StreamEvent),
         (status = 401, description = "Not authenticated"),
     )
 )]

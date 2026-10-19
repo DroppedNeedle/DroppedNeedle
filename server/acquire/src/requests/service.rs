@@ -2370,7 +2370,7 @@ impl From<&RequestRecord> for RequestItem {
             in_library: None,
             task_id: record.task_id.clone(),
             can_reimport: None,
-            request_kind: record.kind.as_str().to_owned(),
+            request_kind: record.kind,
             track_title: record.track_title.clone(),
             duration_seconds: record.duration_seconds,
             track_release_group_mbid: record.track_release_group_mbid.clone(),

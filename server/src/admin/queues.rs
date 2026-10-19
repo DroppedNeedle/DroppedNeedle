@@ -19,7 +19,7 @@ use super::{
         QueueStatsResponse, SlotView,
     },
 };
-use droppedneedle_kernel::db::{CheckpointMode, CheckpointOutcome, CheckpointService, list_loops};
+use droppedneedle_kernel::db::{CheckpointOutcome, CheckpointService, list_loops};
 use droppedneedle_providers::Providers;
 
 /// Loop rows, job queue depths and the latest checkpoint pass.
@@ -38,7 +38,7 @@ pub async fn queue_stats(
             .into_iter()
             .map(|job| JobView {
                 name: job.name,
-                state: job.state.as_str().to_owned(),
+                state: job.state,
                 last_heartbeat_at: job.last_heartbeat_at,
                 last_error: job.last_error,
             })
@@ -62,10 +62,7 @@ pub async fn queue_stats(
 /// stays in the log and the view gets a fixed code.
 fn checkpoint_view(pass: CheckpointOutcome) -> CheckpointView {
     CheckpointView {
-        mode: match pass.mode {
-            CheckpointMode::Passive => "passive".to_owned(),
-            CheckpointMode::Truncate => "truncate".to_owned(),
-        },
+        mode: pass.mode,
         busy: pass.busy,
         active_bytes: pass.active_bytes,
         wal_file_bytes: pass.wal_file_bytes,

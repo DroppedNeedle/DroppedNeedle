@@ -8,7 +8,10 @@ use crate::reads::library::player::SqlitePlayerCatalog;
 use crate::reads::library::sqlite::LibraryDb;
 
 /// Auto-download state of one follow, as the routes show it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum AutoDownloadState {
     /// Off, or on with no verdict on file.
     None,
@@ -23,17 +26,6 @@ pub enum AutoDownloadState {
 }
 
 impl AutoDownloadState {
-    /// Wire form (the v2 vocabulary the web client reads).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Pending => "pending",
-            Self::Approved => "approved",
-            Self::Rejected => "rejected",
-            Self::Revoked => "revoked",
-        }
-    }
-
     /// Parse a stored approval state; unknown text reads as no verdict.
     pub fn from_approval(state: &str) -> Self {
         match state {

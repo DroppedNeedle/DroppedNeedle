@@ -298,6 +298,7 @@ pub async fn delete_track_link(
     get,
     tag = "youtube",
     path = "/api/v3/youtube/quota",
+    operation_id = "get_youtube_quota",
     responses(
         (status = 200, description = "Today's budget", body = YouTubeQuotaStatus),
         (status = 401, description = "Not authenticated"),

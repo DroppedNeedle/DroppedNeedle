@@ -42,8 +42,8 @@ use droppedneedle_kernel::mount::{Routes, routes};
 pub struct ReimportResponse {
     /// Whether the files reached the library (`completed` or `partial`).
     pub success: bool,
-    /// Task status after the import (`completed`, `partial`, `failed`).
-    pub status: String,
+    /// Task status after the import.
+    pub status: TaskStatus,
     /// Why the import did not complete, when it did not.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
@@ -102,9 +102,7 @@ pub struct DownloadTaskResponse {
     pub album_title: String,
     pub track_title: Option<String>,
     pub year: Option<i64>,
-    /// `queued`, `downloading`, `processing`, `completed`, `partial`,
-    /// `failed` or `cancelled`.
-    pub status: String,
+    pub status: TaskStatus,
     pub progress_percent: i64,
     pub total_size_bytes: Option<i64>,
     pub downloaded_bytes: i64,
@@ -182,7 +180,7 @@ impl From<TaskView> for DownloadTaskResponse {
             album_title: task.album_title,
             track_title: extras.track_title,
             year: extras.year,
-            status: task.status.as_str().to_owned(),
+            status: task.status,
             progress_percent: task.progress_percent,
             total_size_bytes: task.total_size_bytes,
             downloaded_bytes: task.downloaded_bytes,
@@ -287,7 +285,7 @@ pub struct DownloadFileItem {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DownloadFilesResponse {
     pub task_id: String,
-    pub status: String,
+    pub status: TaskStatus,
     pub files_total: i64,
     pub files_completed: i64,
     pub files_failed: i64,
@@ -312,7 +310,7 @@ pub struct NextSourceRequest {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct NextSourceResponse {
     pub success: bool,
-    pub status: String,
+    pub status: TaskStatus,
     pub candidate_index: Option<i64>,
 }
 
@@ -529,7 +527,7 @@ pub async fn task_files_handler(
     let (row, files) = state.queue.files(&viewer(&principal), &task_id).await?;
     Ok(Json(DownloadFilesResponse {
         task_id: row.task.id,
-        status: row.task.status.as_str().to_owned(),
+        status: row.task.status,
         files_total: row.extras.files_total,
         files_completed: row.extras.files_completed,
         files_failed: row.extras.files_failed,
@@ -587,7 +585,7 @@ pub async fn next_source_handler(
         .await?;
     Ok(Json(NextSourceResponse {
         success: true,
-        status: task.status.as_str().to_owned(),
+        status: task.status,
         candidate_index: task.candidate_index,
     }))
 }
@@ -758,10 +756,9 @@ pub async fn reimport_task_handler(
     let Some(row) = row else {
         return Err(RequestsError::NotFound.into());
     };
-    let status = row.status.as_str().to_owned();
     Ok(Json(ReimportResponse {
-        success: matches!(status.as_str(), "completed" | "partial"),
-        status,
+        success: matches!(row.status, TaskStatus::Completed | TaskStatus::Partial),
+        status: row.status,
         error_message: row.error_message,
     }))
 }
