@@ -14,10 +14,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::registry::{BoxFuture, JobCtx, JobExit, JobKind, JobRegistry, RegistryStore};
-use super::schedule::{Schedule, SplitMix64, sleep_or_stop};
+use super::BoxFuture;
+use super::schedule::Schedule;
+use super::supervisor::{AlreadyRunning, FnTick, Next, Supervisor, TickError};
 
-/// Registered name of the sync loop.
+/// Name of the sync loop.
 pub const JOB_NAME: &str = "navidrome-playlist-export";
 
 /// v2 poll cadence, unchanged.
@@ -78,34 +79,13 @@ pub struct PlaylistSyncResult {
     pub tracks_unrepresentable: u64,
 }
 
-/// The cadence: v2's 5 minutes with a 30 s spread.
+/// The cadence: v2's 5 minutes with a 30 s spread, the first wait included.
 pub fn default_schedule() -> Schedule {
     Schedule::new(SYNC_INTERVAL)
+        .with_initial_delay(SYNC_INTERVAL)
+        .with_jittered_start()
         .with_jitter(DEFAULT_JITTER)
         .with_backoff(Duration::from_secs(10), Duration::from_secs(600))
-}
-
-/// Spawn the loop on a registry.
-pub async fn spawn_on<S, T, E>(
-    registry: &JobRegistry<S>,
-    settings: T,
-    exporter: E,
-    schedule: Schedule,
-) -> Result<(), super::registry::AlreadyRunning>
-where
-    S: RegistryStore,
-    T: PlaylistSyncSettings,
-    E: PlaylistExporter,
-{
-    let settings = Arc::new(settings);
-    let exporter = Arc::new(exporter);
-    registry
-        .spawn(JOB_NAME, JobKind::Ephemeral, move |ctx| {
-            let settings = Arc::clone(&settings);
-            let exporter = Arc::clone(&exporter);
-            async move { run(ctx, settings.as_ref(), exporter.as_ref(), &schedule).await }
-        })
-        .await
 }
 
 /// One loop cycle. Returns the cycle outcome for backoff: skipped cycles
@@ -133,29 +113,35 @@ where
     if result.success { Ok(()) } else { Err(()) }
 }
 
-/// Run until stop fires. The first cycle waits out one interval (v2 sleeps
-/// before its first sync too); failures back off and never exit.
-pub async fn run<S, T, E>(
-    ctx: JobCtx<S>,
-    settings: &T,
-    exporter: &E,
-    schedule: &Schedule,
-) -> JobExit
+/// Row code of a cycle the exporter reported failed.
+pub const FAILED: &str = "PLAYLIST_EXPORT_FAILED";
+
+/// Start the loop. The first cycle waits out one interval (v2 sleeps before
+/// its first sync too); failures back off and never end it.
+pub fn spawn_on<T, E>(
+    supervisor: &Supervisor,
+    settings: T,
+    exporter: E,
+    schedule: Schedule,
+) -> Result<(), AlreadyRunning>
 where
-    S: RegistryStore,
     T: PlaylistSyncSettings,
     E: PlaylistExporter,
 {
-    let mut rng = SplitMix64::new(SplitMix64::seed_from_time());
-    let mut failures = 0_u32;
-    loop {
-        if sleep_or_stop(schedule.next_delay(&mut rng, failures), ctx.stop()).await {
-            return JobExit::Stopped;
-        }
-        match run_once(settings, exporter).await {
-            Ok(()) => failures = 0,
-            Err(()) => failures = failures.saturating_add(1),
-        }
-        ctx.heartbeat().await;
-    }
+    let settings = Arc::new(settings);
+    let exporter = Arc::new(exporter);
+    supervisor.periodic(
+        JOB_NAME,
+        schedule,
+        FnTick(move |_| {
+            let settings = Arc::clone(&settings);
+            let exporter = Arc::clone(&exporter);
+            async move {
+                run_once(settings.as_ref(), exporter.as_ref())
+                    .await
+                    .map(|()| Next::Continue)
+                    .map_err(|()| TickError::new(FAILED, "the playlist export reported no success"))
+            }
+        }),
+    )
 }

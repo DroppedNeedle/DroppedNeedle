@@ -10,9 +10,8 @@
 //! ```
 //!
 //! The database is opened the way boot opens it: the factory's runtime,
-//! with its watch thread, and the checkpoint loop spawned on a registry
-//! over the durable job rows, so the WAL hold and its relief act as they
-//! do in production.
+//! with its watch thread, and the checkpoint loop on the loop supervisor,
+//! so the WAL hold and its relief act as they do in production.
 //!
 //! Every file lists its artist and album artist (`ARTISTS`,
 //! `ALBUMARTISTS`) with their MusicBrainz ids, so each credit is placed by
@@ -25,6 +24,7 @@
 //! catalog writes, not cold disk reads, and not identification.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::common::library::TestSql as _;
@@ -32,7 +32,7 @@ use crate::common::library::library_at;
 use crate::common::{ScratchDir, config_store, migrated_db};
 use droppedneedle_kernel::db::{DbConfig, open_runtime};
 use droppedneedle_kernel::jobs::checkpoint;
-use droppedneedle_kernel::jobs::registry::{DurableRegistryStore, JobRegistry};
+use droppedneedle_kernel::jobs::{CancellationToken, Supervisor};
 use droppedneedle_library::scan::{
     EffectivePolicy, ScanKind, ScanRequest, ScanState, ScanTrigger, counter_names,
 };
@@ -128,16 +128,18 @@ async fn full_scan_throughput() {
     let runtime = open_runtime(&DbConfig::new(&scratch.join("app.db")))
         .await
         .expect("database runtime opens");
-    let registry = JobRegistry::new(DurableRegistryStore::new(
-        runtime.job_rows().clone(),
+    let supervisor = Supervisor::start(
         runtime.db().clone(),
-    ));
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("loop supervisor starts");
     checkpoint::spawn_on(
-        &registry,
+        &supervisor,
         runtime.checkpoint().clone(),
         checkpoint::default_schedule(),
     )
-    .await
     .expect("checkpoint loop starts");
     let (library, _) = library_at(runtime.db(), config_store(&scratch));
     library
@@ -207,7 +209,7 @@ async fn full_scan_throughput() {
     );
     assert_eq!(indexed, files as i64);
 
-    registry.cancel_all(Duration::from_secs(5)).await;
+    supervisor.shutdown(Duration::from_secs(5)).await;
     drop(library);
     runtime.shutdown().await;
 }

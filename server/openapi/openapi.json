@@ -42292,28 +42292,30 @@
       },
       "JobView": {
         "type": "object",
-        "description": "One registered background job.",
+        "description": "One background loop.",
         "required": [
           "name",
-          "kind",
           "state"
         ],
         "properties": {
-          "kind": {
-            "type": "string",
-            "description": "`durable` or `ephemeral`."
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Code of the last failure, such as `CHECKPOINT_FAILED`, until a\nclean turn clears it."
           },
           "last_heartbeat_at": {
             "type": [
-              "number",
+              "integer",
               "null"
             ],
-            "format": "double",
-            "description": "Last heartbeat as unix seconds, when the job ever beat."
+            "format": "int64",
+            "description": "Last heartbeat as unix milliseconds, when the loop ever beat."
           },
           "name": {
             "type": "string",
-            "description": "Job name, the registry key."
+            "description": "Loop name."
           },
           "state": {
             "type": "string",
@@ -51399,7 +51401,7 @@
       },
       "QueueStatsResponse": {
         "type": "object",
-        "description": "Queue and job-registry snapshot.",
+        "description": "Background loops and the latest checkpoint pass.",
         "required": [
           "jobs"
         ],
@@ -51420,7 +51422,7 @@
             "items": {
               "$ref": "#/components/schemas/JobView"
             },
-            "description": "Registered background jobs in name order."
+            "description": "Background loops in name order."
           }
         }
       },

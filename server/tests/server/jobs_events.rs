@@ -1,5 +1,5 @@
-//! The events watcher: one catch-up run with a skip window, the poll time
-//! re-read on every tick, and a kick while running is skipped.
+//! The events watcher: one catch-up run with a skip window, and the poll
+//! time re-read on every tick.
 
 use std::sync::{
     Arc, Mutex,
@@ -7,50 +7,32 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use droppedneedle_kernel::jobs::events_kick::{self, KickOutcome};
-use droppedneedle_kernel::jobs::events_watcher::{
-    self, EventsWatcher, PollTimeSource, SweepEnd, WallTime, WatchClock,
-};
-use droppedneedle_kernel::jobs::registry::{BoxFuture, JobRegistry, MemoryRegistryStore};
+use droppedneedle_kernel::clock::ManualClock;
+use droppedneedle_kernel::db::DbRuntime;
+use droppedneedle_kernel::jobs::events_watcher::{self, EventsWatcher, PollTimeSource, SweepEnd};
+use droppedneedle_kernel::jobs::{BoxFuture, CancellationToken, Schedule, Supervisor};
 
-type TestRegistry = JobRegistry<MemoryRegistryStore>;
-
-fn registry() -> TestRegistry {
-    JobRegistry::new(MemoryRegistryStore::new())
-}
-
-async fn settle() {
-    for _ in 0..3 {
-        tokio::task::yield_now().await;
-    }
-}
+use crate::common::{ScratchDir, scratch_runtime};
 
 /// Scripted watcher: counts sweeps and remembers the skip windows.
 #[derive(Clone, Default)]
 struct FakeWatcher {
     sweeps: Arc<AtomicU64>,
     windows: Arc<Mutex<Vec<Option<f64>>>>,
-    failures_left: Arc<AtomicU64>,
 }
 
 impl EventsWatcher for FakeWatcher {
     fn run_sweep(
         &self,
         skip_recent_hours: Option<f64>,
-        _stop: Arc<tokio::sync::Notify>,
+        _stop: CancellationToken,
     ) -> BoxFuture<'_, Result<SweepEnd, String>> {
         let sweeps = Arc::clone(&self.sweeps);
         let windows = Arc::clone(&self.windows);
-        let failures_left = Arc::clone(&self.failures_left);
         Box::pin(async move {
             sweeps.fetch_add(1, Ordering::SeqCst);
             windows.lock().unwrap().push(skip_recent_hours);
-            if failures_left.load(Ordering::SeqCst) > 0 {
-                failures_left.fetch_sub(1, Ordering::SeqCst);
-                Err("sources down".to_owned())
-            } else {
-                Ok(SweepEnd::Finished)
-            }
+            Ok(SweepEnd::Finished)
         })
     }
 }
@@ -75,164 +57,85 @@ impl PollTimeSource for FakePollTime {
     }
 }
 
-/// Hand-driven wall clock.
-#[derive(Clone)]
-struct ManualClock {
-    now: Arc<Mutex<WallTime>>,
+/// Unix milliseconds at `minutes` past midnight on `day`.
+fn at(day: i64, minutes: i64) -> i64 {
+    (day * 86_400 + minutes * 60) * 1000
 }
 
-impl ManualClock {
-    fn at(day: i64, minutes: u16) -> Self {
-        Self {
-            now: Arc::new(Mutex::new(WallTime {
-                days_since_epoch: day,
-                minutes_since_midnight: minutes,
-            })),
-        }
-    }
-
-    fn set(&self, day: i64, minutes: u16) {
-        *self.now.lock().unwrap() = WallTime {
-            days_since_epoch: day,
-            minutes_since_midnight: minutes,
-        };
-    }
-}
-
-impl WatchClock for ManualClock {
-    fn now(&self) -> WallTime {
-        *self.now.lock().unwrap()
-    }
-}
-
-async fn spawn_test_loop(
-    registry: &TestRegistry,
+/// A supervisor on `clock` over a scratch database, with the watcher loop
+/// started on the shipped cadence minus its jitter, and the clock paused.
+async fn start_watcher(
+    tag: &str,
+    clock: &ManualClock,
     watcher: FakeWatcher,
     poll: FakePollTime,
-    clock: ManualClock,
-) {
-    events_watcher::spawn_on(registry, watcher, poll, clock)
-        .await
-        .expect("spawn wins");
-    settle().await;
+) -> (Supervisor, DbRuntime, ScratchDir) {
+    let dir = ScratchDir::new(tag);
+    let runtime = scratch_runtime(&dir.join("app.db")).await;
+    let supervisor = Supervisor::start(
+        runtime.db().clone(),
+        Arc::new(clock.clone()),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    tokio::time::pause();
+    events_watcher::spawn_on(
+        &supervisor,
+        watcher,
+        poll,
+        Schedule::new(events_watcher::SCHEDULER_TICK)
+            .with_initial_delay(events_watcher::INITIAL_DELAY),
+    )
+    .expect("spawn wins");
+    (supervisor, runtime, dir)
 }
 
-#[tokio::test(start_paused = true)]
+async fn stop(supervisor: Supervisor, runtime: DbRuntime) {
+    tokio::time::resume();
+    supervisor.shutdown(Duration::from_secs(5)).await;
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn watcher_catch_up_runs_once_with_skip_window() {
-    let registry = registry();
     let watcher = FakeWatcher::default();
-    spawn_test_loop(
-        &registry,
+    let clock = ManualClock::at(at(10, 0));
+    let (supervisor, runtime, _dir) = start_watcher(
+        "events-catch-up",
+        &clock,
         watcher.clone(),
         FakePollTime::new("06:00"),
-        ManualClock::at(10, 0),
     )
     .await;
 
-    // Default boot delay is 420 s; the catch-up sweep lands right after.
-    tokio::time::advance(Duration::from_secs(420)).await;
-    settle().await;
+    // The boot hold-off is 420 s; the catch-up sweep lands right after, and
+    // the next minute's tick sweeps nothing.
+    tokio::time::sleep(Duration::from_secs(421)).await;
     assert_eq!(watcher.sweeps.load(Ordering::SeqCst), 1);
+    tokio::time::sleep(Duration::from_secs(60)).await;
     assert_eq!(
         watcher.windows.lock().unwrap().as_slice(),
         &[Some(events_watcher::CATCHUP_SKIP_RECENT_HOURS)]
     );
-
-    registry.cancel_all(Duration::from_secs(5)).await;
+    stop(supervisor, runtime).await;
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn watcher_rereads_poll_time_every_tick() {
-    let registry = registry();
     let watcher = FakeWatcher::default();
-    let clock = ManualClock::at(10, 5 * 60);
+    let clock = ManualClock::at(at(10, 5 * 60));
     let poll = FakePollTime::new("06:00");
-    spawn_test_loop(&registry, watcher.clone(), poll.clone(), clock.clone()).await;
+    let (supervisor, runtime, _dir) =
+        start_watcher("events-reread", &clock, watcher.clone(), poll.clone()).await;
 
-    tokio::time::advance(Duration::from_secs(420)).await;
-    settle().await;
+    tokio::time::sleep(Duration::from_secs(421)).await;
     assert_eq!(watcher.sweeps.load(Ordering::SeqCst), 1);
 
     // The admin moves the hour earlier; the new slot fires without a restart.
     *poll.value.lock().unwrap() = "05:30".to_owned();
-    clock.set(10, 5 * 60 + 31);
-    tokio::time::advance(Duration::from_secs(120)).await;
-    settle().await;
+    clock.set(at(10, 5 * 60 + 31));
+    tokio::time::sleep(Duration::from_secs(120)).await;
     assert_eq!(watcher.sweeps.load(Ordering::SeqCst), 2);
-
-    registry.cancel_all(Duration::from_secs(5)).await;
-}
-
-// ---------------------------------------------------------------------------
-// Kick
-// ---------------------------------------------------------------------------
-
-#[tokio::test(start_paused = true)]
-async fn kick_while_running_is_skipped() {
-    let registry = registry();
-    // A sweep that holds its task until released keeps the kick live.
-    let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
-    let release_rx = Arc::new(Mutex::new(Some(release_rx)));
-    struct Gate {
-        sweeps: Arc<AtomicU64>,
-        gate: Arc<Mutex<Option<tokio::sync::oneshot::Receiver<()>>>>,
-    }
-    impl EventsWatcher for Gate {
-        fn run_sweep(
-            &self,
-            _skip: Option<f64>,
-            _stop: Arc<tokio::sync::Notify>,
-        ) -> BoxFuture<'_, Result<SweepEnd, String>> {
-            let sweeps = Arc::clone(&self.sweeps);
-            let gate = Arc::clone(&self.gate);
-            Box::pin(async move {
-                sweeps.fetch_add(1, Ordering::SeqCst);
-                let rx = gate.lock().unwrap().take();
-                if let Some(rx) = rx {
-                    let _ = rx.await;
-                }
-                Ok(SweepEnd::Finished)
-            })
-        }
-    }
-    let sweeps = Arc::new(AtomicU64::new(0));
-    let gate = Gate {
-        sweeps: Arc::clone(&sweeps),
-        gate: release_rx,
-    };
-    assert_eq!(
-        events_kick::kick(&registry, gate).await,
-        KickOutcome::Started
-    );
-    settle().await;
-    assert!(registry.is_running(events_kick::JOB_NAME));
-
-    // A second kick while the first is live is skipped, not queued.
-    struct Never;
-    impl EventsWatcher for Never {
-        fn run_sweep(
-            &self,
-            _skip: Option<f64>,
-            _stop: Arc<tokio::sync::Notify>,
-        ) -> BoxFuture<'_, Result<SweepEnd, String>> {
-            Box::pin(async move {
-                panic!("skipped kick must not sweep");
-            })
-        }
-    }
-    assert_eq!(
-        events_kick::kick(&registry, Never).await,
-        KickOutcome::AlreadyRunning
-    );
-
-    // Release the first sweep; the kick clears and a later kick starts fresh.
-    let _ = release_tx.send(());
-    for _ in 0..100 {
-        if !registry.is_running(events_kick::JOB_NAME) {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    assert!(!registry.is_running(events_kick::JOB_NAME));
-    assert_eq!(sweeps.load(Ordering::SeqCst), 1);
+    stop(supervisor, runtime).await;
 }

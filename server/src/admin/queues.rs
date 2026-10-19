@@ -1,8 +1,8 @@
 //! Queue and provider stats.
 //!
-//! Queue stats port v2's lane-occupancy gauge: the job-registry rows,
-//! read through [`droppedneedle_kernel::db::JobRegistryRows::list_jobs`],
-//! and the latest checkpoint pass.
+//! Queue stats port v2's lane-occupancy gauge: the loop liveness rows,
+//! read through [`droppedneedle_kernel::db::list_loops`], and the latest
+//! checkpoint pass.
 //!
 //! Provider stats port v2's provider-counters snapshot onto the v3 pacing
 //! primitives: per-provider limiter posture (verified row plus live bucket)
@@ -19,25 +19,25 @@ use super::{
         SlotView,
     },
 };
-use droppedneedle_kernel::db::{CheckpointMode, CheckpointOutcome, CheckpointService};
+use droppedneedle_kernel::db::{CheckpointMode, CheckpointOutcome, CheckpointService, list_loops};
 use droppedneedle_providers::Providers;
 
-/// Registry rows and the latest checkpoint pass.
+/// Loop rows and the latest checkpoint pass.
 pub async fn queue_stats(
     db: &AdminDb,
     checkpoint: Option<&CheckpointService>,
 ) -> Result<QueueStatsResponse, AdminError> {
-    let jobs = db.job_rows.list_jobs().await.map_err(|error| {
-        AdminError::internal(&format_args!("job registry read failed: {error}"))
-    })?;
+    let jobs = list_loops(&db.db)
+        .await
+        .map_err(|error| AdminError::internal(&format_args!("loop rows read failed: {error}")))?;
     Ok(QueueStatsResponse {
         jobs: jobs
             .into_iter()
             .map(|job| JobView {
                 name: job.name,
-                kind: job.kind.as_str().to_owned(),
                 state: job.state.as_str().to_owned(),
                 last_heartbeat_at: job.last_heartbeat_at,
+                last_error: job.last_error,
             })
             .collect(),
         checkpoint: checkpoint

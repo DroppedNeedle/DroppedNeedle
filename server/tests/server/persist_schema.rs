@@ -3364,25 +3364,30 @@ async fn album_play_summary_arrives_worked_out_from_the_plays() {
     );
 }
 
-/// Migration 0066 drops the wakeup channel table, counters and all, and
-/// keeps every job registry row as it was.
-#[tokio::test]
-async fn wakeup_channels_drop_and_job_rows_survive() {
-    let pool = scratch_pool().await;
-    let before = sqlx::migrate::Migrator {
+/// The shipped migrations up to and including `last`.
+fn migrator_through(last: i64) -> sqlx::migrate::Migrator {
+    sqlx::migrate::Migrator {
         migrations: std::borrow::Cow::Owned(
             MIGRATOR
                 .migrations
                 .iter()
-                .filter(|migration| migration.version < 66)
+                .filter(|migration| migration.version <= last)
                 .cloned()
                 .collect(),
         ),
         ignore_missing: false,
         locking: true,
         no_tx: false,
-    };
-    before.run(&pool).await.unwrap();
+    }
+}
+
+/// Migration 0066 drops the wakeup channel table, counters and all, and
+/// keeps every job registry row as it was. 0069 drops the registry later,
+/// so this runs the migrations through 0066 only.
+#[tokio::test]
+async fn wakeup_channels_drop_and_job_rows_survive() {
+    let pool = scratch_pool().await;
+    migrator_through(65).run(&pool).await.unwrap();
     sqlx::raw_sql(
         "UPDATE durable_work_wakeups SET seq = 3, consumed_seq = 2 WHERE channel = 'scan'; \
          INSERT INTO durable_job_registry (name, kind, state, last_heartbeat_at, updated_at) \
@@ -3393,14 +3398,13 @@ async fn wakeup_channels_drop_and_job_rows_survive() {
     .await
     .unwrap();
 
-    apply_migrations(&pool).await.unwrap();
-    assert_migrated(&pool).await.unwrap();
+    migrator_through(66).run(&pool).await.unwrap();
 
     let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert!(stamped >= 66 && stamped == latest_version(), "{stamped}");
+    assert_eq!(stamped, 66);
     let left: Vec<String> =
         sqlx::query_scalar("SELECT name FROM sqlite_master WHERE name = 'durable_work_wakeups'")
             .fetch_all(&pool)
@@ -3436,6 +3440,58 @@ async fn wakeup_channels_drop_and_job_rows_survive() {
             ),
         ]
     );
+}
+
+/// Migration 0069 replaces the job registry with the loop rows. Nothing is
+/// carried over: the supervisor clears and rebuilds the rows at every
+/// start. The new table is STRICT and checks its state.
+#[tokio::test]
+async fn job_registry_gives_way_to_loop_rows() {
+    let pool = scratch_pool().await;
+    migrator_through(68).run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO durable_job_registry (name, kind, state, last_heartbeat_at, updated_at) \
+         VALUES ('download-worker', 'durable', 'running', 12.5, 13.0);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 69 && stamped == latest_version(), "{stamped}");
+    let left: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE name = 'durable_job_registry'")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(left.is_empty(), "{left:?}");
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM durable_loops")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    sqlx::query(
+        "INSERT INTO durable_loops (name, state, last_heartbeat_at, last_error, updated_at) \
+         VALUES ('wal-checkpoint', 'running', 1700000000000, NULL, 1700000000000)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for refused in [
+        "INSERT INTO durable_loops (name, state, updated_at) VALUES ('a', 'paused', 1)",
+        "INSERT INTO durable_loops (name, state, updated_at) VALUES ('b', 'idle', 'soon')",
+    ] {
+        assert!(
+            sqlx::query(refused).execute(&pool).await.is_err(),
+            "{refused}"
+        );
+    }
 }
 
 /// Every table in the migrated schema is listed once in

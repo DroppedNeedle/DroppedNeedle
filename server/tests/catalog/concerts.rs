@@ -217,7 +217,7 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
         setup.gated_router(),
         test_principal("u1", Role::User, "s1", SessionKind::Standard),
     );
-    let stop = tokio::sync::Notify::new();
+    let stop = droppedneedle_kernel::jobs::CancellationToken::new();
     let sweep = setup.sweep().expect("wired concerts sweep").without_delay();
 
     let (_, first) = sweep.run(None, &stop).await.unwrap();

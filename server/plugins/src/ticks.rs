@@ -1,7 +1,7 @@
-//! `scheduler`: plugin ticks on the jobs registry, and plugin state on the
+//! `scheduler`: plugin ticks on the loop supervisor, and plugin state on the
 //! jobs tick store.
 //!
-//! Jobs owns the loop mechanics, the registry, and the tick store; this
+//! Jobs owns the loop mechanics, the supervisor, and the tick store; this
 //! module plugs the plugin host into them. [`HostTickAdapter`] implements
 //! the jobs [`TickHost`](jobs_tick_host) seam over [`PluginHost`],
 //! resolving the plugin fresh on every tick, and [`PluginTickLoops`]
@@ -19,12 +19,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use droppedneedle_kernel::jobs::Supervisor;
 use droppedneedle_kernel::jobs::plugin_ticks::{
     MemoryTickStore, SqliteTickStore, TickHost as JobsTickHost, TickPlugin as JobsTickPlugin,
     TickSpec, TickStore as JobsTickStore, TickStoreError, TickSyncState, clamp_interval_minutes,
     sync_ticks,
 };
-use droppedneedle_kernel::jobs::registry::{JobRegistry, RegistryStore};
 
 use super::host::{PluginHost, PluginStateStore};
 use super::protocol::methods;
@@ -70,8 +70,7 @@ impl JobsTickStore for TickStoreKind {
         &self,
         plugin: &str,
         key: &str,
-    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'_, Result<Option<Vec<u8>>, TickStoreError>>
-    {
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'_, Result<Option<Vec<u8>>, TickStoreError>> {
         match self {
             Self::Memory(store) => store.read(plugin, key),
             Self::Sqlite(store) => store.read(plugin, key),
@@ -83,7 +82,7 @@ impl JobsTickStore for TickStoreKind {
         plugin: &str,
         key: &str,
         bytes: Vec<u8>,
-    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'_, Result<(), TickStoreError>> {
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'_, Result<(), TickStoreError>> {
         match self {
             Self::Memory(store) => store.write(plugin, key, bytes),
             Self::Sqlite(store) => store.write(plugin, key, bytes),
@@ -160,7 +159,7 @@ impl JobsTickPlugin for PluginTick {
         &self.name
     }
 
-    fn on_tick(&self) -> droppedneedle_kernel::jobs::registry::BoxFuture<'_, Result<(), String>> {
+    fn on_tick(&self) -> droppedneedle_kernel::jobs::BoxFuture<'_, Result<(), String>> {
         let host = Arc::clone(&self.host);
         let name = self.name.clone();
         let budget = self.budget;
@@ -223,28 +222,27 @@ pub fn desired_specs(host: &PluginHost) -> Vec<TickSpec> {
 }
 
 /// Tick-loop rebuilds behind an object-safe seam, so handlers never name
-/// the concrete registry or tick stores.
+/// the supervisor or the concrete tick stores.
 pub trait TickLoopSync: Send + Sync {
     /// Rebuild loops to match the host's enabled scheduler plugins.
     fn sync_host<'a>(&'a self, host: &'a Arc<PluginHost>) -> BoxFuture<'a, ()>;
 }
 
-/// Tick loops over one jobs registry plus one jobs tick store. Each sync
+/// Tick loops on the supervisor over one jobs tick store. Each sync
 /// registers the desired plugins with the store, then rebuilds through
-/// the jobs choke point. Tests run this over the memory pair, production
-/// over the durable pair, both behind the same seams.
-pub struct PluginTickLoops<S, T> {
-    registry: JobRegistry<S>,
+/// the jobs choke point.
+pub struct PluginTickLoops<T> {
+    supervisor: Supervisor,
     sync: TickSyncState,
     store: T,
     grace: Duration,
 }
 
-impl<S, T> PluginTickLoops<S, T> {
-    /// Wire loops over one registry and one tick store.
-    pub fn new(registry: JobRegistry<S>, store: T, grace: Duration) -> Self {
+impl<T> PluginTickLoops<T> {
+    /// Wire loops on the supervisor over one tick store.
+    pub fn new(supervisor: Supervisor, store: T, grace: Duration) -> Self {
         Self {
-            registry,
+            supervisor,
             sync: TickSyncState::new(),
             store,
             grace,
@@ -252,7 +250,7 @@ impl<S, T> PluginTickLoops<S, T> {
     }
 }
 
-impl<S: RegistryStore, T: JobsTickStore + TickStoreAdmin> TickLoopSync for PluginTickLoops<S, T> {
+impl<T: JobsTickStore + TickStoreAdmin> TickLoopSync for PluginTickLoops<T> {
     fn sync_host<'a>(&'a self, host: &'a Arc<PluginHost>) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             let specs = desired_specs(host);
@@ -260,7 +258,7 @@ impl<S: RegistryStore, T: JobsTickStore + TickStoreAdmin> TickLoopSync for Plugi
                 self.store.ensure_plugin(&spec.name);
             }
             let adapter = HostTickAdapter::new(Arc::clone(host));
-            sync_ticks(&self.registry, &adapter, &self.sync, &specs, self.grace).await;
+            sync_ticks(&self.supervisor, &adapter, &self.sync, &specs, self.grace).await;
         })
     }
 }

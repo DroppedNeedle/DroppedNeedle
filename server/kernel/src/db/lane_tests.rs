@@ -18,7 +18,9 @@ use super::{
     writer::{Budget, WriteLane},
 };
 use crate::{
-    jobs::{JobRegistry, checkpoint, registry::DurableRegistryStore},
+    clock::SystemClock,
+    db::durable::list_loops,
+    jobs::{CancellationToken, Supervisor, checkpoint},
     schema::template::copy_to,
 };
 
@@ -1169,26 +1171,27 @@ async fn fill_wal_behind_a_reader(runtime: &DbRuntime) -> rusqlite::Connection {
 async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
     let (runtime, _dir) = small_wal_runtime("wal-hold").await;
     let lane = runtime.db().lane().clone();
-    let registry = JobRegistry::new(DurableRegistryStore::new(
-        runtime.job_rows().clone(),
+    let supervisor = Supervisor::start(
         runtime.db().clone(),
-    ));
+        Arc::new(SystemClock),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     checkpoint::spawn_on(
-        &registry,
+        &supervisor,
         runtime.checkpoint().clone(),
         checkpoint::default_schedule(),
     )
-    .await
     .unwrap();
     // The loop passes once at start and beats its heart. Its next pass is
     // most of a minute away, so nothing below can be its doing.
     until("the checkpoint loop finishes its first pass", || async {
-        runtime
-            .job_rows()
-            .get_job(checkpoint::JOB_NAME)
+        list_loops(runtime.db())
             .await
             .unwrap()
-            .is_some_and(|job| job.last_heartbeat_at.is_some())
+            .iter()
+            .any(|job| job.name == checkpoint::JOB_NAME && job.last_heartbeat_at.is_some())
     })
     .await;
     let reader = fill_wal_behind_a_reader(&runtime).await;
@@ -1203,7 +1206,7 @@ async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
     let limit = Duration::from_secs(10);
     tokio::time::timeout(
         limit,
-        runtime
+        supervisor
             .job_rows()
             .heartbeat(runtime.db(), checkpoint::JOB_NAME),
     )
@@ -1239,7 +1242,7 @@ async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
         .expect("the hold ends once the WAL can shrink, without the loop's next pass")
         .unwrap();
     assert_eq!(labels(&lane), ["request", "bulk"]);
-    registry.cancel_all(Duration::from_secs(5)).await;
+    supervisor.shutdown(Duration::from_secs(5)).await;
     runtime.shutdown().await;
 }
 

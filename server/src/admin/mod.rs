@@ -28,7 +28,7 @@ use axum::{
 };
 
 use droppedneedle_auth::users::UsersDeps;
-use droppedneedle_kernel::db::{BackupService, CheckpointService, Db, JobRegistryRows};
+use droppedneedle_kernel::db::{BackupService, CheckpointService, Db};
 use droppedneedle_providers::{InMemoryProviderCache, Providers};
 
 pub use error::AdminError;
@@ -46,14 +46,12 @@ pub struct AdminDb {
     /// The database: admin reads (quota rows, task sizes) and quota
     /// override writes.
     pub db: Db,
-    /// The runtime's job registry rows, for queue stats.
-    pub job_rows: JobRegistryRows,
 }
 
 impl AdminDb {
-    /// Bundle the database with the runtime's job registry rows.
-    pub fn new(db: Db, job_rows: JobRegistryRows) -> Self {
-        Self { db, job_rows }
+    /// The database the admin routes use.
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 }
 
@@ -74,7 +72,7 @@ pub struct AdminSetup {
     pub backups: Option<Arc<BackupService>>,
     /// Checkpoint service for health observability. `None` until wired.
     pub checkpoint: Option<CheckpointService>,
-    /// Precache trigger over the shared jobs registry. `None` on unwired
+    /// Precache trigger on the loop supervisor. `None` on unwired
     /// test states.
     pub precache: Option<crate::bootstrap::jobs::PrecacheTrigger>,
     /// Cover and artist image cache, for its stats and clears. `None` on

@@ -49,7 +49,7 @@ use super::search_jobs::review::ReviewMode;
 use super::sources::{JournalOwnership, SabnzbdSource, SlskdSource};
 use super::target::Targets;
 use super::target::reasons::TrackReason;
-use droppedneedle_kernel::db::{Db, JobKind, JobRegistryRows, JobState};
+use droppedneedle_kernel::db::{Db, JobRegistryRows, JobState};
 
 mod controls;
 mod landings;
@@ -1846,7 +1846,7 @@ pub async fn spawn_download_worker(
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<tokio::task::JoinHandle<()>, String> {
     job_rows
-        .register_job(&db, DOWNLOAD_WORKER_JOB, JobKind::Durable)
+        .register_job(&db, DOWNLOAD_WORKER_JOB)
         .await
         .map_err(|error| error.to_string())?;
     let task = tokio::spawn(async move {

@@ -18,11 +18,11 @@ use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
 use crate::playback::ports::{Clock, SystemClock};
 use crate::playback::services::{ExternalSession, PresenceRegistry};
+use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::playlist_export::M3uPlaylistExporter;
 use droppedneedle_kernel::jobs::presence::{
     PresenceSession, PresenceSources, PresenceStore, SourceStatus,
 };
-use droppedneedle_kernel::jobs::registry::BoxFuture;
 
 /// What the media bundle hands the jobs bundle.
 #[derive(Clone)]

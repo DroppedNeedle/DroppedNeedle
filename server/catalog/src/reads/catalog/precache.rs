@@ -11,10 +11,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::reads::platform::artwork::{ArtistImageCandidates, ArtistImageSource, ArtworkService};
+use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::precache_phases::{
     LibraryAlbum, LibraryArtist, PrecacheLibrary, PrecacheSources, PrecacheTuning,
 };
-use droppedneedle_kernel::jobs::registry::BoxFuture;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 

@@ -30,6 +30,7 @@ pub struct Schedule {
     min_delay: Duration,
     backoff_base: Duration,
     backoff_cap: Duration,
+    jitter_start: bool,
 }
 
 impl Schedule {
@@ -43,6 +44,7 @@ impl Schedule {
             min_delay: ABSOLUTE_MIN_DELAY,
             backoff_base: Duration::from_secs(1),
             backoff_cap: Duration::from_secs(5 * 60),
+            jitter_start: false,
         }
     }
 
@@ -55,6 +57,13 @@ impl Schedule {
     /// Hold-off after boot before the first cycle.
     pub fn with_initial_delay(mut self, initial_delay: Duration) -> Self {
         self.initial_delay = initial_delay;
+        self
+    }
+
+    /// Spread the boot hold-off by the jitter too, for loops whose first
+    /// wait is a whole interval.
+    pub fn with_jittered_start(mut self) -> Self {
+        self.jitter_start = true;
         self
     }
 
@@ -79,10 +88,46 @@ impl Schedule {
         self.initial_delay
     }
 
+    /// The first wait: the boot hold-off, plus a jitter draw when the
+    /// schedule asks for one.
+    pub fn first_delay(&self, rng: &mut SplitMix64) -> Duration {
+        if self.jitter_start {
+            self.initial_delay
+                .saturating_add(rng.below_duration(self.jitter_max))
+        } else {
+            self.initial_delay
+        }
+    }
+
+    /// The longest wait between cycles when nothing fails: the interval,
+    /// read as the idle ceiling by loops that also wake on a signal.
+    pub fn interval(&self) -> Duration {
+        self.interval
+    }
+
+    /// The smallest gap between cycles.
+    pub fn min_delay(&self) -> Duration {
+        self.min_delay
+    }
+
     /// Delay before the next cycle after `failures` consecutive failures.
     /// Interval plus a fresh jitter draw plus doubled backoff, never below
     /// the floor.
     pub fn next_delay(&self, rng: &mut SplitMix64, failures: u32) -> Duration {
+        self.interval
+            .saturating_add(self.spread(rng, failures))
+            .max(self.min_delay)
+    }
+
+    /// Delay before retrying after `failures` consecutive failures, for
+    /// loops that wake on a signal and do not wait out the interval: a fresh
+    /// jitter draw plus doubled backoff, never below the floor.
+    pub fn retry_delay(&self, rng: &mut SplitMix64, failures: u32) -> Duration {
+        self.spread(rng, failures).max(self.min_delay)
+    }
+
+    /// A fresh jitter draw plus the backoff for `failures`.
+    fn spread(&self, rng: &mut SplitMix64, failures: u32) -> Duration {
         let jitter = rng.below_duration(self.jitter_max);
         let backoff = if failures == 0 {
             Duration::ZERO
@@ -94,10 +139,7 @@ impl Schedule {
                 .unwrap_or(self.backoff_cap);
             grown.min(self.backoff_cap)
         };
-        self.interval
-            .saturating_add(jitter)
-            .saturating_add(backoff)
-            .max(self.min_delay)
+        jitter.saturating_add(backoff)
     }
 }
 
@@ -146,17 +188,6 @@ impl SplitMix64 {
         Duration::from_millis(
             self.below(max.as_millis().saturating_add(1).min(u64::MAX as u128) as u64),
         )
-    }
-}
-
-/// Sleep unless the stop fires first. Returns true when the loop must exit.
-/// A stop that fired before this call returns at once; shutdown never waits
-/// out a sleep.
-pub async fn sleep_or_stop(delay: Duration, stop: &tokio::sync::Notify) -> bool {
-    tokio::select! {
-        biased;
-        _ = stop.notified() => true,
-        _ = tokio::time::sleep(delay) => false,
     }
 }
 

@@ -1,26 +1,30 @@
-//! The statements of the database runtime: the job registry, the planner
+//! The statements of the database runtime: the loop liveness rows, the planner
 //! statistics, and the checks run on a database file before it is opened or
 //! after it is copied.
 
 crate::sql! {
-    /// Register a job, or refresh its kind when the name exists.
-    pub(super) REGISTER_JOB = "INSERT INTO durable_job_registry (name, kind, state, updated_at)
-                 VALUES (?1, ?2, 'idle', ?3)
+    /// Forget every loop row: the supervisor rebuilds them at each start.
+    pub(super) CLEAR_LOOPS = "DELETE FROM durable_loops";
+    /// Write one loop's row as it stands now.
+    pub(super) PUT_LOOP = "INSERT INTO durable_loops (name, state, last_heartbeat_at, last_error, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
                  ON CONFLICT (name) DO UPDATE SET
-                     kind = excluded.kind,
+                     state = excluded.state,
+                     last_heartbeat_at = excluded.last_heartbeat_at,
+                     last_error = excluded.last_error,
                      updated_at = excluded.updated_at";
-    /// Move a job to a new liveness state.
-    pub(super) SET_JOB_STATE = "UPDATE durable_job_registry
-                 SET state = ?1, updated_at = ?2 WHERE name = ?3";
-    /// Beat a job's heart.
-    pub(super) BEAT_JOB = "UPDATE durable_job_registry
+    /// Register a loop that starts idle, keeping a row already there.
+    pub(super) REGISTER_LOOP = "INSERT INTO durable_loops (name, state, updated_at)
+                 VALUES (?1, 'idle', ?2)
+                 ON CONFLICT (name) DO UPDATE SET updated_at = excluded.updated_at";
+    /// Move a loop to a new state.
+    pub(super) SET_LOOP_STATE = "UPDATE durable_loops SET state = ?1, updated_at = ?2 WHERE name = ?3";
+    /// Beat a loop's heart.
+    pub(super) BEAT_LOOP = "UPDATE durable_loops
                  SET last_heartbeat_at = ?1, updated_at = ?1 WHERE name = ?2";
-    /// One registry row.
-    pub(super) JOB_BY_NAME = "SELECT name, kind, state, last_heartbeat_at, updated_at
-                 FROM durable_job_registry WHERE name = ?1";
-    /// Every registry row in name order.
-    pub(super) ALL_JOBS = "SELECT name, kind, state, last_heartbeat_at, updated_at
-                 FROM durable_job_registry ORDER BY name";
+    /// Every loop row in name order.
+    pub(super) ALL_LOOPS = "SELECT name, state, last_heartbeat_at, last_error, updated_at
+                 FROM durable_loops ORDER BY name";
     /// What the last planner statistics run recorded.
     pub(super) LAST_ANALYZE = "SELECT analyzed_at, indexed_tracks FROM db_planner_stats WHERE singleton = 1";
     /// Whether SQLite holds planner statistics at all.

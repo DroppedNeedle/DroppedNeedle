@@ -5,9 +5,8 @@
 //! pass when due (pure over an explicit `now`, so tests drive it with a
 //! [`ManualClock`](super::seams::ManualClock) and never sleep), plus a
 //! `spawn_*` constructor (single-flight registry, log-and-continue passes,
-//! shutdown through the sleeper) that registers the loop as
-//! [`JobKind::Ephemeral`](droppedneedle_kernel::db::JobKind) and returns a handle the
-//! caller awaits at shutdown.
+//! shutdown through the sleeper) that registers the loop's liveness row and
+//! returns a handle the caller awaits at shutdown.
 //!
 //! Cadences match v2's task schedule; each constant cites its source.
 //! Loops that v2 jitters (wanted, follow) take a [`Jitter`]; loops v2
@@ -18,7 +17,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use droppedneedle_kernel::db::{Db, JobKind, JobRegistryRows, JobState};
+use droppedneedle_kernel::db::{Db, JobRegistryRows, JobState};
 
 use super::seams::{
     CandidateSearch, Clock, DispatchKind, DispatchRequest, DownloadDispatch, FlowEvent,
@@ -1417,14 +1416,14 @@ pub struct FlowHandle {
     pub task: tokio::task::JoinHandle<()>,
 }
 
-/// Register one loop as an ephemeral job. Idempotent across restarts.
+/// Register one loop's liveness row. Idempotent across restarts.
 pub async fn register_ephemeral_loop(
     job_rows: &JobRegistryRows,
     db: &Db,
     job: &str,
 ) -> Result<(), String> {
     job_rows
-        .register_job(db, job, JobKind::Ephemeral)
+        .register_job(db, job)
         .await
         .map_err(|error| error.to_string())
 }

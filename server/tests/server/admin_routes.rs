@@ -56,15 +56,25 @@ impl Rig {
         );
         let cache = Arc::new(droppedneedle_providers::InMemoryProviderCache::new());
         let providers = Arc::new(droppedneedle_providers::Providers::new(cache.clone()));
-        let mut jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests();
+        let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
+            runtime.db().clone(),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+            droppedneedle_kernel::jobs::CancellationToken::new(),
+        )
+        .await
+        .expect("loop supervisor starts");
+        let mut jobs = droppedneedle::bootstrap::jobs::JobsSetup::build(
+            supervisor,
+            runtime.checkpoint().clone(),
+            crate::common::config_store(&dir),
+            droppedneedle_media::remotes::presence_feed::MediaJobs::for_tests(),
+            None,
+        );
         if let Some(sources) = precache {
             jobs = jobs.with_precache_sources(sources);
         }
         let admin = AdminSetup::new(rig.deps.clone(), quota.clone(), cache.clone(), providers)
-            .with_db(AdminDb::new(
-                runtime.db().clone(),
-                runtime.job_rows().clone(),
-            ))
+            .with_db(AdminDb::new(runtime.db().clone()))
             .with_backups(droppedneedle_kernel::db::BackupService::new(
                 &dir.join("app.db"),
                 &dir.join("backups"),
@@ -263,7 +273,7 @@ impl droppedneedle_kernel::jobs::precache::PrecacheWork for HangWork {
     fn run(
         &self,
         _progress: droppedneedle_kernel::jobs::precache::Progress,
-    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'_, Result<(), String>> {
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'_, Result<(), String>> {
         Box::pin(async { std::future::pending().await })
     }
 }
@@ -271,23 +281,28 @@ impl droppedneedle_kernel::jobs::precache::PrecacheWork for HangWork {
 #[tokio::test]
 async fn precache_second_run_is_409_while_live() {
     let rig = Rig::open("precache-busy").await;
-    // Hold the shared registry name directly: the route must see it.
+    // Hold the run's name directly on the supervisor: the route must see it.
     let _held = droppedneedle_kernel::jobs::precache::spawn_run(
-        rig.jobs.registry(),
+        rig.jobs.supervisor(),
         HangWork,
         droppedneedle_kernel::jobs::precache::PrecacheLimits::new(
             Duration::from_secs(60),
             Duration::from_secs(600),
         ),
     )
-    .await
     .expect("held run starts");
     let (status, body) = call(rig.admin_app(), "POST", "/admin/precache/run", None).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"]["code"], Value::from("CONFLICT"));
 
     // Once the live run ends, the route starts again.
-    rig.jobs.cancel_all(Duration::from_secs(5)).await;
+    rig.jobs
+        .supervisor()
+        .cancel(
+            droppedneedle_kernel::jobs::precache::JOB_NAME,
+            Duration::from_secs(5),
+        )
+        .await;
     let (status, _) = call(rig.admin_app(), "POST", "/admin/precache/run", None).await;
     assert_eq!(status, StatusCode::ACCEPTED);
 }
@@ -324,6 +339,15 @@ impl ScriptedLibrary {
     fn called(&self, call: &str) -> bool {
         self.calls.lock().unwrap().iter().any(|seen| seen == call)
     }
+
+    fn times_called(&self, call: &str) -> usize {
+        self.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|seen| *seen == call)
+            .count()
+    }
 }
 
 impl droppedneedle_kernel::jobs::precache_phases::PrecacheSources for ScriptedLibrary {
@@ -339,7 +363,7 @@ impl droppedneedle_kernel::jobs::precache_phases::PrecacheSources for ScriptedLi
 
     fn library(
         &self,
-    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<
+    ) -> droppedneedle_kernel::jobs::BoxFuture<
         '_,
         Result<droppedneedle_kernel::jobs::precache_phases::PrecacheLibrary, String>,
     > {
@@ -347,6 +371,7 @@ impl droppedneedle_kernel::jobs::precache_phases::PrecacheSources for ScriptedLi
             LibraryAlbum, LibraryArtist, PrecacheLibrary,
         };
         Box::pin(async {
+            self.record("library".to_owned());
             Ok(PrecacheLibrary {
                 artists: vec![
                     LibraryArtist {
@@ -370,14 +395,14 @@ impl droppedneedle_kernel::jobs::precache_phases::PrecacheSources for ScriptedLi
     fn artist_cached<'a>(
         &'a self,
         _artist: &'a droppedneedle_kernel::jobs::precache_phases::LibraryArtist,
-    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, bool> {
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, bool> {
         Box::pin(async { false })
     }
 
     fn warm_artist<'a>(
         &'a self,
         artist: &'a droppedneedle_kernel::jobs::precache_phases::LibraryArtist,
-    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, ()> {
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, ()> {
         Box::pin(async move { self.record(format!("artist:{}", artist.mbid)) })
     }
 
@@ -385,21 +410,21 @@ impl droppedneedle_kernel::jobs::precache_phases::PrecacheSources for ScriptedLi
         &'a self,
         user_id: &'a str,
         artist_mbid: &'a str,
-    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, ()> {
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, ()> {
         Box::pin(async move { self.record(format!("discovery:{user_id}:{artist_mbid}")) })
     }
 
     fn album_cached<'a>(
         &'a self,
         _album: &'a droppedneedle_kernel::jobs::precache_phases::LibraryAlbum,
-    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, bool> {
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, bool> {
         Box::pin(async { false })
     }
 
     fn warm_album<'a>(
         &'a self,
         album: &'a droppedneedle_kernel::jobs::precache_phases::LibraryAlbum,
-    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, ()> {
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, ()> {
         Box::pin(async move {
             let _permit = self.album_gate.acquire().await;
             self.record(format!("album:{}", album.release_group_mbid));
@@ -409,30 +434,60 @@ impl droppedneedle_kernel::jobs::precache_phases::PrecacheSources for ScriptedLi
     fn audiodb_artist_cached<'a>(
         &'a self,
         _artist: &'a droppedneedle_kernel::jobs::precache_phases::LibraryArtist,
-    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, bool> {
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, bool> {
         Box::pin(async { true })
     }
 
     fn warm_audiodb_artist<'a>(
         &'a self,
         artist: &'a droppedneedle_kernel::jobs::precache_phases::LibraryArtist,
-    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, ()> {
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, ()> {
         Box::pin(async move { self.record(format!("audiodb:{}", artist.mbid)) })
     }
 
     fn audiodb_album_cached<'a>(
         &'a self,
         _album: &'a droppedneedle_kernel::jobs::precache_phases::LibraryAlbum,
-    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, bool> {
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, bool> {
         Box::pin(async { false })
     }
 
     fn warm_audiodb_album<'a>(
         &'a self,
         album: &'a droppedneedle_kernel::jobs::precache_phases::LibraryAlbum,
-    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, ()> {
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, ()> {
         Box::pin(async move { self.record(format!("audiodb:{}", album.release_group_mbid)) })
     }
+}
+
+/// Scans that end within the quiet wait of each other start one library
+/// image refresh, not one each.
+#[tokio::test]
+async fn a_burst_of_scans_starts_one_image_refresh() {
+    let library = Arc::new(ScriptedLibrary {
+        calls: std::sync::Mutex::new(Vec::new()),
+        recorded: tokio::sync::Notify::new(),
+        album_gate: tokio::sync::Semaphore::new(64),
+    });
+    let rig = Rig::open_with("scan-burst", Some(library.clone())).await;
+    tokio::time::pause();
+    let trigger = rig.jobs.precache_trigger();
+    trigger.spawn_after_scan().expect("the wait loop starts");
+    let scan_finished = trigger.after_scan_hook();
+
+    scan_finished();
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    scan_finished();
+    // The run's store reads happen on blocking threads, and the paused clock
+    // jumps ahead while they run, so the first run is awaited in wall-clock
+    // time. Then well past the quiet wait a second run would need.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while library.times_called("library") == 0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    tokio::time::sleep(Duration::from_secs(400)).await;
+    assert_eq!(library.times_called("library"), 1);
+    tokio::time::resume();
 }
 
 /// Poll the status route until `done` holds.
@@ -673,10 +728,7 @@ async fn quota_override_for_an_unmirrored_user_is_not_found() {
         rig.cache.clone(),
         providers,
     )
-    .with_db(AdminDb::new(
-        rig.runtime.db().clone(),
-        rig.runtime.job_rows().clone(),
-    ));
+    .with_db(AdminDb::new(rig.runtime.db().clone()));
     let app = with_test_principal(
         admin.gated_router(),
         test_principal(&rig.admin_id, Role::Admin, "sess-1", SessionKind::Standard),
@@ -728,4 +780,28 @@ async fn lane_seed(rig: &Rig, sql: &str, params: &[&str]) {
         })
         .await
         .expect("seed writes");
+}
+
+/// A booted app shows every always-on loop as running in the admin jobs
+/// view.
+#[tokio::test]
+async fn queue_stats_shows_every_boot_loop_running() {
+    let app = crate::common::TestApp::start("queue-boot-loops").await;
+    let admin = app.login_admin().await;
+    let headers = [("authorization", admin.as_str())];
+    app.until("every boot loop running", || async {
+        let (_, stats) = app
+            .call("GET", "/api/v3/admin/queue-stats", &headers, None)
+            .await;
+        let jobs = stats["jobs"].as_array()?;
+        droppedneedle_kernel::jobs::BOOT_JOBS
+            .iter()
+            .all(|name| {
+                jobs.iter()
+                    .any(|job| job["name"] == *name && job["state"] == "running")
+            })
+            .then_some(())
+    })
+    .await;
+    app.stop().await;
 }

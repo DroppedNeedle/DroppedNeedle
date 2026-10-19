@@ -52,7 +52,7 @@
 
 [kernel]
 db_planner_stats
-durable_job_registry
+durable_loops
 
 [auth]
 auth_oidc_states

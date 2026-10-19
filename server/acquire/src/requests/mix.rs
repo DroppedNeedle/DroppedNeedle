@@ -865,9 +865,7 @@ impl droppedneedle_plugins::scrobble::MixStateReader for MixGrantHooks {
 /// The daily sweep drives the builder in the slot; before boot fills it
 /// the sweep has nothing to do.
 impl droppedneedle_kernel::jobs::personal_mix::PersonalMixer for MixGrantHooks {
-    fn run_for_all_users(
-        &self,
-    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'_, Result<(), String>> {
+    fn run_for_all_users(&self) -> droppedneedle_kernel::jobs::BoxFuture<'_, Result<(), String>> {
         Box::pin(async move {
             match self.slot.get() {
                 Some(builder) => builder.run_for_all_users().await.map(|_| ()),

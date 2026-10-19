@@ -2,17 +2,18 @@
 //! recent activity says is due (v2 `warm_discover_home_periodically`).
 //!
 //! The decisions (who is due, what to rebuild, when to try again) live in
-//! `reads::discover`; this module only owns the loop on the shared
-//! registry. Activity recorded by the page also starts a pass for that
-//! user right away, so the loop is the backstop, not the only trigger.
+//! `reads::discover`; this module only owns the loop on the supervisor.
+//! Activity recorded by the page also starts a pass for that user right
+//! away, so the loop is the backstop, not the only trigger.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::registry::{BoxFuture, JobCtx, JobExit, JobKind, JobRegistry, RegistryStore};
-use super::schedule::{Schedule, SplitMix64, sleep_or_stop};
+use super::BoxFuture;
+use super::schedule::Schedule;
+use super::supervisor::{AlreadyRunning, FnTick, Next, Supervisor};
 
-/// Registered name of the warm loop.
+/// Name of the warm loop.
 pub const JOB_NAME: &str = "discover-warm-cycle";
 
 /// v2 cadence: a pass every 90 seconds...
@@ -43,37 +44,21 @@ pub fn default_schedule() -> Schedule {
         .with_jitter(Duration::from_secs(5))
 }
 
-/// Spawn the loop on a registry.
-pub async fn spawn_on<S>(
-    registry: &JobRegistry<S>,
+/// Start the loop.
+pub fn spawn_on(
+    supervisor: &Supervisor,
     demand: Arc<dyn DemandTick>,
     schedule: Schedule,
-) -> Result<(), super::registry::AlreadyRunning>
-where
-    S: RegistryStore,
-{
-    registry
-        .spawn(JOB_NAME, JobKind::Ephemeral, move |ctx| {
+) -> Result<(), AlreadyRunning> {
+    supervisor.periodic(
+        JOB_NAME,
+        schedule,
+        FnTick(move |_| {
             let demand = Arc::clone(&demand);
-            async move { run(ctx, demand.as_ref(), &schedule).await }
-        })
-        .await
-}
-
-/// Run until stop fires.
-pub async fn run<S>(ctx: JobCtx<S>, demand: &dyn DemandTick, schedule: &Schedule) -> JobExit
-where
-    S: RegistryStore,
-{
-    if sleep_or_stop(schedule.initial_delay(), ctx.stop()).await {
-        return JobExit::Stopped;
-    }
-    let mut rng = SplitMix64::new(SplitMix64::seed_from_time());
-    loop {
-        demand.tick().await;
-        ctx.heartbeat().await;
-        if sleep_or_stop(schedule.next_delay(&mut rng, 0), ctx.stop()).await {
-            return JobExit::Stopped;
-        }
-    }
+            async move {
+                demand.tick().await;
+                Ok(Next::Continue)
+            }
+        }),
+    )
 }

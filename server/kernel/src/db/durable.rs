@@ -1,60 +1,34 @@
-//! The job registry's rows.
+//! The loop liveness rows.
 //!
-//! `durable_job_registry` names every background job, durable or ephemeral,
-//! with its liveness and last heartbeat, for the admin queue view. The live
-//! handles sit in `jobs::registry`; this module reads and writes the rows
-//! behind them. Writes go through the writer lane of a [`Db`]; reads use the
-//! pool.
+//! `durable_loops` names every background loop the server runs this start,
+//! with its state, last heartbeat and the code of its last failure, for the
+//! admin jobs view. The loop supervisor in `jobs::supervisor` writes them;
+//! the rows are cleared and rebuilt at every start. Writes go through the
+//! writer lane's background class, reads through [`Db::read`].
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::fmt;
+use std::sync::Arc;
 
-use sqlx::SqlitePool;
+use rusqlite::types::Type;
 
 use super::{error::DbError, handle::Db, sql, writer::Lane};
+use crate::clock::Clock;
 
-/// What kind of background job a registry row names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JobKind {
-    /// SQLite state machine with startup recovery.
-    Durable,
-    /// Maintenance loop, safe to drop on restart.
-    Ephemeral,
-}
-
-impl JobKind {
-    /// Row value in `durable_job_registry`.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            JobKind::Durable => "durable",
-            JobKind::Ephemeral => "ephemeral",
-        }
-    }
-
-    /// Parse a row value back into a kind.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "durable" => Some(JobKind::Durable),
-            "ephemeral" => Some(JobKind::Ephemeral),
-            _ => None,
-        }
-    }
-}
-
-/// Liveness of a registry row.
+/// Liveness of a loop row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobState {
-    /// Registered, not currently running.
+    /// Registered, not running.
     Idle,
     /// Running now.
     Running,
     /// Stopped cleanly.
     Stopped,
-    /// Stopped on failure; the domain tables hold the details.
+    /// Ended on a panic or an abort; `last_error` says which.
     Failed,
 }
 
 impl JobState {
-    /// Row value in `durable_job_registry`.
+    /// Row value in `durable_loops`.
     pub fn as_str(self) -> &'static str {
         match self {
             JobState::Idle => "idle",
@@ -76,60 +50,119 @@ impl JobState {
     }
 }
 
-/// One registry row.
-#[derive(Debug, Clone, PartialEq)]
-pub struct JobRecord {
-    /// Job name, the primary key.
+/// One loop row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoopRecord {
+    /// Loop name, the primary key.
     pub name: String,
-    /// Durable or ephemeral.
-    pub kind: JobKind,
     /// Current liveness.
     pub state: JobState,
-    /// Last heartbeat as unix seconds, if the job ever beat.
-    pub last_heartbeat_at: Option<f64>,
-    /// Last registry update as unix seconds.
-    pub updated_at: f64,
+    /// Last heartbeat as unix milliseconds, if the loop ever beat.
+    pub last_heartbeat_at: Option<i64>,
+    /// Fixed code of the last failure, cleared by the next clean tick.
+    pub last_error: Option<String>,
+    /// Last change as unix milliseconds.
+    pub updated_at: i64,
 }
 
-/// The registry rows over the pool. Cloneable handle.
-#[derive(Clone, Debug)]
+/// Forget every loop row.
+pub(crate) async fn clear_loops(db: &Db) -> Result<(), DbError> {
+    db.write(Lane::Background, "durable-loops-clear", |tx| {
+        tx.execute(sql::CLEAR_LOOPS.text(), [])?;
+        Ok(())
+    })
+    .await
+}
+
+/// Write each row as given, in one transaction.
+pub(crate) async fn put_loops(db: &Db, rows: Vec<LoopRecord>) -> Result<(), DbError> {
+    db.write(Lane::Background, "durable-loops-put", move |tx| {
+        let mut statement = tx.prepare_cached(sql::PUT_LOOP.text())?;
+        for row in &rows {
+            statement.execute(rusqlite::params![
+                row.name,
+                row.state.as_str(),
+                row.last_heartbeat_at,
+                row.last_error,
+                row.updated_at,
+            ])?;
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// Every loop row in name order.
+pub async fn list_loops(db: &Db) -> Result<Vec<LoopRecord>, DbError> {
+    db.read("durable-loops-list", |conn| {
+        let mut statement = conn.prepare_cached(sql::ALL_LOOPS.text())?;
+        let rows = statement.query_map([], |row| {
+            let state: String = row.get(1)?;
+            let state = JobState::parse(&state).ok_or_else(|| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    Type::Text,
+                    format!("unknown loop state {state:?}").into(),
+                )
+            })?;
+            Ok(LoopRecord {
+                name: row.get(0)?,
+                state,
+                last_heartbeat_at: row.get(2)?,
+                last_error: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    })
+    .await
+}
+
+/// Rows for loops that run outside the supervisor and write their own
+/// liveness. Made only by a started supervisor, so no row can be written
+/// before the start clears the table.
+#[derive(Clone)]
 pub struct JobRegistryRows {
-    pool: SqlitePool,
+    clock: Arc<dyn Clock>,
+}
+
+impl fmt::Debug for JobRegistryRows {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("JobRegistryRows")
+            .finish_non_exhaustive()
+    }
 }
 
 impl JobRegistryRows {
-    /// Read and write the rows of a migrated pool.
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub(crate) fn new(clock: Arc<dyn Clock>) -> Self {
+        Self { clock }
     }
 
-    /// Register a job, or refresh the registration if the name exists.
-    pub async fn register_job(&self, db: &Db, name: &str, kind: JobKind) -> Result<(), DbError> {
+    /// Register a loop as idle, keeping the state of a row already there.
+    pub async fn register_job(&self, db: &Db, name: &str) -> Result<(), DbError> {
         let name = name.to_owned();
-        let kind_text = kind.as_str().to_owned();
-        db.write(Lane::Background, "durable-job-register", move |tx| {
-            tx.execute(
-                sql::REGISTER_JOB.text(),
-                rusqlite::params![name, kind_text, now_unix()],
-            )?;
+        let now = self.clock.now_ms();
+        db.write(Lane::Background, "durable-loop-register", move |tx| {
+            tx.execute(sql::REGISTER_LOOP.text(), rusqlite::params![name, now])?;
             Ok(())
         })
         .await
     }
 
-    /// Move a job to a new liveness state.
+    /// Move a registered loop to a new state.
     pub async fn set_job_state(&self, db: &Db, name: &str, state: JobState) -> Result<(), DbError> {
         let name = name.to_owned();
-        let state_text = state.as_str().to_owned();
-        db.write(Lane::Background, "durable-job-state", move |tx| {
+        let now = self.clock.now_ms();
+        db.write(Lane::Background, "durable-loop-state", move |tx| {
             let changed = tx.execute(
-                sql::SET_JOB_STATE.text(),
-                rusqlite::params![state_text, now_unix(), name],
+                sql::SET_LOOP_STATE.text(),
+                rusqlite::params![state.as_str(), now, name],
             )?;
             if changed == 0 {
                 return Err(DbError::WriteFailed {
-                    operation: "durable-job-state".to_owned(),
-                    cause: "unknown job".to_owned(),
+                    operation: "durable-loop-state".to_owned(),
+                    cause: "unknown loop".to_owned(),
                 });
             }
             Ok(())
@@ -137,60 +170,20 @@ impl JobRegistryRows {
         .await
     }
 
-    /// Beat a job's heart without changing its state.
+    /// Beat a registered loop's heart without changing its state.
     pub async fn heartbeat(&self, db: &Db, name: &str) -> Result<(), DbError> {
         let name = name.to_owned();
-        db.write(Lane::Background, "durable-job-heartbeat", move |tx| {
-            let changed = tx.execute(sql::BEAT_JOB.text(), rusqlite::params![now_unix(), name])?;
+        let now = self.clock.now_ms();
+        db.write(Lane::Background, "durable-loop-heartbeat", move |tx| {
+            let changed = tx.execute(sql::BEAT_LOOP.text(), rusqlite::params![now, name])?;
             if changed == 0 {
                 return Err(DbError::WriteFailed {
-                    operation: "durable-job-heartbeat".to_owned(),
-                    cause: "unknown job".to_owned(),
+                    operation: "durable-loop-heartbeat".to_owned(),
+                    cause: "unknown loop".to_owned(),
                 });
             }
             Ok(())
         })
         .await
     }
-
-    /// Read one registry row, or `None` when the name is unregistered.
-    pub async fn get_job(&self, name: &str) -> Result<Option<JobRecord>, DbError> {
-        let row: Option<JobRow> = sqlx::query_as(sql::JOB_BY_NAME.text())
-            .bind(name)
-            .fetch_optional(&self.pool)
-            .await?;
-        Ok(row.and_then(decode_job))
-    }
-
-    /// Read the whole registry in name order.
-    pub async fn list_jobs(&self) -> Result<Vec<JobRecord>, DbError> {
-        let rows: Vec<JobRow> = sqlx::query_as(sql::ALL_JOBS.text())
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(rows.into_iter().filter_map(decode_job).collect())
-    }
-}
-
-/// One raw registry row: name, kind, state, heartbeat, updated.
-type JobRow = (String, String, String, Option<f64>, f64);
-
-/// Decode a registry row; CHECK constraints make `None` unreachable on a
-/// migrated database, but a corrupt row decodes to nothing instead of
-/// failing the whole listing.
-fn decode_job(row: JobRow) -> Option<JobRecord> {
-    Some(JobRecord {
-        name: row.0,
-        kind: JobKind::parse(&row.1)?,
-        state: JobState::parse(&row.2)?,
-        last_heartbeat_at: row.3,
-        updated_at: row.4,
-    })
-}
-
-/// Current wall-clock as unix seconds for the REAL timestamp columns.
-fn now_unix() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
 }

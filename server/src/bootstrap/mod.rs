@@ -66,6 +66,7 @@ use droppedneedle_kernel::{
     events::EventHub,
     http_client::{HttpClientError, HttpClientFactory},
     ids::UuidGenerator,
+    jobs::{CancellationToken, Supervisor},
     runtime_config::{
         ConfigStore, Crypto, crypto::CryptoError, quota::QUOTA_FILE_NAME,
         secret_sections::ListenBrainzConnection, sections::LyricsSettings,
@@ -510,7 +511,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         provider_cache.clone(),
         providers.clone(),
     )
-    .with_db(AdminDb::new(db.clone(), runtime.job_rows().clone()))
+    .with_db(AdminDb::new(db.clone()))
     .with_backups(BackupService::new(
         &config.library_db_path,
         runtime.backups().backup_dir(),
@@ -555,10 +556,22 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let mix_hooks = Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
         acquire.requests.mixer.clone(),
     ));
-    // The one registry every background job registers on.
+    // The one supervisor every background loop runs on. Starting it clears
+    // the last start's loop rows, so it comes before anything writes one.
+    let supervisor = wait_out_busy(
+        "loop supervisor",
+        |error: &DbError| matches!(error, DbError::Busy { .. }),
+        || {
+            Supervisor::start(
+                db.clone(),
+                Arc::new(droppedneedle_kernel::clock::SystemClock),
+                CancellationToken::new(),
+            )
+        },
+    )
+    .await?;
     let jobs = JobsSetup::build(
-        runtime.job_rows().clone(),
-        db.clone(),
+        supervisor.clone(),
         runtime.checkpoint().clone(),
         config_store.clone(),
         MediaJobs {
@@ -659,7 +672,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         http.shared().clone(),
         crypto,
         provider_cache,
-        jobs.registry().clone(),
+        supervisor.clone(),
         db.clone(),
         outbound.plugin_hosts(),
         &outbound.listenbrainz,
@@ -709,7 +722,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .with_events(events.clone());
     let acquire_loops = state
         .acquire
-        .spawn_loops(runtime.job_rows().clone(), db.clone(), stop.clone())
+        .spawn_loops(supervisor.job_rows(), db.clone(), stop.clone())
         .await
         .map_err(stage("acquire loops"))?;
     background.extend(acquire_loops);
@@ -732,8 +745,8 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             stop,
         )),
     );
-    // Registry jobs stop through the registry at shutdown, not the watch.
-    jobs.spawn_loops().await.map_err(stage("jobs loops"))?;
+    // Supervised loops stop through the supervisor at shutdown, not the watch.
+    jobs.spawn_loops().map_err(stage("jobs loops"))?;
 
     let router = create_app_with_web(state.clone(), web);
     Ok(Built {
@@ -741,7 +754,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         state,
         background: background
             .with_events(events)
-            .with_jobs(jobs)
+            .with_supervisor(supervisor)
             .with_runtime(runtime)
             .with_data_lock(data_lock),
     })

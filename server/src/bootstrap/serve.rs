@@ -2,7 +2,7 @@
 //!
 //! On the stop signal, [`serve`] first tells every background loop to stop
 //! (one watch channel) and ends open event streams, then drains HTTP
-//! connections, cancels registry jobs and joins the loops at the same
+//! connections, stops the supervisor's loops and joins the rest at the same
 //! time, each bounded by `SHUTDOWN_GRACE_PERIOD`. A long stream held open
 //! by a client therefore never keeps scans or downloads running. Whatever
 //! is still running at the bound is aborted with a warning. The database
@@ -18,9 +18,8 @@ use axum::Router;
 use thiserror::Error;
 use tokio::{net::TcpListener, sync::watch, task::JoinHandle};
 
-use super::jobs::JobsSetup;
 use droppedneedle_kernel::{
-    config::BindHost, db::DbRuntime, db::datalock::DataLock, events::EventHub,
+    config::BindHost, db::DbRuntime, db::datalock::DataLock, events::EventHub, jobs::Supervisor,
 };
 
 /// Listen backlog, the usual server default.
@@ -86,7 +85,7 @@ pub struct Background {
     grace: Duration,
     stop: watch::Sender<bool>,
     loops: Vec<(&'static str, JoinHandle<()>)>,
-    jobs: Option<JobsSetup>,
+    supervisor: Option<Supervisor>,
     events: Option<EventHub>,
     runtime: Option<DbRuntime>,
     data_lock: Option<DataLock>,
@@ -100,7 +99,7 @@ impl Background {
             grace,
             stop,
             loops: Vec::new(),
-            jobs: None,
+            supervisor: None,
             events: None,
             runtime: None,
             data_lock: None,
@@ -122,10 +121,10 @@ impl Background {
         self.loops.extend(tasks);
     }
 
-    /// Cancel this registry's jobs at shutdown.
+    /// Stop this supervisor's loops at shutdown.
     #[must_use]
-    pub fn with_jobs(mut self, jobs: JobsSetup) -> Self {
-        self.jobs = Some(jobs);
+    pub fn with_supervisor(mut self, supervisor: Supervisor) -> Self {
+        self.supervisor = Some(supervisor);
         self
     }
 
@@ -151,14 +150,14 @@ impl Background {
         self
     }
 
-    /// Cancel the registry jobs and join the loops, both bounded by the
-    /// grace period. A loop still running at the bound is aborted.
+    /// Stop the supervisor's loops and join the other loops, both bounded
+    /// by the grace period. A loop still running at the bound is aborted.
     async fn stop_work(&mut self) {
         let grace = self.grace;
-        let jobs = self.jobs.clone();
+        let supervisor = self.supervisor.clone();
         let cancel_jobs = async move {
-            if let Some(jobs) = jobs {
-                jobs.cancel_all(grace).await;
+            if let Some(supervisor) = supervisor {
+                supervisor.shutdown(grace).await;
             }
         };
         let loops = std::mem::take(&mut self.loops);

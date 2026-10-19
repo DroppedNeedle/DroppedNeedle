@@ -370,11 +370,18 @@ async fn loop_cadence_and_shutdown() {
         ticks: Arc::new(MemoryTicks::new()),
     });
 
+    let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
+        runtime.db().clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        droppedneedle_kernel::jobs::CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     let early = ManualSleeper::new();
     early.shut_down();
     let (handle, _) = spawn_sync_loop(
         early,
-        runtime.job_rows().clone(),
+        supervisor.job_rows(),
         runtime.db().clone(),
         Arc::new(SystemClock),
         deps.clone(),
@@ -387,7 +394,7 @@ async fn loop_cadence_and_shutdown() {
     let sleeper = ManualSleeper::new();
     let (handle, _) = spawn_sync_loop(
         sleeper.clone(),
-        runtime.job_rows().clone(),
+        supervisor.job_rows(),
         runtime.db().clone(),
         Arc::new(SystemClock),
         deps,
@@ -401,7 +408,10 @@ async fn loop_cadence_and_shutdown() {
     sleeper.shut_down();
     handle.task.await.unwrap();
     assert_eq!(sleeper.requested(), vec![SYNC_INITIAL_DELAY, SYNC_INTERVAL]);
-    let job = runtime.job_rows().get_job(SYNC_JOB).await.unwrap().unwrap();
+    let jobs = droppedneedle_kernel::db::list_loops(runtime.db())
+        .await
+        .unwrap();
+    let job = jobs.iter().find(|job| job.name == SYNC_JOB).unwrap();
     assert_eq!(job.state, JobState::Stopped);
     runtime.shutdown().await;
 }

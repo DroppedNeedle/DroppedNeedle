@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use super::ports::DiscoverContent;
+use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::discovery_demand::DemandTick;
-use droppedneedle_kernel::jobs::registry::BoxFuture;
 
 /// The discover content's warm pass.
 pub struct ContentDemand(pub Arc<dyn DiscoverContent>);

@@ -13,19 +13,24 @@
 //! One intended change: v2 schedules in server-local wall time while v3
 //! schedules in UTC (the container pins `TZ=UTC`, so the two agree in
 //! production) because the standard library cannot name the local zone
-//! portably. The [`WatchClock`] seam owns that choice; tests drive a manual
-//! clock.
+//! portably. Wall time comes from the supervisor's [`Clock`]; tests set a
+//! manual one.
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
-use super::registry::{BoxFuture, JobCtx, JobExit, JobKind, JobRegistry, RegistryStore};
-use super::schedule::sleep_or_stop;
+use super::BoxFuture;
+use super::schedule::Schedule;
+use super::supervisor::{AlreadyRunning, Next, Supervisor, Tick, TickCtx, TickError, TickResult};
+use crate::clock::Clock;
 
-/// Registered name of the watcher loop.
+/// Name of the watcher loop.
 pub const JOB_NAME: &str = "events-watcher";
+
+/// Row code of a failed sweep.
+pub const FAILED: &str = "EVENTS_SWEEP_FAILED";
 
 /// Boot hold-off before the catch-up sweep, from v2.
 pub const INITIAL_DELAY: Duration = Duration::from_secs(420);
@@ -44,7 +49,7 @@ const FALLBACK_POLL_MINUTES: u16 = 6 * 60;
 pub enum SweepEnd {
     /// Walked every artist it meant to.
     Finished,
-    /// Saw the stop signal and quit between artists.
+    /// Saw the stop and quit between artists.
     Stopped,
 }
 
@@ -53,11 +58,11 @@ pub trait EventsWatcher: Send + Sync + 'static {
     /// Run one full sweep. `skip_recent_hours` narrows the catch-up sweep to
     /// artists not swept within the window; daily sweeps pass nothing. A
     /// sweep walks artists for up to an hour, so it watches `stop` between
-    /// artists and returns [`SweepEnd::Stopped`] when it fires.
+    /// artists and returns [`SweepEnd::Stopped`] once it is cancelled.
     fn run_sweep(
         &self,
         skip_recent_hours: Option<f64>,
-        stop: Arc<Notify>,
+        stop: CancellationToken,
     ) -> BoxFuture<'_, Result<SweepEnd, String>>;
 }
 
@@ -67,7 +72,7 @@ impl<W: EventsWatcher> EventsWatcher for Option<W> {
     fn run_sweep(
         &self,
         skip_recent_hours: Option<f64>,
-        stop: Arc<Notify>,
+        stop: CancellationToken,
     ) -> BoxFuture<'_, Result<SweepEnd, String>> {
         match self {
             Some(watcher) => watcher.run_sweep(skip_recent_hours, stop),
@@ -83,7 +88,7 @@ pub trait PollTimeSource: Send + Sync + 'static {
 }
 
 /// Wall time in whole days plus minutes since midnight. Minute resolution is
-/// all a daily scheduler needs, and the shape keeps the clock seam free of
+/// all a daily scheduler needs, and the shape keeps the scheduler free of
 /// date libraries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct WallTime {
@@ -102,27 +107,13 @@ impl WallTime {
             minutes_since_midnight: 0,
         }
     }
-}
 
-/// Clock behind a seam so tests drive wall time by hand.
-pub trait WatchClock: Clone + Send + Sync + 'static {
-    /// Current wall time.
-    fn now(&self) -> WallTime;
-}
-
-/// Production clock: UTC days and minutes from the system clock.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SystemWatchClock;
-
-impl WatchClock for SystemWatchClock {
-    fn now(&self) -> WallTime {
-        let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|span| span.as_secs())
-            .unwrap_or(0);
-        WallTime {
-            days_since_epoch: (secs / 86_400) as i64,
-            minutes_since_midnight: ((secs % 86_400) / 60) as u16,
+    /// The UTC day and minute of a unix millisecond time.
+    pub fn from_unix_ms(now_ms: i64) -> Self {
+        let secs = now_ms.div_euclid(1000);
+        Self {
+            days_since_epoch: secs.div_euclid(86_400),
+            minutes_since_midnight: (secs.rem_euclid(86_400) / 60) as u16,
         }
     }
 }
@@ -159,111 +150,68 @@ fn parse_poll_time(poll: &str) -> u16 {
     parsed.unwrap_or(FALLBACK_POLL_MINUTES)
 }
 
-/// Spawn the loop on a registry.
-pub async fn spawn_on<S, W, P, C>(
-    registry: &JobRegistry<S>,
+/// The scheduler's pacing: a turn a minute after the boot hold-off.
+pub fn default_schedule() -> Schedule {
+    Schedule::new(SCHEDULER_TICK)
+        .with_initial_delay(INITIAL_DELAY)
+        .with_jitter(DEFAULT_JITTER)
+}
+
+/// One scheduler turn: sweep when the catch-up or the day's slot is due.
+struct WatcherTick<W, P> {
     watcher: W,
     poll_source: P,
-    clock: C,
-) -> Result<(), super::registry::AlreadyRunning>
-where
-    S: RegistryStore,
-    W: EventsWatcher,
-    P: PollTimeSource,
-    C: WatchClock,
-{
-    let watcher = Arc::new(watcher);
-    let poll_source = Arc::new(poll_source);
-    let clock = Arc::new(clock);
-    registry
-        .spawn(JOB_NAME, JobKind::Ephemeral, move |ctx| {
-            let watcher = Arc::clone(&watcher);
-            let poll_source = Arc::clone(&poll_source);
-            let clock = Arc::clone(&clock);
-            async move {
-                run(
-                    ctx,
-                    watcher.as_ref(),
-                    poll_source.as_ref(),
-                    clock.as_ref(),
-                    &LoopConfig::default(),
-                )
-                .await
-            }
-        })
-        .await
+    clock: Arc<dyn Clock>,
+    last_sweep: Option<WallTime>,
 }
 
-/// Loop pacing. Defaults are the v2 constants; tests shrink them.
-#[derive(Debug, Clone, Copy)]
-pub struct LoopConfig {
-    /// Boot hold-off before the catch-up sweep.
-    pub initial_delay: Duration,
-    /// Scheduler tick between slot checks.
-    pub tick: Duration,
-    /// Spread added to each tick.
-    pub jitter: Duration,
-}
-
-impl Default for LoopConfig {
-    fn default() -> Self {
-        Self {
-            initial_delay: INITIAL_DELAY,
-            tick: SCHEDULER_TICK,
-            jitter: DEFAULT_JITTER,
-        }
-    }
-}
-
-/// Run until stop fires. Exactly one sleep per iteration, error path included.
-pub async fn run<S, W, P, C>(
-    ctx: JobCtx<S>,
-    watcher: &W,
-    poll_source: &P,
-    clock: &C,
-    config: &LoopConfig,
-) -> JobExit
-where
-    S: RegistryStore,
-    W: EventsWatcher,
-    P: PollTimeSource,
-    C: WatchClock,
-{
-    if sleep_or_stop(config.initial_delay, ctx.stop()).await {
-        return JobExit::Stopped;
-    }
-    let mut rng_state =
-        super::schedule::SplitMix64::new(super::schedule::SplitMix64::seed_from_time());
-    let mut last_sweep: Option<WallTime> = None;
-    loop {
-        let now = clock.now();
-        let due = match last_sweep {
+impl<W: EventsWatcher, P: PollTimeSource> Tick for WatcherTick<W, P> {
+    async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
+        let now = WallTime::from_unix_ms(self.clock.now_ms());
+        let due = match self.last_sweep {
             None => Some(Some(CATCHUP_SKIP_RECENT_HOURS)),
-            Some(previous) => {
-                (now >= next_daily_occurrence(&poll_source.poll_time(), previous)).then_some(None)
-            }
+            Some(previous) => (now
+                >= next_daily_occurrence(&self.poll_source.poll_time(), previous))
+            .then_some(None),
         };
-        if let Some(skip_recent_hours) = due {
-            match watcher
-                .run_sweep(skip_recent_hours, Arc::clone(ctx.stop()))
-                .await
-            {
-                Ok(SweepEnd::Stopped) => return JobExit::Stopped,
-                Ok(SweepEnd::Finished) => {}
-                Err(cause) => tracing::error!(%cause, "events watcher sweep failed"),
-            }
-            // A failing sweep still waits for the next slot.
-            last_sweep = Some(now);
-            ctx.heartbeat().await;
-        }
-        let tick = config
-            .tick
-            .saturating_add(rng_state.below_duration(config.jitter))
-            .max(super::schedule::ABSOLUTE_MIN_DELAY);
-        if sleep_or_stop(tick, ctx.stop()).await {
-            return JobExit::Stopped;
+        let Some(skip_recent_hours) = due else {
+            return Ok(Next::Continue);
+        };
+        let swept = self
+            .watcher
+            .run_sweep(skip_recent_hours, ctx.token().clone())
+            .await;
+        // A failing sweep still waits for the next slot.
+        self.last_sweep = Some(now);
+        match swept {
+            Ok(_) => Ok(Next::Continue),
+            Err(cause) => Err(TickError::new(FAILED, cause)),
         }
     }
+}
+
+/// Start the watcher loop on `schedule` (normally [`default_schedule`]),
+/// reading wall time from the supervisor's clock.
+pub fn spawn_on<W, P>(
+    supervisor: &Supervisor,
+    watcher: W,
+    poll_source: P,
+    schedule: Schedule,
+) -> Result<(), AlreadyRunning>
+where
+    W: EventsWatcher,
+    P: PollTimeSource,
+{
+    supervisor.periodic(
+        JOB_NAME,
+        schedule,
+        WatcherTick {
+            watcher,
+            poll_source,
+            clock: Arc::clone(supervisor.clock()),
+            last_sweep: None,
+        },
+    )
 }
 
 #[cfg(test)]

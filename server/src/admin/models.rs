@@ -117,24 +117,26 @@ pub struct CacheSyncCancelResponse {
     pub status: String,
 }
 
-/// One registered background job.
+/// One background loop.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct JobView {
-    /// Job name, the registry key.
+    /// Loop name.
     pub name: String,
-    /// `durable` or `ephemeral`.
-    pub kind: String,
     /// `idle`, `running`, `stopped`, or `failed`.
     pub state: String,
-    /// Last heartbeat as unix seconds, when the job ever beat.
+    /// Last heartbeat as unix milliseconds, when the loop ever beat.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_heartbeat_at: Option<f64>,
+    pub last_heartbeat_at: Option<i64>,
+    /// Code of the last failure, such as `CHECKPOINT_FAILED`, until a
+    /// clean turn clears it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
 }
 
-/// Queue and job-registry snapshot.
+/// Background loops and the latest checkpoint pass.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct QueueStatsResponse {
-    /// Registered background jobs in name order.
+    /// Background loops in name order.
     pub jobs: Vec<JobView>,
     /// Latest database checkpoint pass, once the checkpoint loop has
     /// recorded one.

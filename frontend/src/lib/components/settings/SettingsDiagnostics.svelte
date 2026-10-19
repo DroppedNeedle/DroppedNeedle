@@ -40,7 +40,7 @@
 
 	function heartbeatText(at: number | null | undefined): string {
 		if (!at) return 'never';
-		return new Date(at * 1000).toLocaleTimeString();
+		return new Date(at).toLocaleTimeString();
 	}
 </script>
 
@@ -144,18 +144,18 @@
 					<thead>
 						<tr>
 							<th scope="col">Job</th>
-							<th scope="col">Kind</th>
 							<th scope="col">State</th>
 							<th scope="col">Last heartbeat</th>
+							<th scope="col">Last error</th>
 						</tr>
 					</thead>
 					<tbody>
 						{#each jobs as job (job.name)}
 							<tr>
 								<td>{humanizeWireValue(job.name)}</td>
-								<td>{humanizeWireValue(job.kind)}</td>
 								<td>{humanizeWireValue(job.state)}</td>
 								<td>{heartbeatText(job.last_heartbeat_at)}</td>
+								<td>{job.last_error ?? 'none'}</td>
 							</tr>
 						{/each}
 					</tbody>

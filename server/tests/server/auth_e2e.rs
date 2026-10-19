@@ -69,6 +69,7 @@ pub(crate) struct E2e {
     http: HttpClientFactory,
     ids: Arc<UuidGenerator>,
     clock: Arc<SystemClock>,
+    supervisor: droppedneedle_kernel::jobs::Supervisor,
     db_path: std::path::PathBuf,
     _scratch: crate::common::ScratchDir,
 }
@@ -115,6 +116,13 @@ impl E2e {
         );
         let http = HttpClientFactory::new().expect("http factory builds");
         let db_path = dir.join("app.db");
+        let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
+            runtime.db().clone(),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+            droppedneedle_kernel::jobs::CancellationToken::new(),
+        )
+        .await
+        .expect("loop supervisor starts");
         Self {
             runtime,
             bundle,
@@ -131,6 +139,7 @@ impl E2e {
             http,
             ids,
             clock,
+            supervisor,
             db_path,
             _scratch: scratch,
         }
@@ -272,7 +281,13 @@ impl E2e {
             .parent()
             .map(|parent| parent.join("backups"))
             .unwrap_or_else(std::env::temp_dir);
-        let jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests();
+        let jobs = droppedneedle::bootstrap::jobs::JobsSetup::build(
+            self.supervisor.clone(),
+            self.runtime.checkpoint().clone(),
+            Arc::clone(&self.store),
+            droppedneedle_media::remotes::presence_feed::MediaJobs::for_tests(),
+            None,
+        );
         // Concerts over the scratch database; the sources point at the
         // discard port so no row can reach a real provider.
         let concerts = droppedneedle_catalog::concerts::ConcertsSetup::new(
@@ -293,7 +308,6 @@ impl E2e {
         )
         .with_db(droppedneedle::admin::AdminDb::new(
             self.runtime.db().clone(),
-            self.runtime.job_rows().clone(),
         ))
         .with_backups(droppedneedle_kernel::db::BackupService::new(
             &self.db_path,
@@ -302,7 +316,7 @@ impl E2e {
         .with_checkpoint(self.runtime.checkpoint().clone())
         .with_precache(jobs.precache_trigger());
         let plugins =
-            droppedneedle_plugins::wiring::PluginsSetup::for_tests(jobs.registry().clone())
+            droppedneedle_plugins::wiring::PluginsSetup::for_tests(jobs.supervisor().clone())
                 .expect("test plugins bundle builds");
         let settings = droppedneedle::settings::wiring::SettingsSetup::for_tests(Arc::clone(
             &self.ids,

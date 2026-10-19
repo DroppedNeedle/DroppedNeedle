@@ -1,39 +1,24 @@
 //! Navidrome playlist sync: the trigger route is admin-only and reads
-//! settings fresh on every call, and the loop syncs on its interval once
-//! enabled.
+//! settings fresh on every call.
 
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
 };
-use std::time::Duration;
 
 use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
 use droppedneedle_auth::users::roles::{Role, SessionKind};
+use droppedneedle_kernel::jobs::BoxFuture;
 use droppedneedle_kernel::jobs::playlist_sync::{
-    self, PlaylistExporter, PlaylistSyncConfig, PlaylistSyncResult, PlaylistSyncSettings,
+    PlaylistExporter, PlaylistSyncConfig, PlaylistSyncResult, PlaylistSyncSettings,
 };
-use droppedneedle_kernel::jobs::registry::{BoxFuture, JobRegistry, MemoryRegistryStore};
-use droppedneedle_kernel::jobs::schedule::Schedule;
 use droppedneedle_media::remotes::playlist_sync::{self as playlist_route, PlaylistSyncState};
 use tower::ServiceExt as _;
 
 use crate::common::auth::{test_principal, with_test_principal};
-
-type TestRegistry = JobRegistry<MemoryRegistryStore>;
-
-fn registry() -> TestRegistry {
-    JobRegistry::new(MemoryRegistryStore::new())
-}
-
-async fn settle() {
-    for _ in 0..3 {
-        tokio::task::yield_now().await;
-    }
-}
 
 /// Scripted settings: the config under test, flippable between calls.
 #[derive(Clone, Default)]
@@ -190,37 +175,4 @@ async fn route_refuses_everyone_but_admins() {
     assert_eq!(body["error"]["code"], "FORBIDDEN");
     assert_eq!(body["error"]["message"], "Admin role required");
     assert_eq!(exporter.calls.load(Ordering::SeqCst), 0);
-}
-
-// ---------------------------------------------------------------------------
-// Loop
-// ---------------------------------------------------------------------------
-
-#[tokio::test(start_paused = true)]
-async fn loop_syncs_on_interval_once_enabled() {
-    let registry = registry();
-    let settings = FakeSettings::enabled();
-    let exporter = FakeExporter::answering(FakeExporter::ok());
-    playlist_sync::spawn_on(
-        &registry,
-        settings,
-        exporter.clone(),
-        Schedule::new(Duration::from_secs(300)),
-    )
-    .await
-    .expect("spawn wins");
-    settle().await;
-
-    // The first cycle waits out one interval, like v2's sleep-first loop.
-    tokio::time::advance(Duration::from_secs(299)).await;
-    settle().await;
-    assert_eq!(exporter.calls.load(Ordering::SeqCst), 0);
-    tokio::time::advance(Duration::from_secs(1)).await;
-    settle().await;
-    assert_eq!(exporter.calls.load(Ordering::SeqCst), 1);
-    tokio::time::advance(Duration::from_secs(300)).await;
-    settle().await;
-    assert_eq!(exporter.calls.load(Ordering::SeqCst), 2);
-
-    registry.cancel_all(Duration::from_secs(5)).await;
 }

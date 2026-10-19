@@ -15215,16 +15215,19 @@ export interface components {
             /** @description Server users (empty unless the probe succeeded). */
             users: components["schemas"]["JellyfinUserInfo"][];
         };
-        /** @description One registered background job. */
+        /** @description One background loop. */
         JobView: {
-            /** @description `durable` or `ephemeral`. */
-            kind: string;
             /**
-             * Format: double
-             * @description Last heartbeat as unix seconds, when the job ever beat.
+             * @description Code of the last failure, such as `CHECKPOINT_FAILED`, until a
+             *     clean turn clears it.
+             */
+            last_error?: string | null;
+            /**
+             * Format: int64
+             * @description Last heartbeat as unix milliseconds, when the loop ever beat.
              */
             last_heartbeat_at?: number | null;
-            /** @description Job name, the registry key. */
+            /** @description Loop name. */
             name: string;
             /** @description `idle`, `running`, `stopped`, or `failed`. */
             state: string;
@@ -19467,10 +19470,10 @@ export interface components {
             /** @description MusicBrainz release-group id. */
             release_group_mbid: string;
         };
-        /** @description Queue and job-registry snapshot. */
+        /** @description Background loops and the latest checkpoint pass. */
         QueueStatsResponse: {
             checkpoint?: null | components["schemas"]["CheckpointView"];
-            /** @description Registered background jobs in name order. */
+            /** @description Background loops in name order. */
             jobs: components["schemas"]["JobView"][];
         };
         /** @description Body checking which cards already landed in the library. */

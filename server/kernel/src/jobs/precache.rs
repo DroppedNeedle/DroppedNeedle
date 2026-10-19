@@ -1,11 +1,11 @@
 //! Library precache supervisor: on-demand runs under a watchdog.
 //!
 //! Precache is not periodic; it runs when asked (after a sync or from the
-//! admin UI) and registers [`JOB_NAME`] only while a run is live. Each run
+//! admin UI) and holds [`JOB_NAME`] only while a run is live. Each run
 //! pairs the phase work with a watchdog ticking every [`DEFAULT_WATCHDOG_TICK`]:
 //! no progress for `stall_timeout` or a run past `max_timeout` cancels the
 //! work and fails the run, exactly the v2 `orchestrator.py` contract. The
-//! caller drives stop through the registry like any other job; the watchdog
+//! caller stops a run through the supervisor like any other job; the watchdog
 //! tick is the recovery path, and the clamped tick floor bounds it.
 
 use std::sync::{Arc, Mutex};
@@ -14,10 +14,20 @@ use std::time::Duration;
 use tokio::sync::Notify;
 use tokio::time::Instant;
 
-use super::registry::{BoxFuture, JobCtx, JobExit, JobKind, JobRegistry, RegistryStore};
+use super::BoxFuture;
+use super::supervisor::{AlreadyRunning, Supervisor, TickCtx, TickError};
 
-/// Registered name while a precache run is live.
+/// Name of a precache run while it is live.
 pub const JOB_NAME: &str = "precache-library";
+
+/// Name of the loop that starts a run once scans have gone quiet.
+pub const AFTER_SCAN_JOB: &str = "precache-after-scan";
+
+/// Row code of a run the watchdog stopped.
+pub const WATCHDOG: &str = "PRECACHE_WATCHDOG";
+
+/// Row code of a run that failed.
+pub const FAILED: &str = "PRECACHE_FAILED";
 
 /// Watchdog cadence from v2, unchanged.
 pub const DEFAULT_WATCHDOG_TICK: Duration = Duration::from_secs(30);
@@ -36,7 +46,7 @@ pub enum PrecacheOutcome {
     Watchdog(String),
     /// A phase raised, with its message.
     Failed(String),
-    /// The registry cancelled the run (shutdown or admin cancel). The phases
+    /// The supervisor cancelled the run (shutdown or admin cancel). The phases
     /// stop at their next await; partial work stays resumable.
     Cancelled,
 }
@@ -134,39 +144,28 @@ impl PrecacheLimits {
 }
 
 /// Start one supervised run. Rejected while a run is live, like any duplicate
-/// job name; the registry row clears when the run lands.
-pub async fn spawn_run<S, W>(
-    registry: &JobRegistry<S>,
+/// job name; the name frees when the run lands.
+pub fn spawn_run<W: PrecacheWork>(
+    supervisor: &Supervisor,
     work: W,
     limits: PrecacheLimits,
-) -> Result<PrecacheHandle, super::registry::AlreadyRunning>
-where
-    S: RegistryStore,
-    W: PrecacheWork,
-{
+) -> Result<PrecacheHandle, AlreadyRunning> {
     let outcome: Arc<Mutex<Option<PrecacheOutcome>>> = Arc::new(Mutex::new(None));
     let done = Arc::new(Notify::new());
-    let work = Arc::new(work);
     let outcome_task = Arc::clone(&outcome);
     let done_task = Arc::clone(&done);
-    registry
-        .spawn(JOB_NAME, JobKind::Ephemeral, move |ctx| {
-            let work = Arc::clone(&work);
-            async move {
-                let result = supervise(&ctx, work.as_ref(), &limits).await;
-                *outcome_task
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(result.clone());
-                done_task.notify_one();
-                match &result {
-                    PrecacheOutcome::Done | PrecacheOutcome::Cancelled => JobExit::Stopped,
-                    PrecacheOutcome::Watchdog(cause) | PrecacheOutcome::Failed(cause) => {
-                        JobExit::Failed(cause.clone())
-                    }
-                }
-            }
-        })
-        .await?;
+    supervisor.one_shot(JOB_NAME, move |ctx| async move {
+        let result = supervise(&ctx, &work, &limits).await;
+        *outcome_task
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(result.clone());
+        done_task.notify_one();
+        match result {
+            PrecacheOutcome::Done | PrecacheOutcome::Cancelled => Ok(()),
+            PrecacheOutcome::Watchdog(cause) => Err(TickError::new(WATCHDOG, cause)),
+            PrecacheOutcome::Failed(cause) => Err(TickError::new(FAILED, cause)),
+        }
+    })?;
     Ok(PrecacheHandle { outcome, done })
 }
 
@@ -197,11 +196,11 @@ impl PrecacheHandle {
 }
 
 /// Drive one run to its outcome: work racing the watchdog and the stop.
-async fn supervise<S, W>(ctx: &JobCtx<S>, work: &W, limits: &PrecacheLimits) -> PrecacheOutcome
-where
-    S: RegistryStore,
-    W: PrecacheWork,
-{
+async fn supervise<W: PrecacheWork>(
+    ctx: &TickCtx,
+    work: &W,
+    limits: &PrecacheLimits,
+) -> PrecacheOutcome {
     let started = Instant::now();
     let progress = Progress::new("starting");
     let work_future = work.run(progress.clone());
@@ -209,7 +208,7 @@ where
     loop {
         tokio::select! {
             biased;
-            _ = ctx.stop().notified() => return PrecacheOutcome::Cancelled,
+            () = ctx.token().cancelled() => return PrecacheOutcome::Cancelled,
             result = &mut work_future => {
                 return match result {
                     Ok(()) => PrecacheOutcome::Done,
@@ -239,7 +238,7 @@ where
                     tracing::error!("{message}");
                     return PrecacheOutcome::Watchdog(message);
                 }
-                ctx.heartbeat().await;
+                ctx.heartbeat();
             }
         }
     }

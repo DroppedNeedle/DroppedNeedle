@@ -29,9 +29,9 @@ use futures_util::StreamExt;
 use futures_util::future::join_all;
 use futures_util::stream;
 
+use super::BoxFuture;
 use super::cache_sync::CacheSyncStatus;
 use super::precache::{PrecacheOutcome, PrecacheWork, Progress};
-use super::registry::BoxFuture;
 
 /// Cache checks between two watchdog beats while a phase sorts out what
 /// still needs fetching.

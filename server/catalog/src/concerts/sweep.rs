@@ -19,8 +19,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::Notify;
-
 use super::events::{ConcertsEvents, ConcertsNew};
 use super::matching::{
     Confidence, EventRow, SweepArtist, TmBasis, dedupe_across_sources, map_skiddle_event,
@@ -31,8 +29,7 @@ use super::sources::Sources;
 use super::store::{ConcertsStore, StoreError};
 use super::{ActiveSources, now_unix, today};
 use droppedneedle_kernel::jobs::events_watcher::{EventsWatcher, SweepEnd};
-use droppedneedle_kernel::jobs::registry::BoxFuture;
-use droppedneedle_kernel::jobs::schedule::sleep_or_stop;
+use droppedneedle_kernel::jobs::{BoxFuture, CancellationToken};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::EventsSweepScope;
 use droppedneedle_providers::error::ProviderError;
@@ -122,7 +119,7 @@ impl ConcertsSweep {
     pub async fn run(
         &self,
         skip_recent_hours: Option<f64>,
-        stop: &Notify,
+        stop: &CancellationToken,
     ) -> Result<(SweepEnd, SweepSummary), StoreError> {
         let Some(active) = ActiveSources::read(&self.config) else {
             tracing::debug!("events sweep skipped: no enabled source with a key");
@@ -145,7 +142,7 @@ impl ConcertsSweep {
         for (index, artist) in artists.iter().enumerate() {
             let outcome = tokio::select! {
                 biased;
-                () = stop.notified() => {
+                () = stop.cancelled() => {
                     tracing::info!(?summary, "events sweep stopped mid-artist");
                     return Ok((SweepEnd::Stopped, summary));
                 }
@@ -169,7 +166,7 @@ impl ConcertsSweep {
                     summary.errors += 1;
                 }
             }
-            if index + 1 < artists.len() && sleep_or_stop(self.inter_artist_delay, stop).await {
+            if index + 1 < artists.len() && !pause(self.inter_artist_delay, stop).await {
                 tracing::info!(?summary, "events sweep stopped early");
                 return Ok((SweepEnd::Stopped, summary));
             }
@@ -342,6 +339,15 @@ impl ConcertsSweep {
     }
 }
 
+/// Wait between artists unless the sweep is stopped first. False once it is.
+async fn pause(delay: Duration, stop: &CancellationToken) -> bool {
+    tokio::select! {
+        biased;
+        () = stop.cancelled() => false,
+        () = tokio::time::sleep(delay) => true,
+    }
+}
+
 /// Bound one source fetch for one artist.
 async fn timed<T>(fetch: impl Future<Output = Result<T, ArtistError>>) -> Result<T, ArtistError> {
     tokio::time::timeout(FETCH_TIMEOUT, fetch)
@@ -353,7 +359,7 @@ impl EventsWatcher for ConcertsSweep {
     fn run_sweep(
         &self,
         skip_recent_hours: Option<f64>,
-        stop: Arc<Notify>,
+        stop: CancellationToken,
     ) -> BoxFuture<'_, Result<SweepEnd, String>> {
         Box::pin(async move {
             self.run(skip_recent_hours, &stop)

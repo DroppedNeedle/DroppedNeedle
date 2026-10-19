@@ -11,10 +11,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::registry::{BoxFuture, JobCtx, JobExit, JobKind, JobRegistry, RegistryStore};
-use super::schedule::{Schedule, SplitMix64, sleep_or_stop};
+use super::BoxFuture;
+use super::schedule::Schedule;
+use super::supervisor::{AlreadyRunning, FnTick, Next, Supervisor, TickError};
 
-/// Registered name of the presence loop.
+/// Name of the presence loop.
 pub const JOB_NAME: &str = "now-playing-presence";
 
 /// v2 poll cadence, unchanged.
@@ -87,29 +88,6 @@ pub fn default_schedule() -> Schedule {
         .with_backoff(Duration::from_secs(1), Duration::from_secs(30))
 }
 
-/// Spawn the loop on a registry.
-pub async fn spawn_on<S, T, P>(
-    registry: &JobRegistry<S>,
-    store: T,
-    sources: P,
-    schedule: Schedule,
-) -> Result<(), super::registry::AlreadyRunning>
-where
-    S: RegistryStore,
-    T: PresenceStore,
-    P: PresenceSources,
-{
-    let store = Arc::new(store);
-    let sources = Arc::new(sources);
-    registry
-        .spawn(JOB_NAME, JobKind::Ephemeral, move |ctx| {
-            let store = Arc::clone(&store);
-            let sources = Arc::clone(&sources);
-            async move { run(ctx, store.as_ref(), sources.as_ref(), &schedule).await }
-        })
-        .await
-}
-
 /// One full cycle: sweep, then each enabled source polled and reconciled in
 /// isolation. Returns the cycle outcome for backoff accounting: a sweep picks
 /// up no failures (it cannot fail loudly), so only source polls count, and a
@@ -158,23 +136,34 @@ where
     if failures == 0 { Ok(()) } else { Err(()) }
 }
 
-/// Run until stop fires. Failures back the schedule off; they never exit.
-pub async fn run<S, T, P>(ctx: JobCtx<S>, store: &T, sources: &P, schedule: &Schedule) -> JobExit
+/// Row code of a cycle where a source failed.
+pub const FAILED: &str = "PRESENCE_SOURCE_FAILED";
+
+/// Start the loop. Failures back the schedule off; they never end it.
+pub fn spawn_on<T, P>(
+    supervisor: &Supervisor,
+    store: T,
+    sources: P,
+    schedule: Schedule,
+) -> Result<(), AlreadyRunning>
 where
-    S: RegistryStore,
     T: PresenceStore,
     P: PresenceSources,
 {
-    let mut rng = SplitMix64::new(SplitMix64::seed_from_time());
-    let mut failures = 0_u32;
-    loop {
-        match run_once(store, sources).await {
-            Ok(()) => failures = 0,
-            Err(()) => failures = failures.saturating_add(1),
-        }
-        ctx.heartbeat().await;
-        if sleep_or_stop(schedule.next_delay(&mut rng, failures), ctx.stop()).await {
-            return JobExit::Stopped;
-        }
-    }
+    let store = Arc::new(store);
+    let sources = Arc::new(sources);
+    supervisor.periodic(
+        JOB_NAME,
+        schedule,
+        FnTick(move |_| {
+            let store = Arc::clone(&store);
+            let sources = Arc::clone(&sources);
+            async move {
+                run_once(store.as_ref(), sources.as_ref())
+                    .await
+                    .map(|()| Next::Continue)
+                    .map_err(|()| TickError::new(FAILED, "a presence source failed"))
+            }
+        }),
+    )
 }

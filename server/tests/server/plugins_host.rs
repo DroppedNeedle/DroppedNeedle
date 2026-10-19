@@ -22,7 +22,6 @@ use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::jobs::plugin_ticks::{
     MemoryTickStore, TickHost as JobsTickHost, TickPlugin as JobsTickPlugin,
 };
-use droppedneedle_kernel::jobs::registry::{JobRegistry, MemoryRegistryStore};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_plugins::fakes::{
@@ -917,9 +916,10 @@ async fn ticks_run_through_the_jobs_loop_and_state_persists() {
             .is_err()
     );
 
-    let registry = JobRegistry::new(MemoryRegistryStore::new());
-    let loops = PluginTickLoops::new(registry.clone(), store, Duration::from_secs(5));
+    let (supervisor, db, _dir) = crate::common::scratch_supervisor("plugin-ticks").await;
+    let loops = PluginTickLoops::new(supervisor.clone(), store, Duration::from_secs(5));
     loops.sync_host(&rig.host).await;
-    assert!(registry.is_running("plugin-tick:toy"));
-    registry.cancel_all(Duration::from_secs(5)).await;
+    assert!(supervisor.is_running("plugin-tick:toy"));
+    supervisor.shutdown(Duration::from_secs(5)).await;
+    db.shutdown().await;
 }

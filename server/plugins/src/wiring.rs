@@ -5,7 +5,7 @@
 //! streaming) can hold it. [`PluginsSetup`] is the one `AppState` field
 //! plugins adds: it backs plugin state with the jobs tick store, starts
 //! the enabled plugins, mounts the routes, and runs tick loops on the
-//! shared jobs registry as `plugin-tick:{name}`.
+//! shared loop supervisor as `plugin-tick:{name}`.
 //!
 //! Production runs each plugin as a subprocess through
 //! [`ProcessLauncher`]; the Python helper module ships inside the server
@@ -18,9 +18,8 @@ use std::sync::Arc;
 use axum::Router;
 
 use droppedneedle_kernel::db::Db;
+use droppedneedle_kernel::jobs::Supervisor;
 use droppedneedle_kernel::jobs::plugin_ticks::SqliteTickStore;
-use droppedneedle_kernel::jobs::registry::JobRegistry;
-use droppedneedle_kernel::jobs::registry::StoreKind;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_providers::cache::{ProviderCache, invalidate_source};
 
@@ -110,13 +109,13 @@ impl Drop for ScratchGuard {
 }
 
 /// Everything `create_app` needs to mount the plugin routes, plus the
-/// tick loops over the shared jobs registry.
+/// tick loops on the shared loop supervisor.
 #[derive(Clone)]
 pub struct PluginsSetup {
     host: Arc<PluginHost>,
     plugins: PluginsDeps,
     scrobble: ScrobbleHttpDeps,
-    ticks: Arc<PluginTickLoops<StoreKind, TickStoreKind>>,
+    ticks: Arc<PluginTickLoops<TickStoreKind>>,
     #[cfg(any(test, feature = "test-support"))]
     _scratch: Option<Arc<ScratchGuard>>,
 }
@@ -125,14 +124,14 @@ impl PluginsSetup {
     /// Bind the production seams over a host from [`new_host`]: SQLite
     /// tick, state and scrobble stores, the HTTP verifier and fetcher,
     /// cache invalidation on link changes, and tick loops over the shared
-    /// jobs registry. Loads the host, which starts the enabled plugins.
+    /// loop supervisor. Loads the host, which starts the enabled plugins.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         host: Arc<PluginHost>,
         http: reqwest::Client,
         crypto: Arc<Crypto>,
         cache: Arc<dyn ProviderCache>,
-        registry: JobRegistry<StoreKind>,
+        supervisor: Supervisor,
         db: Db,
         github: GitHubHosts,
         listenbrainz: &str,
@@ -143,7 +142,7 @@ impl PluginsSetup {
             github,
             listenbrainz,
             cache,
-            registry,
+            supervisor,
             TickStoreKind::Sqlite(SqliteTickStore::new(db.clone())),
             Arc::new(SqliteScrobblePrefsStore::new(db.clone())),
             Arc::new(SqliteListenBrainzLinkStore::new(db, crypto)),
@@ -152,9 +151,9 @@ impl PluginsSetup {
 
     /// Test bundle: scratch config store and plugins directory, fake
     /// plugin runtimes (no subprocesses), memory tick and scrobble stores,
-    /// the production verifier, and tick loops over the caller's registry.
+    /// the production verifier, and tick loops on the caller's supervisor.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(registry: JobRegistry<StoreKind>) -> Result<Self, String> {
+    pub fn for_tests(supervisor: Supervisor) -> Result<Self, String> {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         use super::fakes::FakeLauncher;
@@ -195,7 +194,7 @@ impl PluginsSetup {
             },
             droppedneedle_providers::listenbrainz::DEFAULT_BASE_URL,
             cache,
-            registry,
+            supervisor,
             TickStoreKind::Memory(MemoryTickStore::new()),
             Arc::new(MemoryScrobblePrefsStore::new()),
             Arc::new(MemoryListenBrainzLinkStore::new(crypto)),
@@ -213,14 +212,14 @@ impl PluginsSetup {
         github: GitHubHosts,
         listenbrainz: &str,
         cache: Arc<dyn ProviderCache>,
-        registry: JobRegistry<StoreKind>,
+        supervisor: Supervisor,
         ticks: TickStoreKind,
         prefs: Arc<dyn ScrobblePrefsStore>,
         links: Arc<dyn ListenBrainzLinkStore>,
     ) -> Self {
         host.set_state_store(Arc::new(ticks.clone()));
         host.load_all();
-        let ticks = Arc::new(PluginTickLoops::new(registry, ticks, TICK_CANCEL_GRACE));
+        let ticks = Arc::new(PluginTickLoops::new(supervisor, ticks, TICK_CANCEL_GRACE));
         let plugins = PluginsDeps {
             host: Arc::clone(&host),
             config: Arc::clone(host.config()),

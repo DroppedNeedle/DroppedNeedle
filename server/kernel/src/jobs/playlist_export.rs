@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use unicode_normalization::UnicodeNormalization;
 
+use super::BoxFuture;
 use super::playlist_sync::{PlaylistExporter, PlaylistSyncConfig, PlaylistSyncResult};
-use super::registry::BoxFuture;
 
 /// File suffix Navidrome imports.
 pub const PLAYLIST_SUFFIX: &str = ".m3u8";

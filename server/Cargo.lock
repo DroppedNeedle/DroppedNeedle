@@ -746,6 +746,7 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "unicode-normalization",

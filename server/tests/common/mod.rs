@@ -141,6 +141,50 @@ pub async fn scratch_runtime(path: &Path) -> droppedneedle_kernel::db::DbRuntime
         .expect("scratch runtime opens")
 }
 
+/// A started loop supervisor over a fresh scratch runtime. Hold the guard:
+/// dropping it removes the database.
+pub async fn scratch_supervisor(
+    tag: &str,
+) -> (
+    droppedneedle_kernel::jobs::Supervisor,
+    droppedneedle_kernel::db::DbRuntime,
+    ScratchDir,
+) {
+    let dir = ScratchDir::new(tag);
+    let runtime = scratch_runtime(&dir.join("app.db")).await;
+    let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
+        runtime.db().clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        droppedneedle_kernel::jobs::CancellationToken::new(),
+    )
+    .await
+    .expect("loop supervisor starts");
+    (supervisor, runtime, dir)
+}
+
+/// Wait for the row of loop `name` to satisfy `check`, and return it. The
+/// rows are written on the lane's own thread, so the bound is wall-clock
+/// time; the wait yields instead of sleeping, so a paused clock does not
+/// move while it waits.
+pub async fn loop_row(
+    db: &droppedneedle_kernel::db::Db,
+    name: &str,
+    check: impl Fn(&droppedneedle_kernel::db::LoopRecord) -> bool,
+) -> droppedneedle_kernel::db::LoopRecord {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let rows = droppedneedle_kernel::db::list_loops(db)
+            .await
+            .expect("loop rows read");
+        if let Some(row) = rows.into_iter().find(|row| row.name == name && check(row)) {
+            return row;
+        }
+        assert!(Instant::now() < deadline, "loop row {name} never matched");
+        tokio::task::yield_now().await;
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
 /// Reads inputs for production-shaped rigs: covers and the YouTube quota
 /// under `dir`, settings from `config`, no linked ListenBrainz accounts and
 /// no instance Last.fm key.

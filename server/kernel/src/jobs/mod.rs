@@ -1,10 +1,10 @@
-//! Background jobs: the registry mechanism plus the loops it owns.
+//! Background jobs: the loop supervisor plus the kernel's own loops.
 //!
-//! Every loop in this module registers under its own job name, answers stop
-//! promptly, paces itself with interval plus jitter plus backoff, and
-//! recovers from cycle failures without hot-looping. One-shots
-//! (the events kick, precache runs) register only while live. Plugin ticks
-//! register per plugin and persist their state on the store, never in files.
+//! Every loop runs on the [`Supervisor`] under its own name: it answers
+//! stop promptly, paces itself with interval plus jitter plus backoff, and
+//! recovers from failed ticks without hot-looping. One-shots (the events
+//! kick, precache runs) are live only while they run. Plugin ticks run per
+//! plugin and keep their state on the store, never in files.
 //!
 //! Ownership is narrow on purpose. `acquire` owns acquisition, downloads,
 //! indexers, wanted, Lidarr, Spotify, the download watchdog, auto-retry,
@@ -23,16 +23,17 @@
 //! - [`events_watcher::JOB_NAME`]: daily live-events sweep.
 //! - [`discovery_demand::JOB_NAME`]: the discover warm cycle.
 //!
-//! On-demand entries, registered only while running:
+//! Started on demand:
 //!
 //! - [`events_kick::JOB_NAME`]: the kicked sweep after a settings save.
 //! - [`precache::JOB_NAME`]: supervised precache runs.
+//! - [`precache::AFTER_SCAN_JOB`]: the post-scan wait before a precache run.
 //! - `plugin-tick:{name}`: one loop per scheduler plugin.
 //!
 //! Wiring: `bootstrap::jobs::JobsSetup` is the one `AppState` field these
-//! loops add. It owns the shared registry, nests the playlist-sync route for
-//! the settings tree, and spawns the boot loops; the plugins bundle shares
-//! the registry for its tick loops rather than running its own.
+//! loops add. It holds the supervisor, nests the playlist-sync route for the
+//! settings tree, and starts the boot loops; the plugins bundle runs its tick
+//! loops on the same supervisor.
 
 pub mod cache_sync;
 pub mod checkpoint;
@@ -46,13 +47,15 @@ pub mod plugin_ticks;
 pub mod precache;
 pub mod precache_phases;
 pub mod presence;
-pub mod registry;
 pub mod schedule;
+pub mod supervisor;
 
-pub use registry::{
-    AlreadyRunning, JobCtx, JobExit, JobKind, JobRegistry, JobState, RegistryStore,
-};
+pub use futures_util::future::BoxFuture;
 pub use schedule::{Schedule, SplitMix64};
+pub use supervisor::{
+    AlreadyRunning, FnTick, Next, Supervisor, Tick, TickCtx, TickError, TickResult,
+};
+pub use tokio_util::sync::CancellationToken;
 
 /// Always-on loops the boot path spawns, in spawn order.
 pub const BOOT_JOBS: &[&str] = &[

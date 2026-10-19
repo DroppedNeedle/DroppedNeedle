@@ -21,11 +21,12 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::registry::{BoxFuture, JobCtx, JobExit, JobKind, JobRegistry, RegistryStore};
-use super::schedule::sleep_or_stop;
+use super::BoxFuture;
+use super::schedule::Schedule;
+use super::supervisor::{AlreadyRunning, FnTick, Next, Supervisor, TickCtx, TickError};
 use crate::db::{Db, DbError, writer::Lane};
 
-/// Registered-name prefix for tick loops: `plugin-tick:{name}`.
+/// Name prefix for tick loops: `plugin-tick:{name}`.
 pub const TICK_PREFIX: &str = "plugin-tick:";
 
 /// Smallest tick interval the clamp honors, in minutes.
@@ -434,7 +435,7 @@ fn now_unix() -> f64 {
 }
 
 /// Live tick intervals, the half `sync_ticks` compares against. Lives next to
-/// the host (the registry tracks liveness, not cadence).
+/// the host (the supervisor tracks liveness, not cadence).
 #[derive(Debug, Clone, Default)]
 pub struct TickSyncState {
     intervals: Arc<Mutex<HashMap<String, Duration>>>,
@@ -451,25 +452,22 @@ impl TickSyncState {
 /// intervals, start added ones. The sole rebuild choke point.
 ///
 /// Cancel-then-spawn races a replacement against the winding-down incumbent:
-/// `cancel` drops the registry entry at once, so the new loop can spawn
+/// `cancel` frees the name at once, so the new loop can spawn
 /// while the old task still runs out its grace. Ticks are idempotent (one
 /// state write per sweep, keyed, last-writer-wins), so a short overlap is
 /// harmless and no fencing is needed.
-pub async fn sync_ticks<S, H>(
-    registry: &JobRegistry<S>,
+pub async fn sync_ticks<H: TickHost>(
+    supervisor: &Supervisor,
     host: &H,
     sync: &TickSyncState,
     desired: &[TickSpec],
     grace: Duration,
-) where
-    S: RegistryStore,
-    H: TickHost,
-{
+) {
     let wanted: HashMap<&str, &TickSpec> = desired
         .iter()
         .map(|spec| (spec.name.as_str(), spec))
         .collect();
-    let live: Vec<String> = registry
+    let live: Vec<String> = supervisor
         .running_names()
         .into_iter()
         .filter_map(|name| name.strip_prefix(TICK_PREFIX).map(str::to_owned))
@@ -485,7 +483,7 @@ pub async fn sync_ticks<S, H>(
                 .is_none_or(|interval| *interval != spec.interval),
         };
         if stale {
-            registry
+            supervisor
                 .cancel(&format!("{TICK_PREFIX}{name}"), grace)
                 .await;
             sync.intervals
@@ -497,13 +495,10 @@ pub async fn sync_ticks<S, H>(
     let mut specs: Vec<&TickSpec> = wanted.values().copied().collect();
     specs.sort_by(|left, right| left.name.cmp(&right.name));
     for spec in specs {
-        if registry.is_running(&format!("{TICK_PREFIX}{}", spec.name)) {
+        if supervisor.is_running(&format!("{TICK_PREFIX}{}", spec.name)) {
             continue;
         }
-        if spawn_tick(registry, host.clone(), spec.clone())
-            .await
-            .is_ok()
-        {
+        if spawn_tick(supervisor, host.clone(), spec.clone()).is_ok() {
             sync.intervals
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -512,72 +507,58 @@ pub async fn sync_ticks<S, H>(
     }
 }
 
-/// Spawn one plugin's loop. A live loop owns its name; spawning over it keeps
-/// the incumbent and reports the collision.
-pub async fn spawn_tick<S, H>(
-    registry: &JobRegistry<S>,
+/// Row code of a tick that failed.
+pub const TICK_FAILED: &str = "PLUGIN_TICK_FAILED";
+
+/// Row code of a tick that ran past its interval and was cancelled.
+pub const TICK_TIMED_OUT: &str = "PLUGIN_TICK_TIMED_OUT";
+
+/// Start one plugin's loop. A live loop owns its name; starting over it
+/// keeps the incumbent and reports the collision.
+///
+/// The schedule: no overlap (an overrun delays itself plus one full
+/// interval), a hung tick cancelled at the interval, a failure logged and
+/// continued after a backoff, a missed tick skipped. The plugin resolves
+/// fresh every tick; a disabled or removed plugin ends its loop.
+pub fn spawn_tick<H: TickHost>(
+    supervisor: &Supervisor,
     host: H,
     spec: TickSpec,
-) -> Result<(), super::registry::AlreadyRunning>
-where
-    S: RegistryStore,
-    H: TickHost,
-{
-    let name = format!("{}{}", TICK_PREFIX, spec.name);
-    registry
-        .spawn(&name, JobKind::Ephemeral, move |ctx| async move {
-            run(ctx, &host, &spec).await
-        })
-        .await
-}
-
-/// One plugin's schedule: no overlap (an overrun delays itself plus one full
-/// interval), a hung tick cancelled at the interval, an exception logged and
-/// continued, a missed tick skipped. The plugin resolves fresh every sweep;
-/// a disabled or removed plugin exits its loop.
-pub async fn run<S, H>(ctx: JobCtx<S>, host: &H, spec: &TickSpec) -> JobExit
-where
-    S: RegistryStore,
-    H: TickHost,
-{
-    if !spec.run_on_load && sleep_or_stop(spec.interval, ctx.stop()).await {
-        return JobExit::Stopped;
-    }
-    loop {
-        let Some(plugin) = host.get(&spec.name) else {
-            return JobExit::Stopped;
-        };
-        if !plugin.tick_enabled() {
-            return JobExit::Stopped;
-        }
-        tokio::select! {
-            biased;
-            _ = ctx.stop().notified() => return JobExit::Stopped,
-            tick = tokio::time::timeout(spec.interval, plugin.on_tick()) => {
-                match tick {
-                    Ok(Ok(())) => {}
-                    Ok(Err(cause)) => {
-                        tracing::warn!(
-                            plugin = %spec.name,
-                            %cause,
-                            "plugin tick failed; the loop carries on"
-                        );
-                    }
-                    Err(_) => {
-                        tracing::warn!(
-                            plugin = %spec.name,
-                            interval_s = spec.interval.as_secs(),
-                            "plugin tick timed out and was cancelled"
-                        );
-                    }
+) -> Result<(), AlreadyRunning> {
+    let first = if spec.run_on_load {
+        Duration::ZERO
+    } else {
+        spec.interval
+    };
+    supervisor.periodic(
+        format!("{}{}", TICK_PREFIX, spec.name),
+        Schedule::new(spec.interval).with_initial_delay(first),
+        FnTick(move |ctx: TickCtx| {
+            let plugin = host.get(&spec.name);
+            let name = spec.name.clone();
+            let interval = spec.interval;
+            async move {
+                let Some(plugin) = plugin.filter(|plugin| plugin.tick_enabled()) else {
+                    return Ok(Next::Finish);
+                };
+                tokio::select! {
+                    biased;
+                    () = ctx.token().cancelled() => Ok(Next::Finish),
+                    tick = tokio::time::timeout(interval, plugin.on_tick()) => match tick {
+                        Ok(Ok(())) => Ok(Next::Continue),
+                        Ok(Err(cause)) => Err(TickError::new(
+                            TICK_FAILED,
+                            format_args!("plugin {name}: {cause}"),
+                        )),
+                        Err(_) => Err(TickError::new(
+                            TICK_TIMED_OUT,
+                            format_args!("plugin {name} ran past {}s", interval.as_secs()),
+                        )),
+                    },
                 }
             }
-        }
-        ctx.heartbeat().await;
-        if sleep_or_stop(spec.interval, ctx.stop()).await {
-            return JobExit::Stopped;
-        }
-    }
+        }),
+    )
 }
 
 #[cfg(test)]
