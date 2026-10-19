@@ -3,14 +3,15 @@
 //!
 //! Carried over from v2's covers routes: size validation with the same
 //! allowed sizes and `original` aliases, ETag + `If-None-Match` handling
-//! (strong, weak, and `*`), the 202 warming answer while art resolves in the
-//! background, and distinct album/artist placeholders. The v2 debug route
-//! is absent here on purpose (it lives in `covers_debug`).
+//! (strong, weak, and `*`), and the 202 warming answer while art resolves in
+//! the background. An item with no art answers 404, and the web UI draws its
+//! own fallback. The v2 debug route is absent here on purpose (it lives in
+//! `covers_debug`).
 //!
 //! Caching follows Navidrome: the ETag is the content hash the art already
 //! carries (no hashing per request), `immutable` is sent only when the
-//! request names the art's current version (`?v=`), and placeholders are
-//! never cached, so art that turns up later replaces them at once.
+//! request names the art's current version (`?v=`), and misses are never
+//! cached, so art that turns up later shows at once.
 //! Unversioned art keeps v2's five-minute window, then revalidates.
 //!
 //! Bytes come from the [`CoverArt`] port; production runs
@@ -34,8 +35,8 @@ const SIZE_ALIAS_ORIGINAL: &[&str] = &["", "original", "full", "max", "largest"]
 /// Default release cover size, v2 kept.
 const DEFAULT_SIZE: &str = "500";
 
-/// Placeholders and misses are never stored: a cover that turns up later
-/// must replace them on the next view.
+/// Misses and warming answers are never stored, so a cover that turns up
+/// later shows on the next view.
 const NO_STORE: &str = "no-store";
 /// Unversioned art: v2's five-minute window, then revalidation by ETag.
 const SHORT_CACHE: &str = "public, max-age=300";
@@ -45,23 +46,6 @@ const REVALIDATE_CACHE: &str = "private, no-cache";
 const PRIVATE_IMMUTABLE_CACHE: &str = "private, max-age=31536000, immutable";
 /// An album's own art requested without a version.
 const PRIVATE_SHORT_CACHE: &str = "private, max-age=300";
-
-/// Album placeholder, v2 SVG kept so cold covers look the same.
-const ALBUM_PLACEHOLDER_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
-        <rect fill="#374151" width="200" height="200"/>
-        <circle cx="100" cy="100" r="70" fill="#1f2937" stroke="#4B5563" stroke-width="2"/>
-        <circle cx="100" cy="100" r="50" fill="none" stroke="#4B5563" stroke-width="1"/>
-        <circle cx="100" cy="100" r="30" fill="none" stroke="#4B5563" stroke-width="1"/>
-        <circle cx="100" cy="100" r="12" fill="#4B5563"/>
-        <circle cx="100" cy="100" r="4" fill="#374151"/>
-    </svg>"##;
-
-/// Artist placeholder, v2 SVG kept.
-const ARTIST_PLACEHOLDER_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
-            <rect fill="#374151" width="200" height="200"/>
-            <circle cx="100" cy="80" r="30" fill="#6B7280"/>
-            <path d="M60 120 Q100 140 140 120 L140 160 Q100 180 60 160 Z" fill="#6B7280"/>
-        </svg>"##;
 
 /// Cover bytes with their identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -331,8 +315,8 @@ fn etag_matches(if_none_match: Option<&str>, etag: &str) -> bool {
 }
 
 /// Warming answer: 202 with an empty body so `<img>` fires `onerror`, which
-/// the frontend treats as "still warming" (skeleton + poll) rather than a
-/// settled placeholder. `no-store` so each poll re-requests.
+/// the frontend treats as "still warming" (keep the fallback, poll) rather
+/// than a settled miss. `no-store` so each poll re-requests.
 fn warming_response() -> Response {
     (
         StatusCode::ACCEPTED,
@@ -345,18 +329,15 @@ fn warming_response() -> Response {
         .into_response()
 }
 
-fn placeholder_response(svg: &'static str) -> Response {
+/// No art: a 404 with no body, so the browser draws nothing and the web UI
+/// keeps its own fallback.
+fn missing_response() -> Response {
     (
-        StatusCode::OK,
+        StatusCode::NOT_FOUND,
         [
-            (header::CONTENT_TYPE, "image/svg+xml"),
             (header::CACHE_CONTROL, NO_STORE),
-            (
-                header::HeaderName::from_static("x-cover-source"),
-                "placeholder",
-            ),
+            (header::HeaderName::from_static("x-cover-state"), "missing"),
         ],
-        svg.as_bytes().to_vec(),
     )
         .into_response()
 }
@@ -395,15 +376,11 @@ fn art_response(art: CoverBytes, headers: &HeaderMap, cache: &'static str) -> Re
     response
 }
 
-fn lookup_response(
-    lookup: CoverLookup,
-    headers: &HeaderMap,
-    placeholder: &'static str,
-) -> Response {
+fn lookup_response(lookup: CoverLookup, headers: &HeaderMap) -> Response {
     match lookup {
         CoverLookup::Found(art) => art_response(art, headers, SHORT_CACHE),
         CoverLookup::Warming => warming_response(),
-        CoverLookup::Missing => placeholder_response(placeholder),
+        CoverLookup::Missing => missing_response(),
     }
 }
 
@@ -417,11 +394,12 @@ fn lookup_response(
         ("size" = Option<String>, Query, description = "Preferred size: 250, 500, 1200, or original for full size"),
     ),
     responses(
-        (status = 200, description = "Cover bytes or placeholder SVG"),
+        (status = 200, description = "Cover bytes"),
         (status = 202, description = "Cover is warming; poll again"),
         (status = 304, description = "Cover unchanged"),
         (status = 400, description = "Unsupported size"),
         (status = 401, description = "Not authenticated"),
+        (status = 404, description = "No art for this release group"),
     )
 )]
 pub async fn cover_from_release_group(
@@ -438,7 +416,7 @@ pub async fn cover_from_release_group(
         .covers
         .release_group_cover(&release_group_id, desired_size.as_deref())
         .await;
-    lookup_response(lookup, &headers, ALBUM_PLACEHOLDER_SVG)
+    lookup_response(lookup, &headers)
 }
 
 /// Release cover art.
@@ -451,11 +429,12 @@ pub async fn cover_from_release_group(
         ("size" = Option<String>, Query, description = "Preferred size: 250, 500, 1200, or original for full size"),
     ),
     responses(
-        (status = 200, description = "Cover bytes or placeholder SVG"),
+        (status = 200, description = "Cover bytes"),
         (status = 202, description = "Cover is warming; poll again"),
         (status = 304, description = "Cover unchanged"),
         (status = 400, description = "Unsupported size"),
         (status = 401, description = "Not authenticated"),
+        (status = 404, description = "No art for this release"),
     )
 )]
 pub async fn cover_from_release(
@@ -472,7 +451,7 @@ pub async fn cover_from_release(
         .covers
         .release_cover(&release_id, desired_size.as_deref())
         .await;
-    lookup_response(lookup, &headers, ALBUM_PLACEHOLDER_SVG)
+    lookup_response(lookup, &headers)
 }
 
 /// Artist image.
@@ -485,11 +464,12 @@ pub async fn cover_from_release(
         ("size" = Option<u32>, Query, description = "Preferred width in pixels"),
     ),
     responses(
-        (status = 200, description = "Image bytes or placeholder SVG"),
+        (status = 200, description = "Image bytes"),
         (status = 202, description = "Image is warming; poll again"),
         (status = 304, description = "Image unchanged"),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
+        (status = 404, description = "No image for this artist"),
     )
 )]
 pub async fn artist_cover(
@@ -499,7 +479,7 @@ pub async fn artist_cover(
     ValidQuery(query): ValidQuery<ArtistSizeQuery>,
 ) -> Response {
     let lookup = state.covers.artist_image(&artist_id, query.size).await;
-    lookup_response(lookup, &headers, ARTIST_PLACEHOLDER_SVG)
+    lookup_response(lookup, &headers)
 }
 
 /// An album's own art: the folder image or embedded picture the library
@@ -538,14 +518,7 @@ pub async fn album_artwork(
         .local_album_art(&album_id, size.as_deref())
         .await
     else {
-        return (
-            StatusCode::NOT_FOUND,
-            [
-                (header::CACHE_CONTROL, NO_STORE),
-                (header::HeaderName::from_static("x-cover-state"), "missing"),
-            ],
-        )
-            .into_response();
+        return missing_response();
     };
     let cache = match (query.v, art.version) {
         (Some(asked), Some(current)) if asked == current => PRIVATE_IMMUTABLE_CACHE,

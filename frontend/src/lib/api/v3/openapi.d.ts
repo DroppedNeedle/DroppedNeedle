@@ -26612,7 +26612,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Image bytes or placeholder SVG */
+            /** @description Image bytes */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -26651,6 +26651,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description No image for this artist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     cover_from_release_group: {
@@ -26668,7 +26677,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Cover bytes or placeholder SVG */
+            /** @description Cover bytes */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -26700,6 +26709,15 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No art for this release group */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -26724,7 +26742,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Cover bytes or placeholder SVG */
+            /** @description Cover bytes */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -26756,6 +26774,15 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description No art for this release */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

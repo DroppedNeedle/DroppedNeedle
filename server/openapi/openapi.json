@@ -4051,7 +4051,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Image bytes or placeholder SVG"
+            "description": "Image bytes"
           },
           "202": {
             "description": "Image is warming; poll again"
@@ -4071,6 +4071,16 @@
           },
           "401": {
             "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No image for this artist",
             "content": {
               "application/json": {
                 "schema": {
@@ -4118,7 +4128,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Cover bytes or placeholder SVG"
+            "description": "Cover bytes"
           },
           "202": {
             "description": "Cover is warming; poll again"
@@ -4138,6 +4148,16 @@
           },
           "401": {
             "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No art for this release group",
             "content": {
               "application/json": {
                 "schema": {
@@ -4185,7 +4205,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Cover bytes or placeholder SVG"
+            "description": "Cover bytes"
           },
           "202": {
             "description": "Cover is warming; poll again"
@@ -4205,6 +4225,16 @@
           },
           "401": {
             "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No art for this release",
             "content": {
               "application/json": {
                 "schema": {
