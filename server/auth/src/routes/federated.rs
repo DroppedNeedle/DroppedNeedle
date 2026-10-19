@@ -29,12 +29,12 @@ use crate::session::rate_limit::{LOGIN_CLASS, RateLimiter, rate_limited};
 use crate::session::stated::StatedAddresses;
 use crate::session::tokens::{constant_time_eq, hash_token};
 use crate::users::roles::{Admin, RoleRequired, User};
+use crate::wiring::{ProdJellyfinRoutes, ProdOidcRoutes, ProdPlexRoutes};
 use axum::{
-    Json, Router,
+    Json,
     extract::State,
     http::{HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
-    routing::{get, post},
 };
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::error::ApiError;
@@ -70,14 +70,6 @@ impl OidcConfigSource for SignInSettings {
     async fn current(&self) -> OidcConfig {
         self.oidc_config()
     }
-}
-
-/// The sign-in methods the login page offers. Public: the page asks before
-/// anyone is signed in.
-pub fn providers_router(settings: SignInSettings) -> Router {
-    Router::new()
-        .route("/auth/providers", get(providers_handler))
-        .with_state(settings)
 }
 
 /// Which sign-in methods are switched on (v2 `GET /auth/providers`).
@@ -147,24 +139,6 @@ where
     }
 }
 
-/// OIDC routes. Paths are relative; the orchestrator nests this router under
-/// `/api/v3` (the whole `/auth/oidc` prefix is allowlisted public).
-pub fn oidc_router<S, I, T, E, N, F>(state: OidcRouteState<S, I, T, E, N, F>) -> Router
-where
-    S: FederatedUserStore,
-    I: OidcIdp,
-    T: OidcStateStore,
-    E: OidcExchangeStore,
-    N: SessionIssuer,
-    F: OidcConfigSource,
-{
-    Router::new()
-        .route("/auth/oidc/authorize", post(oidc_authorize_handler))
-        .route("/auth/oidc/callback", get(oidc_callback_handler))
-        .route("/auth/oidc/exchange", post(oidc_exchange_handler))
-        .with_state(state)
-}
-
 /// Path of the state cookie (`cookies::OIDC_STATE_COOKIE`), which binds a
 /// pending OIDC login to the browser that started it. It holds a hash of
 /// the state, so the callback only completes in the browser that asked for
@@ -185,20 +159,12 @@ fn oidc_state_cookie_path(base_path: &str) -> String {
         (status = 503, description = "OIDC not configured or unreachable")
     )
 )]
-pub async fn oidc_authorize_handler<S, I, T, E, N, F>(
-    State(state): State<OidcRouteState<S, I, T, E, N, F>>,
+pub async fn oidc_authorize_handler(
+    State(state): State<ProdOidcRoutes>,
     uri: Uri,
     headers: HeaderMap,
     peer: PeerAddr,
-) -> Result<Response, ApiError>
-where
-    S: FederatedUserStore,
-    I: OidcIdp,
-    T: OidcStateStore,
-    E: OidcExchangeStore,
-    N: SessionIssuer,
-    F: OidcConfigSource,
-{
+) -> Result<Response, ApiError> {
     let config = state.config.current().await;
     match state.login.build_authorize_url(&config).await {
         Ok((url, login_state)) => {
@@ -241,19 +207,11 @@ where
         (status = 503, description = "OIDC provider unavailable")
     )
 )]
-pub async fn oidc_callback_handler<S, I, T, E, N, F>(
-    State(state): State<OidcRouteState<S, I, T, E, N, F>>,
+pub async fn oidc_callback_handler(
+    State(state): State<ProdOidcRoutes>,
     headers: HeaderMap,
     ValidQuery(query): ValidQuery<OidcCallbackQuery>,
-) -> Result<Response, ApiError>
-where
-    S: FederatedUserStore,
-    I: OidcIdp,
-    T: OidcStateStore,
-    E: OidcExchangeStore,
-    N: SessionIssuer,
-    F: OidcConfigSource,
-{
+) -> Result<Response, ApiError> {
     // The callback must land in the browser that started this login.
     let bound = cookies::OIDC_STATE_COOKIE
         .read(&headers)
@@ -305,21 +263,13 @@ where
         (status = 401, description = "Invalid or expired code")
     )
 )]
-pub async fn oidc_exchange_handler<S, I, T, E, N, F>(
-    State(state): State<OidcRouteState<S, I, T, E, N, F>>,
+pub async fn oidc_exchange_handler(
+    State(state): State<ProdOidcRoutes>,
     uri: Uri,
     headers: HeaderMap,
     peer: PeerAddr,
     ValidJson(body): ValidJson<OidcExchangeBody>,
-) -> Result<Response, ApiError>
-where
-    S: FederatedUserStore,
-    I: OidcIdp,
-    T: OidcStateStore,
-    E: OidcExchangeStore,
-    N: SessionIssuer,
-    F: OidcConfigSource,
-{
+) -> Result<Response, ApiError> {
     match state.login.exchange_code(&body.code).await {
         Ok((user, raw_token)) => {
             let body_value = serde_json::to_value(FederatedUserView::from(&user))
@@ -402,20 +352,6 @@ where
     }
 }
 
-/// Jellyfin route. Relative path; the orchestrator nests it under `/api/v3`
-/// (the exact path is allowlisted public).
-pub fn jellyfin_router<S, I, L, N>(state: JellyfinRouteState<S, I, L, N>) -> Router
-where
-    S: FederatedUserStore,
-    I: JellyfinIdp,
-    L: JellyfinConnectionLink,
-    N: SessionIssuer,
-{
-    Router::new()
-        .route("/auth/jellyfin/login", post(jellyfin_login_handler))
-        .with_state(state)
-}
-
 /// Jellyfin login: checks credentials against the configured server, imports
 /// the user, and mints a session. Transport rule matches local login.
 #[utoipa::path(
@@ -430,19 +366,13 @@ where
         (status = 503, description = "Jellyfin unavailable")
     )
 )]
-pub async fn jellyfin_login_handler<S, I, L, N>(
-    State(state): State<JellyfinRouteState<S, I, L, N>>,
+pub async fn jellyfin_login_handler(
+    State(state): State<ProdJellyfinRoutes>,
     uri: Uri,
     headers: HeaderMap,
     peer: PeerAddr,
     ValidJson(body): ValidJson<JellyfinLoginBody>,
-) -> Result<Response, ApiError>
-where
-    S: FederatedUserStore,
-    I: JellyfinIdp,
-    L: JellyfinConnectionLink,
-    N: SessionIssuer,
-{
+) -> Result<Response, ApiError> {
     let username_key = format!("jellyfin-username:{}", body.username.trim().to_lowercase());
     let budget = state.limits.check(LOGIN_CLASS, &username_key);
     if !budget.allowed {
@@ -525,40 +455,13 @@ where
     }
 }
 
-/// Plex journey routes. Relative paths; the orchestrator nests them under
-/// `/api/v3`. Only the login start and poll/login are allowlisted public;
-/// the link and connect steps carry the session extractor, so they 401 even
-/// if mounted without the middleware.
-pub fn plex_router<S, C, L, N>(state: PlexRouteState<S, C, L, N>) -> Router
-where
-    S: FederatedUserStore,
-    C: PlexPinClient,
-    L: PlexConnectionLink,
-    N: SessionIssuer,
-{
-    Router::new()
-        .route("/auth/plex/start", post(plex_start_handler))
-        .route("/auth/plex/start/link", post(plex_start_link_handler))
-        .route("/auth/plex/start/connect", post(plex_start_connect_handler))
-        .route("/auth/plex/poll/login", post(plex_poll_login_handler))
-        .route("/auth/plex/poll/link", post(plex_poll_link_handler))
-        .route("/auth/plex/poll/connect", post(plex_poll_connect_handler))
-        .with_state(state)
-}
-
 /// Run one start and render it. The secret is returned once and never
 /// stored in clear.
-async fn start_rendered<S, C, L, N>(
-    state: &PlexRouteState<S, C, L, N>,
+async fn start_rendered(
+    state: &ProdPlexRoutes,
     purpose: PlexPurpose,
     caller: Option<&str>,
-) -> Result<Json<PlexStartBody>, ApiError>
-where
-    S: FederatedUserStore,
-    C: PlexPinClient,
-    L: PlexConnectionLink,
-    N: SessionIssuer,
-{
+) -> Result<Json<PlexStartBody>, ApiError> {
     match state.journey.start(purpose, caller).await {
         Ok(started) => Ok(Json(PlexStartBody {
             pin_id: started.pin_id,
@@ -590,15 +493,9 @@ where
         (status = 503, description = "Plex login is off, or Plex is unreachable")
     )
 )]
-pub async fn plex_start_handler<S, C, L, N>(
-    State(state): State<PlexRouteState<S, C, L, N>>,
-) -> Result<Json<PlexStartBody>, ApiError>
-where
-    S: FederatedUserStore,
-    C: PlexPinClient,
-    L: PlexConnectionLink,
-    N: SessionIssuer,
-{
+pub async fn plex_start_handler(
+    State(state): State<ProdPlexRoutes>,
+) -> Result<Json<PlexStartBody>, ApiError> {
     start_rendered(&state, PlexPurpose::Login, None).await
 }
 
@@ -615,16 +512,10 @@ where
         (status = 503, description = "Plex or the configured server is unreachable")
     )
 )]
-pub async fn plex_start_link_handler<S, C, L, N>(
-    State(state): State<PlexRouteState<S, C, L, N>>,
+pub async fn plex_start_link_handler(
+    State(state): State<ProdPlexRoutes>,
     User(caller): User,
-) -> Result<Json<PlexStartBody>, ApiError>
-where
-    S: FederatedUserStore,
-    C: PlexPinClient,
-    L: PlexConnectionLink,
-    N: SessionIssuer,
-{
+) -> Result<Json<PlexStartBody>, ApiError> {
     start_rendered(&state, PlexPurpose::Link, Some(caller.user_id())).await
 }
 
@@ -641,16 +532,10 @@ where
         (status = 503, description = "Plex unreachable")
     )
 )]
-pub async fn plex_start_connect_handler<S, C, L, N>(
-    State(state): State<PlexRouteState<S, C, L, N>>,
+pub async fn plex_start_connect_handler(
+    State(state): State<ProdPlexRoutes>,
     admin: Admin,
-) -> Result<Json<PlexStartBody>, ApiError>
-where
-    S: FederatedUserStore,
-    C: PlexPinClient,
-    L: PlexConnectionLink,
-    N: SessionIssuer,
-{
+) -> Result<Json<PlexStartBody>, ApiError> {
     start_rendered(&state, PlexPurpose::Connect, Some(admin.user_id())).await
 }
 
@@ -667,19 +552,13 @@ where
         (status = 503, description = "Plex unreachable")
     )
 )]
-pub async fn plex_poll_login_handler<S, C, L, N>(
-    State(state): State<PlexRouteState<S, C, L, N>>,
+pub async fn plex_poll_login_handler(
+    State(state): State<ProdPlexRoutes>,
     uri: Uri,
     headers: HeaderMap,
     peer: PeerAddr,
     ValidJson(body): ValidJson<PlexLoginPollBody>,
-) -> Result<Response, ApiError>
-where
-    S: FederatedUserStore,
-    C: PlexPinClient,
-    L: PlexConnectionLink,
-    N: SessionIssuer,
-{
+) -> Result<Response, ApiError> {
     let user_agent = user_agent_of(&headers);
     let claim = PinClaim {
         pin_id: body.pin_id,
@@ -743,17 +622,11 @@ where
         (status = 503, description = "Plex unreachable")
     )
 )]
-pub async fn plex_poll_link_handler<S, C, L, N>(
-    State(state): State<PlexRouteState<S, C, L, N>>,
+pub async fn plex_poll_link_handler(
+    State(state): State<ProdPlexRoutes>,
     User(caller): User,
     ValidJson(body): ValidJson<PlexPinBody>,
-) -> Result<Json<PlexLinkPollResult>, ApiError>
-where
-    S: FederatedUserStore,
-    C: PlexPinClient,
-    L: PlexConnectionLink,
-    N: SessionIssuer,
-{
+) -> Result<Json<PlexLinkPollResult>, ApiError> {
     let claim = PinClaim {
         pin_id: body.pin_id,
         pin_secret: &body.pin_secret,
@@ -793,17 +666,11 @@ where
         (status = 503, description = "Plex unreachable")
     )
 )]
-pub async fn plex_poll_connect_handler<S, C, L, N>(
-    State(state): State<PlexRouteState<S, C, L, N>>,
+pub async fn plex_poll_connect_handler(
+    State(state): State<ProdPlexRoutes>,
     User(caller): User,
     ValidJson(body): ValidJson<PlexPinBody>,
-) -> Result<Json<PlexConnectPollResult>, ApiError>
-where
-    S: FederatedUserStore,
-    C: PlexPinClient,
-    L: PlexConnectionLink,
-    N: SessionIssuer,
-{
+) -> Result<Json<PlexConnectPollResult>, ApiError> {
     let claim = PinClaim {
         pin_id: body.pin_id,
         pin_secret: &body.pin_secret,

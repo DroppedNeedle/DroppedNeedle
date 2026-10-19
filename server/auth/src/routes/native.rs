@@ -16,12 +16,12 @@ use crate::session::tokens;
 use crate::users::UsersDeps;
 use crate::users::models::UserResponse;
 use crate::users::{clock_now, services};
+use crate::wiring::ProdNativeAuth;
 use axum::{
-    Json, Router,
+    Json,
     extract::{ConnectInfo, FromRequestParts, State},
     http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
-    routing::{get, post},
 };
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::error::ApiError;
@@ -118,23 +118,6 @@ where
     }
 }
 
-/// Native auth routes. Paths are relative; the orchestrator nests this
-/// router under `/api/v3` inside the session middleware (all four paths are
-/// allowlisted public).
-pub fn native_auth_router<S, V, C>(state: NativeAuthState<S, V, C>) -> Router
-where
-    S: SessionStore,
-    V: crate::session::login::PasswordVerifier,
-    C: crate::session::login::CredentialLookup,
-{
-    Router::new()
-        .route("/auth/login", post(login_handler))
-        .route("/auth/logout", post(logout_handler))
-        .route("/auth/setup", post(setup_handler))
-        .route("/auth/setup/status", get(setup_status_handler))
-        .with_state(state)
-}
-
 /// Local login. Cookie mode (default) sets the session cookie and the body
 /// carries no token; Bearer mode returns the raw token once and sets no
 /// cookie. Failures are one uniform 401 with a dummy-hash verify behind it.
@@ -149,18 +132,13 @@ where
         (status = 429, description = "Too many attempts for this client or username")
     )
 )]
-pub async fn login_handler<S, V, C>(
-    State(state): State<NativeAuthState<S, V, C>>,
+pub async fn login_handler(
+    State(state): State<ProdNativeAuth>,
     uri: Uri,
     headers: HeaderMap,
     peer: PeerAddr,
     ValidJson(body): ValidJson<LoginBody>,
-) -> Result<Response, ApiError>
-where
-    S: SessionStore,
-    V: crate::session::login::PasswordVerifier,
-    C: crate::session::login::CredentialLookup,
-{
+) -> Result<Response, ApiError> {
     let secure = cookies::secure_for_sign_in(
         uri.scheme_str().unwrap_or("http"),
         &headers,
@@ -212,15 +190,10 @@ where
     path = "/api/v3/auth/logout",
     responses((status = 204, description = "Logged out; cookie cleared"))
 )]
-pub async fn logout_handler<S, V, C>(
-    State(state): State<NativeAuthState<S, V, C>>,
+pub async fn logout_handler(
+    State(state): State<ProdNativeAuth>,
     headers: HeaderMap,
-) -> Result<Response, ApiError>
-where
-    S: SessionStore,
-    V: crate::session::login::PasswordVerifier,
-    C: crate::session::login::CredentialLookup,
-{
+) -> Result<Response, ApiError> {
     let presented = match extract::extract(&headers) {
         Some((raw_token, extract::Transport::Bearer)) => vec![raw_token],
         Some((_, extract::Transport::Cookie)) => cookies::SESSION_COOKIE.read_each(&headers),
@@ -265,18 +238,13 @@ where
         (status = 409, description = "Setup has already been completed")
     )
 )]
-pub async fn setup_handler<S, V, C>(
-    State(state): State<NativeAuthState<S, V, C>>,
+pub async fn setup_handler(
+    State(state): State<ProdNativeAuth>,
     uri: Uri,
     headers: HeaderMap,
     peer: PeerAddr,
     ValidJson(body): ValidJson<SetupBody>,
-) -> Result<Response, ApiError>
-where
-    S: SessionStore,
-    V: crate::session::login::PasswordVerifier,
-    C: crate::session::login::CredentialLookup,
-{
+) -> Result<Response, ApiError> {
     if users_exist(&state.users).await? {
         return Err(AuthRouteError::Conflict {
             message: SETUP_ALREADY_COMPLETED.to_owned(),
@@ -341,14 +309,9 @@ where
     path = "/api/v3/auth/setup/status",
     responses((status = 200, description = "Whether setup must run", body = SetupStatusBody))
 )]
-pub async fn setup_status_handler<S, V, C>(
-    State(state): State<NativeAuthState<S, V, C>>,
-) -> Result<Json<SetupStatusBody>, ApiError>
-where
-    S: SessionStore,
-    V: crate::session::login::PasswordVerifier,
-    C: crate::session::login::CredentialLookup,
-{
+pub async fn setup_status_handler(
+    State(state): State<ProdNativeAuth>,
+) -> Result<Json<SetupStatusBody>, ApiError> {
     Ok(Json(SetupStatusBody {
         setup_required: !users_exist(&state.users).await?,
     }))

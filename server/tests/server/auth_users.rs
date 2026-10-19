@@ -15,9 +15,7 @@ use axum::{
 };
 use droppedneedle_auth::session::middleware::require_session;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_auth::users::{
-    Role, admin_router, import, models, public_router, stores::DirectoryUser, users_router,
-};
+use droppedneedle_auth::users::{self, Role, import, models, stores::DirectoryUser};
 use droppedneedle_auth::{Admin, Principal};
 use droppedneedle_kernel::extract::ValidJson;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
@@ -32,10 +30,7 @@ use crate::common::auth_fakes::{FakeHibpHttp, FakeLastFmAuthClient, FakeUserDire
 const OTHER_PASSWORD: &str = "another fine password here";
 
 fn test_app(rig: &AuthRig, principal: Option<Principal>) -> Router {
-    let app = Router::new()
-        .nest("/api/v3", users_router(rig.deps.clone()))
-        .nest("/api/v3", admin_router(rig.deps.clone()))
-        .nest("/api/v3", public_router(rig.deps.clone()));
+    let app = users::routes().with_state(rig.deps.clone()).into_router();
     match principal {
         Some(ctx) => with_test_principal(app, ctx),
         None => app,

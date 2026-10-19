@@ -4,22 +4,22 @@
 //! [`RemotesService`] method, and renders the result. Failures map to the
 //! routes' error in [`render`] and from there onto `ApiError`; query
 //! strings parse through [`ValidQuery`] and bodies through [`ValidJson`] so
-//! malformed input stays inside the envelope. `MediaSetup` mounts
-//! [`remotes_router`] inside the session gate, and every handler takes the
+//! malformed input stays inside the envelope. [`routes`] puts every route
+//! in the user group, inside the session gate, and every handler takes the
 //! [`User`] extractor, so every route 401s anonymously. Operation ids
 //! carry a `remotes_` prefix so they never collide with the library routes
 //! of the same shape.
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{FromRef, Path, State},
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::{get, post},
 };
 use droppedneedle_auth::User;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 
 use super::adapter::{AlbumBrowse, ArtistBrowse, TrackBrowse};
 use super::error::RemotesError;
@@ -42,73 +42,52 @@ pub struct RemotesDeps {
     pub service: RemotesService,
 }
 
-/// Authenticated router. Paths are relative: the app nests this under
-/// `/api/v3` inside the deny-by-default session gate.
-pub fn remotes_router(deps: RemotesDeps) -> axum::Router {
-    axum::Router::new()
-        .route("/me/connections", get(list_links))
-        .route("/remotes/{source}/hub", get(get_hub))
-        .route("/remotes/{source}/stats", get(get_stats))
-        .route("/remotes/{source}/albums", get(list_albums))
-        .route("/remotes/{source}/albums/{id}", get(get_album))
-        .route(
-            "/remotes/{source}/albums/{id}/tracks",
-            get(list_album_tracks),
-        )
-        .route("/remotes/{source}/artists", get(list_artists))
-        .route("/remotes/{source}/artists/index", get(get_artist_index))
-        .route("/remotes/{source}/artists/{id}", get(get_artist))
-        .route("/remotes/{source}/tracks", get(list_tracks))
-        .route("/remotes/{source}/search", get(search))
-        .route("/remotes/{source}/recent", get(get_recent))
-        .route("/remotes/{source}/recently-added", get(get_recently_added))
-        .route("/remotes/{source}/favorites", get(get_favorites))
-        .route("/remotes/{source}/genres", get(list_genres))
-        .route("/remotes/{source}/genres/songs", get(list_genre_songs))
-        .route("/remotes/{source}/moods", get(list_moods))
-        .route("/remotes/{source}/filters", get(get_filters))
-        .route(
-            "/remotes/{source}/most-played/albums",
-            get(list_most_played_albums),
-        )
-        .route(
-            "/remotes/{source}/most-played/artists",
-            get(list_most_played_artists),
-        )
-        .route("/remotes/{source}/playlists", get(list_playlists))
-        .route("/remotes/{source}/playlists/{id}", get(get_playlist))
-        .route(
-            "/remotes/{source}/playlists/{id}/import",
-            post(import_playlist),
-        )
-        .route("/remotes/{source}/info/artists/{id}", get(get_artist_info))
-        .route("/remotes/{source}/info/albums/{id}", get(get_album_info))
-        .route("/remotes/{source}/lyrics/{id}", get(get_lyrics))
-        .route("/remotes/{source}/top/{artist}", get(get_top_songs))
-        .route("/remotes/{source}/similar/{id}", get(get_similar))
-        .route("/remotes/{source}/random", get(get_random))
-        .route("/remotes/{source}/discovery", get(get_discovery))
-        .route("/remotes/{source}/mix/{id}", get(get_mix))
-        .route("/remotes/{source}/sessions", get(list_sessions))
-        .route("/remotes/{source}/history", get(list_history))
-        .route("/remotes/{source}/analytics", get(get_analytics))
-        .route("/remotes/{source}/images/{id}", get(get_image))
-        .route(
-            "/remotes/{source}/covers/playlists/{id}",
-            get(get_playlist_cover),
-        )
-        .route("/remotes/{source}/match", get(match_album))
-        .route(
-            "/remotes/{source}/connection",
-            get(get_connection)
-                .put(put_connection)
-                .delete(delete_connection),
-        )
-        .route(
-            "/remotes/navidrome/folders",
-            get(get_folders).put(put_folders),
-        )
-        .with_state(deps)
+/// Every remote-source route, for any signed-in user.
+pub fn routes<S>() -> Routes<S>
+where
+    S: Clone + Send + Sync + 'static,
+    RemotesDeps: FromRef<S>,
+{
+    Routes::new()
+        .user(routes!(list_links))
+        .user(routes!(get_hub))
+        .user(routes!(get_stats))
+        .user(routes!(list_albums))
+        .user(routes!(get_album))
+        .user(routes!(list_album_tracks))
+        .user(routes!(list_artists))
+        .user(routes!(get_artist_index))
+        .user(routes!(get_artist))
+        .user(routes!(list_tracks))
+        .user(routes!(search))
+        .user(routes!(get_recent))
+        .user(routes!(get_recently_added))
+        .user(routes!(get_favorites))
+        .user(routes!(list_genres))
+        .user(routes!(list_genre_songs))
+        .user(routes!(list_moods))
+        .user(routes!(get_filters))
+        .user(routes!(list_most_played_albums))
+        .user(routes!(list_most_played_artists))
+        .user(routes!(list_playlists))
+        .user(routes!(get_playlist))
+        .user(routes!(import_playlist))
+        .user(routes!(get_artist_info))
+        .user(routes!(get_album_info))
+        .user(routes!(get_lyrics))
+        .user(routes!(get_top_songs))
+        .user(routes!(get_similar))
+        .user(routes!(get_random))
+        .user(routes!(get_discovery))
+        .user(routes!(get_mix))
+        .user(routes!(list_sessions))
+        .user(routes!(list_history))
+        .user(routes!(get_analytics))
+        .user(routes!(get_image))
+        .user(routes!(get_playlist_cover))
+        .user(routes!(match_album))
+        .user(routes!(get_connection, put_connection, delete_connection))
+        .user(routes!(get_folders, put_folders))
 }
 
 /// Map a service failure to the routes' error. Upstream detail reaches the

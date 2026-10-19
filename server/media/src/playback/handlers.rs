@@ -5,7 +5,11 @@
 //! [`ApiError`]. Bodies and query strings parse through the kernel's
 //! [`ValidJson`] and [`ValidQuery`].
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{
+    Json,
+    extract::{FromRef, State},
+    http::StatusCode,
+};
 
 use super::{
     models::{
@@ -19,6 +23,7 @@ use droppedneedle_auth::User;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::events::NowPlayingSnapshot;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 
 fn map(error: services::ServiceError) -> ApiError {
     error.into_playback_error().into()
@@ -213,20 +218,17 @@ pub async fn clear_now_playing(
 // Router
 // ---------------------------------------------------------------------------
 
-/// Every playback route. Mount under `/api/v3` behind the session
-/// gate; see `mod.rs` for the wiring note.
-pub fn playback_router(deps: PlaybackDeps) -> axum::Router {
-    use axum::routing::{get, post};
-
-    axum::Router::new()
-        .route("/playback/start", post(start_playback))
-        .route("/playback/progress", post(report_progress))
-        .route("/playback/stop", post(stop_playback))
-        .route("/scrobble/submit", post(submit_scrobble))
-        .route("/scrobble/now-playing", post(forward_now_playing))
-        .route(
-            "/now-playing",
-            get(now_playing).post(heartbeat).delete(clear_now_playing),
-        )
-        .with_state(deps)
+/// Every playback route, for any signed-in user.
+pub fn routes<S>() -> Routes<S>
+where
+    S: Clone + Send + Sync + 'static,
+    PlaybackDeps: FromRef<S>,
+{
+    Routes::new()
+        .user(routes!(start_playback))
+        .user(routes!(report_progress))
+        .user(routes!(stop_playback))
+        .user(routes!(submit_scrobble))
+        .user(routes!(forward_now_playing))
+        .user(routes!(now_playing, heartbeat, clear_now_playing))
 }

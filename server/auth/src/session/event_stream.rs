@@ -16,14 +16,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    Router,
     extract::State,
     http::{HeaderMap, HeaderValue},
     response::{
         IntoResponse, Response,
         sse::{Event as SseEvent, Sse},
     },
-    routing::get,
 };
 use futures_util::future::BoxFuture;
 use tokio::time::Instant;
@@ -35,6 +33,7 @@ use super::{
 };
 use crate::users::roles::User;
 use droppedneedle_kernel::events::{EventHub, Subscription};
+use droppedneedle_kernel::mount::{Routes, routes};
 
 /// Reconnect delay the stream asks browsers for (v2 `_MUX_RETRY_MS`).
 pub const RETRY: Duration = Duration::from_secs(5);
@@ -83,11 +82,17 @@ pub struct StreamRoute {
     sessions: SessionCheck,
 }
 
-/// The stream route, for nesting under `/api/v3` inside the session gate.
-pub fn router(hub: EventHub, sessions: SessionCheck) -> Router {
-    Router::new()
-        .route("/events/stream", get(stream))
-        .with_state(StreamRoute { hub, sessions })
+impl StreamRoute {
+    /// Events from `hub`, each stream rechecking its session through
+    /// `sessions`.
+    pub fn new(hub: EventHub, sessions: SessionCheck) -> Self {
+        Self { hub, sessions }
+    }
+}
+
+/// The stream route, for any signed-in user.
+pub fn routes() -> Routes<StreamRoute> {
+    Routes::new().user(routes!(stream))
 }
 
 /// Live events for the signed-in user.

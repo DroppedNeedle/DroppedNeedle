@@ -29,12 +29,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use axum::{
-    Json, Router,
+    Json,
     body::Body,
-    extract::{Path as UrlPath, State},
+    extract::{FromRef, Path as UrlPath, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::get,
 };
 use futures_util::{StreamExt as _, stream};
 use serde::{Deserialize, Serialize};
@@ -47,6 +46,7 @@ use super::routes::{
 };
 use droppedneedle_auth::{Role, User};
 use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 
@@ -80,17 +80,17 @@ impl DownloadState {
     }
 }
 
-/// Relative-path router for the `/api/v3` nest inside the session gate.
-pub fn download_routes(state: DownloadState) -> Router {
-    Router::new()
-        .route("/download/access", get(download_access))
-        .route("/download/local/track/{id}", get(download_track))
-        .route("/download/local/album/{id}", get(download_album))
-        .route(
-            "/download/local/album/mbid/{mbid}",
-            get(download_album_by_mbid),
-        )
-        .with_state(state)
+/// The download routes, for any signed-in user.
+pub fn routes<S>() -> Routes<S>
+where
+    S: Clone + Send + Sync + 'static,
+    DownloadState: FromRef<S>,
+{
+    Routes::new()
+        .user(routes!(download_access))
+        .user(routes!(download_track))
+        .user(routes!(download_album))
+        .user(routes!(download_album_by_mbid))
 }
 
 // ---------------------------------------------------------------------------

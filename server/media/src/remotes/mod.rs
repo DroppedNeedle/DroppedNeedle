@@ -24,8 +24,7 @@
 //! one Navidrome playlist sync.
 //! The loopback mock servers the tests run against live in the testkit
 //! crate.
-//! `MediaSetup` mounts [`remotes_router`](handlers::remotes_router)
-//! inside the session gate.
+//! `MediaSetup` mounts [`handlers::routes`] inside the session gate.
 
 pub mod adapter;
 pub mod analytics;

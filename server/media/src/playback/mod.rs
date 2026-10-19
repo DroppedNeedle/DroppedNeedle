@@ -33,11 +33,10 @@
 //!
 //! ## Wiring
 //!
-//! Mounted as `playback` under `/api/v3` inside the session gate (next to
-//! the reads nest). `GET /now-playing` serves the live presence registry
-//! here, not the static snapshot in `reads::discover`. Utoipa paths are
-//! registered in `docs.rs`. The warmup loops run on the loop supervisor
-//! once something starts them.
+//! [`routes`] puts every route in the user group, inside the session gate.
+//! `GET /now-playing` serves the live presence registry here, not the
+//! static snapshot in `reads::discover`. The warmup loops run on the loop
+//! supervisor once something starts them.
 //!
 //! The 4s presence poll loop (v2 `run_now_playing_presence_loop`) lives in
 //! `jobs::presence`; `remotes::presence_feed` feeds it this registry and the
@@ -59,6 +58,6 @@ pub mod services;
 pub mod sqlite;
 pub mod warmup;
 
-pub use handlers::playback_router;
+pub use handlers::routes;
 pub use services::PlaybackDeps;
 pub use warmup::{WarmupScope, WarmupStats};

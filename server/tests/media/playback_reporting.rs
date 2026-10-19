@@ -89,7 +89,9 @@ fn principal(user_id: &str) -> Principal {
 }
 
 fn app(rig: &Rig, user: Option<&str>) -> Router {
-    let router = Router::new().nest("/api/v3", playback::playback_router(rig.deps.clone()));
+    let router = playback::routes()
+        .with_state(rig.deps.clone())
+        .into_router();
     match user {
         Some(id) => with_test_principal(router, principal(id)),
         None => router,

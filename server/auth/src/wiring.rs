@@ -27,13 +27,15 @@ use super::routes::native::NativeAuthState;
 use super::session::middleware::SessionAuth;
 use super::session::rate_limit::RateLimiter;
 use super::session::stated::StatedAddresses;
+use super::users::UsersDeps;
 use super::users::lastfm_http::LastFmAuthHttp;
 use super::users::stores::{HibpPolicy, LastFmKeys, LastFmSwitch, SecurityPolicy};
-use super::users::{UsersDeps, admin_router, public_router, users_router};
+use axum::extract::FromRef;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Live};
@@ -174,6 +176,12 @@ pub struct Upstreams {
     pub pwned_passwords: String,
 }
 
+/// Production login, logout and setup route state.
+pub type ProdNativeAuth = NativeAuthState<
+    SqliteSessionStore,
+    super::prod::Argon2idHasher,
+    super::prod::SqliteCredentialLookup,
+>;
 /// Production OIDC route state.
 pub type ProdOidcRoutes = OidcRouteState<
     SqliteFederatedStore,
@@ -190,7 +198,8 @@ pub type ProdJellyfinRoutes =
 pub type ProdPlexRoutes =
     PlexRouteState<SqliteFederatedStore, PlexTv, MediaLinks, SqliteSessionIssuer>;
 
-/// Everything `create_app` needs to mount `/api/v3`, built once at boot.
+/// Everything `create_app` needs to mount the auth routes and the session
+/// gate, built once at boot.
 #[derive(Clone)]
 pub struct AuthSetup {
     /// Account, device, recovery, and app-password routes.
@@ -200,11 +209,7 @@ pub struct AuthSetup {
     /// Request limiter, mounted inside the session gate.
     pub limits: Arc<RateLimiter>,
     /// Login/logout/setup routes.
-    pub native: NativeAuthState<
-        SqliteSessionStore,
-        super::prod::Argon2idHasher,
-        super::prod::SqliteCredentialLookup,
-    >,
+    pub native: ProdNativeAuth,
     /// OIDC routes.
     pub oidc: ProdOidcRoutes,
     /// Jellyfin login route.
@@ -374,25 +379,6 @@ impl AuthSetup {
         self
     }
 
-    /// Mount every auth router under `/api/v3`. Layers are applied by
-    /// `create_app`, not here.
-    pub fn router(&self) -> axum::Router {
-        use super::routes::federated::{
-            jellyfin_router, oidc_router, plex_router, providers_router,
-        };
-        use super::routes::native::native_auth_router;
-
-        axum::Router::new()
-            .merge(native_auth_router(self.native.clone()))
-            .merge(users_router(self.users.clone()))
-            .merge(admin_router(self.users.clone()))
-            .merge(public_router(self.users.clone()))
-            .merge(providers_router(self.sign_in.clone()))
-            .merge(oidc_router(self.oidc.clone()))
-            .merge(jellyfin_router(self.jellyfin.clone()))
-            .merge(plex_router(self.plex.clone()))
-    }
-
     /// The OIDC callback at its v2 path. v2 registered
     /// `/api/v1/auth/oidc/callback` with identity providers and the import
     /// keeps that redirect URI, so serving it here keeps a migrated SSO
@@ -407,6 +393,68 @@ impl AuthSetup {
                 axum::routing::get(oidc_callback_handler),
             )
             .with_state(self.oidc.clone())
+    }
+}
+
+/// Every auth route under `/api/v3`, in the group its handler's extractor
+/// implies. The sign-in steps are public: they run before there is a
+/// session. Linking a Plex account needs one, and connecting Plex for the
+/// server settings needs an admin.
+pub fn routes() -> Routes<AuthSetup> {
+    use super::routes::federated::*;
+    use super::routes::native::*;
+
+    super::users::routes()
+        .public(routes!(login_handler))
+        .public(routes!(logout_handler))
+        .public(routes!(setup_handler))
+        .public(routes!(setup_status_handler))
+        .public(routes!(providers_handler))
+        .public(routes!(oidc_authorize_handler))
+        .public(routes!(oidc_callback_handler))
+        .public(routes!(oidc_exchange_handler))
+        .public(routes!(jellyfin_login_handler))
+        .public(routes!(plex_start_handler))
+        .user(routes!(plex_start_link_handler))
+        .admin(routes!(plex_start_connect_handler))
+        .public(routes!(plex_poll_login_handler))
+        .user(routes!(plex_poll_link_handler))
+        .user(routes!(plex_poll_connect_handler))
+}
+
+impl FromRef<AuthSetup> for UsersDeps {
+    fn from_ref(setup: &AuthSetup) -> Self {
+        setup.users.clone()
+    }
+}
+
+impl FromRef<AuthSetup> for ProdNativeAuth {
+    fn from_ref(setup: &AuthSetup) -> Self {
+        setup.native.clone()
+    }
+}
+
+impl FromRef<AuthSetup> for SignInSettings {
+    fn from_ref(setup: &AuthSetup) -> Self {
+        setup.sign_in.clone()
+    }
+}
+
+impl FromRef<AuthSetup> for ProdOidcRoutes {
+    fn from_ref(setup: &AuthSetup) -> Self {
+        setup.oidc.clone()
+    }
+}
+
+impl FromRef<AuthSetup> for ProdJellyfinRoutes {
+    fn from_ref(setup: &AuthSetup) -> Self {
+        setup.jellyfin.clone()
+    }
+}
+
+impl FromRef<AuthSetup> for ProdPlexRoutes {
+    fn from_ref(setup: &AuthSetup) -> Self {
+        setup.plex.clone()
     }
 }
 

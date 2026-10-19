@@ -62,7 +62,9 @@ use crate::{
     state::AppState,
     web::WebUi,
 };
-use droppedneedle_auth::session::{middleware::require_session, rate_limit::rate_limit};
+use droppedneedle_auth::session::{
+    event_stream, middleware::require_session, rate_limit::rate_limit,
+};
 use droppedneedle_compat::{
     http::{canonicalize_case, preflight, stamp_cors},
     shared::path_case::is_compat_path,
@@ -175,6 +177,20 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
         .area(droppedneedle_plugins::wiring::routes(), |state| {
             state.plugins.clone()
         })
+        .area(droppedneedle_auth::wiring::routes(), |state| {
+            state.auth.clone()
+        })
+        .area(event_stream::routes(), |state| {
+            event_stream::StreamRoute::new(
+                state.events.clone(),
+                event_stream::session_check(state.auth.session_auth.store.clone()),
+            )
+        })
+        .area(droppedneedle_media::routes(), |state| state.media.clone())
+        .area(
+            droppedneedle_media::remotes::playlist_sync::routes(),
+            |state| state.jobs.playlist_sync(),
+        )
 }
 
 /// The server crate's own routes.
@@ -269,20 +285,11 @@ fn routes(state: &AppState, web: Option<WebUi>) -> Router {
         .nest(
             "/api/v3",
             state
-                .auth
-                .router()
-                .merge(state.reads.gated_router())
-                .merge(state.media.gated_router())
+                .reads
+                .gated_router()
                 .merge(state.acquire.gated_router())
                 .merge(state.library.gated_router())
-                .merge(state.jobs.settings_router())
-                .merge(state.concerts.gated_router())
-                .merge(droppedneedle_auth::session::event_stream::router(
-                    state.events.clone(),
-                    droppedneedle_auth::session::event_stream::session_check(
-                        state.auth.session_auth.store.clone(),
-                    ),
-                )),
+                .merge(state.concerts.gated_router()),
         )
         .merge(state.reads.search_router())
         .layer(middleware::from_fn_with_state(

@@ -36,8 +36,9 @@
 //!   transcode read chunk by chunk, or in-memory bytes (remote objects and
 //!   engines that only implement `open`). HEAD never reads a body and never
 //!   starts ffmpeg. The 206/416 decisions stay here.
-//! * Mounting: [`stream_routes`] returns a relative-path router merged into
-//!   the `/api/v3` nest inside the deny-by-default session gate. Playback
+//! * Mounting: [`routes`] mounts [`stream_get_route`] and
+//!   [`stream_head_route`], the production forms of the generic handlers,
+//!   for any signed-in user. Playback
 //!   reporting (`start`/`progress`/`stop`/`scrobble`/`now-playing`/`stopped`)
 //!   lives in `playback`, not this router.
 //! * [`RETRY_AFTER_SECONDS`] duplicates the transcode constant of the same
@@ -63,19 +64,20 @@ use futures_util::StreamExt as _;
 use futures_util::stream::BoxStream;
 
 use axum::{
-    Router,
     body::Body,
-    extract::{Path, State},
+    extract::{FromRef, Path, State},
     http::{
         HeaderMap, HeaderValue, StatusCode,
         header::{self},
     },
     response::{IntoResponse, Response},
-    routing::get,
 };
 use droppedneedle_auth::{Principal, User};
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidQuery;
+use droppedneedle_kernel::mount::{Routes, routes};
+
+use crate::MediaEngine;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -553,24 +555,35 @@ impl From<StreamError> for ApiError {
 // Router and handlers
 // ---------------------------------------------------------------------------
 
-/// Relative-path stream router for nesting under `/api/v3` inside the
-/// session gate. One route serves both GET and HEAD; the Plex-compatible
-/// wildcard key also matches single-segment ids. The OpenAPI paths below
-/// spell the wildcard the same way, so the contract names the route as
+/// The stream route, GET and HEAD, for any signed-in user. The
+/// Plex-compatible wildcard key also matches single-segment ids; the
+/// document spells the wildcard the same way, so it names the route as
 /// served.
-pub fn stream_routes<E>(state: StreamState<E>) -> Router
+pub fn routes<S>() -> Routes<S>
+where
+    S: Clone + Send + Sync + 'static,
+    StreamState<MediaEngine>: FromRef<S>,
+{
+    Routes::new().user(routes!(stream_get_route, stream_head_route))
+}
+
+/// The stream route at a relative path over any engine, for tests that
+/// drive it with fakes.
+#[cfg(any(test, feature = "test-support"))]
+pub fn stream_routes<E>(state: StreamState<E>) -> axum::Router
 where
     E: StreamEngine + Send + Sync + 'static,
 {
-    Router::new()
+    axum::Router::new()
         .route(
             "/stream/{source}/{*key}",
-            get(stream_get::<E>).head(stream_head::<E>),
+            axum::routing::get(stream_get::<E>).head(stream_head::<E>),
         )
         .with_state(state)
 }
 
 /// Full or ranged audio bytes.
+// The mounted form of `stream_get` over the production engine.
 #[utoipa::path(
     get,
     tag = "stream",
@@ -592,19 +605,21 @@ where
         (status = 416, description = "Range not satisfiable"),
         (status = 429, description = "Stream capacity exhausted"),
         (status = 502, description = "Remote source failed the read"),
-    )
+    ),
+    operation_id = "stream_get"
 )]
-pub(crate) async fn stream_get<E: StreamEngine>(
-    State(state): State<StreamState<E>>,
-    User(user): User,
-    Path((source, key)): Path<(String, String)>,
+pub async fn stream_get_route(
+    state: State<StreamState<MediaEngine>>,
+    user: User,
+    path: Path<(String, String)>,
     headers: HeaderMap,
-    ValidQuery(query): ValidQuery<StreamQuery>,
+    query: ValidQuery<StreamQuery>,
 ) -> Result<Response, ApiError> {
-    Ok(serve(&state, &user, &source, &key, &headers, &query, false).await?)
+    stream_get(state, user, path, headers, query).await
 }
 
 /// Same headers as GET, no body.
+// The mounted form of `stream_head` over the production engine.
 #[utoipa::path(
     head,
     tag = "stream",
@@ -621,8 +636,31 @@ pub(crate) async fn stream_get<E: StreamEngine>(
         (status = 404, description = "Unknown audio id"),
         (status = 429, description = "Stream capacity exhausted"),
         (status = 502, description = "Remote source failed the read"),
-    )
+    ),
+    operation_id = "stream_head"
 )]
+pub async fn stream_head_route(
+    state: State<StreamState<MediaEngine>>,
+    user: User,
+    path: Path<(String, String)>,
+    headers: HeaderMap,
+    query: ValidQuery<StreamQuery>,
+) -> Result<Response, ApiError> {
+    stream_head(state, user, path, headers, query).await
+}
+
+/// Full or ranged audio bytes from any engine.
+pub(crate) async fn stream_get<E: StreamEngine>(
+    State(state): State<StreamState<E>>,
+    User(user): User,
+    Path((source, key)): Path<(String, String)>,
+    headers: HeaderMap,
+    ValidQuery(query): ValidQuery<StreamQuery>,
+) -> Result<Response, ApiError> {
+    Ok(serve(&state, &user, &source, &key, &headers, &query, false).await?)
+}
+
+/// Same headers as GET, no body, from any engine.
 pub(crate) async fn stream_head<E: StreamEngine>(
     State(state): State<StreamState<E>>,
     User(user): User,

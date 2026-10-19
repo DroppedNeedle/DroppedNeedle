@@ -1,8 +1,7 @@
 //! Media bundle: remote sources, stream gateway, playback reporting.
 //!
-//! [`MediaSetup`] is the single bundle `create_app` mounts: its
-//! [`MediaSetup::gated_router`] nests under `/api/v3` inside the
-//! deny-by-default session gate, next to the reads nest. Remote
+//! [`MediaSetup`] is the single bundle `create_app` mounts [`routes`] over,
+//! all of them in the user group inside the session gate. Remote
 //! connections and Navidrome folder preferences are SQLite rows; the admin
 //! servers are read from the config store on every call. Playback catalog,
 //! history, prefs, and display names read the SQLite schema through a
@@ -19,7 +18,7 @@ pub mod stream;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::Router;
+use axum::extract::FromRef;
 
 use crate::playback::forwarding::{ForwardWorker, ScrobbleForwarder, StoredScrobbleCredentials};
 use crate::playback::reports::{ReportQueue, run_report_worker};
@@ -32,14 +31,14 @@ use crate::remotes::connections::{
     ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
 };
 use crate::remotes::folders::SqliteFolderStore;
-use crate::remotes::handlers::{RemotesDeps, remotes_router};
+use crate::remotes::handlers::RemotesDeps;
 use crate::remotes::plex::PlexTokenProbe;
 use crate::remotes::reader::RemotesRemoteReader;
 use crate::remotes::service::RemotesService;
-use crate::stream::download::{DownloadState, download_routes};
+use crate::stream::download::DownloadState;
 use crate::stream::gateway::Gateway;
 use crate::stream::local_files::LibraryFiles;
-use crate::stream::routes::{StreamState, stream_routes};
+use crate::stream::routes::StreamState;
 use crate::stream::transcode::{
     FfmpegTranscoder, LocalTranscodeGate, OutFormat, StdFfmpegSpawner, TranscodeSettings,
     ffmpeg_available,
@@ -50,6 +49,7 @@ use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::CancellationToken;
+use droppedneedle_kernel::mount::Routes;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_kernel::runtime_config::sections::{AudioFormat, ConnectApps};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
@@ -219,15 +219,37 @@ impl MediaSetup {
         self.playback.events = events;
         self
     }
+}
 
-    /// Relative-path routers for nesting under `/api/v3` inside the
-    /// session gate.
-    pub fn gated_router(&self) -> Router {
-        Router::new()
-            .merge(remotes_router(self.remotes.clone()))
-            .merge(stream_routes(self.stream.clone()))
-            .merge(download_routes(self.download.clone()))
-            .merge(crate::playback::playback_router(self.playback.clone()))
+/// Every remote-source, stream, download and playback route.
+pub fn routes() -> Routes<MediaSetup> {
+    remotes::handlers::routes()
+        .merge(stream::routes::routes())
+        .merge(stream::download::routes())
+        .merge(playback::routes())
+}
+
+impl FromRef<MediaSetup> for RemotesDeps {
+    fn from_ref(setup: &MediaSetup) -> Self {
+        setup.remotes.clone()
+    }
+}
+
+impl FromRef<MediaSetup> for StreamState<MediaEngine> {
+    fn from_ref(setup: &MediaSetup) -> Self {
+        setup.stream.clone()
+    }
+}
+
+impl FromRef<MediaSetup> for DownloadState {
+    fn from_ref(setup: &MediaSetup) -> Self {
+        setup.download.clone()
+    }
+}
+
+impl FromRef<MediaSetup> for PlaybackDeps {
+    fn from_ref(setup: &MediaSetup) -> Self {
+        setup.playback.clone()
     }
 }
 

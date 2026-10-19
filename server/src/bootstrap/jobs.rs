@@ -19,7 +19,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::Router;
 use tokio::sync::watch;
 
 use droppedneedle_catalog::concerts::ConcertsSweep;
@@ -31,8 +30,7 @@ use droppedneedle_kernel::jobs::discovery_demand::{self, DemandTick, NoDemand};
 use droppedneedle_kernel::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
 use droppedneedle_kernel::jobs::events_watcher::{self, PollTimeSource};
 use droppedneedle_kernel::jobs::personal_mix::{self, PersonalMixer};
-use droppedneedle_kernel::jobs::playlist_export::M3uPlaylistExporter;
-use droppedneedle_kernel::jobs::playlist_sync::{self, PlaylistSyncConfig, PlaylistSyncSettings};
+use droppedneedle_kernel::jobs::playlist_sync;
 use droppedneedle_kernel::jobs::precache::{self, PrecacheLimits, PrecacheWork};
 use droppedneedle_kernel::jobs::precache_phases::{LibraryPrecache, PrecacheSources};
 use droppedneedle_kernel::jobs::presence;
@@ -40,11 +38,11 @@ use droppedneedle_kernel::jobs::queue::{self, Handlers, JobHandler, JobQueue, Ki
 use droppedneedle_kernel::jobs::{
     AlreadyRunning, BoxFuture, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
 };
-use droppedneedle_kernel::runtime_config::secret_sections::{
-    AdvancedSettings, EventsSettings, NavidromeConnection,
-};
+use droppedneedle_kernel::runtime_config::secret_sections::{AdvancedSettings, EventsSettings};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
-use droppedneedle_media::remotes::playlist_sync::{self as playlist_route, PlaylistSyncState};
+use droppedneedle_media::remotes::playlist_sync::{
+    NavidromeSyncSettings, PlaylistSyncState, ProdPlaylistSync,
+};
 use droppedneedle_media::remotes::presence_feed::{MediaJobs, RegistryFeed, RemoteSessionPollers};
 
 /// Checkpoint passes over the runtime's service.
@@ -67,35 +65,6 @@ pub struct UnwiredMixer;
 impl PersonalMixer for UnwiredMixer {
     fn run_for_all_users(&self) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(async { Ok(()) })
-    }
-}
-
-/// Playlist sync config from saved settings, re-read every cycle and every
-/// route call. `None` (unreadable section, disabled, or an empty target
-/// path) means skip quietly.
-#[derive(Clone, Debug)]
-pub struct NavidromeSyncSettings {
-    connection: Live<NavidromeConnection>,
-}
-
-impl PlaylistSyncSettings for NavidromeSyncSettings {
-    fn sync_config(&self) -> BoxFuture<'_, Option<PlaylistSyncConfig>> {
-        Box::pin(async move {
-            let Ok(connection) = self.connection.get() else {
-                return None;
-            };
-            if !connection.enabled
-                || !connection.playlist_sync_enabled
-                || connection.playlist_sync_path.trim().is_empty()
-            {
-                return None;
-            }
-            Some(PlaylistSyncConfig {
-                target_dir: connection.playlist_sync_path.clone(),
-                scope: connection.playlist_sync_scope.clone(),
-                remove_deleted: connection.playlist_sync_remove_deleted,
-            })
-        })
     }
 }
 
@@ -284,7 +253,7 @@ impl PollTimeSource for EventsPollTime {
 pub struct JobsSetup {
     supervisor: Supervisor,
     checkpoint: CheckpointInput,
-    playlist: PlaylistSyncState<NavidromeSyncSettings, M3uPlaylistExporter>,
+    playlist: ProdPlaylistSync,
     presence: (RegistryFeed, RemoteSessionPollers),
     poll_time: EventsPollTime,
     watcher: Option<ConcertsSweep>,
@@ -354,9 +323,7 @@ impl JobsSetup {
                 service: checkpoint,
             },
             playlist: PlaylistSyncState {
-                settings: NavidromeSyncSettings {
-                    connection: config.live(),
-                },
+                settings: NavidromeSyncSettings::new(config.live()),
                 exporter: media.exporter(),
             },
             presence: (media.feed(), media.pollers()),
@@ -468,11 +435,9 @@ impl JobsSetup {
         }
     }
 
-    /// Settings-nested routes jobs owns: `POST
-    /// /settings/navidrome/playlist-sync` (the v2 path). Mounts inside the
-    /// session gate with the other `/api/v3` routes.
-    pub fn settings_router(&self) -> Router {
-        Router::new().nest("/settings", playlist_route::router(self.playlist.clone()))
+    /// The playlist sync route's state, shared with the sync loop.
+    pub fn playlist_sync(&self) -> ProdPlaylistSync {
+        self.playlist.clone()
     }
 
     /// The settings-save kick: one immediate events sweep on the supervisor,

@@ -26,7 +26,7 @@ use remotes::connections::{
     SharedCredential, SqliteConnectionStore, UserLink,
 };
 use remotes::folders::{FolderPreference, MemoryFolderStore, resolve_scope};
-use remotes::handlers::{RemotesDeps, remotes_router};
+use remotes::handlers::{self as remotes_handlers, RemotesDeps};
 use remotes::jellyfin::JellyfinAdapter;
 use remotes::models::SourceName;
 use remotes::navidrome::NavidromeAdapter;
@@ -79,7 +79,7 @@ fn server(base_url: &str, username: &str, credential: &str, user_id: &str) -> Se
 
 fn authed_app(deps: RemotesDeps) -> Router {
     with_test_principal(
-        remotes_router(deps),
+        remotes_handlers::routes().with_state(deps).into_router(),
         test_principal(USER_ID, Role::User, "sess-1", SessionKind::Standard),
     )
 }
@@ -770,9 +770,11 @@ async fn connected_testbed() -> Router {
 #[tokio::test]
 async fn routes_reject_anonymous_callers_with_challenge() {
     let deps = deps_for(FixedServers::default());
-    let response = remotes_router(deps)
+    let response = remotes_handlers::routes()
+        .with_state(deps)
+        .into_router()
         .oneshot(
-            Request::get("/remotes/plex/hub")
+            Request::get("/api/v3/remotes/plex/hub")
                 .body(Body::empty())
                 .expect("request builds"),
         )
@@ -796,15 +798,15 @@ async fn routes_reject_anonymous_callers_with_challenge() {
 #[tokio::test]
 async fn routes_reject_unknown_sources_and_bad_queries_in_envelope() {
     let app = connected_testbed().await;
-    let (status, body) = get_json(app.clone(), "/remotes/emby/hub").await;
+    let (status, body) = get_json(app.clone(), "/api/v3/remotes/emby/hub").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(error_code(&body), "INVALID_INPUT");
 
-    let (status, body) = get_json(app.clone(), "/remotes/plex/albums?limit=nope").await;
+    let (status, body) = get_json(app.clone(), "/api/v3/remotes/plex/albums?limit=nope").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(error_code(&body), "INVALID_INPUT");
 
-    let (status, body) = get_json(app.clone(), "/remotes/plex/search?q=%20").await;
+    let (status, body) = get_json(app.clone(), "/api/v3/remotes/plex/search?q=%20").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(error_code(&body), "INVALID_INPUT");
 }
@@ -812,7 +814,7 @@ async fn routes_reject_unknown_sources_and_bad_queries_in_envelope() {
 #[tokio::test]
 async fn routes_report_unconfigured_sources() {
     let app = authed_app(deps_for(FixedServers::default()));
-    let (status, body) = get_json(app, "/remotes/plex/hub").await;
+    let (status, body) = get_json(app, "/api/v3/remotes/plex/hub").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(error_code(&body), "REMOTE_NOT_CONFIGURED");
 }
@@ -872,8 +874,11 @@ async fn routes_answer_remote_unavailable_when_the_server_is_down() {
 async fn routes_browse_albums_reports_stats_totals() {
     let app = connected_testbed().await;
     for source in ["jellyfin", "navidrome", "plex"] {
-        let (status, body) =
-            get_json(app.clone(), &format!("/remotes/{source}/albums?limit=2")).await;
+        let (status, body) = get_json(
+            app.clone(),
+            &format!("/api/v3/remotes/{source}/albums?limit=2"),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "{source}");
         assert_eq!(
             body.get("total").and_then(Value::as_i64),
@@ -899,7 +904,7 @@ async fn routes_import_playlists_idempotently() {
         };
         let (status, first) = post_empty(
             app.clone(),
-            &format!("/remotes/{source}/playlists/{id}/import"),
+            &format!("/api/v3/remotes/{source}/playlists/{id}/import"),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{source} import works");
@@ -913,7 +918,7 @@ async fn routes_import_playlists_idempotently() {
         );
         let (status, repeat) = post_empty(
             app.clone(),
-            &format!("/remotes/{source}/playlists/{id}/import"),
+            &format!("/api/v3/remotes/{source}/playlists/{id}/import"),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -922,7 +927,8 @@ async fn routes_import_playlists_idempotently() {
             Some(true)
         );
     }
-    let (status, body) = post_empty(app.clone(), "/remotes/plex/playlists/px-pl-9/import").await;
+    let (status, body) =
+        post_empty(app.clone(), "/api/v3/remotes/plex/playlists/px-pl-9/import").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(error_code(&body), "NOT_FOUND");
 }
@@ -963,7 +969,8 @@ async fn routes_serve_optional_features_per_source() {
         ("plex", matched.as_str(), true),
     ];
     for (source, path, supported) in cases {
-        let (status, body) = get_json(app.clone(), &format!("/remotes/{source}/{path}")).await;
+        let (status, body) =
+            get_json(app.clone(), &format!("/api/v3/remotes/{source}/{path}")).await;
         if supported {
             assert_eq!(status, StatusCode::OK, "{source} {path}: {body}");
         } else {
@@ -976,8 +983,11 @@ async fn routes_serve_optional_features_per_source() {
 #[tokio::test]
 async fn routes_serve_images_with_cache_contract() {
     let app = connected_testbed().await;
-    let (status, headers, bytes) =
-        get_bytes(app.clone(), "/remotes/navidrome/images/nd-al-1?size=200").await;
+    let (status, headers, bytes) = get_bytes(
+        app.clone(),
+        "/api/v3/remotes/navidrome/images/nd-al-1?size=200",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(&bytes[..2], &[0xFF, 0xD8]);
     let header_map: std::collections::HashMap<&str, &str> = headers
@@ -994,7 +1004,7 @@ async fn routes_serve_images_with_cache_contract() {
     assert_eq!(header_map.get("content-security-policy"), Some(&"sandbox"));
 
     let (status, headers, _) =
-        get_bytes(app.clone(), "/remotes/plex/covers/playlists/px-pl-2").await;
+        get_bytes(app.clone(), "/api/v3/remotes/plex/covers/playlists/px-pl-2").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         headers
@@ -1019,7 +1029,7 @@ async fn routes_serve_images_with_cache_contract() {
 #[tokio::test]
 async fn routes_link_own_accounts_over_the_shared_admin_account() {
     let app = connected_testbed().await;
-    let (status, body) = get_json(app.clone(), "/remotes/navidrome/connection").await;
+    let (status, body) = get_json(app.clone(), "/api/v3/remotes/navidrome/connection").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.get("connected").and_then(Value::as_bool), Some(true));
     assert_eq!(
@@ -1028,7 +1038,8 @@ async fn routes_link_own_accounts_over_the_shared_admin_account() {
     );
 
     let payload = serde_json::json!({"username": NAVIDROME_USER, "password": "super-secret"});
-    let (status, body) = put_json(app.clone(), "/remotes/navidrome/connection", payload).await;
+    let (status, body) =
+        put_json(app.clone(), "/api/v3/remotes/navidrome/connection", payload).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body.get("account_mode").and_then(Value::as_str),
@@ -1036,7 +1047,7 @@ async fn routes_link_own_accounts_over_the_shared_admin_account() {
     );
     assert!(!body.to_string().contains("super-secret"));
 
-    let (status, body) = get_json(app.clone(), "/me/connections").await;
+    let (status, body) = get_json(app.clone(), "/api/v3/me/connections").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         body.pointer("/connections/0/service")
@@ -1051,11 +1062,11 @@ async fn routes_link_own_accounts_over_the_shared_admin_account() {
     assert!(!body.to_string().contains("super-secret"));
 
     let wrong = serde_json::json!({"username": "stranger", "password": "nope"});
-    let (status, body) = put_json(app.clone(), "/remotes/navidrome/connection", wrong).await;
+    let (status, body) = put_json(app.clone(), "/api/v3/remotes/navidrome/connection", wrong).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(error_code(&body), "INVALID_INPUT");
 
-    let (status, body) = delete_json(app.clone(), "/remotes/navidrome/connection").await;
+    let (status, body) = delete_json(app.clone(), "/api/v3/remotes/navidrome/connection").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         body.get("account_mode").and_then(Value::as_str),
@@ -1066,12 +1077,12 @@ async fn routes_link_own_accounts_over_the_shared_admin_account() {
 #[tokio::test]
 async fn routes_manage_folder_preferences() {
     let app = connected_testbed().await;
-    let (status, body) = get_json(app.clone(), "/remotes/navidrome/folders").await;
+    let (status, body) = get_json(app.clone(), "/api/v3/remotes/navidrome/folders").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.get("mode").and_then(Value::as_str), Some("all"));
 
     let payload = serde_json::json!({"mode": "selected", "selected_folder_ids": ["folder-1"]});
-    let (status, body) = put_json(app.clone(), "/remotes/navidrome/folders", payload).await;
+    let (status, body) = put_json(app.clone(), "/api/v3/remotes/navidrome/folders", payload).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.get("mode").and_then(Value::as_str), Some("selected"));
     assert_eq!(
@@ -1082,13 +1093,14 @@ async fn routes_manage_folder_preferences() {
     );
 
     let bad = serde_json::json!({"mode": "selected", "selected_folder_ids": ["nope"]});
-    let (status, body) = put_json(app.clone(), "/remotes/navidrome/folders", bad).await;
+    let (status, body) = put_json(app.clone(), "/api/v3/remotes/navidrome/folders", bad).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(error_code(&body), "INVALID_INPUT");
 
     let duplicate =
         serde_json::json!({"mode": "selected", "selected_folder_ids": ["folder-1", "folder-1"]});
-    let (status, body) = put_json(app.clone(), "/remotes/navidrome/folders", duplicate).await;
+    let (status, body) =
+        put_json(app.clone(), "/api/v3/remotes/navidrome/folders", duplicate).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(error_code(&body), "CONFLICT");
 }
@@ -1329,7 +1341,7 @@ async fn routes_refuse_image_answers_that_are_not_images() {
         let app = authed_app(deps_for(servers));
         for source in ["jellyfin", "plex"] {
             let (status, headers, bytes) =
-                get_bytes(app.clone(), &format!("/remotes/{source}/images/any")).await;
+                get_bytes(app.clone(), &format!("/api/v3/remotes/{source}/images/any")).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{source} {content_type}");
             let body = String::from_utf8_lossy(&bytes);
             assert!(!body.contains("script"), "{source} relayed {body}");

@@ -7,8 +7,8 @@
 //!
 //! ## Wiring (as built)
 //!
-//! The routers below mount through [`AuthSetup`][wiring-setup] (`wiring.rs`),
-//! nested under `/api/v3` inside the session middleware (it puts the
+//! [`routes`] mounts through [`AuthSetup`][wiring-setup] (`wiring.rs`); the
+//! user and admin groups sit inside the session middleware (it puts the
 //! request's [`Principal`] in the extensions, which the role extractors read).
 //! `POST /api/v3/auth/password-recovery/reset` is allowlisted public; the
 //! origin check guards cookie mutations. Stores are the `sqlite.rs`
@@ -35,10 +35,8 @@ pub mod stores;
 
 use std::sync::Arc;
 
-use axum::{
-    Router,
-    routing::{delete, get, post, put},
-};
+use axum::extract::FromRef;
+use droppedneedle_kernel::mount::{Routes, routes};
 
 pub use error::UsersError;
 pub use roles::{Admin, Curator, Principal, Role, RoleRequired, SessionKind, User};
@@ -94,90 +92,46 @@ pub fn clock_now(deps: &UsersDeps) -> i64 {
     deps.clock.now_unix()
 }
 
-/// Authenticated user routes. The session middleware authenticates before
-/// these run; the extractors add role gating only.
-pub fn users_router(deps: UsersDeps) -> Router {
-    Router::new()
-        .route(
-            "/me",
-            get(handlers::get_profile).patch(handlers::patch_profile),
-        )
-        .route("/me/username", put(handlers::put_username))
-        .route("/me/email", put(handlers::put_email))
-        .route("/me/password", post(handlers::post_password))
-        .route("/me/local-password", post(handlers::post_local_password))
-        .route("/me/avatar", post(handlers::post_avatar))
-        .route("/users/{id}/avatar", get(handlers::get_avatar))
-        .route("/auth/sessions", get(handlers::list_sessions))
-        .route("/auth/sessions/{id}", delete(handlers::revoke_session))
-        .route("/auth/device-sessions", post(handlers::mint_device_session))
-        .route("/auth/logout-all", post(handlers::logout_all))
-        .route(
-            "/me/app-passwords",
-            get(handlers::list_app_passwords).post(handlers::create_app_password),
-        )
-        .route(
-            "/me/app-passwords/{id}",
-            delete(handlers::revoke_app_password),
-        )
-        .route(
-            "/me/connections/lastfm",
-            get(handlers::lastfm_status)
-                .put(handlers::lastfm_set_credentials)
-                .delete(handlers::lastfm_unlink),
-        )
-        .route("/me/connections/lastfm/token", post(handlers::lastfm_token))
-        .route(
-            "/me/connections/lastfm/session",
-            post(handlers::lastfm_session),
-        )
-        .with_state(deps)
-}
+/// Every users route, in the group its handler's extractor implies.
+/// `POST /auth/password-recovery/reset` is public: the recovery code is
+/// its credential.
+pub fn routes<S>() -> Routes<S>
+where
+    S: Clone + Send + Sync + 'static,
+    UsersDeps: FromRef<S>,
+{
+    use handlers::*;
 
-/// Admin routes. Every handler takes `Admin`.
-pub fn admin_router(deps: UsersDeps) -> Router {
-    Router::new()
-        .route(
-            "/admin/users",
-            get(handlers::admin_list_users).post(handlers::admin_create_user),
-        )
-        .route(
-            "/admin/users/{id}",
-            get(handlers::admin_get_user).delete(handlers::admin_delete_user),
-        )
-        .route("/admin/users/{id}/role", put(handlers::admin_set_role))
-        .route(
-            "/admin/users/{id}/sessions",
-            delete(handlers::admin_revoke_sessions),
-        )
-        .route(
-            "/admin/users/{id}/recovery-code",
-            post(handlers::admin_mint_recovery_code),
-        )
-        .route(
-            "/admin/app-passwords",
-            get(handlers::admin_list_app_passwords),
-        )
-        .route(
-            "/admin/app-passwords/{id}",
-            delete(handlers::admin_revoke_app_password),
-        )
-        .route(
-            "/admin/import/jellyfin",
-            get(handlers::admin_import_list_jellyfin),
-        )
-        .route("/admin/import/plex", get(handlers::admin_import_list_plex))
-        .route("/admin/import", post(handlers::admin_import_users))
-        .with_state(deps)
-}
-
-/// Public routes. The session middleware must allowlist these; they carry
-/// their own credential (the recovery code).
-pub fn public_router(deps: UsersDeps) -> Router {
-    Router::new()
-        .route(
-            "/auth/password-recovery/reset",
-            post(handlers::reset_password),
-        )
-        .with_state(deps)
+    Routes::new()
+        .user(routes!(get_profile, patch_profile))
+        .user(routes!(put_username))
+        .user(routes!(put_email))
+        .user(routes!(post_password))
+        .user(routes!(post_local_password))
+        .user(routes!(post_avatar))
+        .user(routes!(get_avatar))
+        .user(routes!(list_sessions))
+        .user(routes!(revoke_session))
+        .user(routes!(mint_device_session))
+        .user(routes!(logout_all))
+        .user(routes!(list_app_passwords, create_app_password))
+        .user(routes!(revoke_app_password))
+        .user(routes!(
+            lastfm_status,
+            lastfm_set_credentials,
+            lastfm_unlink
+        ))
+        .user(routes!(lastfm_token))
+        .user(routes!(lastfm_session))
+        .admin(routes!(admin_list_users, admin_create_user))
+        .admin(routes!(admin_get_user, admin_delete_user))
+        .admin(routes!(admin_set_role))
+        .admin(routes!(admin_revoke_sessions))
+        .admin(routes!(admin_mint_recovery_code))
+        .admin(routes!(admin_list_app_passwords))
+        .admin(routes!(admin_revoke_app_password))
+        .admin(routes!(admin_import_list_jellyfin))
+        .admin(routes!(admin_import_list_plex))
+        .admin(routes!(admin_import_users))
+        .public(routes!(reset_password))
 }
