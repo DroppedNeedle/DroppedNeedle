@@ -184,6 +184,41 @@ async fn boot_refuses_while_the_offline_tool_holds_the_database() {
     assert!(!db_path.exists(), "the database was opened under the lock");
 }
 
+/// A running server holds the server lock, so a second server on the same
+/// data folder is refused before it opens the database. Once the first has
+/// stopped, the folder boots again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn boot_refuses_a_second_server_on_the_same_data_folder() {
+    let dir = scratch("second-server");
+    let config = config_in(&dir);
+    let db_path = config.library_db_path.clone();
+    // The running server's lock, taken by file name the way the server takes
+    // it, so the test does not lean on the code it checks.
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    let running = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(db_path.with_file_name("library.db.server.lock"))
+        .unwrap();
+    running.try_lock().unwrap();
+    let Err(refused) = build(config.clone()).await else {
+        panic!("boot must refuse a second server on a running folder");
+    };
+    assert!(
+        matches!(refused, bootstrap::BootError::DataLock(_)),
+        "{refused}"
+    );
+    assert!(
+        refused.to_string().contains("library.db.server.lock"),
+        "{refused}"
+    );
+    assert!(!db_path.exists(), "the refused boot opened the database");
+    drop(running);
+    let (router, background) = build(config).await.unwrap();
+    start(router, background).await.shut_down().await;
+}
+
 /// A v2 data directory is refused before the database is opened, backed
 /// up or migrated: v3's migrations would otherwise run over the v2
 /// database. The refusal names the command that upgrades it.

@@ -374,7 +374,8 @@ on the album page hands it back.
 
 ## After the upgrade
 
-Run one v3 container per data directory, never two.
+Run one v3 container per data directory, never two. A second server on the
+same data folder refuses to start.
 
 If your reverse proxy has a special rule for v2's live update stream at
 `/api/v1/events/stream` (no buffering, long read timeout), move it to

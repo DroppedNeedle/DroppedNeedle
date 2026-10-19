@@ -199,13 +199,15 @@ impl BackupService {
         target_dir: &Path,
         allow_downgrade: bool,
     ) -> Result<RestoredBackup, DbError> {
-        // The restore tool's own lock file is the one entry allowed.
+        // The restore tool's own lock file and the server's lock file are
+        // the only entries allowed.
         let lock_name = crate::db::datalock::lock_file_name("library.db");
+        let server_lock_name = crate::db::datalock::server_lock_file_name("library.db");
         let occupied = target_dir.exists()
-            && target_dir
-                .read_dir()?
-                .filter_map(Result::ok)
-                .any(|entry| entry.file_name().to_string_lossy() != lock_name);
+            && target_dir.read_dir()?.filter_map(Result::ok).any(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                name != lock_name && name != server_lock_name
+            });
         if occupied {
             return Err(DbError::RestoreTargetNotEmpty {
                 path: target_dir.to_owned(),

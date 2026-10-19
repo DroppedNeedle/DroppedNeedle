@@ -537,8 +537,8 @@ fn clean_v2(root: &Path) {
 /// Folders (`None`) and files (their bytes) by relative path.
 type Tree = BTreeMap<PathBuf, Option<Vec<u8>>>;
 
-/// Everything under `dir`. The data lock file is left out: taking the
-/// lock creates it and nothing ever removes it.
+/// Everything under `dir`. The data lock files are left out: taking a
+/// lock creates its file and nothing ever removes it.
 fn tree(dir: &Path) -> Tree {
     fn walk(top: &Path, dir: &Path, found: &mut Tree) {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -548,7 +548,7 @@ fn tree(dir: &Path) -> Tree {
             let path = entry.expect("entry reads").path();
             if path
                 .file_name()
-                .is_some_and(|name| name == "library.db.lock")
+                .is_some_and(|name| name == "library.db.lock" || name == "library.db.server.lock")
             {
                 continue;
             }
@@ -993,6 +993,9 @@ async fn an_interrupted_upgrade_is_rolled_back_first() {
     let scratch = scratch_dir("upgrade-interrupted");
     let root = scratch.join("data");
     clean_v2(&root);
+    // A server that refused to start on this folder left its lock file.
+    let server_lock = root.join("cache").join("library.db.server.lock");
+    std::fs::write(&server_lock, b"").expect("server lock writes");
     let original = data_trees(&root);
     let dirs = upgrade_dirs(&root);
 
@@ -1025,6 +1028,9 @@ async fn an_interrupted_upgrade_is_rolled_back_first() {
         data_dirs::check_bootable(&dirs),
         Err(data_dirs::BootRefusal::Interrupted)
     );
+    // The next server boot writes its lock file again before the rollback
+    // goes on.
+    std::fs::write(&server_lock, b"").expect("server lock writes");
     let undone = tool_in(&root, &["upgrade", "--undo", "--yes"]);
     assert!(undone.status.success(), "stderr: {}", stderr_of(&undone));
     assert_eq!(data_trees(&root), original);
@@ -1388,6 +1394,14 @@ async fn restore_round_trips_and_refuses() {
         ),
         "occupied target refuses: {refused:?}"
     );
+
+    // A folder with only lock files in it is empty: a server that booted
+    // there leaves its lock file behind.
+    let locked = root.join("locked");
+    std::fs::create_dir_all(&locked).expect("locked dir");
+    std::fs::write(locked.join("library.db.server.lock"), b"").expect("lock writes");
+    droppedneedle_tool::tooling::restore::restore_backup(&taken.path, &locked, false)
+        .expect("restores beside a server lock file");
 
     // A backup newer than the binary refuses without --allow-downgrade.
     let future = root.join("future.db");

@@ -53,7 +53,7 @@ use crate::import::{
 use droppedneedle::bootstrap::data_dirs::{
     BACKUP_DIR_NAME, DataDirs, Layout, MARKER_FILE_NAME, UnknownLayout, detect, wal_bytes, wal_path,
 };
-use droppedneedle_kernel::db::datalock::{DataLock, DataLockError, lock_path};
+use droppedneedle_kernel::db::datalock::{DataLock, DataLockError, lock_path, server_lock_path};
 use droppedneedle_kernel::runtime_config::crypto::CryptoError;
 use droppedneedle_kernel::runtime_config::{Crypto, Secret};
 use droppedneedle_kernel::schema::SchemaError;
@@ -98,10 +98,12 @@ fn backup_side(dirs: &DataDirs) -> DataDirs {
 fn folders(dirs: &DataDirs) -> [Folder; 2] {
     let marker = OsString::from(MARKER_FILE_NAME);
     let mut cache_kept = vec![OsString::from(BACKUP_DIR_NAME), tmp_name(&marker), marker];
-    // The lock is held for the whole run and has to stay where the
-    // server looks for it.
-    if let Some(lock) = lock_path(&dirs.db_path).file_name() {
-        cache_kept.push(lock.to_owned());
+    // The locks are held for the whole run and have to stay where the
+    // server looks for them, so the upgrade never moves or deletes them.
+    for lock in [lock_path(&dirs.db_path), server_lock_path(&dirs.db_path)] {
+        if let Some(name) = lock.file_name() {
+            cache_kept.push(name.to_owned());
+        }
     }
     [
         Folder {

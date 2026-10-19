@@ -215,9 +215,9 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let http = HttpClientFactory::with_settings(&config.http)?;
     // Held until shutdown, and taken before the database opens (so before
     // the pre-upgrade backup and the migrations): the offline import and
-    // restore refuse to run while it is held, and a running one keeps the
-    // server from starting.
-    let data_lock = DataLock::shared(&config.library_db_path)?;
+    // restore refuse to run while it is held, a running one keeps the
+    // server from starting, and the server lock refuses a second server.
+    let data_lock = DataLock::server(&config.library_db_path)?;
     refuse_foreign_data_dir(&config).await?;
     let runtime = open_runtime(
         &DbConfig::new(&config.library_db_path).with_shutdown_grace(config.shutdown_grace),
