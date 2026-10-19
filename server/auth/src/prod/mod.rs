@@ -11,13 +11,7 @@
 //! use std::sync::Arc;
 //! use droppedneedle_auth::prod::ProdAuth;
 //!
-//! let auth = ProdAuth::new(
-//!     runtime.db(),
-//!     crypto,
-//!     ids,
-//!     clock,
-//!     avatar_dir,
-//! );
+//! let auth = ProdAuth::new(&platform);
 //! // Native login: LoginService::new(auth.sessions.clone(), auth.hasher.clone(), auth.credentials.clone())
 //! // UsersDeps: users/auth.sessions/auth.app_passwords/auth.recovery/auth.lastfm/auth.avatars,
 //! //   passwords: Arc::new(auth.hasher.clone())
@@ -44,14 +38,6 @@
 //!   constant-time compare + touch); `secret_encrypted` round-trips so
 //!   exports can re-encrypt it under a fresh key.
 //!
-
-use std::path::Path;
-use std::sync::Arc;
-
-use droppedneedle_kernel::clock::Clock;
-use droppedneedle_kernel::db::Db;
-use droppedneedle_kernel::ids::IdGenerator;
-use droppedneedle_kernel::runtime_config::crypto::Crypto;
 
 pub use super::avatars::FileAvatarStore;
 pub use super::passwords::{
@@ -99,17 +85,16 @@ pub struct ProdAuth {
 }
 
 impl ProdAuth {
-    /// Build the live bundle. `db` serves reads and writes, `crypto` seals
-    /// federated tokens, `ids` mints row ids, `clock` drives management-side
-    /// expiry, and `avatar_dir` roots avatar files.
-    pub fn new(
-        db: &Db,
-        crypto: Arc<Crypto>,
-        ids: Arc<dyn IdGenerator>,
-        clock: Arc<dyn Clock>,
-        avatar_dir: &Path,
-    ) -> Self {
-        let db = AuthDb::new(db);
+    /// Build the live bundle over the platform's database: its data key
+    /// seals federated tokens, its clock drives management-side expiry, and
+    /// avatar files live under its cache folder.
+    pub fn new(platform: &droppedneedle_kernel::platform::Platform) -> Self {
+        let db = AuthDb::new(&platform.db);
+        let (crypto, ids, clock) = (
+            platform.crypto.clone(),
+            platform.ids.clone(),
+            platform.clock.clone(),
+        );
         let hasher = Argon2idHasher::new();
         // Opportunistic rehash: the login verifier queues bcrypt upgrades
         // and the session insert drains them. One shared queue or the login
@@ -127,7 +112,7 @@ impl ProdAuth {
             recovery: SqliteRecoveryStore::new(&db),
             lastfm: SqliteLastFmStore::new(&db),
             oidc_states: SqliteOidcStateStore::new(&db),
-            avatars: FileAvatarStore::new(avatar_dir),
+            avatars: FileAvatarStore::new(&platform.config.cache_dir),
             hasher,
             db,
         }

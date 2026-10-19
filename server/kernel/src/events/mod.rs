@@ -24,8 +24,8 @@
 //!   their features call [`EventHub::notify`] with the matching
 //!   [`UserNotice`].
 //!
-//! Bundles built before the application state hold an [`EventSink`];
-//! the server's `AppState::with_events` attaches the hub to all of them.
+//! The hub is made once, in the [`Platform`](crate::platform::Platform),
+//! and every publisher takes it when it is built.
 
 pub mod downloads;
 mod follow;
@@ -33,7 +33,7 @@ pub mod hub;
 pub mod model;
 pub mod revisions;
 
-pub use hub::{EventHub, EventSink, Subscription};
+pub use hub::{EventHub, Subscription};
 
 /// The event loops on the supervisor, always on from boot.
 pub const LOOPS: &[&str] = &[revisions::JOB_NAME, downloads::JOB_NAME];

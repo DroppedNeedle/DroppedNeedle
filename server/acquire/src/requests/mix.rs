@@ -32,7 +32,7 @@ use droppedneedle_catalog::reads::collections::store::playlists::{
 use droppedneedle_catalog::reads::discover::adapters::queue::select::{self, Shuffler};
 use droppedneedle_catalog::reads::discover::models::QueueItemLight;
 use droppedneedle_kernel::events::{
-    EventSink, PersonalMixRefreshed, UserNotice, model::new_event_id,
+    EventHub, PersonalMixRefreshed, UserNotice, model::new_event_id,
 };
 use droppedneedle_plugins::scrobble::{ScrobblePrefsPatch, ScrobblePrefsStore};
 use droppedneedle_providers::listenbrainz::playlists::{
@@ -211,7 +211,7 @@ pub struct PersonalMixBuilder {
     prefs: Arc<dyn ScrobblePrefsStore>,
     playlists: PlaylistStore,
     requests: RequestsState,
-    events: EventSink,
+    events: EventHub,
     locks: tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
@@ -223,7 +223,7 @@ impl PersonalMixBuilder {
         prefs: Arc<dyn ScrobblePrefsStore>,
         playlists: PlaylistStore,
         requests: RequestsState,
-        events: EventSink,
+        events: EventHub,
     ) -> Self {
         Self {
             sources,

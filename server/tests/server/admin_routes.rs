@@ -31,6 +31,8 @@ struct Rig {
     cache: Arc<droppedneedle_providers::InMemoryProviderCache>,
     quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
     jobs: droppedneedle::bootstrap::jobs::JobsSetup,
+    /// The count the library bumps when a scan ends.
+    scans: droppedneedle::bootstrap::jobs::ScansEnded,
     _scratch: crate::common::ScratchDir,
 }
 
@@ -46,7 +48,10 @@ impl Rig {
         let scratch = crate::common::ScratchDir::new(&format!("admin-routes-{tag}"));
         let dir = scratch.to_path_buf();
         let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
-        let rig = AuthRig::on(&runtime);
+        let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
+            .build()
+            .await;
+        let rig = AuthRig::on(&platform);
         let admin_user = rig.seed_user("brenda", Role::Admin).await;
         let plain_user = rig.seed_user("molly", Role::User).await;
         let quota = Arc::new(
@@ -56,19 +61,15 @@ impl Rig {
         );
         let cache = Arc::new(droppedneedle_providers::InMemoryProviderCache::new());
         let providers = Arc::new(droppedneedle_providers::Providers::new(cache.clone()));
-        let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
-            runtime.db().clone(),
-            Arc::new(droppedneedle_kernel::clock::SystemClock),
-            droppedneedle_kernel::jobs::CancellationToken::new(),
-        )
-        .await
-        .expect("loop supervisor starts");
+        let scans = droppedneedle::bootstrap::jobs::ScansEnded::default();
         let mut jobs = droppedneedle::bootstrap::jobs::JobsSetup::build(
-            supervisor,
+            &platform,
             runtime.checkpoint().clone(),
-            crate::common::config_store(&dir),
-            droppedneedle_media::remotes::presence_feed::MediaJobs::for_tests(),
+            droppedneedle_media::remotes::presence_feed::MediaJobs::for_tests(
+                platform.events.clone(),
+            ),
             None,
+            scans.clone(),
         );
         if let Some(sources) = precache {
             jobs = jobs.with_precache_sources(sources);
@@ -90,6 +91,7 @@ impl Rig {
             cache,
             quota,
             jobs,
+            scans,
             _scratch: scratch,
         }
     }
@@ -480,11 +482,9 @@ async fn a_burst_of_scans_starts_one_image_refresh() {
     tokio::time::pause();
     let trigger = rig.jobs.precache_trigger();
     trigger.spawn_after_scan().expect("the wait loop starts");
-    let scan_finished = trigger.after_scan_hook();
-
-    scan_finished();
+    rig.scans.bump();
     tokio::time::sleep(Duration::from_secs(10)).await;
-    scan_finished();
+    rig.scans.bump();
     // The run's store reads happen on blocking threads, and the paused clock
     // jumps ahead while they run, so the first run is awaited in wall-clock
     // time. Then well past the quiet wait a second run would need.

@@ -397,7 +397,8 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("providers/src/youtube.rs", 1, REQUEST),
     ("src/admin/handlers.rs", 1, REQUEST),
     ("src/bootstrap/key_check.rs", 1, BOOT_STEP),
-    ("src/bootstrap/mod.rs", 2, BOOT_STEP),
+    ("src/bootstrap/mod.rs", 1, BOOT_STEP),
+    ("src/bootstrap/platform.rs", 1, BOOT_STEP),
     ("src/bootstrap/serve.rs", 1, HTTP_SERVER),
     ("src/settings/library_policy_service.rs", 1, REQUEST),
     ("src/settings/services.rs", 3, REQUEST),
@@ -474,6 +475,10 @@ const SETTINGS_STORE: &[Place] = &[
         "the store, its live handles and the sections",
     ),
     place(
+        "kernel/src/platform.rs",
+        "what every area is built from, which hands out the live handles while it builds",
+    ),
+    place(
         "src/settings/",
         "the settings service, which saves the sections the settings pages edit",
     ),
@@ -504,14 +509,6 @@ const SETTINGS_STORE: &[Place] = &[
     place(
         "plugins/src/handlers.rs",
         "the plugin routes, which show each plugin's masked settings; plugin settings have no live handle",
-    ),
-    place(
-        "plugins/src/wiring.rs",
-        "builds the plugin host over the store",
-    ),
-    place(
-        "auth/src/wiring.rs",
-        "builds the sign-in clients, which read the install ids through the store",
     ),
     place(
         "auth/src/federated/",
@@ -558,6 +555,68 @@ fn settings_are_read_through_live_handles() {
     assert!(
         wrong.is_empty(),
         "read settings through `ConfigStore::live`, or list the place with its reason:\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// The places that may hold a `Platform` by value.
+const PLATFORM_HOLDERS: &[Place] = &[
+    place(
+        "kernel/src/platform.rs",
+        "the type itself and its one constructor",
+    ),
+    place(
+        "src/bootstrap/",
+        "boot, which opens the platform and builds every area from it",
+    ),
+];
+
+/// Areas take `&Platform` while they are built and keep only what they
+/// use. The platform carries the settings store, so a kept platform would
+/// be a way past the live handles: no field, wrapper or value of it lives
+/// anywhere else.
+#[test]
+fn the_platform_is_borrowed_never_kept() {
+    let pattern = Regex::new(r"(&\s*(?:'\w+\s+)?(?:mut\s+)?)?(?:\w+::)*\bPlatform\b(::)?").unwrap();
+    let mut used = vec![false; PLATFORM_HOLDERS.len()];
+    let mut wrong = Vec::new();
+    for source in workspace_sources() {
+        let code = shipping_code(&source);
+        let mut in_use = false;
+        for (at, line) in code.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("use ") || trimmed.starts_with("pub use ") {
+                in_use = true;
+            }
+            if in_use {
+                in_use = !line.contains(';');
+                continue;
+            }
+            for found in pattern.captures_iter(line) {
+                if found.get(1).is_some() || found.get(2).is_some() {
+                    continue;
+                }
+                match PLATFORM_HOLDERS
+                    .iter()
+                    .position(|place| source.path.starts_with(place.path))
+                {
+                    Some(place) => used[place] = true,
+                    None => wrong.push(format!("{}:{}: {}", source.path, at + 1, line.trim())),
+                }
+            }
+        }
+    }
+    for (place, used) in PLATFORM_HOLDERS.iter().zip(used) {
+        if !used {
+            wrong.push(format!(
+                "{}: allowed to hold the platform, but none there does; remove the entry ({})",
+                place.path, place.why
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "take `&Platform` and keep only what you use, or list the place with its reason:\n{}",
         wrong.join("\n")
     );
 }

@@ -18,7 +18,7 @@
 //! (v2 drained the queue and kept the newest message for the same reason).
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::broadcast;
@@ -48,12 +48,6 @@ struct Inner {
     closed: CancellationToken,
 }
 
-impl Default for EventHub {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl std::fmt::Debug for EventHub {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EventHub")
@@ -63,7 +57,9 @@ impl std::fmt::Debug for EventHub {
 }
 
 impl EventHub {
-    /// An empty hub with no streams.
+    /// An empty hub with no streams. The server makes one, in its
+    /// platform; there is no `Default`, so no producer makes its own.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let (sender, _) = broadcast::channel(CAPACITY);
         let closed = CancellationToken::new();
@@ -186,60 +182,5 @@ impl Subscription {
                 () = self.closed.cancelled() => return None,
             }
         }
-    }
-}
-
-/// A producer's handle on the hub, attached after the producer is built.
-/// Bundles are wired before the application state exists, so they hold
-/// one of these; the server's `AppState::with_events` points them all at the
-/// state's hub. Until then, events are dropped. Clones share the slot.
-#[derive(Clone, Default)]
-pub struct EventSink {
-    slot: Arc<RwLock<Option<EventHub>>>,
-}
-
-impl std::fmt::Debug for EventSink {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EventSink")
-            .field("attached", &self.is_attached())
-            .finish()
-    }
-}
-
-impl EventSink {
-    /// Point this sink (and every clone of it) at `hub`, replacing any
-    /// earlier hub.
-    pub fn attach(&self, hub: &EventHub) {
-        let mut slot = self
-            .slot
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *slot = Some(hub.clone());
-    }
-
-    /// True once a hub is attached.
-    pub fn is_attached(&self) -> bool {
-        self.hub().is_some()
-    }
-
-    /// Publish through the attached hub, if any.
-    pub fn publish(&self, event: Event) {
-        if let Some(hub) = self.hub() {
-            hub.publish(event);
-        }
-    }
-
-    /// Notify one user through the attached hub, if any.
-    pub fn notify(&self, user_id: &str, notice: UserNotice) {
-        if let Some(hub) = self.hub() {
-            hub.notify(user_id, notice);
-        }
-    }
-
-    fn hub(&self) -> Option<EventHub> {
-        self.slot
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
     }
 }

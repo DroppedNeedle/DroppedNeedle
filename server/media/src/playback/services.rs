@@ -413,30 +413,25 @@ pub struct PresenceUpdate {
 /// restart (v2 single-process invariant). Privacy is enforced here,
 /// server-side, keyed on the owner's visibility setting, so a hidden track
 /// is never serialized to other clients. Each change broadcasts the
-/// projected snapshot as the `snapshot` event once an event hub is
-/// attached, and bumps the generation either way.
+/// projected snapshot as the `snapshot` event on the event hub, and bumps
+/// the generation.
 #[derive(Debug, Clone)]
 pub struct PresenceRegistry {
     entries: Arc<Mutex<HashMap<String, PresenceEntry>>>,
     visibility: Arc<Mutex<HashMap<String, String>>>,
     generation: Arc<AtomicU64>,
-    events: droppedneedle_kernel::events::EventSink,
+    events: droppedneedle_kernel::events::EventHub,
 }
 
 impl PresenceRegistry {
-    /// Build an empty registry.
-    pub fn new() -> Self {
+    /// An empty registry that broadcasts on `events`.
+    pub fn new(events: droppedneedle_kernel::events::EventHub) -> Self {
         Self {
             entries: Arc::new(Mutex::new(HashMap::new())),
             visibility: Arc::new(Mutex::new(HashMap::new())),
             generation: Arc::new(AtomicU64::new(0)),
-            events: droppedneedle_kernel::events::EventSink::default(),
+            events,
         }
-    }
-
-    /// Broadcast snapshots to `hub` (this registry and every clone).
-    pub fn attach_events(&self, hub: &droppedneedle_kernel::events::EventHub) {
-        self.events.attach(hub);
     }
 
     /// Broadcast count: bumped on every publish, so tests can assert the
@@ -450,9 +445,6 @@ impl PresenceRegistry {
     /// the order they were applied and the hub keeps the latest one.
     fn publish(&self, entries: &HashMap<String, PresenceEntry>) {
         self.generation.fetch_add(1, Ordering::SeqCst);
-        if !self.events.is_attached() {
-            return;
-        }
         let Ok(visibility) = self.visibility.lock() else {
             tracing::warn!("presence visibility lock is poisoned; snapshot not published");
             return;
@@ -643,12 +635,6 @@ impl PresenceRegistry {
 impl droppedneedle_plugins::scrobble::VisibilityHook for PresenceRegistry {
     fn on_visibility_changed(&self, user_id: &str, visibility: &str) {
         self.set_visibility(user_id, visibility);
-    }
-}
-
-impl Default for PresenceRegistry {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

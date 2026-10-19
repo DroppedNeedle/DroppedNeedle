@@ -166,7 +166,7 @@ pub fn live_builder(
     links: Arc<dyn ListenBrainzLinkStore>,
     prefs: Arc<dyn droppedneedle_plugins::scrobble::ScrobblePrefsStore>,
     playlists: droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore,
-    events: droppedneedle_kernel::events::EventSink,
+    events: droppedneedle_kernel::events::EventHub,
     listenbrainz: &str,
 ) -> Option<Arc<super::mix::PersonalMixBuilder>> {
     use droppedneedle_providers::listenbrainz::SOURCE;

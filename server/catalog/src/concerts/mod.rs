@@ -31,18 +31,17 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use droppedneedle_kernel::db::Db;
-use droppedneedle_kernel::http_client::HttpClientFactory;
+use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
-use droppedneedle_kernel::runtime_config::{ConfigStore, Live as LiveSettings, Plain, Secret};
+use droppedneedle_kernel::runtime_config::{Live as LiveSettings, Plain, Secret};
 
-pub use events::{ConcertsEvents, ConcertsNew, NoEventStream};
+pub use events::{ConcertsEvents, ConcertsNew};
 pub use service::ConcertsService;
 pub use sources::Endpoints;
 pub use sweep::ConcertsSweep;
 
 /// The concerts bundle on `AppState`: the routes plus the sweep the jobs
-/// bundle runs. Test states without a database carry an unwired bundle
-/// that mounts no routes and has no sweep.
+/// bundle runs.
 #[derive(Clone)]
 pub struct ConcertsSetup {
     live: Option<Live>,
@@ -57,49 +56,36 @@ struct Live {
 }
 
 impl ConcertsSetup {
-    /// Production wiring over the database, the shared outbound client, the
-    /// events settings in `config` and the sources' addresses.
-    /// `concerts_new` goes nowhere until the event stream is wired through
-    /// [`ConcertsSetup::with_events`].
-    pub fn from_db(
-        db: &Db,
-        http: &HttpClientFactory,
-        config: &ConfigStore,
-        endpoints: Endpoints,
-    ) -> Self {
-        Self::new(db.clone(), http.shared().clone(), config.live(), endpoints)
+    /// Production wiring over the platform's database, shared outbound
+    /// client, events settings and event hub, with the sources at
+    /// `endpoints`.
+    pub fn from_platform(platform: &Platform, endpoints: Endpoints) -> Self {
+        Self::new(
+            platform.db.clone(),
+            platform.http.shared().clone(),
+            platform.settings.live(),
+            endpoints,
+            Arc::new(platform.events.clone()),
+        )
     }
 
-    /// Wiring from parts; tests point `endpoints` at local fakes.
+    /// Wiring from parts; tests point `endpoints` at local fakes and
+    /// record `concerts_new` through `events`.
     pub fn new(
         db: Db,
         http: reqwest::Client,
         settings: LiveSettings<EventsSettings>,
         endpoints: Endpoints,
+        events: Arc<dyn ConcertsEvents>,
     ) -> Self {
         Self {
             live: Some(Live {
                 store: store::ConcertsStore::new(db),
                 settings,
                 sources: Arc::new(sources::Sources::new(http, endpoints)),
-                events: Arc::new(NoEventStream),
+                events,
             }),
         }
-    }
-
-    /// No database: no routes, no sweep.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn unwired() -> Self {
-        Self { live: None }
-    }
-
-    /// Send `concerts_new` events to `events`.
-    #[must_use]
-    pub fn with_events(mut self, events: Arc<dyn ConcertsEvents>) -> Self {
-        if let Some(live) = &mut self.live {
-            live.events = events;
-        }
-        self
     }
 
     /// The sweep the events watcher and the settings kick run; `None` when

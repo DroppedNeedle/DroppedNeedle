@@ -71,10 +71,10 @@ use super::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
 use super::worker::{DownloadWorker, Source, SourceSet, WorkerConfig, run_startup_recovery};
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::collections::state::CollectionsState;
-use droppedneedle_kernel::config::AppConfig;
-use droppedneedle_kernel::events::{EventSink, PlaylistImported, UserNotice, new_event_id};
+use droppedneedle_kernel::events::{EventHub, PlaylistImported, UserNotice, new_event_id};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::{AlreadyRunning, FnTick, Next, Schedule, Supervisor};
+use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     DownloadClients, Indexers as ConfigIndexers, LidarrImportConnection,
     NewznabIndexer as ConfigIndexer, ProwlarrConnection, SlskdConnection, TypedLibrary,
@@ -469,7 +469,7 @@ pub struct AcquireSetup {
     /// Store-prune deps (request history and wanted rows).
     pub prune: Arc<PruneDeps>,
     /// Live event hub handle shared by the flows and the imports.
-    pub events: EventSink,
+    pub events: EventHub,
     /// Finished-download import: verify, match, publish or hold.
     pub landing: Arc<LandingService>,
     /// Manual album searches over the worker's live sources.
@@ -513,7 +513,7 @@ fn drop_imports(
     db: &AcquireDb,
     landing: &LandingService,
     staging_root: &Path,
-    events: &EventSink,
+    events: &EventHub,
     flows: &FlowsBundle,
 ) -> Arc<DropImports> {
     Arc::new(DropImports::new(
@@ -570,7 +570,7 @@ fn core(
     search: Arc<dyn CandidateSearch>,
     collections: &mut CollectionsState,
     plugins: PluginSlot,
-    events: EventSink,
+    events: EventHub,
 ) -> Core {
     let journal = Arc::new(Journal::new(db.clone()));
     let dispatch = Arc::new(UnifiedDispatch::new(
@@ -618,20 +618,22 @@ fn core(
 }
 
 impl AcquireSetup {
-    /// Build the production bundle over the serving database. Credentials
-    /// and tuning are read from the config store on use (decrypted in
-    /// memory only).
-    #[allow(clippy::too_many_arguments)]
+    /// Build the production bundle over the platform's database. Credentials
+    /// and tuning are read from its settings on use (decrypted in memory
+    /// only); notices and import completions go to its event hub.
     pub fn build(
-        db: AcquireDb,
-        config: &AppConfig,
+        platform: &Platform,
         users: UsersDeps,
-        http: &droppedneedle_kernel::http_client::HttpClientFactory,
-        ids: Arc<dyn IdGenerator>,
-        config_store: Arc<ConfigStore>,
         collections: &mut CollectionsState,
         spotify: &SpotifyEndpoints,
     ) -> Result<Self, String> {
+        let db = AcquireDb::new(platform.db.clone());
+        let (config, ids, config_store) = (
+            &platform.config,
+            platform.ids.clone(),
+            platform.settings.clone(),
+        );
+        let http = &platform.http;
         let (http, no_redirect) = (http.shared().clone(), http.no_redirect().clone());
         let staging_root = config.imports_dir();
         let quota = Arc::new(QuotaLedger::new(config_store.live(), db.clone()));
@@ -646,7 +648,7 @@ impl AcquireSetup {
         let search: Arc<dyn CandidateSearch> = Arc::new(LiveSearch {
             clients: clients.clone(),
         });
-        let events = EventSink::default();
+        let events = platform.events.clone();
         let search_quota = quota.clone();
         let core = core(
             &db,
@@ -751,10 +753,10 @@ impl AcquireSetup {
             DownloadWorker::new(
                 core.journal.clone(),
                 WorkerSettings::new(&config_store, clients.clone(), staging_root.clone()),
+                events.clone(),
             )
             .with_plugin_events(worker_plugins)
             .with_targets(clients.targets().clone())
-            .with_events(events.clone())
             .with_landing(landing.clone())
             .with_settled(settled_hook(core.flows.clone())),
         );
@@ -793,12 +795,6 @@ impl AcquireSetup {
             search_jobs,
             drops,
         })
-    }
-
-    /// Send flow notices and import completions to `hub`.
-    /// The server's `AppState::with_events` calls this.
-    pub fn attach_events(&self, hub: &droppedneedle_kernel::events::EventHub) {
-        self.events.attach(hub);
     }
 
     /// Let finished downloads reach the library: the landing looks
@@ -847,6 +843,7 @@ impl AcquireSetup {
     pub fn for_tests(
         ids: Arc<dyn IdGenerator>,
         collections: &mut CollectionsState,
+        events: EventHub,
     ) -> Result<Self, String> {
         use super::imports::health::{
             HealthProbes, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd, ScriptedSlskd,
@@ -875,7 +872,6 @@ impl AcquireSetup {
                 staging_root.clone(),
             )),
         ));
-        let events = EventSink::default();
         let core = core(
             &db,
             ids.clone(),
@@ -971,6 +967,7 @@ impl AcquireSetup {
                     staging_root: staging_root.clone(),
                     ..WorkerConfig::default()
                 },
+                events.clone(),
             )
             .with_landing(landing.clone())
             .with_settled(settled_hook(core.flows.clone())),
@@ -1165,7 +1162,7 @@ fn flows_bundle(
 
 /// Tell the importing user's open tabs the playlist has its tracks, so the
 /// list and detail views refresh (v2 `spotify.py` import completion).
-fn announce_playlist_imported(events: &EventSink, job: &QueuedSpotifyImport) {
+fn announce_playlist_imported(events: &EventHub, job: &QueuedSpotifyImport) {
     events.notify(
         &job.user_id,
         UserNotice::PlaylistImported(PlaylistImported {

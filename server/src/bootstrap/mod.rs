@@ -12,6 +12,7 @@ pub mod data_dirs;
 pub mod jobs;
 pub mod key_check;
 mod outbound;
+pub mod platform;
 mod serve;
 
 use std::{fmt::Display, future::Future, sync::Arc, time::Duration};
@@ -20,9 +21,10 @@ use axum::Router;
 use thiserror::Error;
 
 pub use outbound::{Outbound, Port};
+pub use platform::{Opened, open_platform};
 pub use serve::{Background, ServeError, Stopped, bind, serve};
 
-use data_dirs::{BootRefusal, DataDirs, check_bootable, refuse_lost_key};
+use data_dirs::BootRefusal;
 use jobs::JobsSetup;
 
 use crate::{
@@ -55,28 +57,13 @@ use droppedneedle_catalog::reads::{
     collections::{db::CollectionsDb, remote_import::PlaylistImportSink},
     enrichment::{library::LiveEnrichment, live::production_enrichment},
 };
-use droppedneedle_compat::{
-    CompatSetup, settings::LiveSettings, setup::CompatDeps, shared::address::ListenerConfig,
-};
+use droppedneedle_compat::{CompatSetup, setup::CompatDeps};
 use droppedneedle_kernel::{
     config::AppConfig,
-    db::{
-        BOOT_WAIT, BackupService, DbConfig,
-        datalock::{DataLock, DataLockError},
-        error::DbError,
-        open_runtime,
-    },
-    events::EventHub,
-    http_client::{HttpClientError, HttpClientFactory},
-    ids::UuidGenerator,
-    jobs::{CancellationToken, Supervisor},
-    runtime_config::{
-        ConfigError, ConfigStore, Crypto, KeyOrigin, LegacyConfig,
-        crypto::{CryptoError, KEY_FILE_NAME},
-        ingest::mark_skip,
-        quota::QUOTA_FILE_NAME,
-        sections::MusicBrainzSettings,
-    },
+    db::{BOOT_WAIT, BackupService, datalock::DataLockError, error::DbError},
+    http_client::HttpClientError,
+    platform::Platform,
+    runtime_config::{crypto::CryptoError, quota::QUOTA_FILE_NAME},
 };
 use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_media::{
@@ -180,17 +167,14 @@ where
 }
 
 /// The media links a Plex or Jellyfin sign-in saves, written to the
-/// per-user connections table (the rows the remotes routes read) in `db`.
-pub fn sign_in_links(
-    db: droppedneedle_kernel::db::Db,
-    crypto: Arc<Crypto>,
-    config_store: &ConfigStore,
-) -> MediaLinks {
+/// per-user connections table (the rows the remotes routes read) in the
+/// platform's database.
+pub fn sign_in_links(platform: &Platform) -> MediaLinks {
     MediaLinks::new(Arc::new(SignInLinks::new(Arc::new(
         ConnectionResolver::new(
-            Arc::new(SqliteConnectionStore::new(db)),
-            Arc::new(CredentialCoder::new(crypto)),
-            Arc::new(ConfigServers::new(config_store)),
+            Arc::new(SqliteConnectionStore::new(platform.db.clone())),
+            Arc::new(CredentialCoder::new(platform.crypto.clone())),
+            Arc::new(ConfigServers::new(&platform.settings)),
         ),
     ))))
 }
@@ -218,91 +202,36 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
 /// `outbound` gives.
 pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, BootError> {
     let endpoints = outbound.catalog();
-    let http = HttpClientFactory::with_settings(&config.http)?;
-    // Held until shutdown, and taken before the database opens (so before
-    // the pre-upgrade backup and the migrations): the offline import and
-    // restore refuse to run while it is held, a running one keeps the
-    // server from starting, and the server lock refuses a second server.
-    let data_lock = DataLock::server(&config.library_db_path)?;
-    refuse_foreign_data_dir(&config).await?;
-    // The key comes before the database: a first start that stops early
-    // never leaves a database without its key, and a database whose key is
-    // gone was refused above rather than given a new one.
-    let config_dir = config.config_dir();
-    // A config.json found where no key is yet was not written by this
-    // server: record that it is never to be copied in before the key
-    // exists, so a start that fails before the settings open still skips it.
-    if !config_dir.join(KEY_FILE_NAME).exists() {
-        mark_skip(&config_dir)?;
-    }
-    let (crypto, key_origin) = Crypto::load_or_generate(&config_dir)?;
-    let crypto = Arc::new(crypto);
-    let runtime = open_runtime(
-        &DbConfig::new(&config.library_db_path).with_shutdown_grace(config.shutdown_grace),
-    )
-    .await?;
-    // The one database handle every area is given.
-    let db = runtime.db().clone();
-    // The one supervisor every background loop runs on, and its token the
-    // one stop. Starting it clears the last start's loop rows, so it comes
-    // before anything writes one.
-    let supervisor = wait_out_busy(
-        "loop supervisor",
-        |error: &DbError| matches!(error, DbError::Busy { .. }),
-        || {
-            Supervisor::start(
-                db.clone(),
-                Arc::new(droppedneedle_kernel::clock::SystemClock),
-                CancellationToken::new(),
-            )
-        },
-    )
-    .await?;
+    // The data lock, the key, the database, the supervisor, the settings
+    // and the one event hub: every bundle below publishes into it from the
+    // moment it is built, and the revision loops feed it after each commit.
+    let Opened {
+        platform,
+        runtime,
+        web,
+        data_lock,
+    } = open_platform(config).await?;
+    let p = &platform;
+    let (db, config_store, config, http) = (&p.db, &p.settings, &p.config, &p.http);
+    let (crypto, supervisor, events) = (&p.crypto, &p.supervisor, &p.events);
     // The jobs table areas enqueue through; its kinds' runners start with
     // the other loops.
-    let queues = jobs::QueueSetup::new(db.clone(), &config);
-    let web = prepare_web(&config).await?;
+    let queues = jobs::QueueSetup::new(p);
 
-    let clock = Arc::new(droppedneedle_kernel::clock::SystemClock);
-    let config_store = Arc::new(open_settings(&db, &config_dir, key_origin, clock.clone()).await?);
-    let wall: Arc<dyn droppedneedle_kernel::clock::Clock> = clock.clone();
-    key_check::verify(&db, &crypto, &wall, &config_dir, &config.library_db_path).await?;
-    let ids = Arc::new(UuidGenerator);
-    // One live event hub for the process. Bundles built below publish into
-    // it once the state attaches it; the revision loops feed it after
-    // each commit.
-    let events = EventHub::new();
     // The plugin host exists early so playback, acquisition and streaming
     // can hold it; no plugin starts until `PluginsSetup::build` loads it.
-    let plugin_host = droppedneedle_plugins::wiring::new_host(
-        config.plugins_dir(),
-        config_store.clone(),
-        supervisor.clone(),
-    );
-    let auth_bundle = ProdAuth::new(
-        &db,
-        crypto.clone(),
-        ids.clone(),
-        clock.clone(),
-        &config.cache_dir,
-    );
+    let plugin_host = droppedneedle_plugins::wiring::new_host(p);
     let auth = AuthSetup::build_with_upstreams(
-        auth_bundle,
-        config_store.clone(),
-        crypto.clone(),
-        &http,
-        ids.clone(),
-        clock,
-        &config.base_path,
+        p,
+        ProdAuth::new(p),
         &outbound.sign_in(),
         Arc::new(ConfiguredPlexServer::new(
             http.shared().clone(),
             config_store.live(),
             InstallIds::new(config_store.clone()),
         )),
-        sign_in_links(db.clone(), crypto.clone(), &config_store),
-    )
-    .with_trusted_proxies(config.trusted_proxies.clone());
+        sign_in_links(p),
+    );
 
     // Shared provider deps first: the reads enrichment pair paces through
     // these same limiters, so production holds one limiter set. The byte
@@ -319,10 +248,8 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         config_store.live(),
     );
     let mut reads = ReadsSetup::build(
-        &db,
+        p,
         auth.users.clone(),
-        ids.clone(),
-        &config_store,
         ReadsInputs {
             covers_dir: config.cache_dir.join("covers"),
             cover_cache_max_bytes: config.cover_cache_max_bytes,
@@ -343,9 +270,9 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .with_catalog(
         Catalog::new(
             Upstream::new(
-                &http,
+                http,
                 providers.clone(),
-                Arc::new(LiveCatalogSettings::new(&config_store)),
+                Arc::new(LiveCatalogSettings::new(config_store)),
                 auth.users.clone(),
                 endpoints.clone(),
             ),
@@ -358,13 +285,10 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // clients without a restart.
     let mb_source = outbound.musicbrainz_source(config_store.live());
     let library = LibrarySetup::build(
-        &http,
-        ids.clone(),
+        p,
         providers.clone(),
         mb_source.clone(),
-        &db,
         queues.queue().clone(),
-        &config_store,
         outbound.library(),
     )
     .map_err(stage("library setup"))?;
@@ -375,14 +299,9 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         library.root_source(),
     ));
     let (media, media_workers) = MediaSetup::build(
-        &db,
-        &config,
+        p,
         auth.users.clone(),
-        crypto.clone(),
-        &http,
-        ids.clone(),
         Some(library.root_source()),
-        &config_store,
         // Remote playlist imports land in the user's playlists.
         Arc::new(PlaylistImportSink::new(reads.collections.clone())),
         outbound.plex_tv.clone(),
@@ -395,24 +314,20 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         .engine
         .attach_plugins(plugin_host.clone(), http.direct_no_redirect().clone());
     let acquire = AcquireSetup::build(
-        droppedneedle_acquire::db::AcquireDb::new(db.clone()),
-        &config,
+        p,
         auth.users.clone(),
-        &http,
-        ids.clone(),
-        config_store.clone(),
         &mut reads.collections,
         &outbound.spotify(),
     )
     .map_err(stage("acquire setup"))?
     .with_plugins(plugin_host.clone())
     .with_release_poll(Arc::new(droppedneedle_acquire::search::live_release_poll(
-        &http,
+        http,
         providers.clone(),
         mb_source.clone(),
     )))
     .with_album_lookup(Arc::new(
-        droppedneedle_acquire::target::lookup::live_albums(&http, providers.clone(), mb_source),
+        droppedneedle_acquire::target::lookup::live_albums(http, providers.clone(), mb_source),
     ));
     // Finished downloads reach the library through its import seam.
     let acquire = match library.releases.clone() {
@@ -485,18 +400,12 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         "library recovery complete"
     );
     let compat = CompatSetup::build(CompatDeps::over_reads(
+        p,
         auth.users.clone(),
-        crypto.clone(),
         media.playback.clone(),
         media.stream.engine.clone(),
         library.clone(),
         &reads,
-        LiveSettings::from_config(&config_store),
-        ListenerConfig {
-            port: config.port,
-            trusted_proxies: config.trusted_proxies.clone(),
-            base_path: config.base_path.clone(),
-        },
     ));
     let admin = AdminSetup::new(
         auth.users.clone(),
@@ -522,17 +431,10 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         Ok(loaded) => tracing::info!(loaded, "quota overrides reloaded"),
         Err(error) => tracing::warn!(%error, "quota overrides failed to reload; defaults apply"),
     }
-    let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_db(
-        &db,
-        &http,
-        &config_store,
-        outbound.concerts(),
-    )
-    .with_events(Arc::new(events.clone()));
+    let concerts =
+        droppedneedle_catalog::concerts::ConcertsSetup::from_platform(p, outbound.concerts());
     // Your Weekly Mix: one builder behind the refresh route, the daily
     // loop and the scrobble-settings toggle.
-    let mix_events = droppedneedle_kernel::events::EventSink::default();
-    mix_events.attach(&events);
     if let Some(builder) = droppedneedle_acquire::requests::mix_sources::live_builder(
         &acquire.requests,
         providers.clone(),
@@ -540,7 +442,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         Arc::new(SqliteListenBrainzLinkStore::new(db.clone(), crypto.clone())),
         Arc::new(droppedneedle_plugins::scrobble::SqliteScrobblePrefsStore::new(db.clone())),
         reads.collections.stores.playlists.clone(),
-        mix_events,
+        events.clone(),
         &outbound.listenbrainz,
     ) && acquire.requests.mixer.set(builder).is_err()
     {
@@ -549,10 +451,10 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let mix_hooks = Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
         acquire.requests.mixer.clone(),
     ));
+    let scans = jobs::ScansEnded::default();
     let jobs = JobsSetup::build(
-        supervisor.clone(),
+        p,
         runtime.checkpoint().clone(),
-        config_store.clone(),
         MediaJobs {
             presence: media.playback.presence.clone(),
             resolver: Some(media.remotes.service.resolver().clone()),
@@ -560,6 +462,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             pool: Some(db.sqlx().clone()),
         },
         concerts.sweep(),
+        scans.clone(),
     )
     .with_queue(queues)
     .with_job(
@@ -567,7 +470,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         library.contrib_worker.handler(),
     )
     .with_mixer(mix_hooks.clone())
-    .with_precache_sources_from(&reads, &config_store)
+    .with_precache_sources_from(&reads, config_store)
     .with_discovery_demand(Arc::new(
         droppedneedle_catalog::reads::discover::demand::ContentDemand(
             reads.discover.content.clone(),
@@ -589,9 +492,9 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         ),
         library: config_store.live(),
         upstream: Upstream::new(
-            &http,
+            http,
             providers.clone(),
-            Arc::new(LiveCatalogSettings::new(&config_store)),
+            Arc::new(LiveCatalogSettings::new(config_store)),
             auth.users.clone(),
             endpoints,
         ),
@@ -610,7 +513,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // Completed scans refresh the library's images, as v2 did after a sync.
     if library
         .scan_completed
-        .set(jobs.precache_trigger().after_scan_hook())
+        .set(Arc::new(move || scans.bump()))
         .is_err()
     {
         tracing::warn!("scan completion hook was already set");
@@ -634,27 +537,20 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     {
         tracing::warn!("the settings effects loop was already running");
     }
-    let settings = SettingsSetup::build(
-        config_store.clone(),
-        effects,
-        ids.clone(),
-        http.shared().clone(),
-        config.timezone.clone(),
-        &outbound,
-    )
-    .with_section_prefs(
-        Arc::new(SqliteSectionPrefsStore { db: db.clone() }),
-        Arc::new(SqliteLinkStatus {
+    let settings = SettingsSetup::build(p, effects, &outbound)
+        .with_section_prefs(
+            Arc::new(SqliteSectionPrefsStore { db: db.clone() }),
+            Arc::new(SqliteLinkStatus {
+                pool: db.sqlx().clone(),
+                lastfm: auth.users.lastfm.clone(),
+            }),
+        )
+        .with_impact_buckets(Arc::new(SqliteImpactBuckets {
             pool: db.sqlx().clone(),
-            lastfm: auth.users.lastfm.clone(),
-        }),
-    )
-    .with_impact_buckets(Arc::new(SqliteImpactBuckets {
-        pool: db.sqlx().clone(),
-    }))
-    .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
-        pool: db.sqlx().clone(),
-    }));
+        }))
+        .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
+            pool: db.sqlx().clone(),
+        }));
     // Activation dry runs save the settings through the same service as
     // the settings page, so the two never save over each other.
     if library
@@ -665,12 +561,9 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         tracing::warn!("library management settings service was already attached");
     }
     let plugins = PluginsSetup::build(
+        p,
         plugin_host,
-        http.shared().clone(),
-        crypto,
         provider_cache,
-        supervisor.clone(),
-        db.clone(),
         outbound.plugin_hosts(),
         &outbound.listenbrainz,
     )
@@ -688,13 +581,13 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         .map_err(|error| stage("media workers")(error.to_string()))?;
 
     let grace = config.shutdown_grace;
-    // The state attaches the hub to every publishing bundle (presence,
-    // acquisition, library), so it is built before any loop starts: the
-    // first wanted sweep, scan or presence poll already reaches the hub.
+    // Every publishing bundle took the hub when it was built, so what the
+    // loops started above (plugin sync, settings effects, media drains)
+    // and the ones started below publish reaches open streams.
     let state = AppState::new(
-        ids,
-        http,
-        config,
+        p.ids.clone(),
+        http.clone(),
+        config.clone(),
         auth,
         reads,
         providers,
@@ -707,20 +600,20 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         jobs.clone(),
         plugins,
         concerts,
-    )
-    .with_events(events.clone());
+        events.clone(),
+    );
     state
         .acquire
-        .spawn_loops(&supervisor)
+        .spawn_loops(supervisor)
         .map_err(|error| stage("acquire loops")(error.to_string()))?;
     state
         .library
-        .start_loops(&supervisor)
+        .start_loops(supervisor)
         .map_err(|error| stage("library loops")(error.to_string()))?;
     // `activity.changed` and `downloads.changed` for every open stream.
-    droppedneedle_kernel::events::revisions::start(&supervisor, events.clone(), db.clone())
+    droppedneedle_kernel::events::revisions::start(supervisor, events.clone(), db.clone())
         .map_err(|error| stage("event loops")(error.to_string()))?;
-    droppedneedle_kernel::events::downloads::start(&supervisor, events.clone(), db.clone())
+    droppedneedle_kernel::events::downloads::start(supervisor, events.clone(), db.clone())
         .map_err(|error| stage("event loops")(error.to_string()))?;
     jobs.spawn_loops().map_err(stage("jobs loops"))?;
 
@@ -728,66 +621,14 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     Ok(Built {
         router,
         state,
-        background: Background::new(grace, supervisor, events, runtime, data_lock),
+        background: Background::new(
+            grace,
+            supervisor.clone(),
+            events.clone(),
+            runtime,
+            data_lock,
+        ),
     })
-}
-
-/// Open the settings, before anything reads or writes one: the store
-/// copies in a `config.json` this database has never seen (which refuses
-/// while any row exists). Then store the defaults that mint values once: a
-/// fresh install has no MusicBrainz section, and its default mints a source
-/// id, so it is stored once or every read reports a new source (and clients
-/// keyed on it refetch without end); the Plex and Jellyfin install ids
-/// likewise. Each step is safe to run again, so a busy database is waited
-/// out.
-async fn open_settings(
-    db: &droppedneedle_kernel::db::Db,
-    config_dir: &std::path::Path,
-    key_origin: KeyOrigin,
-    clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
-) -> Result<ConfigStore, BootError> {
-    let legacy = LegacyConfig::at(config_dir, key_origin == KeyOrigin::Minted);
-    let store = wait_out_busy("settings", ConfigError::is_busy, || async {
-        let store = ConfigStore::open(
-            db.clone(),
-            Crypto::load(config_dir).map_err(|error| ConfigError::Database(error.to_string()))?,
-            clock.clone(),
-            legacy.clone(),
-        )
-        .await?;
-        store.seed_default::<MusicBrainzSettings>().await?;
-        // A busy database is waited out; any other failure (an install id
-        // section that does not read) leaves the ids to their per-process
-        // fallback rather than blocking every start.
-        match InstallIds::new(Arc::new(store.clone())).ensure().await {
-            Err(error) if error.is_busy() => return Err(error),
-            Err(error) => {
-                tracing::warn!(%error, "cannot store the install ids; using the fallback");
-            }
-            Ok(()) => {}
-        }
-        Ok::<_, ConfigError>(store)
-    })
-    .await?;
-    Ok(store)
-}
-
-/// Refuse a v2 data directory, or one an upgrade left halfway, before the
-/// database is opened, backed up or migrated: migrating would run v3's
-/// schema over the v2 database. Refuse too a v3 database whose key file is
-/// missing, before a new key is minted. Runs under the data lock, so the
-/// upgrade tool cannot be moving files while this looks.
-async fn refuse_foreign_data_dir(config: &AppConfig) -> Result<(), BootError> {
-    let dirs = DataDirs::from_config(config);
-    tokio::task::spawn_blocking(move || {
-        check_bootable(&dirs).and_then(|()| refuse_lost_key(&dirs.config_dir, &dirs.db_path))
-    })
-    .await
-    .map_err(|error| BootError::Stage {
-        stage: "data directory check",
-        message: error.to_string(),
-    })?
-    .map_err(BootError::from)
 }
 
 /// Stamp the shipped web UI into the cache, off the async workers.

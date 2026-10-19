@@ -43,7 +43,7 @@ use super::requests::sqlite::WantedStore;
 use super::target::{SearchTarget, Targets};
 use super::worker::{DownloadWorker, Source};
 use droppedneedle_auth::Principal;
-use droppedneedle_kernel::events::{EventSink, SearchJobUpdated, UserNotice, new_event_id};
+use droppedneedle_kernel::events::{EventHub, SearchJobUpdated, UserNotice, new_event_id};
 
 /// How long one source may take to answer a manual search.
 const SOURCE_TIMEOUT: Duration = Duration::from_secs(150);
@@ -186,7 +186,7 @@ pub struct SearchJobs {
     targets: Arc<Targets>,
     quota: Arc<QuotaLedger>,
     wanted: WantedStore,
-    events: EventSink,
+    events: EventHub,
     /// Searches running in this process, to cancel them and to tell an
     /// interrupted job from a running one.
     running: Mutex<HashMap<String, tokio::task::AbortHandle>>,
@@ -205,7 +205,7 @@ impl SearchJobs {
         worker: Arc<DownloadWorker>,
         targets: Arc<Targets>,
         quota: Arc<QuotaLedger>,
-        events: EventSink,
+        events: EventHub,
     ) -> Self {
         let wanted = WantedStore::new(store.db().clone());
         Self {

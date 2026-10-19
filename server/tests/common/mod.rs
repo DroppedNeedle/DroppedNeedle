@@ -12,9 +12,11 @@ pub mod auth_fakes;
 pub mod compat;
 pub mod library;
 pub mod logs;
+pub mod platform;
 pub mod sources;
 
 pub use app::TestApp;
+pub use platform::TestPlatform;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

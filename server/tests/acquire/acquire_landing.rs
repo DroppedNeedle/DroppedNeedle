@@ -29,6 +29,7 @@ use droppedneedle_library::tags::save::{TagEdit, save_tags};
 use droppedneedle_library::wiring::LibrarySetup;
 use futures_util::future::BoxFuture;
 
+use crate::common::TestPlatform;
 use crate::common::auth::{AuthRig, test_principal, with_test_principal};
 use crate::common::library::TestSql as _;
 use crate::common::library::library_at;
@@ -175,9 +176,12 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
-    let acquire =
-        droppedneedle_acquire::AcquireSetup::for_tests(ids.clone(), &mut reads.collections)
-            .expect("acquire bundle");
+    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
+        ids.clone(),
+        &mut reads.collections,
+        droppedneedle_kernel::events::EventHub::new(),
+    )
+    .expect("acquire bundle");
     acquire
         .db
         .add_user("u-ada", "Ada", "user")
@@ -193,7 +197,11 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("config"),
     );
-    let (library, _) = library_at(acquire.db.db(), config);
+    let platform = TestPlatform::on(acquire.db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -270,6 +278,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
                     staging_root: acquire.staging_root.clone(),
                     ..WorkerConfig::default()
                 },
+                droppedneedle_kernel::events::EventHub::new(),
             )
             .with_landing(acquire.landing.clone())
             .with_settled(settled_hook(acquire.flows.clone())),
@@ -455,9 +464,12 @@ async fn held_files_import_as_upgrades_or_discard() {
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
-    let acquire =
-        droppedneedle_acquire::AcquireSetup::for_tests(ids.clone(), &mut reads.collections)
-            .expect("acquire bundle");
+    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
+        ids.clone(),
+        &mut reads.collections,
+        droppedneedle_kernel::events::EventHub::new(),
+    )
+    .expect("acquire bundle");
     acquire
         .db
         .add_user("u-ada", "Ada", "user")
@@ -473,7 +485,11 @@ async fn held_files_import_as_upgrades_or_discard() {
         ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("config"),
     );
-    let (library, _) = library_at(acquire.db.db(), config);
+    let platform = TestPlatform::on(acquire.db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -509,6 +525,7 @@ async fn held_files_import_as_upgrades_or_discard() {
                     staging_root: acquire.staging_root.clone(),
                     ..WorkerConfig::default()
                 },
+                droppedneedle_kernel::events::EventHub::new(),
             )
             .with_landing(acquire.landing.clone()),
         )
@@ -645,8 +662,12 @@ async fn bare_acquire() -> (droppedneedle_acquire::AcquireSetup, PathBuf, AuthRi
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
-    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(ids, &mut reads.collections)
-        .expect("acquire bundle");
+    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
+        ids,
+        &mut reads.collections,
+        droppedneedle_kernel::events::EventHub::new(),
+    )
+    .expect("acquire bundle");
     acquire
         .db
         .add_user("u-ada", "Ada", "user")
@@ -958,9 +979,12 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
-    let acquire =
-        droppedneedle_acquire::AcquireSetup::for_tests(ids.clone(), &mut reads.collections)
-            .expect("acquire bundle");
+    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
+        ids.clone(),
+        &mut reads.collections,
+        droppedneedle_kernel::events::EventHub::new(),
+    )
+    .expect("acquire bundle");
     let dir = acquire
         .db
         .path()
@@ -971,7 +995,11 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
         ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("config"),
     );
-    let (library, _) = library_at(acquire.db.db(), config);
+    let platform = TestPlatform::on(acquire.db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -1062,6 +1090,7 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
                 orphan_roots: vec![("usenet".to_owned(), complete.clone())],
                 ..WorkerConfig::default()
             },
+            droppedneedle_kernel::events::EventHub::new(),
         )
         .with_landing(acquire.landing.clone()),
     );
@@ -1258,7 +1287,11 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
         ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("config"),
     );
-    let (library, _) = library_at(acquire.db.db(), config);
+    let platform = TestPlatform::on(acquire.db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -1580,6 +1613,7 @@ impl JoinRig {
                     retry,
                     ..WorkerConfig::default()
                 },
+                droppedneedle_kernel::events::EventHub::new(),
             )
             .with_landing(self.acquire.landing.clone()),
         )

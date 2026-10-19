@@ -17,7 +17,6 @@ use droppedneedle_compat::adapters::library::CompatLibrary;
 use droppedneedle_compat::jellyfin::builders::LIBRARY_INTERNAL_ID;
 use droppedneedle_compat::jellyfin::seams::IdMap as _;
 use droppedneedle_kernel::db::{DbRuntime, Lane};
-use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::runtime_config::Crypto;
 use serde_json::{Value, json};
 
@@ -451,13 +450,13 @@ impl Rig {
             })
             .await
             .unwrap();
-        let auth = AuthRig::on(&runtime);
-        let ids: Arc<dyn droppedneedle_kernel::ids::IdGenerator> = Arc::new(UuidGenerator);
+        let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
+            .build()
+            .await;
+        let auth = AuthRig::on(&platform);
         let reads = ReadsSetup::build(
-            runtime.db(),
+            &platform,
             auth.deps.clone(),
-            ids,
-            &crate::common::config_store(&dir),
             crate::common::reads_inputs(&dir),
             None,
         )

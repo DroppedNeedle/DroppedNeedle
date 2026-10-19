@@ -22,8 +22,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use droppedneedle_catalog::concerts::ConcertsSweep;
-use droppedneedle_kernel::config::AppConfig;
-use droppedneedle_kernel::db::{CheckpointService, Db};
+use droppedneedle_kernel::db::CheckpointService;
 use droppedneedle_kernel::jobs::cache_sync::CacheSyncStatus;
 use droppedneedle_kernel::jobs::checkpoint::{self, CheckpointRunner};
 use droppedneedle_kernel::jobs::discovery_demand::{self, DemandTick, NoDemand};
@@ -38,6 +37,7 @@ use droppedneedle_kernel::jobs::queue::{self, Handlers, JobHandler, JobQueue, Ki
 use droppedneedle_kernel::jobs::{
     AlreadyRunning, BoxFuture, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
 };
+use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::secret_sections::{AdvancedSettings, EventsSettings};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 use droppedneedle_media::remotes::playlist_sync::{
@@ -90,6 +90,28 @@ pub const PRECACHE_CANCEL_GRACE: Duration = Duration::from_secs(30);
 /// folds a burst of scans (one per root, or a watcher storm) into one run.
 pub const SCAN_PRECACHE_DEBOUNCE: Duration = Duration::from_secs(120);
 
+/// Library scans that ended having changed something, counted. The
+/// library bumps the count, as v2 refreshed after every library sync; the
+/// [`precache::AFTER_SCAN_JOB`] loop waits on it, and each bump restarts
+/// its [`SCAN_PRECACHE_DEBOUNCE`] wait before a run with no user (so no
+/// discovery phase, like v2's automatic syncs). Safe to bump from any
+/// thread.
+#[derive(Clone)]
+pub struct ScansEnded(Arc<watch::Sender<u64>>);
+
+impl Default for ScansEnded {
+    fn default() -> Self {
+        Self(Arc::new(watch::channel(0).0))
+    }
+}
+
+impl ScansEnded {
+    /// Count one more ended scan.
+    pub fn bump(&self) {
+        self.0.send_modify(|count| *count = count.wrapping_add(1));
+    }
+}
+
 /// The production precache trigger: one supervised run per call. Watchdog
 /// limits re-read the advanced settings on every run; an unreadable section
 /// falls back to the shipped timeouts.
@@ -99,7 +121,7 @@ pub struct PrecacheTrigger {
     advanced: Live<AdvancedSettings>,
     status: CacheSyncStatus,
     sources: Option<Arc<dyn PrecacheSources>>,
-    scans: Arc<watch::Sender<u64>>,
+    scans: ScansEnded,
 }
 
 impl PrecacheTrigger {
@@ -122,21 +144,6 @@ impl PrecacheTrigger {
         let settler = work.settler();
         precache::spawn_run(&self.supervisor, work, self.limits(), move |outcome| {
             settler.settle(outcome);
-        })
-    }
-
-    /// The hook completed scans call, as v2 refreshed after every library
-    /// sync: each call restarts the [`SCAN_PRECACHE_DEBOUNCE`] wait in the
-    /// [`precache::AFTER_SCAN_JOB`] loop, which then starts a run with no
-    /// user (so no discovery phase, like v2's automatic syncs). Safe to call
-    /// from any thread.
-    pub fn after_scan_hook(&self) -> Arc<dyn Fn() + Send + Sync> {
-        let scans = Arc::clone(&self.scans);
-        let wired = self.sources.is_some();
-        Arc::new(move || {
-            if wired {
-                scans.send_modify(|count| *count = count.wrapping_add(1));
-            }
         })
     }
 
@@ -184,11 +191,11 @@ impl PrecacheTrigger {
     pub fn spawn_after_scan(&self) -> Result<(), AlreadyRunning> {
         self.supervisor.on_wakeup(
             precache::AFTER_SCAN_JOB,
-            self.scans.subscribe(),
+            self.scans.0.subscribe(),
             Schedule::new(Duration::MAX),
             AfterScanTick {
                 trigger: self.clone(),
-                folded: *self.scans.borrow(),
+                folded: *self.scans.0.borrow(),
             },
         )
     }
@@ -204,7 +211,7 @@ struct AfterScanTick {
 
 impl Tick for AfterScanTick {
     async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
-        let mut later = self.trigger.scans.subscribe();
+        let mut later = self.trigger.scans.0.subscribe();
         if *later.borrow_and_update() == self.folded {
             return Ok(Next::Continue);
         }
@@ -262,7 +269,7 @@ pub struct JobsSetup {
     demand: Arc<dyn DemandTick>,
     cache_sync: CacheSyncStatus,
     precache_sources: Option<Arc<dyn PrecacheSources>>,
-    scans: Arc<watch::Sender<u64>>,
+    scans: ScansEnded,
     queues: Option<QueueSetup>,
     handlers: Handlers,
     /// Kinds registered through [`JobsSetup::with_job`].
@@ -280,11 +287,12 @@ pub struct QueueSetup {
 }
 
 impl QueueSetup {
-    /// The jobs table on `db`, on the system clock.
-    #[cfg_attr(not(any(test, feature = "test-support")), allow(unused_variables))]
-    pub fn new(db: Db, config: &AppConfig) -> Self {
+    /// The jobs table on the platform's database and clock. Under test
+    /// hooks it runs on a manual clock instead.
+    pub fn new(platform: &Platform) -> Self {
+        let db = platform.db.clone();
         #[cfg(any(test, feature = "test-support"))]
-        if config.test_hooks {
+        if platform.config.test_hooks {
             use droppedneedle_kernel::clock::{Clock, ManualClock, SystemClock};
             let clock = ManualClock::at(SystemClock.now_ms());
             return Self {
@@ -293,7 +301,7 @@ impl QueueSetup {
             };
         }
         Self {
-            queue: JobQueue::new(db, Arc::new(droppedneedle_kernel::clock::SystemClock)),
+            queue: JobQueue::new(db, platform.clock.clone()),
             #[cfg(any(test, feature = "test-support"))]
             scripted: None,
         }
@@ -306,19 +314,21 @@ impl QueueSetup {
 }
 
 impl JobsSetup {
-    /// Bind the backends over a started supervisor: live checkpoint passes,
-    /// settings reads over the shared store, the media feeds (presence,
-    /// playlist export), and the concerts sweep (`None` only on states
-    /// without concerts).
+    /// Bind the backends over the platform's supervisor, settings and
+    /// event hub: live checkpoint passes, the media feeds (presence,
+    /// playlist export), the concerts sweep (`None` only on states without
+    /// concerts) and the count of ended scans the after-scan refresh waits
+    /// on.
     pub fn build(
-        supervisor: Supervisor,
+        platform: &Platform,
         checkpoint: CheckpointService,
-        config: Arc<ConfigStore>,
         media: MediaJobs,
         watcher: Option<ConcertsSweep>,
+        scans: ScansEnded,
     ) -> Self {
+        let config = platform.settings.clone();
         Self {
-            supervisor,
+            supervisor: platform.supervisor.clone(),
             checkpoint: CheckpointInput {
                 service: checkpoint,
             },
@@ -334,9 +344,9 @@ impl JobsSetup {
             config,
             mixer: Arc::new(UnwiredMixer),
             demand: Arc::new(NoDemand),
-            cache_sync: CacheSyncStatus::default(),
+            cache_sync: CacheSyncStatus::new(platform.events.clone()),
             precache_sources: None,
-            scans: Arc::new(watch::channel(0).0),
+            scans,
             queues: None,
             handlers: Handlers::default(),
             kinds: 0,
@@ -399,11 +409,6 @@ impl JobsSetup {
         }
     }
 
-    /// The precache status; its sink attaches to the event hub.
-    pub fn cache_sync(&self) -> &CacheSyncStatus {
-        &self.cache_sync
-    }
-
     /// The personal-mix builder the daily refresh loop drives.
     pub fn with_mixer(mut self, mixer: Arc<dyn PersonalMixer>) -> Self {
         self.mixer = mixer;
@@ -431,7 +436,7 @@ impl JobsSetup {
             advanced: self.config.live(),
             status: self.cache_sync.clone(),
             sources: self.precache_sources.clone(),
-            scans: Arc::clone(&self.scans),
+            scans: self.scans.clone(),
         }
     }
 

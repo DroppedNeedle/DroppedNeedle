@@ -39,11 +39,12 @@ pub struct MediaJobs {
 }
 
 impl MediaJobs {
-    /// Inputs for test states: a fresh registry, no servers, no database.
+    /// Inputs for test states: a fresh registry on `events`, no servers,
+    /// no database.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests() -> Self {
+    pub fn for_tests(events: droppedneedle_kernel::events::EventHub) -> Self {
         Self {
-            presence: PresenceRegistry::new(),
+            presence: PresenceRegistry::new(events),
             resolver: None,
             http: reqwest::Client::new(),
             pool: None,

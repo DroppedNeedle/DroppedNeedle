@@ -345,7 +345,11 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
         )
         .expect("settings open"),
     );
-    let (library, _) = library_at(&handle, config);
+    let platform = crate::common::TestPlatform::on(&handle, &config_dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
     drain_scans(&library).await;
 
     // The contribution v2 was verifying is verified again: v3's first

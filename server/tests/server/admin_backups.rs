@@ -36,7 +36,10 @@ impl Rig {
         let scratch = crate::common::ScratchDir::new(&format!("admin-backups-{tag}"));
         let dir = scratch.to_path_buf();
         let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
-        let rig = AuthRig::on(&runtime);
+        let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
+            .build()
+            .await;
+        let rig = AuthRig::on(&platform);
         let admin_user = rig.seed_user("brenda", Role::Admin).await;
         let quota = Arc::new(
             droppedneedle_acquire::requests::quota::QuotaLedger::unlimited(

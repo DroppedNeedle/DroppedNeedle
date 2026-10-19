@@ -60,9 +60,9 @@ pub struct AppState {
 
 impl AppState {
     /// Wire the state from its parts. Callers pass the production generator
-    /// or a fake; nothing here reaches globals. One argument per bundle.
-    /// The state gets its own event hub, attached to every bundle that
-    /// publishes; boot swaps in the hub it built with [`Self::with_events`].
+    /// or a fake; nothing here reaches globals. One argument per bundle,
+    /// and the platform's event hub, which every publishing bundle already
+    /// holds.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         ids: Arc<dyn IdGenerator>,
@@ -80,6 +80,7 @@ impl AppState {
         jobs: JobsSetup,
         plugins: PluginsSetup,
         concerts: ConcertsSetup,
+        events: EventHub,
     ) -> Self {
         Self {
             ids,
@@ -97,24 +98,7 @@ impl AppState {
             jobs,
             plugins,
             concerts,
-            events: EventHub::new(),
+            events,
         }
-        .attach_events()
-    }
-
-    /// Use `hub` for the stream route and every publishing bundle. Boot
-    /// builds the hub first so the revision poller (and any bundle built
-    /// before the state) shares it.
-    pub fn with_events(mut self, hub: EventHub) -> Self {
-        self.events = hub;
-        self.attach_events()
-    }
-
-    /// Point every publishing bundle at this state's hub.
-    fn attach_events(self) -> Self {
-        self.media.playback.presence.attach_events(&self.events);
-        self.acquire.attach_events(&self.events);
-        self.jobs.cache_sync().sink().attach(&self.events);
-        self
     }
 }

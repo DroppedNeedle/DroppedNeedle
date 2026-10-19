@@ -578,7 +578,7 @@ pub struct DownloadWorker {
     /// Spawned landings, awaited on shutdown.
     landing_tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     /// Live progress for the web UI (`download_progress`).
-    events: droppedneedle_kernel::events::EventSink,
+    events: droppedneedle_kernel::events::EventHub,
     /// Wakes the loop early after a queue action (retry, next source).
     wake: tokio::sync::watch::Sender<u64>,
     /// Album targets for the look before an automatic grab; without them
@@ -594,12 +594,21 @@ pub type SettledHook =
     Arc<dyn Fn(TaskRow, TaskStatus) -> futures_util::future::BoxFuture<'static, ()> + Send + Sync>;
 
 impl DownloadWorker {
-    /// Wire the worker over the shared journal and the saved settings.
-    pub fn new(journal: Arc<Journal>, settings: super::wiring::WorkerSettings) -> Self {
-        Self::over(journal, Inputs::Live(settings))
+    /// Wire the worker over the shared journal and the saved settings,
+    /// sending live progress to `events`.
+    pub fn new(
+        journal: Arc<Journal>,
+        settings: super::wiring::WorkerSettings,
+        events: droppedneedle_kernel::events::EventHub,
+    ) -> Self {
+        Self::over(journal, Inputs::Live(settings), events)
     }
 
-    fn over(journal: Arc<Journal>, inputs: Inputs) -> Self {
+    fn over(
+        journal: Arc<Journal>,
+        inputs: Inputs,
+        events: droppedneedle_kernel::events::EventHub,
+    ) -> Self {
         let ownership = JournalOwnership::new(journal.clone());
         Self {
             journal,
@@ -614,7 +623,7 @@ impl DownloadWorker {
             settled: None,
             in_flight: Arc::new(Mutex::new(HashSet::new())),
             landing_tasks: Mutex::new(Vec::new()),
-            events: droppedneedle_kernel::events::EventSink::default(),
+            events,
             wake: tokio::sync::watch::Sender::new(0),
             targets: None,
             reviews: review::Reviews::default(),
@@ -625,12 +634,6 @@ impl DownloadWorker {
     /// first automatic attempt (search review).
     pub fn with_targets(mut self, targets: Arc<Targets>) -> Self {
         self.targets = Some(targets);
-        self
-    }
-
-    /// Send live progress through this sink.
-    pub fn with_events(mut self, events: droppedneedle_kernel::events::EventSink) -> Self {
-        self.events = events;
         self
     }
 
@@ -702,13 +705,19 @@ impl DownloadWorker {
     }
 
     /// Worker over a fixed source list and fixed tuning.
-    pub fn fixed(journal: Arc<Journal>, sources: Vec<Source>, config: WorkerConfig) -> Self {
+    pub fn fixed(
+        journal: Arc<Journal>,
+        sources: Vec<Source>,
+        config: WorkerConfig,
+        events: droppedneedle_kernel::events::EventHub,
+    ) -> Self {
         Self::over(
             journal,
             Inputs::Fixed {
                 sources: Arc::new(sources),
                 config,
             },
+            events,
         )
     }
 

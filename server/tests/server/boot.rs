@@ -15,12 +15,11 @@ use std::{
 
 use axum::{body::Body, routing::get};
 use droppedneedle::bootstrap;
-use droppedneedle_acquire::{AcquireSetup, db::AcquireDb, wiring::RecoveryError};
+use droppedneedle_acquire::{AcquireSetup, wiring::RecoveryError};
 use droppedneedle_catalog::reads::ReadsSetup;
 use droppedneedle_kernel::{
     config::AppConfig,
     db::{DbConfig, Lane, open_runtime},
-    http_client::HttpClientFactory,
     ids::{IdGenerator, UuidGenerator},
     runtime_config::{
         ConfigStore, Crypto, Section,
@@ -260,16 +259,17 @@ async fn acquire_recovery_waits_out_a_busy_reader_and_stops_on_a_real_failure() 
     let mut db = DbConfig::new(&config.library_db_path).with_read_wait(Duration::from_millis(100));
     db.readers = 1;
     let runtime = open_runtime(&db).await.unwrap();
-    let auth = AuthRig::on(&runtime);
+    let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
+        .config(config.clone())
+        .settings(Arc::new(stored_settings(&config)))
+        .build()
+        .await;
+    let auth = AuthRig::on(&platform);
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let mut reads = ReadsSetup::for_tests(ids.clone()).unwrap();
+    let mut reads = ReadsSetup::for_tests(ids).unwrap();
     let acquire = AcquireSetup::build(
-        AcquireDb::new(runtime.db().clone()),
-        &config,
+        &platform,
         auth.deps.clone(),
-        &HttpClientFactory::new().unwrap(),
-        ids,
-        Arc::new(stored_settings(&config)),
         &mut reads.collections,
         &closed_outbound().spotify(),
     )

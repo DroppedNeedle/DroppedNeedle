@@ -164,9 +164,12 @@ async fn bundles() -> (
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
-    let acquire =
-        droppedneedle_acquire::AcquireSetup::for_tests(ids.clone(), &mut reads.collections)
-            .expect("acquire bundle");
+    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
+        ids.clone(),
+        &mut reads.collections,
+        droppedneedle_kernel::events::EventHub::new(),
+    )
+    .expect("acquire bundle");
     for (id, name) in [("u-curator", "Cora"), ("u-asker", "Asa")] {
         acquire.db.add_user(id, name, "user").await.expect("user");
     }
@@ -175,7 +178,11 @@ async fn bundles() -> (
         ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
             .expect("config"),
     );
-    let (library, _) = library_at(acquire.db.db(), config);
+    let platform = crate::common::TestPlatform::on(acquire.db.db(), &dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
     let music = dir.join("music");
     std::fs::create_dir_all(&music).expect("music root");
     library
@@ -621,17 +628,16 @@ async fn a_cut_off_upload_survives_a_sweep_that_cannot_read_its_jobs() {
     let runtime = droppedneedle_kernel::db::open_runtime(&db)
         .await
         .expect("runtime opens");
-    let auth = AuthRig::on(&runtime);
+    let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
+        .config(config.clone())
+        .build()
+        .await;
+    let auth = AuthRig::on(&platform);
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let mut reads =
-        droppedneedle_catalog::reads::ReadsSetup::for_tests(ids.clone()).expect("reads bundle");
+    let mut reads = droppedneedle_catalog::reads::ReadsSetup::for_tests(ids).expect("reads bundle");
     let acquire = droppedneedle_acquire::AcquireSetup::build(
-        droppedneedle_acquire::db::AcquireDb::new(runtime.db().clone()),
-        &config,
+        &platform,
         auth.deps.clone(),
-        &droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http"),
-        ids,
-        crate::common::config_store(&dir),
         &mut reads.collections,
         &crate::common::closed_outbound().spotify(),
     )

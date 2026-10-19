@@ -985,9 +985,14 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
             .expect("database opens");
     let auth_db = AuthDb::new(runtime.db());
     let hasher = Argon2idHasher::new();
-    let rig = AuthRig::on(&runtime);
-    rig.clock
-        .set(droppedneedle_auth::session::store::now_unix());
+    // The rig's settings live apart from the imported ones, which are
+    // sealed with the server's own key.
+    let rig_settings = crate::common::ScratchDir::new("cli-rig-settings");
+    let platform = crate::common::TestPlatform::on(runtime.db(), &rig_settings)
+        .settings(crate::common::config_store(&rig_settings))
+        .build()
+        .await;
+    let rig = AuthRig::on(&platform);
     let deps = rig.deps.clone();
     let alice = deps
         .users

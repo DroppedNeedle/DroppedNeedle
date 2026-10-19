@@ -27,7 +27,7 @@ use droppedneedle_acquire::target::lookup::{AlbumRelease, AlbumTrack, FixedAlbum
 use droppedneedle_acquire::worker::{DownloadWorker, Source, WorkerConfig};
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::{Principal, Role};
-use droppedneedle_kernel::events::{EventHub, EventSink};
+use droppedneedle_kernel::events::EventHub;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use serde_json::{Value, json};
 
@@ -115,6 +115,7 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
         },
     );
     let source = SlskdSource::new(Arc::new(repo), journal.clone()).with_targets(targets.clone());
+    let events = EventHub::new();
     let mut worker = DownloadWorker::fixed(
         journal.clone(),
         vec![Source::Slskd(Arc::new(source))],
@@ -122,20 +123,18 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
             staging_root: staging.to_path_buf(),
             ..WorkerConfig::default()
         },
+        events.clone(),
     );
     if review {
         worker = worker.with_targets(targets.clone());
     }
     let worker = Arc::new(worker);
-    let events = EventHub::new();
-    let sink = EventSink::default();
-    sink.attach(&events);
     let jobs = Arc::new(SearchJobs::new(
         JobStore::new(db.clone()),
         worker.clone(),
         targets,
         Arc::new(QuotaLedger::unlimited(db.clone())),
-        sink,
+        events.clone(),
     ));
     Rig {
         journal,

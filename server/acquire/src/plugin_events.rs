@@ -50,12 +50,12 @@ pub fn download_event(
 /// them, and user notices go to the live event stream.
 pub struct FlowTicks {
     plugins: PluginSlot,
-    events: droppedneedle_kernel::events::EventSink,
+    events: droppedneedle_kernel::events::EventHub,
 }
 
 impl FlowTicks {
     /// Tick sink over the plugin slot and the event hub handle.
-    pub fn new(plugins: PluginSlot, events: droppedneedle_kernel::events::EventSink) -> Self {
+    pub fn new(plugins: PluginSlot, events: droppedneedle_kernel::events::EventHub) -> Self {
         Self { plugins, events }
     }
 }

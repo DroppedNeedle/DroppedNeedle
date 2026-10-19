@@ -23,6 +23,7 @@ use crate::settings::services::{PolicyImpactBuckets, SettingsService};
 use crate::settings::verify::{LiveProbes, VerifyProbes};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::mount::{Routes, routes};
+use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::management::settings::service::LibraryManagementService;
@@ -52,22 +53,15 @@ pub struct SettingsSetup {
 }
 
 impl SettingsSetup {
-    /// Build over the shared store, the wired fan-out, the id mint,
-    /// the outbound HTTP client, and the deployment timezone name.
-    pub fn build(
-        store: Arc<ConfigStore>,
-        effects: Effects,
-        ids: Arc<dyn IdGenerator>,
-        http: reqwest::Client,
-        timezone: Option<String>,
-        outbound: &Outbound,
-    ) -> Self {
+    /// Build over the platform's settings, ids, shared HTTP client and
+    /// deployment timezone, with the wired fan-out in `effects`.
+    pub fn build(platform: &Platform, effects: Effects, outbound: &Outbound) -> Self {
         Self::assemble(
-            store,
+            platform.settings.clone(),
             effects,
-            ids,
-            Arc::new(LiveProbes::new(http)),
-            timezone,
+            platform.ids.clone(),
+            Arc::new(LiveProbes::new(platform.http.shared().clone())),
+            platform.config.timezone.clone(),
             outbound.clone(),
         )
     }

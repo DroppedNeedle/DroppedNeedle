@@ -1596,14 +1596,14 @@ async fn bare_library(tag: &str) -> (Scratch, LibrarySetup, PathBuf) {
         .expect("scratch db opens");
     droppedneedle_kernel::schema::apply_migrations_blocking(&connection).expect("migrations apply");
     drop(connection);
-    let library = open_library(&scratch);
+    let library = open_library(&scratch).await;
     let music = scratch.join("music");
     (scratch, library, music)
 }
 
 /// A library bundle over the database and settings in `scratch`, as a
 /// restart would build it.
-fn open_library(scratch: &Scratch) -> LibrarySetup {
+async fn open_library(scratch: &Scratch) -> LibrarySetup {
     let config = Arc::new(
         ConfigStore::scratch(
             scratch,
@@ -1611,12 +1611,13 @@ fn open_library(scratch: &Scratch) -> LibrarySetup {
         )
         .expect("config opens"),
     );
-    library_asking(
-        &droppedneedle_kernel::db::Db::open_for_tests(&scratch.join("app.db"))
-            .expect("database opens"),
-        config,
-        scratch.identify.clone(),
-    )
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&scratch.join("app.db"))
+        .expect("database opens");
+    let platform = crate::common::TestPlatform::on(&db, scratch)
+        .settings(config)
+        .build()
+        .await;
+    library_asking(&platform, scratch.identify.clone())
 }
 
 /// Add `music` as the only root and scan it.
@@ -2114,7 +2115,7 @@ async fn journal_on_a_removed_root_waits() {
         .expect("journal seed");
     drop(first);
 
-    let library = open_library(&scratch);
+    let library = open_library(&scratch).await;
     let recovery = library.run_recovery().await;
 
     assert_eq!(recovery.publish_recoveries.len(), 1);
@@ -5056,7 +5057,11 @@ async fn a_busy_database_leaves_a_management_job_runnable() {
         )
         .expect("config opens"),
     );
-    let library = library_asking(runtime.db(), settings_store, scratch.identify.clone());
+    let platform = crate::common::TestPlatform::on(runtime.db(), &scratch)
+        .settings(settings_store)
+        .build()
+        .await;
+    let library = library_asking(&platform, scratch.identify.clone());
     let music = scratch.join("music");
     plant(&music, "incoming/busy.flac", "management_full.flac");
     add_music_root(&library, &music).await;
@@ -8759,7 +8764,7 @@ async fn handing_every_album_back_takes_one_step_each() {
     assert_eq!((waiting.total, waiting.handing_back), (0, 3));
 
     drop(library);
-    let library = open_library(&scratch);
+    let library = open_library(&scratch).await;
     let management = Management::new(&library);
     let mut settle = Settle::default();
     for left in [2, 1, 0] {

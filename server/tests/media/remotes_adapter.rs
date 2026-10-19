@@ -1126,7 +1126,7 @@ async fn presence_poll_merges_a_remote_session() {
                 .with(SourceName::Plex, server(&plex.base_url, "", PLEX_TOKEN, "")),
         ),
     ));
-    let registry = PresenceRegistry::new();
+    let registry = PresenceRegistry::new(droppedneedle_kernel::events::EventHub::new());
     let media = MediaJobs {
         presence: registry.clone(),
         resolver: Some(resolver),

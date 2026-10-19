@@ -35,12 +35,10 @@ use droppedneedle_catalog::reads::catalog::{
     library::LocalCatalog,
     upstream::{CatalogSettings, LiveCatalogSettings, Upstream},
 };
-use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::config::DEFAULT_PORT;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, open_runtime};
-use droppedneedle_kernel::http_client::HttpClientFactory;
-use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
+use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 use droppedneedle_kernel::runtime_config::{
     ConfigStore, Crypto, Secret, secret_sections::WrappedSettings,
@@ -63,14 +61,12 @@ pub(crate) struct E2e {
     /// the adapters.
     #[allow(dead_code)]
     runtime: DbRuntime,
+    /// What every bundle below is built from; its settings are `store`.
+    platform: Platform,
     bundle: ProdAuth,
     pub(crate) store: Arc<ConfigStore>,
     upstreams: Upstreams,
     crypto: Arc<Crypto>,
-    http: HttpClientFactory,
-    ids: Arc<UuidGenerator>,
-    clock: Arc<SystemClock>,
-    supervisor: droppedneedle_kernel::jobs::Supervisor,
     db_path: std::path::PathBuf,
     _scratch: crate::common::ScratchDir,
 }
@@ -87,11 +83,13 @@ impl E2e {
         let runtime = open_runtime(&tune(DbConfig::new(&dir.join("app.db"))))
             .await
             .expect("scratch runtime opens");
-        let crypto = Arc::new(Crypto::from_key_bytes(&[7u8; 32]).expect("test key"));
-        let store = Arc::new(
-            ConfigStore::scratch(&dir, Crypto::from_key_bytes(&[7u8; 32]).expect("test key"))
-                .expect("scratch config opens"),
-        );
+        let mut config = AppConfig::new(DEFAULT_PORT);
+        config.root_app_dir = dir.clone();
+        let platform = crate::common::TestPlatform::on(runtime.db(), &dir)
+            .config(config)
+            .build()
+            .await;
+        let store = Arc::clone(&platform.settings);
         // Breach screening off via the real knob: setup and user creation
         // must never dial the network in this suite.
         let mut security: SecuritySettings = store.get().expect("security section reads");
@@ -102,28 +100,9 @@ impl E2e {
                 api_key: Secret::new(TEST_WRAPPED_KEY),
             })
             .expect("wrapped key saves");
-
-        let ids = Arc::new(UuidGenerator);
-        let clock = Arc::new(SystemClock);
-        let bundle = ProdAuth::new(
-            runtime.db(),
-            Arc::clone(&crypto),
-            Arc::clone(&ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&clock) as Arc<dyn droppedneedle_kernel::clock::Clock>,
-            &dir.join("avatars"),
-        );
-        let http = HttpClientFactory::new().expect("http factory builds");
-        let db_path = dir.join("app.db");
-        let supervisor = droppedneedle_kernel::jobs::Supervisor::start(
-            runtime.db().clone(),
-            Arc::new(droppedneedle_kernel::clock::SystemClock),
-            droppedneedle_kernel::jobs::CancellationToken::new(),
-        )
-        .await
-        .expect("loop supervisor starts");
         Self {
             runtime,
-            bundle,
+            bundle: ProdAuth::new(&platform),
             store,
             // Nothing listens on the discard port: no test reaches the real
             // plex.tv, Last.fm or breach check unless it points these at
@@ -133,12 +112,9 @@ impl E2e {
                 lastfm: "http://127.0.0.1:9/".to_owned(),
                 pwned_passwords: "http://127.0.0.1:9/range/".to_owned(),
             },
-            crypto,
-            http,
-            ids,
-            clock,
-            supervisor,
-            db_path,
+            crypto: Arc::clone(&platform.crypto),
+            platform,
+            db_path: dir.join("app.db"),
             _scratch: scratch,
         }
     }
@@ -155,29 +131,21 @@ impl E2e {
     }
 
     fn auth_setup(&self) -> AuthSetup {
+        let p = &self.platform;
         AuthSetup::build_with_upstreams(
+            p,
             self.bundle.clone(),
-            Arc::clone(&self.store),
-            Arc::clone(&self.crypto),
-            &self.http,
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&self.clock) as Arc<dyn droppedneedle_kernel::clock::Clock>,
-            "",
             &self.upstreams,
             Arc::new(
                 droppedneedle_media::remotes::plex::ConfiguredPlexServer::new(
-                    self.http.shared().clone(),
+                    p.http.shared().clone(),
                     self.store.live(),
                     droppedneedle_auth::federated::settings::InstallIds::new(Arc::clone(
                         &self.store,
                     )),
                 ),
             ),
-            droppedneedle::bootstrap::sign_in_links(
-                self.runtime.db().clone(),
-                Arc::clone(&self.crypto),
-                &self.store,
-            ),
+            droppedneedle::bootstrap::sign_in_links(p),
         )
     }
 
@@ -190,53 +158,38 @@ impl E2e {
     /// A fresh application state over the same database, for tests that
     /// also reach a bundle (the event hub) behind the router.
     pub(crate) fn state(&self) -> AppState {
+        let p = &self.platform;
         let auth = self.auth_setup();
         let reads = ReadsSetup::build(
-            self.runtime.db(),
+            p,
             auth.users.clone(),
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            &self.store,
             droppedneedle_catalog::reads::ReadsInputs {
                 // Unpaced: every provider sits on the discard port, so
                 // pacing would only add whole seconds of waiting to rows
                 // that are bound to answer "provider down" anyway.
                 providers: Arc::new(Providers::unpaced()),
-                ..crate::common::reads_inputs(self.db_path.parent().expect("db dir"))
+                ..crate::common::reads_inputs(&p.config.root_app_dir)
             },
             None,
         )
         .with_collections(
-            droppedneedle_catalog::reads::collections::db::CollectionsDb::new(
-                self.runtime.db().clone(),
-            ),
+            droppedneedle_catalog::reads::collections::db::CollectionsDb::new(p.db.clone()),
         )
         .with_catalog(Catalog::new(
             Upstream::new(
-                &self.http,
+                &p.http,
                 Arc::new(Providers::unpaced()),
                 Arc::new(LiveCatalogSettings::new(&self.store)) as Arc<dyn CatalogSettings>,
                 auth.users.clone(),
                 droppedneedle::bootstrap::Outbound::live().catalog(),
             ),
-            LocalCatalog::new(self.runtime.db().sqlx().clone()),
+            LocalCatalog::new(p.db.sqlx().clone()),
         ));
-        let mut app_config = AppConfig::new(DEFAULT_PORT);
-        app_config.root_app_dir = self
-            .db_path
-            .parent()
-            .map(|parent| parent.to_path_buf())
-            .unwrap_or_else(std::env::temp_dir);
-        let (library, _) =
-            crate::common::library::library_at(self.runtime.db(), Arc::clone(&self.store));
+        let (library, _) = crate::common::library::library_at(p);
         let (media, _worker) = droppedneedle_media::MediaSetup::build(
-            self.runtime.db(),
-            &app_config,
+            p,
             auth.users.clone(),
-            Arc::clone(&self.crypto),
-            &self.http,
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             Some(library.root_source()),
-            &self.store,
             Arc::new(
                 droppedneedle_catalog::reads::collections::remote_import::PlaylistImportSink::new(
                     reads.collections.clone(),
@@ -248,51 +201,35 @@ impl E2e {
         .expect("media bundle builds");
         let mut reads = reads;
         let acquire = droppedneedle_acquire::AcquireSetup::build(
-            droppedneedle_acquire::db::AcquireDb::new(self.runtime.db().clone()),
-            &app_config,
+            p,
             auth.users.clone(),
-            &self.http,
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&self.store),
             &mut reads.collections,
             &droppedneedle::bootstrap::Outbound::live().spotify(),
         )
         .expect("acquire bundle builds");
         let compat = droppedneedle_compat::CompatSetup::build(
             droppedneedle_compat::setup::CompatDeps::over_reads(
+                p,
                 auth.users.clone(),
-                Arc::clone(&self.crypto),
                 media.playback.clone(),
                 media.stream.engine.clone(),
                 library.clone(),
                 &reads,
-                droppedneedle_compat::settings::LiveSettings::from_config(&self.store),
-                droppedneedle_compat::shared::address::ListenerConfig {
-                    port: app_config.port,
-                    trusted_proxies: app_config.trusted_proxies.clone(),
-                    base_path: app_config.base_path.clone(),
-                },
             ),
         );
         let providers = Arc::new(Providers::unpaced());
-        let backup_dir = self
-            .db_path
-            .parent()
-            .map(|parent| parent.join("backups"))
-            .unwrap_or_else(std::env::temp_dir);
+        let backup_dir = p.config.root_app_dir.join("backups");
         let jobs = droppedneedle::bootstrap::jobs::JobsSetup::build(
-            self.supervisor.clone(),
+            p,
             self.runtime.checkpoint().clone(),
-            Arc::clone(&self.store),
-            droppedneedle_media::remotes::presence_feed::MediaJobs::for_tests(),
+            droppedneedle_media::remotes::presence_feed::MediaJobs::for_tests(p.events.clone()),
             None,
+            droppedneedle::bootstrap::jobs::ScansEnded::default(),
         );
         // Concerts over the scratch database; the sources point at the
         // discard port so no row can reach a real provider.
-        let concerts = droppedneedle_catalog::concerts::ConcertsSetup::new(
-            self.runtime.db().clone(),
-            self.http.shared().clone(),
-            self.store.live(),
+        let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_platform(
+            p,
             droppedneedle_catalog::concerts::Endpoints {
                 ticketmaster: "http://127.0.0.1:9".to_owned(),
                 skiddle: "http://127.0.0.1:9".to_owned(),
@@ -305,9 +242,7 @@ impl E2e {
             Arc::new(InMemoryProviderCache::new()),
             providers.clone(),
         )
-        .with_db(droppedneedle::admin::AdminDb::new(
-            self.runtime.db().clone(),
-        ))
+        .with_db(droppedneedle::admin::AdminDb::new(p.db.clone()))
         .with_backups(droppedneedle_kernel::db::BackupService::new(
             &self.db_path,
             &backup_dir,
@@ -317,25 +252,23 @@ impl E2e {
         let plugins =
             droppedneedle_plugins::wiring::PluginsSetup::for_tests(jobs.supervisor().clone())
                 .expect("test plugins bundle builds");
-        let settings = droppedneedle::settings::wiring::SettingsSetup::for_tests(Arc::clone(
-            &self.ids,
-        )
-            as Arc<dyn IdGenerator>)
-        .expect("test settings bundle builds")
-        .with_impact_buckets(Arc::new(
-            droppedneedle::settings::services::SqliteImpactBuckets {
-                pool: self.runtime.db().sqlx().clone(),
-            },
-        ))
-        .with_library_catalog(Arc::new(
-            droppedneedle::settings::library_catalog::SqliteLibraryPolicyCatalog {
-                pool: self.runtime.db().sqlx().clone(),
-            },
-        ));
+        let settings =
+            droppedneedle::settings::wiring::SettingsSetup::for_tests(Arc::clone(&p.ids))
+                .expect("test settings bundle builds")
+                .with_impact_buckets(Arc::new(
+                    droppedneedle::settings::services::SqliteImpactBuckets {
+                        pool: p.db.sqlx().clone(),
+                    },
+                ))
+                .with_library_catalog(Arc::new(
+                    droppedneedle::settings::library_catalog::SqliteLibraryPolicyCatalog {
+                        pool: p.db.sqlx().clone(),
+                    },
+                ));
         AppState::new(
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            self.http.clone(),
-            app_config,
+            Arc::clone(&p.ids),
+            p.http.clone(),
+            p.config.clone(),
             auth,
             reads,
             providers,
@@ -348,6 +281,7 @@ impl E2e {
             jobs,
             plugins,
             concerts,
+            p.events.clone(),
         )
     }
 

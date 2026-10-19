@@ -207,8 +207,8 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
             skiddle: format!("{base}/sk"),
             geocoding: "http://127.0.0.1:9".to_owned(),
         },
-    )
-    .with_events(recorder.clone());
+        recorder.clone(),
+    );
     let app = with_test_principal(
         droppedneedle_catalog::concerts::handlers::routes()
             .with_state(setup.service().expect("wired concerts"))

@@ -26,14 +26,6 @@ pub trait ConcertsEvents: Send + Sync + 'static {
     fn concerts_new(&self, user_id: &str, event: &ConcertsNew);
 }
 
-/// Drops every event. The default when no event hub is attached.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoEventStream;
-
-impl ConcertsEvents for NoEventStream {
-    fn concerts_new(&self, _user_id: &str, _event: &ConcertsNew) {}
-}
-
 impl ConcertsEvents for droppedneedle_kernel::events::EventHub {
     fn concerts_new(&self, user_id: &str, event: &ConcertsNew) {
         self.notify(

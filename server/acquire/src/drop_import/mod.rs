@@ -44,7 +44,7 @@ use crate::landing::{quality, specs};
 use crate::requests::models::RequestKind;
 use crate::requests::sqlite::{RequestStore, WantedStore};
 use droppedneedle_kernel::events::{
-    DropImportUpdated, EventSink, RequestImported, UserNotice, new_event_id,
+    DropImportUpdated, EventHub, RequestImported, UserNotice, new_event_id,
 };
 
 /// Most files one upload may carry (v2 `_MAX_FILES_PER_DROP`).
@@ -106,7 +106,7 @@ pub struct DropImports {
     store: DropStore,
     library: LibrarySlot,
     root: PathBuf,
-    events: EventSink,
+    events: EventHub,
     ticks: Arc<dyn TickSink>,
     ledger: RequestStore,
     watches: WantedStore,
@@ -119,7 +119,7 @@ impl DropImports {
         store: DropStore,
         library: LibrarySlot,
         root: PathBuf,
-        events: EventSink,
+        events: EventHub,
         ticks: Arc<dyn TickSink>,
         ledger: RequestStore,
         watches: WantedStore,

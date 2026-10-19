@@ -46,13 +46,11 @@ use crate::stream::transcode::{
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::config::AppConfig;
-use droppedneedle_kernel::db::Db;
-use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_kernel::mount::Routes;
-use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::platform::Platform;
+use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::{AudioFormat, ConnectApps};
-use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 use droppedneedle_plugins::scrobble::SqliteListenBrainzLinkStore;
 
 /// Production stream engine: gateway over stored-connection remote reads
@@ -103,31 +101,32 @@ impl MediaWorkers {
 }
 
 impl MediaSetup {
-    /// Build the production bundle. `db` backs the connection and folder
-    /// rows, and the playback stores open their own connections on its
-    /// file; `config` hands out live handles on the admin's server
-    /// settings, the download access and the transcode policy (read per
-    /// stream); `crypto` seals linked credentials;
-    /// `library_roots` plus the catalog in `db` turn local stream keys
-    /// and download ids (track ids) into files under the live library
-    /// roots (`None` keeps the constructor fallback for unwired builds and
-    /// serves no downloads); `imports` is where remote playlist imports
-    /// land; `plex_tv` and `scrobbles` are the plex.tv root and the
-    /// scrobble forwarding addresses.
-    #[allow(clippy::too_many_arguments)]
+    /// Build the production bundle over `platform`. Its database backs the
+    /// connection and folder rows, and the playback stores open their own
+    /// connections on its file; its settings hand out live handles on the
+    /// admin's server settings, the download access and the transcode
+    /// policy (read per stream); its data key seals linked credentials;
+    /// its event hub carries the now-playing snapshots.
+    /// `library_roots` plus the catalog turn local stream keys and
+    /// download ids (track ids) into files under the live library roots
+    /// (`None` keeps the constructor fallback for unwired builds and serves
+    /// no downloads); `imports` is where remote playlist imports land;
+    /// `plex_tv` and `scrobbles` are the plex.tv root and the scrobble
+    /// forwarding addresses.
     pub fn build(
-        db: &Db,
-        app_config: &AppConfig,
+        platform: &Platform,
         users: UsersDeps,
-        crypto: Arc<Crypto>,
-        http_factory: &droppedneedle_kernel::http_client::HttpClientFactory,
-        ids: Arc<dyn IdGenerator>,
         library_roots: Option<droppedneedle_library::scan::coordinator::SharedResolver>,
-        config: &ConfigStore,
         imports: Arc<dyn ImportSink>,
         plex_tv: String,
         scrobbles: crate::playback::forwarding::Endpoints,
     ) -> Result<(Self, MediaWorkers), String> {
+        let (db, app_config, config) = (&platform.db, &platform.config, &*platform.settings);
+        let (http_factory, ids, crypto) = (
+            &platform.http,
+            platform.ids.clone(),
+            platform.crypto.clone(),
+        );
         let http = http_factory.shared().clone();
         crate::stream::plugin_url::sweep_stale_spools();
         let library = library_roots.map(|roots| LibraryFiles::new(db.sqlx().clone(), roots));
@@ -191,7 +190,7 @@ impl MediaSetup {
             prefs: playback_db.clone(),
             names: playback_db,
             sessions: SessionStore::new(),
-            presence: PresenceRegistry::new(),
+            presence: PresenceRegistry::new(platform.events.clone()),
             dedup: ScrobbleDedup::new(),
             mixed: MixedDedup::new(),
             clock: Arc::new(SystemClock),

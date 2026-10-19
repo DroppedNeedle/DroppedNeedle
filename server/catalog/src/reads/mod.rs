@@ -52,24 +52,23 @@ pub struct ReadsSetup {
 }
 
 impl ReadsSetup {
-    /// Build the production bundle. `db` serves library and search reads
-    /// (through its sqlx pool) and discover's writes;
+    /// Build the production bundle over `platform`: its database serves
+    /// library and search reads (through its sqlx pool) and discover's
+    /// writes, and its settings hand out the live handles the reads hold
+    /// on their sections;
     /// `users` gives wrapped its display names and discover its batch
     /// callers and Last.fm links;
-    /// `settings` hands out the live handles the reads hold on their
-    /// settings sections;
     /// `inputs` carries what cover art, the version check, wrapped and
     /// discover read from the composition root; `enrichment`
     /// carries the live provider pair (`None` keeps the
     /// unconfigured ports: bare enrichment echoes and empty lyrics).
     pub fn build(
-        db: &droppedneedle_kernel::db::Db,
+        platform: &droppedneedle_kernel::platform::Platform,
         users: UsersDeps,
-        ids: Arc<dyn IdGenerator>,
-        settings: &droppedneedle_kernel::runtime_config::ConfigStore,
         inputs: ReadsInputs,
         enrichment: Option<enrichment::live::ProductionEnrichment>,
     ) -> Self {
+        let (db, settings, ids) = (&platform.db, &*platform.settings, platform.ids.clone());
         let pool = db.sqlx();
         let discover_requests = discover::adapters::batches::RequestsSlot::default();
         let discover_inputs = discover::adapters::DiscoverInputs {

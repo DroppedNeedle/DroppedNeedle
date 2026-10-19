@@ -32,7 +32,6 @@ use super::scan::watcher::{DirtyScopes, WatcherState, WorkWakeups};
 use super::service::ServiceError;
 use super::settings::LibrarySettings;
 use droppedneedle_kernel::ids::IdGenerator;
-use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_kernel::runtime_config::{Live, Plain};
 
@@ -179,16 +178,12 @@ impl LibrarySetup {
     /// release documents it fetches; AcoustID runs only for albums whose
     /// tags are weak, with the key read from the settings per job. The
     /// publisher and its journal readers still open their own connections
-    /// on `db`'s file.
-    #[allow(clippy::too_many_arguments)]
+    /// on the platform database's file.
     pub fn build(
-        http: &droppedneedle_kernel::http_client::HttpClientFactory,
-        ids: Arc<dyn IdGenerator>,
+        platform: &droppedneedle_kernel::platform::Platform,
         providers: Arc<droppedneedle_providers::Providers>,
         mb_source: droppedneedle_providers::musicbrainz::LiveSource,
-        db: &droppedneedle_kernel::db::Db,
         queue: droppedneedle_kernel::jobs::queue::JobQueue,
-        config: &ConfigStore,
         endpoints: Endpoints,
     ) -> Result<Self, String> {
         use droppedneedle_providers::RequestPriority;
@@ -198,6 +193,7 @@ impl LibrarySetup {
             MbPacing, MusicBrainzClient, ReqwestMbTransport,
         };
 
+        let (http, ids, db) = (&platform.http, platform.ids.clone(), &platform.db);
         // Identification is background work on the source settings name,
         // read per request; user page loads go ahead of it at the limiter.
         // Both clients count their failures toward system health, so an
@@ -263,8 +259,14 @@ impl LibrarySetup {
                 ))
             }),
         };
-        let mut setup =
-            Self::assemble(ids, make, contrib, db, queue, LibrarySettings::new(config))?;
+        let mut setup = Self::assemble(
+            ids,
+            make,
+            contrib,
+            db,
+            queue,
+            LibrarySettings::new(&platform.settings),
+        )?;
         setup.releases = Some(imports);
         setup.http = Some(http.shared().clone());
         setup.fingerprints = Some(Arc::new(

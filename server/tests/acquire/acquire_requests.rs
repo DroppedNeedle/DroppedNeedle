@@ -13,7 +13,7 @@ use droppedneedle_acquire::requests::mix::{
 };
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 use droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore;
-use droppedneedle_kernel::events::EventSink;
+use droppedneedle_kernel::events::EventHub;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live};
 use droppedneedle_plugins::scrobble::{
@@ -719,7 +719,7 @@ async fn personal_mix_grant_build_and_refresh() {
         prefs.clone(),
         playlists.clone(),
         state.clone(),
-        EventSink::default(),
+        EventHub::new(),
     ));
     assert!(state.mixer.set(builder.clone()).is_ok());
     let hooks = MixGrantHooks::new(state.mixer.clone());

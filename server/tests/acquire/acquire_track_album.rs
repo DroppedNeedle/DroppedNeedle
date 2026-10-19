@@ -199,6 +199,7 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
             staging_root: staging.to_path_buf(),
             ..WorkerConfig::default()
         },
+        droppedneedle_kernel::events::EventHub::new(),
     ));
     worker.run_once(1).await;
 

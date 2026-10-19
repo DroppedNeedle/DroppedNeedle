@@ -10,9 +10,7 @@ use std::sync::{Arc, Mutex};
 use droppedneedle::bootstrap::Port;
 use droppedneedle_kernel::db::writer::Lane;
 use droppedneedle_kernel::db::{Db, DbError};
-use droppedneedle_kernel::http_client::HttpClientFactory;
-use droppedneedle_kernel::ids::UuidGenerator;
-use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::platform::Platform;
 use droppedneedle_library::contrib::ContribProviders;
 use droppedneedle_library::contrib::scripted::{ScriptedDiscogs, ScriptedMusicBrainz};
 use droppedneedle_library::identify::models::{LocalAlbumFacts, RecallResult};
@@ -155,37 +153,30 @@ impl ScriptedContrib {
     }
 }
 
-/// A library bundle built the way the app builds it, over `db` and the
-/// settings in `config`, with identification answering from scripted
+/// A library bundle built the way the app builds it, over the platform's
+/// database and settings, with identification answering from scripted
 /// providers. Returns the bundle and those providers.
-pub fn library_at(db: &Db, config: Arc<ConfigStore>) -> (LibrarySetup, Arc<FakeProviders>) {
+pub fn library_at(platform: &Platform) -> (LibrarySetup, Arc<FakeProviders>) {
     let scripted = Arc::new(FakeProviders::default());
-    let library = library_asking(db, config, scripted.clone());
+    let library = library_asking(platform, scripted.clone());
     (library, scripted)
 }
 
 /// As [`library_at`], with identification asking `identify`. Contributions
 /// answer from scripts with nothing scripted, and every other outside
 /// address is closed.
-pub fn library_asking(
-    db: &Db,
-    config: Arc<ConfigStore>,
-    identify: Arc<dyn IdentifyProviders>,
-) -> LibrarySetup {
+pub fn library_asking(platform: &Platform, identify: Arc<dyn IdentifyProviders>) -> LibrarySetup {
     let mut outbound = super::closed_outbound();
     outbound.identify_providers = Port::given(identify);
     outbound.contribution_providers = Port::given(ScriptedContrib::default().providers());
     LibrarySetup::build(
-        &HttpClientFactory::new().expect("http factory builds"),
-        Arc::new(UuidGenerator),
+        platform,
         Arc::new(Providers::unpaced()),
-        outbound.musicbrainz_source(config.live()),
-        db,
+        outbound.musicbrainz_source(platform.settings.live()),
         droppedneedle_kernel::jobs::queue::JobQueue::new(
-            db.clone(),
+            platform.db.clone(),
             Arc::new(droppedneedle_kernel::clock::SystemClock),
         ),
-        &config,
         outbound.library(),
     )
     .expect("library bundle builds")

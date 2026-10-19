@@ -31,14 +31,12 @@ use super::users::UsersDeps;
 use super::users::lastfm_http::LastFmAuthHttp;
 use super::users::stores::{HibpPolicy, LastFmKeys, LastFmSwitch, SecurityPolicy};
 use axum::extract::FromRef;
-use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::config::TrustedProxies;
-use droppedneedle_kernel::http_client::HttpClientFactory;
-use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::mount::{Routes, routes};
+use droppedneedle_kernel::platform::Platform;
+use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
-use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Live};
 
 /// One stored exchange code: owning user, sealed token, expiry.
 type StoredExchange = (String, String, SystemTime);
@@ -241,32 +239,28 @@ fn warn_on_public_http_oidc(sign_in: &SignInSettings) {
 }
 
 impl AuthSetup {
-    /// Build the bundle. `http` is the outbound client factory: the
-    /// sign-in clients use its shared client, OIDC its no-redirect one;
-    /// `ids` mints row ids; `clock` drives management-side expiry;
-    /// `upstreams` gives the plex.tv, Last.fm and breach-check addresses;
-    /// `plex_server` reads the configured Plex server's machine id for the
-    /// membership gate; `links` saves the media link a Plex or Jellyfin
-    /// sign-in hands back.
-    #[allow(clippy::too_many_arguments)]
+    /// Build the bundle over `platform`: the sign-in clients use its
+    /// shared HTTP client, OIDC its no-redirect one, and every forwarded
+    /// header is read through its trusted proxies. `upstreams` gives the
+    /// plex.tv, Last.fm and breach-check addresses; `plex_server` reads
+    /// the configured Plex server's machine id for the membership gate;
+    /// `links` saves the media link a Plex or Jellyfin sign-in hands back.
     pub fn build_with_upstreams(
+        platform: &Platform,
         auth: ProdAuth,
-        config_store: Arc<ConfigStore>,
-        crypto: Arc<Crypto>,
-        http: &HttpClientFactory,
-        ids: Arc<dyn IdGenerator>,
-        clock: Arc<dyn Clock>,
-        base_path: &str,
         upstreams: &Upstreams,
         plex_server: Arc<dyn PlexServerIdentity>,
         links: MediaLinks,
     ) -> Self {
         use super::users::hibp::{HibpScreen, PwnedPasswordsHttp};
 
-        let sign_in = SignInSettings::new(&config_store);
+        let config_store = &platform.settings;
+        let base_path = platform.config.base_path.as_str();
+        let (clock, ids, crypto) = (&platform.clock, &platform.ids, &platform.crypto);
+        let sign_in = SignInSettings::new(config_store);
         warn_on_public_http_oidc(&sign_in);
-        let no_redirect = http.no_redirect().clone();
-        let http = http.shared().clone();
+        let no_redirect = platform.http.no_redirect().clone();
+        let http = platform.http.shared().clone();
         let plex_tv = PlexTv::with_base(
             http.clone(),
             config_store.clone(),
@@ -352,6 +346,7 @@ impl AuthSetup {
             security: config_store.live(),
             base_path: base_path.to_owned(),
         }
+        .with_trusted_proxies(platform.config.trusted_proxies.clone())
     }
 
     /// Trust the given reverse proxies everywhere auth reads forwarded
@@ -359,7 +354,7 @@ impl AuthSetup {
     /// flag, and the client address the limiter keys on
     /// (`TRUSTED_PROXY_IPS`).
     #[must_use]
-    pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
+    fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
         let limits = Arc::new(RateLimiter::new().with_trusted_proxies(trusted.clone()));
         self.session_auth = self
             .session_auth

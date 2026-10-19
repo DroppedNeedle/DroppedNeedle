@@ -122,12 +122,13 @@ impl Lib {
     async fn open(providers: Arc<dyn IdentifyProviders>) -> Self {
         let scratch = ScratchDir::new("identify-shutdown");
         migrated_db(&scratch.join("app.db"));
-        let library = library_asking(
-            &droppedneedle_kernel::db::Db::open_for_tests(&scratch.join("app.db"))
-                .expect("database opens"),
-            config_store(&scratch),
-            providers,
-        );
+        let db = droppedneedle_kernel::db::Db::open_for_tests(&scratch.join("app.db"))
+            .expect("database opens");
+        let platform = crate::common::TestPlatform::on(&db, &scratch)
+            .settings(config_store(&scratch))
+            .build()
+            .await;
+        let library = library_asking(&platform, providers);
         Self {
             library,
             _scratch: scratch,

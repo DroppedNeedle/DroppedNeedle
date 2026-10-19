@@ -141,7 +141,12 @@ async fn full_scan_throughput() {
         checkpoint::default_schedule(),
     )
     .expect("checkpoint loop starts");
-    let (library, _) = library_at(runtime.db(), config_store(&scratch));
+    let platform = crate::common::TestPlatform::on(runtime.db(), &scratch)
+        .settings(config_store(&scratch))
+        .supervisor(supervisor.clone())
+        .build()
+        .await;
+    let (library, _) = library_at(&platform);
     library
         .add_root(
             Some("music".to_owned()),

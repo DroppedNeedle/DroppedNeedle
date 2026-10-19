@@ -64,7 +64,7 @@ fn rig_with_sinks(sinks: FakeSinks) -> Rig {
         prefs: prefs.clone(),
         names: Arc::new(FakeNames::default()),
         sessions: SessionStore::new(),
-        presence: PresenceRegistry::new(),
+        presence: PresenceRegistry::new(droppedneedle_kernel::events::EventHub::new()),
         dedup: ScrobbleDedup::new(),
         mixed: MixedDedup::new(),
         clock: Arc::new(clock.clone()),

@@ -14,21 +14,20 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::events::{CacheSyncProgress, Event, EventSink};
+use crate::events::{CacheSyncProgress, Event, EventHub};
 
 /// Least time between two item-progress frames (v2 broadcast throttle).
 pub const BROADCAST_EVERY: Duration = Duration::from_millis(300);
 
 /// Shared precache status. Cheap to clone; clones share everything.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct CacheSyncStatus {
     inner: Arc<Inner>,
 }
 
-#[derive(Default)]
 struct Inner {
     state: Mutex<State>,
-    sink: EventSink,
+    events: EventHub,
 }
 
 #[derive(Default)]
@@ -47,10 +46,14 @@ impl std::fmt::Debug for CacheSyncStatus {
 }
 
 impl CacheSyncStatus {
-    /// The sink frames go out on; the server's `AppState::with_events` attaches
-    /// it to the hub.
-    pub fn sink(&self) -> &EventSink {
-        &self.inner.sink
+    /// An idle status that publishes its frames on `events`.
+    pub fn new(events: EventHub) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                state: Mutex::new(State::default()),
+                events,
+            }),
+        }
     }
 
     /// The current status.
@@ -177,7 +180,7 @@ impl CacheSyncStatus {
     }
 
     fn publish(&self, progress: CacheSyncProgress) {
-        self.inner.sink.publish(Event::CacheSync(progress));
+        self.inner.events.publish(Event::CacheSync(progress));
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {

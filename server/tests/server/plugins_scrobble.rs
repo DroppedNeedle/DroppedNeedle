@@ -415,7 +415,7 @@ async fn saved_visibility_reaches_the_live_presence_feed() {
     use droppedneedle_media::playback::services::{PresenceRegistry, PresenceUpdate};
     use droppedneedle_plugins::scrobble::update_prefs;
 
-    let registry = PresenceRegistry::new();
+    let registry = PresenceRegistry::new(droppedneedle_kernel::events::EventHub::new());
     let deps = rig().deps.with_visibility_hook(Arc::new(registry.clone()));
     registry.update(
         PresenceUpdate {

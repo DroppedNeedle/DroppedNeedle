@@ -135,18 +135,6 @@ impl AdminSetup {
         self.covers = Some(covers);
         self
     }
-
-    /// Test bundle: always-present handles only, backends unwired. Suites
-    /// that need a database attach it with the `with_*` builders.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(
-        users: UsersDeps,
-        quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
-        cache: Arc<InMemoryProviderCache>,
-        providers: Arc<Providers>,
-    ) -> Self {
-        Self::new(users, quota, cache, providers)
-    }
 }
 
 /// The admin routes and the system health read. Each handler also takes

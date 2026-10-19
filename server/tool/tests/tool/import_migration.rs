@@ -294,7 +294,11 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
         )
         .expect("settings open"),
     );
-    let (library, scripted) = library_at(&handle, config);
+    let platform = crate::common::TestPlatform::on(&handle, &config_dir)
+        .settings(config)
+        .build()
+        .await;
+    let (library, scripted) = library_at(&platform);
     let facts = library
         .identify_store
         .album_facts(V2_ALBUM_ID)

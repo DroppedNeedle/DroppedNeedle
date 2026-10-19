@@ -31,6 +31,7 @@ use crate::shared::address::ListenerConfig;
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::ReadsSetup;
+use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_media::MediaEngine;
@@ -71,28 +72,31 @@ pub struct CompatDeps {
 
 impl CompatDeps {
     /// Deps over the native reads bundle, so compat shares its catalog and
-    /// collections.
-    #[allow(clippy::too_many_arguments)]
+    /// collections; the data key, the live settings and this server's port
+    /// and proxies come from `platform`.
     pub fn over_reads(
+        platform: &Platform,
         users: UsersDeps,
-        crypto: Arc<Crypto>,
         playback: PlaybackDeps,
         engine: Arc<MediaEngine>,
         scan: LibrarySetup,
         reads: &ReadsSetup,
-        settings: LiveSettings,
-        listener: ListenerConfig,
     ) -> Self {
+        let config = &platform.config;
         Self {
             users,
-            crypto,
+            crypto: platform.crypto.clone(),
             playback,
             engine,
             scan,
             library: CompatLibrary::from_reads(reads),
             queues: CompatQueues::new(reads.collections.db.clone()),
-            settings,
-            listener,
+            settings: LiveSettings::from_config(&platform.settings),
+            listener: ListenerConfig {
+                port: config.port,
+                trusted_proxies: config.trusted_proxies.clone(),
+                base_path: config.base_path.clone(),
+            },
         }
     }
 }
@@ -162,87 +166,6 @@ impl CompatSetup {
             router,
             templates,
         }
-    }
-
-    /// Minimal bundle for unit-style app tests: real seam types, an unused
-    /// engine over an empty root, both protocols off.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(
-        users: UsersDeps,
-        scan: LibrarySetup,
-        reads: &ReadsSetup,
-    ) -> Result<Self, String> {
-        use std::path::PathBuf;
-
-        use crate::jellyfin::seams::JellyfinSettings;
-        use crate::subsonic::Settings;
-        use droppedneedle_kernel::clock::SystemClock;
-        use droppedneedle_media::playback::fakes::{
-            FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeSinks,
-        };
-        use droppedneedle_media::playback::reports::ReportQueue;
-        use droppedneedle_media::playback::services::{
-            MixedDedup, PresenceRegistry, ScrobbleDedup, SessionStore,
-        };
-        use droppedneedle_media::remotes::connections::{CredentialCoder, MemoryConnectionStore};
-        use droppedneedle_media::remotes::reader::RemotesRemoteReader;
-        use droppedneedle_media::stream::gateway::Gateway;
-        use droppedneedle_media::stream::transcode::TranscodeSettings;
-        use droppedneedle_media::stream::transcode::{
-            FfmpegTranscoder, LocalTranscodeGate, StdFfmpegSpawner,
-        };
-
-        let crypto = Arc::new(
-            Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| format!("test key: {error}"))?,
-        );
-        let http = droppedneedle_kernel::http_client::HttpClientFactory::new()
-            .map_err(|error| format!("test compat http: {error}"))?
-            .shared()
-            .clone();
-        let connections: Arc<MemoryConnectionStore> = Arc::new(MemoryConnectionStore::new());
-        let reader = RemotesRemoteReader::new(
-            http,
-            connections,
-            Arc::new(CredentialCoder::new(crypto.clone())),
-        );
-        let engine = Arc::new(Gateway::new(
-            PathBuf::from("unmounted-compat-test-music"),
-            reader,
-            FfmpegTranscoder::new(
-                StdFfmpegSpawner::with_path(PathBuf::from("ffmpeg")),
-                Arc::new(LocalTranscodeGate::new()),
-            ),
-            TranscodeSettings::default(),
-            false,
-        ));
-        let playback = PlaybackDeps {
-            catalog: Arc::new(FakeCatalog::with_tracks(Vec::new())),
-            sinks: Arc::new(FakeSinks::unlinked()),
-            remotes: Arc::new(ReportQueue::detached()),
-            history: Arc::new(FakeHistory::default()),
-            prefs: Arc::new(FakePrefs::default()),
-            names: Arc::new(FakeNames::default()),
-            sessions: SessionStore::new(),
-            presence: PresenceRegistry::new(),
-            dedup: ScrobbleDedup::new(),
-            mixed: MixedDedup::new(),
-            clock: Arc::new(SystemClock),
-            events: std::sync::Arc::new(droppedneedle_media::playback::ports::NoPlayEvents),
-        };
-        Ok(Self::build(CompatDeps::over_reads(
-            users,
-            crypto,
-            playback,
-            engine,
-            scan,
-            reads,
-            LiveSettings::fixed(Settings::default(), JellyfinSettings::default()),
-            ListenerConfig {
-                port: droppedneedle_kernel::config::DEFAULT_PORT,
-                trusted_proxies: droppedneedle_kernel::config::TrustedProxies::default(),
-                base_path: String::new(),
-            },
-        )))
     }
 
     /// Enable one or both protocols with fixed settings (wiring tests;

@@ -27,13 +27,12 @@ use droppedneedle_auth::users::stores::UserStore as _;
 use droppedneedle_auth::wiring::AuthSetup;
 use droppedneedle_kernel::clock::{Clock, ManualClock};
 use droppedneedle_kernel::db::DbRuntime;
-use droppedneedle_kernel::http_client::HttpClientFactory;
-use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
+use droppedneedle_kernel::platform::Platform;
+use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
-use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 
-use super::{ScratchDir, closed_outbound, config_store, scratch_runtime};
+use super::{ScratchDir, TestPlatform, closed_outbound, scratch_runtime};
 
 /// The rig's clock at build: 2024-01-01T00:00:00Z.
 pub const TEST_NOW: i64 = 1_704_067_200;
@@ -56,32 +55,41 @@ pub struct AuthRig {
     pub auth: ProdAuth,
     /// The clock behind `deps` and the session list.
     pub clock: Arc<ManualClock>,
-    /// The settings `deps` read live.
+    /// The settings `deps` read live: the platform's.
     pub config: Arc<ConfigStore>,
+    /// What the rig was built from, for the test's other bundles.
+    pub platform: Platform,
     gate: SessionAuth<SqliteSessionStore>,
     runtime: Option<DbRuntime>,
-    _scratch: ScratchDir,
+    _scratch: Option<ScratchDir>,
 }
 
 impl AuthRig {
-    /// A rig on its own copy of the migrated database.
+    /// A rig on its own copy of the migrated database, whose platform runs
+    /// on the rig's clock.
     pub async fn new(tag: &str) -> Self {
         let scratch = ScratchDir::new(&format!("auth-{tag}"));
         let runtime = scratch_runtime(&scratch.join("auth.db")).await;
-        let mut rig = Self::build(&runtime, scratch);
+        let clock = Arc::new(ManualClock::at(TEST_NOW * 1000));
+        let platform = TestPlatform::on(runtime.db(), &scratch)
+            .clock(Arc::clone(&clock) as Arc<dyn Clock>)
+            .build()
+            .await;
+        let mut rig = Self::build(platform, clock);
         rig.runtime = Some(runtime);
+        rig._scratch = Some(scratch);
         rig
     }
 
-    /// A rig on the caller's database, so its users sit beside the rows
-    /// the test seeds. The caller keeps the runtime open.
-    pub fn on(runtime: &DbRuntime) -> Self {
-        Self::build(runtime, ScratchDir::new("auth-on"))
+    /// A rig on the caller's platform, so its users sit beside the rows
+    /// the test seeds. Auth runs on the platform's clock; the rig's own
+    /// clock only stamps what it seeds.
+    pub fn on(platform: &Platform) -> Self {
+        Self::build(platform.clone(), Arc::new(ManualClock::at(TEST_NOW * 1000)))
     }
 
-    fn build(runtime: &DbRuntime, scratch: ScratchDir) -> Self {
-        let crypto = Arc::new(Crypto::from_key_bytes(&[7u8; 32]).expect("test key"));
-        let config = config_store(&scratch);
+    fn build(platform: Platform, clock: Arc<ManualClock>) -> Self {
+        let config = Arc::clone(&platform.settings);
         config
             .save_blocking(SecuritySettings {
                 hibp_check: false,
@@ -94,33 +102,19 @@ impl AuthRig {
                 ..LastFmSettings::default()
             })
             .expect("Last.fm settings save");
-        let clock = Arc::new(ManualClock::at(TEST_NOW * 1000));
-        let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-        let auth = ProdAuth::new(
-            runtime.db(),
-            Arc::clone(&crypto),
-            Arc::clone(&ids),
-            Arc::clone(&clock) as Arc<dyn Clock>,
-            &scratch,
-        );
-        let http = HttpClientFactory::new().expect("http factory builds");
+        let auth = ProdAuth::new(&platform);
         let setup = AuthSetup::build_with_upstreams(
+            &platform,
             auth.clone(),
-            Arc::clone(&config),
-            Arc::clone(&crypto),
-            &http,
-            ids,
-            Arc::clone(&clock) as Arc<dyn Clock>,
-            "",
             &closed_outbound().sign_in(),
             Arc::new(
                 droppedneedle_media::remotes::plex::ConfiguredPlexServer::new(
-                    http.shared().clone(),
+                    platform.http.shared().clone(),
                     config.live(),
                     droppedneedle_auth::federated::settings::InstallIds::new(Arc::clone(&config)),
                 ),
             ),
-            droppedneedle::bootstrap::sign_in_links(runtime.db().clone(), crypto, &config),
+            droppedneedle::bootstrap::sign_in_links(&platform),
         );
         Self {
             deps: setup.users,
@@ -128,8 +122,9 @@ impl AuthRig {
             auth,
             clock,
             config,
+            platform,
             runtime: None,
-            _scratch: scratch,
+            _scratch: None,
         }
     }
 

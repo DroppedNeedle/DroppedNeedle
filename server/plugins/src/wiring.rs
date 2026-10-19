@@ -17,11 +17,10 @@ use std::sync::Arc;
 
 use axum::extract::FromRef;
 
-use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::jobs::Supervisor;
 use droppedneedle_kernel::jobs::plugin_ticks::SqliteTickStore;
 use droppedneedle_kernel::mount::Routes;
-use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_kernel::platform::Platform;
 use droppedneedle_providers::cache::{ProviderCache, invalidate_source};
 
 use super::handlers::{
@@ -66,13 +65,10 @@ pub fn write_python_sdk(plugins_dir: &Path) {
 }
 
 /// The production host: subprocess plugins over the deployment's plugins
-/// directory, each process supervised on `supervisor`. Nothing starts until
+/// directory, each process supervised on the platform's supervisor. Nothing starts until
 /// [`PluginsSetup::build`] loads it.
-pub fn new_host(
-    plugins_dir: PathBuf,
-    config: Arc<ConfigStore>,
-    supervisor: Supervisor,
-) -> Arc<PluginHost> {
+pub fn new_host(platform: &Platform) -> Arc<PluginHost> {
+    let plugins_dir = platform.config.plugins_dir();
     // Best-effort: the host reads a missing directory as empty and the
     // install path creates it, so a failure here must not fail the boot.
     if let Err(error) = std::fs::create_dir_all(&plugins_dir) {
@@ -81,9 +77,9 @@ pub fn new_host(
     write_python_sdk(&plugins_dir);
     let launcher: Arc<dyn PluginLauncher> = Arc::new(ProcessLauncher::new(
         python_sdk_dir(&plugins_dir),
-        supervisor,
+        platform.supervisor.clone(),
     ));
-    PluginHost::new(plugins_dir, config, launcher)
+    PluginHost::new(plugins_dir, platform.settings.clone(), launcher)
 }
 
 /// Link-change hook over the shared provider cache: a ListenBrainz link
@@ -133,27 +129,27 @@ impl PluginsSetup {
     /// tick, state and scrobble stores, the HTTP verifier and fetcher,
     /// cache invalidation on link changes, and tick loops over the shared
     /// loop supervisor. Loads the host, which starts the enabled plugins.
-    #[allow(clippy::too_many_arguments)]
     pub fn build(
+        platform: &Platform,
         host: Arc<PluginHost>,
-        http: reqwest::Client,
-        crypto: Arc<Crypto>,
         cache: Arc<dyn ProviderCache>,
-        supervisor: Supervisor,
-        db: Db,
         github: GitHubHosts,
         listenbrainz: &str,
     ) -> Self {
+        let db = &platform.db;
         Self::assemble(
             host,
-            http,
+            platform.http.shared().clone(),
             github,
             listenbrainz,
             cache,
-            supervisor,
+            platform.supervisor.clone(),
             TickStoreKind::Sqlite(SqliteTickStore::new(db.clone())),
             Arc::new(SqliteScrobblePrefsStore::new(db.clone())),
-            Arc::new(SqliteListenBrainzLinkStore::new(db, crypto)),
+            Arc::new(SqliteListenBrainzLinkStore::new(
+                db.clone(),
+                platform.crypto.clone(),
+            )),
         )
     }
 
@@ -168,6 +164,7 @@ impl PluginsSetup {
         use super::scrobble::{MemoryListenBrainzLinkStore, MemoryScrobblePrefsStore};
         use droppedneedle_kernel::http_client::HttpClientFactory;
         use droppedneedle_kernel::jobs::plugin_ticks::MemoryTickStore;
+        use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
         use droppedneedle_providers::InMemoryProviderCache;
 
         /// Scratch-dir sequence so parallel test states never share a store.
