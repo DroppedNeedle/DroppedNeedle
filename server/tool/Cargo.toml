@@ -54,4 +54,5 @@ droppedneedle-testkit = { path = "../testkit", version = "0.1.0" }
 axum.workspace = true
 regex.workspace = true
 tower.workspace = true
+tracing-subscriber.workspace = true
 utoipa.workspace = true
