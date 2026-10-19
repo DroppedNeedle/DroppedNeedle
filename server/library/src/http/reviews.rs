@@ -9,12 +9,12 @@
 //! holds or start a job, so they are admin-only, as in v2.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path, State},
-    routing::{get, post},
 };
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
@@ -38,24 +38,21 @@ use droppedneedle_auth::{Admin, Curator, User};
 /// Largest review page.
 const PAGE_MAX: u32 = 200;
 
-/// Review routes, relative for nesting under `/api/v3`.
-pub fn reviews_router() -> Router<LibrarySetup> {
-    Router::new()
-        .route("/library/reviews", get(list_reviews))
-        .route(
-            "/library/reviews/retry-pending",
-            post(retry_pending_reviews),
-        )
-        .route("/library/reviews/bulk-preview", post(preview_bulk_reviews))
-        .route("/library/reviews/bulk-apply", post(apply_bulk_reviews))
-        .route("/library/reviews/{id}", get(get_review))
-        .route("/library/reviews/{id}/approve", post(approve_review))
-        .route("/library/reviews/{id}/reject", post(reject_review))
-        .route("/library/reviews/{id}/dismiss", post(dismiss_review))
-        .route("/library/reviews/{id}/detach", post(detach_review))
-        .route("/library/reviews/{id}/exclude", post(exclude_review))
-        .route("/library/reviews/{id}/restore", post(restore_review))
-        .route("/library/reviews/{id}/retry", post(retry_review))
+/// Review routes.
+pub fn routes() -> Routes<LibrarySetup> {
+    Routes::new()
+        .user(routes!(list_reviews))
+        .admin(routes!(retry_pending_reviews))
+        .curator(routes!(preview_bulk_reviews))
+        .curator(routes!(apply_bulk_reviews))
+        .user(routes!(get_review))
+        .curator(routes!(approve_review))
+        .curator(routes!(reject_review))
+        .curator(routes!(dismiss_review))
+        .curator(routes!(detach_review))
+        .admin(routes!(exclude_review))
+        .admin(routes!(restore_review))
+        .admin(routes!(retry_review))
 }
 
 /// Review list filter and paging. A bulk change takes the same filter.

@@ -15,18 +15,19 @@ use axum::{
     extract::{OriginalUri, Path, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
-    routing::{get, post, put},
+    routing::get,
 };
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 use serde::Deserialize;
 use serde_json::json;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::contrib::error::ContribError;
 use crate::contrib::models::{
-    CALLBACK_PATH, ContributionRecord, DiscogsReleaseCandidate, LEGACY_CALLBACK_PATH,
-    MusicBrainzSeed, ReleaseDraft,
+    ContributionRecord, DiscogsReleaseCandidate, LEGACY_CALLBACK_PATH, MusicBrainzSeed,
+    ReleaseDraft,
 };
 use crate::wiring::LibrarySetup;
 use droppedneedle_auth::{Curator, User};
@@ -160,60 +161,31 @@ type Answer<T> = Result<Json<T>, ApiError>;
 // Routes
 // ---------------------------------------------------------------------------
 
-/// The session-gated contribution routes, relative to `/api/v3`. The
-/// library router merges them.
-pub fn router(state: LibrarySetup) -> Router {
-    Router::new()
-        .route(
-            "/library/albums/{id}/contributions",
-            post(create_contribution),
-        )
-        .route("/library/contributions/{id}", get(get_contribution))
-        .route("/library/contributions/{id}/draft", put(update_draft))
-        .route("/library/contributions/{id}/rebuild", post(rebuild))
-        .route("/library/contributions/{id}/cancel", post(cancel))
-        .route(
-            "/library/contributions/{id}/discogs/search",
-            post(search_discogs),
-        )
-        .route(
-            "/library/contributions/{id}/discogs/select",
-            post(select_discogs),
-        )
-        .route(
-            "/library/contributions/{id}/discogs/remove",
-            post(remove_discogs),
-        )
-        .route(
-            "/library/contributions/{id}/musicbrainz/duplicates",
-            post(check_duplicates),
-        )
-        .route(
-            "/library/contributions/{id}/musicbrainz/attach",
-            post(attach_existing),
-        )
-        .route(
-            "/library/contributions/{id}/musicbrainz/seed",
-            post(create_seed),
-        )
-        .route(
-            "/library/contributions/{id}/musicbrainz/result",
-            put(record_result),
-        )
-        .route(
-            "/library/contributions/{id}/musicbrainz/verify",
-            post(retry_verification),
-        )
-        .with_state(state)
+/// The contribution routes. The callback is public: the one-time token
+/// identifies the contribution, as in v2's public route.
+pub fn routes() -> Routes<LibrarySetup> {
+    Routes::new()
+        .curator(routes!(create_contribution))
+        .user(routes!(get_contribution))
+        .curator(routes!(update_draft))
+        .curator(routes!(rebuild))
+        .curator(routes!(cancel))
+        .curator(routes!(search_discogs))
+        .curator(routes!(select_discogs))
+        .curator(routes!(remove_discogs))
+        .curator(routes!(check_duplicates))
+        .curator(routes!(attach_existing))
+        .curator(routes!(create_seed))
+        .curator(routes!(record_result))
+        .curator(routes!(retry_verification))
+        .public(routes!(musicbrainz_callback))
 }
 
 impl LibrarySetup {
-    /// The MusicBrainz callback at full paths (v3 and the v1 shim), for
-    /// mounting outside the session gate: the one-time token identifies
-    /// the contribution, as in v2's public route.
-    pub fn contrib_callback_router(&self) -> Router {
+    /// The MusicBrainz callback at its v1 path, for a seed opened before the
+    /// upgrade. Mounted outside the session gate, like the v3 one.
+    pub fn legacy_contrib_callback_router(&self) -> Router {
         Router::new()
-            .route(CALLBACK_PATH, get(musicbrainz_callback))
             .route(LEGACY_CALLBACK_PATH, get(musicbrainz_callback))
             .with_state(self.clone())
     }

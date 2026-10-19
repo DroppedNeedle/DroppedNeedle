@@ -7,13 +7,13 @@
 //! `spawn_blocking`; the release search awaits MusicBrainz.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    routing::{get, post},
 };
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -31,24 +31,15 @@ use droppedneedle_auth::{Admin, Curator};
 /// Matcher version reported on candidates scored by the matching engine.
 const MATCHER_VERSION: &str = "library-matching-v1";
 
-/// Operation routes, relative for nesting under `/api/v3`.
-pub fn operations_router() -> Router<LibrarySetup> {
-    Router::new()
-        .route("/library/operations/{job_id}", get(get_operation))
-        .route("/library/operations/{job_id}/pause", post(pause_operation))
-        .route(
-            "/library/operations/{job_id}/resume",
-            post(resume_operation),
-        )
-        .route("/library/operations/{job_id}/stop", post(stop_operation))
-        .route(
-            "/library/albums/{album_id}/reidentification/releases",
-            get(search_reidentification_releases),
-        )
-        .route(
-            "/library/albums/{album_id}/undo-automatic-edition",
-            post(undo_automatic_edition),
-        )
+/// Operation routes.
+pub fn routes() -> Routes<LibrarySetup> {
+    Routes::new()
+        .admin(routes!(get_operation))
+        .admin(routes!(pause_operation))
+        .admin(routes!(resume_operation))
+        .admin(routes!(stop_operation))
+        .curator(routes!(search_reidentification_releases))
+        .admin(routes!(undo_automatic_edition))
 }
 
 // ---------------------------------------------------------------------------

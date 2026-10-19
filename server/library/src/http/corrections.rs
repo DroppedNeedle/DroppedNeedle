@@ -10,13 +10,13 @@
 use std::collections::BTreeMap;
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    routing::{get, post},
 };
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::ValidJson;
+use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -31,37 +31,22 @@ use crate::corrections::models::{
 use crate::wiring::LibrarySetup;
 use droppedneedle_auth::Admin;
 
-/// Correction routes, relative for nesting under `/api/v3`.
-pub fn corrections_router() -> Router<LibrarySetup> {
-    Router::new()
-        .route(
-            "/library/albums/{album_id}/split-preview",
-            post(preview_album_split),
-        )
-        .route("/library/albums/{album_id}/split", post(apply_album_split))
-        .route("/library/albums/merge-preview", post(preview_album_merge))
-        .route("/library/albums/merge", post(apply_album_merge))
-        .route("/library/tracks/move-preview", post(preview_track_move))
-        .route("/library/tracks/move", post(apply_track_move))
-        .route(
-            "/library/albums/{album_id}/reset-grouping-preview",
-            post(preview_grouping_reset),
-        )
-        .route(
-            "/library/albums/{album_id}/reset-grouping",
-            post(apply_grouping_reset),
-        )
-        .route("/library/artists/merge-preview", post(preview_artist_merge))
-        .route("/library/artists/merge", post(apply_artist_merge))
-        .route("/library/retag-pairs", get(list_retag_pairs))
-        .route(
-            "/library/retag-pairs/{old_album_id}/{new_album_id}/join",
-            post(join_retag_pair),
-        )
-        .route(
-            "/library/retag-pairs/{old_album_id}/{new_album_id}/dismiss",
-            post(dismiss_retag_pair),
-        )
+/// Correction routes.
+pub fn routes() -> Routes<LibrarySetup> {
+    Routes::new()
+        .admin(routes!(preview_album_split))
+        .admin(routes!(apply_album_split))
+        .admin(routes!(preview_album_merge))
+        .admin(routes!(apply_album_merge))
+        .admin(routes!(preview_track_move))
+        .admin(routes!(apply_track_move))
+        .admin(routes!(preview_grouping_reset))
+        .admin(routes!(apply_grouping_reset))
+        .admin(routes!(preview_artist_merge))
+        .admin(routes!(apply_artist_merge))
+        .admin(routes!(list_retag_pairs))
+        .admin(routes!(join_retag_pair))
+        .admin(routes!(dismiss_retag_pair))
 }
 
 // ---------------------------------------------------------------------------

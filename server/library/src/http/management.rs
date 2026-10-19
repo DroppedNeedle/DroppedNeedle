@@ -8,12 +8,12 @@
 use std::collections::BTreeMap;
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path, State},
-    routing::{get, post},
 };
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -29,53 +29,20 @@ use crate::wiring::LibrarySetup;
 use droppedneedle_auth::Admin;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagementRootOverrides;
 
-/// Management routes, relative for nesting under `/api/v3`.
-pub fn management_router() -> Router<LibrarySetup> {
-    Router::new()
-        .route(
-            "/library/management/previews",
-            post(create_management_preview),
-        )
-        .route(
-            "/library/management/previews/{job_id}",
-            get(get_management_preview),
-        )
-        .route(
-            "/library/management/previews/{job_id}/items",
-            get(list_management_preview_items),
-        )
-        .route(
-            "/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}",
-            get(get_management_preview_artwork),
-        )
-        .route(
-            "/library/management/previews/{job_id}/discard",
-            post(discard_management_preview),
-        )
-        .route(
-            "/library/management/previews/{job_id}/apply",
-            post(apply_management_preview),
-        )
-        .route(
-            "/library/management/previews/{job_id}/reissue",
-            post(reissue_management_preview),
-        )
-        .route(
-            "/library/management/operations",
-            get(list_management_operations),
-        )
-        .route(
-            "/library/management/operations/{job_id}",
-            get(get_management_operation),
-        )
-        .route(
-            "/library/management/operations/{job_id}/results",
-            get(list_management_operation_results),
-        )
-        .route(
-            "/library/management/operations/{job_id}/undo-preview",
-            post(create_management_undo_preview),
-        )
+/// Management routes.
+pub fn routes() -> Routes<LibrarySetup> {
+    Routes::new()
+        .admin(routes!(create_management_preview))
+        .admin(routes!(get_management_preview))
+        .admin(routes!(list_management_preview_items))
+        .admin(routes!(get_management_preview_artwork))
+        .admin(routes!(discard_management_preview))
+        .admin(routes!(apply_management_preview))
+        .admin(routes!(reissue_management_preview))
+        .admin(routes!(list_management_operations))
+        .admin(routes!(get_management_operation))
+        .admin(routes!(list_management_operation_results))
+        .admin(routes!(create_management_undo_preview))
 }
 
 impl From<ManagementError> for ApiError {

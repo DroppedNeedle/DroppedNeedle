@@ -5,13 +5,13 @@
 //! [`crate::mutations`].
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, post},
 };
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -21,21 +21,15 @@ use crate::mutations::{MutationError, Mutations};
 use crate::wiring::LibrarySetup;
 use droppedneedle_auth::{Admin, Curator};
 
-/// Mutation routes, relative for nesting under `/api/v3`.
-pub fn mutations_router() -> Router<LibrarySetup> {
-    Router::new()
-        .route("/library/albums/{id}", delete(remove_album))
-        .route("/library/tracks/{id}", delete(remove_track))
-        .route("/library/albums/{album_id}/rescan", post(rescan_album))
-        .route(
-            "/library/albums/{album_id}/management/re-enable",
-            post(reenable_management),
-        )
-        .route(
-            "/library/albums/{album_id}/management/hand-back",
-            post(hand_back_management),
-        )
-        .route("/library/management/hand-back", post(hand_back_all))
+/// Mutation routes.
+pub fn routes() -> Routes<LibrarySetup> {
+    Routes::new()
+        .admin(routes!(remove_album))
+        .curator(routes!(remove_track))
+        .admin(routes!(rescan_album))
+        .admin(routes!(reenable_management))
+        .admin(routes!(hand_back_management))
+        .admin(routes!(hand_back_all))
 }
 
 /// Album removal options.

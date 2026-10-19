@@ -7,12 +7,12 @@
 use std::collections::BTreeMap;
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path, State},
-    routing::{get, post},
 };
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidJson;
+use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -32,69 +32,24 @@ use crate::wiring::LibrarySetup;
 use droppedneedle_auth::Admin;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 
-/// The routes, relative for nesting under `/api/v3`.
-pub fn router() -> Router<LibrarySetup> {
-    Router::new()
-        .route(
-            "/library/management/tracks/{track_id}/tag-editor",
-            get(get_management_tag_editor),
-        )
-        .route(
-            "/library/management/tag-edit-previews",
-            post(create_management_tag_edit_preview),
-        )
-        .route(
-            "/library/management/baselines/restore-previews",
-            post(create_management_restore_preview),
-        )
-        .route(
-            "/library/management/baselines/purge-impact",
-            post(get_management_purge_impact),
-        )
-        .route(
-            "/library/management/baselines/purge",
-            post(purge_management_baselines),
-        )
-        .route(
-            "/library/management/duplicate-resolution-previews",
-            post(create_management_duplicate_preview),
-        )
-        .route(
-            "/library/management/recovery/diagnostics",
-            get(get_management_recovery_diagnostics),
-        )
-        .route(
-            "/library/management/recovery/import-bundles/{bundle_id}/resolve",
-            post(resolve_management_bundle),
-        )
-        .route(
-            "/library/management/automatic/skipped",
-            get(list_management_automatic_skipped),
-        )
-        .route(
-            "/library/management/takeovers",
-            get(list_management_takeovers),
-        )
-        .route(
-            "/settings/library-management/placement",
-            get(get_management_placement),
-        )
-        .route(
-            "/settings/library-management/placement/{root_id}/check",
-            post(check_management_placement),
-        )
-        .route(
-            "/settings/library-management/activation-previews",
-            post(create_management_activation_preview),
-        )
-        .route(
-            "/settings/library-management/activation-previews/{job_id}",
-            get(get_management_activation_preview),
-        )
-        .route(
-            "/settings/library-management/activation-confirmations",
-            post(confirm_management_activation),
-        )
+/// Library Management tool routes.
+pub fn routes() -> Routes<LibrarySetup> {
+    Routes::new()
+        .admin(routes!(get_management_tag_editor))
+        .admin(routes!(create_management_tag_edit_preview))
+        .admin(routes!(create_management_restore_preview))
+        .admin(routes!(get_management_purge_impact))
+        .admin(routes!(purge_management_baselines))
+        .admin(routes!(create_management_duplicate_preview))
+        .admin(routes!(get_management_recovery_diagnostics))
+        .admin(routes!(resolve_management_bundle))
+        .admin(routes!(list_management_automatic_skipped))
+        .admin(routes!(list_management_takeovers))
+        .admin(routes!(get_management_placement))
+        .admin(routes!(check_management_placement))
+        .admin(routes!(create_management_activation_preview))
+        .admin(routes!(get_management_activation_preview))
+        .admin(routes!(confirm_management_activation))
 }
 
 async fn blocking<T: Send + 'static>(

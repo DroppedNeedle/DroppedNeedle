@@ -8,13 +8,13 @@
 //! `library_scan_target` routes.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    routing::{get, post},
 };
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -28,25 +28,20 @@ use crate::scans::{MAX_FAILURE_PAGE, MAX_PAGE, RunControl};
 use crate::wiring::LibrarySetup;
 use droppedneedle_auth::{Admin, User};
 
-/// Scan control and activity routes, merged into the library router.
-pub fn routes() -> Router<LibrarySetup> {
-    Router::new()
-        // GET on this path (the run list) lives with the other handlers;
-        // the merge joins the two methods.
-        .route("/library/scan/runs", post(request_scan_run))
-        .route("/library/scan/runs/current", get(current_scan_runs))
-        .route("/library/scan/runs/history", get(scan_run_history))
-        .route("/library/scan/runs/estimate", get(estimate_scan_run))
-        .route("/library/scan/runs/{id}/failures", get(scan_run_failures))
-        .route("/library/scan/runs/{id}/pause", post(pause_scan_run))
-        .route("/library/scan/runs/{id}/resume", post(resume_scan_run))
-        .route("/library/scan/runs/{id}/stop", post(stop_scan_run))
-        .route("/library/activity", get(library_activity))
-        .route("/library/identification/pause", post(pause_identification))
-        .route(
-            "/library/identification/resume",
-            post(resume_identification),
-        )
+/// Scan control and activity routes.
+pub fn routes() -> Routes<LibrarySetup> {
+    Routes::new()
+        .admin(routes!(request_scan_run))
+        .admin(routes!(current_scan_runs))
+        .admin(routes!(scan_run_history))
+        .admin(routes!(estimate_scan_run))
+        .admin(routes!(scan_run_failures))
+        .admin(routes!(pause_scan_run))
+        .admin(routes!(resume_scan_run))
+        .admin(routes!(stop_scan_run))
+        .user(routes!(library_activity))
+        .admin(routes!(pause_identification))
+        .admin(routes!(resume_identification))
 }
 
 /// Run store-backed work on a blocking thread.

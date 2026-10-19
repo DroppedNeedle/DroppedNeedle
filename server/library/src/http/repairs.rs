@@ -5,15 +5,15 @@
 use std::collections::BTreeMap;
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path, State},
     http::{HeaderValue, header},
     response::{IntoResponse, Response},
-    routing::{get, post},
 };
 use droppedneedle_kernel::db::DbError;
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -29,56 +29,23 @@ use crate::repairs::service::{RepairDetail, Repairs};
 use crate::wiring::LibrarySetup;
 use droppedneedle_auth::Admin;
 
-pub fn router() -> Router<LibrarySetup> {
-    Router::new()
-        .route(
-            "/library/identity-repairs",
-            get(list_repairs).post(create_repair),
-        )
-        .route("/library/identity-repairs/estimate", get(estimate_repair))
-        .route("/library/identity-repairs/{job_id}", get(get_repair))
-        .route(
-            "/library/identity-repairs/{job_id}/findings",
-            get(repair_findings),
-        )
-        .route(
-            "/library/identity-repairs/{job_id}/apply",
-            post(apply_repair),
-        )
-        .route(
-            "/library/identity-repairs/{job_id}/pause",
-            post(pause_repair),
-        )
-        .route(
-            "/library/identity-repairs/{job_id}/resume",
-            post(resume_repair),
-        )
-        .route("/library/identity-repairs/{job_id}/stop", post(stop_repair))
-        .route(
-            "/library/management/identity-preparations",
-            get(list_preparations).post(create_preparation),
-        )
-        .route(
-            "/library/management/identity-preparations/estimate",
-            get(estimate_preparation),
-        )
-        .route(
-            "/library/management/identity-preparations/{job_id}",
-            get(get_preparation),
-        )
-        .route(
-            "/library/management/identity-preparations/{job_id}/findings",
-            get(preparation_findings),
-        )
-        .route(
-            "/library/management/identity-preparations/{job_id}/apply",
-            post(apply_preparation),
-        )
-        .route(
-            "/library/management/identity-preparations/{job_id}/discard",
-            post(discard_preparation),
-        )
-        .route("/library/scan/runs/{id}/diagnostics", get(scan_diagnostics))
+pub fn routes() -> Routes<LibrarySetup> {
+    Routes::new()
+        .admin(routes!(list_repairs, create_repair))
+        .admin(routes!(estimate_repair))
+        .admin(routes!(get_repair))
+        .admin(routes!(repair_findings))
+        .admin(routes!(apply_repair))
+        .admin(routes!(pause_repair))
+        .admin(routes!(resume_repair))
+        .admin(routes!(stop_repair))
+        .admin(routes!(list_preparations, create_preparation))
+        .admin(routes!(estimate_preparation))
+        .admin(routes!(get_preparation))
+        .admin(routes!(preparation_findings))
+        .admin(routes!(apply_preparation))
+        .admin(routes!(discard_preparation))
+        .admin(routes!(scan_diagnostics))
 }
 
 // ---------------------------------------------------------------------------

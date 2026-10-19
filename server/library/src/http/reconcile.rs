@@ -6,13 +6,13 @@
 use std::collections::BTreeMap;
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    routing::{get, post},
 };
 use droppedneedle_kernel::error::{ApiError, Unavailable};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -25,24 +25,12 @@ use crate::reconcile::service::Reconcile;
 use crate::wiring::LibrarySetup;
 use droppedneedle_auth::Admin;
 
-pub fn router() -> Router<LibrarySetup> {
-    Router::new()
-        .route(
-            "/library/artists/reconciliation",
-            get(artist_reconciliation),
-        )
-        .route(
-            "/library/artists/duplicate-groups",
-            get(list_artist_duplicate_groups),
-        )
-        .route(
-            "/library/artists/duplicate-groups/{group_id}",
-            get(get_artist_duplicate_group),
-        )
-        .route(
-            "/library/artists/duplicate-groups/{group_id}/dismiss",
-            post(dismiss_artist_duplicate_group),
-        )
+pub fn routes() -> Routes<LibrarySetup> {
+    Routes::new()
+        .admin(routes!(artist_reconciliation))
+        .admin(routes!(list_artist_duplicate_groups))
+        .admin(routes!(get_artist_duplicate_group))
+        .admin(routes!(dismiss_artist_duplicate_group))
 }
 
 impl From<ReconcileError> for ApiError {

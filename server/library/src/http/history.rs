@@ -5,11 +5,11 @@
 //!   every signed-in user, as the album is catalog data.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path, State},
-    routing::get,
 };
 use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::mount::{Routes, routes};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -20,9 +20,9 @@ use crate::operations::service::Operations;
 use crate::wiring::LibrarySetup;
 use droppedneedle_auth::User;
 
-/// Album history routes, relative for nesting under `/api/v3`.
-pub fn history_router() -> Router<LibrarySetup> {
-    Router::new().route("/library/albums/{album_id}/history", get(get_album_history))
+/// Album history routes.
+pub fn routes() -> Routes<LibrarySetup> {
+    Routes::new().user(routes!(get_album_history))
 }
 
 /// What one history entry tells.

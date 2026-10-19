@@ -1,42 +1,33 @@
-//! Library routes: relative paths for nesting under `/api/v3`.
+//! Library routes, at their full `/api/v3` paths.
 
-use axum::{
-    Router,
-    routing::{get, post},
-};
+use droppedneedle_kernel::mount::{Routes, routes};
 
-use super::handlers;
+use super::handlers::*;
 use crate::wiring::LibrarySetup;
 
-/// Library router. The wiring mounts this inside the session gate.
-pub fn library_router(state: LibrarySetup) -> Router {
-    Router::new()
-        .route(
-            "/library/roots",
-            get(handlers::list_roots).post(handlers::add_root),
-        )
-        .route("/library/scan", post(handlers::trigger_scan))
-        .route("/library/scan/runs", get(handlers::list_runs))
-        .route("/library/scan/runs/{id}", get(handlers::get_run))
-        .route("/library/identify", post(handlers::enqueue_identify))
-        .route("/library/manage/preview", post(handlers::manage_preview))
-        .route("/library/manage/apply", post(handlers::manage_apply))
-        .route("/library/manage/undo", post(handlers::manage_undo))
-        .route(
-            "/library/manage/baseline/restore",
-            post(handlers::baseline_restore),
-        )
+/// Every library route, grouped by who may call it.
+pub fn library_routes() -> Routes<LibrarySetup> {
+    Routes::new()
+        .user(routes!(list_roots))
+        .admin(routes!(add_root))
+        .admin(routes!(trigger_scan))
+        .user(routes!(list_runs))
+        .user(routes!(get_run))
+        .curator(routes!(enqueue_identify))
+        .curator(routes!(manage_preview))
+        .curator(routes!(manage_apply))
+        .curator(routes!(manage_undo))
+        .admin(routes!(baseline_restore))
         .merge(super::scan::routes())
-        .merge(super::operations::operations_router())
-        .merge(super::corrections::corrections_router())
-        .merge(super::management::management_router())
-        .merge(super::management_tools::router())
-        .merge(super::reconcile::router())
-        .merge(super::repairs::router())
-        .merge(super::reviews::reviews_router())
-        .merge(super::mutations::mutations_router())
-        .merge(super::edition::edition_router())
-        .merge(super::history::history_router())
-        .with_state(state.clone())
-        .merge(super::contrib::router(state))
+        .merge(super::operations::routes())
+        .merge(super::corrections::routes())
+        .merge(super::management::routes())
+        .merge(super::management_tools::routes())
+        .merge(super::reconcile::routes())
+        .merge(super::repairs::routes())
+        .merge(super::reviews::routes())
+        .merge(super::mutations::routes())
+        .merge(super::edition::routes())
+        .merge(super::history::routes())
+        .merge(super::contrib::routes())
 }

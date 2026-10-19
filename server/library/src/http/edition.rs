@@ -25,12 +25,12 @@
 //! pinning was; reading is open to every signed-in user.
 
 use axum::{
-    Json, Router,
+    Json,
     extract::{Path, State},
-    routing::{get, post, put},
 };
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
+use droppedneedle_kernel::mount::{Routes, routes};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -52,45 +52,20 @@ use droppedneedle_auth::{Admin, Curator, User};
 /// Largest page of the unconfirmed list.
 const PAGE_MAX: u32 = 200;
 
-/// Edition routes, relative for nesting under `/api/v3`.
-pub fn edition_router() -> Router<LibrarySetup> {
-    Router::new()
-        .route(
-            "/library/albums/{album_id}/edition",
-            get(get_edition)
-                .put(choose_edition)
-                .delete(hand_back_edition),
-        )
-        .route(
-            "/library/albums/{album_id}/edition/confirm",
-            post(confirm_edition),
-        )
-        .route(
-            "/library/albums/{album_id}/edition/undo",
-            post(undo_edition),
-        )
-        .route(
-            "/library/albums/{album_id}/edition/custom",
-            post(seal_custom_edition),
-        )
-        .route(
-            "/library/albums/{album_id}/edition/leave-unmanaged",
-            post(leave_unmanaged),
-        )
-        .route("/library/albums/{album_id}/edition/plan", get(plan_edition))
-        .route(
-            "/library/albums/{album_id}/edition/extras/remove",
-            post(remove_extras),
-        )
-        .route(
-            "/library/albums/{album_id}/edition/extras/restore",
-            post(restore_extras),
-        )
-        .route(
-            "/library/albums/{album_id}/edition/files/{track_id}",
-            put(match_edition_file).delete(unmatch_edition_file),
-        )
-        .route("/library/unconfirmed", get(list_unconfirmed))
+/// Edition routes.
+pub fn routes() -> Routes<LibrarySetup> {
+    Routes::new()
+        .user(routes!(get_edition))
+        .curator(routes!(choose_edition, hand_back_edition))
+        .curator(routes!(confirm_edition))
+        .curator(routes!(undo_edition))
+        .admin(routes!(seal_custom_edition))
+        .admin(routes!(leave_unmanaged))
+        .user(routes!(plan_edition))
+        .curator(routes!(remove_extras))
+        .curator(routes!(restore_extras))
+        .curator(routes!(match_edition_file, unmatch_edition_file))
+        .user(routes!(list_unconfirmed))
 }
 
 /// One candidate the matcher scored, as the edition picker shows it.

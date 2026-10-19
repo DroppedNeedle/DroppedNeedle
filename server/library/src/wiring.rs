@@ -5,8 +5,7 @@
 //! cell, plus the HTTP state (preview seals) and the background
 //! loops. `build` binds everything over the production provider
 //! clients, or over the provider ports a test gives in [`Endpoints`].
-//! The routers nest under `/api/v3` inside the deny-by-default session
-//! gate.
+//! [`routes`] lists the library's routes for the app to mount.
 //!
 //! Store durability: roots, scan state, identification, contributions,
 //! and the publish journal live in the application database.
@@ -14,8 +13,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-
-use axum::Router;
 
 use super::adapters::LoftyTagReader;
 use super::contrib::ContribProviders;
@@ -72,6 +69,11 @@ struct ProviderParts {
 
 type ProviderFactory =
     Box<dyn FnOnce(ProviderParts) -> Arc<dyn super::identify::providers::IdentifyProviders>>;
+
+/// Every library route, grouped by who may call it.
+pub fn routes() -> droppedneedle_kernel::mount::Routes<LibrarySetup> {
+    super::http::routes::library_routes()
+}
 
 /// Startup recovery report.
 #[derive(Debug, Clone, Default)]
@@ -448,12 +450,6 @@ impl LibrarySetup {
     /// against; every refresh swaps the roots in for all its holders.
     pub fn root_source(&self) -> SharedResolver {
         (*self.registry).clone()
-    }
-
-    /// Relative-path routers for nesting under `/api/v3` inside the
-    /// session gate, whose principal the handlers read.
-    pub fn gated_router(&self) -> Router {
-        super::http::routes::library_router(self.clone())
     }
 
     /// Startup recovery: publish reconcile (resume-or-compensate,

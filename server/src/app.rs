@@ -191,6 +191,9 @@ fn mount(m: Mount<'_>) -> Mount<'_> {
             droppedneedle_media::remotes::playlist_sync::routes(),
             |state| state.jobs.playlist_sync(),
         )
+        .area(droppedneedle_library::wiring::routes(), |state| {
+            state.library.clone()
+        })
 }
 
 /// The server crate's own routes.
@@ -288,7 +291,6 @@ fn routes(state: &AppState, web: Option<WebUi>) -> Router {
                 .reads
                 .gated_router()
                 .merge(state.acquire.gated_router())
-                .merge(state.library.gated_router())
                 .merge(state.concerts.gated_router()),
         )
         .merge(state.reads.search_router())
@@ -306,13 +308,13 @@ fn routes(state: &AppState, web: Option<WebUi>) -> Router {
             state.auth.limits.clone(),
             rate_limit,
         ));
-    // Spotify OAuth and MusicBrainz contribution callbacks: outside the
-    // session gate (token identified), still rate-limited like the
-    // wrapped trio.
+    // Spotify OAuth callbacks and the v1 MusicBrainz contribution
+    // callback: outside the session gate (token identified), still
+    // rate-limited like the wrapped trio.
     let acquire_public = Router::new()
         .nest("/api/v3", state.acquire.callback_router())
         .merge(state.acquire.legacy_callback_router())
-        .merge(state.library.contrib_callback_router())
+        .merge(state.library.legacy_contrib_callback_router())
         .layer(middleware::from_fn_with_state(
             state.auth.limits.clone(),
             rate_limit,
