@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { SECRET_MASK } from '$lib/ui/secretMask';
-	import type { AdvancedSettingsForm } from './advanced-settings-types';
+	import type { AdvancedSettings } from './advanced-settings-types';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
-	let { data = $bindable() }: { data: AdvancedSettingsForm } = $props();
+	let { data = $bindable() }: { data: AdvancedSettings } = $props();
 </script>
 
 <div class="alert alert-info alert-soft mb-4">

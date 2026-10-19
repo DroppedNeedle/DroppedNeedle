@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use droppedneedle_kernel::runtime_config::Masked;
-use droppedneedle_kernel::runtime_config::secret_sections::{AdvancedSettings, TypedLibrary};
+use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, LibraryManagement, LibraryManagementProfile, LibraryScanSchedule, MbSourceMode,
     MusicBrainzSettings, UsenetBackend,
@@ -414,117 +414,6 @@ pub struct LibraryRestoreRootsRequest {
 }
 
 // --- advanced settings ------------------------------------------------------------
-
-/// Advanced tunables as the settings form shows them. It is a closed
-/// allowlist: unknown JSON fields are rejected at decode (400), so a client
-/// holding a dropped tuning field learns it is gone instead of believing it
-/// saved.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields, default)]
-pub struct AdvancedSettingsForm {
-    /// Discover queue size (1-20).
-    pub discover_queue_size: i64,
-    /// Discover queue auto-generate.
-    pub discover_queue_auto_generate: bool,
-    /// Discover seed artists (1-10).
-    pub discover_queue_seed_artists: i64,
-    /// Discover wildcard slots (0-10).
-    pub discover_queue_wildcard_slots: i64,
-    /// Let the background warm cycle build queue decks.
-    pub discover_queue_warm_cycle_build: bool,
-    /// Similar artists per seed (5-50).
-    pub discover_queue_similar_artists_limit: i64,
-    /// Albums per similar artist (1-20).
-    pub discover_queue_albums_per_similar: i64,
-    /// MusicBrainz lookups per Last.fm album batch (1-50).
-    pub discover_queue_lastfm_mbid_max_lookups: i64,
-    /// Discover genre-affinity weight (0-1).
-    pub discover_picks_genre_affinity_weight: f64,
-    /// Discover picks count (4-30).
-    pub discover_picks_count: i64,
-    /// AudioDB provider switch.
-    pub audiodb_enabled: bool,
-    /// AudioDB name-search fallback.
-    pub audiodb_name_search_fallback: bool,
-    /// Serve remote images directly.
-    pub direct_remote_images_enabled: bool,
-    /// Prefer local cover art.
-    pub prefer_local_cover_art: bool,
-    /// AudioDB API key (masked unless unset).
-    pub audiodb_api_key: String,
-    /// Request history retention, days (30-3650).
-    pub request_history_retention_days: i64,
-    /// Ignored-releases retention, days (30-3650).
-    pub ignored_releases_retention_days: i64,
-    /// Store prune cadence, hours (1-168).
-    pub store_prune_interval_hours: i64,
-}
-
-impl AdvancedSettingsForm {
-    /// The stored section as the form shows it. The section is masked, so
-    /// the AudioDB key shows as its mask.
-    #[must_use]
-    pub fn from_section(section: &Masked<AdvancedSettings>) -> Self {
-        Self::from_values(section)
-    }
-
-    fn from_values(section: &AdvancedSettings) -> Self {
-        Self {
-            discover_queue_size: section.discover_queue_size,
-            discover_queue_auto_generate: section.discover_queue_auto_generate,
-            discover_queue_seed_artists: section.discover_queue_seed_artists,
-            discover_queue_wildcard_slots: section.discover_queue_wildcard_slots,
-            discover_queue_warm_cycle_build: section.discover_queue_warm_cycle_build,
-            discover_queue_similar_artists_limit: section.discover_queue_similar_artists_limit,
-            discover_queue_albums_per_similar: section.discover_queue_albums_per_similar,
-            discover_queue_lastfm_mbid_max_lookups: section.discover_queue_lastfm_mbid_max_lookups,
-            discover_picks_genre_affinity_weight: section.discover_picks_genre_affinity_weight,
-            discover_picks_count: section.discover_picks_count,
-            audiodb_enabled: section.audiodb_enabled,
-            audiodb_name_search_fallback: section.audiodb_name_search_fallback,
-            direct_remote_images_enabled: section.direct_remote_images_enabled,
-            prefer_local_cover_art: section.prefer_local_cover_art,
-            audiodb_api_key: section.audiodb_api_key.expose().to_owned(),
-            request_history_retention_days: section.request_history_retention_days,
-            ignored_releases_retention_days: section.ignored_releases_retention_days,
-            store_prune_interval_hours: section.store_prune_interval_hours,
-        }
-    }
-
-    /// The form as a section to save. The AudioDB key is a submitted
-    /// value: the mask keeps the stored key.
-    #[must_use]
-    pub fn into_section(self) -> AdvancedSettings {
-        AdvancedSettings {
-            discover_queue_size: self.discover_queue_size,
-            discover_queue_auto_generate: self.discover_queue_auto_generate,
-            discover_queue_seed_artists: self.discover_queue_seed_artists,
-            discover_queue_wildcard_slots: self.discover_queue_wildcard_slots,
-            discover_queue_warm_cycle_build: self.discover_queue_warm_cycle_build,
-            discover_queue_similar_artists_limit: self.discover_queue_similar_artists_limit,
-            discover_queue_albums_per_similar: self.discover_queue_albums_per_similar,
-            discover_queue_lastfm_mbid_max_lookups: self.discover_queue_lastfm_mbid_max_lookups,
-            discover_picks_genre_affinity_weight: self.discover_picks_genre_affinity_weight,
-            discover_picks_count: self.discover_picks_count,
-            audiodb_enabled: self.audiodb_enabled,
-            audiodb_name_search_fallback: self.audiodb_name_search_fallback,
-            direct_remote_images_enabled: self.direct_remote_images_enabled,
-            prefer_local_cover_art: self.prefer_local_cover_art,
-            audiodb_api_key: self.audiodb_api_key.into(),
-            request_history_retention_days: self.request_history_retention_days,
-            ignored_releases_retention_days: self.ignored_releases_retention_days,
-            store_prune_interval_hours: self.store_prune_interval_hours,
-        }
-    }
-}
-
-/// Defaults are the stored defaults. The default section holds no AudioDB
-/// key, so there is nothing to mask.
-impl Default for AdvancedSettingsForm {
-    fn default() -> Self {
-        Self::from_values(&AdvancedSettings::default())
-    }
-}
 
 /// The advanced settings the web app reads at start. The browser's cache
 /// lifetimes and the queue's polling interval are fixed in the web app.

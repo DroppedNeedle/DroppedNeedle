@@ -1,9 +1,9 @@
 <script lang="ts">
-	import type { AdvancedSettingsForm } from './advanced-settings-types';
+	import type { AdvancedSettings } from './advanced-settings-types';
 	import NumberField from '$lib/ui/NumberField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
-	let { data = $bindable() }: { data: AdvancedSettingsForm } = $props();
+	let { data = $bindable() }: { data: AdvancedSettings } = $props();
 </script>
 
 <div class="alert alert-info alert-soft mb-4">

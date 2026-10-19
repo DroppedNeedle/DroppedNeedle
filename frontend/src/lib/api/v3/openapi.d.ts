@@ -7750,11 +7750,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read the advanced tunables in form units. */
+        /** Read the advanced tunables (AudioDB key masked unless unset). */
         get: operations["get_advanced"];
         /**
-         * Save the advanced tunables. Unknown fields are a 400: the shape is a
-         *     closed allowlist.
+         * Save the advanced tunables (a masked AudioDB key keeps the stored one,
+         *     a blank one stores the free default).
          */
         put: operations["put_advanced"];
         post?: never;
@@ -9743,20 +9743,17 @@ export interface components {
             /** @description One page of users. */
             users: components["schemas"]["UserResponse"][];
         };
-        /**
-         * @description Advanced tunables as the settings form shows them. It is a closed
-         *     allowlist: unknown JSON fields are rejected at decode (400), so a client
-         *     holding a dropped tuning field learns it is gone instead of believing it
-         *     saved.
-         */
-        AdvancedSettingsForm: {
+        /** @description Advanced tuning: discover queue, AudioDB, images and retention. */
+        AdvancedSettings: {
             /**
-             * @description AudioDB API key (masked unless unset).
+             * @description AudioDB key (encrypted at rest; v2 stored it plaintext). A missing
+             *     field reads as empty (then the read path falls back to the "123"
+             *     default); only an explicitly stored value decrypts.
              * @default
              */
             audiodb_api_key: string;
             /**
-             * @description AudioDB provider switch.
+             * @description AudioDB master switch.
              * @default true
              */
             audiodb_enabled: boolean;
@@ -9766,25 +9763,25 @@ export interface components {
              */
             audiodb_name_search_fallback: boolean;
             /**
-             * @description Serve remote images directly.
+             * @description Direct remote images.
              * @default true
              */
             direct_remote_images_enabled: boolean;
             /**
              * Format: int64
-             * @description Discover picks count (4-30).
+             * @description Discover picks count.
              * @default 12
              */
             discover_picks_count: number;
             /**
              * Format: double
-             * @description Discover genre-affinity weight (0-1).
+             * @description Discover genre-affinity weight.
              * @default 0.7
              */
             discover_picks_genre_affinity_weight: number;
             /**
              * Format: int64
-             * @description Albums per similar artist (1-20).
+             * @description Albums taken per similar artist.
              * @default 5
              */
             discover_queue_albums_per_similar: number;
@@ -9795,42 +9792,42 @@ export interface components {
             discover_queue_auto_generate: boolean;
             /**
              * Format: int64
-             * @description MusicBrainz lookups per Last.fm album batch (1-50).
+             * @description MusicBrainz lookups one Last.fm album batch may spend.
              * @default 10
              */
             discover_queue_lastfm_mbid_max_lookups: number;
             /**
              * Format: int64
-             * @description Discover seed artists (1-10).
+             * @description Discover seed artists.
              * @default 3
              */
             discover_queue_seed_artists: number;
             /**
              * Format: int64
-             * @description Similar artists per seed (5-50).
+             * @description Similar artists fetched per seed artist.
              * @default 15
              */
             discover_queue_similar_artists_limit: number;
             /**
              * Format: int64
-             * @description Discover queue size (1-20).
+             * @description Discover queue size.
              * @default 10
              */
             discover_queue_size: number;
             /**
-             * @description Let the background warm cycle build queue decks.
+             * @description Whether the background warm cycle may build queue decks.
              * @default true
              */
             discover_queue_warm_cycle_build: boolean;
             /**
              * Format: int64
-             * @description Discover wildcard slots (0-10).
+             * @description Discover wildcard slots.
              * @default 2
              */
             discover_queue_wildcard_slots: number;
             /**
              * Format: int64
-             * @description Ignored-releases retention, days (30-3650).
+             * @description Ignored-releases retention days.
              * @default 365
              */
             ignored_releases_retention_days: number;
@@ -9841,13 +9838,13 @@ export interface components {
             prefer_local_cover_art: boolean;
             /**
              * Format: int64
-             * @description Request history retention, days (30-3650).
+             * @description Request-history retention days.
              * @default 180
              */
             request_history_retention_days: number;
             /**
              * Format: int64
-             * @description Store prune cadence, hours (1-168).
+             * @description Store-prune cadence hours.
              * @default 6
              */
             store_prune_interval_hours: number;
@@ -42487,7 +42484,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdvancedSettingsForm"];
+                    "application/json": components["schemas"]["AdvancedSettings"];
                 };
             };
         };
@@ -42501,7 +42498,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AdvancedSettingsForm"];
+                "application/json": components["schemas"]["AdvancedSettings"];
             };
         };
         responses: {
@@ -42511,7 +42508,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdvancedSettingsForm"];
+                    "application/json": components["schemas"]["AdvancedSettings"];
                 };
             };
         };

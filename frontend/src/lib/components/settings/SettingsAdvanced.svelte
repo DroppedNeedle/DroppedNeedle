@@ -3,14 +3,14 @@
 	import { CircleCheck, CircleAlert, Database, RotateCcw, Save, ImageIcon } from 'lucide-svelte';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { onDestroy } from 'svelte';
-	import type { AdvancedSettingsForm } from './advanced-settings-types';
+	import type { AdvancedSettings } from './advanced-settings-types';
 	import SettingsSectionCollapse from './SettingsSectionCollapse.svelte';
 	import SettingsStorageQueue from './SettingsStorageQueue.svelte';
 	import SettingsAudioDB from './SettingsAudioDB.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import Button from '$lib/ui/Button.svelte';
 
-	const form = createSettingsForm<AdvancedSettingsForm>({
+	const form = createSettingsForm<AdvancedSettings>({
 		loadEndpoint: SETTINGS_ENDPOINTS.advanced(),
 		saveEndpoint: SETTINGS_ENDPOINTS.advanced(),
 		afterSave: () => {

@@ -16,7 +16,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use common::{FIXED_ID, FixedIdGenerator};
 use droppedneedle::settings::effects::{Effects, SaveEffects};
-use droppedneedle::settings::models::{AdvancedSettingsForm, LibrarySettingsSaveRequest};
+use droppedneedle::settings::models::LibrarySettingsSaveRequest;
 use droppedneedle::settings::musicbrainz::BRAINZMASH_DISCLOSURE_VERSION;
 use droppedneedle::settings::services::SettingsService;
 use droppedneedle::settings::verify::{
@@ -285,19 +285,19 @@ impl VerifyProbes for FakeProbes {
 /// fan-out.
 #[tokio::test]
 async fn advanced_round_trip_masks() {
-    use droppedneedle_kernel::runtime_config::Section as _;
     use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+    use droppedneedle_kernel::runtime_config::{Masked, Section as _};
 
     let (service, effects, _scratch) = scratch_service();
-    let form = AdvancedSettingsForm {
-        discover_queue_size: 15,
-        discover_queue_auto_generate: false,
-        audiodb_api_key: "audiodb-secret".to_owned(),
-        ..Default::default()
-    };
-    let echoed = service.save_advanced(form).await.expect("saves");
+    let body: Masked<AdvancedSettings> = serde_json::from_value(json!({
+        "discover_queue_size": 15,
+        "discover_queue_auto_generate": false,
+        "audiodb_api_key": "audiodb-secret",
+    }))
+    .expect("decodes");
+    let echoed = service.save_masked(body).await.expect("saves");
     assert_eq!(echoed.discover_queue_size, 15);
-    assert_eq!(echoed.audiodb_api_key, SECRET_MASK);
+    assert_eq!(echoed.audiodb_api_key.expose(), SECRET_MASK);
     assert_eq!(
         effects.calls(),
         vec![Effect::Invalidate(&[CacheRoot::AudioDb])]
@@ -313,7 +313,7 @@ async fn advanced_round_trip_masks() {
     // The echo re-saves cleanly: the mask keeps the stored key, the row is
     // left as it was, and the save still runs the section's effects.
     let revision = service.store.revision(AdvancedSettings::KEY);
-    service.save_advanced(echoed).await.expect("resaves");
+    service.save_masked(echoed).await.expect("resaves");
     assert_eq!(service.store.revision(AdvancedSettings::KEY), revision);
     assert_eq!(effects.calls().len(), 2);
     let stored = service

@@ -11,20 +11,19 @@ use axum::{
 };
 
 use super::models::{
-    AdvancedSettingsForm, DownloadPolicyView, FrontendCacheTTLs, IndexerReorderRequest,
-    IndexerSavedResponse, IndexerTestResponse, JellyfinVerifyResponse,
-    LibraryManagementProfileCopyRequest, LibraryManagementProfileCreateRequest,
-    LibraryManagementProfileDeleteRequest, LibraryManagementProfileExportRequest,
-    LibraryManagementProfileImportPreviewRequest, LibraryManagementProfileImportRequest,
-    LibraryManagementProfileUpdateRequest, LibraryManagementSaveRequest,
-    LibraryManagementSettingsImpactRequest, LibraryPathQuery, LibraryPathRequest,
-    LibraryPolicyApplyRequest, LibraryPolicyImpactRequest, LibraryRestorableRootsResponse,
-    LibraryRestoreRootsRequest, LibraryScanScheduleResponse, LibrarySettingsSaveRequest,
-    MusicBrainzBindingRequest, MusicBrainzSettingsUpdate, MusicBrainzSettingsView,
-    MusicBrainzVerifyRequest, OperationResult, PlexLibrarySectionInfo, PlexVerifyResponse,
-    PolicyImpactResponse, PolicySummaryResponse, ProwlarrTestResponse, SabnzbdTestResponse,
-    SectionPrefsResponse, SectionPrefsUpdate, SourcePriorityOrder, TestConnectionResponse,
-    UsenetSearchBackend, VerifyConnectionResponse,
+    DownloadPolicyView, FrontendCacheTTLs, IndexerReorderRequest, IndexerSavedResponse,
+    IndexerTestResponse, JellyfinVerifyResponse, LibraryManagementProfileCopyRequest,
+    LibraryManagementProfileCreateRequest, LibraryManagementProfileDeleteRequest,
+    LibraryManagementProfileExportRequest, LibraryManagementProfileImportPreviewRequest,
+    LibraryManagementProfileImportRequest, LibraryManagementProfileUpdateRequest,
+    LibraryManagementSaveRequest, LibraryManagementSettingsImpactRequest, LibraryPathQuery,
+    LibraryPathRequest, LibraryPolicyApplyRequest, LibraryPolicyImpactRequest,
+    LibraryRestorableRootsResponse, LibraryRestoreRootsRequest, LibraryScanScheduleResponse,
+    LibrarySettingsSaveRequest, MusicBrainzBindingRequest, MusicBrainzSettingsUpdate,
+    MusicBrainzSettingsView, MusicBrainzVerifyRequest, OperationResult, PlexLibrarySectionInfo,
+    PlexVerifyResponse, PolicyImpactResponse, PolicySummaryResponse, ProwlarrTestResponse,
+    SabnzbdTestResponse, SectionPrefsResponse, SectionPrefsUpdate, SourcePriorityOrder,
+    TestConnectionResponse, UsenetSearchBackend, VerifyConnectionResponse,
 };
 use super::wiring::SettingsSetup;
 use droppedneedle_auth::{Admin, User};
@@ -32,7 +31,7 @@ use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::runtime_config::Masked;
 use droppedneedle_kernel::runtime_config::secret_sections::{
-    EventsSettings, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
+    AdvancedSettings, EventsSettings, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
     NavidromeConnection, NewznabIndexer, OidcConnection, PlexConnection, ProwlarrConnection,
     SabnzbdConnection, SlskdConnection, WrappedSettings, YouTubeConnection,
 };
@@ -821,41 +820,41 @@ pub async fn get_library_path_mapping(
 
 // --- advanced + cache TTLs ---------------------------------------------------------
 
-/// Read the advanced tunables in form units.
+/// Read the advanced tunables (AudioDB key masked unless unset).
 #[utoipa::path(
     get,
     tag = "settings",
     path = "/api/v3/settings/advanced",
-    responses((status = 200, description = "Advanced tunables", body = AdvancedSettingsForm))
+    responses((status = 200, description = "Advanced tunables", body = AdvancedSettings))
 )]
 pub async fn get_advanced(
     State(settings): State<SettingsSetup>,
     _caller: Admin,
-) -> JsonResult<AdvancedSettingsForm> {
+) -> JsonResult<Masked<AdvancedSettings>> {
     settings
         .service()
-        .get_advanced()
+        .get_masked()
         .map(Json)
         .map_err(ApiError::from)
 }
 
-/// Save the advanced tunables. Unknown fields are a 400: the shape is a
-/// closed allowlist.
+/// Save the advanced tunables (a masked AudioDB key keeps the stored one,
+/// a blank one stores the free default).
 #[utoipa::path(
     put,
     tag = "settings",
     path = "/api/v3/settings/advanced",
-    request_body = AdvancedSettingsForm,
-    responses((status = 200, description = "Saved tunables", body = AdvancedSettingsForm))
+    request_body = AdvancedSettings,
+    responses((status = 200, description = "Saved tunables", body = AdvancedSettings))
 )]
 pub async fn put_advanced(
     State(settings): State<SettingsSetup>,
     _caller: Admin,
-    ValidJson(body): ValidJson<AdvancedSettingsForm>,
-) -> JsonResult<AdvancedSettingsForm> {
+    ValidJson(body): ValidJson<Masked<AdvancedSettings>>,
+) -> JsonResult<Masked<AdvancedSettings>> {
     settings
         .service()
-        .save_advanced(body)
+        .save_masked(body)
         .await
         .map(Json)
         .map_err(ApiError::from)

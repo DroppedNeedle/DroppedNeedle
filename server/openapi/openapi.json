@@ -28619,7 +28619,7 @@
         "tags": [
           "settings"
         ],
-        "summary": "Read the advanced tunables in form units.",
+        "summary": "Read the advanced tunables (AudioDB key masked unless unset).",
         "operationId": "get_advanced",
         "responses": {
           "200": {
@@ -28627,7 +28627,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AdvancedSettingsForm"
+                  "$ref": "#/components/schemas/AdvancedSettings"
                 }
               }
             }
@@ -28645,13 +28645,13 @@
         "tags": [
           "settings"
         ],
-        "summary": "Save the advanced tunables. Unknown fields are a 400: the shape is a\nclosed allowlist.",
+        "summary": "Save the advanced tunables (a masked AudioDB key keeps the stored one,\na blank one stores the free default).",
         "operationId": "put_advanced",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AdvancedSettingsForm"
+                "$ref": "#/components/schemas/AdvancedSettings"
               }
             }
           },
@@ -28663,7 +28663,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AdvancedSettingsForm"
+                  "$ref": "#/components/schemas/AdvancedSettings"
                 }
               }
             }
@@ -34737,18 +34737,18 @@
           }
         }
       },
-      "AdvancedSettingsForm": {
+      "AdvancedSettings": {
         "type": "object",
-        "description": "Advanced tunables as the settings form shows them. It is a closed\nallowlist: unknown JSON fields are rejected at decode (400), so a client\nholding a dropped tuning field learns it is gone instead of believing it\nsaved.",
+        "description": "Advanced tuning: discover queue, AudioDB, images and retention.",
         "properties": {
           "audiodb_api_key": {
             "type": "string",
-            "description": "AudioDB API key (masked unless unset).",
+            "description": "AudioDB key (encrypted at rest; v2 stored it plaintext). A missing\nfield reads as empty (then the read path falls back to the \"123\"\ndefault); only an explicitly stored value decrypts.",
             "default": ""
           },
           "audiodb_enabled": {
             "type": "boolean",
-            "description": "AudioDB provider switch.",
+            "description": "AudioDB master switch.",
             "default": true
           },
           "audiodb_name_search_fallback": {
@@ -34758,25 +34758,25 @@
           },
           "direct_remote_images_enabled": {
             "type": "boolean",
-            "description": "Serve remote images directly.",
+            "description": "Direct remote images.",
             "default": true
           },
           "discover_picks_count": {
             "type": "integer",
             "format": "int64",
-            "description": "Discover picks count (4-30).",
+            "description": "Discover picks count.",
             "default": 12
           },
           "discover_picks_genre_affinity_weight": {
             "type": "number",
             "format": "double",
-            "description": "Discover genre-affinity weight (0-1).",
+            "description": "Discover genre-affinity weight.",
             "default": 0.7
           },
           "discover_queue_albums_per_similar": {
             "type": "integer",
             "format": "int64",
-            "description": "Albums per similar artist (1-20).",
+            "description": "Albums taken per similar artist.",
             "default": 5
           },
           "discover_queue_auto_generate": {
@@ -34787,42 +34787,42 @@
           "discover_queue_lastfm_mbid_max_lookups": {
             "type": "integer",
             "format": "int64",
-            "description": "MusicBrainz lookups per Last.fm album batch (1-50).",
+            "description": "MusicBrainz lookups one Last.fm album batch may spend.",
             "default": 10
           },
           "discover_queue_seed_artists": {
             "type": "integer",
             "format": "int64",
-            "description": "Discover seed artists (1-10).",
+            "description": "Discover seed artists.",
             "default": 3
           },
           "discover_queue_similar_artists_limit": {
             "type": "integer",
             "format": "int64",
-            "description": "Similar artists per seed (5-50).",
+            "description": "Similar artists fetched per seed artist.",
             "default": 15
           },
           "discover_queue_size": {
             "type": "integer",
             "format": "int64",
-            "description": "Discover queue size (1-20).",
+            "description": "Discover queue size.",
             "default": 10
           },
           "discover_queue_warm_cycle_build": {
             "type": "boolean",
-            "description": "Let the background warm cycle build queue decks.",
+            "description": "Whether the background warm cycle may build queue decks.",
             "default": true
           },
           "discover_queue_wildcard_slots": {
             "type": "integer",
             "format": "int64",
-            "description": "Discover wildcard slots (0-10).",
+            "description": "Discover wildcard slots.",
             "default": 2
           },
           "ignored_releases_retention_days": {
             "type": "integer",
             "format": "int64",
-            "description": "Ignored-releases retention, days (30-3650).",
+            "description": "Ignored-releases retention days.",
             "default": 365
           },
           "prefer_local_cover_art": {
@@ -34833,17 +34833,16 @@
           "request_history_retention_days": {
             "type": "integer",
             "format": "int64",
-            "description": "Request history retention, days (30-3650).",
+            "description": "Request-history retention days.",
             "default": 180
           },
           "store_prune_interval_hours": {
             "type": "integer",
             "format": "int64",
-            "description": "Store prune cadence, hours (1-168).",
+            "description": "Store-prune cadence hours.",
             "default": 6
           }
-        },
-        "additionalProperties": false
+        }
       },
       "AlbumBasicInfo": {
         "type": "object",

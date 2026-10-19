@@ -17,8 +17,8 @@ use std::sync::Arc;
 
 use super::effects::Effects;
 use super::models::{
-    AdvancedSettingsForm, DownloadPolicyView, FrontendCacheTTLs, IndexerSavedResponse,
-    IndexerTestResponse, JellyfinUserInfo, JellyfinVerifyResponse, LibraryScanScheduleResponse,
+    DownloadPolicyView, FrontendCacheTTLs, IndexerSavedResponse, IndexerTestResponse,
+    JellyfinUserInfo, JellyfinVerifyResponse, LibraryScanScheduleResponse,
     LibrarySettingsSaveRequest, PlexLibrarySectionInfo, PlexVerifyResponse, PolicyImpactResponse,
     PolicySummaryResponse, ProwlarrTestResponse, SabnzbdTestResponse, SourcePriorityOrder,
     TestConnectionResponse, UsenetSearchBackend, VerifyConnectionResponse,
@@ -249,23 +249,6 @@ impl SettingsService {
             .await?;
         self.effects.saved(mark).await;
         Ok(saved.map(|clients| clients.sabnzbd))
-    }
-
-    /// The advanced tunables in form units.
-    pub fn get_advanced(&self) -> Result<AdvancedSettingsForm, SettingsError> {
-        let stored: Masked<AdvancedSettings> = self.get_masked()?;
-        Ok(AdvancedSettingsForm::from_section(&stored))
-    }
-
-    /// Save the advanced tunables (form units scale to stored units; a
-    /// masked AudioDB key keeps the stored one). The save invalidates the
-    /// AudioDB cache root.
-    pub async fn save_advanced(
-        &self,
-        form: AdvancedSettingsForm,
-    ) -> Result<AdvancedSettingsForm, SettingsError> {
-        let saved = self.save_submitted(form.into_section()).await?;
-        Ok(AdvancedSettingsForm::from_section(&saved))
     }
 
     /// The advanced settings the web app reads at start.
