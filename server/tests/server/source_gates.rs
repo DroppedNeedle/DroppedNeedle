@@ -488,7 +488,7 @@ const SETTINGS_STORE: &[Place] = &[
     ),
     place(
         "library/src/settings.rs",
-        "adds a root, builds Library Management's settings service and signs correction previews with the data key",
+        "adds a root and signs correction previews with the data key",
     ),
     place(
         "library/src/management/settings/service.rs",

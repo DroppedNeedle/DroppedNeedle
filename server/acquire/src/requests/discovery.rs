@@ -118,7 +118,7 @@ impl BatchRequests for DiscoveryBatchRequests {
             let Some(library) = self.library.clone() else {
                 return Ok(false);
             };
-            let hook = library.removal_hook.get().cloned();
+            let hook = library.removal_hook.clone();
             let (album, actor_id) = (release_group_mbid.to_owned(), admin.user_id().to_owned());
             let removed = tokio::task::spawn_blocking(move || {
                 Mutations::new(&library).remove_album(&album, true, &actor_id)
@@ -128,8 +128,7 @@ impl BatchRequests for DiscoveryBatchRequests {
             match removed {
                 Ok(removed) => {
                     // The removal stands; download and wanted cleanup follow it.
-                    if let (Some(hook), Some(group)) = (hook, removed.release_group_mbid.as_deref())
-                    {
+                    if let Some(group) = removed.release_group_mbid.as_deref() {
                         hook.album_removed(group, true).await;
                     }
                     Ok(true)

@@ -108,16 +108,17 @@ impl MediaSetup {
     /// policy (read per stream); its data key seals linked credentials;
     /// its event hub carries the now-playing snapshots.
     /// `library_roots` plus the catalog turn local stream keys and
-    /// download ids (track ids) into files under the live library roots
-    /// (`None` keeps the constructor fallback for unwired builds and serves
-    /// no downloads); `imports` is where remote playlist imports land;
+    /// download ids (track ids) into files under the live library roots;
+    /// `imports` is where remote playlist imports land; `plugins` hears
+    /// accepted plays and serves `streaming_source` plugin streams;
     /// `plex_tv` and `scrobbles` are the plex.tv root and the scrobble
     /// forwarding addresses.
     pub fn build(
         platform: &Platform,
         users: UsersDeps,
-        library_roots: Option<droppedneedle_library::scan::coordinator::SharedResolver>,
+        library_roots: droppedneedle_library::scan::coordinator::SharedResolver,
         imports: Arc<dyn ImportSink>,
+        plugins: Arc<droppedneedle_plugins::host::PluginHost>,
         plex_tv: String,
         scrobbles: crate::playback::forwarding::Endpoints,
     ) -> Result<(Self, MediaWorkers), String> {
@@ -129,8 +130,8 @@ impl MediaSetup {
         );
         let http = http_factory.shared().clone();
         crate::stream::plugin_url::sweep_stale_spools();
-        let library = library_roots.map(|roots| LibraryFiles::new(db.sqlx().clone(), roots));
-        let download = DownloadState::new(library.clone(), config.live());
+        let library = LibraryFiles::new(db.sqlx().clone(), library_roots);
+        let download = DownloadState::new(Some(library.clone()), config.live());
         let resolver = Arc::new(
             ConnectionResolver::new(
                 Arc::new(SqliteConnectionStore::new(db.clone())),
@@ -169,13 +170,11 @@ impl MediaSetup {
             TranscodeSettings::default(),
             ffmpeg_available(),
         )
-        .with_settings(config.live());
-        let engine = match library {
-            Some(library) => gateway.with_library(library),
-            None => gateway,
-        };
+        .with_settings(config.live())
+        .with_library(library)
+        .with_plugins(plugins.clone(), http_factory.direct_no_redirect().clone());
         let stream = StreamState {
-            engine: Arc::new(engine),
+            engine: Arc::new(gateway),
         };
         let playback_db = Arc::new(PlaybackDb::new(db.clone(), ids.clone()));
         let (queue, rx) = ReportQueue::channel();
@@ -194,7 +193,7 @@ impl MediaSetup {
             dedup: ScrobbleDedup::new(),
             mixed: MixedDedup::new(),
             clock: Arc::new(SystemClock),
-            events: std::sync::Arc::new(crate::playback::ports::NoPlayEvents),
+            events: Arc::new(crate::playback::plugin_events::PluginPlayEvents(plugins)),
         };
         let worker = MediaWorkers {
             reports: rx,
@@ -211,12 +210,6 @@ impl MediaSetup {
             },
             worker,
         ))
-    }
-
-    /// Send accepted plays to listeners (the plugin host).
-    pub fn with_play_events(mut self, events: Arc<dyn crate::playback::ports::PlayEvents>) -> Self {
-        self.playback.events = events;
-        self
     }
 }
 
@@ -272,10 +265,8 @@ fn transcode_settings(connect_apps: &ConnectApps) -> TranscodeSettings {
     }
 }
 
-/// Local-stream sandbox root for unwired builds (`None` roots, test
-/// bundles): local keys resolve under `<root>/music`, which is
-/// normally absent, so local reads 404. Wired builds
-/// resolve against the live library registry instead.
+/// The gateway's constructor root, `<root>/music`. The built gateway
+/// resolves local keys against the live library registry instead.
 fn local_root(config: &AppConfig) -> PathBuf {
     config.root_app_dir.join("music")
 }

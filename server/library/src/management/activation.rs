@@ -66,13 +66,9 @@ impl Management {
             .map_err(|error| ManagementError::Store(error.to_string()))
     }
 
-    /// The settings page's service, or a private one in test bundles.
+    /// The settings page's service.
     fn settings_service(&self) -> Arc<LibraryManagementService> {
-        self.setup
-            .management_settings
-            .get()
-            .cloned()
-            .unwrap_or_else(|| Arc::new(self.setup.settings.management_service()))
+        self.setup.management_settings.clone()
     }
 
     /// Start a dry run of one folder under proposed settings. Blocking.

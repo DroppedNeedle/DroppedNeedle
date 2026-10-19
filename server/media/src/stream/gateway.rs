@@ -88,7 +88,7 @@ pub trait RemoteReader: Send + Sync {
 pub struct Gateway<R, T> {
     local_root: PathBuf,
     library: Option<LibraryFiles>,
-    plugins: std::sync::OnceLock<(
+    plugins: Option<(
         Arc<droppedneedle_plugins::host::PluginHost>,
         reqwest::Client,
     )>,
@@ -115,7 +115,7 @@ impl<R, T> Gateway<R, T> {
         Self {
             local_root,
             library: None,
-            plugins: std::sync::OnceLock::new(),
+            plugins: None,
             remote,
             transcoder,
             fixed: settings,
@@ -143,16 +143,14 @@ impl<R, T> Gateway<R, T> {
 
     /// Serve `streaming_source` plugins under [`AudioSource::Plugin`].
     /// `no_redirect` proxies plugin URLs; it must not follow redirects on
-    /// its own, because every hop is re-checked. Boot attaches the host
-    /// once, after the shared engine exists.
-    pub fn attach_plugins(
-        &self,
+    /// its own, because every hop is re-checked.
+    pub fn with_plugins(
+        mut self,
         host: Arc<droppedneedle_plugins::host::PluginHost>,
         no_redirect: reqwest::Client,
-    ) {
-        if self.plugins.set((host, no_redirect)).is_err() {
-            tracing::warn!("plugin host was already attached to the stream gateway");
-        }
+    ) -> Self {
+        self.plugins = Some((host, no_redirect));
+        self
     }
 }
 
@@ -435,7 +433,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
     ) -> Result<StreamMedia, StreamFault> {
         use droppedneedle_plugins::capabilities::stream::PluginStream;
 
-        let Some((host, client)) = self.plugins.get() else {
+        let Some((host, client)) = &self.plugins else {
             return Err(StreamFault::NotFound);
         };
         let roots = self.all_library_roots();

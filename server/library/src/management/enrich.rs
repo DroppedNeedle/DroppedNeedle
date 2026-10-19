@@ -5,7 +5,6 @@
 //! an answer that does not come in time counts as *deferred*, never as
 //! "nothing there", so a partial answer never replaces what a file holds.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
@@ -241,13 +240,13 @@ pub fn names_wanted(
 /// document and put on `release`. Never inside a transaction. A stored
 /// part is kept and used when its refetch fails.
 pub fn ensure_release_extras(
-    slot: &EnrichmentSlot,
+    port: Option<&dyn EnrichmentPort>,
     store: &SqliteIdentifyStore,
     profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
     release: &mut Release,
     background: bool,
 ) -> ReleaseParts {
-    let Some(port) = slot.get() else {
+    let Some(port) = port else {
         return ReleaseParts::default();
     };
     if super::custom::is_custom(release) {
@@ -351,10 +350,6 @@ fn now_ms() -> i64 {
         })
 }
 
-/// The slot the port is attached to at boot (empty in test bundles until a
-/// test scripts one).
-pub type EnrichmentSlot = Arc<std::sync::OnceLock<Arc<dyn EnrichmentPort>>>;
-
 /// Drive one call to completion from the blocking planning thread. `None`
 /// when there is no runtime, the call fails, or it runs out of time.
 pub fn wait<T>(call: BoxFuture<'_, Result<T, String>>) -> Option<T> {
@@ -435,14 +430,14 @@ pub struct ReplayGainValues {
 /// artist names the profile writes are fetched onto `release` (and its stored document)
 /// first; `automatic` runs ask at background priority.
 pub fn gather(
-    slot: &EnrichmentSlot,
+    port: Option<&dyn EnrichmentPort>,
     store: &SqliteIdentifyStore,
     profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
     release: &mut Release,
     automatic: bool,
 ) -> AlbumExtras {
     use droppedneedle_kernel::runtime_config::sections::GenreSource;
-    let parts = ensure_release_extras(slot, store, profile, release, automatic);
+    let parts = ensure_release_extras(port, store, profile, release, automatic);
     let mut extras = AlbumExtras {
         credits: parts.credits,
         names: parts.names,
@@ -450,7 +445,7 @@ pub fn gather(
         ..AlbumExtras::default()
     };
     let release = &*release;
-    let Some(port) = slot.get() else {
+    let Some(port) = port else {
         return extras;
     };
     let artwork = &profile.artwork;
@@ -499,7 +494,7 @@ pub enum LyricsAnswer {
 /// Ask LRCLIB for one track's lyrics by its exact signature (v2's
 /// accuracy gate: title, artist, album and a length within two seconds).
 pub fn lyrics(
-    slot: &EnrichmentSlot,
+    port: Option<&dyn EnrichmentPort>,
     settings: &droppedneedle_kernel::runtime_config::sections::LyricsManagementSettings,
     release: &crate::matching::Release,
     track: &crate::matching::ReleaseTrack,
@@ -507,7 +502,7 @@ pub fn lyrics(
     if !settings.enabled || (!settings.write_plain && !settings.write_synced) {
         return LyricsAnswer::Off;
     }
-    let Some(port) = slot.get() else {
+    let Some(port) = port else {
         return LyricsAnswer::Deferred;
     };
     let artist = if track.artists.is_empty() {

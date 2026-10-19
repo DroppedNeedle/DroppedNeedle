@@ -162,13 +162,13 @@ pub async fn remove_album(
     ValidQuery(query): ValidQuery<RemoveAlbumQuery>,
 ) -> Result<Json<RemovalResponse>, ApiError> {
     let actor = caller.user_id().to_owned();
-    let hook = state.removal_hook.get().cloned();
+    let hook = state.removal_hook.clone();
     let removed = blocking(move || {
         Mutations::new(&state).remove_album(&album_id, query.delete_files, &actor)
     })
     .await?;
     // The removal stands; download and wanted cleanup only follow it.
-    if let (Some(hook), Some(group)) = (hook, removed.release_group_mbid.as_deref()) {
+    if let Some(group) = removed.release_group_mbid.as_deref() {
         hook.album_removed(group, query.stop_wanted).await;
     }
     Ok(Json(RemovalResponse {

@@ -216,10 +216,7 @@ impl PluginHost {
         let root_id = primary.clone();
         let write = async move {
             // Hold the root like every publisher write; dropped when done.
-            let _lease = match &fs {
-                Some(fs) => Some(fs.write(&root_id).await),
-                None => None,
-            };
+            let _lease = fs.write(&root_id).await;
             tokio::task::spawn_blocking(move || {
                 let note = ledger.join(uuid::Uuid::new_v4().simple().to_string());
                 let stored = write_new_file(&sandbox, &root_id, &relative, &data, |temp| {

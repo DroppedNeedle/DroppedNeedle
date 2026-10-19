@@ -176,9 +176,9 @@ pub struct Removed {
 pub type Recycled = Vec<(PathBuf, PathBuf)>;
 
 /// What happens outside the library once an album is removed: its
-/// download records and wanted watch are cleaned up. Acquisition fills the
-/// slot at boot; failures are logged there, never surfaced, because the
-/// removal itself already happened.
+/// download records and wanted watch are cleaned up. The library is built
+/// with acquisition's; failures are logged there, never surfaced, because
+/// the removal itself already happened.
 pub trait AlbumRemovalHook: Send + Sync {
     /// The album `release_group_mbid` left the library. `stop_wanted`
     /// stops its watch; otherwise a fulfilled watch looks for a
@@ -189,10 +189,6 @@ pub trait AlbumRemovalHook: Send + Sync {
         stop_wanted: bool,
     ) -> futures_util::future::BoxFuture<'a, ()>;
 }
-
-/// The slot the removal hook goes into.
-pub type AlbumRemovalSlot =
-    std::sync::Arc<std::sync::OnceLock<std::sync::Arc<dyn AlbumRemovalHook>>>;
 
 /// One track row a removal or rescan works on.
 #[derive(Debug, Clone)]

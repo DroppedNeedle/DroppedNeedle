@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::common::library::TestSql as _;
-use crate::common::library::{ScriptedContrib, ScriptedIdentify, library_asking};
+use crate::common::library::{ScriptedContrib, ScriptedIdentify, library_asking, library_with};
 use crate::common::{ScratchDir, TestApp, closed_outbound};
 use axum::http::StatusCode;
 use droppedneedle::bootstrap::Port;
@@ -1570,11 +1570,13 @@ fn control_revision(activity: &Value) -> u64 {
     })
 }
 
-/// A library test's scratch folder, and the MusicBrainz answers its
-/// library identifies with. Derefs to the folder.
+/// A library test's scratch folder, the MusicBrainz answers its library
+/// identifies with, and the outside sources Library Management plans with
+/// (none unless the test scripts them). Derefs to the folder.
 struct Scratch {
     dir: ScratchDir,
     identify: Arc<FakeProviders>,
+    enrichment: Option<Arc<dyn droppedneedle_library::management::enrich::EnrichmentPort>>,
 }
 
 impl std::ops::Deref for Scratch {
@@ -1588,9 +1590,19 @@ impl std::ops::Deref for Scratch {
 /// A bare library bundle over a migrated scratch database, with its
 /// music folder (not yet a root).
 async fn bare_library(tag: &str) -> (Scratch, LibrarySetup, PathBuf) {
+    bare_library_with(tag, None).await
+}
+
+/// As [`bare_library`], with Library Management planning through
+/// `enrichment`.
+async fn bare_library_with(
+    tag: &str,
+    enrichment: Option<Arc<dyn droppedneedle_library::management::enrich::EnrichmentPort>>,
+) -> (Scratch, LibrarySetup, PathBuf) {
     let scratch = Scratch {
         dir: ScratchDir::new(tag),
         identify: Arc::new(FakeProviders::default()),
+        enrichment,
     };
     let connection = droppedneedle_kernel::db::open_connection(&scratch.join("app.db"))
         .expect("scratch db opens");
@@ -1617,7 +1629,11 @@ async fn open_library(scratch: &Scratch) -> LibrarySetup {
         .settings(config)
         .build()
         .await;
-    library_asking(&platform, scratch.identify.clone())
+    library_with(
+        &platform,
+        scratch.identify.clone(),
+        scratch.enrichment.clone(),
+    )
 }
 
 /// Add `music` as the only root and scan it.
@@ -5042,6 +5058,7 @@ async fn a_busy_database_leaves_a_management_job_runnable() {
     let scratch = Scratch {
         dir: ScratchDir::new("lib-management-busy"),
         identify: Arc::new(FakeProviders::default()),
+        enrichment: None,
     };
     crate::common::migrated_db(&scratch.join("app.db"));
     // One request reader and a short wait for it: while a read holds it,
@@ -5839,7 +5856,34 @@ async fn library_management_tools_journey() {
     use droppedneedle_library::management::tag_edit::TagEditRequest;
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    let (scratch, library, music) = bare_library("lib-management-tools").await;
+    use droppedneedle_library::management::enrich::{Cover, LyricsFound, ScriptedEnrichment};
+    let cover = {
+        let mut bytes = Vec::new();
+        image::RgbImage::from_pixel(8, 8, image::Rgb([200, 30, 30]))
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("png");
+        bytes
+    };
+    let synced = "[00:01.00]Plain words\n".to_owned();
+    let (scratch, library, music) = bare_library_with(
+        "lib-management-tools",
+        Some(Arc::new(ScriptedEnrichment {
+            listenbrainz: None,
+            lyrics: Some(LyricsFound {
+                plain: Some("Plain words".to_owned()),
+                synced: Some(synced.clone()),
+            }),
+            cover: Some(Cover {
+                bytes: cover.clone(),
+                mime: "image/png".to_owned(),
+            }),
+            ..Default::default()
+        })),
+    )
+    .await;
     let file = plant(&music, "incoming/tool track.flac", "management_full.flac");
     add_music_root(&library, &music).await;
     let track = library
@@ -5917,40 +5961,11 @@ async fn library_management_tools_journey() {
     // all come off again with the run's undo.
     {
         use droppedneedle_kernel::runtime_config::sections::{LibraryManagement, ReplayGainMode};
-        use droppedneedle_library::management::enrich::{Cover, LyricsFound, ScriptedEnrichment};
         use droppedneedle_library::tags::save::read_document;
         let db = || {
             droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
                 .expect("db")
         };
-        let cover = {
-            let mut bytes = Vec::new();
-            image::RgbImage::from_pixel(8, 8, image::Rgb([200, 30, 30]))
-                .write_to(
-                    &mut std::io::Cursor::new(&mut bytes),
-                    image::ImageFormat::Png,
-                )
-                .expect("png");
-            bytes
-        };
-        let synced = "[00:01.00]Plain words\n".to_owned();
-        assert!(
-            library
-                .enrichment
-                .set(Arc::new(ScriptedEnrichment {
-                    listenbrainz: None,
-                    lyrics: Some(LyricsFound {
-                        plain: Some("Plain words".to_owned()),
-                        synced: Some(synced.clone()),
-                    }),
-                    cover: Some(Cover {
-                        bytes: cover.clone(),
-                        mime: "image/png".to_owned(),
-                    }),
-                    ..Default::default()
-                }))
-                .is_ok()
-        );
         droppedneedle_library::tags::save_tags(
             &file,
             &[droppedneedle_library::tags::TagEdit::native(
@@ -6741,7 +6756,29 @@ async fn library_management_artwork_journey() {
     use droppedneedle_library::tags::save::read_document;
     use droppedneedle_library::tags::{TagEdit, TagField};
 
-    let (scratch, library, music) = bare_library("lib-management-artwork").await;
+    let cover = {
+        let mut bytes = Vec::new();
+        image::RgbImage::from_pixel(8, 8, image::Rgb([30, 30, 200]))
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("png");
+        bytes
+    };
+    let (scratch, library, music) = bare_library_with(
+        "lib-management-artwork",
+        Some(Arc::new(ScriptedEnrichment {
+            listenbrainz: None,
+            lyrics: None,
+            cover: Some(Cover {
+                bytes: cover,
+                mime: "image/png".to_owned(),
+            }),
+            ..Default::default()
+        })),
+    )
+    .await;
     let file = plant(&music, "art/cover track.m4a", "management_full.m4a");
     droppedneedle_library::tags::save_tags(
         &file,
@@ -6801,30 +6838,6 @@ async fn library_management_artwork_journey() {
     lm::service::LibraryManagementService::new(Arc::new(library.settings.store().clone()))
         .get_settings()
         .expect("settings normalized");
-    let cover = {
-        let mut bytes = Vec::new();
-        image::RgbImage::from_pixel(8, 8, image::Rgb([30, 30, 200]))
-            .write_to(
-                &mut std::io::Cursor::new(&mut bytes),
-                image::ImageFormat::Png,
-            )
-            .expect("png");
-        bytes
-    };
-    assert!(
-        library
-            .enrichment
-            .set(Arc::new(ScriptedEnrichment {
-                listenbrainz: None,
-                lyrics: None,
-                cover: Some(Cover {
-                    bytes: cover,
-                    mime: "image/png".to_owned(),
-                }),
-                ..Default::default()
-            }))
-            .is_ok()
-    );
     let db = || {
         droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
             .expect("db")
@@ -7017,8 +7030,29 @@ impl ManagedLibrary {
             &mut droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
         ),
     ) -> Self {
+        Self::start_with(tag, configure, None).await
+    }
+
+    /// As [`Self::start`], planning through the scripted outside sources.
+    async fn scripted(
+        tag: &str,
+        configure: impl Fn(
+            &mut droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
+        ),
+        enrichment: Arc<droppedneedle_library::management::enrich::ScriptedEnrichment>,
+    ) -> Self {
+        Self::start_with(tag, configure, Some(enrichment)).await
+    }
+
+    async fn start_with(
+        tag: &str,
+        configure: impl Fn(
+            &mut droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
+        ),
+        enrichment: Option<Arc<dyn droppedneedle_library::management::enrich::EnrichmentPort>>,
+    ) -> Self {
         use droppedneedle_library::management::settings as lm;
-        let (scratch, library, music) = bare_library(tag).await;
+        let (scratch, library, music) = bare_library_with(tag, enrichment).await;
         std::fs::create_dir_all(&music).expect("music folder");
         add_music_root(&library, &music).await;
         library
@@ -7910,11 +7944,6 @@ async fn a_scrub_preview_names_the_tags_it_keeps() {
     use droppedneedle_library::management::enrich::{Cover, ScriptedEnrichment};
     use droppedneedle_library::management::models::{Eligibility, SelectionKind};
 
-    let managed = ManagedLibrary::start("lib-kept-as-is", |profile| {
-        profile.metadata.scrub_unmanaged_tags = true;
-        profile.artwork.embedded_enabled = true;
-    })
-    .await;
     let mut cover = Vec::new();
     image::RgbImage::from_pixel(8, 8, image::Rgb([30, 30, 200]))
         .write_to(
@@ -7922,21 +7951,23 @@ async fn a_scrub_preview_names_the_tags_it_keeps() {
             image::ImageFormat::Png,
         )
         .expect("png");
-    assert!(
-        managed
-            .library
-            .enrichment
-            .set(Arc::new(ScriptedEnrichment {
-                listenbrainz: None,
-                lyrics: None,
-                cover: Some(Cover {
-                    bytes: cover,
-                    mime: "image/png".to_owned(),
-                }),
-                ..Default::default()
-            }))
-            .is_ok()
-    );
+    let managed = ManagedLibrary::scripted(
+        "lib-kept-as-is",
+        |profile| {
+            profile.metadata.scrub_unmanaged_tags = true;
+            profile.artwork.embedded_enabled = true;
+        },
+        Arc::new(ScriptedEnrichment {
+            listenbrainz: None,
+            lyrics: None,
+            cover: Some(Cover {
+                bytes: cover,
+                mime: "image/png".to_owned(),
+            }),
+            ..Default::default()
+        }),
+    )
+    .await;
     let (kept, kept_tracks) = managed
         .add_album_from(
             "kept",
@@ -8432,35 +8463,32 @@ async fn a_replaced_picture_counts_only_where_pictures_are_managed() {
         bytes
     };
     for (tag, artwork) in [("lib-takeover-art", true), ("lib-takeover-no-art", false)] {
-        let managed = ManagedLibrary::start(tag, |profile| {
-            profile.artwork.embedded_enabled = artwork;
-            // No credits are scripted here.
-            for field in &mut profile.metadata.fields {
-                if droppedneedle_library::management::enrich::CREDIT_FIELDS
-                    .iter()
-                    .any(|(name, _)| *name == field.field)
-                {
-                    field.mode =
-                        droppedneedle_kernel::runtime_config::sections::FieldMode::Disabled;
+        let managed = ManagedLibrary::scripted(
+            tag,
+            |profile| {
+                profile.artwork.embedded_enabled = artwork;
+                // No credits are scripted here.
+                for field in &mut profile.metadata.fields {
+                    if droppedneedle_library::management::enrich::CREDIT_FIELDS
+                        .iter()
+                        .any(|(name, _)| *name == field.field)
+                    {
+                        field.mode =
+                            droppedneedle_kernel::runtime_config::sections::FieldMode::Disabled;
+                    }
                 }
-            }
-        })
+            },
+            Arc::new(ScriptedEnrichment {
+                listenbrainz: None,
+                lyrics: None,
+                cover: Some(Cover {
+                    bytes: png([30, 30, 200]),
+                    mime: "image/png".to_owned(),
+                }),
+                ..Default::default()
+            }),
+        )
         .await;
-        assert!(
-            managed
-                .library
-                .enrichment
-                .set(Arc::new(ScriptedEnrichment {
-                    listenbrainz: None,
-                    lyrics: None,
-                    cover: Some(Cover {
-                        bytes: png([30, 30, 200]),
-                        mime: "image/png".to_owned(),
-                    }),
-                    ..Default::default()
-                }))
-                .is_ok()
-        );
         let (album, tracks) = managed.add_album("first", 1).await;
         managed.activate().await;
         managed.look(&album).await;
@@ -14607,9 +14635,8 @@ async fn the_picard_profile_writes_musicbrainz_credits() {
     use droppedneedle_library::management::models::SelectionKind;
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    let managed = ManagedLibrary::start("lib-credits", |_| {}).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
-    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let managed = ManagedLibrary::scripted("lib-credits", |_| {}, scripted.clone()).await;
     let v23 = clean_v23_mp3(&managed.scratch.to_path_buf().join("v23.mp3"));
     let formats = [
         "management_full.flac",
@@ -14797,9 +14824,8 @@ async fn automatic_credits_wait_for_musicbrainz_and_respect_a_hand_edit() {
     use droppedneedle_library::management::enrich::ScriptedEnrichment;
     use droppedneedle_library::tags::{TagEdit, TagField, read_fields};
 
-    let managed = ManagedLibrary::start("lib-credits-auto", |_| {}).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
-    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let managed = ManagedLibrary::scripted("lib-credits-auto", |_| {}, scripted.clone()).await;
     let (album, tracks) = managed
         .add_album_from("first", &["management_full.flac"], |_| {})
         .await;
@@ -15576,16 +15602,19 @@ async fn acoustid_ids_come_from_a_lookup_naming_the_files_recording() {
     use droppedneedle_library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
     use droppedneedle_library::management::models::SelectionKind;
 
-    let managed = ManagedLibrary::start("lib-acoustid-id", |profile| {
-        for field in &mut profile.metadata.fields {
-            if field.field == "acoustid_id" {
-                field.mode = FieldMode::Replace;
-            }
-        }
-    })
-    .await;
     let scripted = Arc::new(ScriptedEnrichment::default());
-    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let managed = ManagedLibrary::scripted(
+        "lib-acoustid-id",
+        |profile| {
+            for field in &mut profile.metadata.fields {
+                if field.field == "acoustid_id" {
+                    field.mode = FieldMode::Replace;
+                }
+            }
+        },
+        scripted.clone(),
+    )
+    .await;
     let (album, tracks) = managed
         .add_album_from("ids", &["management_full.flac"], |_| {})
         .await;
@@ -15697,9 +15726,8 @@ async fn acoustid_ids_come_from_a_lookup_naming_the_files_recording() {
 async fn automatic_acoustid_waits_while_acoustid_is_down() {
     use droppedneedle_library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
 
-    let managed = ManagedLibrary::start("lib-acoustid-auto", |_| {}).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
-    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let managed = ManagedLibrary::scripted("lib-acoustid-auto", |_| {}, scripted.clone()).await;
     *scripted.acoustid.lock().expect("script") = Some(ScriptedAcoustId::Unavailable);
     let (album, tracks) = managed
         .add_album_from("first", &["management_full.flac"], |_| {})
@@ -15771,9 +15799,8 @@ async fn automatic_acoustid_without_a_key_goes_ahead() {
     use droppedneedle_library::management::enrich::ScriptedEnrichment;
     use rusqlite::OptionalExtension as _;
 
-    let managed = ManagedLibrary::start("lib-acoustid-nokey", |_| {}).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
-    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let managed = ManagedLibrary::scripted("lib-acoustid-nokey", |_| {}, scripted.clone()).await;
     let (album, tracks) = managed
         .add_album_from("nokey", &["management_full.flac"], |_| {})
         .await;
@@ -15810,9 +15837,8 @@ async fn fill_missing_acoustid_looks_up_only_the_file_without_values() {
     use droppedneedle_library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
     use droppedneedle_library::management::models::SelectionKind;
 
-    let managed = ManagedLibrary::start("lib-acoustid-fill", |_| {}).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
-    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let managed = ManagedLibrary::scripted("lib-acoustid-fill", |_| {}, scripted.clone()).await;
     let (album, tracks) = managed
         .add_album_from(
             "fill",
@@ -16354,9 +16380,8 @@ async fn a_translating_profile_writes_english_artist_names() {
     use droppedneedle_library::management::service::ApplyRequest;
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    let managed = ManagedLibrary::start("lib-names", translating).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
-    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let managed = ManagedLibrary::scripted("lib-names", translating, scripted.clone()).await;
     *scripted.names.lock().expect("script") = Some(recorded_names());
     let v23 = clean_v23_mp3(&managed.scratch.to_path_buf().join("v23.mp3"));
     let fixtures = [
@@ -16601,9 +16626,8 @@ async fn a_run_that_adds_ids_and_translates_keeps_the_artist() {
     use droppedneedle_library::management::models::SelectionKind;
     use droppedneedle_library::tags::{TagEdit, TagField, save_tags};
 
-    let managed = ManagedLibrary::start("lib-names-link", translating).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
-    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let managed = ManagedLibrary::scripted("lib-names-link", translating, scripted.clone()).await;
     *scripted.names.lock().expect("script") = Some(recorded_names());
     let fixtures = [
         "management_full.flac",
@@ -17161,9 +17185,8 @@ async fn translated_names_wait_for_musicbrainz() {
     use droppedneedle_library::management::models::SelectionKind;
     use droppedneedle_library::tags::{TagField, read_fields};
 
-    let managed = ManagedLibrary::start("lib-names-down", translating).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
-    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let managed = ManagedLibrary::scripted("lib-names-down", translating, scripted.clone()).await;
     let (album, tracks) = managed
         .add_album_from("down", &["management_full.flac"], sakamoto_edition)
         .await;
@@ -17244,9 +17267,8 @@ async fn credits_and_names_come_in_one_lookup() {
     use droppedneedle_library::management::enrich::{ExtrasWanted, ScriptedEnrichment};
     use droppedneedle_library::management::models::SelectionKind;
 
-    let managed = ManagedLibrary::start("lib-names-once", translating).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
-    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let managed = ManagedLibrary::scripted("lib-names-once", translating, scripted.clone()).await;
     let (album, tracks) = managed
         .add_album_from(
             "once",

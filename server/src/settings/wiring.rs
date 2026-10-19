@@ -54,8 +54,16 @@ pub struct SettingsSetup {
 
 impl SettingsSetup {
     /// Build over the platform's settings, ids, shared HTTP client and
-    /// deployment timezone, with the wired fan-out in `effects`.
-    pub fn build(platform: &Platform, effects: Effects, outbound: &Outbound) -> Self {
+    /// deployment timezone, with the wired fan-out in `effects`. The
+    /// Library Management routes save through `management`, the library's
+    /// own service, so an activation dry run and a page save never save
+    /// over each other.
+    pub fn build(
+        platform: &Platform,
+        effects: Effects,
+        outbound: &Outbound,
+        management: Arc<LibraryManagementService>,
+    ) -> Self {
         Self::assemble(
             platform.settings.clone(),
             effects,
@@ -63,6 +71,7 @@ impl SettingsSetup {
             Arc::new(LiveProbes::new(platform.http.shared().clone())),
             platform.config.timezone.clone(),
             outbound.clone(),
+            management,
         )
     }
 
@@ -73,6 +82,7 @@ impl SettingsSetup {
         probes: Arc<dyn VerifyProbes>,
         timezone: Option<String>,
         outbound: Outbound,
+        management: Arc<LibraryManagementService>,
     ) -> Self {
         let service = Arc::new(
             SettingsService::new(
@@ -87,8 +97,8 @@ impl SettingsSetup {
         Self {
             policy: Arc::new(LibraryPolicyService::new(service.clone(), None)),
             service,
-            lifecycle: Arc::new(MusicBrainzLifecycle::new(store.clone(), effects, outbound)),
-            management: Arc::new(LibraryManagementService::new(store)),
+            lifecycle: Arc::new(MusicBrainzLifecycle::new(store, effects, outbound)),
+            management,
             prefs: None,
             buckets: None,
             #[cfg(any(test, feature = "test-support"))]
@@ -167,7 +177,16 @@ impl SettingsSetup {
                 Arc::new(NoopKick),
             )),
         );
-        let mut setup = Self::assemble(store, effects, ids, probes, None, Outbound::live());
+        let management = Arc::new(LibraryManagementService::new(store.clone()));
+        let mut setup = Self::assemble(
+            store,
+            effects,
+            ids,
+            probes,
+            None,
+            Outbound::live(),
+            management,
+        );
         setup.prefs = Some(Arc::new(SectionPrefsDeps {
             store: Arc::new(MemorySectionPrefsStore::new()),
             links: Arc::new(StaticLinkStatus {
@@ -192,11 +211,6 @@ impl SettingsSetup {
     /// The MusicBrainz lifecycle.
     pub fn lifecycle(&self) -> &MusicBrainzLifecycle {
         &self.lifecycle
-    }
-
-    /// The same service, shared with the library's activation dry runs.
-    pub fn library_management_shared(&self) -> Arc<LibraryManagementService> {
-        self.management.clone()
     }
 
     /// Run one Library Management operation on the blocking pool: every

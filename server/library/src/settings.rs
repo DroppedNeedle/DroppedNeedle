@@ -7,7 +7,6 @@
 //! change takes effect without a restart, and the roots survive restarts.
 
 use std::path::Path;
-use std::sync::Arc;
 
 use super::scan::models::EffectivePolicy;
 use super::scan::roots::{LibraryRoot, PolicyRule, RootRegistry, fingerprint_roots};
@@ -15,7 +14,6 @@ use super::scan::scheduler::{InclusionRule, ScheduleSettings};
 use super::scan::watcher::WatcherSettings;
 use super::service::ServiceError;
 use crate::edition_prefs::LivePreferences;
-use crate::management::settings::service::LibraryManagementService;
 use crate::policy::{self as library_policy, clean_absolute};
 use droppedneedle_kernel::runtime_config::secret_sections::{
     IdentificationPolicy, JellyfinConnection, LibraryRoot as StoredRoot, TypedLibrary,
@@ -80,11 +78,6 @@ impl LibrarySettings {
     #[cfg(any(test, feature = "test-support"))]
     pub fn store(&self) -> &ConfigStore {
         &self.store
-    }
-
-    /// Library Management's settings service over the same store.
-    pub(crate) fn management_service(&self) -> LibraryManagementService {
-        LibraryManagementService::new(Arc::new(self.store.clone()))
     }
 
     /// Sign `message` for `purpose` with the server's data key.

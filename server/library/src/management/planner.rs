@@ -520,7 +520,7 @@ fn plan_file(
         reasons::file_unreadable()
     })?;
     let lyrics = super::enrich::lyrics(
-        &ctx.setup.enrichment,
+        ctx.setup.enrichment.as_deref(),
         &ctx.pinned.profile.enrichment.lyrics,
         release,
         release_track,
@@ -1317,7 +1317,7 @@ pub(crate) fn acoustid_values(
     use super::enrich::{AcoustIdAnswer, AcoustIdPrint};
     use droppedneedle_providers::acoustid::MAX_BATCH;
 
-    let port = setup.enrichment.get();
+    let port = setup.enrichment.as_deref();
     // Without a key no id is looked up, so a file that wants only an id
     // is not decoded.
     let mut keyed: Option<bool> = None;
@@ -1834,7 +1834,7 @@ pub fn plan_album(
         };
     // Only a person's own preview asks MusicBrainz at their priority.
     let mut extras = super::enrich::gather(
-        &ctx.setup.enrichment,
+        ctx.setup.enrichment.as_deref(),
         &ctx.setup.identify_store,
         &ctx.pinned.profile,
         &mut release,
@@ -1973,7 +1973,7 @@ pub fn plan_one(
                 Ok::<_, ManagementError>(overrides(conn, &scope.album_id, &track.id)?)
             })?;
             let mut extras = super::enrich::gather(
-                &ctx.setup.enrichment,
+                ctx.setup.enrichment.as_deref(),
                 &ctx.setup.identify_store,
                 &ctx.pinned.profile,
                 &mut release,

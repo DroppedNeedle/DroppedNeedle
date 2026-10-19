@@ -50,6 +50,8 @@ struct Rig {
     host: Arc<PluginHost>,
     config: Arc<ConfigStore>,
     launcher: Arc<FakeLauncher>,
+    /// The host's plugin state store.
+    ticks: TickStoreKind,
 }
 
 fn rig(tag: &str) -> Rig {
@@ -57,12 +59,20 @@ fn rig(tag: &str) -> Rig {
     let crypto = Crypto::from_key_bytes(&[7u8; 32]).unwrap();
     let config = Arc::new(ConfigStore::scratch(&dir, crypto).unwrap());
     let launcher = Arc::new(FakeLauncher::new());
-    let host = PluginHost::new(dir.join("plugins"), Arc::clone(&config), launcher.clone());
+    let ticks = TickStoreKind::Memory(MemoryTickStore::new());
+    let host = PluginHost::new(
+        dir.join("plugins"),
+        Arc::clone(&config),
+        launcher.clone(),
+        Arc::new(ticks.clone()),
+        droppedneedle_library::scan::fs::FsCoordinator::new(),
+    );
     Rig {
         dir,
         host,
         config,
         launcher,
+        ticks,
     }
 }
 
@@ -926,8 +936,7 @@ async fn fanout_reaches_subscribers_once_per_causation() {
 #[tokio::test]
 async fn ticks_run_through_the_jobs_loop_and_state_persists() {
     let rig = rig("ticks");
-    let store = TickStoreKind::Memory(MemoryTickStore::new());
-    rig.host.set_state_store(Arc::new(store.clone()));
+    let store = rig.ticks.clone();
     let runtime = enable_toy(&rig, TOY_MANIFEST);
 
     let adapter = HostTickAdapter::new(Arc::clone(&rig.host));

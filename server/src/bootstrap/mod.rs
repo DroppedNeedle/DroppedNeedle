@@ -68,7 +68,6 @@ use droppedneedle_kernel::{
 use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_media::{
     MediaSetup,
-    playback::plugin_events::PluginPlayEvents,
     remotes::{
         connections::{
             ConfigServers, ConnectionResolver, CredentialCoder, SignInLinks, SqliteConnectionStore,
@@ -218,9 +217,13 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // the other loops.
     let queues = jobs::QueueSetup::new(p);
 
+    // The library roots' lease table: the publisher and plugin library
+    // writes hold the same leases.
+    let library_fs = droppedneedle_library::scan::fs::FsCoordinator::new();
     // The plugin host exists early so playback, acquisition and streaming
     // can hold it; no plugin starts until `PluginsSetup::build` loads it.
-    let plugin_host = droppedneedle_plugins::wiring::new_host(p);
+    let plugin_ticks = droppedneedle_plugins::wiring::tick_store(p);
+    let plugin_host = droppedneedle_plugins::wiring::new_host(p, &plugin_ticks, library_fs.clone());
     let auth = AuthSetup::build_with_upstreams(
         p,
         ProdAuth::new(p),
@@ -274,7 +277,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
                 providers.clone(),
                 Arc::new(LiveCatalogSettings::new(config_store)),
                 auth.users.clone(),
-                endpoints.clone(),
+                endpoints,
             ),
             LocalCatalog::new(db.sqlx().clone()),
         )
@@ -284,16 +287,16 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // Read live, so a source switch in Settings reaches the long-lived
     // clients without a restart.
     let mb_source = outbound.musicbrainz_source(config_store.live());
+    let scans = jobs::ScansEnded::default();
     let library = LibrarySetup::build(
         p,
         providers.clone(),
         mb_source.clone(),
         queues.queue().clone(),
         outbound.library(),
+        library_ports(p, &outbound, &providers, &auth, &reads, &scans, library_fs)?,
     )
     .map_err(stage("library setup"))?;
-    // Plugin library writes hold the same root leases as the publisher.
-    plugin_host.set_library_fs(library.fs.clone());
     reads = reads.with_library_files(droppedneedle_media::stream::local_files::LibraryFiles::new(
         db.sqlx().clone(),
         library.root_source(),
@@ -301,18 +304,14 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let (media, media_workers) = MediaSetup::build(
         p,
         auth.users.clone(),
-        Some(library.root_source()),
+        library.root_source(),
         // Remote playlist imports land in the user's playlists.
         Arc::new(PlaylistImportSink::new(reads.collections.clone())),
+        plugin_host.clone(),
         outbound.plex_tv.clone(),
         outbound.scrobbles(),
     )
     .map_err(stage("media setup"))?;
-    let media = media.with_play_events(Arc::new(PluginPlayEvents(plugin_host.clone())));
-    media
-        .stream
-        .engine
-        .attach_plugins(plugin_host.clone(), http.direct_no_redirect().clone());
     let acquire = AcquireSetup::build(
         p,
         auth.users.clone(),
@@ -330,16 +329,13 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         droppedneedle_acquire::target::lookup::live_albums(http, providers.clone(), mb_source),
     ));
     // Finished downloads reach the library through its import seam.
-    let acquire = match library.releases.clone() {
-        Some(releases) => acquire.with_library(Arc::new(
-            droppedneedle_acquire::landing::library::LibraryLanding::new(
-                library.clone(),
-                releases,
-                db.sqlx().clone(),
-            ),
-        )),
-        None => acquire,
-    };
+    let acquire = acquire.with_library(Arc::new(
+        droppedneedle_acquire::landing::library::LibraryLanding::new(
+            library.clone(),
+            library.releases.clone(),
+            db.sqlx().clone(),
+        ),
+    ));
     // "Get missing tracks" asks the library which tracks the chosen
     // edition lacks.
     if acquire
@@ -351,19 +347,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         .is_err()
     {
         tracing::warn!("edition plans were already attached");
-    }
-    // Removing an album also clears its download and wanted state.
-    if library
-        .removal_hook
-        .set(Arc::new(
-            droppedneedle_acquire::library_removal::AcquireAlbumCleanup::new(
-                acquire.journal.clone(),
-                acquire.requests.wanted.clone(),
-            ),
-        ))
-        .is_err()
-    {
-        tracing::warn!("album removal cleanup was already attached");
     }
     // Discovery batches file their albums through the requests service.
     if reads
@@ -451,7 +434,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let mix_hooks = Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
         acquire.requests.mixer.clone(),
     ));
-    let scans = jobs::ScansEnded::default();
     let jobs = JobsSetup::build(
         p,
         runtime.checkpoint().clone(),
@@ -476,48 +458,11 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             reads.discover.content.clone(),
         ),
     ));
-    // Library Management plans genres, lyrics and covers through the same
-    // clients and artwork cache the pages use, and AcoustID ids on
-    // identification's shared rate limit.
-    let acoustid_pacer =
-        droppedneedle_providers::adapters::CorePacer::for_source(providers.clone(), "acoustid")
-            .ok_or_else(|| "acoustid has no verified rate row".to_owned())
-            .map_err(stage("library management"))?;
-    let enrichment = LiveEnrichment {
-        acoustid: droppedneedle_providers::acoustid::AcoustIdClient::new(
-            http.shared().clone(),
-            &outbound.acoustid,
-            acoustid_pacer,
-            droppedneedle_providers::adapters::HealthSink::new(&providers),
-        ),
-        library: config_store.live(),
-        upstream: Upstream::new(
-            http,
-            providers.clone(),
-            Arc::new(LiveCatalogSettings::new(config_store)),
-            auth.users.clone(),
-            endpoints,
-        ),
-        http: http.shared().clone(),
-        artwork: reads.artwork.clone(),
-        lrclib: Default::default(),
-    };
-    if library.enrichment.set(Arc::new(enrichment)).is_err() {
-        tracing::warn!("library management enrichment was already attached");
-    }
     let admin = match &reads.artwork {
         Some(artwork) => admin.with_covers(artwork.cache().clone()),
         None => admin,
     }
     .with_precache(jobs.precache_trigger());
-    // Completed scans refresh the library's images, as v2 did after a sync.
-    if library
-        .scan_completed
-        .set(Arc::new(move || scans.bump()))
-        .is_err()
-    {
-        tracing::warn!("scan completion hook was already set");
-    }
     let download_worker = acquire.worker.clone();
     // Each section's declared effects run after every committed change to
     // it, whoever saved it; settings routes wait for them before answering.
@@ -537,7 +482,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     {
         tracing::warn!("the settings effects loop was already running");
     }
-    let settings = SettingsSetup::build(p, effects, &outbound)
+    let settings = SettingsSetup::build(p, effects, &outbound, library.management_settings.clone())
         .with_section_prefs(
             Arc::new(SqliteSectionPrefsStore { db: db.clone() }),
             Arc::new(SqliteLinkStatus {
@@ -551,18 +496,10 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
             pool: db.sqlx().clone(),
         }));
-    // Activation dry runs save the settings through the same service as
-    // the settings page, so the two never save over each other.
-    if library
-        .management_settings
-        .set(settings.library_management_shared())
-        .is_err()
-    {
-        tracing::warn!("library management settings service was already attached");
-    }
     let plugins = PluginsSetup::build(
         p,
         plugin_host,
+        plugin_ticks,
         provider_cache,
         outbound.plugin_hosts(),
         &outbound.listenbrainz,
@@ -628,6 +565,52 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             runtime,
             data_lock,
         ),
+    })
+}
+
+/// What the library calls outside itself. Removing an album clears its
+/// download and wanted state. Completed scans refresh the library's
+/// images, as v2 did after a sync. Library Management plans genres, lyrics
+/// and covers through the same clients and artwork cache the pages use, and
+/// AcoustID ids on identification's shared rate limit.
+fn library_ports(
+    p: &Platform,
+    outbound: &Outbound,
+    providers: &Arc<Providers>,
+    auth: &AuthSetup,
+    reads: &ReadsSetup,
+    scans: &jobs::ScansEnded,
+    fs: droppedneedle_library::scan::fs::FsCoordinator,
+) -> Result<droppedneedle_library::wiring::LibraryPorts, BootError> {
+    let acoustid_pacer =
+        droppedneedle_providers::adapters::CorePacer::for_source(providers.clone(), "acoustid")
+            .ok_or_else(|| "acoustid has no verified rate row".to_owned())
+            .map_err(stage("library management"))?;
+    let enrichment = LiveEnrichment {
+        acoustid: droppedneedle_providers::acoustid::AcoustIdClient::new(
+            p.http.shared().clone(),
+            &outbound.acoustid,
+            acoustid_pacer,
+            droppedneedle_providers::adapters::HealthSink::new(providers),
+        ),
+        library: p.settings.live(),
+        upstream: Upstream::new(
+            &p.http,
+            providers.clone(),
+            Arc::new(LiveCatalogSettings::new(&p.settings)),
+            auth.users.clone(),
+            outbound.catalog(),
+        ),
+        http: p.http.shared().clone(),
+        artwork: reads.artwork.clone(),
+        lrclib: Default::default(),
+    };
+    let scans = scans.clone();
+    Ok(droppedneedle_library::wiring::LibraryPorts {
+        removal: Arc::new(droppedneedle_acquire::library_removal::AcquireAlbumCleanup::open(&p.db)),
+        enrichment: Some(Arc::new(enrichment)),
+        scan_completed: Arc::new(move || scans.bump()),
+        fs,
     })
 }
 

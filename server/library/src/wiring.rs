@@ -21,6 +21,9 @@ use super::contrib::worker::VerificationWorker;
 use super::identify::service::{IdentifyDeps, IdentifyService};
 use super::identify::sqlite::SqliteIdentifyStore;
 use super::manage::{PreviewEntry, PublishCell};
+use super::management::enrich::EnrichmentPort;
+use super::management::settings::service::LibraryManagementService;
+use super::mutations::AlbumRemovalHook;
 use super::scan::coordinator::{
     LibraryScanCoordinator, ResolverSource, ScanEventPublisher, SharedResolver,
 };
@@ -85,10 +88,23 @@ pub struct LibraryRecovery {
 // Bundle.
 // ---------------------------------------------------------------------------
 
-/// What runs after a scan that changed the library completes. Boot fills
-/// it once the jobs exist;
-/// until then completed scans call nothing.
-pub type ScanCompletedSlot = Arc<std::sync::OnceLock<Arc<dyn Fn() + Send + Sync>>>;
+/// What runs after a scan that changed the library completes.
+pub type ScanCompleted = Arc<dyn Fn() + Send + Sync>;
+
+/// What the library calls outside itself, given at construction.
+pub struct LibraryPorts {
+    /// Download and wanted cleanup after an album removal.
+    pub removal: Arc<dyn AlbumRemovalHook>,
+    /// Genres, lyrics, covers and AcoustID ids Library Management plans
+    /// with. `None` only in a test bundle with no outside sources:
+    /// planning then asks nothing.
+    pub enrichment: Option<Arc<dyn EnrichmentPort>>,
+    /// Called after each scan run that changed the library completes
+    /// (the library image refresh).
+    pub scan_completed: ScanCompleted,
+    /// Root leases, shared with the plugin host's library writes.
+    pub fs: FsCoordinator,
+}
 
 /// Everything `create_app` needs to mount the library engine, built once.
 #[derive(Clone)]
@@ -125,10 +141,10 @@ pub struct LibrarySetup {
     pub identify: Arc<IdentifyService>,
     /// MusicBrainz releases for importing finished downloads: search and
     /// release lookups, identity-critical like identification.
-    pub releases: Option<Arc<dyn super::identify::sources::ReleaseSource>>,
+    pub releases: Arc<dyn super::identify::sources::ReleaseSource>,
     /// AcoustID for files being imported, keyed per call and keeping
     /// nothing; off while no AcoustID key is set.
-    pub fingerprints: Option<Arc<dyn super::identify::sources::FingerprintSource>>,
+    pub fingerprints: Arc<dyn super::identify::sources::FingerprintSource>,
     /// Contribution service.
     pub contrib: Arc<ContributionService>,
     /// Contribution verification worker.
@@ -149,27 +165,19 @@ pub struct LibrarySetup {
     pub watcher_state: Arc<std::sync::Mutex<WatcherState>>,
     /// Shared root-directory lookup.
     pub root_dirs: RootDirs,
-    /// Download and wanted cleanup after an album removal, set at boot.
-    pub removal_hook: super::mutations::AlbumRemovalSlot,
-    /// Called after each scan run completes (the library image refresh
-    /// kick), set at boot.
-    pub scan_completed: ScanCompletedSlot,
+    /// Download and wanted cleanup after an album removal.
+    pub removal_hook: Arc<dyn AlbumRemovalHook>,
     /// The shared outbound HTTP client, for media-server refreshes after a
     /// management run.
-    pub http: Option<reqwest::Client>,
-    /// The settings page's Library Management service, attached at boot so
-    /// an activation dry run saves through it. Until then a private one
-    /// is used.
-    pub management_settings: std::sync::Arc<
-        std::sync::OnceLock<
-            std::sync::Arc<crate::management::settings::service::LibraryManagementService>,
-        >,
-    >,
-    /// Genres, lyrics and covers Library Management plans with, attached
-    /// at boot (the artwork cache lives with the reads). Empty in test
-    /// bundles until a test scripts it; planning then treats every outside
-    /// source as unavailable.
-    pub enrichment: super::management::enrich::EnrichmentSlot,
+    pub http: reqwest::Client,
+    /// Library Management's settings service. The settings page uses this
+    /// one too, so an activation dry run and a page save never save over
+    /// each other.
+    pub management_settings: Arc<LibraryManagementService>,
+    /// Genres, lyrics and covers Library Management plans with (the
+    /// artwork cache lives with the reads). `None` in a test bundle with
+    /// no outside sources.
+    pub enrichment: Option<Arc<dyn EnrichmentPort>>,
 }
 
 impl LibrarySetup {
@@ -178,13 +186,15 @@ impl LibrarySetup {
     /// release documents it fetches; AcoustID runs only for albums whose
     /// tags are weak, with the key read from the settings per job. The
     /// publisher and its journal readers still open their own connections
-    /// on the platform database's file.
+    /// on the platform database's file. What the library calls outside
+    /// itself comes in `ports`.
     pub fn build(
         platform: &droppedneedle_kernel::platform::Platform,
         providers: Arc<droppedneedle_providers::Providers>,
         mb_source: droppedneedle_providers::musicbrainz::LiveSource,
         queue: droppedneedle_kernel::jobs::queue::JobQueue,
         endpoints: Endpoints,
+        ports: LibraryPorts,
     ) -> Result<Self, String> {
         use droppedneedle_providers::RequestPriority;
         use droppedneedle_providers::acoustid::AcoustIdClient;
@@ -193,7 +203,7 @@ impl LibrarySetup {
             MbPacing, MusicBrainzClient, ReqwestMbTransport,
         };
 
-        let (http, ids, db) = (&platform.http, platform.ids.clone(), &platform.db);
+        let http = &platform.http;
         // Identification is background work on the source settings name,
         // read per request; user page loads go ahead of it at the limiter.
         // Both clients count their failures toward system health, so an
@@ -259,36 +269,31 @@ impl LibrarySetup {
                 ))
             }),
         };
-        let mut setup = Self::assemble(
-            ids,
+        Self::assemble(
+            platform,
             make,
             contrib,
-            db,
             queue,
-            LibrarySettings::new(&platform.settings),
-        )?;
-        setup.releases = Some(imports);
-        setup.http = Some(http.shared().clone());
-        setup.fingerprints = Some(Arc::new(
-            super::identify::sources::AcoustIdFingerprints::new(
-                import_acoustid,
-                setup.settings.library.clone(),
-                setup.root_source(),
-                setup.pool.clone(),
-                setup.identify_store.clone(),
-            ),
-        ));
-        Ok(setup)
+            ports,
+            imports,
+            import_acoustid,
+        )
     }
 
     fn assemble(
-        ids: Arc<dyn IdGenerator>,
+        platform: &droppedneedle_kernel::platform::Platform,
         make_providers: ProviderFactory,
         contrib_providers: ContribProviders,
-        db: &droppedneedle_kernel::db::Db,
         queue: droppedneedle_kernel::jobs::queue::JobQueue,
-        settings: LibrarySettings,
+        ports: LibraryPorts,
+        releases: Arc<dyn super::identify::sources::ReleaseSource>,
+        import_acoustid: droppedneedle_providers::acoustid::AcoustIdClient<
+            droppedneedle_providers::adapters::CorePacer,
+            droppedneedle_providers::adapters::HealthSink,
+        >,
     ) -> Result<Self, String> {
+        let db = &platform.db;
+        let settings = LibrarySettings::new(&platform.settings);
         let scan_store = Arc::new(SqliteScanStore::new(db.clone()));
         // The roots load before anything can scan or stream: a restart
         // comes back with exactly the roots the settings hold.
@@ -303,9 +308,12 @@ impl LibrarySetup {
         let identify_store = Arc::new(SqliteIdentifyStore::new(db.clone()));
         let pool = BlockingPool::new(4);
         let wakeups = WorkWakeups::new();
-        let fs = FsCoordinator::new();
-        let scan_completed: ScanCompletedSlot = Default::default();
-        let completed_hook = Arc::clone(&scan_completed);
+        let LibraryPorts {
+            removal,
+            enrichment,
+            scan_completed,
+            fs,
+        } = ports;
         let coordinator = Arc::new(
             ScanCoordinator::new(
                 scan_store.clone(),
@@ -324,9 +332,8 @@ impl LibrarySetup {
                 if event.state == crate::scan::models::ScanState::Completed
                     && event.event == "scan.transition"
                     && event.changed
-                    && let Some(hook) = completed_hook.get()
                 {
-                    hook();
+                    scan_completed();
                 }
             }))),
         );
@@ -351,10 +358,19 @@ impl LibrarySetup {
                 identify_store.clone(),
             )),
         );
+        let fingerprints: Arc<dyn super::identify::sources::FingerprintSource> =
+            Arc::new(super::identify::sources::AcoustIdFingerprints::new(
+                import_acoustid,
+                settings.library.clone(),
+                (*registry).clone(),
+                pool.clone(),
+                identify_store.clone(),
+            ));
         let publish = PublishCell::new(db.clone());
         let placement = publish.placement();
         Ok(Self {
-            ids,
+            ids: platform.ids.clone(),
+            management_settings: Arc::new(LibraryManagementService::new(platform.settings.clone())),
             settings,
             registry,
             db: db.clone(),
@@ -366,8 +382,8 @@ impl LibrarySetup {
             wakeups,
             identify_store,
             identify,
-            releases: None,
-            fingerprints: None,
+            releases,
+            fingerprints,
             contrib,
             contrib_worker,
             publish: Arc::new(std::sync::Mutex::new(publish)),
@@ -377,11 +393,9 @@ impl LibrarySetup {
             previews: Arc::new(std::sync::Mutex::new(HashMap::new())),
             watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
             root_dirs,
-            removal_hook: Default::default(),
-            scan_completed,
-            http: None,
-            management_settings: Default::default(),
-            enrichment: Default::default(),
+            removal_hook: removal,
+            http: platform.http.shared().clone(),
+            enrichment,
         })
     }
 

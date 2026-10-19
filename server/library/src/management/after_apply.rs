@@ -340,9 +340,7 @@ impl Management {
     }
 
     fn refresh_jellyfin(&self) -> Result<(), &'static str> {
-        let Some(http) = self.setup.http.clone() else {
-            return Err("NOT_CONFIGURED");
-        };
+        let http = self.setup.http.clone();
         let connection = self
             .setup
             .settings

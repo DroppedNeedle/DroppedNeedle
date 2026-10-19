@@ -189,11 +189,16 @@ impl E2e {
         let (media, _worker) = droppedneedle_media::MediaSetup::build(
             p,
             auth.users.clone(),
-            Some(library.root_source()),
+            library.root_source(),
             Arc::new(
                 droppedneedle_catalog::reads::collections::remote_import::PlaylistImportSink::new(
                     reads.collections.clone(),
                 ),
+            ),
+            droppedneedle_plugins::wiring::new_host(
+                p,
+                &droppedneedle_plugins::wiring::tick_store(p),
+                library.fs.clone(),
             ),
             droppedneedle::bootstrap::Outbound::live().plex_tv,
             droppedneedle::bootstrap::Outbound::live().scrobbles(),

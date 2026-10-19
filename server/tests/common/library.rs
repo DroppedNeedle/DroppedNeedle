@@ -8,6 +8,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use droppedneedle::bootstrap::Port;
+use droppedneedle_acquire::library_removal::AcquireAlbumCleanup;
 use droppedneedle_kernel::db::writer::Lane;
 use droppedneedle_kernel::db::{Db, DbError};
 use droppedneedle_kernel::platform::Platform;
@@ -18,7 +19,9 @@ use droppedneedle_library::identify::providers::{FakeProviders, IdentifyProvider
 use droppedneedle_library::identify::sources::{
     ArtistAnswer, EditionPage, EditionQuery, SourceError, Unanswered,
 };
-use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_library::management::enrich::EnrichmentPort;
+use droppedneedle_library::scan::fs::FsCoordinator;
+use droppedneedle_library::wiring::{LibraryPorts, LibrarySetup};
 use droppedneedle_providers::Providers;
 use droppedneedle_providers::musicbrainz::Criticality;
 
@@ -163,9 +166,19 @@ pub fn library_at(platform: &Platform) -> (LibrarySetup, Arc<FakeProviders>) {
 }
 
 /// As [`library_at`], with identification asking `identify`. Contributions
-/// answer from scripts with nothing scripted, and every other outside
-/// address is closed.
+/// answer from scripts with nothing scripted, Library Management has no
+/// outside sources, and every other outside address is closed.
 pub fn library_asking(platform: &Platform, identify: Arc<dyn IdentifyProviders>) -> LibrarySetup {
+    library_with(platform, identify, None)
+}
+
+/// As [`library_asking`], with Library Management planning through
+/// `enrichment`. Album removals clean up acquisition's rows as in the app.
+pub fn library_with(
+    platform: &Platform,
+    identify: Arc<dyn IdentifyProviders>,
+    enrichment: Option<Arc<dyn EnrichmentPort>>,
+) -> LibrarySetup {
     let mut outbound = super::closed_outbound();
     outbound.identify_providers = Port::given(identify);
     outbound.contribution_providers = Port::given(ScriptedContrib::default().providers());
@@ -178,6 +191,12 @@ pub fn library_asking(platform: &Platform, identify: Arc<dyn IdentifyProviders>)
             Arc::new(droppedneedle_kernel::clock::SystemClock),
         ),
         outbound.library(),
+        LibraryPorts {
+            removal: Arc::new(AcquireAlbumCleanup::open(&platform.db)),
+            enrichment,
+            scan_completed: Arc::new(|| {}),
+            fs: FsCoordinator::new(),
+        },
     )
     .expect("library bundle builds")
 }

@@ -145,23 +145,30 @@ pub struct PluginHost {
     /// Serializes reloads so two saves cannot launch the same plugin twice.
     reload: Mutex<()>,
     generation: AtomicU64,
-    state: Mutex<Option<Arc<dyn PluginStateStore>>>,
+    /// Backs the `host.state.*` requests.
+    state: Arc<dyn PluginStateStore>,
     /// Subscriber fan-out and publish bookkeeping.
     pub(super) events: EventState,
     /// Library writes per plugin (`host.library.write`).
     pub(super) library_writes: super::capabilities::library_files::LibraryWrites,
-    /// The library roots' lease table, set once the library is wired.
-    library_fs: std::sync::OnceLock<droppedneedle_library::scan::fs::FsCoordinator>,
+    /// The library roots' lease table, shared with the publisher.
+    library_fs: droppedneedle_library::scan::fs::FsCoordinator,
 }
 
 impl PluginHost {
     /// Build a host over one plugins directory. Nothing loads until
-    /// [`load_all`](PluginHost::load_all) runs.
+    /// [`load_all`](PluginHost::load_all) runs. `state` backs the
+    /// `host.state.*` requests. Plugin library writes hold the roots
+    /// through `library_fs`, the publisher's lease table; temp files a
+    /// crash left from such writes are cleared here.
     pub fn new(
         plugins_dir: PathBuf,
         config: Arc<ConfigStore>,
         launcher: Arc<dyn PluginLauncher>,
+        state: Arc<dyn PluginStateStore>,
+        library_fs: droppedneedle_library::scan::fs::FsCoordinator,
     ) -> Arc<Self> {
+        super::capabilities::library_files::sweep_ledger(&plugins_dir.join(DATA_FOLDER));
         Arc::new_cyclic(|me| Self {
             me: me.clone(),
             dir: plugins_dir,
@@ -172,31 +179,15 @@ impl PluginHost {
             running: Mutex::new(HashMap::new()),
             reload: Mutex::new(()),
             generation: AtomicU64::new(0),
-            state: Mutex::new(None),
+            state,
             events: EventState::default(),
             library_writes: Default::default(),
-            library_fs: std::sync::OnceLock::new(),
+            library_fs,
         })
     }
 
-    /// Back the `host.state.*` requests with a durable store.
-    pub fn set_state_store(&self, store: Arc<dyn PluginStateStore>) {
-        if let Ok(mut slot) = self.state.lock() {
-            *slot = Some(store);
-        }
-    }
-
-    /// Hold library roots through this lease table when a plugin writes a
-    /// library file, and clear temp files a crash left from such writes.
-    pub fn set_library_fs(&self, fs: droppedneedle_library::scan::fs::FsCoordinator) {
-        super::capabilities::library_files::sweep_ledger(&self.data_dir(""));
-        if self.library_fs.set(fs).is_err() {
-            tracing::warn!("plugin host library lease table was already set");
-        }
-    }
-
-    pub(super) fn library_fs(&self) -> Option<droppedneedle_library::scan::fs::FsCoordinator> {
-        self.library_fs.get().cloned()
+    pub(super) fn library_fs(&self) -> droppedneedle_library::scan::fs::FsCoordinator {
+        self.library_fs.clone()
     }
 
     /// Plugins directory.
@@ -622,8 +613,8 @@ impl PluginHost {
             .collect()
     }
 
-    fn state_store(&self) -> Option<Arc<dyn PluginStateStore>> {
-        self.state.lock().ok().and_then(|slot| slot.clone())
+    fn state_store(&self) -> Arc<dyn PluginStateStore> {
+        self.state.clone()
     }
 }
 
@@ -736,9 +727,7 @@ impl HostServices for HostRequests {
                 }
                 methods::HOST_STATE_GET => {
                     let key = state_key(&params)?;
-                    let store = host.state_store().ok_or_else(|| {
-                        RpcError::new(codes::HOST_REFUSED, "durable state is not available")
-                    })?;
+                    let store = host.state_store();
                     let value = store
                         .read(plugin, &key)
                         .await
@@ -757,9 +746,7 @@ impl HostServices for HostRequests {
                     if value.len() > STATE_VALUE_MAX {
                         return Err(RpcError::new(codes::INVALID_PARAMS, "value is over 1 MiB"));
                     }
-                    let store = host.state_store().ok_or_else(|| {
-                        RpcError::new(codes::HOST_REFUSED, "durable state is not available")
-                    })?;
+                    let store = host.state_store();
                     store
                         .write(plugin, &key, value.as_bytes().to_vec())
                         .await

@@ -885,7 +885,15 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
         .expect("config"),
     );
     let launcher = Arc::new(FakeLauncher::new());
-    let host = PluginHost::new(dir.join("plugins"), config, launcher.clone());
+    let host = PluginHost::new(
+        dir.join("plugins"),
+        config,
+        launcher.clone(),
+        Arc::new(droppedneedle_plugins::ticks::TickStoreKind::Memory(
+            droppedneedle_kernel::jobs::plugin_ticks::MemoryTickStore::new(),
+        )),
+        droppedneedle_library::scan::fs::FsCoordinator::new(),
+    );
     host.load_all();
     let allowed = dir.join("plugin-downloads");
     // Both folders exist, as they do once a real plugin has started.

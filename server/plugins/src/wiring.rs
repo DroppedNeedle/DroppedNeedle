@@ -2,10 +2,11 @@
 //!
 //! [`new_host`] builds the [`PluginHost`] early in boot so the flows that
 //! raise events or look up plugin sources (playback, acquisition,
-//! streaming) can hold it. [`PluginsSetup`] is the one `AppState` field
-//! plugins adds: it backs plugin state with the jobs tick store, starts
-//! the enabled plugins, mounts the routes, and runs tick loops on the
-//! shared loop supervisor as `plugin-tick:{name}`.
+//! streaming) can hold it; plugin state is backed by the jobs tick store
+//! from [`tick_store`]. [`PluginsSetup`] is the one `AppState` field
+//! plugins adds: it starts the enabled plugins, mounts the routes, and
+//! runs tick loops over the same store on the shared loop supervisor as
+//! `plugin-tick:{name}`.
 //!
 //! Production runs each plugin as a subprocess through
 //! [`ProcessLauncher`]; the Python helper module ships inside the server
@@ -64,10 +65,22 @@ pub fn write_python_sdk(plugins_dir: &Path) {
     }
 }
 
+/// The tick and plugin state store over the platform's database. The host
+/// and the tick loops share this one value: a plugin is known to both.
+pub fn tick_store(platform: &Platform) -> TickStoreKind {
+    TickStoreKind::Sqlite(SqliteTickStore::new(platform.db.clone()))
+}
+
 /// The production host: subprocess plugins over the deployment's plugins
-/// directory, each process supervised on the platform's supervisor. Nothing starts until
+/// directory, each process supervised on the platform's supervisor, with
+/// plugin state in `ticks` and library writes holding the roots through
+/// `library_fs`, the publisher's lease table. Nothing starts until
 /// [`PluginsSetup::build`] loads it.
-pub fn new_host(platform: &Platform) -> Arc<PluginHost> {
+pub fn new_host(
+    platform: &Platform,
+    ticks: &TickStoreKind,
+    library_fs: droppedneedle_library::scan::fs::FsCoordinator,
+) -> Arc<PluginHost> {
     let plugins_dir = platform.config.plugins_dir();
     // Best-effort: the host reads a missing directory as empty and the
     // install path creates it, so a failure here must not fail the boot.
@@ -79,7 +92,13 @@ pub fn new_host(platform: &Platform) -> Arc<PluginHost> {
         python_sdk_dir(&plugins_dir),
         platform.supervisor.clone(),
     ));
-    PluginHost::new(plugins_dir, platform.settings.clone(), launcher)
+    PluginHost::new(
+        plugins_dir,
+        platform.settings.clone(),
+        launcher,
+        Arc::new(ticks.clone()),
+        library_fs,
+    )
 }
 
 /// Link-change hook over the shared provider cache: a ListenBrainz link
@@ -125,13 +144,15 @@ pub struct PluginsSetup {
 }
 
 impl PluginsSetup {
-    /// Bind the production seams over a host from [`new_host`]: SQLite
-    /// tick, state and scrobble stores, the HTTP verifier and fetcher,
-    /// cache invalidation on link changes, and tick loops over the shared
-    /// loop supervisor. Loads the host, which starts the enabled plugins.
+    /// Bind the production seams over a host from [`new_host`] and the
+    /// tick store it was given: SQLite scrobble stores, the HTTP verifier
+    /// and fetcher, cache invalidation on link changes, and tick loops over
+    /// the shared loop supervisor. Loads the host, which starts the enabled
+    /// plugins.
     pub fn build(
         platform: &Platform,
         host: Arc<PluginHost>,
+        ticks: TickStoreKind,
         cache: Arc<dyn ProviderCache>,
         github: GitHubHosts,
         listenbrainz: &str,
@@ -144,7 +165,7 @@ impl PluginsSetup {
             listenbrainz,
             cache,
             platform.supervisor.clone(),
-            TickStoreKind::Sqlite(SqliteTickStore::new(db.clone())),
+            ticks,
             Arc::new(SqliteScrobblePrefsStore::new(db.clone())),
             Arc::new(SqliteListenBrainzLinkStore::new(
                 db.clone(),
@@ -186,7 +207,14 @@ impl PluginsSetup {
         let crypto =
             Arc::new(Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?);
         let cache: Arc<dyn ProviderCache> = Arc::new(InMemoryProviderCache::new());
-        let host = PluginHost::new(dir.join("plugins"), config, Arc::new(FakeLauncher::new()));
+        let ticks = TickStoreKind::Memory(MemoryTickStore::new());
+        let host = PluginHost::new(
+            dir.join("plugins"),
+            config,
+            Arc::new(FakeLauncher::new()),
+            Arc::new(ticks.clone()),
+            droppedneedle_library::scan::fs::FsCoordinator::new(),
+        );
         let mut setup = Self::assemble(
             host,
             http.shared().clone(),
@@ -197,7 +225,7 @@ impl PluginsSetup {
             droppedneedle_providers::listenbrainz::DEFAULT_BASE_URL,
             cache,
             supervisor,
-            TickStoreKind::Memory(MemoryTickStore::new()),
+            ticks,
             Arc::new(MemoryScrobblePrefsStore::new()),
             Arc::new(MemoryListenBrainzLinkStore::new(crypto)),
         );
@@ -219,7 +247,6 @@ impl PluginsSetup {
         prefs: Arc<dyn ScrobblePrefsStore>,
         links: Arc<dyn ListenBrainzLinkStore>,
     ) -> Self {
-        host.set_state_store(Arc::new(ticks.clone()));
         host.load_all();
         let ticks = Arc::new(PluginTickLoops::new(supervisor, ticks, TICK_CANCEL_GRACE));
         let plugins = PluginsDeps {

@@ -71,7 +71,15 @@ async fn rig(tag: &str, examples: &[&str]) -> Rig {
     .await
     .unwrap();
     let launcher = ProcessLauncher::new(repo().join("sdk/python"), supervisor);
-    let host = PluginHost::new(dir.join("plugins"), config, Arc::new(launcher));
+    let host = PluginHost::new(
+        dir.join("plugins"),
+        config,
+        Arc::new(launcher),
+        Arc::new(droppedneedle_plugins::ticks::TickStoreKind::Memory(
+            droppedneedle_kernel::jobs::plugin_ticks::MemoryTickStore::new(),
+        )),
+        droppedneedle_library::scan::fs::FsCoordinator::new(),
+    );
     host.load_all();
     Rig { dir, host }
 }

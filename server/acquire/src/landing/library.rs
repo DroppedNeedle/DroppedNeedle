@@ -386,12 +386,7 @@ impl LandingLibrary for LibraryLanding {
         &self,
         files: Vec<(String, PathBuf)>,
     ) -> BoxFuture<'_, HashMap<String, Vec<String>>> {
-        Box::pin(async move {
-            match &self.library.fingerprints {
-                Some(source) => source.identify_files(&files).await,
-                None => HashMap::new(),
-            }
-        })
+        Box::pin(async move { self.library.fingerprints.identify_files(&files).await })
     }
 
     fn group_releases<'a>(
@@ -417,10 +412,10 @@ impl LandingLibrary for LibraryLanding {
         files: Vec<(String, PathBuf)>,
     ) -> BoxFuture<'_, HashMap<String, Vec<String>>> {
         Box::pin(async move {
-            match &self.library.fingerprints {
-                Some(source) => source.identify_file_releases(&files).await,
-                None => HashMap::new(),
-            }
+            self.library
+                .fingerprints
+                .identify_file_releases(&files)
+                .await
         })
     }
 
