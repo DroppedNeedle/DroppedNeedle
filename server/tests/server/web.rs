@@ -111,6 +111,19 @@ async fn base_path_moves_everything_and_the_gate_sees_routed_paths() {
     }
 }
 
+/// The page is never served as a plain file: a percent-encoded spelling of
+/// `index.html` still gets the page's own policy and cache rule.
+#[tokio::test]
+async fn an_encoded_page_path_still_gets_the_page() {
+    let (app, _scratch) = web_app("encoded", "").await;
+    let (status, headers, body) = get(&app, "/index%2ehtml", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, page(""));
+    assert_eq!(headers["cache-control"], "no-cache");
+    let policy = text(&headers, "content-security-policy").unwrap();
+    assert!(policy.contains("'sha256-"), "{policy}");
+}
+
 /// A browser preflight to an existing route reaches the debug CORS layer:
 /// preflights are handled before routing, where the router's 405 fallback
 /// cannot take them first.

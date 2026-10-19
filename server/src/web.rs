@@ -9,11 +9,12 @@
 //! new tree is staged next to the old one and swapped in only once it is
 //! complete.
 //!
-//! Serving follows v2's `static_server.py`: `_app/immutable/*` is cached
+//! Files are served by `tower_http`'s `ServeDir`, which sends a `.br` or
+//! `.gz` sibling when the client accepts it and answers ranges. Cache
+//! policy follows v2's `static_server.py`: `_app/immutable/*` is cached
 //! for a year, `index.html` and the rest of `_app/` are `no-cache`, other
-//! assets for a week. A smaller `.br` or `.gz` sibling is sent when the
-//! client accepts it, with `Vary: Accept-Encoding`. Any other GET that is
-//! not an API path gets `index.html` so client-side routes load.
+//! assets for a week. Any other GET that is not an API path gets
+//! `index.html` so client-side routes load.
 //!
 //! `index.html` holds inline script, which the page's content-security
 //! policy admits by hash. The hashes are taken from the file as served,
@@ -29,12 +30,13 @@ use std::{
 
 use axum::{
     body::Body,
-    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Method, Request, StatusCode, Uri, header},
     response::Response,
 };
 use base64::Engine as _;
 use sha2::Digest as _;
 use thiserror::Error;
+use tower_http::services::ServeDir;
 
 use crate::security_headers::AppShell;
 
@@ -104,6 +106,7 @@ fn io_error(path: &Path) -> impl FnOnce(std::io::Error) -> WebError + '_ {
 #[derive(Debug, Clone)]
 pub struct WebUi {
     root: Arc<PathBuf>,
+    assets: ServeDir,
     shell: AppShell,
 }
 
@@ -134,6 +137,10 @@ impl WebUi {
         };
         Self {
             root: Arc::new(root.to_owned()),
+            assets: ServeDir::new(root)
+                .append_index_html_on_directories(false)
+                .precompressed_br()
+                .precompressed_gzip(),
             shell: AppShell {
                 script_hashes: script_hashes.into(),
             },
@@ -189,10 +196,15 @@ impl WebUi {
         if method != Method::GET && method != Method::HEAD {
             return None;
         }
-        if is_api_path(path) {
+        // Every check runs on the path `ServeDir` will open, so no spelling
+        // of `index.html` reaches it as a plain file.
+        let decoded = percent_encoding::percent_decode_str(path)
+            .decode_utf8()
+            .ok()?;
+        if is_api_path(&decoded) {
             return None;
         }
-        let relative = path.trim_start_matches('/');
+        let relative = decoded.trim_start_matches('/');
         let segments: Vec<&str> = relative.split('/').collect();
         let unsafe_segment = segments
             .iter()
@@ -200,19 +212,105 @@ impl WebUi {
         if unsafe_segment {
             return None;
         }
-        if !relative.is_empty() && !relative.ends_with('/') {
-            let file = self.root.join(relative);
-            if is_file(&file).await {
-                let shell = (relative == "index.html").then_some(&self.shell);
-                return Some(serve_file(&file, relative, headers, shell).await);
+        if !relative.is_empty() && !relative.ends_with('/') && relative != "index.html" {
+            if let Some(asset) = self.asset(method, path, relative, headers).await {
+                return Some(asset);
             }
             let asset_dir = matches!(segments.first(), Some(&("_app" | "img" | "fonts")));
             if asset_dir {
                 return None;
             }
         }
-        let index = self.root.join("index.html");
-        Some(serve_file(&index, "index.html", headers, Some(&self.shell)).await)
+        self.page(headers).await
+    }
+
+    /// A file under the root, through `ServeDir`: a precompressed sibling
+    /// for a client that accepts it, ranges, HEAD and `Last-Modified`.
+    /// `None` when there is no such file.
+    async fn asset(
+        &self,
+        method: &Method,
+        path: &str,
+        relative: &str,
+        headers: &HeaderMap,
+    ) -> Option<Response> {
+        let mut request = Request::new(Body::empty());
+        *request.method_mut() = method.clone();
+        *request.uri_mut() = Uri::try_from(path).ok()?;
+        *request.headers_mut() = headers.clone();
+        // A range is taken of the file itself, never of a compressed copy.
+        if headers.contains_key(header::RANGE) {
+            request.headers_mut().remove(header::ACCEPT_ENCODING);
+        }
+        let mut response = match self.assets.clone().try_call(request).await {
+            Ok(response) => response,
+            Err(error) => {
+                tracing::warn!(path = %relative, %error, "cannot read web UI file");
+                return None;
+            }
+        };
+        if response.status() == StatusCode::NOT_FOUND {
+            return None;
+        }
+        let headers = response.headers_mut();
+        headers.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static(cache_control(relative)),
+        );
+        // Any file may have a precompressed sibling, and the compression
+        // layer varies the rest.
+        headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+        if headers.contains_key(header::CONTENT_TYPE) {
+            headers.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(content_type(relative)),
+            );
+        }
+        Some(response.map(Body::new))
+    }
+
+    /// The app's page, marked as such for the content-security layer. It
+    /// has its own `ETag`, which that layer extends with the policy mark so
+    /// a page cached under other settings is sent again in full; the
+    /// `Last-Modified` that `ServeDir` sends cannot carry the mark. The
+    /// page is sent as is and the compression layer compresses it.
+    async fn page(&self, headers: &HeaderMap) -> Option<Response> {
+        let path = self.root.join("index.html");
+        let metadata = tokio::fs::metadata(&path).await.ok()?;
+        let modified_nanos = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map_or(0, |since| since.as_nanos());
+        let etag = format!("\"{:x}-{:x}\"", metadata.len(), modified_nanos);
+        let not_modified = headers
+            .get(header::IF_NONE_MATCH)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value
+                    .split(',')
+                    .any(|tag| tag.trim() == "*" || tag.trim().trim_start_matches("W/") == etag)
+            });
+        let builder = Response::builder()
+            .header(header::CACHE_CONTROL, NO_CACHE)
+            .header(header::ETAG, &etag)
+            .extension(self.shell.clone());
+        let built = if not_modified {
+            builder.status(StatusCode::NOT_MODIFIED).body(Body::empty())
+        } else {
+            let bytes = match tokio::fs::read(&path).await {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    tracing::warn!(path = %path.display(), %error, "cannot read the web UI page");
+                    return None;
+                }
+            };
+            builder
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+                .body(Body::from(bytes))
+        };
+        built.ok()
     }
 }
 
@@ -262,17 +360,11 @@ fn is_api_path(path: &str) -> bool {
     path == "/api" || path.starts_with("/api/")
 }
 
-async fn is_file(path: &Path) -> bool {
-    tokio::fs::metadata(path)
-        .await
-        .is_ok_and(|metadata| metadata.is_file())
-}
-
-/// Cache policy by location, matching v2.
+/// Cache policy for a file other than the page, by location, matching v2.
 fn cache_control(relative: &str) -> &'static str {
     if relative.starts_with("_app/immutable/") {
         IMMUTABLE
-    } else if relative == "index.html" || relative.starts_with("_app/") {
+    } else if relative.starts_with("_app/") {
         NO_CACHE
     } else if relative == "robots.txt" {
         ONE_DAY
@@ -281,6 +373,11 @@ fn cache_control(relative: &str) -> &'static str {
     }
 }
 
+/// The content type a file is sent as, in place of the one `ServeDir`
+/// takes from `mime_guess`. Where the two differ this keeps what these
+/// files have always been sent as: text keeps its charset, source maps are
+/// JSON, and an unknown extension stays opaque rather than becoming
+/// something a browser may run.
 fn content_type(relative: &str) -> &'static str {
     let extension = relative.rsplit_once('.').map_or("", |(_, ext)| ext);
     match extension.to_ascii_lowercase().as_str() {
@@ -303,155 +400,6 @@ fn content_type(relative: &str) -> &'static str {
         "wasm" => "application/wasm",
         _ => "application/octet-stream",
     }
-}
-
-/// Quality the client gives `coding` in `Accept-Encoding` (0 when refused).
-fn encoding_quality(accept: &str, coding: &str) -> f32 {
-    let mut wildcard = 0.0;
-    for item in accept.split(',') {
-        let mut parts = item.split(';');
-        let token = parts.next().unwrap_or("").trim().to_ascii_lowercase();
-        if token.is_empty() {
-            continue;
-        }
-        let mut quality = 1.0_f32;
-        for parameter in parts {
-            if let Some(("q", value)) = parameter.trim().split_once('=') {
-                quality = value.trim().parse::<f32>().unwrap_or(0.0).clamp(0.0, 1.0);
-            }
-        }
-        if token == coding {
-            return quality;
-        }
-        if token == "*" {
-            wildcard = quality;
-        }
-    }
-    wildcard
-}
-
-/// One file on disk chosen to answer the request.
-struct Representation {
-    path: PathBuf,
-    length: u64,
-    modified_nanos: u128,
-    coding: Option<&'static str>,
-}
-
-async fn representation(path: &Path, coding: Option<&'static str>) -> Option<Representation> {
-    let metadata = tokio::fs::metadata(path).await.ok()?;
-    let modified_nanos = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map_or(0, |since| since.as_nanos());
-    Some(Representation {
-        path: path.to_owned(),
-        length: metadata.len(),
-        modified_nanos,
-        coding,
-    })
-}
-
-/// Pick the identity file or its best accepted precompressed sibling.
-/// Returns the choice and whether any sibling exists (for `Vary`).
-async fn choose(path: &Path, headers: &HeaderMap) -> Option<(Representation, bool)> {
-    let identity = representation(path, None).await?;
-    let mut variants = Vec::new();
-    for (coding, suffix) in ENCODINGS {
-        let mut sibling = path.as_os_str().to_owned();
-        sibling.push(format!(".{suffix}"));
-        if let Some(found) = representation(Path::new(&sibling), Some(coding)).await
-            && found.length < identity.length
-        {
-            variants.push(found);
-        }
-    }
-    let has_variants = !variants.is_empty();
-    if !has_variants || headers.contains_key(header::RANGE) {
-        return Some((identity, has_variants));
-    }
-    let accept = headers
-        .get(header::ACCEPT_ENCODING)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("");
-    let mut best: Option<(f32, Representation)> = None;
-    for variant in variants {
-        let quality = encoding_quality(accept, variant.coding.unwrap_or(""));
-        // Ties go to the first listed coding (brotli).
-        if quality > 0.0 && best.as_ref().is_none_or(|(top, _)| quality > *top) {
-            best = Some((quality, variant));
-        }
-    }
-    Some((best.map_or(identity, |(_, chosen)| chosen), true))
-}
-
-/// Answer with the file at `path`. `shell` is given when the file is the
-/// web UI's page, and marks the 200 and the 304 as that page.
-async fn serve_file(
-    path: &Path,
-    relative: &str,
-    headers: &HeaderMap,
-    shell: Option<&AppShell>,
-) -> Response {
-    let Some((chosen, has_variants)) = choose(path, headers).await else {
-        return status_only(StatusCode::NOT_FOUND);
-    };
-    let etag = format!(
-        "\"{:x}-{:x}{}\"",
-        chosen.length,
-        chosen.modified_nanos,
-        chosen
-            .coding
-            .map_or(String::new(), |coding| format!("-{coding}"))
-    );
-    let not_modified = headers
-        .get(header::IF_NONE_MATCH)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| {
-            value
-                .split(',')
-                .any(|tag| tag.trim() == "*" || tag.trim().trim_start_matches("W/") == etag)
-        });
-    let mut builder = Response::builder()
-        .header(header::CACHE_CONTROL, cache_control(relative))
-        .header(header::ETAG, &etag);
-    if has_variants {
-        builder = builder.header(header::VARY, "Accept-Encoding");
-    }
-    if let Some(shell) = shell {
-        builder = builder.extension(shell.clone());
-    }
-    if not_modified {
-        return builder
-            .status(StatusCode::NOT_MODIFIED)
-            .body(Body::empty())
-            .unwrap_or_else(|_| status_only(StatusCode::INTERNAL_SERVER_ERROR));
-    }
-    let bytes = match tokio::fs::read(&chosen.path).await {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            tracing::warn!(path = %chosen.path.display(), %error, "cannot read web UI file");
-            return status_only(StatusCode::NOT_FOUND);
-        }
-    };
-    builder = builder.header(header::CONTENT_TYPE, content_type(relative));
-    if let Some(coding) = chosen.coding {
-        builder = builder.header(header::CONTENT_ENCODING, coding);
-    }
-    builder
-        .status(StatusCode::OK)
-        .body(Body::from(bytes))
-        .unwrap_or_else(|_| status_only(StatusCode::INTERNAL_SERVER_ERROR))
-}
-
-fn status_only(status: StatusCode) -> Response {
-    let mut response = Response::new(Body::empty());
-    *response.status_mut() = status;
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_CACHE));
-    response
 }
 
 /// Remove staging and previous trees left behind by a crashed boot.
@@ -667,13 +615,5 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-    }
-
-    #[test]
-    fn accept_encoding_quality_follows_q_values() {
-        assert_eq!(encoding_quality("gzip, br", "br"), 1.0);
-        assert_eq!(encoding_quality("gzip;q=0.5, *;q=0.1", "br"), 0.1);
-        assert_eq!(encoding_quality("br;q=0", "br"), 0.0);
-        assert_eq!(encoding_quality("", "gzip"), 0.0);
     }
 }
