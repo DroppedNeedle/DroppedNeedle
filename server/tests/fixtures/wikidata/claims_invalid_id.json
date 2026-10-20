@@ -1,0 +1,19 @@
+{
+  "error": {
+    "code": "param-invalid",
+    "info": "The serialization \"Q9999999999999\" is not recognized by the configured id builders",
+    "messages": [
+      {
+        "name": "wikibase-api-param-invalid",
+        "parameters": [
+          "The serialization \"Q9999999999999\" is not recognized by the configured id builders"
+        ],
+        "html": {
+          "*": "The serialization \"Q9999999999999\" is not recognized by the configured id builders"
+        }
+      }
+    ],
+    "*": "See https://www.wikidata.org/w/api.php for API usage. Subscribe to the mediawiki-api-announce mailing list at &lt;https://lists.wikimedia.org/postorius/lists/mediawiki-api-announce.lists.wikimedia.org/&gt; for notice of API deprecations and breaking changes."
+  },
+  "servedby": "mw-api-ext.codfw.main-767f977f67-rz7zj"
+}

@@ -1,0 +1,12 @@
+{
+  "batchcomplete": "",
+  "query": {
+    "pages": {
+      "-1": {
+        "title": "Radiohead[1]",
+        "invalidreason": "The requested page title contains invalid characters: \"[\".",
+        "invalid": ""
+      }
+    }
+  }
+}

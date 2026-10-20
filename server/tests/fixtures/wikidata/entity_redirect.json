@@ -1,0 +1,726 @@
+{
+  "entities": {
+    "Q1": {
+      "id": "Q1",
+      "sitelinks": {
+        "eowikiquote": {
+          "title": "Universo"
+        },
+        "nnwikiquote": {
+          "title": "Universet"
+        },
+        "bgwikiquote": {
+          "title": "Вселена — Космос — Светове"
+        },
+        "bswikiquote": {
+          "title": "Svemir"
+        },
+        "itwikiquote": {
+          "title": "Universo"
+        },
+        "ptwikiquote": {
+          "title": "Universo"
+        },
+        "cawikiquote": {
+          "title": "Univers"
+        },
+        "ltwikiquote": {
+          "title": "Visata"
+        },
+        "ruwikiquote": {
+          "title": "Вселенная"
+        },
+        "dewikiquote": {
+          "title": "Universum"
+        },
+        "enwikiquote": {
+          "title": "Universe"
+        },
+        "srwikiquote": {
+          "title": "Свемир"
+        },
+        "ukwikiquote": {
+          "title": "Всесвіт"
+        },
+        "cswikiquote": {
+          "title": "Vesmír"
+        },
+        "eswikiquote": {
+          "title": "Universo"
+        },
+        "slwikiquote": {
+          "title": "Vesolje"
+        },
+        "plwikiquote": {
+          "title": "Wszechświat"
+        },
+        "elwikiquote": {
+          "title": "Σύμπαν"
+        },
+        "skwikiquote": {
+          "title": "Vesmír"
+        },
+        "itwikibooks": {
+          "title": "Universo"
+        },
+        "azwikiquote": {
+          "title": "Kainat"
+        },
+        "hrwikiquote": {
+          "title": "Svemir"
+        },
+        "enwiki": {
+          "title": "Universe"
+        },
+        "dewiki": {
+          "title": "Universum"
+        },
+        "frwiki": {
+          "title": "Univers"
+        },
+        "eswiki": {
+          "title": "Universo"
+        },
+        "ruwiki": {
+          "title": "Вселенная"
+        },
+        "itwiki": {
+          "title": "Universo"
+        },
+        "jawiki": {
+          "title": "宇宙"
+        },
+        "nlwiki": {
+          "title": "Heelal"
+        },
+        "plwiki": {
+          "title": "Wszechświat"
+        },
+        "zhwiki": {
+          "title": "宇宙"
+        },
+        "fawiki": {
+          "title": "گیتی"
+        },
+        "hewiki": {
+          "title": "היקום"
+        },
+        "trwiki": {
+          "title": "Evren"
+        },
+        "huwiki": {
+          "title": "Világegyetem"
+        },
+        "fiwiki": {
+          "title": "Maailmankaikkeus"
+        },
+        "arwiki": {
+          "title": "فضاء كوني"
+        },
+        "viwiki": {
+          "title": "Vũ trụ"
+        },
+        "nowiki": {
+          "title": "Universet"
+        },
+        "ukwiki": {
+          "title": "Всесвіт"
+        },
+        "kowiki": {
+          "title": "우주"
+        },
+        "cawiki": {
+          "title": "Univers"
+        },
+        "cswiki": {
+          "title": "Vesmír"
+        },
+        "srwiki": {
+          "title": "Свемир"
+        },
+        "rowiki": {
+          "title": "Univers"
+        },
+        "idwiki": {
+          "title": "Alam semesta"
+        },
+        "dawiki": {
+          "title": "Universet"
+        },
+        "simplewiki": {
+          "title": "Universe"
+        },
+        "bgwiki": {
+          "title": "Вселена"
+        },
+        "afwiki": {
+          "title": "Heelal"
+        },
+        "alswiki": {
+          "title": "Universum"
+        },
+        "anwiki": {
+          "title": "Universo"
+        },
+        "arcwiki": {
+          "title": "ܬܒܝܠ"
+        },
+        "arzwiki": {
+          "title": "كون"
+        },
+        "astwiki": {
+          "title": "Universu"
+        },
+        "azwiki": {
+          "title": "Kainat"
+        },
+        "bawiki": {
+          "title": "Ғаләм"
+        },
+        "barwiki": {
+          "title": "Wödall"
+        },
+        "bat_smgwiki": {
+          "title": "Vėsata"
+        },
+        "bewiki": {
+          "title": "Сусвет"
+        },
+        "be_x_oldwiki": {
+          "title": "Сусьвет"
+        },
+        "bhwiki": {
+          "title": "ब्रह्मांड"
+        },
+        "bnwiki": {
+          "title": "মহাবিশ্ব"
+        },
+        "brwiki": {
+          "title": "Hollved"
+        },
+        "bswiki": {
+          "title": "Svemir"
+        },
+        "bxrwiki": {
+          "title": "Оршолон"
+        },
+        "cdowiki": {
+          "title": "Ṳ̄-dêu"
+        },
+        "chrwiki": {
+          "title": "ᎦᎸᎶᎯ ᎦᎸᎾᏗ"
+        },
+        "ckbwiki": {
+          "title": "گەردوون"
+        },
+        "csbwiki": {
+          "title": "Wszechswiat"
+        },
+        "cvwiki": {
+          "title": "Çут Тĕнче"
+        },
+        "cywiki": {
+          "title": "Bydysawd (seryddiaeth)"
+        },
+        "dsbwiki": {
+          "title": "Uniwersum"
+        },
+        "elwiki": {
+          "title": "Σύμπαν"
+        },
+        "eowiki": {
+          "title": "Universo"
+        },
+        "etwiki": {
+          "title": "Universum"
+        },
+        "fowiki": {
+          "title": "Alheimurin"
+        },
+        "frrwiki": {
+          "title": "Åål"
+        },
+        "fywiki": {
+          "title": "Hielal"
+        },
+        "glwiki": {
+          "title": "Universo"
+        },
+        "gnwiki": {
+          "title": "Arapy"
+        },
+        "guwiki": {
+          "title": "બ્રહ્માંડ"
+        },
+        "hakwiki": {
+          "title": "Yî-chhiu"
+        },
+        "hiwiki": {
+          "title": "ब्रह्माण्ड"
+        },
+        "hifwiki": {
+          "title": "Sansaar"
+        },
+        "hrwiki": {
+          "title": "Svemir"
+        },
+        "htwiki": {
+          "title": "Linivè"
+        },
+        "hywiki": {
+          "title": "Տիեզերք"
+        },
+        "iawiki": {
+          "title": "Universo"
+        },
+        "ilowiki": {
+          "title": "Law-ang"
+        },
+        "iowiki": {
+          "title": "Universo"
+        },
+        "iswiki": {
+          "title": "Alheimurinn"
+        },
+        "jamwiki": {
+          "title": "Yunivoers"
+        },
+        "kawiki": {
+          "title": "სამყარო"
+        },
+        "kkwiki": {
+          "title": "Әлем"
+        },
+        "krcwiki": {
+          "title": "Болум"
+        },
+        "kuwiki": {
+          "title": "Gerdûn"
+        },
+        "lawiki": {
+          "title": "Universum"
+        },
+        "lezwiki": {
+          "title": "Чилер-цавар"
+        },
+        "liwiki": {
+          "title": "Universum"
+        },
+        "lijwiki": {
+          "title": "Universo"
+        },
+        "lmowiki": {
+          "title": "Ünivers"
+        },
+        "ltwiki": {
+          "title": "Visata"
+        },
+        "lvwiki": {
+          "title": "Visums"
+        },
+        "mkwiki": {
+          "title": "Вселена"
+        },
+        "mlwiki": {
+          "title": "പ്രപഞ്ചം"
+        },
+        "mnwiki": {
+          "title": "Орчлон"
+        },
+        "mrwiki": {
+          "title": "विश्व"
+        },
+        "mswiki": {
+          "title": "Alam semesta"
+        },
+        "mwlwiki": {
+          "title": "Ouniberso"
+        },
+        "mywiki": {
+          "title": "စကြဝဠာ"
+        },
+        "napwiki": {
+          "title": "Annevierzo"
+        },
+        "nds_nlwiki": {
+          "title": "Hielal"
+        },
+        "newiki": {
+          "title": "ब्रह्माण्ड"
+        },
+        "nnwiki": {
+          "title": "Universet"
+        },
+        "novwiki": {
+          "title": "Universe"
+        },
+        "nrmwiki": {
+          "title": "Eunivers"
+        },
+        "nvwiki": {
+          "title": "Yágháhookáán"
+        },
+        "ocwiki": {
+          "title": "Univèrs"
+        },
+        "pawiki": {
+          "title": "ਬ੍ਰਹਿਮੰਡ"
+        },
+        "pamwiki": {
+          "title": "Sikluban"
+        },
+        "papwiki": {
+          "title": "Universo"
+        },
+        "pmswiki": {
+          "title": "Univers"
+        },
+        "pnbwiki": {
+          "title": "کائنات"
+        },
+        "ruewiki": {
+          "title": "Весмір"
+        },
+        "scnwiki": {
+          "title": "Universu"
+        },
+        "shwiki": {
+          "title": "Svemir"
+        },
+        "siwiki": {
+          "title": "විශ්වය"
+        },
+        "skwiki": {
+          "title": "Vesmír"
+        },
+        "snwiki": {
+          "title": "Denga neNyika"
+        },
+        "sowiki": {
+          "title": "Koon"
+        },
+        "sqwiki": {
+          "title": "Gjithësia"
+        },
+        "stqwiki": {
+          "title": "Al"
+        },
+        "suwiki": {
+          "title": "Jagat"
+        },
+        "swwiki": {
+          "title": "Ulimwengu"
+        },
+        "tawiki": {
+          "title": "அண்டம்"
+        },
+        "tewiki": {
+          "title": "విశ్వం"
+        },
+        "thwiki": {
+          "title": "เอกภพ"
+        },
+        "ttwiki": {
+          "title": "Галәм"
+        },
+        "urwiki": {
+          "title": "کائنات"
+        },
+        "uzwiki": {
+          "title": "Olam"
+        },
+        "vepwiki": {
+          "title": "Mir"
+        },
+        "warwiki": {
+          "title": "Sangkalibutan"
+        },
+        "wuuwiki": {
+          "title": "宇宙"
+        },
+        "xmfwiki": {
+          "title": "ოქიანუ"
+        },
+        "yiwiki": {
+          "title": "אוניווערס"
+        },
+        "zh_min_nanwiki": {
+          "title": "Ú-tiū"
+        },
+        "zh_yuewiki": {
+          "title": "宇宙"
+        },
+        "aswiki": {
+          "title": "বিশ্বব্ৰহ্মাণ্ড"
+        },
+        "kywiki": {
+          "title": "Аалам"
+        },
+        "ptwiki": {
+          "title": "Universo"
+        },
+        "frwikiquote": {
+          "title": "Univers"
+        },
+        "svwiki": {
+          "title": "Universum"
+        },
+        "wawiki": {
+          "title": "Univiers"
+        },
+        "tswiki": {
+          "title": "Matilo"
+        },
+        "euwiki": {
+          "title": "Unibertsoa"
+        },
+        "rmywiki": {
+          "title": "Jegeya"
+        },
+        "amwiki": {
+          "title": "ጠፈር"
+        },
+        "cewiki": {
+          "title": "Вселенни"
+        },
+        "slwiki": {
+          "title": "Vesolje"
+        },
+        "lfnwiki": {
+          "title": "Universo"
+        },
+        "inhwiki": {
+          "title": "Айлам"
+        },
+        "diqwiki": {
+          "title": "Kainat"
+        },
+        "pflwiki": {
+          "title": "Weltall"
+        },
+        "hewikiquote": {
+          "title": "היקום"
+        },
+        "udmwiki": {
+          "title": "Югыт дунне"
+        },
+        "zhwikiquote": {
+          "title": "宇宙"
+        },
+        "hywwiki": {
+          "title": "Տիեզերք"
+        },
+        "lbwiki": {
+          "title": "Universum"
+        },
+        "jawikiquote": {
+          "title": "宇宙"
+        },
+        "extwiki": {
+          "title": "Universu"
+        },
+        "lowiki": {
+          "title": "ເອກະພົບ"
+        },
+        "dewikinews": {
+          "title": "Kategorie:Weltall"
+        },
+        "eowikinews": {
+          "title": "Kategorio:Universo"
+        },
+        "fjwiki": {
+          "title": "Vuravura taucoko"
+        },
+        "etwikiquote": {
+          "title": "Universum"
+        },
+        "gawiki": {
+          "title": "Cruinne"
+        },
+        "satwiki": {
+          "title": "ᱚᱣᱟᱝ"
+        },
+        "iewiki": {
+          "title": "Universe"
+        },
+        "lldwiki": {
+          "title": "Univers"
+        },
+        "kabwiki": {
+          "title": "Ameɣrad"
+        },
+        "nowikinews": {
+          "title": "Kategori:Universet"
+        },
+        "ruwikinews": {
+          "title": "Категория:Вселенная"
+        },
+        "trwikinews": {
+          "title": "Kategori:Evren"
+        },
+        "arywiki": {
+          "title": "كون"
+        },
+        "szlwiki": {
+          "title": "Wszechświat"
+        },
+        "bclwiki": {
+          "title": "Uniberso"
+        },
+        "cebwiki": {
+          "title": "Uniberso"
+        },
+        "dagwiki": {
+          "title": "Dunia"
+        },
+        "pswiki": {
+          "title": "کاينات"
+        },
+        "twwiki": {
+          "title": "Amansan"
+        },
+        "nahwiki": {
+          "title": "Cemanahuatl"
+        },
+        "gcrwiki": {
+          "title": "Linivèr"
+        },
+        "enwikiversity": {
+          "title": "Universe"
+        },
+        "tgwiki": {
+          "title": "Олам"
+        },
+        "azbwiki": {
+          "title": "ائورن"
+        },
+        "zuwiki": {
+          "title": "UMkhathilibe"
+        },
+        "bowiki": {
+          "title": "འཇིག་རྟེན་"
+        },
+        "zawiki": {
+          "title": "Yijcou"
+        },
+        "omwiki": {
+          "title": "Hawaa"
+        },
+        "gdwiki": {
+          "title": "Domhan"
+        },
+        "mznwiki": {
+          "title": "کهون"
+        },
+        "igwiki": {
+          "title": "Eluigwe na Ala"
+        },
+        "bnwikiquote": {
+          "title": "মহাবিশ্ব"
+        },
+        "tlwiki": {
+          "title": "Uniberso"
+        },
+        "knwiki": {
+          "title": "ವಿಶ್ವ"
+        },
+        "btmwiki": {
+          "title": "Alam semesta"
+        },
+        "ndswiki": {
+          "title": "Universum"
+        },
+        "quwiki": {
+          "title": "Hinantin pacha"
+        },
+        "kswiki": {
+          "title": "سَمسار"
+        },
+        "minwiki": {
+          "title": "Alam samasta"
+        },
+        "ibawiki": {
+          "title": "Dunya raya"
+        },
+        "jawikibooks": {
+          "title": "中学校理科 第2分野/地球と宇宙"
+        },
+        "mgwiki": {
+          "title": "Izao rehetra izao"
+        },
+        "banwiki": {
+          "title": "Alam Semesta"
+        },
+        "jvwiki": {
+          "title": "Jagat rat"
+        },
+        "guwwiki": {
+          "title": "Wẹkẹ"
+        },
+        "kaawiki": {
+          "title": "Álem"
+        },
+        "kwwiki": {
+          "title": "Braster"
+        },
+        "bugwiki": {
+          "title": "ᨕᨒ"
+        },
+        "viwikiquote": {
+          "title": "Vũ trụ"
+        },
+        "kncwiki": {
+          "title": "Universe"
+        },
+        "sdwiki": {
+          "title": "ڪائنات"
+        },
+        "nlwikibooks": {
+          "title": "Basisstructuur van de kosmos"
+        },
+        "rkiwiki": {
+          "title": "စကြဝဠာ"
+        },
+        "pcmwiki": {
+          "title": "Univas"
+        },
+        "hsbwiki": {
+          "title": "Uniwersum"
+        },
+        "zh_classicalwiki": {
+          "title": "寰宇"
+        },
+        "newwiki": {
+          "title": "ब्रह्माण्ड"
+        },
+        "zghwiki": {
+          "title": "ⵉⵖⵣⵡⵔ"
+        },
+        "abstractwiki": {
+          "title": "Q1"
+        },
+        "mnwwiki": {
+          "title": "စက္ကဝါ"
+        },
+        "jbowiki": {
+          "title": "kensa"
+        },
+        "isvwiki": {
+          "title": "Vsesvět"
+        },
+        "abwiki": {
+          "title": "Адунеи"
+        },
+        "magwiki": {
+          "title": "ब्रह्माण्ड"
+        },
+        "fiwikiquote": {
+          "title": "Maailmankaikkeus"
+        },
+        "tokwiki": {
+          "title": "ale pi kon mun"
+        }
+      }
+    }
+  }
+}

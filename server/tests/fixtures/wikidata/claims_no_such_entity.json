@@ -1,0 +1,19 @@
+{
+  "error": {
+    "code": "no-such-entity",
+    "info": "⧼no-such-entity⧽",
+    "messages": [
+      {
+        "name": "no-such-entity",
+        "parameters": [
+          "Q999999999"
+        ],
+        "html": {
+          "*": "⧼no-such-entity⧽"
+        }
+      }
+    ],
+    "*": "See https://www.wikidata.org/w/api.php for API usage. Subscribe to the mediawiki-api-announce mailing list at &lt;https://lists.wikimedia.org/postorius/lists/mediawiki-api-announce.lists.wikimedia.org/&gt; for notice of API deprecations and breaking changes."
+  },
+  "servedby": "mw-api-ext.codfw.main-6b7fb45bcf-vg77r"
+}

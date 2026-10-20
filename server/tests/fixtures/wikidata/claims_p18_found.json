@@ -1,0 +1,21 @@
+{
+  "claims": {
+    "P18": [
+      {
+        "mainsnak": {
+          "snaktype": "value",
+          "property": "P18",
+          "hash": "f4a39e35c46abd6959686f8c6434768127e5ec37",
+          "datavalue": {
+            "value": "RadioheadO2211125 composite.jpg",
+            "type": "string"
+          },
+          "datatype": "commonsMedia"
+        },
+        "type": "statement",
+        "id": "Q44190$7E6BC4CF-10A5-4CE7-84B6-05F24A96233D",
+        "rank": "normal"
+      }
+    ]
+  }
+}

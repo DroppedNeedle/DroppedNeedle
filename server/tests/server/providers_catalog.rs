@@ -686,48 +686,50 @@ async fn lrclib_degradation_404_429_500_bad_json() {
 // Wikidata
 // ---------------------------------------------------------------------------
 
-const ENTITY: &str = "http://fake/data/wiki/Special:EntityData/Q42.json";
+const ENTITY: &str = "http://fake/data/wiki/Special:EntityData/Q44190.json";
 const EXTRACT: &str = "http://fake/en.wiki/w/api.php";
+const CLAIMS: &str = "http://fake/data/w/api.php";
+const COMMONS: &str = "http://fake/commons/w/api.php";
 
 #[tokio::test]
-async fn wikidata_contract_tolerant_decode() {
-    let entity = r#"{"entities": {"Q1": {
-        "futureField": {"n": 1},
-        "sitelinks": {"enwiki": {"title": "One", "badges": [], "futureField": {"n": 1}}},
-        "labels": {"en": {"value": "One"}}
-    }}, "success": 1}"#;
+async fn wikidata_recorded_entity_reads_its_title() {
     let wire = scripted(
-        "http://fake/data/wiki/Special:EntityData/Q1.json",
-        &[(200, &[], entity)],
+        ENTITY,
+        &[(
+            200,
+            &[],
+            include_str!("../fixtures/wikidata/entity_found.json"),
+        )],
     );
     let title = catalog_providers(&wire)
         .wikidata
-        .wikipedia_title_from_wikidata("Q1", "en", PRIORITY)
+        .wikipedia_title_from_wikidata("Q44190", "en", PRIORITY)
         .await
         .unwrap();
-    assert_eq!(title.as_deref(), Some("One"));
+    assert_eq!(title.as_deref(), Some("Radiohead"));
 }
 
 #[tokio::test]
 async fn wikidata_quirk_bio_hop() {
     // A Wikidata URL hops entity -> sitelink -> extract.
-    let entity = r#"{"entities": {"Q42": {
-        "sitelinks": {"enwiki": {"title": "Douglas Adams"}}}}}"#;
-    let page = r#"{"query": {"pages": {"1": {
-        "pageid": 1, "extract": "Douglas Adams was an author."}}}}"#;
+    let entity = include_str!("../fixtures/wikidata/entity_found.json");
+    let page = include_str!("../fixtures/wikidata/extract_found.json");
     let wire = scripted(ENTITY, &[(200, &[], entity)]);
     wire.answer(EXTRACT, 200, &[], page);
     let found = catalog_providers(&wire)
         .wikidata
-        .get_bio_extract("https://www.wikidata.org/wiki/Q42", "en", PRIORITY)
+        .get_bio_extract("https://www.wikidata.org/wiki/Q44190", "en", PRIORITY)
         .await
         .unwrap();
-    assert_eq!(found.as_deref(), Some("Douglas Adams was an author."));
+    assert_eq!(
+        found.as_deref(),
+        Some("Placeholder intro text for the Radiohead article.")
+    );
     let sent = wire.sent();
     assert_eq!(sent.len(), 2);
     assert_eq!(sent[0].url.as_str(), ENTITY);
     assert!(sent[1].url.as_str().starts_with(EXTRACT));
-    assert_eq!(sent[1].query("titles").as_deref(), Some("Douglas Adams"));
+    assert_eq!(sent[1].query("titles").as_deref(), Some("Radiohead"));
 
     // A Wikipedia URL skips the entity hop, and its title is sent decoded
     // (encoded once by the query, never twice).
@@ -813,4 +815,150 @@ async fn wikidata_degradation_429_honors_retry_after() {
         .expect_err("429");
     assert!(matches!(error, ProviderError::RateLimited { .. }));
     assert!(resting(&providers, "wikimedia-api") >= Duration::from_secs(59));
+}
+
+/// Recorded "no such" answers read as absence: a title with no page, a title
+/// no page can carry, a property with no statement, an id that names no
+/// entity, a merged item's claims, and a file with no image info.
+#[tokio::test]
+async fn wikidata_recorded_absence_answers_read_as_absent() {
+    let extract = |wire: Arc<ScriptedWire>| async move {
+        catalog_providers(&wire)
+            .wikidata
+            .wikipedia_extract("X", "en", PRIORITY)
+            .await
+    };
+    let missing = include_str!("../fixtures/wikidata/extract_not_found.json");
+    assert_eq!(
+        extract(scripted(EXTRACT, &[(200, &[], missing)]))
+            .await
+            .unwrap(),
+        None
+    );
+    let invalid = include_str!("../fixtures/wikidata/extract_invalid.json");
+    assert_eq!(
+        extract(scripted(EXTRACT, &[(200, &[], invalid)]))
+            .await
+            .unwrap(),
+        None
+    );
+
+    let claim = |wire: Arc<ScriptedWire>| async move {
+        catalog_providers(&wire)
+            .wikidata
+            .claim_string("Q44190", "P18", PRIORITY)
+            .await
+    };
+    let no_statement = include_str!("../fixtures/wikidata/claims_no_statement.json");
+    assert_eq!(
+        claim(scripted(CLAIMS, &[(200, &[], no_statement)]))
+            .await
+            .unwrap(),
+        None
+    );
+    let no_entity = include_str!("../fixtures/wikidata/claims_no_such_entity.json");
+    assert_eq!(
+        claim(scripted(CLAIMS, &[(200, &[], no_entity)]))
+            .await
+            .unwrap(),
+        None
+    );
+    let invalid_id = include_str!("../fixtures/wikidata/claims_invalid_id.json");
+    assert_eq!(
+        claim(scripted(CLAIMS, &[(200, &[], invalid_id)]))
+            .await
+            .unwrap(),
+        None
+    );
+    let merged = include_str!("../fixtures/wikidata/claims_unresolved_redirect.json");
+    assert_eq!(
+        claim(scripted(CLAIMS, &[(200, &[], merged)]))
+            .await
+            .unwrap(),
+        None
+    );
+
+    let wire = scripted(
+        CLAIMS,
+        &[(
+            200,
+            &[],
+            include_str!("../fixtures/wikidata/claims_p18_found.json"),
+        )],
+    );
+    wire.answer(
+        COMMONS,
+        200,
+        &[],
+        include_str!("../fixtures/wikidata/commons_imageinfo_not_found.json"),
+    );
+    let image = catalog_providers(&wire)
+        .wikidata
+        .get_artist_image("Q44190", PRIORITY)
+        .await
+        .unwrap();
+    assert_eq!(image, None);
+}
+
+/// An API error whose code does not name a missing entity is a payload error,
+/// not absence.
+#[tokio::test]
+async fn wikidata_other_api_errors_are_payload_errors() {
+    let wire = scripted(CLAIMS, &[(200, &[], r#"{"error": {"code": "maxlag"}}"#)]);
+    let error = catalog_providers(&wire)
+        .wikidata
+        .claim_string("Q44190", "P18", PRIORITY)
+        .await
+        .expect_err("an API error is not an answer");
+    assert!(matches!(
+        error,
+        ProviderError::Payload {
+            kind: PayloadKind::Contract,
+            ..
+        }
+    ));
+}
+
+/// A redirected id answers with its target under the target's own id, and the
+/// target's title is the one read.
+#[tokio::test]
+async fn wikidata_redirected_id_reads_the_target_entity() {
+    let wire = scripted(
+        "http://fake/data/wiki/Special:EntityData/Q13165295.json",
+        &[(
+            200,
+            &[],
+            include_str!("../fixtures/wikidata/entity_redirect.json"),
+        )],
+    );
+    let title = catalog_providers(&wire)
+        .wikidata
+        .wikipedia_title_from_wikidata("Q13165295", "en", PRIORITY)
+        .await
+        .unwrap();
+    assert_eq!(title.as_deref(), Some("Universe"));
+}
+
+/// An answer with no entity for the id asked is a payload error unless it holds
+/// exactly one entity, which is then the target of a redirect.
+#[tokio::test]
+async fn wikidata_no_single_entity_for_the_id_asked_is_a_payload_error() {
+    for body in [
+        r#"{"entities": {}}"#,
+        r#"{"entities": {"Q1": {"id": "Q1"}, "Q2": {"id": "Q2"}}}"#,
+    ] {
+        let wire = scripted(ENTITY, &[(200, &[], body)]);
+        let error = catalog_providers(&wire)
+            .wikidata
+            .wikipedia_title_from_wikidata("Q44190", "en", PRIORITY)
+            .await
+            .expect_err("no single entity for the id asked");
+        assert!(matches!(
+            error,
+            ProviderError::Payload {
+                kind: PayloadKind::Decode,
+                ..
+            }
+        ));
+    }
 }

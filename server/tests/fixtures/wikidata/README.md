@@ -1,0 +1,59 @@
+# Wikidata, Wikipedia and Commons answers
+
+Recorded on 2026-10-20 with the app's User-Agent
+(`DroppedNeedle/3.0.0 ( contact@droppedneedle.com ; +https://github.com/DroppedNeedle/DroppedNeedle )`).
+None of the three APIs needs a key. The requests were sent one at a time, each
+after the previous answer, well under the `wikimedia-api` row in the rate table
+(4 a second, one at a time). The subject is the band Radiohead, Wikidata item
+Q44190, and a merged item, Q13165295, that redirects to Q1.
+
+Every endpoint the client calls has a fixture:
+
+- `entity_found.json`: `GET https://www.wikidata.org/wiki/Special:EntityData/Q44190.json`,
+  HTTP 200, `application/json; charset=UTF-8`. Trimmed, see below.
+- `entity_redirect.json`: `GET https://www.wikidata.org/wiki/Special:EntityData/Q13165295.json`,
+  HTTP 200, no redirect status. Q13165295 is a redirect to Q1. The answer's one
+  entity is that target, under its own id, `Q1`. Trimmed, see below. Q13165295
+  was found with `action=query&generator=allredirects&garnamespace=0&garlimit=1&garfrom=Q&prop=info`.
+- `claims_p18_found.json`: `GET https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=Q44190&property=P18&format=json`,
+  HTTP 200. The image claim, a `commonsMedia` file name.
+- `claims_no_statement.json`: the same request for `property=P2048` (height),
+  which the band has no statement for. HTTP 200, `{"claims":{}}`.
+- `claims_no_such_entity.json`: the same request for `entity=Q999999999`, an id
+  of the right form that names no entity. HTTP 200 with an `error` object,
+  code `no-such-entity`.
+- `claims_invalid_id.json`: the same request for `entity=Q9999999999999`, which
+  the id builder refuses. HTTP 200 with an `error` object, code `param-invalid`.
+- `claims_unresolved_redirect.json`: the same request for `entity=Q13165295`, the
+  redirect above. HTTP 200 with an `error` object, code `unresolved-redirect`.
+  This endpoint does not resolve a merged item to its target.
+- `extract_found.json`: `GET https://en.wikipedia.org/w/api.php?action=query&titles=Radiohead&prop=extracts&exintro=1&explaintext=1&format=json`,
+  HTTP 200. Page 38252.
+- `extract_not_found.json`: the same request for the title `Zzqxjvwkp nonexistent article qqz`.
+  HTTP 200, page `-1` with `missing`.
+- `extract_invalid.json`: the same request for the title `Radiohead[1]`, which
+  MediaWiki refuses because `[` is not allowed in a title. HTTP 200, page `-1`
+  with `invalid` and `invalidreason`.
+- `commons_imageinfo_found.json`: `GET https://commons.wikimedia.org/w/api.php?action=query&titles=File:RadioheadO2211125 composite.jpg&prop=imageinfo&iiprop=url&iiurlwidth=1280&format=json`,
+  HTTP 200. The 1280 px thumbnail is in `thumburl`. The answer carries a
+  `continue` block, which the client does not follow.
+- `commons_imageinfo_not_found.json`: the same request for a file name that
+  does not exist. HTTP 200, page `-1` with `missing` and no image info.
+
+Not recorded: the Special:EntityData answer for an unknown id. The client
+reads its 404 as absence without decoding the body.
+
+The two entity answers are trimmed to the fields read: each entity's `id`, and
+each sitelink's `title`. The values kept are unchanged, and every sitelink key
+is kept. As sent, the Q44190 answer was 134,661 bytes and the Q13165295 answer
+215,162 bytes.
+
+The other bodies are unchanged except re-indented (two spaces), with one
+exception. In `extract_found.json` the English Wikipedia intro in
+`query.pages.38252.extract` is CC BY-SA article text, so it is replaced by a
+placeholder sentence. Nothing else in that file was changed. The Commons answers
+carry no author or licence metadata, because the client does not request
+`extmetadata`.
+
+None of the bodies holds a key, a token or personal data. The error answers
+name the Wikimedia server that served them (`servedby`), which is not personal data.

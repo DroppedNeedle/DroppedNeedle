@@ -1,0 +1,17 @@
+{
+  "error": {
+    "code": "unresolved-redirect",
+    "info": "The given entity ID refers to a redirect, which is not supported in this context.",
+    "messages": [
+      {
+        "name": "wikibase-api-unresolved-redirect",
+        "parameters": [],
+        "html": {
+          "*": "The given entity ID refers to a redirect, which is not supported in this context."
+        }
+      }
+    ],
+    "*": "See https://www.wikidata.org/w/api.php for API usage. Subscribe to the mediawiki-api-announce mailing list at &lt;https://lists.wikimedia.org/postorius/lists/mediawiki-api-announce.lists.wikimedia.org/&gt; for notice of API deprecations and breaking changes."
+  },
+  "servedby": "mw-api-ext.codfw.main-6b7fb45bcf-wdksh"
+}

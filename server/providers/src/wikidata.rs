@@ -20,14 +20,19 @@
 //! `Ok(None)` only for 404 and a typed [`ProviderError`] otherwise, so an
 //! outage cannot be mistaken for "this artist has no bio".
 
-use serde::Deserialize;
+mod models;
+
 use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::RequestPriority;
-use crate::client::{decode, parse_base, unusable_base};
-use crate::error::{MAX_RETRY_AFTER, ProviderError};
+use crate::client::{decode, parse_base, payload, unusable_base};
+use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
 use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
+
+use models::{
+    Claim, ClaimsAnswer, Entity, EntityData, ExtractAnswer, ImageAnswer, ImagePage, WikiPage,
+};
 
 /// The provider name errors carry.
 pub const SOURCE: &str = "wikidata";
@@ -57,144 +62,13 @@ pub const COMMONS_BASE: &str = "https://commons.wikimedia.org";
 /// The "image" property behind artist photos.
 pub const PROPERTY_IMAGE: &str = "P18";
 
-// ---------------------------------------------------------------------------
-// Wire models (default-tolerant; unknown fields are ignored by serde)
-// ---------------------------------------------------------------------------
-
-/// One sitelink on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireSitelink {
-    /// Page title on the linked wiki.
-    #[serde(default)]
-    pub title: Option<String>,
-}
-
-/// One entity on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireEntity {
-    /// Sitelinks keyed by wiki id ("enwiki", ...).
-    #[serde(default)]
-    pub sitelinks: HashMap<String, WireSitelink>,
-}
-
-/// An entity-data answer on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireEntityResponse {
-    /// Entities keyed by id ("Q...").
-    #[serde(default)]
-    pub entities: HashMap<String, WireEntity>,
-}
-
-/// One claim datavalue on the wire. The value keeps its raw JSON form: P18
-/// filenames are strings, while relation targets are `{"id": "Q..."}` entity
-/// objects, and both must decode without failing the page.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireDatavalue {
-    /// Raw datavalue.
-    #[serde(default)]
-    pub value: Option<serde_json::Value>,
-}
-
-impl WireDatavalue {
-    /// The value when it is a plain string (P18 filenames).
-    pub fn string_value(&self) -> Option<&str> {
-        self.value.as_ref().and_then(serde_json::Value::as_str)
-    }
-}
-
-/// One claim snak on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireSnak {
-    /// Main datavalue.
-    #[serde(default)]
-    pub datavalue: Option<WireDatavalue>,
-}
-
-/// One claim on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireClaim {
-    /// Main snak.
-    #[serde(default)]
-    pub mainsnak: Option<WireSnak>,
-}
-
-/// A claims answer on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireClaimsResponse {
-    /// Claims keyed by property ("P18", ...).
-    #[serde(default)]
-    pub claims: HashMap<String, Vec<WireClaim>>,
-}
-
-/// One Wikipedia page on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireWikiPage {
-    /// Page id; missing or negative means the page does not exist.
-    #[serde(default)]
-    pub pageid: Option<i64>,
-    /// Plain-text intro extract.
-    #[serde(default)]
-    pub extract: Option<String>,
-}
-
-/// One MediaWiki query block on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireQuery {
-    /// Pages keyed by page id.
-    #[serde(default)]
-    pub pages: HashMap<String, WireWikiPage>,
-}
-
-/// A Wikipedia query answer on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireQueryResponse {
-    /// Query block.
-    #[serde(default)]
-    pub query: Option<WireQuery>,
-}
-
 /// Width Commons scales artist portraits to: big enough for any artist
 /// header, without downloading multi-megabyte originals. A standard Commons
 /// thumbnail width (https://www.mediawiki.org/wiki/Common_thumbnail_sizes).
-/// Checked 2026-10-19: imageinfo at 1280 for File:RadioheadO2211125
-/// composite.jpg (5940 px original) returned a 1280 px thumburl on
-/// thumb.wikimedia.org. The stored portrait is still shrunk to 1200 px.
+/// Verified against commons.wikimedia.org/w/api.php on 2026-10-20: a 1280 px
+/// thumburl for File:RadioheadO2211125 composite.jpg, tests/fixtures/wikidata/commons_imageinfo_found.json.
+/// The stored portrait is still shrunk to 1200 px.
 pub const COMMONS_THUMB_WIDTH: &str = "1280";
-
-/// One Commons imageinfo row on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireImageInfo {
-    /// Direct file URL.
-    #[serde(default)]
-    pub url: Option<String>,
-    /// Scaled thumbnail URL, when one was asked for (`iiurlwidth`).
-    #[serde(default)]
-    pub thumburl: Option<String>,
-}
-
-/// One Commons page on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireCommonsPage {
-    /// Image info rows.
-    #[serde(default)]
-    pub imageinfo: Vec<WireImageInfo>,
-}
-
-/// One Commons query block on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireCommonsQuery {
-    /// Pages keyed by page id.
-    #[serde(default)]
-    pub pages: HashMap<String, WireCommonsPage>,
-}
-
-/// A Commons query answer on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireCommonsResponse {
-    /// Query block.
-    #[serde(default)]
-    pub query: Option<WireCommonsQuery>,
-}
 
 // ---------------------------------------------------------------------------
 // Pure helpers (ports of the v2 static helpers)
@@ -262,65 +136,89 @@ fn is_language(value: &str) -> bool {
     (2..=12).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
 }
 
-/// Read the `{lang}wiki` sitelink title for one entity, or `None` when the
-/// entity or sitelink is missing.
-pub fn sitelink_title(page: &WireEntityResponse, entity_id: &str, lang: &str) -> Option<String> {
-    page.entities
-        .get(entity_id)
-        .and_then(|entity| entity.sitelinks.get(&format!("{lang}wiki")))
+/// The entity an answer holds for `entity_id`. A redirected id answers with its
+/// target under the target's own id, so one entity under another id is that
+/// target. Verified against www.wikidata.org/wiki/Special:EntityData/Q13165295.json
+/// on 2026-10-20: tests/fixtures/wikidata/entity_redirect.json. No entity, or
+/// several with none of them asked for, is a payload error.
+fn entity_for<'a>(answer: &'a EntityData, entity_id: &str) -> Result<&'a Entity, ProviderError> {
+    if let Some(entity) = answer.entities.get(entity_id) {
+        return Ok(entity);
+    }
+    let mut others = answer.entities.values();
+    match (others.next(), others.next()) {
+        (Some(target), None) => Ok(target),
+        _ => Err(payload(
+            SOURCE,
+            PayloadKind::Decode,
+            "no entity for the id asked",
+        )),
+    }
+}
+
+/// Read the `{lang}wiki` sitelink title of the entity an answer holds for
+/// `entity_id`, or `None` when that sitelink is missing.
+fn sitelink_title(
+    answer: &EntityData,
+    entity_id: &str,
+    lang: &str,
+) -> Result<Option<String>, ProviderError> {
+    let entity = entity_for(answer, entity_id)?;
+    Ok(entity
+        .sitelinks
+        .get(&format!("{lang}wiki"))
         .and_then(|link| link.title.clone())
-        .filter(|title| !title.is_empty())
+        .filter(|title| !title.is_empty()))
 }
 
-/// Read the first usable extract from a Wikipedia answer:
-/// a missing page (absent or negative id) ends
-/// the lookup as absent, and the first non-empty extract wins.
-pub fn select_extract(page: &WireQueryResponse) -> Option<String> {
-    let pages = page.query.as_ref().map(|query| &query.pages)?;
-    // Single-title lookups carry one page; iterate deterministically anyway.
-    let mut keys: Vec<&String> = pages.keys().collect();
-    keys.sort();
-    for key in keys {
-        let Some(entry) = pages.get(key) else {
-            continue;
-        };
-        if entry.pageid.unwrap_or(-1) < 0 {
-            return None;
-        }
-        if let Some(extract) = entry.extract.as_deref().filter(|text| !text.is_empty()) {
-            return Some(extract.to_owned());
+/// Read the first usable extract from a Wikipedia answer. A page that does not
+/// exist, or a title no page can carry, ends the lookup as absent; the first
+/// non-empty extract wins.
+fn select_extract(answer: &ExtractAnswer) -> Option<String> {
+    let mut pages: Vec<(&String, &WikiPage)> = answer.query.pages.iter().collect();
+    pages.sort_by(|a, b| a.0.cmp(b.0));
+    for (_, page) in pages {
+        match page {
+            WikiPage::Found {
+                extract: Some(text),
+                ..
+            } if !text.is_empty() => return Some(text.clone()),
+            WikiPage::Found { .. } => {}
+            WikiPage::Missing { .. } | WikiPage::Invalid { .. } => return None,
         }
     }
     None
 }
 
-/// Read the first usable Commons file URL:
-/// the first page carrying image info
+/// Read the first usable Commons file URL: the first page carrying image info
 /// decides, and an empty URL there ends the lookup as absent.
-pub fn select_commons_url(page: &WireCommonsResponse) -> Option<String> {
-    let pages = page.query.as_ref().map(|query| &query.pages)?;
-    let mut keys: Vec<&String> = pages.keys().collect();
-    keys.sort();
-    for key in keys {
-        let Some(entry) = pages.get(key) else {
-            continue;
-        };
-        if entry.imageinfo.is_empty() {
-            continue;
-        }
-        // The scaled thumbnail when Commons made one, else the original.
-        return entry
-            .imageinfo
-            .first()
-            .and_then(|info| {
-                info.thumburl
-                    .clone()
-                    .filter(|url| !url.is_empty())
-                    .or_else(|| info.url.clone())
-            })
-            .filter(|url| !url.is_empty());
-    }
-    None
+fn select_commons_url(answer: &ImageAnswer) -> Option<String> {
+    let mut pages: Vec<(&String, &ImagePage)> = answer.query.pages.iter().collect();
+    pages.sort_by(|a, b| a.0.cmp(b.0));
+    let (_, page) = pages
+        .into_iter()
+        .find(|(_, page)| !page.imageinfo.is_empty())?;
+    let info = page.imageinfo.first()?;
+    // The scaled thumbnail when Commons made one, else the original.
+    let url = info
+        .thumburl
+        .as_deref()
+        .filter(|url| !url.is_empty())
+        .unwrap_or(info.url.as_str());
+    (!url.is_empty()).then(|| url.to_owned())
+}
+
+/// The error codes that read as absence: the id names no entity, or it is a
+/// merged item that this endpoint does not resolve to its target.
+/// Verified against www.wikidata.org/w/api.php on 2026-10-20: `no-such-entity`
+/// for a well-formed unknown id (tests/fixtures/wikidata/claims_no_such_entity.json),
+/// `param-invalid` for an id the id builder refuses (claims_invalid_id.json), and
+/// `unresolved-redirect` for a merged item (claims_unresolved_redirect.json).
+fn reads_as_absent(code: &str) -> bool {
+    matches!(
+        code,
+        "no-such-entity" | "param-invalid" | "unresolved-redirect"
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -410,8 +308,8 @@ impl WikidataClient {
         else {
             return Ok(None);
         };
-        let page: WireEntityResponse = decode(&reply)?;
-        Ok(sitelink_title(&page, wikidata_id, lang))
+        let answer: EntityData = decode(&reply)?;
+        sitelink_title(&answer, wikidata_id, lang)
     }
 
     /// Fetch one plain-text intro extract.
@@ -443,8 +341,8 @@ impl WikidataClient {
         else {
             return Ok(None);
         };
-        let page: WireQueryResponse = decode(&reply)?;
-        Ok(select_extract(&page))
+        let answer: ExtractAnswer = decode(&reply)?;
+        Ok(select_extract(&answer))
     }
 
     /// The bio extract behind a Wikidata or Wikipedia URL (v2
@@ -510,8 +408,8 @@ impl WikidataClient {
         else {
             return Ok(None);
         };
-        let page: WireCommonsResponse = decode(&reply)?;
-        Ok(select_commons_url(&page))
+        let answer: ImageAnswer = decode(&reply)?;
+        Ok(select_commons_url(&answer))
     }
 
     /// The first claim's string value for one property (the P18 path behind
@@ -526,32 +424,32 @@ impl WikidataClient {
         property: &str,
         priority: RequestPriority,
     ) -> Result<Option<String>, ProviderError> {
-        let page = self.fetch_claims(wikidata_id, property, priority).await?;
-        let Some(page) = page else {
+        let Some(claims) = self.fetch_claims(wikidata_id, property, priority).await? else {
             return Ok(None);
         };
-        Ok(page
-            .claims
+        Ok(claims
             .get(property)
-            .and_then(|claims| claims.first())
+            .and_then(|statements| statements.first())
             .and_then(|claim| claim.mainsnak.as_ref())
             .and_then(|snak| snak.datavalue.as_ref())
-            .and_then(WireDatavalue::string_value)
+            .and_then(|datavalue| datavalue.value.file_name())
             .map(str::to_owned))
     }
 
-    /// Fetch one property's claims, with 404 as absence. An id that is not
-    /// an item id is never sent and reads as absence.
+    /// Fetch one property's statements, with 404 as absence. An id that is not
+    /// an item id is never sent and reads as absence, and so does an error
+    /// answer that `reads_as_absent` lists. Any other error answer is a payload
+    /// error.
     ///
     /// # Errors
     ///
     /// The typed failure of the call or of its answer.
-    pub async fn fetch_claims(
+    async fn fetch_claims(
         &self,
         wikidata_id: &str,
         property: &str,
         priority: RequestPriority,
-    ) -> Result<Option<WireClaimsResponse>, ProviderError> {
+    ) -> Result<Option<HashMap<String, Vec<Claim>>>, ProviderError> {
         if !is_item_id(wikidata_id) {
             return Ok(None);
         }
@@ -571,6 +469,14 @@ impl WikidataClient {
         else {
             return Ok(None);
         };
-        decode(&reply).map(Some)
+        match decode::<ClaimsAnswer>(&reply)? {
+            ClaimsAnswer::Claims { claims } => Ok(Some(claims)),
+            ClaimsAnswer::Refused { error } if reads_as_absent(&error.code) => Ok(None),
+            ClaimsAnswer::Refused { .. } => Err(payload(
+                SOURCE,
+                PayloadKind::Contract,
+                "the API answered with an error",
+            )),
+        }
     }
 }

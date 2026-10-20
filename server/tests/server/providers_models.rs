@@ -24,12 +24,27 @@ enum Provider {
     ItunesAlbum,
     ItunesTrack,
     ItunesAlbumTracks,
+    WikidataEntity,
+    WikidataClaims,
+    WikipediaExtract,
+    CommonsImage,
+    WikidataRedirect,
 }
 
 /// The album the Deezer album search fixture names first, and its track list.
 const DEEZER_ALBUM_PATH: &str = "/album/1007321681/tracks";
 const DEEZER_ALBUM_SEARCH_BODY: &str = include_str!("../fixtures/deezer/search_album.json");
 const DEEZER_ALBUM_TRACKS_BODY: &str = include_str!("../fixtures/deezer/album_tracks.json");
+
+/// The origins the Wikidata rows answer from, and the claim and image info
+/// the Commons row reads before its own answer.
+const WIKIDATA_ENTITY_URL: &str = "http://fake/wikidata/wiki/Special:EntityData/Q44190.json";
+const WIKIDATA_CLAIMS_URL: &str = "http://fake/wikidata/w/api.php";
+const WIKIDATA_CLAIMS_BODY: &str = include_str!("../fixtures/wikidata/claims_p18_found.json");
+const WIKIPEDIA_EXTRACT_URL: &str = "http://fake/en.wiki/w/api.php";
+const COMMONS_IMAGE_URL: &str = "http://fake/commons/w/api.php";
+/// A merged item, asked for by its own id: the answer holds its target, Q1.
+const WIKIDATA_REDIRECT_URL: &str = "http://fake/wikidata/wiki/Special:EntityData/Q13165295.json";
 
 /// One recorded answer.
 struct Row {
@@ -96,6 +111,42 @@ const ROWS: &[Row] = &[
         provider: Provider::ItunesAlbumTracks,
         body: include_str!("../fixtures/itunes/search_album_tracks.json"),
         identity: "/results/0/trackId",
+    },
+    Row {
+        name: "wikidata Special:EntityData, entity id",
+        provider: Provider::WikidataEntity,
+        body: include_str!("../fixtures/wikidata/entity_found.json"),
+        identity: "/entities/Q44190/id",
+    },
+    Row {
+        name: "wikidata Special:EntityData, the entity asked for",
+        provider: Provider::WikidataEntity,
+        body: include_str!("../fixtures/wikidata/entity_found.json"),
+        identity: "/entities/Q44190",
+    },
+    Row {
+        name: "wikidata wbgetclaims, P18 file name",
+        provider: Provider::WikidataClaims,
+        body: WIKIDATA_CLAIMS_BODY,
+        identity: "/claims/P18/0/mainsnak/datavalue/value",
+    },
+    Row {
+        name: "en.wikipedia query extracts, page id",
+        provider: Provider::WikipediaExtract,
+        body: include_str!("../fixtures/wikidata/extract_found.json"),
+        identity: "/query/pages/38252/pageid",
+    },
+    Row {
+        name: "commons imageinfo, file url",
+        provider: Provider::CommonsImage,
+        body: include_str!("../fixtures/wikidata/commons_imageinfo_found.json"),
+        identity: "/query/pages/179695193/imageinfo/0/url",
+    },
+    Row {
+        name: "wikidata Special:EntityData, redirected id, the target entity",
+        provider: Provider::WikidataRedirect,
+        body: include_str!("../fixtures/wikidata/entity_redirect.json"),
+        identity: "/entities/Q1",
     },
 ];
 
@@ -202,6 +253,49 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                 .await?;
             Ok(!tracks.is_empty())
         }
+        Provider::WikidataEntity => {
+            let providers = wikidata_answers(&[(WIKIDATA_ENTITY_URL, body)]);
+            let title = providers
+                .wikidata
+                .wikipedia_title_from_wikidata("Q44190", "en", PRIORITY)
+                .await?;
+            Ok(title.is_some())
+        }
+        Provider::WikidataClaims => {
+            let providers = wikidata_answers(&[(WIKIDATA_CLAIMS_URL, body)]);
+            let file = providers
+                .wikidata
+                .claim_string("Q44190", "P18", PRIORITY)
+                .await?;
+            Ok(file.is_some())
+        }
+        Provider::WikipediaExtract => {
+            let providers = wikidata_answers(&[(WIKIPEDIA_EXTRACT_URL, body)]);
+            let extract = providers
+                .wikidata
+                .wikipedia_extract("Radiohead", "en", PRIORITY)
+                .await?;
+            Ok(extract.is_some())
+        }
+        Provider::CommonsImage => {
+            let providers = wikidata_answers(&[
+                (WIKIDATA_CLAIMS_URL, WIKIDATA_CLAIMS_BODY),
+                (COMMONS_IMAGE_URL, body),
+            ]);
+            let image = providers
+                .wikidata
+                .get_artist_image("Q44190", PRIORITY)
+                .await?;
+            Ok(image.is_some())
+        }
+        Provider::WikidataRedirect => {
+            let providers = wikidata_answers(&[(WIKIDATA_REDIRECT_URL, body)]);
+            let title = providers
+                .wikidata
+                .wikipedia_title_from_wikidata("Q13165295", "en", PRIORITY)
+                .await?;
+            Ok(title.is_some())
+        }
     }
 }
 
@@ -240,6 +334,24 @@ fn itunes(body: &str) -> Providers {
         wire,
         ProviderEndpoints {
             itunes: "http://fake/itunes/search".to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    )
+}
+
+/// Serves each `(url, body)` from the Wikidata, Wikipedia and Commons origins
+/// and returns the providers that read them.
+fn wikidata_answers(answers: &[(&str, &str)]) -> Providers {
+    let wire = Arc::new(ScriptedWire::new());
+    for (url, body) in answers {
+        wire.answer(url, 200, &[], body.as_bytes().to_vec());
+    }
+    Providers::unpaced_at(
+        wire,
+        ProviderEndpoints {
+            wikidata: "http://fake/wikidata".to_owned(),
+            wikipedia: "http://fake/{lang}.wiki".to_owned(),
+            commons: "http://fake/commons".to_owned(),
             ..ProviderEndpoints::closed()
         },
     )
