@@ -7,8 +7,8 @@
 //! its own format: JPEG at quality 85, PNG and WebP lossless. Pictures
 //! already small enough, of another format, or over 40 megapixels (v2
 //! `MAX_DELIVERY_IMAGE_PIXELS`, a decompression-bomb guard) are left as
-//! they are. Cover Art Archive art never comes here: the archive renders
-//! its own thumbnails. Callers run this on the blocking pool.
+//! they are. Cover Art Archive art comes here only to make a 250 from its
+//! 500 thumbnail. Callers run this on the blocking pool.
 
 use std::io::Cursor;
 

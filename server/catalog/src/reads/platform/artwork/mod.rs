@@ -7,8 +7,9 @@
 //!    wins: the folder image or embedded picture the library scan recorded
 //!    (see [`local`]).
 //! 2. Otherwise, or when there is none, the Cover Art Archive front cover at
-//!    the requested size. The archive renders 250, 500 and 1200 pixel
-//!    thumbnails itself, so nothing is resized here.
+//!    the requested size. The archive renders 500 and 1200 pixel thumbnails
+//!    itself. A 250 is scaled down from the 500, so one archive trip serves
+//!    both sizes.
 //! 3. With the preference off, local art is the fallback when the archive
 //!    has nothing.
 //!
@@ -530,9 +531,9 @@ impl ArtworkService {
         })
     }
 
-    /// Archive cover through the cache, coalesced, waiting up to `wait`.
-    /// Fetches are coalesced per priority class, so a page never waits on
-    /// a background fetch of the same cover.
+    /// Archive cover through the cache, waiting up to `wait`. A 250 is made
+    /// from the 500 file, so the two sizes share one fetch and one "no art"
+    /// answer.
     async fn remote_cover(
         &self,
         entity: EntityKind,
@@ -541,10 +542,34 @@ impl ArtworkService {
         wait: Duration,
         priority: RequestPriority,
     ) -> CoverLookup {
+        let asked = download_size(size);
+        let file = match asked {
+            DownloadSize::Size250 => DownloadSize::Size500,
+            other => other,
+        };
+        match self.archive_file(entity, mbid, file, wait, priority).await {
+            CoverLookup::Found(cover) if asked == DownloadSize::Size250 => {
+                CoverLookup::Found(self.sized(cover, size).await)
+            }
+            other => other,
+        }
+    }
+
+    /// One archive file (the original or a thumbnail width) through the
+    /// cache: a stored copy, its "no art" answer, or a fetch shared with
+    /// every request for that file. Fetches are coalesced per priority class,
+    /// so a page never waits on a background fetch of the same cover.
+    async fn archive_file(
+        &self,
+        entity: EntityKind,
+        mbid: &str,
+        size: DownloadSize,
+        wait: Duration,
+        priority: RequestPriority,
+    ) -> CoverLookup {
         let Some(remote) = self.remote.clone() else {
             return CoverLookup::Missing;
         };
-        let size = download_size(size);
         let key = format!("caa:{}:{mbid}:{}", entity.path(), size.label());
         match self.cache.key(&key).await {
             Some(KeyEntry::Hit { hash, content_type }) => {
