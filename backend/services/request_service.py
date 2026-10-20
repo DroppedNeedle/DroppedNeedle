@@ -189,11 +189,26 @@ class RequestService:
                 )
                 resolved.append((canonical, release_mbid))
         normalized: list[dict] = []
+        learned_aliases: dict[str, str] = {}
         for item, (canonical_mbid, release_mbid) in zip(items, resolved):
             value = dict(item)
+            # A caller that already knows the edition names it explicitly. The
+            # release-group identity stays canonical and the batch keeps its
+            # single durable alias lookup: no MusicBrainz round-trip is needed
+            # to carry the edition into the request and the download task.
+            explicit = str(value.get("release_mbid") or "").strip()
+            if (
+                release_mbid is None
+                and explicit
+                and explicit.casefold() != canonical_mbid.casefold()
+            ):
+                release_mbid = explicit
+                learned_aliases[explicit] = canonical_mbid
             value["musicbrainz_id"] = canonical_mbid
             value["release_mbid"] = release_mbid
             normalized.append(value)
+        if learned_aliases and self._mbid_store is not None:
+            await self._mbid_store.save_mbid_resolution_map(learned_aliases)
         return normalized
 
     async def _resolve_request_names(
