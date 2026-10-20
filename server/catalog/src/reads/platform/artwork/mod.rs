@@ -73,7 +73,10 @@ use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 /// short cache window, as v2 did.
 pub const CAA_SOURCE: &str = "cover-art-archive";
 /// How long the web routes wait for an archive fetch before answering 202.
-pub const WARM_WAIT: Duration = Duration::from_secs(4);
+/// A typical fetch takes about 1.8 s (probed 2026-10-19), which this wait
+/// covers. Past it, the 202 frees the browser connection, which matters on
+/// plain HTTP/1.1, where a browser opens six connections per host.
+pub const WARM_WAIT: Duration = Duration::from_millis(2_500);
 /// How long compat clients (which cannot poll) wait for an archive fetch.
 pub const COMPAT_WAIT: Duration = Duration::from_secs(20);
 /// The archive said it has no cover: ask again after four hours (v2
