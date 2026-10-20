@@ -31,7 +31,7 @@ use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::management::settings::service::LibraryManagementService;
 use droppedneedle_library::policy::LibraryPolicyCatalog;
-use droppedneedle_providers::listenbrainz::ListenBrainzClient;
+use droppedneedle_providers::Providers;
 
 /// Section-prefs backends: the toggle store plus per-user link state.
 pub struct SectionPrefsDeps {
@@ -64,23 +64,21 @@ impl SettingsSetup {
     /// deployment timezone, with the wired fan-out in `effects`. The
     /// Library Management routes save through `management`, the library's
     /// own service, so an activation dry run and a page save never save
-    /// over each other. The schedule reads its last scan from `scans`.
+    /// over each other. The schedule reads its last scan from `scans`, and
+    /// the Verify probes check keys through the clients in `providers`.
     pub fn build(
         platform: &Platform,
         effects: Effects,
         outbound: &Outbound,
         management: Arc<LibraryManagementService>,
         scans: Arc<dyn LibraryLookups>,
-        listenbrainz: ListenBrainzClient,
+        providers: &Providers,
     ) -> Self {
         let mut setup = Self::assemble(
             platform.settings.clone(),
             effects,
             platform.ids.clone(),
-            Arc::new(LiveProbes::new(
-                platform.http.shared().clone(),
-                listenbrainz,
-            )),
+            Arc::new(LiveProbes::new(platform.http.shared().clone(), providers)),
             platform.config.timezone.clone(),
             outbound.clone(),
             management,
@@ -99,14 +97,8 @@ impl SettingsSetup {
         management: Arc<LibraryManagementService>,
     ) -> Self {
         let service = Arc::new(
-            SettingsService::new(
-                store.clone(),
-                effects.clone(),
-                ids,
-                probes,
-                outbound.clone(),
-            )
-            .with_timezone(timezone),
+            SettingsService::new(store.clone(), effects.clone(), ids, probes)
+                .with_timezone(timezone),
         );
         Self {
             policy: Arc::new(LibraryPolicyService::new(service.clone(), None)),
@@ -156,9 +148,11 @@ impl SettingsSetup {
     /// scripted fake instead, so no test touches live networks.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
-        let http = reqwest::Client::new();
-        let listenbrainz = droppedneedle_providers::Providers::closed().listenbrainz;
-        Self::for_tests_with_probes(ids, Arc::new(LiveProbes::new(http, listenbrainz)))
+        let providers = Providers::closed();
+        Self::for_tests_with_probes(
+            ids,
+            Arc::new(LiveProbes::new(reqwest::Client::new(), &providers)),
+        )
     }
 
     /// Test bundle with scripted verify probes.

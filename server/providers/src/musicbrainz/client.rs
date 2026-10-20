@@ -371,6 +371,36 @@ impl MusicBrainzView {
             .await
     }
 
+    /// Check that the source answers an artist search, for the Settings
+    /// connection test. Only a success status passes.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call; a 404 is [`ProviderError::NotFound`]
+    /// and a redirect [`ProviderError::Redirect`].
+    pub async fn check_reachable(&self) -> Result<(), ProviderError> {
+        let params = vec![
+            ("query".to_owned(), "test".to_owned()),
+            ("limit".to_owned(), "1".to_owned()),
+        ];
+        match self
+            .get(
+                vec!["artist".to_owned()],
+                params,
+                Criticality::IdentityCritical,
+            )
+            .await?
+        {
+            WireOutcome::Found(_) => Ok(()),
+            WireOutcome::Missing => Err(ProviderError::NotFound { provider: SOURCE }),
+            WireOutcome::Redirect { status, .. } => Err(refused(status)),
+            WireOutcome::Degraded => Err(ProviderError::Unavailable {
+                provider: SOURCE,
+                retry_after: None,
+            }),
+        }
+    }
+
     /// Search artists by name.
     pub async fn search_artists(
         &self,

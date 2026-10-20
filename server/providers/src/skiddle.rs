@@ -257,6 +257,42 @@ impl SkiddleClient {
         Ok(decoded.results)
     }
 
+    /// Check that `key` is accepted: one small events search, sent once,
+    /// whose answer must carry Skiddle's `error` code 0. An answer without
+    /// the code is not proof the key works.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
+    pub async fn check_key(
+        &self,
+        key: &str,
+        priority: RequestPriority,
+    ) -> Result<(), ProviderError> {
+        #[derive(Deserialize)]
+        struct KeyCheck {
+            error: Option<i64>,
+        }
+        let base = self.base.as_ref().ok_or_else(|| unusable_base(SOURCE))?;
+        let request = Request::get(
+            base,
+            &["events", "search"],
+            &[("limit", "1"), ("api_key", key)],
+        )
+        .map_err(|_| unusable_base(SOURCE))?
+        .trailing_slash()
+        .idempotent(false);
+        let reply = self.executor.send(request, priority).await?;
+        match decode::<KeyCheck>(&reply)?.error {
+            Some(code) => envelope(code),
+            None => Err(payload(
+                SOURCE,
+                PayloadKind::Contract,
+                "skiddle answered no error code",
+            )),
+        }
+    }
+
     /// One GET of `segments` under the root, with the key as a query pair.
     /// Skiddle serves these routes with a trailing slash.
     async fn get(

@@ -470,6 +470,28 @@ impl TicketmasterClient {
         })
     }
 
+    /// Check that `key` is accepted: one small attractions search, sent
+    /// once.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
+    pub async fn check_key(
+        &self,
+        key: &str,
+        priority: RequestPriority,
+    ) -> Result<(), ProviderError> {
+        let base = self.base.as_ref().ok_or_else(|| unusable_base(SOURCE))?;
+        let request = Request::get(
+            base,
+            &["attractions.json"],
+            &[("keyword", "test"), ("size", "1"), ("apikey", key)],
+        )
+        .map_err(|_| unusable_base(SOURCE))?
+        .idempotent(false);
+        self.executor.send(request, priority).await.map(drop)
+    }
+
     /// One GET of `endpoint` under the root, with the key as a query pair.
     async fn get(
         &self,

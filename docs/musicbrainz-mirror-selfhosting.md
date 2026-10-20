@@ -152,8 +152,9 @@ BrainzMash; if BrainzMash was already active, the current binding continues serv
 `source_id`, `generation`, and `disclosure_version`. This is a local zero-wire action. It
 persists consent for that exact pending identity and enables Test Connection for that proposal.
 3. **Test Connection.** DroppedNeedle sends `POST
-/api/v3/settings/musicbrainz/verify` with the same exact binding. The dedicated BrainzMash
-client uses the local 10 requests/second, capacity-1 policy. A successful test records
+/api/v3/settings/musicbrainz/verify` with the same exact binding. The test request goes
+through the dedicated BrainzMash client, under the same local 10 requests/second, capacity-1
+policy as every other BrainzMash request. A successful test records
 verification for the same endpoint and binding. A failed, stale, or mismatched test cannot
 activate the proposal.
 4. **Activate.** An administrator sends `POST
@@ -366,7 +367,9 @@ On hardware you operate, raised limits or the Unlimited sentinel can be appropri
 create a provider guarantee. Be reasonable with servers you do not own. In particular, do not set
 Unlimited against a Community server merely because the UI permits that value.
 
-Press **Test Connection** before saving. The test checks the configured server. A successful test
+Press **Test Connection** before saving. The test checks the configured server, paced like
+real traffic: at the rate you entered, or at 1 request per second when the address is a public
+MusicBrainz host. A successful test
 is not evidence that every lookup, browse, search, include, redirect, or error shape matches the
 current DroppedNeedle request set.
 

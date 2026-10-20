@@ -465,7 +465,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         &outbound,
         library.management_settings.clone(),
         scans,
-        providers.listenbrainz.clone(),
+        &providers,
     )
     .with_section_prefs(
         Arc::new(SqliteSectionPrefsStore { db: db.clone() }),

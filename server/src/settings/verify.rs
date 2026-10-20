@@ -8,8 +8,9 @@
 //! 5xx, and never echo the URL or host.
 //!
 //! Probes reuse the production clients (media adapters, slskd and
-//! Usenet clients, the ListenBrainz verifier), so a passing verify
-//! means the same code path the app uses can reach the upstream. The
+//! Usenet clients, the provider clients for MusicBrainz, ListenBrainz,
+//! YouTube, Ticketmaster and Skiddle), so a passing verify means the same
+//! code path the app uses can reach the upstream. The
 //! [`VerifyProbes`] port keeps tests hermetic: HTTP tests run against
 //! scripted fakes while the live probes prove themselves against
 //! loopback stubs with explicit base URLs.
@@ -20,8 +21,12 @@ use futures_util::future::BoxFuture;
 
 use droppedneedle_kernel::http_client::read_capped;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
-use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
+use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzClient};
+use droppedneedle_providers::skiddle::SkiddleClient;
+use droppedneedle_providers::ticketmaster::TicketmasterClient;
+use droppedneedle_providers::youtube::YouTubeApi;
+use droppedneedle_providers::{ProviderError, Providers, RequestPriority, TransportKind};
 
 /// Per-probe HTTP budget, matching the v2 repositories.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -164,8 +169,8 @@ pub struct NewznabVerdict {
 }
 
 /// Connection probes. Every method tests explicitly passed values;
-/// fixed-host upstreams take their base URL so tests point them at
-/// loopback stubs while production passes the module constants. All
+/// services at a fixed address are reached through their provider
+/// client, which knows where they live. All
 /// failures are verdicts, never errors: only the Plex library listing
 /// (a GET over stored config) fails the request.
 pub trait VerifyProbes: Send + Sync {
@@ -193,11 +198,11 @@ pub trait VerifyProbes: Send + Sync {
         token: &'a str,
     ) -> BoxFuture<'a, ListenBrainzVerdict>;
     /// YouTube Data API key check.
-    fn youtube<'a>(&'a self, base: &'a str, key: &'a str) -> BoxFuture<'a, ProbeVerdict>;
+    fn youtube<'a>(&'a self, key: &'a str) -> BoxFuture<'a, ProbeVerdict>;
     /// Ticketmaster Discovery key check.
-    fn ticketmaster<'a>(&'a self, base: &'a str, key: &'a str) -> BoxFuture<'a, ProbeVerdict>;
+    fn ticketmaster<'a>(&'a self, key: &'a str) -> BoxFuture<'a, ProbeVerdict>;
     /// Skiddle events key check.
-    fn skiddle<'a>(&'a self, base: &'a str, key: &'a str) -> BoxFuture<'a, ProbeVerdict>;
+    fn skiddle<'a>(&'a self, key: &'a str) -> BoxFuture<'a, ProbeVerdict>;
     /// slskd session health.
     fn slskd<'a>(&'a self, url: &'a str, key: &'a str) -> BoxFuture<'a, VersionVerdict>;
     /// SABnzbd version plus categories, completed dir, and the mount
@@ -212,25 +217,42 @@ pub trait VerifyProbes: Send + Sync {
     fn prowlarr<'a>(&'a self, url: &'a str, key: &'a str) -> BoxFuture<'a, ProwlarrVerdict>;
     /// Newznab `t=caps`.
     fn newznab<'a>(&'a self, url: &'a str, key: &'a str) -> BoxFuture<'a, NewznabVerdict>;
-    /// MusicBrainz-compatible artist lookup (official, mirror,
-    /// community, or the pinned BrainzMash endpoint).
-    fn musicbrainz<'a>(&'a self, api_url: &'a str) -> BoxFuture<'a, ProbeVerdict>;
+    /// MusicBrainz-compatible artist search against `source` (official,
+    /// a mirror, or the pinned BrainzMash endpoint), sent through that
+    /// source's own pacing.
+    fn musicbrainz<'a>(&'a self, source: &'a MbSource) -> BoxFuture<'a, ProbeVerdict>;
     /// OIDC issuer discovery document.
     fn oidc<'a>(&'a self, issuer: &'a str) -> BoxFuture<'a, ProbeVerdict>;
 }
 
-/// Live probes over one shared HTTP client.
+/// Live probes over one shared HTTP client and the provider clients.
 pub struct LiveProbes {
     /// Outbound client.
     pub http: reqwest::Client,
+    /// The MusicBrainz client, over the official, BrainzMash and mirror
+    /// rows.
+    pub musicbrainz: MusicBrainzClient,
     /// The one ListenBrainz client, which checks ListenBrainz credentials.
     pub listenbrainz: ListenBrainzClient,
+    /// The YouTube Data API client.
+    pub youtube: YouTubeApi,
+    /// The Ticketmaster client.
+    pub ticketmaster: TicketmasterClient,
+    /// The Skiddle client.
+    pub skiddle: SkiddleClient,
 }
 
 impl LiveProbes {
-    /// Build over the shared client and the ListenBrainz client.
-    pub fn new(http: reqwest::Client, listenbrainz: ListenBrainzClient) -> Self {
-        Self { http, listenbrainz }
+    /// Build over the shared client and the providers' clients.
+    pub fn new(http: reqwest::Client, providers: &Providers) -> Self {
+        Self {
+            http,
+            musicbrainz: providers.musicbrainz.clone(),
+            listenbrainz: providers.listenbrainz.clone(),
+            youtube: providers.youtube.clone(),
+            ticketmaster: providers.ticketmaster.clone(),
+            skiddle: providers.skiddle.clone(),
+        }
     }
 }
 
@@ -251,18 +273,65 @@ pub fn require_service_url(url: &str, label: &str) -> Result<String, SettingsErr
     Ok(trimmed.trim_end_matches('/').to_owned())
 }
 
-/// Collapse a transport error to one line. URLs and hosts never ride
-/// in probe errors: reqwest's display can embed them, so only the
-/// error kind is ever rendered.
-fn transport_kind(error: &reqwest::Error) -> &'static str {
-    if error.is_timeout() {
-        "timed out"
-    } else if error.is_connect() {
-        "connection refused"
-    } else if error.is_body() || error.is_decode() {
-        "unreadable response"
-    } else {
-        "request failed"
+/// The HTTP status behind a failed provider call, when it had one.
+fn status_of(error: &ProviderError) -> Option<u16> {
+    match error {
+        ProviderError::Unauthorized { .. } => Some(401),
+        ProviderError::Forbidden { .. } => Some(403),
+        ProviderError::NotFound { .. } => Some(404),
+        ProviderError::RateLimited { .. } => Some(429),
+        ProviderError::Unavailable { .. } => Some(503),
+        ProviderError::BadRequest { status, .. }
+        | ProviderError::Redirect { status, .. }
+        | ProviderError::Server { status, .. } => Some(*status),
+        ProviderError::Transport { .. }
+        | ProviderError::Payload { .. }
+        | ProviderError::Disabled { .. }
+        | ProviderError::NotConfigured { .. }
+        | ProviderError::Invalid { .. } => None,
+    }
+}
+
+/// The verdict when `service` asked us to slow down, or its row still
+/// rests after it did: the key may be fine, so say when to try again.
+fn asked_to_wait(service: &str, error: &ProviderError) -> Option<String> {
+    let ProviderError::RateLimited { retry_after, .. } = error else {
+        return None;
+    };
+    Some(match retry_after {
+        Some(wait) => {
+            let minutes = wait.as_secs().div_ceil(60).max(1);
+            let unit = if minutes == 1 { "minute" } else { "minutes" };
+            format!("{service} asked us to wait; try again in about {minutes} {unit}.")
+        }
+        None => format!("{service} asked us to wait; try again shortly."),
+    })
+}
+
+/// The YouTube verdict for a failed key check. Only the status or the
+/// kind of transport failure is rendered, never the URL, which holds the
+/// key.
+fn youtube_failure(error: &ProviderError) -> String {
+    if let Some(wait) = asked_to_wait("YouTube", error) {
+        return wait;
+    }
+    match error {
+        ProviderError::Forbidden { .. } => {
+            "API key is invalid or YouTube Data API is not enabled.".to_owned()
+        }
+        ProviderError::Transport { kind, .. } => {
+            let kind = match kind {
+                TransportKind::Timeout => "timed out",
+                TransportKind::Connect => "connection refused",
+                TransportKind::Other => "request failed",
+            };
+            format!("Connection error: {kind}.")
+        }
+        ProviderError::Payload { .. } => "Connection error: unreadable response.".to_owned(),
+        other => match status_of(other) {
+            Some(status) => format!("Unexpected response: {status}."),
+            None => "Connection error: request failed.".to_owned(),
+        },
     }
 }
 
@@ -436,89 +505,59 @@ impl VerifyProbes for LiveProbes {
         })
     }
 
-    fn youtube<'a>(&'a self, base: &'a str, key: &'a str) -> BoxFuture<'a, ProbeVerdict> {
+    fn youtube<'a>(&'a self, key: &'a str) -> BoxFuture<'a, ProbeVerdict> {
         Box::pin(async move {
             if key.trim().is_empty() {
                 return ProbeVerdict::failed("An API key is required.");
             }
-            let url = format!("{}/youtube/v3/videos", base.trim_end_matches('/'));
-            let response = self
-                .http
-                .get(&url)
-                .query(&[("part", "id"), ("id", "dQw4w9WgXcQ"), ("key", key.trim())])
-                .timeout(PROBE_TIMEOUT)
-                .send()
-                .await;
-            match response {
-                Ok(response) if response.status().is_success() => {
-                    ProbeVerdict::ok("YouTube API key is valid.")
-                }
-                Ok(response) if response.status() == reqwest::StatusCode::FORBIDDEN => {
-                    ProbeVerdict::failed("API key is invalid or YouTube Data API is not enabled.")
-                }
-                Ok(response) => ProbeVerdict::failed(format!(
-                    "Unexpected response: {}.",
-                    response.status().as_u16()
-                )),
-                Err(error) => {
-                    ProbeVerdict::failed(format!("Connection error: {}.", transport_kind(&error)))
-                }
-            }
-        })
-    }
-
-    fn ticketmaster<'a>(&'a self, base: &'a str, key: &'a str) -> BoxFuture<'a, ProbeVerdict> {
-        Box::pin(async move {
-            if key.trim().is_empty() {
-                return ProbeVerdict::failed("An API key is required.");
-            }
-            let url = format!("{}/attractions.json", base.trim_end_matches('/'));
-            let reached = self
-                .http
-                .get(&url)
-                .query(&[("keyword", "test"), ("size", "1"), ("apikey", key.trim())])
-                .timeout(PROBE_TIMEOUT)
-                .send()
+            // An admin waits on the Verify button.
+            match self
+                .youtube
+                .check_key(key.trim(), RequestPriority::UserInitiated)
                 .await
-                .is_ok_and(|response| response.status().is_success());
-            if reached {
-                ProbeVerdict::ok("Connected to Ticketmaster.")
-            } else {
-                ProbeVerdict::failed("Ticketmaster rejected the key or is unreachable.")
+            {
+                Ok(()) => ProbeVerdict::ok("YouTube API key is valid."),
+                Err(error) => ProbeVerdict::failed(youtube_failure(&error)),
             }
         })
     }
 
-    fn skiddle<'a>(&'a self, base: &'a str, key: &'a str) -> BoxFuture<'a, ProbeVerdict> {
+    fn ticketmaster<'a>(&'a self, key: &'a str) -> BoxFuture<'a, ProbeVerdict> {
         Box::pin(async move {
             if key.trim().is_empty() {
                 return ProbeVerdict::failed("An API key is required.");
             }
-            let url = format!("{}/events/search/", base.trim_end_matches('/'));
-            let response = self
-                .http
-                .get(&url)
-                .query(&[("limit", "1"), ("api_key", key.trim())])
-                .timeout(PROBE_TIMEOUT)
-                .send()
+            let checked = self
+                .ticketmaster
+                .check_key(key.trim(), RequestPriority::UserInitiated)
                 .await;
-            let ok = match response {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        false
-                    } else {
-                        decode_body(response)
-                            .await
-                            .and_then(|body| body.get("error").and_then(|error| error.as_i64()))
-                            == Some(0)
-                    }
+            match checked {
+                Ok(()) => ProbeVerdict::ok("Connected to Ticketmaster."),
+                Err(error) => {
+                    ProbeVerdict::failed(asked_to_wait("Ticketmaster", &error).unwrap_or_else(
+                        || "Ticketmaster rejected the key or is unreachable.".to_owned(),
+                    ))
                 }
-                Err(_) => false,
-            };
-            if ok {
-                ProbeVerdict::ok("Connected to Skiddle.")
-            } else {
-                ProbeVerdict::failed("Skiddle rejected the key or is unreachable.")
+            }
+        })
+    }
+
+    fn skiddle<'a>(&'a self, key: &'a str) -> BoxFuture<'a, ProbeVerdict> {
+        Box::pin(async move {
+            if key.trim().is_empty() {
+                return ProbeVerdict::failed("An API key is required.");
+            }
+            let checked = self
+                .skiddle
+                .check_key(key.trim(), RequestPriority::UserInitiated)
+                .await;
+            match checked {
+                Ok(()) => ProbeVerdict::ok("Connected to Skiddle."),
+                Err(error) => {
+                    ProbeVerdict::failed(asked_to_wait("Skiddle", &error).unwrap_or_else(|| {
+                        "Skiddle rejected the key or is unreachable.".to_owned()
+                    }))
+                }
             }
         })
     }
@@ -738,25 +777,25 @@ impl VerifyProbes for LiveProbes {
         })
     }
 
-    fn musicbrainz<'a>(&'a self, api_url: &'a str) -> BoxFuture<'a, ProbeVerdict> {
+    fn musicbrainz<'a>(&'a self, source: &'a MbSource) -> BoxFuture<'a, ProbeVerdict> {
         Box::pin(async move {
-            let url = format!("{}/artist", api_url.trim_end_matches('/'));
-            let response = self
-                .http
-                .get(&url)
-                .query(&[("query", "test"), ("limit", "1"), ("fmt", "json")])
-                .timeout(PROBE_TIMEOUT)
-                .send()
+            // An admin waits on the Test Connection button.
+            let checked = self
+                .musicbrainz
+                .fixed(source.clone(), RequestPriority::UserInitiated)
+                .check_reachable()
                 .await;
-            match response {
-                Ok(response) if response.status().is_success() => {
-                    ProbeVerdict::ok("Connected to MusicBrainz.")
-                }
-                Ok(response) => ProbeVerdict::failed(format!(
-                    "MusicBrainz verification returned HTTP {}.",
-                    response.status().as_u16()
-                )),
-                Err(_) => ProbeVerdict::failed("Could not connect to MusicBrainz."),
+            match checked {
+                Ok(()) => ProbeVerdict::ok("Connected to MusicBrainz."),
+                Err(error) => ProbeVerdict::failed(
+                    asked_to_wait("MusicBrainz", &error)
+                        .or_else(|| {
+                            status_of(&error).map(|status| {
+                                format!("MusicBrainz verification returned HTTP {status}.")
+                            })
+                        })
+                        .unwrap_or_else(|| "Could not connect to MusicBrainz.".to_owned()),
+                ),
             }
         })
     }

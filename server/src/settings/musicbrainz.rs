@@ -21,12 +21,14 @@ use super::models::{
 use super::verify::{VerifyProbes, require_service_url};
 use crate::bootstrap::Outbound;
 use droppedneedle_kernel::db::DurableLane;
+use droppedneedle_kernel::runtime_config::sections::is_mb_rate_policy_public_host;
 use droppedneedle_kernel::runtime_config::sections::{
     BRAINZMASH_ENDPOINT, BRAINZMASH_RATE_LIMIT, MbSourceMode, MusicBrainzSettings,
     OFFICIAL_MB_API_BASE, OFFICIAL_MB_RATE_LIMIT, exact_nonblank,
 };
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Section as _, UpdateError};
+use droppedneedle_providers::musicbrainz::MbSource;
 
 /// BrainzMash disclosure version. A proposal carrying any other version
 /// is outdated and cannot proceed.
@@ -524,7 +526,13 @@ impl MusicBrainzLifecycle {
                     });
                 }
                 self.check_verify_binding(binding).await?;
-                let verdict = probes.musicbrainz(&self.outbound.brainzmash).await;
+                // The binding under test is the one being proven, so the
+                // probe may send before the binding is active.
+                let source = MbSource::BrainzMash {
+                    base_url: self.outbound.brainzmash.clone(),
+                    binding_valid: true,
+                };
+                let verdict = probes.musicbrainz(&source).await;
                 if !verdict.valid {
                     return Err(SettingsError::Upstream {
                         cause: verdict.message,
@@ -557,7 +565,17 @@ impl MusicBrainzLifecycle {
                     .filter(|url| !url.trim().is_empty())
                     .unwrap_or_else(|| self.outbound.musicbrainz.clone());
                 let api_url = require_service_url(&api_url, "MusicBrainz API URL")?;
-                let verdict = probes.musicbrainz(&api_url).await;
+                // A public MusicBrainz host keeps the official pace, as a
+                // saved source would.
+                let source = if is_mb_rate_policy_public_host(&api_url) {
+                    MbSource::Official { base_url: api_url }
+                } else {
+                    MbSource::Mirror {
+                        base_url: api_url,
+                        rate_per_sec: update.rate_limit,
+                    }
+                };
+                let verdict = probes.musicbrainz(&source).await;
                 if !verdict.valid {
                     return Err(SettingsError::Upstream {
                         cause: verdict.message,

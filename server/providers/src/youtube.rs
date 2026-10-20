@@ -155,6 +155,29 @@ impl YouTubeApi {
             },
         }
     }
+
+    /// Check that `key` may read the API: one `videos.list` for a known
+    /// video, sent once, outside the daily search budget.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call: a 403 is a key that is invalid or
+    /// lacks the YouTube Data API.
+    pub async fn check_key(
+        &self,
+        key: &str,
+        priority: RequestPriority,
+    ) -> Result<(), ProviderError> {
+        let base = self.base.as_ref().ok_or_else(|| unusable_base(SOURCE))?;
+        let request = Request::get(
+            base,
+            &["youtube", "v3", "videos"],
+            &[("part", "id"), ("id", "dQw4w9WgXcQ"), ("key", key)],
+        )
+        .map_err(|_| unusable_base(SOURCE))?
+        .idempotent(false);
+        self.executor.send(request, priority).await.map(drop)
+    }
 }
 
 /// What kind of preview a search is after. Album and track searches are

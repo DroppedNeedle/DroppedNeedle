@@ -25,7 +25,6 @@ use super::models::{
 };
 use super::quality;
 use super::verify::{VerifyProbes, check_hibp_file, require_service_url};
-use crate::bootstrap::Outbound;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, DownloadClients, EventsSettings, IdentificationPolicy, JellyfinConnection,
@@ -57,19 +56,15 @@ pub struct SettingsService {
     pub timezone: Option<String>,
     /// Connection probes behind the verify methods.
     probes: Arc<dyn VerifyProbes>,
-    /// Where the probes of services with a fixed address are sent.
-    outbound: Outbound,
 }
 
 impl SettingsService {
-    /// Build over the shared store, effects, ids, and probes. `outbound`
-    /// says where the probes of services with a fixed address are sent.
+    /// Build over the shared store, effects, ids, and probes.
     pub fn new(
         store: Arc<ConfigStore>,
         effects: Effects,
         ids: Arc<dyn IdGenerator>,
         probes: Arc<dyn VerifyProbes>,
-        outbound: Outbound,
     ) -> Self {
         Self {
             store,
@@ -77,7 +72,6 @@ impl SettingsService {
             ids,
             timezone: None,
             probes,
-            outbound,
         }
     }
 
@@ -675,10 +669,7 @@ impl SettingsService {
         incoming: Masked<YouTubeConnection>,
     ) -> Result<VerifyConnectionResponse, SettingsError> {
         let resolved = self.unmask(incoming)?;
-        let verdict = self
-            .probes
-            .youtube(&self.outbound.youtube, resolved.api_key.expose())
-            .await;
+        let verdict = self.probes.youtube(resolved.api_key.expose()).await;
         Ok(verdict_response(verdict.valid, verdict.message))
     }
 
@@ -690,10 +681,7 @@ impl SettingsService {
         let resolved = self.unmask(incoming)?;
         let verdict = self
             .probes
-            .ticketmaster(
-                &self.outbound.ticketmaster,
-                resolved.ticketmaster_api_key.expose(),
-            )
+            .ticketmaster(resolved.ticketmaster_api_key.expose())
             .await;
         Ok(verdict_response(verdict.valid, verdict.message))
     }
@@ -704,10 +692,7 @@ impl SettingsService {
         incoming: Masked<EventsSettings>,
     ) -> Result<VerifyConnectionResponse, SettingsError> {
         let resolved = self.unmask(incoming)?;
-        let verdict = self
-            .probes
-            .skiddle(&self.outbound.skiddle, resolved.skiddle_api_key.expose())
-            .await;
+        let verdict = self.probes.skiddle(resolved.skiddle_api_key.expose()).await;
         Ok(verdict_response(verdict.valid, verdict.message))
     }
 

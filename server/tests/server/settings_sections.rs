@@ -63,13 +63,7 @@ fn scratch_service() -> (SettingsService, Arc<RecorderEffects>, ScratchDir) {
     tokio::spawn(runner.run(droppedneedle_kernel::jobs::CancellationToken::new()));
     let ids = Arc::new(FixedIdGenerator::new(FIXED_ID));
     (
-        SettingsService::new(
-            store,
-            settled,
-            ids,
-            Arc::new(FakeProbes::passing()),
-            droppedneedle::bootstrap::Outbound::live(),
-        ),
+        SettingsService::new(store, settled, ids, Arc::new(FakeProbes::passing())),
         effects,
         dir,
     )
@@ -181,23 +175,23 @@ impl VerifyProbes for FakeProbes {
         })
     }
 
-    fn youtube<'a>(&'a self, base: &'a str, key: &'a str) -> BoxFuture<'a, ProbeVerdict> {
+    fn youtube<'a>(&'a self, key: &'a str) -> BoxFuture<'a, ProbeVerdict> {
         Box::pin(async move {
-            self.recorded("youtube", &[base, key]);
+            self.recorded("youtube", &[key]);
             self.verdict("youtube")
         })
     }
 
-    fn ticketmaster<'a>(&'a self, base: &'a str, key: &'a str) -> BoxFuture<'a, ProbeVerdict> {
+    fn ticketmaster<'a>(&'a self, key: &'a str) -> BoxFuture<'a, ProbeVerdict> {
         Box::pin(async move {
-            self.recorded("ticketmaster", &[base, key]);
+            self.recorded("ticketmaster", &[key]);
             self.verdict("ticketmaster")
         })
     }
 
-    fn skiddle<'a>(&'a self, base: &'a str, key: &'a str) -> BoxFuture<'a, ProbeVerdict> {
+    fn skiddle<'a>(&'a self, key: &'a str) -> BoxFuture<'a, ProbeVerdict> {
         Box::pin(async move {
-            self.recorded("skiddle", &[base, key]);
+            self.recorded("skiddle", &[key]);
             self.verdict("skiddle")
         })
     }
@@ -263,9 +257,12 @@ impl VerifyProbes for FakeProbes {
         })
     }
 
-    fn musicbrainz<'a>(&'a self, api_url: &'a str) -> BoxFuture<'a, ProbeVerdict> {
+    fn musicbrainz<'a>(
+        &'a self,
+        source: &'a droppedneedle_providers::musicbrainz::MbSource,
+    ) -> BoxFuture<'a, ProbeVerdict> {
         Box::pin(async move {
-            self.recorded("musicbrainz", &[api_url]);
+            self.recorded("musicbrainz", &[source.base_url()]);
             self.verdict("musicbrainz")
         })
     }
@@ -990,7 +987,13 @@ fn stub_app() -> Router {
         )
         .route(
             "/attractions.json",
-            axum::routing::get(|| async { Json(json!({"_embedded": {}})) }),
+            axum::routing::get(|Query(query): Query<HashMap<String, String>>| async move {
+                if query.get("apikey").map(String::as_str) == Some("limited") {
+                    (StatusCode::TOO_MANY_REQUESTS, [("retry-after", "120")]).into_response()
+                } else {
+                    Json(json!({"_embedded": {}})).into_response()
+                }
+            }),
         )
         .route(
             "/events/search/",
@@ -1066,16 +1069,22 @@ async fn live_probes_hit_stubs() {
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
     let probes = LiveProbes::new(
         reqwest::Client::new(),
-        droppedneedle_providers::Providers::unpaced_at(
+        &droppedneedle_providers::Providers::unpaced_at(
             Arc::new(droppedneedle_providers::ReqwestWire::new(&http)),
             droppedneedle_providers::ProviderEndpoints {
                 listenbrainz: base.clone(),
+                youtube: base.clone(),
+                ticketmaster: base.clone(),
+                skiddle: base.clone(),
                 ..droppedneedle_providers::ProviderEndpoints::closed()
             },
-        )
-        .listenbrainz,
+        ),
     );
     let dead = "http://127.0.0.1:9";
+    let unreachable = LiveProbes::new(
+        reqwest::Client::new(),
+        &droppedneedle_providers::Providers::closed(),
+    );
 
     let jellyfin = probes.jellyfin(&base, "key").await;
     assert!(jellyfin.valid);
@@ -1103,15 +1112,29 @@ async fn live_probes_hit_stubs() {
     let lb = probes.listenbrainz("ada", "limited").await;
     assert!(lb.rate_limited);
 
-    let youtube = probes.youtube(&base, "key").await;
+    let youtube = probes.youtube("key").await;
     assert!(youtube.valid);
-    let youtube = probes.youtube(&base, "bad").await;
+    let youtube = probes.youtube("bad").await;
     assert!(!youtube.valid);
+    assert_eq!(
+        youtube.message,
+        "API key is invalid or YouTube Data API is not enabled."
+    );
 
-    assert!(probes.ticketmaster(&base, "key").await.valid);
-    assert!(!probes.ticketmaster(dead, "key").await.valid);
-    assert!(probes.skiddle(&base, "key").await.valid);
-    assert!(!probes.skiddle(&base, "bad").await.valid);
+    assert!(probes.ticketmaster("key").await.valid);
+    assert!(!unreachable.ticketmaster("key").await.valid);
+    // A rate limit says to wait, not that the key is bad; while the row
+    // rests, a check of another key gets the same answer without sending.
+    for key in ["limited", "key"] {
+        let resting = probes.ticketmaster(key).await;
+        assert!(!resting.valid);
+        assert_eq!(
+            resting.message,
+            "Ticketmaster asked us to wait; try again in about 2 minutes."
+        );
+    }
+    assert!(probes.skiddle("key").await.valid);
+    assert!(!probes.skiddle("bad").await.valid);
 
     let slskd = probes.slskd(&base, "key").await;
     assert!(slskd.valid, "{}", slskd.message);
@@ -1146,8 +1169,14 @@ async fn live_probes_hit_stubs() {
         Some(format!("{base}/api").as_str())
     );
 
-    assert!(probes.musicbrainz(&base).await.valid);
-    assert!(!probes.musicbrainz(&format!("{base}/boom")).await.valid);
+    let mirror = |base_url: String| droppedneedle_providers::musicbrainz::MbSource::Mirror {
+        base_url,
+        rate_per_sec: 0.0,
+    };
+    assert!(probes.musicbrainz(&mirror(base.clone())).await.valid);
+    let boom = probes.musicbrainz(&mirror(format!("{base}/boom"))).await;
+    assert!(!boom.valid);
+    assert_eq!(boom.message, "MusicBrainz verification returned HTTP 500.");
 
     let oidc = probes.oidc(&base).await;
     assert!(oidc.valid);
