@@ -164,7 +164,7 @@ pub async fn remove_album(
     let actor = caller.user_id().to_owned();
     let hook = state.removal_hook.clone();
     let removed = blocking(move || {
-        Mutations::new(&state).remove_album(&album_id, query.delete_files, &actor)
+        Mutations::new(&state).remove_album_now(&album_id, query.delete_files, &actor)
     })
     .await?;
     // The removal stands; download and wanted cleanup only follow it.
@@ -204,9 +204,10 @@ pub async fn remove_track(
     ValidQuery(query): ValidQuery<RemoveTrackQuery>,
 ) -> Result<Json<RemovalResponse>, ApiError> {
     let actor = caller.user_id().to_owned();
-    let removed =
-        blocking(move || Mutations::new(&state).remove_track(&track_id, query.delete_file, &actor))
-            .await?;
+    let removed = blocking(move || {
+        Mutations::new(&state).remove_track_now(&track_id, query.delete_file, &actor)
+    })
+    .await?;
     Ok(Json(RemovalResponse {
         success: true,
         id: removed.id,

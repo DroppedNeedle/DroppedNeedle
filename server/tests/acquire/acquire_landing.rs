@@ -2582,13 +2582,15 @@ async fn a_version_at_its_own_path_keeps_its_override() {
 }
 
 // Stopped before the catalog commit and recovered as boot does: the new
-// file is placed and the history is on it.
+// file is placed and the history is on it. The old copy is removed first,
+// in a publish of its own, so the crash is armed for the import's publish
+// only; once both steps share one publish this arms that one.
 #[tokio::test]
 async fn a_version_replacement_recovers_after_a_crash() {
     let v = VersionCase::new(15, 1, true, "02 Sour Times.flac").await;
     let rig = &v.rig;
     v.ask("t-version").await;
-    rig.library.arm_publish_crash(Some(
+    rig.library.arm_publish_crash_for_writes(Some(
         droppedneedle_library::publish::CrashPoint::BeforeCatalogCommit,
     ));
     v.land_directly("t-version", v.sour("t-version")).await;

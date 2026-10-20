@@ -29,6 +29,7 @@ use publish::planner::{
     TrackMapping,
 };
 use publish::recovery::reconcile_with_seams;
+use publish::remove;
 use publish::snapshots::{BaselineStore, BlobStore, SnapshotStore, sha256_hex};
 use publish::tags_seam::TagDocument;
 use publish::undo::{
@@ -284,6 +285,7 @@ fn two_track_bundle(fix: &Fixture, kind: PlanKind) -> (PlanBundle, BTreeMap<Stri
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        removal: None,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-a".to_string(), TagDocument::empty());
@@ -1993,6 +1995,7 @@ fn generated_files_land_and_go_away_journaled() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        removal: None,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-a".to_string(), TagDocument::empty());
@@ -2077,6 +2080,7 @@ fn interrupted_generated_put_back_is_finished_by_recovery() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        removal: None,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-a".to_string(), TagDocument::empty());
@@ -2355,6 +2359,482 @@ fn nothing_goes_to_a_bin_while_the_bins_are_unknown() {
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
+// --- Removal briefs: a removed file is set aside, then binned; never lost. ---
+
+/// A removal of `tracks` (id, path under `music`) with the files the test
+/// planted, planned as a request plans one, against `sandbox`.
+fn removal_bundle(
+    fix: &Fixture,
+    sandbox: &Sandbox,
+    root: &str,
+    tracks: &[(&str, &str)],
+) -> PlanBundle {
+    let targets: Vec<remove::Target> = tracks
+        .iter()
+        .map(|(track, rel)| remove::Target {
+            track_id: (*track).to_string(),
+            root_id: root.to_string(),
+            relative_path: (*rel).to_string(),
+            probe: remove::probe(
+                sandbox.removal_root_dir(root).unwrap(),
+                &sandbox.resolve_removal(root, rel).unwrap(),
+            )
+            .unwrap(),
+            expect_sha256: None,
+        })
+        .collect();
+    let removal = remove::plan(
+        &restart(fix),
+        sandbox,
+        "bundle-r",
+        &targets,
+        "FILE_RECYCLED",
+        None,
+        None,
+        std::time::SystemTime::now(),
+    )
+    .unwrap();
+    PlanBundle {
+        id: "bundle-r".to_string(),
+        items: Vec::new(),
+        profile_revision: 7,
+        naming_revision: 3,
+        policy_revision: 5,
+        removal: Some(removal),
+    }
+}
+
+/// Every regular file under `dir`.
+fn files_under(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        for entry in std::fs::read_dir(&current).into_iter().flatten().flatten() {
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => stack.push(entry.path()),
+                Ok(kind) if kind.is_file() => out.push(entry.path()),
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// A removal that stops after the first of its two files is journaled
+/// never counts as staged in full: recovery unwinds it. Both files stay
+/// where they were, both tracks stay listed, and nothing reaches the bin.
+#[test]
+fn a_crash_after_the_first_of_two_removals_unwinds() {
+    let fix = fixture("remove-first-row");
+    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    write_fixture_source(&fix, "music", "staging/b.flac", "management_full.flac");
+    let bundle = removal_bundle(
+        &fix,
+        &fix.sandbox,
+        "music",
+        &[("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")],
+    );
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterFirstFileStaged));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &BTreeMap::new()),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+
+    reconcile(&restart(&fix), &fix.sandbox, &SqliteCatalog).unwrap();
+    let conn = open_db(&fix);
+    for (track, rel) in [("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")] {
+        assert!(
+            fix.sandbox.resolve("music", rel).unwrap().exists(),
+            "{rel} is home"
+        );
+        assert_eq!(track_row(&conn, track).1, "indexed", "{track} is listed");
+    }
+    assert!(
+        files_under(&fix.dir.join("bin")).is_empty(),
+        "nothing in the bin"
+    );
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A removed file its recycle bin cannot take waits under its hidden name
+/// with its row pending, and every retry keeps it there. Once the bin can
+/// take it, it moves in. It is never deleted.
+#[test]
+fn a_removal_the_bin_cannot_take_stays_set_aside() {
+    let fix = fixture("remove-bin-blocked");
+    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    let bytes = std::fs::read(fix.sandbox.resolve("music", "staging/a.flac").unwrap()).unwrap();
+    let bundle = removal_bundle(
+        &fix,
+        &fix.sandbox,
+        "music",
+        &[("track-a", "staging/a.flac")],
+    );
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    // Something takes the bin's folder name once every check has passed.
+    let blocker = fix.dir.join("bin");
+    let planted = blocker.clone();
+    publisher.set_before_set_aside(Some(Box::new(move |_| {
+        std::fs::write(&planted, b"in the way").unwrap();
+    })));
+
+    let outcome = publisher.publish(&sealed, &live, &BTreeMap::new()).unwrap();
+
+    assert_eq!(outcome, PublishOutcome::CleanupPending);
+    drop(publisher);
+    let held = |fix: &Fixture| {
+        let hidden = hidden_leftovers(&fix.dir.join("music"));
+        assert_eq!(hidden.len(), 1, "one hidden copy");
+        assert_eq!(
+            std::fs::read(&hidden[0]).unwrap(),
+            bytes,
+            "it is the removed file"
+        );
+        let rows = JournalStore::new(&open_db(fix)).bundle("bundle-r").unwrap();
+        assert!(
+            rows.iter()
+                .all(|row| row.state == JournalState::CleanupPending)
+        );
+    };
+    held(&fix);
+    assert_eq!(track_row(&open_db(&fix), "track-a").1, "missing");
+    reconcile(&restart(&fix), &fix.sandbox, &SqliteCatalog).unwrap();
+    held(&fix);
+
+    std::fs::remove_file(&blocker).unwrap();
+    reconcile(&restart(&fix), &fix.sandbox, &SqliteCatalog).unwrap();
+    let binned = files_under(&blocker);
+    assert_eq!(binned.len(), 1);
+    assert_eq!(std::fs::read(&binned[0]).unwrap(), bytes);
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A removal whose second file changes as it is set aside unwinds as a
+/// whole: the first file, already set aside, goes back home, the changed
+/// one stays as it is, both tracks stay listed, and nothing is binned.
+#[test]
+fn a_file_changed_during_its_removal_unwinds_the_removal() {
+    let fix = fixture("remove-changed");
+    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    write_fixture_source(&fix, "music", "staging/b.flac", "management_full.flac");
+    let a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    let a_bytes = std::fs::read(&a).unwrap();
+    let bundle = removal_bundle(
+        &fix,
+        &fix.sandbox,
+        "music",
+        &[("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")],
+    );
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_before_set_aside(Some(Box::new(|dest| {
+        if dest.ends_with("b.flac") {
+            std::fs::write(dest, b"saved by another program").unwrap();
+        }
+    })));
+
+    let err = publisher
+        .publish(&sealed, &live, &BTreeMap::new())
+        .unwrap_err();
+
+    assert!(matches!(err, PublishError::Collision(_)), "got {err:?}");
+    assert_eq!(
+        std::fs::read(&a).unwrap(),
+        a_bytes,
+        "the first file is home"
+    );
+    assert_eq!(
+        std::fs::read(fix.sandbox.resolve("music", "staging/b.flac").unwrap()).unwrap(),
+        b"saved by another program"
+    );
+    let conn = open_db(&fix);
+    assert_eq!(track_row(&conn, "track-a").1, "indexed");
+    assert_eq!(track_row(&conn, "track-b").1, "indexed");
+    assert!(
+        files_under(&fix.dir.join("bin")).is_empty(),
+        "nothing in the bin"
+    );
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A removal whose unwind put a file home and stopped before it recorded
+/// so is unwound by recovery, never committed: the file stays home with
+/// its track listed, and the other file comes back too.
+#[test]
+fn a_removal_unwind_that_stopped_after_a_file_went_home_unwinds() {
+    let fix = fixture("remove-unwind-stopped");
+    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    write_fixture_source(&fix, "music", "staging/b.flac", "management_full.flac");
+    let bundle = removal_bundle(
+        &fix,
+        &fix.sandbox,
+        "music",
+        &[("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")],
+    );
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::BeforeCatalogCommit));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &BTreeMap::new()),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+    // The unwind put track-a's file home, then the process died before
+    // the row was marked compensated.
+    let rows = JournalStore::new(&open_db(&fix))
+        .bundle("bundle-r")
+        .unwrap();
+    let row_a = rows
+        .iter()
+        .find(|row| {
+            row.replaces
+                .as_ref()
+                .and_then(|replaced| replaced.track_id.as_deref())
+                == Some("track-a")
+        })
+        .unwrap();
+    assert_eq!(row_a.state, JournalState::Published);
+    let a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    std::fs::rename(&row_a.staged, &a).unwrap();
+
+    reconcile(&restart(&fix), &fix.sandbox, &SqliteCatalog).unwrap();
+
+    let conn = open_db(&fix);
+    for (track, rel) in [("track-a", "staging/a.flac"), ("track-b", "staging/b.flac")] {
+        assert!(
+            fix.sandbox.resolve("music", rel).unwrap().exists(),
+            "{rel} is home"
+        );
+        assert_eq!(track_row(&conn, track).1, "indexed", "{track} is listed");
+    }
+    assert!(
+        files_under(&fix.dir.join("bin")).is_empty(),
+        "nothing in the bin"
+    );
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// Rewrite `path` in place with other bytes of the same length and put its
+/// modified time back, as a tag editor that keeps timestamps does.
+fn edit_keeping_size_and_mtime(path: &std::path::Path) {
+    use std::io::{Seek, Write};
+    let mut bytes = std::fs::read(path).unwrap();
+    let modified = std::fs::metadata(path).unwrap().modified().unwrap();
+    bytes[0] ^= 0xff;
+    let mut file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+    file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    file.write_all(&bytes).unwrap();
+    file.set_modified(modified).unwrap();
+}
+
+/// A file edited in place after its removal read it, keeping its size and
+/// modified time, is not removed: the check just before it moves sees its
+/// change time, and the file stays home as it is now.
+#[test]
+fn a_file_edited_in_place_after_it_was_read_is_not_removed() {
+    let fix = fixture("remove-edited-before-move");
+    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    let bundle = removal_bundle(
+        &fix,
+        &fix.sandbox,
+        "music",
+        &[("track-a", "staging/a.flac")],
+    );
+    let a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    edit_keeping_size_and_mtime(&a);
+    let edited = std::fs::read(&a).unwrap();
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+
+    let err = publisher
+        .publish(&sealed, &live, &BTreeMap::new())
+        .unwrap_err();
+
+    assert!(matches!(err, PublishError::Collision(_)), "got {err:?}");
+    assert_eq!(
+        std::fs::read(&a).unwrap(),
+        edited,
+        "the file is home as edited"
+    );
+    assert_eq!(track_row(&open_db(&fix), "track-a").1, "indexed");
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A set-aside file edited in place after its removal committed, keeping
+/// its size and modified time, still reaches the bin as it is now (the
+/// change is logged) instead of waiting for good: on recovery on the same
+/// disk, and when the bin is on another disk.
+#[test]
+fn a_removed_file_edited_in_place_still_reaches_the_bin() {
+    let fix = fixture("remove-edited");
+    write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    let bundle = removal_bundle(
+        &fix,
+        &fix.sandbox,
+        "music",
+        &[("track-a", "staging/a.flac")],
+    );
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterCatalogCommit));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &BTreeMap::new()),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+    let hidden = hidden_leftovers(&fix.dir.join("music"));
+    assert_eq!(hidden.len(), 1);
+    edit_keeping_size_and_mtime(&hidden[0]);
+    let edited = std::fs::read(&hidden[0]).unwrap();
+
+    reconcile(&restart(&fix), &fix.sandbox, &SqliteCatalog).unwrap();
+
+    let binned = files_under(&fix.dir.join("bin"));
+    assert_eq!(binned.len(), 1, "the edited file is in the bin");
+    assert_eq!(std::fs::read(&binned[0]).unwrap(), edited);
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+    let rows = JournalStore::new(&open_db(&fix))
+        .bundle("bundle-r")
+        .unwrap();
+    assert!(rows.iter().all(|row| row.state == JournalState::Cleaned));
+
+    // The bin on another disk: the bytes copied are the ones read now.
+    let from = fix.sandbox.resolve("music", "staging/c.flac").unwrap();
+    std::fs::write(&from, b"removed-library-file").unwrap();
+    let known = publish::paths::FileStat::read(&from).unwrap();
+    edit_keeping_size_and_mtime(&from);
+    let edited = std::fs::read(&from).unwrap();
+    let to = fix.dir.join("bin/entry/c.flac");
+    let moved = publish::paths::recycle_backup(
+        PlacementMode::Unknown,
+        Seams {
+            cross_device: true,
+            ..Seams::default()
+        },
+        &from,
+        &to,
+        &sha256_hex(b"removed-library-file"),
+        Some(known),
+    )
+    .unwrap();
+    assert!(moved);
+    assert_eq!(std::fs::read(&to).unwrap(), edited);
+    assert!(!from.exists());
+}
+
+/// A copy to another disk that stops part way leaves nothing behind: no
+/// file at the destination, no hidden temp, and the source keeps its
+/// bytes. The move into the bin and Put back both copy this way.
+#[test]
+fn a_copy_that_fails_part_way_leaves_nothing_behind() {
+    let fix = fixture("copy-short");
+    let from = fix.dir.join("bin/entry/a.flac");
+    std::fs::create_dir_all(from.parent().unwrap()).unwrap();
+    std::fs::write(&from, b"removed-library-file").unwrap();
+    let to = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    let seams = Seams {
+        cross_device: true,
+        short_write: true,
+        ..Seams::default()
+    };
+
+    let err = publish::paths::recycle_backup(
+        PlacementMode::Unknown,
+        seams,
+        &from,
+        &to,
+        &sha256_hex(b"removed-library-file"),
+        None,
+    )
+    .unwrap_err();
+
+    assert!(matches!(err, PublishError::Io(_)), "got {err:?}");
+    assert!(
+        std::fs::symlink_metadata(&to).is_err(),
+        "nothing at the destination"
+    );
+    assert!(hidden_leftovers(&fix.dir).is_empty(), "no unfinished copy");
+    assert_eq!(std::fs::read(&from).unwrap(), b"removed-library-file");
+}
+
+/// A library folder only removals may take files from (an excluded
+/// folder whose included subfolders are in the catalog): a removal moves
+/// its file to the bin, and any other write aimed at it is refused before
+/// anything moves.
+#[test]
+fn a_remove_only_root_takes_removals_only() {
+    let fix = fixture("remove-only");
+    let excluded = fix.dir.join("excluded");
+    std::fs::create_dir_all(&excluded).unwrap();
+    let sandbox = Sandbox::new(vec![
+        Root::library("music", fix.dir.join("music")),
+        Root::remove_only("excluded", excluded.clone()),
+        Root::bin("bin", fix.dir.join("bin")),
+    ])
+    .unwrap();
+    open_db(&fix)
+        .execute(
+            "UPDATE local_tracks SET root_id = 'excluded' WHERE id = 't'",
+            [],
+        )
+        .unwrap();
+    std::fs::write(excluded.join("s.flac"), b"excluded-file").unwrap();
+    let mut publisher = Publisher::new(
+        sandbox.clone(),
+        restart(&fix),
+        SqliteCatalog,
+        FixedSpace(u64::MAX),
+        || DAY_50_MS,
+    );
+
+    let removal = removal_bundle(&fix, &sandbox, "excluded", &[("t", "s.flac")]);
+    let (sealed, live) = seal(&removal);
+    let outcome = publisher.publish(&sealed, &live, &BTreeMap::new()).unwrap();
+
+    assert_eq!(outcome, PublishOutcome::Committed);
+    assert!(!excluded.join("s.flac").exists());
+    let binned = files_under(&fix.dir.join("bin"));
+    assert_eq!(binned.len(), 1);
+    assert_eq!(std::fs::read(&binned[0]).unwrap(), b"excluded-file");
+    assert_eq!(track_row(&open_db(&fix), "t").1, "missing");
+
+    let fp = write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    let mut item = plan_item(
+        "track-a",
+        "staging/a.flac",
+        "organized/a.flac",
+        fp,
+        PlanKind::Move,
+    );
+    item.dest_root = "excluded".to_string();
+    item.capabilities.push(Capability::CrossRootMove);
+    let bundle = PlanBundle {
+        id: "bundle-into-excluded".to_string(),
+        items: vec![item],
+        profile_revision: 7,
+        naming_revision: 3,
+        policy_revision: 5,
+        removal: None,
+    };
+    let (sealed, live) = seal(&bundle);
+    let mut docs = BTreeMap::new();
+    docs.insert("track-a".to_string(), TagDocument::empty());
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+
+    assert!(matches!(err, PublishError::UnsafePath(_)), "got {err:?}");
+    assert!(!excluded.join("organized/a.flac").exists());
+    assert!(
+        fix.sandbox
+            .resolve("music", "staging/a.flac")
+            .unwrap()
+            .exists()
+    );
+}
+
 #[test]
 fn hardlinked_audio_publishes_an_independent_inode() {
     let fix = fixture("hardlink");
@@ -2413,6 +2893,7 @@ fn unknown_empty_and_multivalued_tags_survive_apply() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        removal: None,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-s".to_string(), before);
@@ -3100,6 +3581,7 @@ fn retag_bundle(
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        removal: None,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-s".to_string(), TagDocument::empty());
@@ -3122,6 +3604,7 @@ fn a_240_byte_file_name_is_published_and_retagged() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        removal: None,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-s".to_string(), TagDocument::empty());
@@ -3350,6 +3833,7 @@ fn mp3_unknown_frames_survive_publish_staging() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
+        removal: None,
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-s".to_string(), TagDocument::empty());

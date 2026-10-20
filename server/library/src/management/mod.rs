@@ -213,13 +213,24 @@ async fn blocking(
     }
 }
 
+/// Whether a wait's cause is already logged once where it arises: no
+/// recycle bin is known while a setting cannot be read, which the bins'
+/// source logs on each change.
+pub(crate) fn logged_elsewhere(cause: &str) -> bool {
+    cause == crate::mutations::RECYCLE_BIN_UNKNOWN.message
+}
+
 /// What a step's answer means for the loop.
 fn settled(what: &'static str, result: Result<bool, ManagementError>) -> Step {
     match result {
         Ok(true) => Step::Worked,
         Ok(false) => Step::Idle,
-        Err(error @ ManagementError::Busy(_)) => {
-            tracing::warn!(%error, "{what} waits: the database is busy");
+        Err(ManagementError::Busy(cause)) => {
+            if logged_elsewhere(&cause) {
+                tracing::debug!("{what} waits: {cause}");
+            } else {
+                tracing::warn!("{what} waits: {cause}");
+            }
             Step::Busy
         }
         Err(error) => {

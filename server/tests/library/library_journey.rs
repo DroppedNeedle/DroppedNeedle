@@ -3892,6 +3892,192 @@ async fn put_back_refuses_an_occupied_path() {
     );
 }
 
+/// A removal stopped at any step of its write ends, once recovery has
+/// run, with each file in the recycle bin and its track missing, or at
+/// home with its track listed: never one without the other. So does
+/// Remove extras, whose undo record exists exactly when its tracks left.
+/// A removal whose tracks change while it waits for recovery is put back.
+#[tokio::test]
+async fn a_stopped_removal_keeps_each_file_with_its_track() {
+    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::publish::CrashPoint;
+
+    let (scratch, library, music) = bare_library("lib-remove-stopped").await;
+    // (where it stops, Remove extras, the rows change before recovery)
+    let mut cases: Vec<(CrashPoint, bool, bool)> = CrashPoint::all()
+        .into_iter()
+        .flat_map(|point| [(point, false, false), (point, true, false)])
+        .collect();
+    cases.push((CrashPoint::BeforeCatalogCommit, false, true));
+    // Untagged files group by folder: one album per case.
+    for index in 0..cases.len() {
+        plant(&music, &format!("Case{index}/01.flac"), "flac_no_tags.flac");
+        plant(&music, &format!("Case{index}/02.flac"), "flac_no_tags.flac");
+    }
+    add_music_root(&library, &music).await;
+    library
+        .scan_store
+        .db()
+        .run_sql(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+        )
+        .expect("admin row");
+    let conn = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db opens");
+    let availability = |track: &str| -> String {
+        conn.query_row(
+            "SELECT availability FROM local_tracks WHERE id = ?1",
+            [track],
+            |row| row.get(0),
+        )
+        .expect("track row")
+    };
+    let bin = music.join(".recycle");
+
+    for (index, (point, extras, rows_change)) in cases.into_iter().enumerate() {
+        let case = format!("case {index} ({point:?}, extras {extras})");
+        let paths: Vec<PathBuf> = ["01.flac", "02.flac"]
+            .iter()
+            .map(|name| music.join(format!("Case{index}/{name}")))
+            .collect();
+        let tracks: Vec<String> = ["01.flac", "02.flac"]
+            .iter()
+            .map(|name| {
+                library
+                    .scan_store
+                    .track_at("music", &format!("Case{index}/{name}"))
+                    .unwrap()
+                    .expect("track indexed")
+            })
+            .collect();
+        let album: String = conn
+            .query_row(
+                "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+                [&tracks[0]],
+                |row| row.get(0),
+            )
+            .expect("album id");
+        let on_album: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?1",
+                [&album],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(on_album, 2, "{case}: one album per folder");
+        let binned_before = walk_files(&bin).len();
+
+        library.arm_publish_crash(Some(point));
+        let mutations = Mutations::new(&library);
+        let answer = if extras {
+            mutations
+                .recycle_album_files(&album, &tracks, "admin")
+                .map(|_| ())
+        } else {
+            mutations.remove_album(&album, true, "admin").map(|_| ())
+        };
+        library.arm_publish_crash(None);
+        let committed = matches!(
+            point,
+            CrashPoint::AfterCatalogCommit | CrashPoint::DuringCleanup
+        );
+        assert_eq!(
+            answer.is_ok(),
+            committed,
+            "{case}: only a removal that committed answers that it removed: {answer:?}"
+        );
+        if rows_change {
+            conn.execute(
+                "UPDATE local_tracks SET stat_revision = 'changed' WHERE id = ?1",
+                [&tracks[0]],
+            )
+            .expect("row changes");
+        }
+        library.publish_tick().expect("recovery runs");
+
+        let mut gone = 0;
+        for (path, track) in paths.iter().zip(&tracks) {
+            let home = path.exists();
+            let listed = availability(track) == "indexed";
+            assert_eq!(home, listed, "{case}: {} and its track", path.display());
+            if !home {
+                gone += 1;
+            }
+        }
+        assert_eq!(
+            walk_files(&bin).len() - binned_before,
+            gone,
+            "{case}: every file that left is in the bin"
+        );
+        assert!(
+            walk_files(&music.join(format!("Case{index}")))
+                .iter()
+                .all(|path| path.file_name().is_some_and(|name| {
+                    !name
+                        .to_string_lossy()
+                        .starts_with(".droppedneedle-management-")
+                })),
+            "{case}: no hidden copy is left"
+        );
+        let expected_gone = if rows_change { 0 } else { 2 };
+        assert_eq!(gone, expected_gone, "{case}");
+        if extras {
+            let undo: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM library_catalog_actions \
+                     WHERE action_kind = 'edition_extras_recycled' AND local_album_id = ?1",
+                    [&album],
+                    |row| row.get(0),
+                )
+                .expect("count");
+            assert_eq!(undo, i64::from(gone == 2), "{case}: the undo record");
+        }
+    }
+}
+
+/// A library folder whose path goes through a symlink is refused for a
+/// removal with its files, as every managed write refuses it: the answer
+/// says why, the file stays and its track stays listed. It never answers
+/// that it removed a file it left in place.
+#[tokio::test]
+async fn a_removal_under_a_symlinked_folder_is_refused() {
+    use droppedneedle_library::mutations::{MutationError, Mutations};
+
+    let (scratch, library, _music) = bare_library("lib-remove-linked").await;
+    let real = scratch.to_path_buf().join("real");
+    let file = plant(&real, "music/Band/LP/01.flac", "flac_full_01.flac");
+    let linked = scratch.to_path_buf().join("linked");
+    std::os::unix::fs::symlink(&real, &linked).expect("link made");
+    add_music_root(&library, &linked.join("music")).await;
+    let track = library
+        .scan_store
+        .track_at("music", "Band/LP/01.flac")
+        .unwrap()
+        .expect("track indexed");
+
+    let refused = Mutations::new(&library).remove_track_now(&track, true, "admin");
+
+    assert!(
+        matches!(
+            &refused,
+            Err(MutationError::Conflict(reason)) if reason.code == "FILE_OUTSIDE_ROOT"
+        ),
+        "{refused:?}"
+    );
+    assert!(file.exists(), "the file stays");
+    let availability: String =
+        droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+            .expect("db opens")
+            .query_row(
+                "SELECT availability FROM local_tracks WHERE id = ?1",
+                [&track],
+                |row| row.get(0),
+            )
+            .expect("track row");
+    assert_eq!(availability, "indexed");
+}
+
 /// One edition operation: a person chooses another edition (partial
 /// mapping), automatic passes leave it alone, undo takes it back, and
 /// "Let DroppedNeedle choose" returns the album to its best fit.

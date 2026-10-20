@@ -28,6 +28,11 @@ pub enum RootKind {
     /// entry folder. `serves` names the one library root whose `.recycle`
     /// this is; `None` is the configured bin, which serves every root.
     Bin { serves: Option<String> },
+    /// A library folder whose policy keeps DroppedNeedle's writes out of
+    /// it, though files in its included subfolders are in the catalog. A
+    /// person can still remove those files: only a removal's own steps
+    /// resolve paths here, and every other write is refused.
+    RemoveOnly,
 }
 
 /// A sandbox root: a stable id, its absolute directory and what it holds.
@@ -48,6 +53,15 @@ impl Root {
             id: id.into(),
             dir: dir.into(),
             kind: RootKind::Library,
+        }
+    }
+
+    /// A library folder only removals may take files from.
+    pub fn remove_only(id: impl Into<String>, dir: impl Into<PathBuf>) -> Self {
+        Self {
+            id: id.into(),
+            dir: dir.into(),
+            kind: RootKind::RemoveOnly,
         }
     }
 
@@ -90,6 +104,8 @@ impl Root {
 #[derive(Debug, Clone)]
 pub struct Sandbox {
     roots: Vec<Root>,
+    /// Library folders only removals may take files from.
+    remove_only: Vec<Root>,
     /// `Err` with the cause while the bins are unknown (a setting they
     /// come from cannot be read): nothing then moves into a bin, and no
     /// other bin stands in.
@@ -99,8 +115,9 @@ pub struct Sandbox {
 }
 
 impl Sandbox {
-    /// Build a sandbox over library roots and bins, rejecting roots that
-    /// are not absolute. It needs at least one library root.
+    /// Build a sandbox over library roots, remove-only roots and bins,
+    /// rejecting roots that are not absolute. It needs at least one library
+    /// or remove-only root.
     pub fn new(roots: Vec<Root>) -> Result<Self, PublishError> {
         for root in &roots {
             if !root.dir.is_absolute() {
@@ -111,13 +128,17 @@ impl Sandbox {
             }
         }
         let (bins, roots): (Vec<Root>, Vec<Root>) = roots.into_iter().partition(Root::is_bin);
-        if roots.is_empty() {
+        let (remove_only, roots): (Vec<Root>, Vec<Root>) = roots
+            .into_iter()
+            .partition(|root| root.kind == RootKind::RemoveOnly);
+        if roots.is_empty() && remove_only.is_empty() {
             return Err(PublishError::UnsafePath(
                 "sandbox needs at least one root".into(),
             ));
         }
         Ok(Self {
             roots,
+            remove_only,
             bins: Ok(bins),
             modes: Arc::default(),
         })
@@ -182,9 +203,16 @@ impl Sandbox {
             tracing::warn!(bin = bin.id, %error, "recycle bin folder refused");
             return PlacementMode::Unknown;
         }
-        if let Err(error) = std::fs::create_dir_all(&bin.dir) {
-            tracing::warn!(bin = bin.id, %error, "recycle bin folder could not be made");
-            return PlacementMode::Unknown;
+        match make_dirs(&bin.dir) {
+            Ok(made) => {
+                if let Err(error) = sync_made(&made) {
+                    tracing::warn!(bin = bin.id, %error, "recycle bin folder sync failed");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(bin = bin.id, %error, "recycle bin folder could not be made");
+                return PlacementMode::Unknown;
+            }
         }
         let mode = place::probe(&bin.dir);
         if mode == PlacementMode::Check {
@@ -245,13 +273,17 @@ impl Sandbox {
     /// recycle bin. The result is guaranteed to stay under the library
     /// root directory.
     pub fn resolve(&self, root_id: &str, relative: &str) -> Result<PathBuf, PublishError> {
+        let root_dir = self.root_dir(root_id)?.to_path_buf();
+        self.resolve_under(&root_dir, relative)
+    }
+
+    fn resolve_under(&self, root_dir: &Path, relative: &str) -> Result<PathBuf, PublishError> {
         if relative.is_empty() {
             return Err(PublishError::UnsafePath("empty relative path".into()));
         }
         if relative.contains('\0') {
             return Err(PublishError::UnsafePath("NUL byte in path".into()));
         }
-        let root_dir = self.root_dir(root_id)?.to_path_buf();
         let mut clean = PathBuf::new();
         for component in Path::new(relative).components() {
             match component {
@@ -283,6 +315,7 @@ impl Sandbox {
     fn in_a_bin(&self, path: &Path) -> bool {
         self.roots
             .iter()
+            .chain(&self.remove_only)
             .any(|root| path.starts_with(root.dir.join(RECYCLE_BIN_DIRECTORY_NAME)))
             || self
                 .bins
@@ -303,6 +336,62 @@ impl Sandbox {
         let path = self.resolve(root_id, relative)?;
         ensure_no_symlink(&path)?;
         Ok(path)
+    }
+
+    /// The folder of a root a removal may take files from: a library root
+    /// or a remove-only one. Only a removal's own steps call this.
+    pub fn removal_root_dir(&self, id: &str) -> Result<&Path, PublishError> {
+        self.roots
+            .iter()
+            .chain(&self.remove_only)
+            .find(|root| root.id == id)
+            .map(|root| root.dir.as_path())
+            .ok_or_else(|| PublishError::UnsafePath(format!("unknown root {id}")))
+    }
+
+    /// [`Self::resolve_no_symlink`] for a file a removal takes away, which
+    /// may also sit under a remove-only root. Only a removal's own steps
+    /// call this; every other write resolves through the library roots.
+    pub fn resolve_removal(&self, root_id: &str, relative: &str) -> Result<PathBuf, PublishError> {
+        let root_dir = self.removal_root_dir(root_id)?.to_path_buf();
+        let path = self.resolve_under(&root_dir, relative)?;
+        ensure_no_symlink(&path)?;
+        Ok(path)
+    }
+
+    /// [`Self::ensure_under_roots`] for a removal's own paths, which may
+    /// also sit under a remove-only root.
+    pub fn ensure_under_removal_roots(&self, path: &Path) -> Result<(), PublishError> {
+        if self.in_a_bin(path) {
+            return Err(PublishError::UnsafePath(
+                "path is inside the recycle bin".to_owned(),
+            ));
+        }
+        if self
+            .roots
+            .iter()
+            .chain(&self.remove_only)
+            .any(|root| path.starts_with(&root.dir))
+        {
+            return Ok(());
+        }
+        Err(PublishError::UnsafePath(
+            "path escapes all sandbox roots".to_owned(),
+        ))
+    }
+
+    /// [`Self::probe_placement`] for a root a removal sets a file aside
+    /// under, which may be a remove-only root.
+    pub fn probe_removal_placement(&self, root_id: &str) -> Result<PlacementMode, PublishError> {
+        let known = self.placement_mode(root_id);
+        if known != PlacementMode::Unknown {
+            return Ok(known);
+        }
+        let dir = self.removal_root_dir(root_id)?;
+        let mode = place::probe(dir);
+        warn_check_root(dir, mode);
+        self.store_placement_mode(false, root_id, mode);
+        Ok(mode)
     }
 
     /// Why the session's bins are unknown, while they are.
@@ -557,117 +646,295 @@ pub fn backup_home(
     }
 }
 
-/// Move a replaced file's backup into the recycle bin after commit. The
-/// backup must still hold `sha256`; a bin path that already holds those
-/// bytes (an earlier attempt copied it there) only drops the backup, and
-/// a bin path holding anything else is refused, never overwritten. The
-/// file goes in through [`place::place_from_hidden`], so an entry that
-/// turns up after those checks is not replaced either. On another
-/// filesystem the bytes are copied under a temporary name, synced, read
-/// back and checked against `sha256`, placed the same way, and only then
-/// is the backup removed. `mode` is the bin's placement mode. The caller
-/// has proved `recycle_to` is an entry of a bin with no symlink below it.
-/// True when the file is in the bin now; false when there was nothing
-/// left to move.
+/// A file's identity on disk: its device and inode, with its size,
+/// modified time and change time. Before a file moves, all five must match
+/// for it to count as the file that was read: any write or time change
+/// moves the change time, which nothing can set back. A rename on one disk
+/// moves the change time too, but keeps the other four, so after a move
+/// [`FileStat::same_moved`] compares those.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FileStat {
+    pub dev: u64,
+    pub ino: u64,
+    pub size: u64,
+    pub mtime_ns: i64,
+    pub ctime_ns: i64,
+}
+
+impl FileStat {
+    /// The identity in `meta`.
+    pub fn of(meta: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt as _;
+        Self {
+            dev: meta.dev(),
+            ino: meta.ino(),
+            size: meta.len(),
+            mtime_ns: crate::scan::revision::mtime_ns_from_metadata(meta),
+            ctime_ns: meta
+                .ctime()
+                .saturating_mul(1_000_000_000)
+                .saturating_add(meta.ctime_nsec()),
+        }
+    }
+
+    /// The identity of the regular file at `path`, never through a
+    /// symlink.
+    pub fn read(path: &Path) -> std::io::Result<Self> {
+        let meta = std::fs::symlink_metadata(path)?;
+        if !meta.file_type().is_file() {
+            return Err(std::io::Error::other("not a regular file"));
+        }
+        Ok(Self::of(&meta))
+    }
+
+    /// Whether `now` is this file after a rename on one disk: everything
+    /// but the change time, which the rename moves.
+    pub fn same_moved(&self, now: &Self) -> bool {
+        self.dev == now.dev
+            && self.ino == now.ino
+            && self.size == now.size
+            && self.mtime_ns == now.mtime_ns
+    }
+}
+
+/// Move a set-aside file into its recycle bin entry after commit. The
+/// file must still hold `sha256`, unless `known` (its identity when it was
+/// hashed) still matches: then it is the file that was set aside, a move
+/// on one disk does not read it again, and bytes changed in place since
+/// (an edit that kept its size and modified time) go to the bin as they
+/// are now, logged, rather than holding the move for good. A bin path
+/// that already holds those bytes (an earlier attempt copied it there)
+/// only drops the set-aside file, and a bin path holding anything else is
+/// refused, never overwritten. The file goes in through
+/// [`place::place_from_hidden`], so an entry that turns up after those
+/// checks is not replaced either. On another filesystem the bytes are
+/// copied under a temporary name with the file's permission bits, synced,
+/// read back and checked against the bytes read, placed the same way, and
+/// only then, with the folders above the copy on disk, is the set-aside
+/// file removed. A copy that fails part way is removed. `mode` is the
+/// placement mode where `recycle_to` is; the caller has checked that
+/// `recycle_to` is a place the file may go. True when the file is there
+/// now; false when there was nothing left to move. Cheap checks come
+/// first, so a retry while the bin cannot take the file reads nothing.
 pub fn recycle_backup(
     mode: PlacementMode,
     seams: Seams,
     backup: &Path,
     recycle_to: &Path,
     sha256: &str,
+    known: Option<FileStat>,
 ) -> Result<bool, PublishError> {
     use super::snapshots::sha256_hex;
-    let in_bin = || {
-        read_regular_file(recycle_to)
-            .ok()
-            .map(|bytes| sha256_hex(&bytes))
-    };
-    let bytes = match read_regular_file(backup) {
-        Ok(bytes) => bytes,
-        Err(_) if in_bin().as_deref() == Some(sha256) => return Ok(true),
-        Err(_) if std::fs::symlink_metadata(backup).is_err() => return Ok(false),
-        Err(error) => return Err(error),
-    };
-    if sha256_hex(&bytes) != sha256 {
-        return Err(PublishError::Validation(format!(
+    let hash_of = |path: &Path| read_regular_file(path).ok().map(|bytes| sha256_hex(&bytes));
+    let changed = || {
+        PublishError::Validation(format!(
             "set-aside file {} changed; it stays where it is",
             message_name(backup)
-        )));
+        ))
+    };
+    let backup_meta = match std::fs::symlink_metadata(backup) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(hash_of(recycle_to).as_deref() == Some(sha256));
+        }
+        Err(error) => return Err(PublishError::Io(error.to_string())),
+    };
+    if !backup_meta.file_type().is_file() {
+        return Err(changed());
     }
-    match in_bin() {
-        // An earlier attempt copied it there. The backup goes only once the
-        // bin's folder is synced, so the copy is on disk first.
-        Some(found) if found == sha256 => {
-            if let Some(entry) = recycle_to.parent() {
-                super::journal::fsync_dir(entry)?;
+    // The set-aside file itself, by identity: what it holds now is what
+    // goes to the bin.
+    let trusted = known.is_some_and(|known| known.same_moved(&FileStat::of(&backup_meta)));
+    let parent = recycle_to
+        .parent()
+        .ok_or_else(|| PublishError::UnsafePath("recycle bin path has no folder".into()))?;
+    if std::fs::symlink_metadata(recycle_to).is_ok() {
+        // An earlier attempt copied it there. The set-aside file goes only
+        // once the copy's folder and the one above it are synced.
+        let held = hash_of(backup);
+        let copied = hash_of(recycle_to);
+        if held.is_some() && held == copied && (trusted || held.as_deref() == Some(sha256)) {
+            super::journal::fsync_dir(parent)?;
+            if let Some(above) = parent.parent() {
+                super::journal::fsync_dir(above)?;
             }
             std::fs::remove_file(backup).map_err(PublishError::from)?;
             return Ok(true);
         }
-        Some(_) => {
-            return Err(PublishError::Collision(format!(
-                "recycle bin entry {} is taken",
-                message_name(recycle_to)
-            )));
-        }
-        None if std::fs::symlink_metadata(recycle_to).is_ok() => {
-            return Err(PublishError::Collision(format!(
-                "recycle bin entry {} is taken",
-                message_name(recycle_to)
-            )));
-        }
-        None => {}
+        return Err(taken(recycle_to));
     }
-    let parent = recycle_to
-        .parent()
-        .ok_or_else(|| PublishError::UnsafePath("recycle bin path has no folder".into()))?;
-    std::fs::create_dir_all(parent).map_err(PublishError::from)?;
-    let refused = |error: PlaceError| match error {
-        PlaceError::Collision => PublishError::Collision(format!(
-            "recycle bin entry {} is taken",
-            message_name(recycle_to)
-        )),
-        PlaceError::Unavailable(_) | PlaceError::CrossDevice => PublishError::Cleanup(format!(
-            "the recycle bin folder has no safe way to add {} without risking an overwrite",
-            message_name(recycle_to)
-        )),
-        other => PublishError::Io(other.to_string()),
+    let made = make_dirs(parent).map_err(PublishError::from)?;
+    let made_synced = sync_made(&made);
+    let read_checked = || -> Result<(Vec<u8>, String), PublishError> {
+        let read = read_regular_file(backup)?;
+        let actual = sha256_hex(&read);
+        if actual != sha256 {
+            if !trusted {
+                return Err(changed());
+            }
+            tracing::warn!(
+                file = %message_name(backup),
+                "a removed file changed in place after it was read; it goes to the recycle bin as it is now"
+            );
+        }
+        Ok((read, actual))
     };
+    let mut bytes = None;
+    if !trusted {
+        bytes = Some(read_checked()?);
+    }
     match place::place_with(mode, backup, recycle_to, seams) {
         Ok(_) => {}
         Err(PlaceError::Unsynced(error)) => {
             tracing::warn!(%error, "recycle bin folder sync failed");
         }
-        // The bin is on another disk: the one caller that copies. The copy
-        // is read back before it is placed, and the backup goes only once
-        // a verified copy is in the bin and the bin's folder is synced: a
-        // failed sync keeps the backup, and the row stays pending.
+        // Another disk: the one case that copies. A failed sync keeps the
+        // set-aside file, and the row stays pending.
         Err(PlaceError::CrossDevice) => {
-            let temp = parent.join(format!(
-                "{HIDDEN_PREFIX}incoming-{}",
-                short_hash(&recycle_to.to_string_lossy())
-            ));
-            let mut file = create_hidden(&temp).map_err(PublishError::from)?;
-            file.write_all(&bytes).map_err(PublishError::from)?;
-            super::journal::fsync_file(&file)?;
-            drop(file);
-            if read_regular_file(&temp).map(|copied| sha256_hex(&copied))? != sha256 {
-                std::fs::remove_file(&temp).map_err(PublishError::from)?;
-                return Err(PublishError::Cleanup(format!(
-                    "the copy of {} in the recycle bin did not read back the same",
-                    message_name(recycle_to)
-                )));
-            }
-            let within_bin = Seams {
-                cross_device: false,
-                ..seams
+            let (bytes, actual) = match bytes {
+                Some(read) => read,
+                None => read_checked()?,
             };
-            place::place_with(mode, &temp, recycle_to, within_bin).map_err(refused)?;
+            made_synced?;
+            let bits = {
+                use std::os::unix::fs::PermissionsExt as _;
+                backup_meta.permissions().mode() & 0o777
+            };
+            copy_verified(&bytes, recycle_to, &actual, bits, mode, seams)?;
             std::fs::remove_file(backup).map_err(PublishError::from)?;
+            return Ok(true);
         }
-        Err(error) => return Err(refused(error)),
+        Err(error) => return Err(refused(error, recycle_to)),
+    }
+    if let Err(error) = made_synced {
+        tracing::warn!(%error, "recycle bin folder sync failed");
     }
     Ok(true)
+}
+
+/// Move a file out of a recycle bin back to `home`, for the put-back that
+/// stays until it goes through the publisher. The steps are
+/// [`recycle_backup`]'s: never onto a taken name (the placing call refuses
+/// it), and on another disk a copy verified, with the file's permission
+/// bits, before the bin copy goes. `PlacementMode::Check` keeps
+/// check-then-rename as the last step, as the plain rename it replaces
+/// did. The bin copy is read once. False when it was gone.
+pub fn put_home(bin_file: &Path, home: &Path) -> Result<bool, PublishError> {
+    let known = FileStat::read(bin_file).map_err(PublishError::from)?;
+    let sha256 = super::snapshots::sha256_hex(&read_regular_file(bin_file)?);
+    recycle_backup(
+        PlacementMode::Check,
+        Seams::default(),
+        bin_file,
+        home,
+        &sha256,
+        Some(known),
+    )
+}
+
+fn taken(recycle_to: &Path) -> PublishError {
+    PublishError::Collision(format!(
+        "recycle bin entry {} is taken",
+        message_name(recycle_to)
+    ))
+}
+
+fn refused(error: PlaceError, recycle_to: &Path) -> PublishError {
+    match error {
+        PlaceError::Collision => taken(recycle_to),
+        PlaceError::Unavailable(_) | PlaceError::CrossDevice => PublishError::Cleanup(format!(
+            "the recycle bin folder has no safe way to add {} without risking an overwrite",
+            message_name(recycle_to)
+        )),
+        other => PublishError::Io(other.to_string()),
+    }
+}
+
+/// Copy `bytes` to `recycle_to` on another disk: under a hidden temporary
+/// name with permission bits `bits`, synced and read back, then placed.
+/// A temp that did not end up placed is ours, and goes.
+fn copy_verified(
+    bytes: &[u8],
+    recycle_to: &Path,
+    sha256: &str,
+    bits: u32,
+    mode: PlacementMode,
+    seams: Seams,
+) -> Result<(), PublishError> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let parent = recycle_to
+        .parent()
+        .ok_or_else(|| PublishError::UnsafePath("recycle bin path has no folder".into()))?;
+    let temp = parent.join(format!(
+        "{HIDDEN_PREFIX}incoming-{}",
+        short_hash(&recycle_to.to_string_lossy())
+    ));
+    let copied = (|| -> Result<(), PublishError> {
+        let mut file = create_hidden(&temp).map_err(PublishError::from)?;
+        if seams.short_write {
+            file.write_all(&bytes[..bytes.len() / 2])
+                .map_err(PublishError::from)?;
+            return Err(PublishError::Io("the copy stopped part way".into()));
+        }
+        file.write_all(bytes).map_err(PublishError::from)?;
+        if let Err(error) = file.set_permissions(std::fs::Permissions::from_mode(bits)) {
+            tracing::warn!(%error, "recycle bin copy keeps the default permission bits");
+        }
+        super::journal::fsync_file(&file)?;
+        drop(file);
+        let copied = read_regular_file(&temp)?;
+        if super::snapshots::sha256_hex(&copied) != sha256 {
+            return Err(PublishError::Cleanup(format!(
+                "the copy of {} did not read back the same",
+                message_name(recycle_to)
+            )));
+        }
+        let within = Seams {
+            cross_device: false,
+            ..seams
+        };
+        place::place_with(mode, &temp, recycle_to, within)
+            .map(|_| ())
+            .map_err(|error| refused(error, recycle_to))
+    })();
+    if copied.is_err()
+        && let Err(error) = std::fs::remove_file(&temp)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(temp = %temp.display(), %error, "unfinished copy not removed");
+    }
+    copied
+}
+
+/// Make `dir` and any folder above it that is missing. Answers the
+/// folders made, top first.
+fn make_dirs(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut missing = Vec::new();
+    let mut cursor = Some(dir);
+    while let Some(path) = cursor {
+        match std::fs::symlink_metadata(path) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(path.to_path_buf());
+                cursor = path.parent();
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    std::fs::create_dir_all(dir)?;
+    missing.reverse();
+    Ok(missing)
+}
+
+/// Put each made folder's own entry on disk, by syncing the folder that
+/// holds it.
+fn sync_made(made: &[PathBuf]) -> Result<(), PublishError> {
+    for dir in made {
+        if let Some(parent) = dir.parent() {
+            super::journal::fsync_dir(parent)?;
+        }
+    }
+    Ok(())
 }
 
 /// Unicode/case-fold collision key: NFC normalization plus full

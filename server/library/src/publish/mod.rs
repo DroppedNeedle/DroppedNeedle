@@ -78,6 +78,10 @@
 //!   names that fold together can never both publish.
 //! - Every publisher write lands under a sandbox root; anything else is
 //!   rejected before any mutation.
+//! - A file leaving the library (`remove` rows, see [`remove`]) is set
+//!   aside under its row, its track is marked missing in the catalog
+//!   commit, and only then does it move into its recycle bin. It is never
+//!   deleted, and an unwind puts it back.
 
 pub mod archive;
 pub mod bin;
@@ -91,6 +95,7 @@ pub mod plugin_files;
 pub mod publisher;
 pub mod record;
 pub mod recovery;
+pub mod remove;
 pub mod snapshots;
 pub(crate) mod sql;
 pub mod staging;

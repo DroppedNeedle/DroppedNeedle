@@ -465,6 +465,7 @@ impl LibrarySetup {
                 profile_revision: PINNED_REVISION,
                 naming_revision: PINNED_REVISION,
                 policy_revision: super::manage::policy_revision_u64(&registry),
+                removal: None,
             };
             let token_hash = sha256_hex(bundle.id.as_bytes());
             let live = SealRecheck {

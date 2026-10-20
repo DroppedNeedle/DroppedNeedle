@@ -17,7 +17,7 @@ use super::reasons::ItemReason;
 use super::selection;
 use super::service::{JobSpec, Management, Refused, stale};
 use super::store::{self, Snapshot};
-use crate::mutations::MutationError;
+use crate::mutations::{MutationError, NO_RECYCLE_BIN, REMOVAL_CHANGED};
 use crate::publish::planner::PlanKind;
 use rusqlite::OptionalExtension as _;
 
@@ -70,6 +70,13 @@ fn nothing_to_place() -> ItemReason {
 /// A recycle-bin refusal as a management one, in its own words.
 fn recycle_refused(error: MutationError) -> ManagementError {
     match error {
+        MutationError::Conflict(reason) if reason.code == REMOVAL_CHANGED.code => {
+            ManagementError::Conflict(format!(
+                "{} {}",
+                duplicate_changed().message,
+                duplicate_changed().action
+            ))
+        }
         MutationError::Conflict(reason) | MutationError::Files(reason) => {
             ManagementError::Conflict(format!("{} {}", reason.message, reason.action))
         }
@@ -198,27 +205,19 @@ impl Management {
                 duplicate_changed().action
             ))
         };
-        let sandbox = self.setup.publish_sandbox().map_err(|_| {
-            ManagementError::Conflict(
-                "The library folders are not available right now. Try again later.".to_owned(),
-            )
-        })?;
         match intent.action {
             DuplicateAction::RecycleIncomingKeepExisting => {
                 let item = self.source_item(snapshot, 0)?;
                 let track_id = item.track_id.clone().ok_or_else(changed)?;
-                let unchanged = sandbox
-                    .resolve_no_symlink(&item.source_root, &item.source_rel)
-                    .ok()
-                    .and_then(|path| crate::publish::paths::read_regular_file(&path).ok())
-                    .is_some_and(|bytes| {
-                        crate::publish::snapshots::sha256_hex(&bytes) == item.fingerprint
-                    });
-                if !unchanged {
-                    return Err(changed());
-                }
+                // The removal itself checks the track is still at that path
+                // and its file still holds the bytes the preview read.
                 mutations
-                    .remove_track(&track_id, true, &actor)
+                    .recycle_duplicate(
+                        &track_id,
+                        (&item.source_root, &item.source_rel),
+                        &item.fingerprint,
+                        &actor,
+                    )
                     .map_err(recycle_refused)?;
                 Ok(true)
             }
@@ -248,10 +247,29 @@ impl Management {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            let recycle_to = mutations
-                .recycle_entry(&first.root_id, &name)
-                .map_err(|error| Refused::Busy(ManagementError::Busy(error.to_string())))?
-                .ok_or_else(|| ItemReason {
+            // While no bin is known the job waits; a folder with no usable
+            // bin refuses only its own album, and the job moves on.
+            let recycle_to = match mutations.recycle_entry(&first.root_id, &name) {
+                Ok(entry) => entry,
+                Err(MutationError::Conflict(reason)) if reason.code == NO_RECYCLE_BIN.code => {
+                    return Err(Refused::Reason(ItemReason {
+                        code: "RECYCLE_FAILED".to_owned(),
+                        message: format!(
+                            "{}'s library folder has no usable recycle bin, so it cannot be replaced.",
+                            first.relative_path
+                        ),
+                        action: "Make the folder's .recycle a plain folder, or keep both files."
+                            .to_owned(),
+                    }));
+                }
+                Err(MutationError::Conflict(reason)) => {
+                    return Err(Refused::Busy(ManagementError::Busy(
+                        reason.message.to_owned(),
+                    )));
+                }
+                Err(error) => return Err(Refused::Busy(ManagementError::Busy(error.to_string()))),
+            }
+            .ok_or_else(|| ItemReason {
                     code: "RECYCLE_FAILED".to_owned(),
                     message: format!(
                         "No recycle bin is available for {}, so it cannot be replaced.",

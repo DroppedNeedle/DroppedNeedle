@@ -957,27 +957,35 @@ impl Management {
         };
         match outcome {
             Ok(()) => Ok(true),
-            // A busy database is not the job's fault: it goes back to the
-            // queue as it stood, as at a shutdown, and the worker waits
+            // Waiting is not the job's fault (a busy database, or no recycle
+            // bin known yet): it goes back to the queue as it stood, as at a
+            // shutdown, with why it waits on its work, and the worker waits
             // before it takes it again. A put-back that fails leaves it to
             // its lease.
-            Err(error @ ManagementError::Busy(_)) => {
-                tracing::warn!(%error, job_id, "management job waits: the database is busy");
+            Err(ManagementError::Busy(cause)) => {
+                if super::logged_elsewhere(&cause) {
+                    tracing::debug!(job_id, "management job waits: {cause}");
+                } else {
+                    tracing::warn!(job_id, "management job waits: {cause}");
+                }
                 let released =
                     self.setup
                         .db
                         .write_blocking(Lane::Background, "management.release", |tx| {
-                            Ok::<_, ManagementError>(jobs::release(
+                            let now = now_unix();
+                            Ok::<_, ManagementError>(jobs::release_until(
                                 tx,
                                 &job_id,
                                 worker,
-                                now_unix(),
+                                now,
+                                Some(&cause),
+                                now,
                             )?)
                         });
                 if let Err(error) = released {
                     tracing::warn!(%error, job_id, "management job not put back; its lease brings it back");
                 }
-                Err(error)
+                Err(ManagementError::Busy(cause))
             }
             Err(error) => {
                 tracing::error!(%error, job_id, "management job failed");

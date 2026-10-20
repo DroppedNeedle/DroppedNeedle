@@ -69,7 +69,16 @@ pub(crate) struct OpenPublish {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SessionRoots {
     library: Vec<Root>,
+    /// Excluded library folders: files in their included subfolders are
+    /// in the catalog, and only a removal may take them out.
+    remove_only: Vec<Root>,
     bins: Result<Vec<Root>, &'static str>,
+}
+
+impl SessionRoots {
+    fn is_empty(&self) -> bool {
+        self.library.is_empty() && self.remove_only.is_empty()
+    }
 }
 
 /// Publish state. Empty until the first usable root is configured;
@@ -333,11 +342,21 @@ impl PublishCell {
             .collect()
     }
 
+    fn remove_only_dirs(registry: &RootRegistry) -> Vec<Root> {
+        registry
+            .roots()
+            .iter()
+            .filter(|root| root.policy == EffectivePolicy::Excluded)
+            .map(|root| Root::remove_only(root.id.clone(), root.path.clone()))
+            .collect()
+    }
+
     /// The roots and bins a session would open over now. The bins are
     /// resolved here, once per call.
     pub(crate) fn session(&self, registry: &RootRegistry) -> SessionRoots {
         SessionRoots {
             library: Self::root_dirs(registry),
+            remove_only: Self::remove_only_dirs(registry),
             bins: self.bins.current(registry).map(|choice| choice.roots),
         }
     }
@@ -361,7 +380,7 @@ impl PublishCell {
         session: SessionRoots,
         space_roots: &RootDirs,
     ) -> Result<Vec<super::publish::recovery::BundleRecovery>, PublishError> {
-        if session.library.is_empty() {
+        if session.is_empty() {
             self.cell = None;
             self.placement.follow(None);
             return Ok(Vec::new());
@@ -372,6 +391,7 @@ impl PublishCell {
             return Ok(Vec::new());
         }
         let mut roots = session.library.clone();
+        roots.extend(session.remove_only.iter().cloned());
         roots.extend(session.bins.iter().flatten().cloned());
         let mut sandbox = Sandbox::new(roots)?;
         if let Err(cause) = session.bins {
@@ -403,7 +423,7 @@ impl PublishCell {
             .ok_or_else(|| PublishError::Journal("no usable library root is configured".into()))
     }
 
-    /// Root ids a refresh would open under.
+    /// Library root ids a refresh would open under.
     pub(crate) fn pending_ids(registry: &RootRegistry) -> Vec<String> {
         Self::root_dirs(registry)
             .iter()
@@ -411,14 +431,44 @@ impl PublishCell {
             .collect()
     }
 
+    /// Every root id a refresh would open under, remove-only roots
+    /// included: the roots a reopen's reconcile may write under.
+    pub(crate) fn guarded_ids(registry: &RootRegistry) -> Vec<String> {
+        Self::root_dirs(registry)
+            .iter()
+            .chain(&Self::remove_only_dirs(registry))
+            .map(|root| root.id.clone())
+            .collect()
+    }
+
     /// True when refreshing to `session` would reopen (and reconcile):
     /// exactly the case where reconcile can write.
     pub(crate) fn needs_refresh(&self, session: &SessionRoots) -> bool {
-        if session.library.is_empty() {
+        if session.is_empty() {
             return false;
         }
         self.cell.as_ref().map(|open| &open.session) != Some(session)
     }
+}
+
+/// How a removal takes the publish lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RemovalEntry {
+    /// A person is waiting: a lock or library folder another write holds
+    /// answers busy at once.
+    Now,
+    /// Background work: it waits its turn, as other background publishes
+    /// do, so busy never fails it.
+    Wait,
+}
+
+/// What a removal took out of the library.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RemovalDone {
+    pub track_ids: Vec<String>,
+    /// Each file as (where it was, where it is now): its bin entry, or its
+    /// hidden name while its move into the bin waits.
+    pub recycled: Vec<(PathBuf, PathBuf)>,
 }
 
 /// Revisions a publish is sealed with: the job's pins, which the live
@@ -659,7 +709,7 @@ impl LibrarySetup {
     /// its publish so scans never interleave with managed writes.
     /// Blocking: callers run off the async runtime.
     pub(crate) fn publish_guards(&self, registry: &RootRegistry) -> Vec<WriteGuard> {
-        let mut ids = PublishCell::pending_ids(registry);
+        let mut ids = PublishCell::guarded_ids(registry);
         ids.sort();
         ids.into_iter()
             .map(|id| self.fs.blocking_write(&id))
@@ -1114,6 +1164,7 @@ impl LibrarySetup {
             profile_revision: PINNED_REVISION,
             naming_revision: PINNED_REVISION,
             policy_revision: policy_revision_u64(&registry),
+            removal: None,
         };
         // The tracks' rows as previewed: Apply is refused if they move.
         super::publish::planner::seal_rows(&self.db, &mut bundle).map_err(publish_error)?;
@@ -1320,6 +1371,22 @@ impl LibrarySetup {
         }
     }
 
+    /// [`Self::arm_publish_crash`] for every publish but a removal, so a
+    /// test can stop a write that a removal runs ahead of. Tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn arm_publish_crash_for_writes(&self, point: Option<super::publish::CrashPoint>) {
+        let registry = self.live_registry();
+        let mut cell = self
+            .publish
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if cell.refresh(&registry, &self.root_dirs).is_ok()
+            && let Ok(open) = cell.open()
+        {
+            open.publisher.set_crash_point_for_writes(point);
+        }
+    }
+
     pub(crate) fn settle_publishes(&self) -> Result<(), PublishError> {
         let mut cell = self
             .publish
@@ -1382,6 +1449,148 @@ impl LibrarySetup {
         cell.recheck_placement(root_id)
     }
 
+    /// Take `targets` out of the library and their files to the recycle
+    /// bin, as one removal bundle: planned, sealed and published under the
+    /// publish lock and the root guards. With [`RemovalEntry::Now`] a lock
+    /// or a library folder another write holds answers busy at once; with
+    /// [`RemovalEntry::Wait`] the removal waits its turn. A removal whose
+    /// commit landed answers what it removed even when a later step failed:
+    /// recovery finishes it. Blocking.
+    pub(crate) fn publish_removal(
+        &self,
+        targets: &[super::publish::remove::Target],
+        reason_code: &str,
+        actor: Option<&str>,
+        extras: Option<super::publish::planner::ExtrasAction>,
+        entry: RemovalEntry,
+    ) -> Result<RemovalDone, super::publish::remove::Refusal> {
+        use super::publish::JournalState;
+        use super::publish::remove::{self, Refusal};
+        let mut cell = match entry {
+            RemovalEntry::Wait => self
+                .publish
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            RemovalEntry::Now => match self.publish.try_lock() {
+                Ok(cell) => cell,
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => return Err(Refusal::Busy),
+            },
+        };
+        let registry = self.live_registry();
+        let session = cell.session(&registry);
+        let _guards = match entry {
+            RemovalEntry::Wait => self.publish_guards(&registry),
+            RemovalEntry::Now => {
+                // A reopen reconciles, which may touch any root.
+                let mut ids: Vec<String> = if cell.needs_refresh(&session) {
+                    PublishCell::guarded_ids(&registry)
+                } else {
+                    targets
+                        .iter()
+                        .map(|target| target.root_id.clone())
+                        .collect()
+                };
+                ids.sort();
+                ids.dedup();
+                ids.iter()
+                    .map(|id| self.fs.try_write(id).ok_or(Refusal::Busy))
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+        };
+        cell.refresh_to(session, &self.root_dirs)?;
+        let open = cell.open().map_err(|_| Refusal::OutsideRoot)?;
+        let bundle_id = uuid::Uuid::new_v4().to_string();
+        let removal = remove::plan(
+            &self.db,
+            &open.sandbox,
+            &bundle_id,
+            targets,
+            reason_code,
+            actor,
+            extras,
+            std::time::SystemTime::now(),
+        )?;
+        let track_ids: Vec<String> = removal
+            .items
+            .iter()
+            .map(|item| item.track_id.clone())
+            .collect();
+        let policy_revision = policy_revision_u64(&registry);
+        let bundle = PlanBundle {
+            id: bundle_id,
+            items: Vec::new(),
+            profile_revision: PINNED_REVISION,
+            naming_revision: PINNED_REVISION,
+            policy_revision,
+            removal: Some(removal),
+        };
+        let token_hash = sha256_hex(self.ids.new_id().as_bytes());
+        let sealed = SealedPreview::seal(
+            bundle,
+            token_hash.clone(),
+            PINNED_REVISION,
+            today_day() + PREVIEW_TTL_DAYS,
+        );
+        let live = SealRecheck {
+            fingerprints: BTreeMap::new(),
+            identities: BTreeMap::new(),
+            overrides: BTreeMap::new(),
+            profile_revision: PINNED_REVISION,
+            naming_revision: PINNED_REVISION,
+            policy_revision,
+            settings_revision: PINNED_REVISION,
+            today_day: today_day(),
+            token_hash,
+        };
+        let published = open
+            .publisher
+            .publish_as(&sealed, &live, &BTreeMap::new(), None);
+        let bundle_id = sealed.bundle.id.as_str();
+        let rows = || {
+            self.db.read_blocking("publish.removal_rows", |conn| {
+                JournalStore::new(conn).bundle(bundle_id)
+            })
+        };
+        if let Err(error) = published {
+            let committed = self
+                .held_bundles
+                .committed(bundle_id)
+                .unwrap_or_else(|read| {
+                    tracing::warn!(%read, bundle_id, "could not tell whether a failed removal committed");
+                    false
+                });
+            if !committed {
+                let kept = rows().is_ok_and(|rows| {
+                    rows.iter()
+                        .any(|row| row.state == JournalState::NeedsAttention)
+                });
+                return Err(Refusal::Publish { error, kept });
+            }
+            tracing::warn!(%error, bundle_id, "removal committed; recovery finishes the rest");
+        }
+        let mut recycled = Vec::new();
+        if let Some(removal) = sealed.bundle.removal.as_ref() {
+            for row in rows().unwrap_or_default() {
+                let (Some(file), Some(replaced)) =
+                    (remove::file_of(removal, &row), row.replaces.as_ref())
+                else {
+                    continue;
+                };
+                let now_at = if row.state == JournalState::Cleaned {
+                    &replaced.recycle_to
+                } else {
+                    &row.staged
+                };
+                recycled.push((PathBuf::from(&file.path), PathBuf::from(now_at)));
+            }
+        }
+        Ok(RemovalDone {
+            track_ids,
+            recycled,
+        })
+    }
+
     /// Publish one album a management job planned. The tags to write and
     /// the destinations were fixed at planning; the before-state is read
     /// now, and the seal refuses any file, identity, override or revision
@@ -1419,6 +1628,7 @@ impl LibrarySetup {
             profile_revision: pins.profile,
             naming_revision: pins.naming,
             policy_revision: policy_revision_u64(&registry),
+            removal: None,
         };
         // What moved since planning is caught by the seal recheck below;
         // the rows are sealed now, so the commit refuses only what moves
@@ -2066,6 +2276,7 @@ impl LibrarySetup {
             profile_revision: PINNED_REVISION,
             naming_revision: PINNED_REVISION,
             policy_revision: policy_revision_u64(&self.live_registry()),
+            removal: None,
         };
         super::publish::planner::seal_rows(&self.db, &mut bundle).map_err(publish_error)?;
         // Restoration bundles re-run the dry-run gates: a restore

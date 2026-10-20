@@ -4,14 +4,17 @@
 //!
 //! Removing never deletes audio. Without `delete_files` the tracks only
 //! leave the catalog (marked missing, rows and references kept, as v2).
-//! With it, every file first moves into the recycle bin, each into its
-//! own `<stamp>-<id>` entry so equal names never collide; if any move
-//! fails, the files already moved go back and nothing in the catalog
-//! changes. The bin is the download settings' `recycle_bin_path` (the one
-//! upgrades use, pruned on the same retention window) when it overlaps no
-//! library or download folder, else `.recycle` at the top of the file's
-//! library root, which the scanner skips and which keeps the move a rename
-//! on the same filesystem. The publisher's sessions pick the same bins.
+//! With it, the removal goes through the publisher as one bundle
+//! (`publish::remove`): each file is set aside under the journal, the
+//! catalog marks the tracks missing in one commit, and only then does each
+//! file move into its own `<stamp>-<id>` recycle bin entry, so equal names
+//! never collide. A removal that stops before its commit puts every file
+//! back; one that stops after it finishes on restart. This module decides
+//! what to remove and never moves a file itself. The bin is the download
+//! settings' `recycle_bin_path` (the one upgrades use, pruned on the same
+//! retention window) when it overlaps no library or download folder, else
+//! `.recycle` at the top of the file's library root, which the scanner
+//! skips and which keeps the move a rename on the same filesystem.
 //!
 //! Every refusal carries one [`Reason`]: a stable code, a plain sentence
 //! and what to do next. All functions here block; callers run them off
@@ -25,10 +28,14 @@ use droppedneedle_kernel::db::Lane;
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::catalog_revision::bump_catalog;
+use super::manage::RemovalEntry;
 use super::management::takeover;
 use super::operations::reasons::Reason;
+use super::publish::PublishError;
 use super::publish::bin::{fresh_entry, serving};
 use super::publish::paths::Root;
+use super::publish::planner::ExtrasAction;
+use super::publish::remove::{self, Refusal, Target};
 use super::scan::coordinator::ScanRequestError;
 use super::scan::models::{ScanKind, ScanRequest, ScanRequestResult, ScanScope, ScanTrigger};
 use super::scan::roots::RootRegistry;
@@ -72,8 +79,28 @@ pub const RECYCLE_FAILED: Reason = reason(
 );
 pub const RESTORE_FAILED: Reason = reason(
     "RESTORE_FAILED",
-    "A file could not be moved into the recycle bin, and some files already moved could not be put back.",
-    "Look in the recycle bin for this album's files and move them back by hand, then rescan.",
+    "A file could not be moved into the recycle bin, and another could not be put back. It is kept under a hidden name beside where it was.",
+    "Look for a hidden .droppedneedle-management file in the album's folder, move it back by hand, then rescan.",
+);
+pub const REMOVAL_CHANGED: Reason = reason(
+    "REMOVAL_CHANGED",
+    "A file or its track changed while it was being removed, so nothing was removed.",
+    "Reload the page and try again.",
+);
+pub const FILE_NOT_LINKABLE: Reason = reason(
+    "FILE_NOT_LINKABLE",
+    "A file could not be moved safely, so nothing was removed: the server can't link it to keep a way back.",
+    "Check the file's owner and permissions, or that its disk supports hard links, then try again.",
+);
+pub const NO_RECYCLE_BIN: Reason = reason(
+    "NO_RECYCLE_BIN",
+    "This library folder has no usable recycle bin, so nothing was removed: its .recycle links somewhere it may not.",
+    "Make .recycle a plain folder, or set a recycle bin in the download settings.",
+);
+pub const RECYCLE_BIN_UNKNOWN: Reason = reason(
+    "RECYCLE_BIN_UNKNOWN",
+    "No recycle bin is known while the download or SABnzbd settings can't be read, so nothing was removed.",
+    "Open those settings and save them again, then try again.",
 );
 pub const LIBRARY_BUSY: Reason = reason(
     "LIBRARY_BUSY",
@@ -215,12 +242,34 @@ impl<'a> Mutations<'a> {
 
     /// Remove an album from the catalog, moving its files into the
     /// recycle bin when `delete_files` is set. `album_id` is a local album
-    /// id or a release-group MBID.
+    /// id or a release-group MBID. Background work: it waits for a write
+    /// in flight instead of answering busy.
     pub fn remove_album(
         &self,
         album_id: &str,
         delete_files: bool,
         actor: &str,
+    ) -> Result<Removed, MutationError> {
+        self.remove_album_with(album_id, delete_files, actor, RemovalEntry::Wait)
+    }
+
+    /// [`Self::remove_album`] for a person waiting on the answer: a write
+    /// in flight answers busy at once.
+    pub fn remove_album_now(
+        &self,
+        album_id: &str,
+        delete_files: bool,
+        actor: &str,
+    ) -> Result<Removed, MutationError> {
+        self.remove_album_with(album_id, delete_files, actor, RemovalEntry::Now)
+    }
+
+    fn remove_album_with(
+        &self,
+        album_id: &str,
+        delete_files: bool,
+        actor: &str,
+        entry: RemovalEntry,
     ) -> Result<Removed, MutationError> {
         let canonical = self
             .canonical_album(album_id)?
@@ -244,8 +293,14 @@ impl<'a> Mutations<'a> {
                 .optional()
                 .map_err(MutationError::from)
             })?;
-        let (track_ids, recycled) =
-            self.remove_tracks(&tracks, delete_files, reason_code, actor)?;
+        let removal = Removal {
+            reason_code,
+            actor,
+            entry,
+            expect_sha256: None,
+            extras: None,
+        };
+        let (track_ids, recycled) = self.remove_tracks(&tracks, delete_files, &removal)?;
         Ok(Removed {
             id: canonical,
             track_ids,
@@ -255,34 +310,80 @@ impl<'a> Mutations<'a> {
     }
 
     /// Remove one track, moving its file into the recycle bin when
-    /// `delete_file` is set.
+    /// `delete_file` is set. Background work: it waits for a write in
+    /// flight instead of answering busy.
     pub fn remove_track(
         &self,
         track_id: &str,
         delete_file: bool,
         actor: &str,
     ) -> Result<Removed, MutationError> {
-        let track = self
-            .setup
-            .db
-            .read_blocking("mutations.remove_track", |conn| {
-                conn.query_row(
-                    "SELECT id, local_album_id, root_id, relative_path FROM local_tracks \
-                     WHERE id = ?1 AND availability = 'indexed'",
-                    [track_id],
-                    track_row,
-                )
-                .optional()
-                .map_err(MutationError::from)
-            })?
-            .ok_or(MutationError::NotFound(TRACK_NOT_FOUND))?;
+        self.remove_track_with(track_id, delete_file, actor, RemovalEntry::Wait)
+    }
+
+    /// [`Self::remove_track`] for a person waiting on the answer: a write
+    /// in flight answers busy at once.
+    pub fn remove_track_now(
+        &self,
+        track_id: &str,
+        delete_file: bool,
+        actor: &str,
+    ) -> Result<Removed, MutationError> {
+        self.remove_track_with(track_id, delete_file, actor, RemovalEntry::Now)
+    }
+
+    fn remove_track_with(
+        &self,
+        track_id: &str,
+        delete_file: bool,
+        actor: &str,
+        entry: RemovalEntry,
+    ) -> Result<Removed, MutationError> {
+        let track = self.indexed_track(track_id, None)?;
         let reason_code = if delete_file {
             "FILE_RECYCLED"
         } else {
             "CATALOG_REMOVAL"
         };
-        let (track_ids, recycled) =
-            self.remove_tracks(&[track], delete_file, reason_code, actor)?;
+        let removal = Removal {
+            reason_code,
+            actor,
+            entry,
+            expect_sha256: None,
+            extras: None,
+        };
+        let (track_ids, recycled) = self.remove_tracks(&[track], delete_file, &removal)?;
+        Ok(Removed {
+            id: track_id.to_owned(),
+            track_ids,
+            release_group_mbid: None,
+            recycled,
+        })
+    }
+
+    /// Move the file a duplicate resolution sends to the recycle bin, and
+    /// take its track out of the catalog. The track must still be at
+    /// `root_id:relative_path` and its file must still hold `sha256`, the
+    /// bytes the preview read; otherwise nothing is removed.
+    pub(crate) fn recycle_duplicate(
+        &self,
+        track_id: &str,
+        (root_id, relative_path): (&str, &str),
+        sha256: &str,
+        actor: &str,
+    ) -> Result<Removed, MutationError> {
+        let track = self.indexed_track(track_id, None)?;
+        if track.root_id != root_id || track.relative_path != relative_path {
+            return Err(MutationError::Conflict(REMOVAL_CHANGED));
+        }
+        let removal = Removal {
+            reason_code: "FILE_RECYCLED",
+            actor,
+            entry: RemovalEntry::Now,
+            expect_sha256: Some(sha256),
+            extras: None,
+        };
+        let (track_ids, recycled) = self.remove_tracks(&[track], true, &removal)?;
         Ok(Removed {
             id: track_id.to_owned(),
             track_ids,
@@ -293,9 +394,9 @@ impl<'a> Mutations<'a> {
 
     /// Move some of one album's files into the recycle bin: the files its
     /// edition has no place for, which a person picked from the edition
-    /// plan. The moves are kept in one catalog action so
-    /// [`Self::restore_recycled`] can put them back. Answers that action's
-    /// id and the track ids that left the catalog.
+    /// plan. The undo record is written in the same commit that takes the
+    /// tracks out, so [`Self::restore_recycled`] can put them back. Answers
+    /// that record's id and the track ids that left the catalog.
     pub fn recycle_album_files(
         &self,
         album_id: &str,
@@ -304,62 +405,43 @@ impl<'a> Mutations<'a> {
     ) -> Result<(String, Vec<String>), MutationError> {
         let mut tracks = Vec::with_capacity(track_ids.len());
         for track_id in track_ids {
-            let track = self
-                .setup
-                .db
-                .read_blocking("mutations.recycle_track", |conn| {
-                    conn.query_row(
-                        "SELECT id, local_album_id, root_id, relative_path FROM local_tracks \
-                         WHERE id = ?1 AND local_album_id = ?2 AND availability = 'indexed'",
-                        params![track_id, album_id],
-                        track_row,
-                    )
-                    .optional()
-                    .map_err(MutationError::from)
-                })?
-                .ok_or(MutationError::NotFound(TRACK_NOT_FOUND))?;
-            tracks.push(track);
+            tracks.push(self.indexed_track(track_id, Some(album_id))?);
         }
-        let (removed, moved) =
-            self.remove_tracks(&tracks, true, "EDITION_EXTRA_RECYCLED", actor)?;
-        let moves: Vec<[String; 2]> = moved
-            .iter()
-            .map(|(from, to)| {
-                [
-                    from.to_string_lossy().into_owned(),
-                    to.to_string_lossy().into_owned(),
-                ]
-            })
-            .collect();
         let action_id = uuid::Uuid::new_v4().to_string();
-        let written =
-            self.setup
-                .db
-                .write_blocking(Lane::Foreground, "mutations.record_recycled", |tx| {
-                    tx.execute(
-                        "INSERT INTO library_catalog_actions (id, actor_user_id, action_kind, \
-                 local_album_id, before_json, after_json, reason_code, created_at) VALUES \
-                 (?1, (SELECT id FROM auth_users WHERE id = ?2), 'edition_extras_recycled', ?3, \
-                 '{}', ?4, 'EDITION_EXTRA_RECYCLED', ?5)",
-                        params![
-                            action_id,
-                            actor,
-                            album_id,
-                            serde_json::json!({ "moves": moves, "track_ids": removed }).to_string(),
-                            now_secs(),
-                        ],
-                    )?;
-                    Ok::<_, MutationError>(())
-                });
-        if let Err(error) = written {
-            // The files are in the bin and off the catalog; only the undo
-            // record is lost, so the removal stands and says so.
-            tracing::warn!(
-                ?error,
-                "recycled the edition's extras but could not keep the undo"
-            );
-        }
+        let removal = Removal {
+            reason_code: "EDITION_EXTRA_RECYCLED",
+            actor,
+            entry: RemovalEntry::Now,
+            expect_sha256: None,
+            extras: Some(ExtrasAction {
+                id: action_id.clone(),
+                album_id: album_id.to_owned(),
+            }),
+        };
+        let (removed, _) = self.remove_tracks(&tracks, true, &removal)?;
         Ok((action_id, removed))
+    }
+
+    /// The indexed track `track_id`, on `album_id` when one is given.
+    fn indexed_track(
+        &self,
+        track_id: &str,
+        album_id: Option<&str>,
+    ) -> Result<TrackFile, MutationError> {
+        self.setup
+            .db
+            .read_blocking("mutations.indexed_track", |conn| {
+                conn.query_row(
+                    "SELECT id, local_album_id, root_id, relative_path FROM local_tracks \
+                     WHERE id = ?1 AND availability = 'indexed' \
+                     AND (?2 IS NULL OR local_album_id = ?2)",
+                    params![track_id, album_id],
+                    track_row,
+                )
+                .optional()
+                .map_err(MutationError::from)
+            })?
+            .ok_or(MutationError::NotFound(TRACK_NOT_FOUND))
     }
 
     /// Put back the files one [`Self::recycle_album_files`] moved, then
@@ -443,8 +525,9 @@ impl<'a> Mutations<'a> {
 
     /// A fresh recycle-bin entry for a file named `name` from this
     /// library folder: `<bin>/<stamp>-<id>/<name>`, not created yet.
-    /// `None` for a name that cannot be one; `Err` while no usable bin is
-    /// known for the folder.
+    /// `None` for a name that cannot be one. `Err` while no bin is known
+    /// ([`RECYCLE_BIN_UNKNOWN`]) or the folder has no usable one
+    /// ([`NO_RECYCLE_BIN`]).
     pub fn recycle_entry(
         &self,
         root_id: &str,
@@ -464,8 +547,7 @@ impl<'a> Mutations<'a> {
     /// be put back, or another file now sits at its old path; it stays in
     /// the recycle bin and the error is logged.
     pub fn put_back(&self, moved: &[(PathBuf, PathBuf)], actor: &str) -> bool {
-        let reason = restore(moved);
-        let restored = reason.code != RESTORE_FAILED.code;
+        let restored = restore(moved);
         let registry = self.setup.live_registry();
         let mut scopes: BTreeMap<(String, String), ScanScope> = BTreeMap::new();
         for (original, _) in moved {
@@ -628,83 +710,60 @@ impl<'a> Mutations<'a> {
             })
     }
 
-    /// Recycle (when asked) then mark missing. Files already gone from
-    /// disk are not a failure: their rows still leave the catalog.
+    /// Take `tracks` out of the catalog. Without `recycle` this is one
+    /// catalog write. With it, each file is read once here, before the
+    /// publish lock, and the removal is published as one bundle: files
+    /// already gone from disk are not a failure, and their rows still leave
+    /// the catalog.
     fn remove_tracks(
         &self,
         tracks: &[TrackFile],
         recycle: bool,
-        reason_code: &str,
-        actor: &str,
+        removal: &Removal<'_>,
     ) -> Result<(Vec<String>, Recycled), MutationError> {
-        let mut moved: Recycled = Vec::new();
-        let mut guards = Vec::new();
-        if recycle {
-            let registry = self.setup.live_registry();
-            let bins = self.bins(&registry)?;
-            let mut planned = Vec::new();
-            for track in tracks {
-                let root = registry
-                    .resolve(&track.root_id)
-                    .ok_or(MutationError::Conflict(FILE_OUTSIDE_ROOT))?;
-                let path = join_inside(&root.path, &track.relative_path)
-                    .ok_or(MutationError::Conflict(FILE_OUTSIDE_ROOT))?;
-                let bin = bin_dir(&bins, &track.root_id)?;
-                planned.push((track.root_id.clone(), path, bin));
-            }
-            for root_id in planned
-                .iter()
-                .map(|(root_id, _, _)| root_id.clone())
-                .collect::<std::collections::BTreeSet<_>>()
-            {
-                guards.push(
-                    self.setup
-                        .fs
-                        .try_write(&root_id)
-                        .ok_or(MutationError::Conflict(LIBRARY_BUSY))?,
-                );
-            }
-            for (_, path, bin) in planned {
-                if !path.exists() {
-                    tracing::warn!(
-                        file = %path.file_name().unwrap_or_default().to_string_lossy(),
-                        "file already absent; removing its catalog entry"
-                    );
-                    continue;
-                }
-                match recycle_file(&path, &bin) {
-                    Ok(destination) => moved.push((path, destination)),
-                    Err(error) => {
-                        tracing::warn!(%error, "recycle move failed; restoring");
-                        return Err(MutationError::Files(restore(&moved)));
-                    }
-                }
-            }
+        if !recycle {
+            let changed = self.setup.db.write_blocking(
+                Lane::Foreground,
+                "mutations.remove_tracks",
+                |tx| mark_missing(tx, tracks, removal.reason_code, removal.actor),
+            )?;
+            tracing::info!(tracks = changed.len(), "library removal");
+            return Ok((changed, Vec::new()));
         }
-        let ids: Vec<String> = tracks.iter().map(|track| track.id.clone()).collect();
-        let marked =
-            self.setup
-                .db
-                .write_blocking(Lane::Foreground, "mutations.remove_tracks", |tx| {
-                    mark_missing(tx, tracks, reason_code, actor)
-                });
-        drop(guards);
-        match marked {
-            Ok(changed) => {
-                tracing::info!(
-                    tracks = ids.len(),
-                    recycled = moved.len(),
-                    "library removal"
-                );
-                Ok((changed, moved))
-            }
-            Err(error) => {
-                if !moved.is_empty() {
-                    let _ = restore(&moved);
-                }
-                Err(error)
-            }
+        let registry = self.setup.live_registry();
+        let mut targets = Vec::with_capacity(tracks.len());
+        for track in tracks {
+            let root = registry
+                .resolve(&track.root_id)
+                .ok_or(MutationError::Conflict(FILE_OUTSIDE_ROOT))?;
+            let path = join_inside(&root.path, &track.relative_path)
+                .ok_or(MutationError::Conflict(FILE_OUTSIDE_ROOT))?;
+            let probe =
+                remove::probe(&root.path, &path).map_err(|error| refusal(Refusal::from(error)))?;
+            targets.push(Target {
+                track_id: track.id.clone(),
+                root_id: track.root_id.clone(),
+                relative_path: track.relative_path.clone(),
+                probe,
+                expect_sha256: removal.expect_sha256.map(str::to_owned),
+            });
         }
+        let done = self
+            .setup
+            .publish_removal(
+                &targets,
+                removal.reason_code,
+                Some(removal.actor),
+                removal.extras.clone(),
+                removal.entry,
+            )
+            .map_err(refusal)?;
+        tracing::info!(
+            tracks = done.track_ids.len(),
+            recycled = done.recycled.len(),
+            "library removal"
+        );
+        Ok((done.track_ids, done.recycled))
     }
 
     /// The recycle bins now, chosen as the publisher's sessions choose
@@ -715,9 +774,11 @@ impl<'a> Mutations<'a> {
             .bins
             .current(registry)
             .map(|choice| choice.roots)
-            .map_err(|cause| MutationError::Store(format!("no recycle bin is known while {cause}")))
+            .map_err(|cause| {
+                tracing::debug!(cause, "no recycle bin is known");
+                MutationError::Conflict(RECYCLE_BIN_UNKNOWN)
+            })
     }
-
     /// Resolve a local album id (following merges) or a release-group
     /// MBID to the live local album.
     fn canonical_album(&self, album_id: &str) -> Result<Option<String>, MutationError> {
@@ -828,34 +889,70 @@ fn join_inside(root: &Path, relative: &str) -> Option<PathBuf> {
 fn bin_dir(bins: &[Root], root_id: &str) -> Result<PathBuf, MutationError> {
     serving(bins, root_id)
         .map(|bin| bin.dir.clone())
-        .ok_or_else(|| {
-            MutationError::Store(format!("library root {root_id} has no usable recycle bin"))
-        })
+        .ok_or(MutationError::Conflict(NO_RECYCLE_BIN))
 }
 
-/// Move one file into its own bin entry; returns where it went.
-fn recycle_file(path: &Path, bin: &Path) -> std::io::Result<PathBuf> {
-    let destination = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .and_then(|name| fresh_entry(bin, name, SystemTime::now()))
-        .ok_or_else(|| std::io::Error::other("file has no usable name"))?;
-    if let Some(entry) = destination.parent() {
-        std::fs::create_dir_all(entry)?;
-    }
-    move_file(path, &destination)?;
-    Ok(destination)
+/// What one removal is, besides its tracks.
+struct Removal<'a> {
+    reason_code: &'a str,
+    actor: &'a str,
+    entry: RemovalEntry,
+    /// The bytes every file must still hold (a duplicate resolution).
+    expect_sha256: Option<&'a str>,
+    /// Remove extras' undo record.
+    extras: Option<ExtrasAction>,
 }
 
-/// Rename, or copy then unlink when the bin is on another filesystem.
-fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
-    match std::fs::rename(from, to) {
-        Ok(()) => Ok(()),
-        Err(error) if error.raw_os_error() == Some(18) => {
-            std::fs::copy(from, to)?;
-            std::fs::remove_file(from)
+/// A removal's refusal as the page reads it.
+fn refusal(refused: Refusal) -> MutationError {
+    match refused {
+        Refusal::Busy => MutationError::Conflict(LIBRARY_BUSY),
+        Refusal::Changed => MutationError::Conflict(REMOVAL_CHANGED),
+        Refusal::OutsideRoot => MutationError::Conflict(FILE_OUTSIDE_ROOT),
+        Refusal::BinsUnknown(cause) => {
+            tracing::debug!(cause, "no recycle bin is known");
+            MutationError::Conflict(RECYCLE_BIN_UNKNOWN)
         }
-        Err(error) => Err(error),
+        Refusal::NoBin(root) => {
+            tracing::warn!(root, "a removal found no usable recycle bin");
+            MutationError::Conflict(NO_RECYCLE_BIN)
+        }
+        Refusal::Publish { error, kept: true } => {
+            tracing::error!(%error, "a removal unwound and kept a file under a hidden name");
+            MutationError::Files(RESTORE_FAILED)
+        }
+        Refusal::Publish { error, kept: false } => match error {
+            PublishError::Interrupted(cause) => MutationError::Busy(cause),
+            PublishError::Validation(_) | PublishError::Catalog(_) | PublishError::Collision(_) => {
+                tracing::info!(%error, "a removal found its files or tracks changed");
+                MutationError::Conflict(REMOVAL_CHANGED)
+            }
+            PublishError::UnsafePath(_) => {
+                tracing::warn!(%error, "a removal refused a path");
+                MutationError::Conflict(FILE_OUTSIDE_ROOT)
+            }
+            PublishError::NotLinkable(_) => {
+                tracing::warn!(%error, "a removal could not keep a way back");
+                MutationError::Files(FILE_NOT_LINKABLE)
+            }
+            PublishError::NoSafePlacement(_)
+            | PublishError::Cleanup(_)
+            | PublishError::Space(_)
+            | PublishError::Capability(_)
+            | PublishError::Snapshot(_)
+            | PublishError::Archive(_)
+            | PublishError::Io(_) => {
+                tracing::warn!(%error, "a removal moved nothing");
+                MutationError::Files(RECYCLE_FAILED)
+            }
+            // The plan already waited out other writes on these tracks,
+            // and each removal's hidden names are new, so a journal refusal
+            // here is an internal fault.
+            PublishError::Journal(_)
+            | PublishError::Store(_)
+            | PublishError::TimedOut(_)
+            | PublishError::InjectedCrash(_) => MutationError::Store(error.to_string()),
+        },
     }
 }
 
@@ -868,35 +965,34 @@ fn occupied(path: &Path) -> bool {
     )
 }
 
-/// Put moved files back, newest first, never onto a path something else
-/// has taken since. The check and the move are two steps, so a file that
-/// lands between them is still replaced. Answers the reason to report.
-fn restore(moved: &[(PathBuf, PathBuf)]) -> Reason {
-    let mut failed = false;
+/// Put files back from the recycle bin, newest first, never onto a path
+/// something else has taken: the placing call refuses one, and a copy to
+/// another disk is verified before the bin copy goes. False when a file
+/// could not be put back; it stays in the bin and the error is logged.
+fn restore(moved: &[(PathBuf, PathBuf)]) -> bool {
+    let mut restored = true;
     for (original, destination) in moved.iter().rev() {
         if occupied(original) {
-            failed = true;
+            restored = false;
             tracing::error!(
                 file = %original.file_name().unwrap_or_default().to_string_lossy(),
                 "a file sits where a recycled file was; left it in the recycle bin"
             );
             continue;
         }
-        let back = original
-            .parent()
-            .map(std::fs::create_dir_all)
-            .transpose()
-            .and_then(|_| move_file(destination, original));
-        if let Err(error) = back {
-            failed = true;
-            tracing::error!(%error, "could not restore a recycled file");
+        match super::publish::paths::put_home(destination, original) {
+            Ok(true) => {}
+            Ok(false) => {
+                restored = false;
+                tracing::error!("a recycled file to put back is gone from the recycle bin");
+            }
+            Err(error) => {
+                restored = false;
+                tracing::error!(%error, "could not restore a recycled file");
+            }
         }
     }
-    if failed {
-        RESTORE_FAILED
-    } else {
-        RECYCLE_FAILED
-    }
+    restored
 }
 
 /// Mark indexed tracks missing, one catalog action each; rows and
@@ -910,32 +1006,16 @@ fn mark_missing(
     let now = now_secs();
     let mut changed = Vec::new();
     for track in tracks {
-        let revision: Option<i64> = tx
-            .query_row(
-                "SELECT row_revision FROM local_tracks WHERE id = ?1 AND availability = 'indexed'",
-                [&track.id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let Some(revision) = revision else {
-            continue;
-        };
-        tx.execute(
-            "UPDATE local_tracks SET availability = 'missing', missing_since = ?1, \
-             row_revision = row_revision + 1 WHERE id = ?2",
-            params![now, track.id],
-        )?;
-        record_action(
+        if remove::mark_removed(
             tx,
-            actor,
-            "remove_track",
+            &track.id,
             &track.album_id,
-            Some(&track.id),
-            &serde_json::json!({"availability": "indexed", "row_revision": revision}),
-            &serde_json::json!({"availability": "missing", "row_revision": revision + 1}),
             reason_code,
-        )?;
-        changed.push(track.id.clone());
+            Some(actor),
+            now,
+        )? {
+            changed.push(track.id.clone());
+        }
     }
     if !changed.is_empty() {
         bump_catalog(tx)?;

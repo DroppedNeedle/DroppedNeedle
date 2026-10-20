@@ -21,8 +21,8 @@ use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 
 use super::PublishError;
-use super::journal::{FileJournal, JournalReplacement, JournalWriter};
-use super::paths::{self, Root, RootKind, Sandbox};
+use super::journal::{FileJournal, JournalKind, JournalReplacement, JournalWriter};
+use super::paths::{self, FileStat, Root, RootKind, Sandbox};
 use super::place::Seams;
 use super::publisher::durable;
 use crate::scan::fs::RECYCLE_BIN_DIRECTORY_NAME;
@@ -303,7 +303,7 @@ fn problems(choice: &BinChoice) -> Option<String> {
 pub fn serving<'b>(bins: &'b [Root], root_id: &str) -> Option<&'b Root> {
     bins.iter().find(|bin| match &bin.kind {
         RootKind::Bin { serves } => serves.as_deref().is_none_or(|id| id == root_id),
-        RootKind::Library => false,
+        RootKind::Library | RootKind::RemoveOnly => false,
     })
 }
 
@@ -367,7 +367,10 @@ pub fn utc_stamp(now: SystemTime) -> String {
 /// the row's root now, written durably before the file moves. The entry
 /// is checked under its bin (no symlink below the bin's folder) and the
 /// file goes in by the bin's own placement mode. While the bins are
-/// unknown nothing moves. True when the file is in the bin now.
+/// unknown nothing moves. A removal's file (a `remove` row) may sit under
+/// a remove-only root. `known` is the file's identity when it was hashed,
+/// when the caller has it. True when the file is in the bin now.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn recycle_replaced(
     db: &Db,
     sandbox: &Sandbox,
@@ -376,9 +379,17 @@ pub(super) fn recycle_replaced(
     backup: &Path,
     seams: Seams,
     now: SystemTime,
+    known: Option<FileStat>,
 ) -> Result<bool, PublishError> {
     sandbox.bins()?;
-    sandbox.ensure_under_roots(backup)?;
+    match journal.kind {
+        JournalKind::Remove => sandbox.ensure_under_removal_roots(backup)?,
+        JournalKind::Audio
+        | JournalKind::Sidecar
+        | JournalKind::Artwork
+        | JournalKind::Output
+        | JournalKind::Delete => sandbox.ensure_under_roots(backup)?,
+    }
     let mut recycle_to = PathBuf::from(&replaced.recycle_to);
     if sandbox.bin_holding(&recycle_to).is_none() {
         if std::fs::symlink_metadata(backup).is_err() {
@@ -410,7 +421,7 @@ pub(super) fn recycle_replaced(
     }
     let bin = sandbox.ensure_under_bin(&recycle_to)?;
     let mode = sandbox.probe_bin_placement(bin);
-    let moved = paths::recycle_backup(mode, seams, backup, &recycle_to, &replaced.sha256)?;
+    let moved = paths::recycle_backup(mode, seams, backup, &recycle_to, &replaced.sha256, known)?;
     if moved {
         durable(db, "publish.journal_recycled", |tx| {
             JournalWriter::new(tx).set_recycled(&journal.id, unix_secs(now))

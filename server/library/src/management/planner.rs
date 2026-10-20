@@ -1822,6 +1822,7 @@ fn check_collisions(ctx: &PlanContext<'_>, items: &mut [PlannedItem]) {
             profile_revision: 0,
             naming_revision: 0,
             policy_revision: 0,
+            removal: None,
         };
         match CollisionGate::check_bundle(ctx.sandbox, &single) {
             Ok(()) => {}
@@ -1979,6 +1980,7 @@ pub fn plan_album(
             profile_revision: 0,
             naming_revision: 0,
             policy_revision: 0,
+            removal: None,
         };
         let probe = crate::adapters::FsSpaceProbe::new(ctx.setup.root_dirs.clone());
         if DiskPreflight::check(&bundle, &probe).is_err() {

@@ -119,6 +119,8 @@ pub struct Seams {
     pub cross_device: bool,
     /// The folder sync after a good placement fails.
     pub unsynced: bool,
+    /// A copy to another disk stops part way with a write error.
+    pub short_write: bool,
 }
 
 /// Place `hidden_from` at `to`, never replacing a file at `to`. `mode` is

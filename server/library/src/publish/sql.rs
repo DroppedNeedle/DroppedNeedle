@@ -40,13 +40,34 @@ droppedneedle_kernel::sql! {
     /// A fresh bin entry (`?2`) for a replaced file not yet recycled.
     pub(super) JOURNAL_SET_RECYCLE_TO = "UPDATE library_publish_replacements \
              SET recycle_to = ?2 WHERE journal_id = ?1 AND recycled_at IS NULL";
-    /// Another bundle (not `?2`) still unsettled for a track (`?1`).
+    /// Another bundle (not `?2`) still unsettled for a track (`?1`): one
+    /// writing the track's file, or one that set the file aside to replace
+    /// or remove it and has not committed yet. A committed row waiting for
+    /// its bin holds no track.
     pub(super) UNSETTLED_FOR_TRACK = "SELECT bundle_id FROM library_publish_journal \
              WHERE track_id = ?1 AND bundle_id <> ?2 \
-             AND state NOT IN ('cleaned', 'compensated', 'needs_attention') LIMIT 1";
+             AND state NOT IN ('cleaned', 'compensated', 'needs_attention') \
+             UNION ALL SELECT j.bundle_id FROM library_publish_journal j \
+             JOIN library_publish_replacements r ON r.journal_id = j.id \
+             WHERE r.replaced_track_id = ?1 AND j.bundle_id <> ?2 \
+             AND j.state IN ('prepared', 'staged', 'published') LIMIT 1";
     /// Bundles with unsettled rows, in order.
     pub(super) ACTIVE_BUNDLES = "SELECT DISTINCT bundle_id FROM library_publish_journal \
              WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention') ORDER BY bundle_id";
+    /// How many bundles have a row that has not committed yet.
+    pub(super) PRECOMMIT_BUNDLE_COUNT = "SELECT COUNT(DISTINCT bundle_id) \
+             FROM library_publish_journal WHERE state IN ('prepared', 'staged', 'published')";
+    /// Mark an indexed track (`?1`) missing since `?2`; answers its new
+    /// row revision.
+    pub(crate) TRACK_MARK_MISSING = "UPDATE local_tracks SET availability = 'missing', \
+             missing_since = ?2, row_revision = row_revision + 1 \
+             WHERE id = ?1 AND availability = 'indexed' RETURNING row_revision";
+    /// One catalog action. The actor (`?2`) stays NULL when it is no
+    /// account.
+    pub(crate) CATALOG_ACTION_INSERT = "INSERT INTO library_catalog_actions (id, actor_user_id, \
+             action_kind, local_album_id, local_track_id, before_json, after_json, reason_code, \
+             created_at) VALUES (?1, (SELECT id FROM auth_users WHERE id = ?2), ?3, ?4, ?5, ?6, \
+             ?7, ?8, ?9)";
     /// Whether any bundle has unsettled rows.
     pub(crate) ANY_ACTIVE = "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
              WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention'))";

@@ -121,6 +121,10 @@ pub enum JournalKind {
     /// Fingerprinted delete of generated art on undo: the staged copy
     /// is a safety backup and must never become a live destination.
     Delete,
+    /// A library file leaving the library: set aside under the row's
+    /// hidden name, then moved to its recycle bin entry after the commit.
+    /// Its copy is never deleted, and goes home on any unwind.
+    Remove,
 }
 
 impl JournalKind {
@@ -132,6 +136,7 @@ impl JournalKind {
             Self::Artwork => "artwork",
             Self::Output => "output",
             Self::Delete => "delete",
+            Self::Remove => "remove",
         }
     }
 
@@ -143,6 +148,7 @@ impl JournalKind {
             "artwork" => Ok(Self::Artwork),
             "output" => Ok(Self::Output),
             "delete" => Ok(Self::Delete),
+            "remove" => Ok(Self::Remove),
             other => Err(PublishError::Journal(format!(
                 "unknown journal kind {other}"
             ))),

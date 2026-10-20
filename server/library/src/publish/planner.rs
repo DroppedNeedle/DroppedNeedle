@@ -300,6 +300,113 @@ pub struct PlanBundle {
     pub naming_revision: u64,
     /// Global typed-library policy revision.
     pub policy_revision: u64,
+    /// Library files this bundle takes away to the recycle bin. A bundle
+    /// carries either items or a removal, never both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removal: Option<Removal>,
+}
+
+/// Tracks a bundle takes out of the library, with their files.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Removal {
+    /// The catalog actions' reason code.
+    pub reason_code: String,
+    /// The account the catalog actions name, when a person asked.
+    pub actor: Option<String>,
+    pub items: Vec<RemoveItem>,
+    /// Remove extras' undo record, written in the commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extras_action: Option<ExtrasAction>,
+}
+
+/// One track a removal marks missing, and its file when it has one.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RemoveItem {
+    pub track_id: String,
+    /// The track's rows as the removal found them.
+    pub seal: RemoveSeal,
+    /// `None` when there was no file to move (it was already gone).
+    pub file: Option<RemoveFile>,
+}
+
+/// A file a removal moves to the recycle bin.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RemoveFile {
+    /// Where it was, absolute, for the extras' undo record.
+    pub path: String,
+    /// Its bytes when the removal read them.
+    pub fingerprint: FileFingerprint,
+    /// Its identity when they were read.
+    pub stat: super::paths::FileStat,
+    /// Its recycle bin entry, absolute.
+    pub recycle_to: String,
+}
+
+/// A track's own rows as a removal found them, absent identity included.
+/// The commit refuses the removal when any of them moved.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RemoveSeal {
+    pub root_id: String,
+    pub relative_path: String,
+    pub stat_revision: String,
+    pub album_id: String,
+    pub album_revision: Option<i64>,
+    pub album_release_group_mbid: Option<String>,
+    pub album_release_mbid: Option<String>,
+    pub mapping_revision: Option<i64>,
+    pub recording_mbid: Option<String>,
+    pub release_track_mbid: Option<String>,
+}
+
+/// The undo record Remove extras writes with its commit.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExtrasAction {
+    /// The catalog action's id, which Put back names.
+    pub id: String,
+    pub album_id: String,
+}
+
+impl RemoveSeal {
+    fn of(row: &OwnRow) -> Self {
+        Self {
+            root_id: row.root_id.clone(),
+            relative_path: row.relative_path.clone(),
+            stat_revision: row.stat_revision.clone(),
+            album_id: row.album_id.clone(),
+            album_revision: row.album_revision,
+            album_release_group_mbid: row.album_release_group_mbid.clone(),
+            album_release_mbid: row.album_release_mbid.clone(),
+            mapping_revision: row.mapping_revision,
+            recording_mbid: row.recording_mbid.clone(),
+            release_track_mbid: row.release_track_mbid.clone(),
+        }
+    }
+}
+
+/// The seals of `track_ids` as their rows are now, by id. A track that is
+/// not indexed has none.
+pub(crate) fn removal_seals<'a>(
+    conn: &rusqlite::Connection,
+    track_ids: impl Iterator<Item = &'a str>,
+) -> Result<BTreeMap<String, RemoveSeal>, PublishError> {
+    Ok(own_rows(conn, track_ids)?
+        .into_iter()
+        .filter(|(_, row)| row.availability == "indexed")
+        .map(|(id, row)| (id, RemoveSeal::of(&row)))
+        .collect())
+}
+
+/// The first of `items` whose rows moved since the removal sealed them, or
+/// that is no longer indexed, read on `conn`.
+pub(crate) fn removal_moved<'a>(
+    conn: &rusqlite::Connection,
+    items: &'a [RemoveItem],
+) -> Result<Option<&'a str>, PublishError> {
+    let current = removal_seals(conn, items.iter().map(|item| item.track_id.as_str()))?;
+    Ok(items
+        .iter()
+        .find(|item| current.get(&item.track_id) != Some(&item.seal))
+        .map(|item| item.track_id.as_str()))
 }
 
 /// The catalog rows a moved or retagged item was sealed against, beside

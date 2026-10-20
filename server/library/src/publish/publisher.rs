@@ -84,6 +84,8 @@ pub struct BundleCommit {
     pub bundle_id: String,
     /// Track adoptions in this bundle.
     pub tracks: Vec<TrackCommit>,
+    /// The tracks a removal marks missing, checked against their seals.
+    pub removal: Option<super::planner::Removal>,
 }
 
 /// Catalog port: where a managed track lives and what the publisher
@@ -172,6 +174,9 @@ impl Catalog for SqliteCatalog {
 
     fn commit_bundle(&self, tx: &Durable<'_>, commit: &BundleCommit) -> Result<(), PublishError> {
         let conn: &Connection = tx;
+        if let Some(removal) = &commit.removal {
+            super::remove::commit(conn, &commit.bundle_id, removal, now_secs())?;
+        }
         // The bundle's own rows, read in this transaction: a scan or an
         // identification that changed one since the seal refuses the
         // whole bundle before any row moves. Adoptions have no rows yet.
@@ -671,6 +676,10 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
     space: P,
     gate: CapabilityGate,
     injector: Option<CrashPoint>,
+    /// The armed crash point leaves removal bundles alone.
+    crash_spares_removals: bool,
+    /// The bundle being published is a removal.
+    publishing_removal: bool,
     place_seams: super::place::Seams,
     /// Seams for the move of a replaced file into its bin, so a test can
     /// give the bin a filesystem the library does not share.
@@ -756,6 +765,8 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             space,
             gate: CapabilityGate::production(),
             injector: None,
+            crash_spares_removals: false,
+            publishing_removal: false,
             place_seams: super::place::Seams::default(),
             bin_seams: super::place::Seams::default(),
             before_place: None,
@@ -779,6 +790,15 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_crash_point(&mut self, point: Option<CrashPoint>) {
         self.injector = point;
+        self.crash_spares_removals = false;
+    }
+
+    /// Arm one crash-injection point for every bundle but a removal.
+    /// Tests only; production never calls this.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_crash_point_for_writes(&mut self, point: Option<CrashPoint>) {
+        self.injector = point;
+        self.crash_spares_removals = true;
     }
 
     /// Make placement behave like a filesystem without one of its steps.
@@ -838,6 +858,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         applied_by: Option<&str>,
     ) -> Result<PublishOutcome, PublishError> {
         let bundle = &sealed.bundle;
+        self.publishing_removal = bundle.removal.is_some();
         self.now_ms = (self.clock)();
         self.today_day = day_of(self.now_ms);
         self.run_pregates(sealed, live)?;
@@ -885,6 +906,14 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     /// never arrived), collision, snapshot inputs, disk preflight. Nothing
     /// is staged until all pass.
     fn run_pregates(&self, sealed: &SealedPreview, live: &SealRecheck) -> Result<(), PublishError> {
+        let removal = sealed.bundle.removal.as_ref();
+        // A removal publishes alone: the rules for a bundle that also places
+        // files on the paths it frees are not written yet.
+        if removal.is_some() && !sealed.bundle.items.is_empty() {
+            return Err(PublishError::Journal(
+                "a removal is published on its own".into(),
+            ));
+        }
         sealed.recheck(live).map_err(|err| match err {
             SealError::StaleFile(text) | SealError::StaleIdentity(text) => {
                 PublishError::Validation(text)
@@ -910,6 +939,24 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 )));
             }
             let journals = JournalStore::new(conn);
+            if let Some(removal) = removal {
+                if let Some(moved) = super::planner::removal_moved(conn, &removal.items)? {
+                    return Err(PublishError::Validation(format!(
+                        "track {moved} changed under the preview"
+                    )));
+                }
+                for item in &removal.items {
+                    if let Some(held) =
+                        journals.unsettled_bundle_for_track(&item.track_id, &sealed.bundle.id)?
+                    {
+                        return Err(PublishError::Journal(format!(
+                            "track {} has an unfinished managed write (bundle {held}) waiting \
+                             for recovery",
+                            item.track_id
+                        )));
+                    }
+                }
+            }
             let baselines = super::snapshots::BaselineStore::new(conn);
             items
                 .iter()
@@ -941,14 +988,24 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         // A replaced file's bin entry is checked before anything moves.
         // While the bins are unknown the publish waits, as a busy database
         // makes it.
-        for replaced in items.iter().filter_map(|item| item.replaces.as_ref()) {
+        let entries = items
+            .iter()
+            .filter_map(|item| item.replaces.as_ref())
+            .map(|replaced| replaced.recycle_to.as_str())
+            .chain(
+                removal
+                    .into_iter()
+                    .flat_map(|removal| &removal.items)
+                    .filter_map(|item| item.file.as_ref())
+                    .map(|file| file.recycle_to.as_str()),
+            );
+        for recycle_to in entries {
             if let Some(cause) = self.sandbox.bins_unknown() {
                 return Err(PublishError::Interrupted(format!(
                     "no recycle bin is known while {cause}"
                 )));
             }
-            self.sandbox
-                .ensure_under_bin(Path::new(&replaced.recycle_to))?;
+            self.sandbox.ensure_under_bin(Path::new(recycle_to))?;
         }
         CollisionGate::check_bundle(&self.sandbox, &sealed.bundle)?;
         DiskPreflight::check(&sealed.bundle, &self.space)?;
@@ -977,6 +1034,24 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         bundle: &PlanBundle,
         docs: &BTreeMap<String, TagDocument>,
     ) -> Result<Vec<PreparedFile>, PublishError> {
+        if let Some(removal) = &bundle.removal {
+            let files: Vec<(
+                usize,
+                &super::planner::RemoveItem,
+                &super::planner::RemoveFile,
+            )> = removal
+                .items
+                .iter()
+                .enumerate()
+                .filter_map(|(index, item)| item.file.as_ref().map(|file| (index, item, file)))
+                .collect();
+            for (count, (index, item, file)) in files.iter().enumerate() {
+                self.prepare_remove(bundle, *index, item, file)?;
+                if count == 0 && files.len() > 1 {
+                    self.maybe_crash(CrashPoint::AfterFirstFileStaged)?;
+                }
+            }
+        }
         let mut staged_files = Vec::new();
         for (ordinal, item) in bundle.items.iter().enumerate() {
             let source = self
@@ -1343,6 +1418,50 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         })
     }
 
+    /// Journal one file a removal takes away, inserted and staged in one
+    /// durable write. Nothing moves until publish.
+    fn prepare_remove(
+        &mut self,
+        bundle: &PlanBundle,
+        index: usize,
+        item: &super::planner::RemoveItem,
+        file: &super::planner::RemoveFile,
+    ) -> Result<(), PublishError> {
+        let journal_id = super::remove::journal_id(&bundle.id, index);
+        let dest = self
+            .sandbox
+            .resolve_removal(&item.seal.root_id, &item.seal.relative_path)?;
+        let aside = self.sandbox.backup_path_for(&dest, &journal_id)?;
+        self.sandbox.ensure_under_removal_roots(&aside)?;
+        let journal = FileJournal {
+            id: journal_id.clone(),
+            bundle_id: bundle.id.clone(),
+            kind: JournalKind::Remove,
+            source: None,
+            dest_root: item.seal.root_id.clone(),
+            dest_rel: item.seal.relative_path.clone(),
+            staged: aside.to_string_lossy().to_string(),
+            backup: None,
+            source_sha256: Some(file.fingerprint.sha256.clone()),
+            staged_sha256: file.fingerprint.sha256.clone(),
+            track_id: None,
+            mgmt_state: None,
+            state: JournalState::Prepared,
+            seq: 0,
+            replaces: Some(JournalReplacement {
+                rel: item.seal.relative_path.clone(),
+                sha256: file.fingerprint.sha256.clone(),
+                track_id: Some(item.track_id.clone()),
+                recycle_to: file.recycle_to.clone(),
+            }),
+        };
+        durable(&self.db, "publish.journal_remove", |tx| {
+            let writer = JournalWriter::new(tx);
+            writer.insert(&journal)?;
+            writer.advance(&journal_id, JournalState::Prepared, JournalState::Staged)
+        })
+    }
+
     /// Publish renames plus the atomic catalog commit, then cleanup.
     fn publish_and_commit(
         &mut self,
@@ -1352,12 +1471,11 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         let journals = long_read(&self.db, "publish.bundle_journals", |conn| {
             JournalStore::new(conn).bundle(&bundle.id)
         })?;
-        let roots: BTreeSet<&str> = journals
-            .iter()
-            .map(|journal| journal.dest_root.as_str())
-            .collect();
-        for root in roots {
-            self.sandbox.probe_placement(root)?;
+        let mut probed: BTreeSet<&str> = BTreeSet::new();
+        for journal in &journals {
+            if probed.insert(journal.dest_root.as_str()) {
+                probe_root(&self.sandbox, journal)?;
+            }
         }
         let mut first = true;
         for journal in journals.iter() {
@@ -1409,22 +1527,37 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 current.state.as_str()
             )));
         }
+        if current.kind == JournalKind::Remove {
+            return self.publish_remove(bundle, &current);
+        }
         let dest = self
             .sandbox
             .resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
         self.sandbox.ensure_under_roots(&dest)?;
-        if current.kind == JournalKind::Delete {
-            let aside = Path::new(&journal.staged);
-            self.sandbox.ensure_under_roots(aside)?;
-            super::generated::set_aside(
-                self.sandbox.placement_mode(&journal.dest_root),
-                (&journal.dest_root, &journal.dest_rel),
-                &dest,
-                aside,
-                &journal.staged_sha256,
-                self.place_seams,
-            )?;
-            return self.journal_published(&journal.id);
+        match current.kind {
+            JournalKind::Delete => {
+                let aside = Path::new(&journal.staged);
+                self.sandbox.ensure_under_roots(aside)?;
+                super::generated::set_aside(
+                    self.sandbox.placement_mode(&journal.dest_root),
+                    (&journal.dest_root, &journal.dest_rel),
+                    &dest,
+                    aside,
+                    &journal.staged_sha256,
+                    self.place_seams,
+                )?;
+                return self.journal_published(&journal.id);
+            }
+            JournalKind::Remove => {
+                return Err(PublishError::Journal(format!(
+                    "journal {} is a removal",
+                    journal.id
+                )));
+            }
+            JournalKind::Audio
+            | JournalKind::Sidecar
+            | JournalKind::Artwork
+            | JournalKind::Output => {}
         }
         let staged_path = Path::new(&journal.staged);
         self.sandbox.ensure_under_roots(staged_path)?;
@@ -1516,6 +1649,40 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         self.journal_published(&journal.id)
     }
 
+    /// Set one file a removal takes away aside under its row's hidden name,
+    /// checked by the identity the plan read when it is known.
+    fn publish_remove(
+        &self,
+        bundle: &PlanBundle,
+        journal: &FileJournal,
+    ) -> Result<(), PublishError> {
+        let dest = self
+            .sandbox
+            .resolve_removal(&journal.dest_root, &journal.dest_rel)?;
+        let aside = Path::new(&journal.staged);
+        self.sandbox.ensure_under_removal_roots(aside)?;
+        let known = bundle
+            .removal
+            .as_ref()
+            .and_then(|removal| super::remove::file_of(removal, journal))
+            .map(|file| file.stat);
+        let hook = self
+            .before_set_aside
+            .as_deref()
+            .map(|hook| hook as &dyn Fn(&Path));
+        super::remove::set_aside(
+            self.sandbox.placement_mode(&journal.dest_root),
+            (&journal.dest_root, &journal.dest_rel),
+            &dest,
+            aside,
+            &journal.staged_sha256,
+            known,
+            self.place_seams,
+            hook,
+        )?;
+        self.journal_published(&journal.id)
+    }
+
     /// Single durable transaction: the catalog commit plus every journal
     /// `published -> committed`. The adopted files are read before it.
     fn commit(&mut self, bundle: &PlanBundle, staged: &[PreparedFile]) -> Result<(), PublishError> {
@@ -1553,6 +1720,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         let commit = BundleCommit {
             bundle_id: bundle.id.clone(),
             tracks,
+            removal: bundle.removal.clone(),
         };
         durable(&self.db, "publish.bundle_commit", |tx| {
             self.catalog.commit_bundle(tx, &commit)?;
@@ -1612,7 +1780,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             if journal.state != JournalState::Committed {
                 continue;
             }
-            if let Err(error) = self.cleanup_one(journal, staged) {
+            if let Err(error) = self.cleanup_one(bundle, journal, staged) {
                 if error.wrote_nothing() {
                     return Err(error);
                 }
@@ -1656,13 +1824,47 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     /// newly empty source parents. Unknown files are never deleted.
     fn cleanup_one(
         &self,
+        bundle: &PlanBundle,
         journal: &FileJournal,
         staged: &[PreparedFile],
     ) -> Result<(), PublishError> {
-        if journal.kind == JournalKind::Delete {
-            let aside = Path::new(&journal.staged);
-            self.sandbox.ensure_under_roots(aside)?;
-            return super::generated::discard(aside, &journal.staged_sha256);
+        let now =
+            std::time::UNIX_EPOCH + std::time::Duration::from_millis(self.now_ms.max(0) as u64);
+        match journal.kind {
+            JournalKind::Delete => {
+                let aside = Path::new(&journal.staged);
+                self.sandbox.ensure_under_roots(aside)?;
+                return super::generated::discard(aside, &journal.staged_sha256);
+            }
+            // A removed file goes to its bin, never away.
+            JournalKind::Remove => {
+                let replaced = journal.replaces.as_ref().ok_or_else(|| {
+                    PublishError::Journal(format!("journal {} has no bin entry", journal.id))
+                })?;
+                let known = bundle
+                    .removal
+                    .as_ref()
+                    .and_then(|removal| super::remove::file_of(removal, journal))
+                    .map(|file| file.stat);
+                let moved = super::bin::recycle_replaced(
+                    &self.db,
+                    &self.sandbox,
+                    journal,
+                    replaced,
+                    Path::new(&journal.staged),
+                    self.bin_seams,
+                    now,
+                    known,
+                )?;
+                if !moved {
+                    tracing::warn!(journal_id = %journal.id, "a removed file's hidden copy is gone");
+                }
+                return Ok(());
+            }
+            JournalKind::Audio
+            | JournalKind::Sidecar
+            | JournalKind::Artwork
+            | JournalKind::Output => {}
         }
         if let (Some(replaced), Some(backup_text)) =
             (journal.replaces.as_ref(), journal.backup.as_deref())
@@ -1674,7 +1876,8 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 replaced,
                 Path::new(backup_text),
                 self.bin_seams,
-                std::time::UNIX_EPOCH + std::time::Duration::from_millis(self.now_ms.max(0) as u64),
+                now,
+                None,
             )?;
         } else if let Some(backup_text) = journal.backup.as_deref() {
             let backup = Path::new(backup_text);
@@ -1727,7 +1930,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         let journals = long_read(&self.db, "publish.bundle_journals", |conn| {
             JournalStore::new(conn).bundle(&bundle.id)
         })?;
-        let rows = if self.injector == Some(CrashPoint::AfterFirstUnwind) {
+        let rows = if self.armed() == Some(CrashPoint::AfterFirstUnwind) {
             &journals[..journals.len().min(1)]
         } else {
             &journals[..]
@@ -1753,9 +1956,17 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         )
     }
 
+    /// The crash point armed for the bundle being published.
+    fn armed(&self) -> Option<CrashPoint> {
+        if self.crash_spares_removals && self.publishing_removal {
+            return None;
+        }
+        self.injector
+    }
+
     /// Fail with the armed crash point, if it matches.
     fn maybe_crash(&self, point: CrashPoint) -> Result<(), PublishError> {
-        if self.injector == Some(point) {
+        if self.armed() == Some(point) {
             return Err(PublishError::InjectedCrash(point.as_str().to_string()));
         }
         Ok(())
@@ -1791,9 +2002,27 @@ fn removal_journal_id(audio_journal_id: &str, index: usize) -> String {
     format!("{audio_journal_id}-remove-{index}")
 }
 
+/// Probe the root a journal's file is under, by the steps its kind may
+/// take: a removal's root may be a remove-only one.
+pub(super) fn probe_root(sandbox: &Sandbox, journal: &FileJournal) -> Result<(), PublishError> {
+    match journal.kind {
+        JournalKind::Remove => sandbox.probe_removal_placement(&journal.dest_root)?,
+        JournalKind::Audio
+        | JournalKind::Sidecar
+        | JournalKind::Artwork
+        | JournalKind::Output
+        | JournalKind::Delete => sandbox.probe_placement(&journal.dest_root)?,
+    };
+    Ok(())
+}
+
 /// Every journal row `prepare` writes for a bundle staged in full.
 pub(super) fn journal_ids(bundle: &PlanBundle) -> Vec<String> {
-    let mut ids = Vec::new();
+    let mut ids = bundle
+        .removal
+        .as_ref()
+        .map(|removal| super::remove::journal_ids(&bundle.id, removal))
+        .unwrap_or_default();
     for (ordinal, item) in bundle.items.iter().enumerate() {
         let audio = audio_journal_id(&bundle.id, ordinal);
         ids.extend((0..item.sidecars.len()).map(|index| sidecar_journal_id(&audio, index)));
