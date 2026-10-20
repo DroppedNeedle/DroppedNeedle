@@ -309,7 +309,8 @@ machine and its data folders can run it.
     lossy bounds and lossless preferences, the unknown-quality choice, and
     the target bitrate of a custom MP3 recipe step.
   - The server-wide scrobble targets (each user's own scrobble switches
-    stay), the home page section settings, "Scrobble to Plex" (a Plex track
+    stay), the server-wide home page section settings (each user's own
+    section choices stay), "Scrobble to Plex" (a Plex track
     that ends is always reported), Connect Apps' exact-track approval flag,
     MusicBrainz's concurrent searches, and the scan schedule's stored "last
     scan" (it now comes from the scan history).
