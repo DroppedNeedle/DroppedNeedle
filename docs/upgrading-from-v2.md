@@ -36,8 +36,9 @@ with the same ids, and v3 checks it against your files on its first scan.
    ```
 
 The upgrade prints what it is doing, then a summary: how many of each kind
-of record moved, what stayed behind, which settings are back at their
-defaults, and where your v2 files are now. The full report is saved as
+of record moved, what stayed behind, anything worth a look (such as an
+artist kept under its v2 id), which settings are back at their defaults,
+and where your v2 files are now. The full report is saved as
 `upgrade-report.json` in your cache folder.
 
 Upgrade before anyone uses v3. If you start v3 on a v2 data directory by
@@ -121,9 +122,12 @@ many. Nothing else in the v2 database is changed.
 - Small per-user preferences: scrobble targets, home page sections,
   Navidrome folders, personal-mix approvals, and profile pictures.
 - Saved play queues and bookmarks of Subsonic and Jellyfin apps.
-- Your library: every album and song with the id v2 gave it. Artists get
-  a new id once, the one v3 finds them by when it scans, so each artist
-  keeps its songs; the id v2 gave an artist still opens it.
+- Your library: every album and song with the id v2 gave it. Most
+  artists get a new id once, the one v3 finds them by when it scans, so
+  each artist keeps its songs; the id v2 gave an artist still opens it.
+  An artist that can't take that id (Various Artists, one with no songs,
+  or one whose name another artist already holds) keeps its v2 id, and
+  the summary names any kept apart by name.
   Playlists, favorites, history, queues and bookmarks find their songs and
   artists again. Subsonic apps like Symfonium or Feishin keep everything:
   song and album ids do not change, and an artist they know by its v2 id
