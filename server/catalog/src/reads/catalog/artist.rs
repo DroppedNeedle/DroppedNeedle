@@ -429,14 +429,41 @@ impl Catalog {
     /// TheAudioDB images already in the cache; never dials out, so the
     /// header stays fast.
     async fn cached_artist_images(&self, mbid: &str) -> Option<ArtistImages> {
-        let bytes = self
-            .upstream()
-            .cache()
-            .get_bytes(&self.audiodb_artist_key(mbid))
-            .await?;
+        self.cached_audiodb_answer(&self.audiodb_artist_key(mbid))
+            .await
+            .flatten()
+    }
+
+    /// TheAudioDB's cached answer under `key`: `Some(None)` for a
+    /// remembered miss, `None` when nothing is cached.
+    async fn cached_audiodb_answer(&self, key: &CacheKey) -> Option<Option<ArtistImages>> {
+        let bytes = self.upstream().cache().get_bytes(key).await?;
         serde_json::from_slice::<AudioDbArtistEntry>(&bytes)
-            .ok()?
-            .images
+            .ok()
+            .map(|entry| entry.images)
+    }
+
+    /// TheAudioDB images for a page, from the cache only: the free key
+    /// allows one call every two seconds, too slow for a page to wait on.
+    /// With nothing cached, a background fill for `queue_for` (the artist
+    /// as the page asked for it) is queued and the answer reads as none.
+    /// Off reads as none and queues nothing.
+    pub(super) async fn page_artist_images(
+        &self,
+        mbid: &str,
+        queue_for: &str,
+    ) -> Option<ArtistImages> {
+        let advanced = self.upstream().settings().advanced();
+        self.upstream().audiodb(&advanced)?;
+        let cached = self
+            .cached_audiodb_answer(&self.audiodb_artist_key(mbid))
+            .await;
+        if cached.is_none() {
+            let mut targets = WarmTargets::default();
+            targets.audiodb_artist(Some(queue_for));
+            self.warm_covers("audiodb", targets);
+        }
+        cached.flatten()
     }
 
     /// TheAudioDB images, fetched and cached with v2's found/miss
@@ -471,10 +498,8 @@ impl Catalog {
             return Some(None);
         };
         let key = self.audiodb_artist_key(mbid);
-        if let Some(bytes) = self.upstream().cache().get_bytes(&key).await
-            && let Ok(entry) = serde_json::from_slice::<AudioDbArtistEntry>(&bytes)
-        {
-            return Some(entry.images);
+        if let Some(images) = self.cached_audiodb_answer(&key).await {
+            return Some(images);
         }
         let mut found = client.artist_by_mbid(mbid, priority).await;
         if matches!(found, Ok(None)) && advanced.audiodb_name_search_fallback && !name.is_empty() {

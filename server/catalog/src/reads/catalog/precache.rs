@@ -124,8 +124,10 @@ impl Catalog {
             .map(|images| images.and_then(|images| images.album_thumb_url))
     }
 
-    /// Candidate image URLs for an artist: TheAudioDB's thumbnail, asked
-    /// at `priority`, else the Wikidata portrait.
+    /// Candidate image URLs for an artist: TheAudioDB's thumbnail, else
+    /// the Wikidata portrait, the providers asked at `priority`. A page
+    /// reads TheAudioDB from the cache only and queues a fill on a miss;
+    /// background work asks it directly.
     pub async fn artist_image_candidates(
         &self,
         mbid: &str,
@@ -143,10 +145,13 @@ impl Catalog {
             }
         };
         let mut candidates = ArtistImageCandidates::default();
-        match self
-            .artist_images_lookup(&detail.mbid, &detail.name, priority)
-            .await
-        {
+        let audiodb = if priority.is_user_facing() {
+            Some(self.page_artist_images(&detail.mbid, mbid).await)
+        } else {
+            self.artist_images_lookup(&detail.mbid, &detail.name, priority)
+                .await
+        };
+        match audiodb {
             Some(images) => {
                 if let Some(thumb) = images.and_then(|images| images.thumb_url) {
                     candidates.urls.push(thumb);
@@ -162,6 +167,24 @@ impl Catalog {
         }
         candidates
     }
+
+    /// Fetch and cache TheAudioDB's answer for an artist at background
+    /// priority. True when it names a thumbnail. Safe to repeat: a cached
+    /// answer is not asked again.
+    pub async fn fill_artist_images(&self, mbid: &str) -> bool {
+        let detail = match self.artist_detail(mbid, BACKGROUND).await {
+            Ok(Some(detail)) => detail,
+            Ok(None) => return false,
+            Err(error) => {
+                tracing::debug!(artist = mbid, %error, "AudioDB fill: MusicBrainz unavailable");
+                return false;
+            }
+        };
+        self.artist_images_lookup(&detail.mbid, &detail.name, BACKGROUND)
+            .await
+            .flatten()
+            .is_some_and(|images| images.thumb_url.is_some())
+    }
 }
 
 /// The artwork service's artist image source.
@@ -174,6 +197,10 @@ impl ArtistImageSource for CatalogArtistImages {
         priority: droppedneedle_providers::RequestPriority,
     ) -> futures_util::future::BoxFuture<'a, ArtistImageCandidates> {
         Box::pin(self.0.artist_image_candidates(artist_mbid, priority))
+    }
+
+    fn fill<'a>(&'a self, artist_mbid: &'a str) -> futures_util::future::BoxFuture<'a, bool> {
+        Box::pin(self.0.fill_artist_images(artist_mbid))
     }
 }
 

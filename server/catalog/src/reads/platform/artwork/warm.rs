@@ -8,14 +8,21 @@
 //! disk: covers at 500 px (the 250 is made from it), artists at the stored
 //! original. The archive's limiter serves every page request first.
 //!
+//! The same kind fills TheAudioDB's artist answers, which a page reads from
+//! the cache only: an artist image resolve that finds none queues one job
+//! naming that artist. The handler asks TheAudioDB at background priority
+//! and caches its answer; when it names a picture and the artist has no
+//! stored image yet, the image is resolved again at once.
+//!
 //! A job is keyed by its page and a digest of its targets, so the same
 //! list queued twice is one row. Queueing never waits: the write runs on
 //! its own task, and one that fails is logged and dropped (the next build
 //! queues again). A run is safe to repeat: what is cached is skipped, and
 //! what cannot be fetched is remembered by the cache's own "no art"
-//! markers, so the job always ends done. The handler writes nothing to the
-//! database; a busy one only meets the queue's own writes, which put the
-//! job back without spending an attempt.
+//! markers, so the job always ends done. When TheAudioDB does not answer,
+//! nothing is cached, so the next page to miss it queues the fill again.
+//! The handler writes nothing to the database; a busy one only meets the
+//! queue's own writes, which put the job back without spending an attempt.
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -55,6 +62,8 @@ pub struct WarmTargets {
     covers: Vec<String>,
     #[serde(default)]
     artists: Vec<String>,
+    #[serde(default)]
+    audiodb_artists: Vec<String>,
     #[serde(skip)]
     seen: HashSet<String>,
 }
@@ -78,9 +87,19 @@ impl WarmTargets {
         }
     }
 
+    /// Add an artist whose TheAudioDB answer is to be fetched. Ids that
+    /// are not MBIDs are skipped.
+    pub fn audiodb_artist(&mut self, mbid: Option<&str>) {
+        if self.audiodb_artists.len() < MAX_ARTISTS
+            && let Some(mbid) = self.fresh("audiodb", mbid)
+        {
+            self.audiodb_artists.push(mbid);
+        }
+    }
+
     /// True when there is nothing to warm.
     pub fn is_empty(&self) -> bool {
-        self.covers.is_empty() && self.artists.is_empty()
+        self.covers.is_empty() && self.artists.is_empty() && self.audiodb_artists.is_empty()
     }
 
     fn fresh(&mut self, kind: &str, mbid: Option<&str>) -> Option<String> {
@@ -165,9 +184,13 @@ impl JobHandler for CoverWarmJobs {
                     fetched += 1;
                 }
             }
+            for mbid in &targets.audiodb_artists {
+                artwork.fill_artist_image(mbid).await;
+            }
             tracing::debug!(
                 covers = targets.covers.len(),
                 artists = targets.artists.len(),
+                audiodb_artists = targets.audiodb_artists.len(),
                 fetched,
                 "page images warmed"
             );

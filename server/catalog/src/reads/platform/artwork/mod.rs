@@ -27,7 +27,9 @@
 //!
 //! Artist images come from TheAudioDB's artist thumbnail, else the
 //! Wikidata portrait (v2's order, minus the Lidarr and Jellyfin sources v3
-//! does not mirror). The catalog names the candidate URLs through
+//! does not mirror). A page reads TheAudioDB from the cache only; a miss
+//! queues a background fill (see [`warm`]) and the page goes on to the
+//! portrait. The catalog names the candidate URLs through
 //! [`ArtistImageSource`]; the image itself is downloaded once, from an
 //! allowed host only (see
 //! [`check_image_url`](droppedneedle_providers::images::check_image_url)),
@@ -114,6 +116,10 @@ pub trait ArtistImageSource: Send + Sync {
         artist_mbid: &'a str,
         priority: RequestPriority,
     ) -> BoxFuture<'a, ArtistImageCandidates>;
+
+    /// Fetch and cache, at background priority, the sources a page only
+    /// reads from the cache (TheAudioDB). True when they name a picture.
+    fn fill<'a>(&'a self, artist_mbid: &'a str) -> BoxFuture<'a, bool>;
 }
 
 /// Whether `prefer_local_cover_art` is on now, so a settings change applies
@@ -211,6 +217,32 @@ impl ArtworkService {
                 .await,
             CoverLookup::Found(_)
         )
+    }
+
+    /// Fill the artist's background-only sources (TheAudioDB). When they
+    /// name a picture and no image is stored, the image is resolved now,
+    /// past any "none" marker; a stored image is kept until the cache
+    /// lets it go.
+    pub async fn fill_artist_image(&self, artist_mbid: &str) {
+        let Some(source) = self.artist_source.clone() else {
+            return;
+        };
+        if !source.fill(artist_mbid).await {
+            return;
+        }
+        let key = artist_key(artist_mbid);
+        if let Some(KeyEntry::Hit { hash, .. }) = self.cache.key(&key).await
+            && self.cache.has_blob(&hash).await
+        {
+            return;
+        }
+        self.resolve_artist_original(
+            artist_mbid,
+            key,
+            PRECACHE_WAIT,
+            RequestPriority::BackgroundSync,
+        )
+        .await;
     }
 
     /// Whether a release group's 500 px cover is settled: the album's own
@@ -347,6 +379,19 @@ impl ArtworkService {
             Some(KeyEntry::Miss { until }) if until > unix_now() => return CoverLookup::Missing,
             _ => {}
         }
+        self.resolve_artist_original(mbid, key, wait, priority)
+            .await
+    }
+
+    /// Resolve the artist's image in the background while the caller
+    /// waits up to `wait`, whatever the cache holds.
+    async fn resolve_artist_original(
+        &self,
+        mbid: &str,
+        key: String,
+        wait: Duration,
+        priority: RequestPriority,
+    ) -> CoverLookup {
         let (Some(source), Some(images)) = (self.artist_source.clone(), self.images.clone()) else {
             return CoverLookup::Missing;
         };

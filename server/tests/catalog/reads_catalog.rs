@@ -975,14 +975,17 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
 
 /// A cold artist image waits its turn behind a busy MusicBrainz instead of
 /// being turned down like a page: the image resolve asks at image
-/// priority, so it finds the artist and its thumbnail rather than coming
+/// priority, so it finds the artist and its portrait rather than coming
 /// back incomplete, which would hold the image blank for the outage wait.
+/// TheAudioDB, with nothing cached, is left to the background fill.
 #[tokio::test]
 async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
     use droppedneedle_catalog::reads::catalog::precache::CatalogArtistImages;
     use droppedneedle_catalog::reads::platform::artwork::ArtistImageSource as _;
     use droppedneedle_providers::executor::ScriptedWire;
-    use droppedneedle_providers::{ProviderEndpoints, RequestPriority, audiodb, musicbrainz};
+    use droppedneedle_providers::{
+        ProviderEndpoints, RequestPriority, audiodb, musicbrainz, wikidata,
+    };
     use std::time::Duration;
 
     let wire = Arc::new(ScriptedWire::new());
@@ -998,12 +1001,26 @@ async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
         &[],
         upstream_fixture("audiodb_artist"),
     );
+    wire.answer(
+        &format!("{}/w/api.php", wikidata::WIKIDATA_BASE),
+        200,
+        &[],
+        upstream_fixture("wikidata_claims"),
+    );
+    wire.answer(
+        &format!("{}/w/api.php", wikidata::COMMONS_BASE),
+        200,
+        &[],
+        upstream_fixture("commons_imageinfo"),
+    );
     let providers = Arc::new(Providers::over_wire(
         wire.clone(),
         Arc::new(droppedneedle_kernel::clock::SystemClock),
         ProviderEndpoints {
             musicbrainz: musicbrainz::MB_API_BASE.to_owned(),
             audiodb: audiodb::DEFAULT_BASE_URL.to_owned(),
+            wikidata: wikidata::WIKIDATA_BASE.to_owned(),
+            commons: wikidata::COMMONS_BASE.to_owned(),
             ..ProviderEndpoints::closed()
         },
     ));
@@ -1033,9 +1050,15 @@ async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
     assert!(!candidates.incomplete, "the resolve is settled");
     assert_eq!(
         candidates.urls,
-        ["https://r2.theaudiodb.com/images/media/artist/thumb/radiohead.jpg"]
+        ["https://upload.wikimedia.org/wikipedia/commons/a/a1/Radiohead_2016.jpg"]
     );
     assert!(started.elapsed() >= Duration::from_secs(2), "it waited");
+    assert!(
+        wire.sent()
+            .iter()
+            .all(|sent| !sent.url.as_str().starts_with(audiodb::DEFAULT_BASE_URL)),
+        "TheAudioDB is not asked while the page waits"
+    );
 }
 
 /// A section built past a failed ListenBrainz read is not cached as the
