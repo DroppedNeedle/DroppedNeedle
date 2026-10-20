@@ -91,6 +91,50 @@ async def test_ping_missing_auth_fails(compat_env):
     assert body["error"]["code"] in (10, 40)
 
 
+@_aio
+async def test_missing_secret_is_10_for_known_and_unknown_users(compat_env):
+    for username in (compat_env.username, "no-such-user"):
+        r = compat_env.client.get("/subsonic/rest/ping", params={"f": "json", "u": username})
+        assert _sub(r)["error"]["code"] == 10
+
+
+@_aio
+async def test_credentialless_requests_do_not_trip_the_auth_lockout(compat_env):
+    bare = {
+        "id": encode("artist", "a74b1b7f-71a5-4011-9441-d0b5e4122711"),
+        "size": "1200",
+        "f": "json",
+    }
+    for _ in range(10):
+        r = compat_env.client.get("/subsonic/rest/getCoverArt", params=bare)
+        assert _sub(r)["error"]["code"] == 10
+    q = {"f": "json", "apiKey": compat_env.secret}
+    assert _sub(compat_env.client.get("/subsonic/rest/ping", params=q))["status"] == "ok"
+
+
+@_aio
+async def test_wrong_secret_still_trips_the_auth_lockout(compat_env):
+    from tests.compat.conftest import subsonic_query
+
+    bad = subsonic_query("wrong-secret", compat_env.username, scheme="enc")
+    for _ in range(5):
+        compat_env.client.get("/subsonic/rest/ping", params=bad)
+    q = {"f": "json", "apiKey": compat_env.secret}
+    r = compat_env.client.get("/subsonic/rest/ping", params=q)
+    assert _sub(r)["error"]["message"] == "Rate limit exceeded"
+    assert "Retry-After" in r.headers
+
+
+@_aio
+async def test_credentialless_flood_is_throttled_without_locking_out_valid_auth(compat_env):
+    replies = [
+        compat_env.client.get("/subsonic/rest/ping", params={"f": "json"}) for _ in range(60)
+    ]
+    assert any("Retry-After" in r.headers for r in replies)
+    q = {"f": "json", "apiKey": compat_env.secret}
+    assert _sub(compat_env.client.get("/subsonic/rest/ping", params=q))["status"] == "ok"
+
+
 # ----- public extensions endpoint (no auth) -----
 
 @_aio

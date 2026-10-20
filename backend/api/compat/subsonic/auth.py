@@ -16,6 +16,10 @@ def _first(params: dict[str, list[str]], key: str) -> str | None:
     return vals[0] if vals else None
 
 
+def presents_secret(params: dict[str, list[str]]) -> bool:
+    return any(params.get(key) for key in ("t", "s", "p", "apiKey"))
+
+
 async def resolve_subsonic_user(
     params: dict[str, list[str]], app_passwords: "AppPasswordService"
 ) -> "UserRecord":
@@ -32,6 +36,8 @@ async def resolve_subsonic_user(
     if has_password and has_token:
         raise SubsonicError(10)
     if has_api_key and (has_token or has_password):
+        raise SubsonicError(10)
+    if not (has_token or has_password or has_api_key):
         raise SubsonicError(10)
     return await app_passwords.verify_subsonic(
         u=_first(params, "u"),

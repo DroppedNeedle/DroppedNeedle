@@ -23,7 +23,7 @@ from api.compat.common.ratelimit import (
     reject_subsonic,
     trusted_client_ip,
 )
-from api.compat.subsonic.auth import resolve_subsonic_user
+from api.compat.subsonic.auth import presents_secret, resolve_subsonic_user
 from api.compat.subsonic.errors import to_subsonic_code, to_subsonic_message
 from api.compat.subsonic.ids import decode, encode
 from api.compat.subsonic import models as m
@@ -234,16 +234,19 @@ async def _dispatch(
             try:
                 user = await resolve_subsonic_user(params, services.app_passwords)
             except SubsonicError as exc:
-                if exc.code in {10, 40, 41, 42, 43, 44}:
+                retry_after = None
+                if not presents_secret(params):
+                    retry_after = await compat_rate_limits.public_retry_after(client_ip)
+                elif exc.code in {10, 40, 41, 42, 43, 44}:
                     retry_after = compat_rate_limits.record_auth_failure(client_ip)
-                    if retry_after is not None:
-                        return reject_subsonic(
-                            fmt,
-                            callback,
-                            retry_after,
-                            server_name=settings.advertise_server_name,
-                            server_version=server_version,
-                        )
+                if retry_after is not None:
+                    return reject_subsonic(
+                        fmt,
+                        callback,
+                        retry_after,
+                        server_name=settings.advertise_server_name,
+                        server_version=server_version,
+                    )
                 raise
             if not is_media_request(path):
                 retry_after = await compat_rate_limits.principal_retry_after(
