@@ -9,8 +9,6 @@
 //!
 //! [`LimiterSet`]: crate::limiter::LimiterSet
 
-use crate::limiter::RatePolicy;
-
 /// How fast one row's bucket refills.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Rate {
@@ -262,14 +260,4 @@ pub const RATES: &[RateRow] = &[
 #[must_use]
 pub fn row(source: &str) -> Option<&'static RateRow> {
     RATES.iter().find(|row| row.source == source)
-}
-
-/// The fixed bucket of one row, or `None` for a missing or operator-set row.
-#[must_use]
-pub fn fixed_policy(source: &str) -> Option<RatePolicy> {
-    let row = row(source)?;
-    match row.per_second {
-        Rate::Fixed(per_second) => Some(RatePolicy::new(per_second, row.burst)),
-        Rate::Setting => None,
-    }
 }

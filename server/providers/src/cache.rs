@@ -1,16 +1,15 @@
 //! Cache-aside helpers with registered key prefixes.
 //!
-//! Provider clients read through [`cache_aside`]: a hit returns the cached
-//! bytes, a miss runs the fetch closure and stores its result. Keys live
+//! Provider reads go through [`cache_aside_json`]: a hit returns the cached
+//! value, a miss runs the fetch closure and stores its result. Keys live
 //! under per-source prefixes, and every source registers its invalidation
 //! roots in [`PROVIDER_CACHE_PREFIXES`] so a source change (endpoint swap,
 //! credential rotation, settings edit) sweeps exactly that source's keys via
 //! [`invalidate_source`].
 //!
-//! The prefix lists port v2's `cache_keys.py` sweep sets. Clients may use
-//! narrower prefixes than the registered roots (a sweep of `lfm_` covers
-//! `lfm_management:...`); the client contract only requires that every
-//! prefix a client writes starts under one of its roots.
+//! A client may write under a narrower prefix than its registered root (a
+//! sweep of `lfm_` covers `lfm_management:...`), as long as the prefix
+//! starts under one of its roots.
 
 use std::{collections::HashMap, time::Duration};
 
@@ -29,28 +28,6 @@ pub trait ProviderCache: Send + Sync + std::fmt::Debug {
     fn delete<'a>(&'a self, key: &'a str) -> BoxFuture<'a, ()>;
     /// Drop every entry under `prefix`, returning how many went.
     fn clear_prefix<'a>(&'a self, prefix: &'a str) -> BoxFuture<'a, usize>;
-}
-
-/// Read-through fetch with an infallible closure (scripted fakes, pure
-/// derivations): hit returns cached bytes, miss runs `fetch` and stores its
-/// result for `ttl`. Fallible fetches belong in [`cache_aside_json`] or match
-/// on the cache directly.
-pub async fn cache_aside_bytes<F, Fut>(
-    cache: &dyn ProviderCache,
-    key: &str,
-    ttl: Duration,
-    fetch: F,
-) -> Vec<u8>
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Vec<u8>>,
-{
-    if let Some(hit) = cache.get_bytes(key).await {
-        return hit;
-    }
-    let value = fetch().await;
-    cache.set_bytes(key, value.clone(), ttl).await;
-    value
 }
 
 /// Read-through fetch for JSON-serializable values. Decode failures behave
@@ -112,16 +89,6 @@ impl InMemoryProviderCache {
     /// Whether the cache holds no entries.
     pub async fn is_empty(&self) -> bool {
         self.entries.lock().await.is_empty()
-    }
-
-    /// Drop expired entries, returning how many went.
-    #[cfg(any(test, feature = "test-support"))]
-    pub async fn cleanup_expired(&self) -> usize {
-        let mut entries = self.entries.lock().await;
-        let now = tokio::time::Instant::now();
-        let before = entries.len();
-        entries.retain(|_, entry| entry.expires > now);
-        before - entries.len()
     }
 }
 
@@ -190,8 +157,8 @@ pub struct SourcePrefixes {
 }
 
 /// Registered invalidation roots for every provider. The MusicBrainz list
-/// ports v2's `musicbrainz_prefixes()` sweep set verbatim, including the
-/// provider-bearing composite responses that must cold-clear with it.
+/// includes the composite responses built from MusicBrainz data, which
+/// must clear with it.
 pub const PROVIDER_CACHE_PREFIXES: &[SourcePrefixes] = &[
     SourcePrefixes {
         source: "musicbrainz",
@@ -268,25 +235,9 @@ pub async fn invalidate_source(cache: &dyn ProviderCache, source: &str) -> usize
     dropped
 }
 
-/// Whether `prefix` sits under one of `source`'s registered roots, so a
-/// sweep of the roots covers it.
-#[must_use]
-pub fn prefix_is_registered(source: &str, prefix: &str) -> bool {
-    prefixes_for(source)
-        .iter()
-        .any(|root| prefix.starts_with(root))
-}
-
-/// Build `{prefix}{id}` with the id canonicalized the way v2's `_mbid_key`
-/// does: trimmed and lowercased (MBIDs are ASCII, so this matches casefold).
-#[must_use]
-pub fn namespaced_key(prefix: &str, id: &str) -> String {
-    format!("{prefix}{}", id.trim().to_lowercase())
-}
-
 /// Build `{prefix}{sha256(parts):x}:{suffix}` for free-text lookups, where
 /// raw text would make keys unbounded. Parts are whitespace-collapsed and
-/// lowercased before hashing, like v2's digest builders.
+/// lowercased before hashing.
 #[must_use]
 pub fn digest_key(prefix: &str, parts: &[&str], suffix: &str) -> String {
     let mut hasher = Sha256::new();
@@ -313,23 +264,6 @@ mod tests {
         for root in CacheRoot::ALL {
             assert!(!prefixes_for(root.as_str()).is_empty(), "{root:?}");
         }
-    }
-
-    #[tokio::test]
-    async fn aside_serves_miss_then_hit() {
-        let cache = InMemoryProviderCache::new();
-        let key = "mb:rg:detail:deadbeef:default";
-        let miss = cache_aside_bytes(&cache, key, Duration::from_secs(60), || async {
-            b"fresh".to_vec()
-        })
-        .await;
-        assert_eq!(miss, b"fresh");
-        let hit = cache_aside_bytes(&cache, key, Duration::from_secs(60), || async {
-            b"must-not-run".to_vec()
-        })
-        .await;
-        assert_eq!(hit, b"fresh");
-        assert_eq!(cache.len().await, 1);
     }
 
     #[tokio::test]
@@ -403,22 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn narrower_prefixes_stay_covered_by_roots() {
-        assert!(prefix_is_registered("lastfm", "lfm_management:album:"));
-        assert!(prefix_is_registered(
-            "musicbrainz",
-            "mb:artist_rgs:deadbeef:page:10:0"
-        ));
-        assert!(!prefix_is_registered("lastfm", "mb:rg:detail:"));
-        assert!(!prefix_is_registered("unknown", "lfm_"));
-    }
-
-    #[test]
-    fn key_builders_canonicalize() {
-        assert_eq!(
-            namespaced_key("mb:rg:detail:", "  DEAD-BEEF "),
-            "mb:rg:detail:dead-beef"
-        );
+    fn digest_keys_canonicalize() {
         let left = digest_key("lrclib:exact:", &[" Hello  World ", "Artist"], "180");
         let right = digest_key("lrclib:exact:", &["hello world", "artist"], "180");
         assert_eq!(left, right);

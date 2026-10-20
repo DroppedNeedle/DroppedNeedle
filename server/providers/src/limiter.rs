@@ -324,29 +324,6 @@ impl RateLimiter {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
-    /// Wait for one token at user priority.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`OverCapacity`] when the bucket could never hold the tokens.
-    pub async fn acquire(&self) -> Result<(), OverCapacity> {
-        self.acquire_with_priority(1, RequestPriority::UserInitiated)
-            .await
-    }
-
-    /// Wait for `tokens` at an explicit priority.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`OverCapacity`] when `tokens` exceeds the burst capacity.
-    pub async fn acquire_with_priority(
-        &self,
-        tokens: u32,
-        priority: RequestPriority,
-    ) -> Result<(), OverCapacity> {
-        self.wait_for(tokens, priority, false).await
-    }
-
     /// Wait for one token and one in-flight slot at `priority`. The slot is
     /// held until the returned guard drops. Rows without a concurrency
     /// limit hand out slots freely.
@@ -438,18 +415,6 @@ impl RateLimiter {
         state.grant_locked();
     }
 
-    /// Take `tokens` without waiting: `true` when granted, `false` when the
-    /// bucket is short, cooling down, or another caller already queues.
-    pub fn try_acquire(&self, tokens: u32) -> bool {
-        let mut state = self.lock();
-        state.refresh();
-        if !state.waiters.is_empty() || state.paused() || !state.has_tokens(tokens) {
-            return false;
-        }
-        state.take(tokens, false);
-        true
-    }
-
     /// Whole tokens currently available.
     #[must_use]
     pub fn remaining(&self) -> u32 {
@@ -502,7 +467,7 @@ impl RateLimiter {
 
     /// Change the rate in place for an operator-set row. Tokens are kept,
     /// capped at the burst; zero or less makes the row unpaced.
-    pub fn retune(&self, per_second: f64) {
+    pub(crate) fn retune(&self, per_second: f64) {
         let mut state = self.lock();
         if state.policy.per_second == per_second {
             return;
@@ -541,14 +506,6 @@ impl RateLimiter {
     /// A clean answer ends the run of 429s that named no wait.
     pub fn clear_headerless_limits(&self) {
         self.lock().headerless_streak = 0;
-    }
-
-    /// Refill to burst and end any cooldown.
-    pub fn reset(&self) {
-        let mut state = self.lock();
-        state.tokens = f64::from(state.policy.burst);
-        state.paused_until = None;
-        state.updated = Instant::now();
     }
 }
 
@@ -605,6 +562,22 @@ impl LimiterSet {
             .map(|(_, limiter)| limiter)
     }
 
+    /// The limiter an executor paces through for `row`. A row missing from
+    /// the table is logged and paced at one request a second, never left
+    /// unpaced. Debug builds stop here instead, so building the providers
+    /// in a test proves every executor names a row.
+    #[must_use]
+    pub fn for_executor(&self, row: &str) -> Arc<RateLimiter> {
+        debug_assert!(
+            self.shared(row).is_some(),
+            "an executor names rate row {row:?}, which the table lacks"
+        );
+        self.shared(row).cloned().unwrap_or_else(|| {
+            tracing::error!(row, "no rate row; pacing at one request a second");
+            Arc::new(RateLimiter::new(RatePolicy::new(1.0, 1)))
+        })
+    }
+
     /// Lowercase names of every row, in table order.
     #[must_use]
     pub fn sources(&self) -> Vec<&'static str> {
@@ -618,29 +591,22 @@ impl Default for LimiterSet {
     }
 }
 
-/// Pacing port: one token per upstream call. No client paces through it
-/// any more; the executor takes its tokens from the table's bucket.
-pub trait Pacer: Send + Sync {
-    /// Wait until one upstream call may proceed.
-    fn acquire(&self) -> impl std::future::Future<Output = ()> + Send;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn over_capacity_fails_instead_of_waiting_forever() {
-        let limiter = RateLimiter::new(RatePolicy::new(1.0, 1));
+    async fn a_row_that_holds_no_tokens_fails_instead_of_waiting_forever() {
+        let limiter = RateLimiter::new(RatePolicy::new(1.0, 0));
         let error = limiter
-            .acquire_with_priority(2, RequestPriority::UserInitiated)
+            .acquire_slot(RequestPriority::UserInitiated)
             .await
-            .expect_err("2 tokens exceed the burst of 1");
+            .expect_err("a burst of 0 never grants");
         assert_eq!(
             error,
             OverCapacity {
-                tokens: 2,
-                burst: 1
+                tokens: 1,
+                burst: 0
             }
         );
     }
@@ -650,18 +616,25 @@ mod tests {
         use tokio::sync::Mutex as AsyncMutex;
 
         let limiter = Arc::new(RateLimiter::new(RatePolicy::new(1.0, 1)));
-        limiter.acquire().await.expect("first token is free");
-        assert!(!limiter.try_acquire(1));
+        drop(
+            limiter
+                .acquire_slot(RequestPriority::UserInitiated)
+                .await
+                .expect("first token is free"),
+        );
+        assert_eq!(limiter.remaining(), 0);
 
         let order = Arc::new(AsyncMutex::new(Vec::new()));
         let background = {
             let limiter = Arc::clone(&limiter);
             let order = Arc::clone(&order);
             tokio::spawn(async move {
-                limiter
-                    .acquire_with_priority(1, RequestPriority::BackgroundSync)
-                    .await
-                    .expect("background acquires");
+                drop(
+                    limiter
+                        .acquire_slot(RequestPriority::BackgroundSync)
+                        .await
+                        .expect("background acquires"),
+                );
                 order.lock().await.push("background");
             })
         };
@@ -671,10 +644,12 @@ mod tests {
             let limiter = Arc::clone(&limiter);
             let order = Arc::clone(&order);
             tokio::spawn(async move {
-                limiter
-                    .acquire_with_priority(1, RequestPriority::UserInitiated)
-                    .await
-                    .expect("user acquires");
+                drop(
+                    limiter
+                        .acquire_slot(RequestPriority::UserInitiated)
+                        .await
+                        .expect("user acquires"),
+                );
                 order.lock().await.push("user");
             })
         };
@@ -683,15 +658,20 @@ mod tests {
         assert_eq!(*order.lock().await, ["user", "background"]);
     }
 
-    #[test]
-    fn retry_after_rounds_up_to_whole_seconds() {
+    #[tokio::test(start_paused = true)]
+    async fn retry_after_rounds_up_to_whole_seconds() {
         let limiter = RateLimiter::new(RatePolicy::new(0.5, 2));
-        assert!(limiter.try_acquire(2));
+        assert_eq!(limiter.retry_after(1), Duration::ZERO);
+        for _ in 0..2 {
+            drop(
+                limiter
+                    .acquire_slot(RequestPriority::UserInitiated)
+                    .await
+                    .expect("burst token"),
+            );
+        }
         // 0.5/s with an empty bucket: one token needs 2s.
         assert_eq!(limiter.retry_after(1), Duration::from_secs(2));
-        limiter.reset();
-        assert_eq!(limiter.retry_after(1), Duration::ZERO);
-        assert_eq!(limiter.remaining(), 2);
     }
 
     #[tokio::test(start_paused = true)]

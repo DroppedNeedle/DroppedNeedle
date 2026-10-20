@@ -1,25 +1,18 @@
-//! Typed provider failures and HTTP status semantics.
+//! Typed provider failures.
 //!
-//! Every upstream answers through [`ProviderError`], which keeps the distinct
-//! meanings of 401, 403, 404, the rest of 4xx/3xx, 429, 503, and other 5xx.
-//! There is no blanket non-2xx mapping, on purpose: callers match on the
-//! variant, and [`classify_status`] is the single place that turns a status
-//! code into one.
-//!
-//! Retry behavior ports the v2 rules: 429/503/5xx and transport failures are
-//! retriable, everything else is not. Payload-shape failures and intended
-//! upstream switch-offs are deterministic: never retried and never tripping a
-//! shared breaker, because the service is healthy (or switched off) and
-//! retrying cannot help. `Retry-After` parsing ports v2 too: delta-seconds or
-//! an HTTP date, negative or past values ignored, honored values capped.
+//! Every provider answers through [`ProviderError`], which keeps the
+//! distinct meanings of 401, 403, 404, the rest of 4xx and 3xx, 429, 503
+//! and other 5xx, so a caller matches on the variant. 429, 503, other 5xx
+//! and transport failures may be retried; everything else is the same on
+//! every attempt. Payload failures and intended switch-offs never count as
+//! an outage: the service answered.
 
 use std::time::Duration;
 
-use droppedneedle_kernel::clock::{Clock, SystemClock};
 use thiserror::Error;
 
-/// Upper bound on a `Retry-After` honored by [`parse_retry_after`]. The
-/// executor caps by each provider's own limit instead.
+/// The longest wait most providers may ask for; a provider's spec names
+/// its own cap.
 pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
 
 /// Why a request got no answer. Fixed text only: a transport error never
@@ -35,18 +28,6 @@ pub enum TransportKind {
     /// Anything else below HTTP: a reset, a broken body.
     #[error("request failed")]
     Other,
-}
-
-impl TransportKind {
-    /// The kind behind one of the fixed labels the event clients use.
-    #[must_use]
-    pub fn named(label: &str) -> Self {
-        match label {
-            "timed out" => Self::Timeout,
-            "connection failed" => Self::Connect,
-            _ => Self::Other,
-        }
-    }
 }
 
 /// What was wrong with an answer's body.
@@ -157,10 +138,9 @@ pub enum ProviderError {
         /// The decoder's account, one short line; never the body.
         message: String,
     },
-    /// The provider switched this sub-API off on purpose (ports v2's
-    /// `ServiceDisabledUpstreamError`, e.g. a disabled popularity endpoint).
-    /// Deterministic for the outage and breaker-exempt: the rest of the
-    /// provider is healthy.
+    /// The provider switched this sub-API off on purpose, such as a
+    /// disabled popularity endpoint. Never counted as an outage: the rest
+    /// of the provider is healthy.
     #[error("{provider} has switched this API off: {message}")]
     Disabled {
         /// Lowercase provider key.
@@ -169,8 +149,7 @@ pub enum ProviderError {
         message: String,
     },
     /// The provider cannot be called because it is not configured (missing
-    /// API key, no endpoint). Never retried. Ports v2's `ConfigurationError`
-    /// at the provider boundary.
+    /// API key, no endpoint). Never retried.
     #[error("{provider} is not configured: {message}")]
     NotConfigured {
         /// Lowercase provider key.
@@ -279,50 +258,6 @@ impl ProviderError {
     }
 }
 
-/// Turn one HTTP status into a typed failure, or `None` for success.
-///
-/// `retry_after_value` is the raw `Retry-After` header value when the
-/// response carried one; it is parsed (and capped) only for 429 and 503.
-/// Every other detail of the response is intentionally ignored here: 2xx is
-/// success, and each non-2xx family maps to exactly one variant, so a 401
-/// can never surface as a 503 and a 404 can never look like an outage.
-#[must_use]
-pub fn classify_status(
-    source: &'static str,
-    status: u16,
-    retry_after_value: Option<&str>,
-) -> Option<ProviderError> {
-    if (200..300).contains(&status) {
-        return None;
-    }
-    let retry_after = || parse_retry_after(retry_after_value);
-    Some(match status {
-        401 => ProviderError::Unauthorized { provider: source },
-        403 => ProviderError::Forbidden { provider: source },
-        404 => ProviderError::NotFound { provider: source },
-        429 => ProviderError::RateLimited {
-            provider: source,
-            retry_after: retry_after(),
-        },
-        503 => ProviderError::Unavailable {
-            provider: source,
-            retry_after: retry_after(),
-        },
-        300..=399 => ProviderError::Redirect {
-            provider: source,
-            status,
-        },
-        400..=499 => ProviderError::BadRequest {
-            provider: source,
-            status,
-        },
-        _ => ProviderError::Server {
-            provider: source,
-            status,
-        },
-    })
-}
-
 /// Read the wait-before-retry from a response's headers, uncapped.
 ///
 /// `headers` yields `(name, value)` pairs so this stays free of any HTTP
@@ -362,15 +297,6 @@ pub fn retry_delay_from_headers<'a>(
     None
 }
 
-/// Parse one `Retry-After` value, capped at [`MAX_RETRY_AFTER`], for the
-/// clients that do not send through the executor yet. It reads the
-/// kernel's system clock; the executor passes its own clock to
-/// [`retry_delay_from_headers`] instead.
-#[must_use]
-pub fn parse_retry_after(value: Option<&str>) -> Option<Duration> {
-    parse_retry_after_at(value?, SystemClock.now_unix()).map(|delay| delay.min(MAX_RETRY_AFTER))
-}
-
 /// Parse one `Retry-After` value: delta-seconds or an HTTP date read
 /// against `now_unix`. Plain numbers first, then the three HTTP date
 /// shapes; past or negative values mean no usable signal.
@@ -386,7 +312,7 @@ fn parse_retry_after_at(value: &str, now_unix: i64) -> Option<Duration> {
 }
 
 /// Parse delta-seconds (`Retry-After: 120`, `RateLimit-Reset: 5`).
-/// Fractional values are accepted, matching v2's float parse.
+/// Fractional values are accepted.
 fn parse_delta_seconds(text: &str) -> Option<Duration> {
     let seconds: f64 = text.trim().parse().ok()?;
     if !seconds.is_finite() || seconds < 0.0 {
@@ -534,112 +460,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn success_statuses_have_no_error() {
-        for status in [200, 201, 204, 299] {
-            assert_eq!(classify_status("musicbrainz", status, None), None);
-        }
-    }
-
-    #[test]
-    fn auth_and_absence_keep_distinct_meanings() {
-        assert!(matches!(
-            classify_status("lastfm", 401, None),
-            Some(ProviderError::Unauthorized { .. })
-        ));
-        assert!(matches!(
-            classify_status("lastfm", 403, None),
-            Some(ProviderError::Forbidden { .. })
-        ));
-        assert!(matches!(
-            classify_status("musicbrainz", 404, None),
-            Some(ProviderError::NotFound { .. })
-        ));
-        assert!(matches!(
-            classify_status("musicbrainz", 400, None),
-            Some(ProviderError::BadRequest { status: 400, .. })
-        ));
-        assert!(matches!(
-            classify_status("musicbrainz", 302, None),
-            Some(ProviderError::Redirect { status: 302, .. })
-        ));
-    }
-
-    #[test]
-    fn rate_limit_and_outage_carry_retry_after() {
-        let limited = classify_status("musicbrainz", 429, Some("7")).expect("429 maps");
-        assert_eq!(limited.retry_after(), Some(Duration::from_secs(7)));
-        assert!(limited.is_retriable());
-
-        let down = classify_status("lastfm", 503, Some("3")).expect("503 maps");
-        assert_eq!(down.retry_after(), Some(Duration::from_secs(3)));
-        assert!(down.is_retriable());
-
-        let broken = classify_status("lastfm", 500, Some("3")).expect("500 maps");
-        assert!(matches!(broken, ProviderError::Server { status: 500, .. }));
-        assert!(broken.is_retriable());
-        // Only 429/503 honor Retry-After; a 500 header is not a wait signal.
-        assert_eq!(broken.retry_after(), None);
-    }
-
-    #[test]
-    fn only_health_signals_retry_and_trip_the_breaker() {
-        for (status, retriable) in [
-            (401, false),
-            (403, false),
-            (404, false),
-            (400, false),
-            (422, false),
-            (301, false),
-            (429, true),
-            (503, true),
-            (500, true),
-            (502, true),
-        ] {
-            let error = classify_status("audiodb", status, None).expect("non-2xx maps");
-            assert_eq!(error.is_retriable(), retriable, "status {status}");
-            assert_eq!(error.trips_breaker(), retriable, "status {status}");
-            assert!(!error.is_deterministic(), "status {status}");
-        }
-        let payload = ProviderError::Payload {
-            provider: "musicbrainz",
-            kind: PayloadKind::Contract,
-            message: "null where an MBID belongs".to_owned(),
-        };
-        assert!(!payload.is_retriable());
-        assert!(!payload.trips_breaker());
-        assert!(payload.is_deterministic());
-        let disabled = ProviderError::Disabled {
-            provider: "listenbrainz",
-            message: "currently disabled due to high load".to_owned(),
-        };
-        assert!(!disabled.is_retriable());
-        assert!(!disabled.trips_breaker());
-        assert!(disabled.is_deterministic());
-    }
-
-    #[test]
-    fn retry_after_accepts_seconds_and_dates_and_caps() {
-        assert_eq!(parse_retry_after(Some("5")), Some(Duration::from_secs(5)));
+    fn retry_after_accepts_seconds_and_the_three_date_shapes() {
+        let now = 1_700_000_000;
+        let at = |value| parse_retry_after_at(value, now);
+        assert_eq!(at("5"), Some(Duration::from_secs(5)));
+        assert_eq!(at("  12  "), Some(Duration::from_secs(12)));
         assert_eq!(
-            parse_retry_after(Some("  12  ")),
-            Some(Duration::from_secs(12))
+            at("Wed, 01 Jan 2031 00:00:00 GMT"),
+            Some(Duration::from_secs(1_924_992_000 - 1_700_000_000))
         );
-        // Huge values cap at one minute, like v2.
-        assert_eq!(parse_retry_after(Some("3600")), Some(MAX_RETRY_AFTER));
-        // A far-future HTTP date is a valid wait (capped); a past one is not.
-        assert_eq!(
-            parse_retry_after(Some("Wed, 01 Jan 2031 00:00:00 GMT")),
-            Some(MAX_RETRY_AFTER)
-        );
-        assert_eq!(
-            parse_retry_after(Some("Sunday, 06-Nov-94 08:49:37 GMT")),
-            None
-        );
-        assert_eq!(parse_retry_after(Some("Sun Nov  6 08:49:37 1994")), None);
-        assert_eq!(parse_retry_after(Some("-3")), None);
-        assert_eq!(parse_retry_after(Some("not-a-date")), None);
-        assert_eq!(parse_retry_after(Some("")), None);
-        assert_eq!(parse_retry_after(None), None);
+        // Past dates in each shape, negatives and junk carry no wait.
+        assert_eq!(at("Sunday, 06-Nov-94 08:49:37 GMT"), None);
+        assert_eq!(at("Sun Nov  6 08:49:37 1994"), None);
+        assert_eq!(at("-3"), None);
+        assert_eq!(at("not-a-date"), None);
+        assert_eq!(at(""), None);
     }
 
     #[test]

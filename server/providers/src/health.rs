@@ -1,17 +1,14 @@
 //! Process-wide registry of degraded external services.
 //!
-//! Ports v2's `ServiceHealthRegistry`: one answer to "is this service
-//! having trouble right now?", read by `GET /api/v3/system/health` to drive
-//! the header status dot. Entries expire on their own after a TTL that each
-//! fresh failure slides forward, so a service heals without a reset or a
-//! sweeper once the failures stop.
+//! One answer to "is this service having trouble right now?", read by
+//! `GET /api/v3/system/health` to drive the header status dot. Entries
+//! expire on their own after a TTL that each fresh failure slides forward,
+//! so a service heals without a reset or a sweeper once the failures stop.
 //!
-//! v2 fed it from circuit breakers that opened after several consecutive
-//! failures. Here the provider clients report through the
-//! [`DegradationSink`](super::degradation::DegradationSink): each wire
-//! failure counts, each answered request clears the count, and a run of
-//! failures inside a short window marks the service. One blip never flags
-//! a service; a sustained outage does.
+//! The executor reports every call: each failure that says something about
+//! the service counts, each answered request clears the count, and a run
+//! of failures inside a short window marks the service. One blip never
+//! flags a service; a sustained outage does.
 
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},

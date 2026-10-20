@@ -1,37 +1,34 @@
-//! Shared provider core: the executor, the rate table, caching,
-//! coalescing, degradation.
+//! The outside services DroppedNeedle reads from, and the one way a
+//! request to them goes out.
 //!
-//! Every upstream client builds on this crate instead of reimplementing
-//! resilience. The pieces:
+//! [`Providers`] is built once at boot and handed to every area. It holds
+//! one client per service (MusicBrainz, the Cover Art Archive,
+//! ListenBrainz, Last.fm, TheAudioDB, AcoustID, Discogs, iTunes, Deezer,
+//! LRCLIB, Wikidata, Ticketmaster, Skiddle, Open-Meteo, YouTube, GitHub
+//! and the image hosts), the limiters, the byte cache and the service
+//! health registry. Each client sends through its own [`Executor`].
 //!
-//! - [`executor`]: the one way a provider request goes out. Pacing at the
-//!   caller's priority, a deadline, a capped read, typed classification,
-//!   retry inside a budget, `Retry-After` as a cooldown, and one record of
-//!   the outcome for health and the request's degradation notes.
-//! - [`rates`]: the one rate table, every row with its date and basis.
-//! - [`limiter`]: the token buckets built from the table, with priority
-//!   waiters, cooldowns and in-flight caps.
-//! - [`error`]: typed [`ProviderError`](error::ProviderError) with distinct
-//!   401/403/404/400 semantics and `Retry-After` parsing.
-//! - [`slots`]: priority-queue lanes (user / image / background).
-//! - [`cache`]: cache-aside helpers with registered key prefixes and
-//!   per-source invalidation.
-//! - [`singleflight`]: request coalescing for concurrent identical fetches.
-//! - [`degradation`]: the request-scoped degradation context.
+//! - [`executor`]: sends one request. It waits for a token at the caller's
+//!   priority, sends with a deadline, reads the body under a cap, types the
+//!   answer, retries what may be retried inside a budget, turns a
+//!   `Retry-After` into a cooldown, and records the outcome for service
+//!   health and the request's degradation notes.
+//! - [`rates`]: the rate table, the only place a provider's pace is
+//!   written, each row with the date and source it was read from.
+//! - [`limiter`]: one token bucket per row, with priority waiters,
+//!   cooldowns and in-flight caps, and the [`RequestPriority`] every caller
+//!   names.
+//! - [`error`]: [`ProviderError`], which keeps 401, 403, 404 and 400
+//!   apart, and the `Retry-After` reader.
+//! - [`health`]: which services are degraded right now.
+//! - [`degradation`]: the per-request record of which sources failed.
+//! - [`cache`]: cache-aside reads with per-source key prefixes.
+//! - [`singleflight`]: one fetch for many identical callers.
+//! - [`slots`]: the user, image and background lanes the admin view shows.
 //!
-//! # Wiring
-//!
-//! ```rust,ignore
-//! let providers = Providers::build(&platform, endpoints);
-//! ```
-//!
-//! # Provider clients
-//!
-//! Each client is reached by module path
-//! (`providers::musicbrainz::MusicBrainzClient`, ...). The names are not
-//! re-exported at this root, on purpose: several collide across modules
-//! and with the role traits in `reads::enrichment`, so the module path is
-//! the disambiguator.
+//! Each client is reached by its module path
+//! (`providers::musicbrainz::MusicBrainzClient`). The names are not
+//! re-exported here because several collide across modules.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
@@ -39,7 +36,7 @@
 pub mod acoustid;
 pub mod audiodb;
 pub mod cache;
-pub mod client;
+mod client;
 pub mod coverart;
 pub mod degradation;
 pub mod discogs;
@@ -54,12 +51,10 @@ pub mod lastfm;
 pub mod limiter;
 pub mod listenbrainz;
 pub mod lrclib;
-pub mod matrix;
 pub mod musicbrainz;
 pub mod plextv;
 pub mod preview;
 pub mod rates;
-pub mod retry;
 pub mod singleflight;
 pub mod skiddle;
 pub mod slots;
@@ -73,21 +68,13 @@ use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::platform::Platform;
 
 pub use cache::{
-    InMemoryProviderCache, ProviderCache, cache_aside_bytes, cache_aside_json, digest_key,
-    invalidate_source, namespaced_key, prefixes_for,
+    InMemoryProviderCache, ProviderCache, cache_aside_json, digest_key, invalidate_source,
+    prefixes_for,
 };
-pub use client::{ContractViolation, ProviderClient, check_client_contract};
-pub use degradation::{
-    DegradationContext, DegradationSink, IntegrationStatus, NoopSink, ProviderOutcome,
-    aggregate_status, degraded_none, record_current, scoped, with_current,
-};
-pub use error::{
-    MAX_RETRY_AFTER, PayloadKind, ProviderError, TransportKind, classify_status, parse_retry_after,
-};
+pub use degradation::{DegradationContext, IntegrationStatus, record_current, scoped};
+pub use error::{MAX_RETRY_AFTER, PayloadKind, ProviderError, TransportKind};
 pub use executor::{Executor, ReqwestWire, Wire};
-pub use limiter::{LimiterSet, OverCapacity, Pacer, RateLimiter, RatePolicy, RequestPriority};
-pub use matrix::{OperationKind, SourceRole, apply, role};
-pub use retry::{RetryPolicy, execute};
+pub use limiter::{LimiterSet, OverCapacity, RateLimiter, RatePolicy, RequestPriority};
 pub use singleflight::Singleflight;
 pub use slots::{SlotError, SlotManager, SlotStats, USER_QUIET_WINDOW};
 
@@ -273,14 +260,9 @@ impl Providers {
     ) -> Self {
         let health = Arc::new(health::ServiceHealth::new());
         let executor = |spec: &'static executor::Spec, row: &str| {
-            let limiter = limiters.shared(row).cloned().unwrap_or_else(|| {
-                // Every executor names a row of the table; a test pins it.
-                tracing::error!(row, "no rate row; pacing at one request a second");
-                Arc::new(RateLimiter::new(RatePolicy::new(1.0, 1)))
-            });
             Executor::new(
                 spec,
-                limiter,
+                limiters.for_executor(row),
                 Arc::clone(&wire),
                 Arc::clone(&health),
                 Arc::clone(&clock),
@@ -396,5 +378,18 @@ impl Providers {
     #[must_use]
     pub fn limiter(&self, source: &str) -> Option<&RateLimiter> {
         self.limiters.limiter(source)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Providers;
+
+    /// Building the providers hands every executor its row; a row name
+    /// missing from the rate table stops the build in a debug test.
+    #[test]
+    fn every_executor_names_a_rate_row() {
+        let providers = Providers::closed();
+        assert!(providers.limiter("musicbrainz").is_some());
     }
 }

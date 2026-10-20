@@ -136,7 +136,7 @@ impl Request {
     /// A GET of `url` exactly as given: an address a provider's own data
     /// named, already checked by the caller.
     #[must_use]
-    pub fn get_url(url: Url) -> Self {
+    pub(crate) fn get_url(url: Url) -> Self {
         Self::new(Method::Get, url, Body::Empty)
     }
 

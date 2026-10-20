@@ -1,13 +1,10 @@
-//! Typed degradation results and the request-scoped degradation context.
+//! The request-scoped degradation context.
 //!
-//! Provider calls return [`ProviderOutcome`]: the value (when there is one)
-//! plus the per-source status that produced it. Optional enrichment follows
-//! the record-then-`None` rule: on failure the caller records the outcome
-//! into the request's [`DegradationContext`] and returns `None`, and the
-//! request still succeeds. The recording is the error signal:
-//! aggregation boundaries and the response envelope read the context instead
-//! of receiving errors. Ports v2's `IntegrationResult` and `degradation.py`,
-//! with the context carried by a tokio task-local instead of a contextvar.
+//! A request runs inside [`scoped`], and a provider call made for it that
+//! fails records its source with [`record_current`]. A failed optional
+//! source records and yields `None`, and the request still succeeds: the response reads the context to say which services were
+//! degraded. The context rides a tokio task-local, so nothing threads it
+//! through signatures.
 
 use std::{
     cell::RefCell,
@@ -25,92 +22,6 @@ pub enum IntegrationStatus {
     Degraded,
     /// The source failed completely; no data came from it.
     Error,
-}
-
-/// The outcome of one external-service call: data plus upstream status.
-///
-/// `data` is `None` only when `status` is [`IntegrationStatus::Error`].
-/// `Degraded` always carries some data, possibly stale or partial.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProviderOutcome<T> {
-    /// The value, present unless the source failed completely.
-    pub data: Option<T>,
-    /// Lowercase provider key.
-    pub source: &'static str,
-    /// How healthy this answer is.
-    pub status: IntegrationStatus,
-    /// Short failure note, safe for logs.
-    pub error: Option<String>,
-    /// True only for deterministic payload-shape failures: the service is
-    /// healthy but its answer violates the verified contract.
-    pub deterministic: bool,
-}
-
-impl<T> ProviderOutcome<T> {
-    /// A full answer from `source`.
-    #[must_use]
-    pub const fn ok(data: T, source: &'static str) -> Self {
-        Self {
-            data: Some(data),
-            source,
-            status: IntegrationStatus::Ok,
-            error: None,
-            deterministic: false,
-        }
-    }
-
-    /// A partial answer from `source`, with a note about what is missing.
-    #[must_use]
-    pub fn degraded(data: T, source: &'static str, message: impl Into<String>) -> Self {
-        Self {
-            data: Some(data),
-            source,
-            status: IntegrationStatus::Degraded,
-            error: Some(message.into()),
-            deterministic: false,
-        }
-    }
-
-    /// A complete failure of `source`: no data.
-    #[must_use]
-    pub fn error(source: &'static str, message: impl Into<String>) -> Self {
-        Self {
-            data: None,
-            source,
-            status: IntegrationStatus::Error,
-            error: Some(message.into()),
-            deterministic: false,
-        }
-    }
-
-    /// A deterministic payload-shape failure: no data, and tracked
-    /// separately from transient degradation in summaries.
-    #[must_use]
-    pub fn deterministic_error(source: &'static str, message: impl Into<String>) -> Self {
-        Self {
-            data: None,
-            source,
-            status: IntegrationStatus::Error,
-            error: Some(message.into()),
-            deterministic: true,
-        }
-    }
-
-    /// Whether the source answered fully.
-    #[must_use]
-    pub const fn is_ok(&self) -> bool {
-        matches!(self.status, IntegrationStatus::Ok)
-    }
-}
-
-/// The worst status across several outcomes: error beats degraded beats ok.
-#[must_use]
-pub fn aggregate_status(outcomes: &[IntegrationStatus]) -> IntegrationStatus {
-    let mut worst = IntegrationStatus::Ok;
-    for status in outcomes {
-        worst = worst.max(*status);
-    }
-    worst
 }
 
 /// Per-request accumulation of per-source statuses.
@@ -131,12 +42,7 @@ impl DegradationContext {
         Self::default()
     }
 
-    /// Record one outcome, keeping the worst status per source.
-    pub fn record<T>(&mut self, outcome: &ProviderOutcome<T>) {
-        self.record_status(outcome.source, outcome.status, outcome.deterministic);
-    }
-
-    /// Record one raw status for `source`.
+    /// Record one status for `source`, keeping the worst per source.
     pub fn record_status(
         &mut self,
         source: &'static str,
@@ -213,7 +119,7 @@ where
 
 /// Record into the current request's context, or do nothing outside a
 /// request scope (background tasks, startup). Returns whether the recording
-/// landed. Never nest this inside [`with_current`].
+/// landed.
 pub fn record_current(
     source: &'static str,
     status: IntegrationStatus,
@@ -227,67 +133,6 @@ pub fn record_current(
         .is_ok()
 }
 
-/// Read the current request's context without recording. Returns `None`
-/// outside a request scope. The closure must not record (no nesting).
-pub fn with_current<F, R>(read: F) -> Option<R>
-where
-    F: FnOnce(&DegradationContext) -> R,
-{
-    CURRENT.try_with(|cell| read(&cell.borrow())).ok()
-}
-
-/// Record a failure for an optional source and yield `None`: the
-/// record-then-`None` half of optional enrichment. The caller returns this
-/// `None` up and the request still succeeds; the recording in the request
-/// context is the error signal.
-pub fn degraded_none<T>(
-    source: &'static str,
-    status: IntegrationStatus,
-    deterministic: bool,
-) -> Option<T> {
-    record_current(source, status, deterministic);
-    None
-}
-
-/// Degradation port: one note per failed optional call. No client reports
-/// through it any more; the executor records every outcome itself.
-/// `source` is the lowercase provider key the matrix joins on; callers
-/// fold any operation detail into `message`.
-pub trait DegradationSink: Send + Sync {
-    /// Record one note that this optional source failed. The failure
-    /// counts toward the source's service health.
-    fn record(&self, source: &'static str, message: String);
-
-    /// Record a failure that says nothing about the service's health: a
-    /// local pacing decline, or an answer whose shape did not decode. The
-    /// request still sees it; the service health registry does not.
-    fn record_quiet(&self, source: &'static str, message: String) {
-        self.record(source, message);
-    }
-
-    /// Record a failure under `source` that counts toward a different
-    /// health entry, such as a BrainzMash mirror failure recorded as
-    /// `musicbrainz` but reported as `musicbrainz-brainzmash`.
-    fn record_as(&self, source: &'static str, health_source: &'static str, message: String) {
-        let _ = health_source;
-        self.record(source, message);
-    }
-
-    /// The service answered. Clears its run of failures.
-    fn succeeded(&self, health_source: &'static str) {
-        let _ = health_source;
-    }
-}
-
-/// A sink that drops every record. Handy until the wiring lands, and for
-/// callers that handle absence themselves.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoopSink;
-
-impl DegradationSink for NoopSink {
-    fn record(&self, _source: &'static str, _message: String) {}
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,9 +141,9 @@ mod tests {
     fn worst_status_wins_per_source() {
         let mut context = DegradationContext::new();
         assert!(!context.has_degradation());
-        context.record(&ProviderOutcome::ok(vec![1], "lastfm"));
-        context.record(&ProviderOutcome::<Vec<u8>>::error("lastfm", "reset"));
-        context.record(&ProviderOutcome::ok(vec![2], "lastfm"));
+        context.record_status("lastfm", IntegrationStatus::Ok, false);
+        context.record_status("lastfm", IntegrationStatus::Error, false);
+        context.record_status("lastfm", IntegrationStatus::Ok, false);
         assert_eq!(
             context.summary().get("lastfm"),
             Some(&IntegrationStatus::Error)
@@ -311,30 +156,16 @@ mod tests {
     fn deterministic_failures_track_separately() {
         let mut context = DegradationContext::new();
         assert!(!context.has_deterministic_failure());
-        context.record(&ProviderOutcome::<()>::deterministic_error(
-            "musicbrainz",
-            "null where an MBID belongs",
-        ));
+        context.record_status("musicbrainz", IntegrationStatus::Error, true);
         assert!(context.has_deterministic_failure());
         assert!(context.deterministic_sources().contains("musicbrainz"));
-    }
-
-    #[test]
-    fn aggregate_prefers_the_worst() {
-        use IntegrationStatus::{Degraded, Error, Ok};
-        assert_eq!(aggregate_status(&[Ok, Ok]), Ok);
-        assert_eq!(aggregate_status(&[Ok, Degraded]), Degraded);
-        assert_eq!(aggregate_status(&[Degraded, Error, Ok]), Error);
-        assert_eq!(aggregate_status(&[]), Ok);
     }
 
     #[tokio::test]
     async fn scoped_collects_recordings() {
         let (output, context) = scoped(async {
             record_current("audiodb", IntegrationStatus::Error, false);
-            let missing: Option<String> =
-                degraded_none("lastfm", IntegrationStatus::Degraded, false);
-            assert_eq!(missing, None);
+            record_current("lastfm", IntegrationStatus::Degraded, false);
             "done"
         })
         .await;
@@ -353,6 +184,5 @@ mod tests {
     #[tokio::test]
     async fn recording_outside_a_scope_is_a_quiet_no() {
         assert!(!record_current("lastfm", IntegrationStatus::Error, false));
-        assert_eq!(with_current(|context| context.has_degradation()), None);
     }
 }

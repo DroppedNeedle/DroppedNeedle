@@ -6,8 +6,10 @@
 //! does, for callers that validate every hop themselves or must not be
 //! bounced to another host, and the
 //! [`direct_no_redirect`](HttpClientFactory::direct_no_redirect) one also
-//! skips any proxy and has no total timeout, for plugin audio streams. Per-provider rates live in
-//! the providers crate's rate table, and per-upstream resilience lives with each client.
+//! skips any proxy and has no total timeout, for plugin audio streams.
+//! Provider rates live in the providers crate's rate table, and every
+//! provider in that crate sends through its executor, which paces,
+//! retries and cools down.
 
 use std::time::Duration;
 
