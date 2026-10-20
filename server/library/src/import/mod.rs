@@ -278,7 +278,15 @@ impl LibrarySetup {
         let staged_dir = open
             .sandbox
             .resolve_no_symlink(&root.id, &task_dir)
-            .map_err(|error| fault(error.to_string()))?;
+            .map_err(|error| {
+                if matches!(error, PublishError::FolderMissing) {
+                    tracing::warn!(
+                        root = root.id,
+                        "a landing stopped: the library folder is not there"
+                    );
+                }
+                fault(error.to_string())
+            })?;
         let replaced = join
             .as_ref()
             .map(|join| join.replaced.clone())

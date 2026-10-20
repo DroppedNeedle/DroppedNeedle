@@ -7,7 +7,7 @@ use super::adapters::FsSpaceProbe;
 use super::clock::{now_ms, today_day};
 use super::publish::bin::BinSource;
 use super::publish::journal::JournalStore;
-use super::publish::paths::Root;
+use super::publish::paths::{ResolvedRoot, Root, left_out};
 use super::publish::planner::{
     Capability, CollisionGate, DiskPreflight, FileFingerprint, PlanBundle, PlanItem, PlanKind,
     ReleaseIdentity, SealRecheck, SealedPreview,
@@ -63,7 +63,9 @@ pub(crate) struct OpenPublish {
 
 /// What a publish session is open over: the usable library roots and the
 /// recycle bins, each by id and folder (`Err` with the cause while the
-/// bins are unknown). A change to any of them reopens the session. A
+/// bins are unknown), and the real folder each root resolves to now. A
+/// change to any of them reopens the session, so a library folder whose
+/// link is pointed somewhere else is probed and given its bins afresh. A
 /// caller works it out once and uses that one answer both to decide on
 /// the root guards and to refresh, so the two never disagree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +74,8 @@ pub(crate) struct SessionRoots {
     /// Excluded library folders: files in their included subfolders are
     /// in the catalog, and only a removal may take them out.
     remove_only: Vec<Root>,
+    /// Each root's real folder by id; `None` while it does not resolve.
+    resolved: Vec<(String, Option<PathBuf>)>,
     bins: Result<Vec<Root>, &'static str>,
 }
 
@@ -91,6 +95,9 @@ pub struct PublishCell {
     bins: BinSource,
     pub(crate) cell: Option<OpenPublish>,
     placement: RootPlacement,
+    /// The roots last left out of the session, so each change is logged
+    /// once.
+    left_out: std::sync::Mutex<Vec<String>>,
 }
 
 /// How files can be placed under each root of the open publisher session,
@@ -282,6 +289,7 @@ impl PublishCell {
             bins,
             cell: None,
             placement: RootPlacement::default(),
+            left_out: std::sync::Mutex::default(),
         }
     }
 
@@ -351,14 +359,48 @@ impl PublishCell {
             .collect()
     }
 
-    /// The roots and bins a session would open over now. The bins are
-    /// resolved here, once per call.
+    /// The roots and bins a session would open over now. The roots and
+    /// bins are resolved here, once per call. A root [`left_out`] names
+    /// takes no managed writes.
     pub(crate) fn session(&self, registry: &RootRegistry) -> SessionRoots {
+        let resolved: Vec<ResolvedRoot> = registry
+            .roots()
+            .iter()
+            .map(|root| ResolvedRoot::of(&root.id, &root.path))
+            .collect();
+        let left_out = left_out(&resolved);
+        self.log_left_out(&left_out);
+        let kept = |root: &Root| !left_out.contains(&root.id);
         SessionRoots {
-            library: Self::root_dirs(registry),
-            remove_only: Self::remove_only_dirs(registry),
+            library: Self::root_dirs(registry).into_iter().filter(kept).collect(),
+            remove_only: Self::remove_only_dirs(registry)
+                .into_iter()
+                .filter(kept)
+                .collect(),
+            resolved: resolved
+                .into_iter()
+                .filter(|root| !left_out.contains(&root.id))
+                .map(|root| (root.id, root.real))
+                .collect(),
             bins: self.bins.current(registry).map(|choice| choice.roots),
         }
+    }
+
+    fn log_left_out(&self, ids: &[String]) {
+        let mut logged = self
+            .left_out
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if logged.as_slice() == ids {
+            return;
+        }
+        if !ids.is_empty() {
+            tracing::warn!(
+                roots = ids.join(", "),
+                "library folders reached through a link into another library folder take no file changes"
+            );
+        }
+        *logged = ids.to_vec();
     }
 
     /// [`Self::refresh_to`] the session `registry` calls for now, for a
@@ -695,6 +737,10 @@ pub(crate) fn publish_error(error: PublishError) -> ServiceError {
         PublishError::UnsafePath(message) | PublishError::Archive(message) => {
             ServiceError::InvalidInput { message }
         }
+        PublishError::FolderMissing => ServiceError::Conflict {
+            message: "The library folder isn't there. Check that its drive or share is mounted."
+                .to_owned(),
+        },
         PublishError::Interrupted(cause) => ServiceError::Busy { cause },
         PublishError::Store(message)
         | PublishError::TimedOut(message)

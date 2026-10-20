@@ -344,7 +344,9 @@ fn reconcile_with<C: Catalog>(
 }
 
 /// The first root a bundle's active journals name that the sandbox does
-/// not hold for them. A removal's row may name a remove-only root.
+/// not hold for them, or whose folder is not there now (a share not yet
+/// mounted, a link to nothing). A removal's row may name a remove-only
+/// root.
 fn unusable_root(sandbox: &Sandbox, journals: &[FileJournal]) -> Option<String> {
     journals
         .iter()
@@ -357,13 +359,16 @@ fn unusable_root(sandbox: &Sandbox, journals: &[FileJournal]) -> Option<String> 
                     .map(|(root, _)| (journal.kind, root.as_str())),
             )
         })
-        .find(|(kind, root)| match kind {
-            JournalKind::Remove => sandbox.removal_root_dir(root).is_err(),
-            JournalKind::Audio
-            | JournalKind::Sidecar
-            | JournalKind::Artwork
-            | JournalKind::Output
-            | JournalKind::Delete => sandbox.root_dir(root).is_err(),
+        .find(|(kind, root)| {
+            let dir = match kind {
+                JournalKind::Remove => sandbox.removal_root_dir(root),
+                JournalKind::Audio
+                | JournalKind::Sidecar
+                | JournalKind::Artwork
+                | JournalKind::Output
+                | JournalKind::Delete => sandbox.root_dir(root),
+            };
+            dir.and_then(paths::ensure_library_dir).is_err()
         })
         .map(|(_, root)| root.to_owned())
 }

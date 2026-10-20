@@ -86,13 +86,20 @@ impl From<droppedneedle_kernel::db::DbError> for Refusal {
 
 /// Read the file at `path` under library folder `root` once, before the
 /// publish lock: its bytes and its identity. A symlink below the folder,
-/// a missing file or anything but a regular file has nothing to move. A
-/// folder reached through a symlink is refused (`UnsafePath`), as every
-/// managed write refuses it. A file that changed while it was read
-/// refuses.
+/// a missing file or anything but a regular file has nothing to move. The
+/// folder may be reached through a symlink, but one that is not a folder
+/// now (gone, or a link to nothing) refuses (`FolderMissing`), so its
+/// tracks are not marked missing while their files may still exist. A
+/// path that is not plainly inside the folder refuses. A file that changed
+/// while it was read refuses.
 pub fn probe(root: &Path, path: &Path) -> Result<Probe, PublishError> {
-    paths::ensure_no_symlink(root)?;
-    match paths::ensure_no_symlink(path) {
+    paths::ensure_library_dir(root)?;
+    if paths::below_root(root, path).is_none_or(|below| below.as_os_str().is_empty()) {
+        return Err(PublishError::UnsafePath(
+            "path is not inside its library folder".into(),
+        ));
+    }
+    match paths::no_symlink_below(root, path) {
         Ok(()) => {}
         Err(PublishError::UnsafePath(_)) => return Ok(Probe::Gone),
         Err(error) => return Err(error),

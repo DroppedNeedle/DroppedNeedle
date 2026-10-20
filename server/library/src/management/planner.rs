@@ -398,6 +398,7 @@ fn base_item(
 fn path_reason(error: &PublishError) -> ItemReason {
     match error {
         PublishError::UnsafePath(_) => reasons::symlink_unsupported(),
+        PublishError::FolderMissing => reasons::root_unavailable(),
         _ => reasons::file_unreadable(),
     }
 }

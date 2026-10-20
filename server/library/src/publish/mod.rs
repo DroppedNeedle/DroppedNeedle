@@ -172,6 +172,10 @@ pub enum PublishError {
     /// Path safety: traversal, escape, symlink, or out-of-sandbox path.
     #[error("unsafe path: {0}")]
     UnsafePath(String),
+    /// The library folder is not there now (a share not mounted, a link
+    /// to nothing), so nothing under it is touched until it is back.
+    #[error("the library folder is not there")]
+    FolderMissing,
     /// Archive safety: zip-slip, traversal, symlink, size, or bomb limit.
     #[error("archive blocked: {0}")]
     Archive(String),

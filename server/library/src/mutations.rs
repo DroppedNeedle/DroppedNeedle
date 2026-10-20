@@ -72,6 +72,11 @@ pub const FILE_OUTSIDE_ROOT: Reason = reason(
     "A file of this album is not inside a configured library folder, so it was left alone.",
     "Check the library folders under Settings > Library, then rescan.",
 );
+pub const LIBRARY_FOLDER_MISSING: Reason = reason(
+    "LIBRARY_FOLDER_MISSING",
+    "The library folder isn't there, so nothing was removed.",
+    "Check that its drive or share is mounted, then try again.",
+);
 pub const RECYCLE_FAILED: Reason = reason(
     "RECYCLE_FAILED",
     "A file could not be moved into the recycle bin, so nothing was removed.",
@@ -930,6 +935,10 @@ fn refusal(refused: Refusal) -> MutationError {
             PublishError::UnsafePath(_) => {
                 tracing::warn!(%error, "a removal refused a path");
                 MutationError::Conflict(FILE_OUTSIDE_ROOT)
+            }
+            PublishError::FolderMissing => {
+                tracing::warn!("a removal found its library folder missing");
+                MutationError::Conflict(LIBRARY_FOLDER_MISSING)
             }
             PublishError::NotLinkable(_) => {
                 tracing::warn!(%error, "a removal could not keep a way back");

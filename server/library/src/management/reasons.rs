@@ -392,6 +392,7 @@ pub fn from_publish(error: &PublishError) -> ItemReason {
             "Restore the v2 library-management cache from a backup and migrate again before managing it.",
         ),
         PublishError::UnsafePath(_) => symlink_unsupported(),
+        PublishError::FolderMissing => root_unavailable(),
         PublishError::NoSafePlacement(message) => no_safe_placement(message),
         PublishError::NotLinkable(message) => file_not_linkable(message),
         PublishError::Cleanup(_)

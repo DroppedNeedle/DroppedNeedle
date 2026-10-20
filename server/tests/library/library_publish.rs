@@ -731,6 +731,57 @@ fn same_path_crash_keeps_original_until_commit() {
     );
 }
 
+/// A bundle whose library folder is not there at recovery (a share not
+/// yet mounted) waits with its rows as they were, and finishes once the
+/// folder is back. It is never handed to an admin for it.
+#[test]
+fn a_bundle_waits_for_its_missing_folder_and_then_finishes() {
+    let fix = fixture("crash-folder-missing");
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::BeforeCatalogCommit));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::InjectedCrash(_)));
+    drop(publisher);
+    let db = restart(&fix);
+    let conn = open_db(&fix);
+    let music = fix.dir.join("music");
+    let away = fix.dir.join("unmounted");
+    std::fs::rename(&music, &away).unwrap();
+
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(results.len(), 1);
+    assert!(
+        matches!(results[0].action, publish::RecoveryAction::Deferred(_)),
+        "{:?}",
+        results[0].action
+    );
+    let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
+    assert!(
+        journals.iter().all(|journal| !journal.state.is_terminal()),
+        "{journals:?}"
+    );
+
+    std::fs::rename(&away, &music).unwrap();
+    let results = reconcile(&db, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(results.len(), 1);
+    for item in bundle.items.iter() {
+        let dest = fix
+            .sandbox
+            .resolve(&item.dest_root, &item.dest_rel)
+            .unwrap();
+        assert_staged(&dest, &item.track_id);
+    }
+    let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
+    assert!(
+        journals
+            .iter()
+            .all(|journal| journal.state == JournalState::Cleaned),
+        "{journals:?}"
+    );
+}
+
 /// A file the writer refuses in the middle of an album unwinds the files
 /// staged before it: nothing stays held, and recovery never finishes the
 /// part that was staged.
@@ -3392,6 +3443,70 @@ fn resolve_no_symlink_refuses_linked_components() {
             .resolve_no_symlink("music", "alias.flac")
             .is_err()
     );
+}
+
+/// A library folder may be reached through a link, at the folder or
+/// above it, and below it no link is followed. A folder that is a link to
+/// nothing refuses, and so does a path outside its folder. A remove-only
+/// folder reached through a link keeps its plain `.recycle` as a bin.
+#[cfg(unix)]
+#[test]
+fn a_library_folder_may_be_reached_through_a_link() {
+    use std::os::unix::fs::symlink;
+    let scratch = ScratchDir::new("publish-linked-root");
+    let dir = scratch.to_path_buf();
+    let real = dir.join("real");
+    for folder in ["music", "kept", "foreign"] {
+        std::fs::create_dir_all(real.join(folder)).unwrap();
+    }
+    std::fs::write(real.join("foreign/secret.flac"), b"secret").unwrap();
+    symlink(&real, dir.join("parent")).unwrap();
+    symlink(real.join("music"), dir.join("alias")).unwrap();
+    symlink(real.join("foreign"), real.join("music/linked")).unwrap();
+    symlink(
+        real.join("foreign/secret.flac"),
+        real.join("music/alias.flac"),
+    )
+    .unwrap();
+    let kept = dir.join("parent/kept");
+    for root in [dir.join("parent/music"), dir.join("alias")] {
+        let sandbox = publish::Sandbox::new(vec![
+            Root::library("music", &root),
+            Root::remove_only("kept", &kept),
+            Root::recycle_of("kept", &kept),
+        ])
+        .unwrap();
+        assert_eq!(
+            sandbox.resolve_no_symlink("music", "Band/01.flac").unwrap(),
+            root.join("Band/01.flac")
+        );
+        for rel in ["linked/secret.flac", "alias.flac"] {
+            assert!(sandbox.resolve_no_symlink("music", rel).is_err(), "{rel}");
+            assert!(sandbox.resolve_removal("music", rel).is_err(), "{rel}");
+        }
+        let entry = kept.join(".recycle/20260101T000000-0a1b2c3d/01.flac");
+        assert_eq!(
+            sandbox.ensure_under_bin(&entry).unwrap().id,
+            ".recycle:kept",
+            "the remove-only folder's bin"
+        );
+    }
+
+    symlink(dir.join("nowhere"), dir.join("dangling")).unwrap();
+    let dangling =
+        publish::Sandbox::new(vec![Root::library("music", dir.join("dangling"))]).unwrap();
+    assert!(
+        dangling
+            .resolve_no_symlink("music", "Band/01.flac")
+            .is_err()
+    );
+    let music = real.join("music");
+    for outside in [music.join("../foreign/secret.flac"), real.join("foreign")] {
+        assert!(
+            publish::paths::ensure_no_symlink_below_for_tests(&music, &outside).is_err(),
+            "{outside:?}"
+        );
+    }
 }
 
 #[cfg(unix)]

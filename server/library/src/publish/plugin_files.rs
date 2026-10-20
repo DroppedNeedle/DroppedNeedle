@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 use super::PublishError;
 use super::journal::{fsync_dir, fsync_file};
-use super::paths::{Sandbox, ensure_no_symlink};
+use super::paths::{Sandbox, ensure_no_symlink_below};
 
 /// Tag in the temp names plugin writes use (after the hidden prefix), so
 /// a startup sweep can tell them from the publisher's journaled temps.
@@ -38,7 +38,7 @@ pub fn write_new_file(
         .to_path_buf();
     std::fs::create_dir_all(&parent)?;
     // A component created or swapped meanwhile must not be a symlink.
-    ensure_no_symlink(&parent)?;
+    ensure_no_symlink_below(sandbox.root_dir(root_id)?, &parent)?;
     sandbox.ensure_under_roots(&dest)?;
     if std::fs::symlink_metadata(&dest).is_ok() {
         return Err(PublishError::Collision(format!(

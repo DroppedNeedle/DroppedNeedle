@@ -4,11 +4,12 @@
 //! file leaving the library, under a recycle bin. Library paths arrive as
 //! `(root id, relative path)` pairs and are resolved here: absolute
 //! inputs, `..` escapes, NUL bytes, and symlink components all fail closed
-//! before any mutation. Media symlinks are never followed; that is a
-//! security boundary, not a profile toggle. A bin entry is an absolute
-//! path that must sit under one of the session's bins with no symlink
-//! below the bin's own folder, and library audio never resolves into a
-//! bin.
+//! before any mutation. A library folder is used as the admin set it, and
+//! that path may go through a link; below the folder, media symlinks are
+//! never followed. That is a security boundary, not a profile toggle. A
+//! bin entry is an absolute path that must sit under one of the session's
+//! bins with no symlink below the bin's own folder, and library audio
+//! never resolves into a bin.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -324,17 +325,17 @@ impl Sandbox {
                 .any(|bin| path.starts_with(&bin.dir))
     }
 
-    /// Resolve and additionally prove that no existing component on the
-    /// path (and the final component, when present) is a symlink.
-    /// Missing trailing components are fine; every ancestor that
-    /// exists must be symlink-free.
+    /// Resolve and additionally prove that the library folder is there and
+    /// that no existing component below it (the final one included) is a
+    /// symlink. Missing trailing components are fine. The folder itself,
+    /// and the path above it, are the admin's and may go through links.
     pub fn resolve_no_symlink(
         &self,
         root_id: &str,
         relative: &str,
     ) -> Result<PathBuf, PublishError> {
         let path = self.resolve(root_id, relative)?;
-        ensure_no_symlink(&path)?;
+        ensure_no_symlink_below(self.root_dir(root_id)?, &path)?;
         Ok(path)
     }
 
@@ -355,7 +356,7 @@ impl Sandbox {
     pub fn resolve_removal(&self, root_id: &str, relative: &str) -> Result<PathBuf, PublishError> {
         let root_dir = self.removal_root_dir(root_id)?.to_path_buf();
         let path = self.resolve_under(&root_dir, relative)?;
-        ensure_no_symlink(&path)?;
+        ensure_no_symlink_below(&root_dir, &path)?;
         Ok(path)
     }
 
@@ -416,13 +417,14 @@ impl Sandbox {
     }
 
     /// Refuse a bin whose own folder is now a symlink. A root's plain
-    /// `.recycle` is checked itself; a resolved folder (the configured bin,
-    /// or the target of a `.recycle` link) is checked all the way down,
-    /// since it held no link when the session opened.
+    /// `.recycle` (a library or remove-only root's) is checked itself, as
+    /// its root may be reached through a link; a resolved folder (the
+    /// configured bin, or the target of a `.recycle` link) is checked all
+    /// the way down, since it held no link when the session opened.
     fn ensure_bin_dir(&self, bin: &Root) -> Result<(), PublishError> {
         let plain_recycle = match &bin.kind {
             RootKind::Bin { serves: Some(root) } => self
-                .root_dir(root)
+                .removal_root_dir(root)
                 .is_ok_and(|dir| dir.join(RECYCLE_BIN_DIRECTORY_NAME) == bin.dir),
             _ => false,
         };
@@ -525,6 +527,65 @@ impl Sandbox {
     }
 }
 
+/// A library root with the real folder its configured path resolves to
+/// now (`None` while it does not resolve).
+#[derive(Debug, Clone)]
+pub struct ResolvedRoot {
+    pub id: String,
+    pub configured: PathBuf,
+    pub real: Option<PathBuf>,
+}
+
+impl ResolvedRoot {
+    /// Resolve root `id` at `configured`. Blocking: it reads the disk.
+    pub fn of(id: &str, configured: &Path) -> Self {
+        Self {
+            id: id.to_owned(),
+            configured: configured.to_path_buf(),
+            real: std::fs::canonicalize(configured).ok(),
+        }
+    }
+
+    fn folder(&self) -> &Path {
+        self.real.as_deref().unwrap_or(&self.configured)
+    }
+}
+
+/// The roots that take no managed writes: each one reached through a link
+/// (its real folder is not its configured path) whose real folder is,
+/// holds or sits inside another root's. Through both ids, two catalogs
+/// would manage one set of files: automatic management could move them
+/// to and fro, a collision between the two would be caught only by the
+/// operating system's placement call, and a removal that takes the lock at
+/// once guards only its own root, so a scan of the other one runs beside
+/// it. A root whose path is its real folder is never left out, so nothing
+/// that took file changes before linked folders did loses them.
+///
+/// Library folders against download and staging folders stay as the
+/// settings check them, by name: the publisher writes only under a root,
+/// a landed file already inside a library folder is refused on resolved
+/// paths, and the download side deletes only folders it named itself.
+pub fn left_out(roots: &[ResolvedRoot]) -> Vec<String> {
+    roots
+        .iter()
+        .filter(|root| {
+            root.real
+                .as_ref()
+                .is_some_and(|real| *real != root.configured)
+        })
+        .filter(|root| {
+            let mine = root.folder();
+            roots.iter().any(|other| {
+                other.id != root.id && {
+                    let theirs = other.folder();
+                    mine.starts_with(theirs) || theirs.starts_with(mine)
+                }
+            })
+        })
+        .map(|root| root.id.clone())
+        .collect()
+}
+
 /// Warn about a library root whose disk has neither safe placement step.
 fn warn_check_root(root: &Path, mode: PlacementMode) {
     if mode == PlacementMode::Check {
@@ -545,10 +606,73 @@ fn message_name(path: &Path) -> String {
         .to_owned()
 }
 
-/// Fail closed when any existing component of `path` is a symlink.
-/// Missing trailing components are allowed so new destinations can be
-/// validated before they exist.
-pub fn ensure_no_symlink(path: &Path) -> Result<(), PublishError> {
+/// Fail closed unless library folder `root` is a folder now. It is
+/// followed through any link: the folder an admin set is trusted as set.
+/// A folder that is gone, or a link to nothing, answers
+/// [`PublishError::FolderMissing`].
+pub(crate) fn ensure_library_dir(root: &Path) -> Result<(), PublishError> {
+    match std::fs::metadata(root) {
+        Ok(meta) if meta.is_dir() => Ok(()),
+        Ok(_) => Err(PublishError::FolderMissing),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(PublishError::FolderMissing)
+        }
+        Err(error) => Err(PublishError::Io(error.to_string())),
+    }
+}
+
+/// The part of `path` below `root`, when it is made only of plain names.
+/// `None` for a path outside `root`, or one with a `.` or `..` in it.
+pub(crate) fn below_root<'p>(root: &Path, path: &'p Path) -> Option<&'p Path> {
+    path.strip_prefix(root).ok().filter(|below| {
+        below
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+    })
+}
+
+/// Fail closed unless library folder `root` is a folder now and no
+/// existing component of `path` below it is a symlink. `root` and what
+/// lies above it are the admin's and are not checked for links. Missing
+/// trailing components are allowed so new destinations can be validated
+/// before they exist.
+pub(crate) fn ensure_no_symlink_below(root: &Path, path: &Path) -> Result<(), PublishError> {
+    ensure_library_dir(root)?;
+    no_symlink_below(root, path)
+}
+
+/// [`ensure_no_symlink_below`] for the integration tests.
+#[cfg(any(test, feature = "test-support"))]
+pub fn ensure_no_symlink_below_for_tests(root: &Path, path: &Path) -> Result<(), PublishError> {
+    ensure_no_symlink_below(root, path)
+}
+
+/// The walk of [`ensure_no_symlink_below`] alone, for a caller that has
+/// just checked the folder. A path not [`below_root`] refuses.
+pub(crate) fn no_symlink_below(root: &Path, path: &Path) -> Result<(), PublishError> {
+    let below = below_root(root, path)
+        .ok_or_else(|| PublishError::UnsafePath("path is not inside its library folder".into()))?;
+    let mut cursor = root.to_path_buf();
+    for component in below.components() {
+        cursor.push(component.as_os_str());
+        match std::fs::symlink_metadata(&cursor) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(PublishError::UnsafePath(format!(
+                    "refusing to follow symlink: {}",
+                    message_name(&cursor)
+                )));
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(PublishError::Io(err.to_string())),
+        }
+    }
+    Ok(())
+}
+
+/// Fail closed when any existing component of `path` is a symlink. Only
+/// for a resolved bin folder, which held no link when the session opened.
+fn ensure_no_symlink(path: &Path) -> Result<(), PublishError> {
     let mut cursor = PathBuf::new();
     for component in path.components() {
         cursor.push(component.as_os_str());

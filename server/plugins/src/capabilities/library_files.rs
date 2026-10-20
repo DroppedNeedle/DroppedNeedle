@@ -26,9 +26,9 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use super::super::host::PluginHost;
-use droppedneedle_library::publish::HIDDEN_PREFIX;
-use droppedneedle_library::publish::paths::{Root, Sandbox};
+use droppedneedle_library::publish::paths::{ResolvedRoot, Root, Sandbox, left_out};
 use droppedneedle_library::publish::plugin_files::{TEMP_TAG, write_new_file};
+use droppedneedle_library::publish::{HIDDEN_PREFIX, PublishError};
 
 /// The capability a plugin declares to write library files.
 pub const CAPABILITY: &str = "library_writer";
@@ -195,6 +195,10 @@ impl PluginHost {
         let Some(primary) = roots.first().map(|root| root.id.clone()) else {
             return Err(writes.refuse(plugin, "no library folder is set up".to_owned()));
         };
+        let folders: Vec<(String, PathBuf)> = roots
+            .iter()
+            .map(|root| (root.id.clone(), root.dir.clone()))
+            .collect();
         let sandbox =
             Sandbox::new(roots).map_err(|error| writes.refuse(plugin, error.to_string()))?;
         let bytes = data.len();
@@ -215,6 +219,16 @@ impl PluginHost {
             // Hold the root like every publisher write; dropped when done.
             let _lease = fs.write(&root_id).await;
             tokio::task::spawn_blocking(move || {
+                let resolved: Vec<ResolvedRoot> = folders
+                    .iter()
+                    .map(|(id, dir)| ResolvedRoot::of(id, dir))
+                    .collect();
+                if left_out(&resolved).contains(&root_id) {
+                    return Err(PublishError::UnsafePath(
+                        "the library folder is reached through a link into another library folder"
+                            .into(),
+                    ));
+                }
                 let note = ledger.join(uuid::Uuid::new_v4().simple().to_string());
                 let stored = write_new_file(&sandbox, &root_id, &relative, &data, |temp| {
                     std::fs::create_dir_all(&ledger)?;

@@ -4036,17 +4036,22 @@ async fn a_stopped_removal_keeps_each_file_with_its_track() {
     }
 }
 
-/// A library folder whose path goes through a symlink is refused for a
-/// removal with its files, as every managed write refuses it: the answer
-/// says why, the file stays and its track stays listed. It never answers
-/// that it removed a file it left in place.
+/// A library folder configured through a symlinked parent takes managed
+/// writes like any other: a tag edit writes the file, and a removal moves
+/// it into the folder's recycle bin and lists the track as missing. A
+/// folder reached through a link into another library folder takes none.
 #[tokio::test]
-async fn a_removal_under_a_symlinked_folder_is_refused() {
-    use droppedneedle_library::mutations::{MutationError, Mutations};
+async fn a_library_folder_reached_through_a_symlink_takes_writes() {
+    use droppedneedle_library::management::models::TagEditMode;
+    use droppedneedle_library::management::service::Management;
+    use droppedneedle_library::management::settings as lm;
+    use droppedneedle_library::management::tag_edit::TagEditRequest;
+    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::tags::{TagField, read_fields};
 
-    let (scratch, library, _music) = bare_library("lib-remove-linked").await;
+    let (scratch, library, _music) = bare_library("lib-linked-folder").await;
     let real = scratch.to_path_buf().join("real");
-    let file = plant(&real, "music/Band/LP/01.flac", "flac_full_01.flac");
+    let file = plant(&real, "music/Band/LP/01.flac", "management_full.flac");
     let linked = scratch.to_path_buf().join("linked");
     std::os::unix::fs::symlink(&real, &linked).expect("link made");
     add_music_root(&library, &linked.join("music")).await;
@@ -4055,17 +4060,84 @@ async fn a_removal_under_a_symlinked_folder_is_refused() {
         .track_at("music", "Band/LP/01.flac")
         .unwrap()
         .expect("track indexed");
+    let album = library
+        .scan_store
+        .album_for_track(&track)
+        .unwrap()
+        .expect("album");
+    scratch
+        .identify
+        .set_recall(ambiguous_recall(&library.identify_store, &album));
+    assert_eq!(library.identify_tick().await, 1);
+    library
+        .scan_store
+        .db()
+        .run_sql(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+        )
+        .expect("admin row");
+    droppedneedle_library::operations::service::Operations::new(&library)
+        .confirm_match(&album, "admin")
+        .expect("match confirmed");
+    let mut settings = lm::initial_settings("");
+    for profile in &mut settings.profiles {
+        for field in &mut profile.metadata.fields {
+            if droppedneedle_library::management::enrich::CREDIT_FIELDS
+                .iter()
+                .any(|(name, _)| *name == field.field)
+            {
+                field.mode = droppedneedle_kernel::runtime_config::sections::FieldMode::Disabled;
+            }
+        }
+    }
+    library
+        .settings
+        .store()
+        .save_blocking(settings)
+        .expect("settings saved");
+    lm::service::LibraryManagementService::new(Arc::new(library.settings.store().clone()))
+        .get_settings()
+        .expect("settings normalized");
 
-    let refused = Mutations::new(&library).remove_track_now(&track, true, "admin");
-
-    assert!(
-        matches!(
-            &refused,
-            Err(MutationError::Conflict(reason)) if reason.code == "FILE_OUTSIDE_ROOT"
-        ),
-        "{refused:?}"
+    let edit = Management::new(&library)
+        .create_tag_edit(
+            TagEditRequest {
+                local_track_id: track.clone(),
+                mode: TagEditMode::SaveOverride,
+                expected_settings_revision: lm::settings_revision(
+                    &library
+                        .settings
+                        .store()
+                        .get::<droppedneedle_kernel::runtime_config::sections::LibraryManagement>()
+                        .expect("settings read"),
+                ),
+                expected_policy_revision: library.policy_revision().expect("policy revision"),
+                fields: vec![("title".to_owned(), serde_json::json!("Linked Title"))],
+                idempotency_key: Some("linked-edit".to_owned()),
+            },
+            "admin",
+        )
+        .expect("edit preview");
+    assert!(management_step(&library).await, "edit planning runs");
+    let applied = management_apply(&library, &edit).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+    assert_eq!(
+        read_fields(&file).expect("tags read")[&TagField::Title],
+        vec!["Linked Title".to_owned()]
     );
-    assert!(file.exists(), "the file stays");
+
+    let bytes = std::fs::read(&file).expect("file read");
+    Mutations::new(&library)
+        .remove_track_now(&track, true, "admin")
+        .expect("removal");
+    assert!(!file.exists(), "the file left the folder");
+    let binned: Vec<PathBuf> = std::fs::read_dir(real.join("music/.recycle"))
+        .expect("the folder's bin")
+        .map(|entry| entry.expect("entry").path().join("01.flac"))
+        .collect();
+    assert_eq!(binned.len(), 1, "{binned:?}");
+    assert_eq!(std::fs::read(&binned[0]).expect("bin copy"), bytes);
     let availability: String =
         droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
             .expect("db opens")
@@ -4075,7 +4147,37 @@ async fn a_removal_under_a_symlinked_folder_is_refused() {
                 |row| row.get(0),
             )
             .expect("track row");
-    assert_eq!(availability, "indexed");
+    assert_eq!(availability, "missing");
+
+    // A second folder reached through a link into the first takes no
+    // managed writes: two ids would manage one set of files.
+    let second = plant(&real, "music/Band/LP2/02.flac", "flac_full_02.flac");
+    let other = scratch.to_path_buf().join("other");
+    std::os::unix::fs::symlink(real.join("music"), &other).expect("link made");
+    let inner = other.join("Band");
+    library
+        .add_root(
+            Some("inner".to_owned()),
+            inner.to_string_lossy().into_owned(),
+            droppedneedle_library::scan::EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    drain_scans(&library).await;
+    let through_link = library
+        .scan_store
+        .track_at("inner", "LP2/02.flac")
+        .unwrap()
+        .expect("track indexed");
+    let refused = Mutations::new(&library).remove_track_now(&through_link, true, "admin");
+    assert!(
+        matches!(
+            &refused,
+            Err(droppedneedle_library::mutations::MutationError::Conflict(reason))
+                if reason.code == "FILE_OUTSIDE_ROOT"
+        ),
+        "{refused:?}"
+    );
+    assert!(second.exists(), "the file stays");
 }
 
 /// One edition operation: a person chooses another edition (partial
