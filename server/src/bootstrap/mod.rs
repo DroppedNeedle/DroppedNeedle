@@ -87,7 +87,7 @@ use droppedneedle_media::{
     stream::local_files::LibraryFiles,
 };
 use droppedneedle_plugins::{scrobble::SqliteListenBrainzLinkStore, wiring::PluginsSetup};
-use droppedneedle_providers::{InMemoryProviderCache, Providers};
+use droppedneedle_providers::Providers;
 
 /// Why the server could not boot.
 #[derive(Debug, Error)]
@@ -249,8 +249,8 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // Shared provider deps first: the reads enrichment pair paces through
     // these same limiters, so production holds one limiter set. The byte
     // cache stays shared with the admin stats and clear routes.
-    let provider_cache = Arc::new(InMemoryProviderCache::new());
-    let providers = Arc::new(Providers::new(provider_cache.clone()));
+    let providers = Arc::new(Providers::build(p, outbound.providers()));
+    let provider_cache = providers.cache.clone();
     // Read live so turning ListenBrainz or lyrics on or off takes effect
     // at once.
     let enrichment = production_enrichment(
@@ -292,7 +292,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let acquire_stores = AcquireStores::open(db);
     // Read live, so a source switch in Settings reaches the long-lived
     // clients without a restart.
-    let mb_source = outbound.musicbrainz_source(config_store.live());
+    let mb_source = providers.musicbrainz.live_source(config_store.live());
     let scans = jobs::ScansEnded::default();
     let library = LibrarySetup::build(
         p,
@@ -635,14 +635,11 @@ fn acquire_ports(
             library,
         )),
         album_lookup: Arc::new(droppedneedle_acquire::target::lookup::live_albums(
-            &p.http,
-            providers.clone(),
+            providers,
             mb_source.clone(),
         )),
         release_poll: Arc::new(droppedneedle_acquire::search::live_release_poll(
-            &p.http,
-            providers.clone(),
-            mb_source,
+            providers, mb_source,
         )),
         plugins: plugin_host.clone(),
         collections: collections.clone(),

@@ -4,26 +4,100 @@
 //! a broad default: the full verification include set decoded ~608 KB for
 //! one 34-track release, live 2026-07-21), and the descriptive DroppedNeedle
 //! User-Agent from the HTTP client factory.
+//!
+//! [`MusicBrainzClient`] holds one executor per kind of source, built once
+//! with the providers. Callers read through a [`MusicBrainzView`], which
+//! names the source and the priority every request of the view uses.
 
-use serde::Deserialize;
+use std::time::Duration;
+
+use droppedneedle_kernel::runtime_config::{Live, sections::MusicBrainzSettings};
+use serde::de::DeserializeOwned;
 
 use super::models::{
     ArtistSearchHit, MbArtist, MbRecording, MbRelease, MbReleaseGroup, ReleaseGroupBrowsePage,
     ReleaseGroupSearchHit, ReleaseSearchHit, SearchPage, UrlResolution, decode_search_page,
 };
-use super::pacing::MbPacing;
 use super::redirects::{
     RedirectHop, brainzmash_redirect_path, lookup_redirect_pair, official_redirect_hop,
     validate_brainzmash_path,
 };
-use super::transport::{MbRequest, MbTransport, RawResponse};
 use super::{
-    Criticality, LiveSource, MAX_PAGE_LIMIT, MAX_REDIRECT_HOPS, MbError, MbSource,
-    build_release_search_query, escape_lucene_phrase, is_valid_mbid, normalize_mb_id,
-    parse_retry_after_secs,
+    BRAINZMASH_MAX_COOLDOWN, Criticality, LiveSource, MAX_BODY_BYTES, MAX_PAGE_LIMIT,
+    MAX_REDIRECT_HOPS, MbSource, SOURCE, build_release_search_query, escape_lucene_phrase,
+    is_valid_mbid, normalize_mb_id,
 };
 use crate::RequestPriority;
-use crate::degradation::{DegradationSink, NoopSink};
+use crate::error::{PayloadKind, ProviderError};
+use crate::executor::{
+    Answer, Backoff, Executor, Redirects, Reply, Request, Spec, Url, standard_classify,
+};
+
+/// Deadline per attempt, the HTTP factory's own.
+const TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The official service. Over its 1 request per second rule MusicBrainz
+/// declines with HTTP 503 (MusicBrainz_API/Rate_Limiting, read
+/// 2026-10-18), so a 503 is a rate limit here; one that names no wait
+/// rests the bucket for a second.
+pub static OFFICIAL: Spec = Spec {
+    source: SOURCE,
+    health_key: "musicbrainz",
+    timeout: TIMEOUT,
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(1)),
+    retry_after_cap: Duration::from_secs(60),
+    classify: official_classify,
+};
+
+/// BrainzMash. A 429 rests the bucket for the wait it names, or backs off
+/// from one second to a minute while 429s keep naming none (v2
+/// `_BrainzMashScheduler`). A 503 is a dead mirror, not a rate signal, so
+/// it sets no cooldown. Failures count toward the mirror's own health
+/// entry.
+pub static BRAINZMASH: Spec = Spec {
+    source: SOURCE,
+    health_key: "musicbrainz-brainzmash",
+    timeout: TIMEOUT,
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Exponential {
+        base: Duration::from_secs(1),
+        max: BRAINZMASH_MAX_COOLDOWN,
+    },
+    retry_after_cap: BRAINZMASH_MAX_COOLDOWN,
+    classify: brainzmash_classify,
+};
+
+/// A mirror the operator runs, paced at the rate they set.
+pub static MIRROR: Spec = Spec {
+    source: SOURCE,
+    health_key: "musicbrainz",
+    timeout: TIMEOUT,
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(1)),
+    retry_after_cap: Duration::from_secs(60),
+    classify: standard_classify,
+};
+
+fn official_classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
+    if answer.reply.status() == 503 {
+        return Err(ProviderError::RateLimited {
+            provider: SOURCE,
+            retry_after: answer.retry_after(),
+        });
+    }
+    standard_classify(answer)
+}
+
+fn brainzmash_classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
+    if answer.reply.status() == 503 {
+        return Err(ProviderError::Unavailable {
+            provider: SOURCE,
+            retry_after: None,
+        });
+    }
+    standard_classify(answer)
+}
 
 /// Lookup result: the entity plus the redirect proof behind it.
 #[derive(Debug, Clone)]
@@ -34,86 +108,94 @@ pub struct Lookup<T> {
     pub redirects: Vec<RedirectHop>,
 }
 
-/// MusicBrainz client over any [`MbTransport`]. Owns status semantics,
-/// redirect walking and criticality routing, and paces every attempt
-/// through the shared [`MbPacing`]; owns no cache and no persistence.
-pub struct MusicBrainzClient<T: MbTransport, S: DegradationSink = NoopSink> {
-    transport: T,
-    sink: S,
-    source: MbSource,
-    resolve: Option<LiveSource>,
-    pacing: MbPacing,
+/// The MusicBrainz executors, one per kind of source, and the roots of
+/// the two built-in sources. Built once with the providers; cheap to clone.
+#[derive(Debug, Clone)]
+pub struct MusicBrainzClient {
+    official: Executor,
+    brainzmash: Executor,
+    mirror: Executor,
+    official_root: String,
+    brainzmash_root: String,
+}
+
+impl MusicBrainzClient {
+    /// The client over its three executors, with the official and
+    /// BrainzMash roots.
+    #[must_use]
+    pub fn new(
+        official: Executor,
+        brainzmash: Executor,
+        mirror: Executor,
+        official_root: &str,
+        brainzmash_root: &str,
+    ) -> Self {
+        Self {
+            official,
+            brainzmash,
+            mirror,
+            official_root: official_root.to_owned(),
+            brainzmash_root: brainzmash_root.to_owned(),
+        }
+    }
+
+    /// The source `settings` select.
+    #[must_use]
+    pub fn source_from(&self, settings: &MusicBrainzSettings) -> MbSource {
+        MbSource::from_settings(settings, &self.official_root, &self.brainzmash_root)
+    }
+
+    /// The source the saved settings select, read at each request.
+    #[must_use]
+    pub fn live_source(&self, settings: Live<MusicBrainzSettings>) -> LiveSource {
+        LiveSource::new(settings, &self.official_root, &self.brainzmash_root)
+    }
+
+    /// Reads against `source`, every request at `priority`.
+    #[must_use]
+    pub fn fixed(&self, source: MbSource, priority: RequestPriority) -> MusicBrainzView {
+        MusicBrainzView {
+            client: self.clone(),
+            source: Choice::Fixed(source),
+            priority,
+        }
+    }
+
+    /// Reads against the source the settings name at each request, every
+    /// request at `priority`.
+    #[must_use]
+    pub fn live(&self, source: LiveSource, priority: RequestPriority) -> MusicBrainzView {
+        MusicBrainzView {
+            client: self.clone(),
+            source: Choice::Live(source),
+            priority,
+        }
+    }
+}
+
+#[derive(Clone)]
+enum Choice {
+    Fixed(MbSource),
+    Live(LiveSource),
+}
+
+/// MusicBrainz reads against one source at one priority. Owns status
+/// semantics, redirect walking and criticality routing; owns no cache and
+/// no persistence.
+#[derive(Clone)]
+pub struct MusicBrainzView {
+    client: MusicBrainzClient,
+    source: Choice,
     priority: RequestPriority,
 }
 
-impl<T: MbTransport> MusicBrainzClient<T, NoopSink> {
-    /// Client against `source`, paced through the shared limiters at user
-    /// priority.
-    pub fn new(transport: T, source: MbSource, pacing: MbPacing) -> Self {
-        Self {
-            transport,
-            sink: NoopSink,
-            source,
-            resolve: None,
-            pacing,
-            priority: RequestPriority::UserInitiated,
-        }
-    }
-
-    /// Client against the official service.
-    pub fn official(transport: T, pacing: MbPacing) -> Self {
-        Self::new(transport, MbSource::official(), pacing)
-    }
-
-    /// Client against BrainzMash. `binding_valid` must be true before any
-    /// request is sent; otherwise calls fail closed without touching the
-    /// wire (v2 raises "BrainzMash active binding is not valid").
-    pub fn brainzmash(transport: T, binding_valid: bool, pacing: MbPacing) -> Self {
-        Self::new(
-            transport,
-            MbSource::BrainzMash {
-                base_url: super::BRAINZMASH_API_BASE.to_owned(),
-                binding_valid,
-            },
-            pacing,
-        )
-    }
-}
-
-impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
-    /// Swap the degradation sink (the enrichment aggregator mounts its own).
-    pub fn with_sink<N: DegradationSink>(self, sink: N) -> MusicBrainzClient<T, N> {
-        MusicBrainzClient {
-            transport: self.transport,
-            sink,
-            source: self.source,
-            resolve: self.resolve,
-            pacing: self.pacing,
-            priority: self.priority,
-        }
-    }
-
-    /// Wait for limiter tokens at `priority`. Background work passes
-    /// [`RequestPriority::BackgroundSync`] so user page loads go first.
-    #[must_use]
-    pub fn with_priority(mut self, priority: RequestPriority) -> Self {
-        self.priority = priority;
-        self
-    }
-
-    /// Read the source from the settings at every request instead of the
-    /// one fixed at construction.
-    #[must_use]
-    pub fn with_live_source(mut self, resolve: LiveSource) -> Self {
-        self.resolve = Some(resolve);
-        self
-    }
-
+impl MusicBrainzView {
     /// The source the next request goes to.
     pub fn source(&self) -> MbSource {
-        self.resolve
-            .as_ref()
-            .map_or_else(|| self.source.clone(), LiveSource::current)
+        match &self.source {
+            Choice::Fixed(source) => source.clone(),
+            Choice::Live(live) => live.current(),
+        }
     }
 
     /// Search artists by free text, the way v2's artist search asked:
@@ -125,21 +207,13 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         limit: u32,
         offset: u32,
         criticality: Criticality,
-    ) -> Result<SearchPage<ArtistSearchHit>, MbError> {
+    ) -> Result<SearchPage<ArtistSearchHit>, ProviderError> {
         let escaped = escape_lucene_phrase(text.trim());
         let query = format!(
             r#"artist:"{escaped}"^3 OR artistaccent:"{escaped}"^3 OR alias:"{escaped}"^2 OR {escaped}"#
         );
-        self.search_page(
-            "/artist",
-            &query,
-            limit,
-            offset,
-            "artists",
-            "search_artists",
-            criticality,
-        )
-        .await
+        self.search_page("artist", &query, limit, offset, "artists", criticality)
+            .await
     }
 
     /// Search release groups by free text, the way v2's album search
@@ -150,16 +224,15 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         limit: u32,
         offset: u32,
         criticality: Criticality,
-    ) -> Result<SearchPage<ReleaseGroupSearchHit>, MbError> {
+    ) -> Result<SearchPage<ReleaseGroupSearchHit>, ProviderError> {
         let escaped = escape_lucene_phrase(text.trim());
         let query = format!(r#"releasegroup:"{escaped}"^3 OR release:"{escaped}"^2 OR {escaped}"#);
         self.search_page(
-            "/release-group",
+            "release-group",
             &query,
             limit,
             offset,
             "release-groups",
-            "search_release_groups",
             criticality,
         )
         .await
@@ -174,8 +247,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         limit: u32,
         offset: u32,
         criticality: Criticality,
-    ) -> Result<ReleaseGroupBrowsePage, MbError> {
-        let operation = "browse_release_groups";
+    ) -> Result<ReleaseGroupBrowsePage, ProviderError> {
         let params = vec![
             ("artist".to_owned(), normalize_mb_id(artist_mbid)),
             ("inc".to_owned(), "artist-credits".to_owned()),
@@ -183,20 +255,16 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
             ("offset".to_owned(), offset.to_string()),
         ];
         match self
-            .get("/release-group", params, operation, criticality)
+            .get(vec!["release-group".to_owned()], params, criticality)
             .await?
         {
-            WireOutcome::Found(body) => serde_json::from_slice(&body).map_err(|error| {
-                MbError::Contract(format!("{operation} payload breaks the contract: {error}"))
-            }),
+            WireOutcome::Found(reply) => reply.json(),
             WireOutcome::Missing | WireOutcome::Degraded => Ok(ReleaseGroupBrowsePage {
                 count: 0,
                 offset: u64::from(offset),
                 items: Vec::new(),
             }),
-            WireOutcome::Redirect { .. } => Err(MbError::RedirectRejected(format!(
-                "{operation} never follows redirects"
-            ))),
+            WireOutcome::Redirect { status, .. } => Err(refused(status)),
         }
     }
 
@@ -207,18 +275,10 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         artist: &str,
         limit: u32,
         criticality: Criticality,
-    ) -> Result<SearchPage<ReleaseSearchHit>, MbError> {
+    ) -> Result<SearchPage<ReleaseSearchHit>, ProviderError> {
         let query = build_release_search_query(title, artist);
-        self.search_page(
-            "/release",
-            &query,
-            limit,
-            0,
-            "releases",
-            "search_releases",
-            criticality,
-        )
-        .await
+        self.search_page("release", &query, limit, 0, "releases", criticality)
+            .await
     }
 
     /// Search releases with a query the caller built and escaped. Library
@@ -229,17 +289,9 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         query: &str,
         limit: u32,
         criticality: Criticality,
-    ) -> Result<SearchPage<ReleaseSearchHit>, MbError> {
-        self.search_page(
-            "/release",
-            query,
-            limit,
-            0,
-            "releases",
-            "search_releases",
-            criticality,
-        )
-        .await
+    ) -> Result<SearchPage<ReleaseSearchHit>, ProviderError> {
+        self.search_page("release", query, limit, 0, "releases", criticality)
+            .await
     }
 
     /// One page of releases by title and artist, for a curator choosing
@@ -251,18 +303,10 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         limit: u32,
         offset: u32,
         criticality: Criticality,
-    ) -> Result<SearchPage<ReleaseSearchHit>, MbError> {
+    ) -> Result<SearchPage<ReleaseSearchHit>, ProviderError> {
         let query = build_release_search_query(title, artist);
-        self.search_page(
-            "/release",
-            &query,
-            limit,
-            offset,
-            "releases",
-            "search_release_editions",
-            criticality,
-        )
-        .await
+        self.search_page("release", &query, limit, offset, "releases", criticality)
+            .await
     }
 
     /// One page of every release in one release group, for a curator
@@ -274,18 +318,10 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         limit: u32,
         offset: u32,
         criticality: Criticality,
-    ) -> Result<SearchPage<ReleaseSearchHit>, MbError> {
+    ) -> Result<SearchPage<ReleaseSearchHit>, ProviderError> {
         let query = format!("rgid:{}", normalize_mb_id(release_group_mbid));
-        self.search_page(
-            "/release",
-            &query,
-            limit,
-            offset,
-            "releases",
-            "search_release_group_editions",
-            criticality,
-        )
-        .await
+        self.search_page("release", &query, limit, offset, "releases", criticality)
+            .await
     }
 
     /// Search release groups carrying one tag (v2
@@ -296,15 +332,14 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         limit: u32,
         offset: u32,
         criticality: Criticality,
-    ) -> Result<SearchPage<ReleaseGroupSearchHit>, MbError> {
+    ) -> Result<SearchPage<ReleaseGroupSearchHit>, ProviderError> {
         let query = super::build_tag_query(tag);
         self.search_page(
-            "/release-group",
+            "release-group",
             &query,
             limit,
             offset,
             "release-groups",
-            "search_release_groups_by_tag",
             criticality,
         )
         .await
@@ -317,7 +352,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         tag: &str,
         limit: u32,
         criticality: Criticality,
-    ) -> Result<SearchPage<ArtistSearchHit>, MbError> {
+    ) -> Result<SearchPage<ArtistSearchHit>, ProviderError> {
         self.search_artists_by_tag_from(tag, limit, 0, criticality)
             .await
     }
@@ -330,18 +365,10 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         limit: u32,
         offset: u32,
         criticality: Criticality,
-    ) -> Result<SearchPage<ArtistSearchHit>, MbError> {
+    ) -> Result<SearchPage<ArtistSearchHit>, ProviderError> {
         let query = super::build_tag_query(tag);
-        self.search_page(
-            "/artist",
-            &query,
-            limit,
-            offset,
-            "artists",
-            "search_artists_by_tag",
-            criticality,
-        )
-        .await
+        self.search_page("artist", &query, limit, offset, "artists", criticality)
+            .await
     }
 
     /// Search artists by name.
@@ -350,18 +377,10 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         name: &str,
         limit: u32,
         criticality: Criticality,
-    ) -> Result<SearchPage<ArtistSearchHit>, MbError> {
+    ) -> Result<SearchPage<ArtistSearchHit>, ProviderError> {
         let query = format!(r#"artist:"{}""#, escape_lucene_phrase(name));
-        self.search_page(
-            "/artist",
-            &query,
-            limit,
-            0,
-            "artists",
-            "search_artists",
-            criticality,
-        )
-        .await
+        self.search_page("artist", &query, limit, 0, "artists", criticality)
+            .await
     }
 
     /// Look up one release with the caller's include set.
@@ -370,10 +389,8 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         mbid: &str,
         includes: &[&str],
         criticality: Criticality,
-    ) -> Result<Option<Lookup<MbRelease>>, MbError> {
-        let path = format!("/release/{}", normalize_mb_id(mbid));
-        self.lookup(&path, includes, "lookup_release", criticality)
-            .await
+    ) -> Result<Option<Lookup<MbRelease>>, ProviderError> {
+        self.lookup("release", mbid, includes, criticality).await
     }
 
     /// Look up one release with proof it belongs to a provider-returned
@@ -385,7 +402,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         &self,
         mbid: &str,
         criticality: Criticality,
-    ) -> Result<Option<Lookup<MbRelease>>, MbError> {
+    ) -> Result<Option<Lookup<MbRelease>>, ProviderError> {
         let found = self
             .lookup_release(
                 mbid,
@@ -394,9 +411,14 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
             )
             .await?;
         match found {
-            Some(lookup) if lookup.entity.release_group.is_none() => Err(MbError::Contract(
-                format!("exact release {mbid} arrived without its provider release group"),
-            )),
+            Some(lookup) if lookup.entity.release_group.is_none() => Err(ProviderError::Payload {
+                provider: SOURCE,
+                kind: PayloadKind::Contract,
+                message: format!(
+                    "exact release {} arrived without its provider release group",
+                    lookup.entity.id
+                ),
+            }),
             other => Ok(other),
         }
     }
@@ -408,7 +430,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         &self,
         release_mbid: &str,
         criticality: Criticality,
-    ) -> Result<Option<String>, MbError> {
+    ) -> Result<Option<String>, ProviderError> {
         let found = self
             .lookup_release(release_mbid, &["release-groups"], criticality)
             .await?;
@@ -421,9 +443,8 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         mbid: &str,
         includes: &[&str],
         criticality: Criticality,
-    ) -> Result<Option<Lookup<MbReleaseGroup>>, MbError> {
-        let path = format!("/release-group/{}", normalize_mb_id(mbid));
-        self.lookup(&path, includes, "lookup_release_group", criticality)
+    ) -> Result<Option<Lookup<MbReleaseGroup>>, ProviderError> {
+        self.lookup("release-group", mbid, includes, criticality)
             .await
     }
 
@@ -434,10 +455,8 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         mbid: &str,
         includes: &[&str],
         criticality: Criticality,
-    ) -> Result<Option<Lookup<MbArtist>>, MbError> {
-        let path = format!("/artist/{}", normalize_mb_id(mbid));
-        self.lookup(&path, includes, "lookup_artist", criticality)
-            .await
+    ) -> Result<Option<Lookup<MbArtist>>, ProviderError> {
+        self.lookup("artist", mbid, includes, criticality).await
     }
 
     /// Look up one recording. Identity callers pass
@@ -450,10 +469,8 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         mbid: &str,
         includes: &[&str],
         criticality: Criticality,
-    ) -> Result<Option<Lookup<MbRecording>>, MbError> {
-        let path = format!("/recording/{}", normalize_mb_id(mbid));
-        self.lookup(&path, includes, "lookup_recording", criticality)
-            .await
+    ) -> Result<Option<Lookup<MbRecording>>, ProviderError> {
+        self.lookup("recording", mbid, includes, criticality).await
     }
 
     /// Resolve a recording MBID through merge redirects to its canonical
@@ -464,10 +481,13 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         &self,
         recording_mbid: &str,
         criticality: Criticality,
-    ) -> Result<Option<String>, MbError> {
+    ) -> Result<Option<String>, ProviderError> {
         let normalized = normalize_mb_id(recording_mbid);
         if !is_valid_mbid(&normalized) {
-            return Err(MbError::InvalidMbid(recording_mbid.to_owned()));
+            return Err(ProviderError::Invalid {
+                provider: SOURCE,
+                reason: "not a MusicBrainz id",
+            });
         }
         let found = self.lookup_recording(&normalized, &[], criticality).await?;
         Ok(found.map(|lookup| lookup.entity.id))
@@ -482,40 +502,36 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         resource: &str,
         includes: &[&str],
         criticality: Criticality,
-    ) -> Result<UrlResolution, MbError> {
-        let operation = "resolve_url";
+    ) -> Result<UrlResolution, ProviderError> {
         let mut params = vec![("resource".to_owned(), resource.to_owned())];
         let inc = sorted_includes(includes);
         if !inc.is_empty() {
             params.push(("inc".to_owned(), inc));
         }
-        match self.get("/url", params, operation, criticality).await? {
-            WireOutcome::Found(body) => serde_json::from_slice(&body).map_err(|error| {
-                MbError::Contract(format!("url resolution broke the contract: {error}"))
-            }),
+        match self
+            .get(vec!["url".to_owned()], params, criticality)
+            .await?
+        {
+            WireOutcome::Found(reply) => reply.json(),
             WireOutcome::Missing | WireOutcome::Degraded => Ok(UrlResolution::empty(resource)),
-            WireOutcome::Redirect { .. } => Err(MbError::RedirectRejected(
-                "url resolution never follows redirects".to_owned(),
-            )),
+            WireOutcome::Redirect { status, .. } => Err(refused(status)),
         }
     }
 
     /// One entity search with bucket isolation: provider death on a
     /// non-critical search records a degradation and yields an empty page
     /// (v2 grouped search returns `[]` plus a failed bucket).
-    #[allow(clippy::too_many_arguments)]
     async fn search_page<E>(
         &self,
-        path: &str,
+        entity: &str,
         query: &str,
         limit: u32,
         offset: u32,
         array_key: &str,
-        operation: &'static str,
         criticality: Criticality,
-    ) -> Result<SearchPage<E>, MbError>
+    ) -> Result<SearchPage<E>, ProviderError>
     where
-        E: for<'de> Deserialize<'de>,
+        E: DeserializeOwned,
     {
         let mut params = vec![
             ("query".to_owned(), query.to_owned()),
@@ -524,276 +540,205 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         if offset > 0 {
             params.push(("offset".to_owned(), offset.to_string()));
         }
-        match self.get(path, params, operation, criticality).await? {
-            WireOutcome::Found(body) => decode_search_page(&body, array_key),
+        match self
+            .get(vec![entity.to_owned()], params, criticality)
+            .await?
+        {
+            WireOutcome::Found(reply) => decode_search_page(reply.bytes(), array_key),
             WireOutcome::Missing | WireOutcome::Degraded => Ok(SearchPage {
                 count: 0,
                 offset: 0,
                 items: Vec::new(),
             }),
-            WireOutcome::Redirect { .. } => Err(MbError::RedirectRejected(format!(
-                "{operation} never follows redirects"
-            ))),
+            WireOutcome::Redirect { status, .. } => Err(refused(status)),
         }
     }
 
     /// One entity lookup with redirect proof and criticality routing.
     async fn lookup<E>(
         &self,
-        path: &str,
+        entity: &str,
+        mbid: &str,
         includes: &[&str],
-        operation: &'static str,
         criticality: Criticality,
-    ) -> Result<Option<Lookup<E>>, MbError>
+    ) -> Result<Option<Lookup<E>>, ProviderError>
     where
-        E: for<'de> Deserialize<'de>,
+        E: DeserializeOwned,
     {
         let mut params = Vec::new();
         let inc = sorted_includes(includes);
         if !inc.is_empty() {
             params.push(("inc".to_owned(), inc));
         }
-        let mut current_path = path.to_owned();
+        let mut segments = vec![entity.to_owned(), normalize_mb_id(mbid)];
         let mut redirects = Vec::new();
+        let mut last_status = 0;
         for _ in 0..=MAX_REDIRECT_HOPS {
-            match self
-                .get(&current_path, params.clone(), operation, criticality)
-                .await?
-            {
-                WireOutcome::Found(body) => {
-                    let entity = serde_json::from_slice(&body).map_err(|error| {
-                        MbError::Contract(format!(
-                            "{operation} payload breaks the contract: {error}"
-                        ))
-                    })?;
+            match self.get(segments, params.clone(), criticality).await? {
+                WireOutcome::Found(reply) => {
+                    let entity = reply.json()?;
                     return Ok(Some(Lookup { entity, redirects }));
                 }
                 WireOutcome::Missing | WireOutcome::Degraded => return Ok(None),
-                WireOutcome::Redirect { hop, next_path } => {
+                WireOutcome::Redirect {
+                    hop,
+                    next_path,
+                    status,
+                } => {
                     redirects.push(hop);
-                    current_path = next_path;
+                    segments = path_segments(&next_path);
+                    last_status = status;
                 }
             }
         }
-        Err(MbError::RedirectRejected(format!(
-            "{operation} exceeded {MAX_REDIRECT_HOPS} redirect hops"
-        )))
+        Err(refused(last_status))
     }
 
-    /// One paced wire attempt with status semantics. Returns the redirect
-    /// hop for the caller to follow (lookups) or reject (searches).
+    /// One request with status semantics. Returns the redirect hop for the
+    /// caller to follow (lookups) or reject (searches).
     async fn get(
         &self,
-        path: &str,
+        segments: Vec<String>,
         mut params: Vec<(String, String)>,
-        operation: &'static str,
         criticality: Criticality,
-    ) -> Result<WireOutcome, MbError> {
+    ) -> Result<WireOutcome, ProviderError> {
         let source = self.source();
-        if matches!(source, MbSource::Unreadable) {
-            return Err(MbError::Misconfigured(
-                "the musicbrainz settings cannot be read".to_owned(),
-            ));
-        }
-        if let MbSource::BrainzMash { binding_valid, .. } = &source
-            && !binding_valid
-        {
-            return Err(MbError::Misconfigured(
-                "brainzmash active binding is not valid".to_owned(),
-            ));
-        }
-        let brainzmash = source.is_brainzmash();
-        let request_path = if brainzmash {
-            validate_brainzmash_path(path)?
-        } else {
-            path.to_owned()
-        };
-        if let Err(wait) = self.pacing.acquire(&source, self.priority).await {
-            let secs = wait.as_secs_f64();
-            if criticality == Criticality::IdentityCritical {
-                return Err(MbError::RateLimited {
-                    retry_after_secs: Some(secs),
+        let client = &self.client;
+        let (executor, base_text) = match &source {
+            MbSource::Unreadable => {
+                return Err(ProviderError::NotConfigured {
+                    provider: SOURCE,
+                    message: "the musicbrainz settings cannot be read".to_owned(),
                 });
             }
-            // A local pacing decline: the mirror said nothing, so it does
-            // not count toward its health.
-            return self.provider_dead(
-                operation,
-                criticality,
-                format!("brainzmash cooling down {secs:.1}s"),
-                Health::Quiet,
-            );
-        }
-        params.push(("fmt".to_owned(), "json".to_owned()));
-        let url = format!(
-            "{}{}",
-            source.base_url().trim_end_matches('/'),
-            request_path
-        );
-        let request = MbRequest {
-            url: url.clone(),
-            query: params,
-            headers: Vec::new(),
+            MbSource::BrainzMash {
+                binding_valid: false,
+                ..
+            } => {
+                return Err(ProviderError::NotConfigured {
+                    provider: SOURCE,
+                    message: "brainzmash active binding is not valid".to_owned(),
+                });
+            }
+            MbSource::BrainzMash { base_url, .. } => (&client.brainzmash, base_url),
+            MbSource::Official { base_url } => (&client.official, base_url),
+            MbSource::Mirror {
+                base_url,
+                rate_per_sec,
+            } => {
+                // Zero or less is the owner's "unlimited" for their mirror.
+                let rate = if rate_per_sec.is_finite() {
+                    *rate_per_sec
+                } else {
+                    0.0
+                };
+                client.mirror.limiter().retune(rate);
+                (&client.mirror, base_url)
+            }
         };
-        let wire = if brainzmash {
-            Health::Counts(BRAINZMASH_HEALTH)
+        let joined = format!("/{}", segments.join("/"));
+        let request_path = if source.is_brainzmash() {
+            validate_brainzmash_path(&joined)?
         } else {
-            Health::Counts(OFFICIAL_HEALTH)
+            joined
         };
-        let response = match self.transport.get(&request).await {
-            Ok(response) => response,
-            Err(error) => return self.provider_dead(operation, criticality, error.0, wire),
-        };
-        if brainzmash {
-            self.note_brainzmash_status(&response);
-        }
-        match response.status {
-            200 => {
-                if let Health::Counts(health_source) = wire {
-                    self.sink.succeeded(health_source);
-                }
-                Ok(WireOutcome::Found(response.body))
-            }
-            404 => Ok(WireOutcome::Missing),
-            429 | 503 => {
-                let retry_after_secs = parse_retry_after_secs(response.header("Retry-After"));
-                if brainzmash && response.status == 429 {
-                    // Single note_cooldown call for this response: it is not
-                    // idempotent, so the helper above skips 429 on purpose.
-                    let selected = self.pacing.cooldown().note_cooldown(retry_after_secs);
-                    return self.provider_dead(
-                        operation,
-                        criticality,
-                        format!("brainzmash rate limited; cooling down {selected:.1}s"),
-                        wire,
-                    );
-                }
-                if brainzmash && response.status == 503 {
-                    // A BrainzMash 503 is a dead mirror, not a rate signal:
-                    // v2 labels only the official 503 rate-limited.
-                    return self.provider_dead(
-                        operation,
-                        criticality,
-                        "brainzmash unavailable (HTTP 503)".to_owned(),
-                        wire,
-                    );
-                }
-                if criticality == Criticality::BestEffort {
-                    self.sink.record(
-                        "musicbrainz",
-                        format!(
-                            "{operation}: musicbrainz rate limited (HTTP {})",
-                            response.status
-                        ),
-                    );
-                    return Ok(WireOutcome::Degraded);
-                }
-                Err(MbError::RateLimited { retry_after_secs })
-            }
-            // A lookup 400 names a well-formed id the service rejects; a
-            // search or browse 400 is a bad query.
-            400 if operation.starts_with("lookup") || operation.starts_with("resolve") => {
-                Err(MbError::InvalidMbid(format!("{operation} {path}")))
-            }
-            300..=399 => {
-                let hop = self.redirect_hop(&source, &url, &request_path, &response, operation)?;
+        let base = parse_base(base_text).ok_or(ProviderError::Invalid {
+            provider: SOURCE,
+            reason: "the MusicBrainz address is not a valid URL",
+        })?;
+        params.push(("fmt".to_owned(), "json".to_owned()));
+        let query: Vec<(&str, &str)> = params
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
+        let request = Request::get(&base, &segments, &query)
+            .map_err(|_| ProviderError::Invalid {
+                provider: SOURCE,
+                reason: "the MusicBrainz address is not a valid URL",
+            })?
+            .redirects(Redirects::Return);
+        match executor.send(request, self.priority).await {
+            Ok(reply) if (300..400).contains(&reply.status()) => {
+                let request_url = format!("{}{request_path}", base_text.trim_end_matches('/'));
+                let hop = redirect_hop(&source, &request_url, &request_path, &reply)?;
                 Ok(WireOutcome::Redirect {
                     hop: hop.hop,
                     next_path: hop.next_path,
+                    status: reply.status(),
                 })
             }
-            400..=499 => Err(MbError::Rejected(response.status)),
-            _ => self.provider_dead(
-                operation,
-                criticality,
-                format!("HTTP {} from {}", response.status, source.base_url()),
-                wire,
-            ),
+            Ok(reply) => Ok(WireOutcome::Found(reply)),
+            Err(ProviderError::NotFound { .. }) => Ok(WireOutcome::Missing),
+            // A dead or busy provider on a best-effort read is a recorded
+            // absence; the executor has recorded it.
+            Err(error) if criticality == Criticality::BestEffort && error.is_retriable() => {
+                tracing::debug!(%error, "musicbrainz read degraded to absence");
+                Ok(WireOutcome::Degraded)
+            }
+            Err(error) => Err(error),
         }
     }
+}
 
-    /// Validate one 3xx into a followable hop, or reject it.
-    fn redirect_hop(
-        &self,
-        source: &MbSource,
-        request_url: &str,
-        request_path: &str,
-        response: &RawResponse,
-        operation: &'static str,
-    ) -> Result<FollowHop, MbError> {
-        let location = response.header("location").unwrap_or("");
-        if source.is_brainzmash() {
-            if let Some(hop_path) =
-                brainzmash_redirect_path(request_url, response.status, response.header("location"))
-                && let Some(hop) = lookup_redirect_pair(request_path, &hop_path)
-            {
-                return Ok(FollowHop {
-                    hop,
-                    next_path: hop_path,
-                });
-            }
-        } else if let Some(hop) =
-            official_redirect_hop(request_url, source.base_url(), request_path, location)
+/// Validate one 3xx into a followable hop, or refuse it.
+fn redirect_hop(
+    source: &MbSource,
+    request_url: &str,
+    request_path: &str,
+    reply: &Reply,
+) -> Result<FollowHop, ProviderError> {
+    let location = reply.header("location").unwrap_or("");
+    if source.is_brainzmash() {
+        if let Some(hop_path) =
+            brainzmash_redirect_path(request_url, reply.status(), reply.header("location"))
+            && let Some(hop) = lookup_redirect_pair(request_path, &hop_path)
         {
-            let next_path = format!("/{}/{}", hop.entity, hop.to_mbid);
-            return Ok(FollowHop { hop, next_path });
+            return Ok(FollowHop {
+                hop,
+                next_path: hop_path,
+            });
         }
-        Err(MbError::RedirectRejected(format!(
-            "{operation} refused {request_path} -> {location}"
-        )))
+    } else if let Some(hop) =
+        official_redirect_hop(request_url, source.base_url(), request_path, location)
+    {
+        let next_path = format!("/{}/{}", hop.entity, hop.to_mbid);
+        return Ok(FollowHop { hop, next_path });
     }
+    tracing::debug!(
+        status = reply.status(),
+        path = request_path,
+        "musicbrainz redirect refused"
+    );
+    Err(refused(reply.status()))
+}
 
-    /// BrainzMash per-response bookkeeping: 200 clears the cooldown.
-    /// The 429 arm below owns the single `note_cooldown` call for its
-    /// response (it is not idempotent), so 429 is skipped here on purpose.
-    fn note_brainzmash_status(&self, response: &RawResponse) {
-        if response.status == 200 {
-            self.pacing.cooldown().note_success();
-        }
-    }
-
-    /// Dead-provider routing: typed failure when identity-critical,
-    /// recorded absence otherwise.
-    fn provider_dead(
-        &self,
-        operation: &'static str,
-        criticality: Criticality,
-        cause: String,
-        health: Health,
-    ) -> Result<WireOutcome, MbError> {
-        if criticality == Criticality::IdentityCritical {
-            return Err(MbError::Unavailable(cause));
-        }
-        let message = format!("{operation}: musicbrainz unavailable: {cause}");
-        match health {
-            Health::Counts(health_source) => {
-                self.sink.record_as("musicbrainz", health_source, message);
-            }
-            Health::Quiet => self.sink.record_quiet("musicbrainz", message),
-        }
-        Ok(WireOutcome::Degraded)
+fn refused(status: u16) -> ProviderError {
+    ProviderError::Redirect {
+        provider: SOURCE,
+        status,
     }
 }
 
-/// Health entry the official service's wire failures count toward.
-const OFFICIAL_HEALTH: &str = "musicbrainz";
-/// Health entry a BrainzMash mirror's wire failures count toward (v2's
-/// separate breaker).
-const BRAINZMASH_HEALTH: &str = "musicbrainz-brainzmash";
-
-/// Whether a recorded failure counts toward service health.
-#[derive(Debug, Clone, Copy)]
-enum Health {
-    /// A wire failure: counts toward this health entry.
-    Counts(&'static str),
-    /// A local decline: the request sees it, service health does not.
-    Quiet,
+/// An http or https base that can carry a path.
+fn parse_base(text: &str) -> Option<Url> {
+    let url = Url::parse(text.trim()).ok()?;
+    (matches!(url.scheme(), "http" | "https") && !url.cannot_be_a_base() && url.has_host())
+        .then_some(url)
 }
 
-/// One wire attempt's classified result.
+/// `/entity/mbid` as its segments.
+fn path_segments(path: &str) -> Vec<String> {
+    path.trim_matches('/')
+        .split('/')
+        .map(str::to_owned)
+        .collect()
+}
+
+/// One request's classified result.
 enum WireOutcome {
     /// 200 with a body to decode.
-    Found(Vec<u8>),
+    Found(Reply),
     /// 404: definitive absence (a 404 today may still resolve after later
     /// edits, so misses are never cached as permanent elsewhere).
     Missing,
@@ -805,6 +750,8 @@ enum WireOutcome {
         hop: RedirectHop,
         /// Next lookup path.
         next_path: String,
+        /// The 3xx status.
+        status: u16,
     },
 }
 

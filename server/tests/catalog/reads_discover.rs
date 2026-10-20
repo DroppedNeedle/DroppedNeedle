@@ -384,7 +384,7 @@ async fn lastfm_charts_read_the_instance_key_per_call() {
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
     let http = HttpClientFactory::new().unwrap();
-    let providers = Arc::new(Providers::with_memory_cache());
+    let providers = Arc::new(Providers::closed());
     let switch = Arc::new(crate::common::auth_fakes::InstanceKeySwitch::default());
     let auth = AuthRig::new("charts").await;
     let charts = LiveCharts::new(

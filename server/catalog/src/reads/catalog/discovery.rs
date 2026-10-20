@@ -25,7 +25,7 @@ use super::models::{
     DiscoveryAlbum, DiscoverySource, MoreByArtistResponse, SimilarAlbumsResponse, SimilarArtist,
     SimilarArtistsResponse, TopAlbum, TopAlbumsResponse, TopSong, TopSongsResponse,
 };
-use super::{Catalog, MISS_TTL, is_mbid, mb_error, mb_retry, record_mb_down};
+use super::{Catalog, MISS_TTL, is_mbid, mb_error, record_mb_down};
 
 /// Empty answers are kept ten minutes (v2 `DISCOVERY_EMPTY_CACHE_TTL`).
 const EMPTY_TTL: Duration = Duration::from_secs(600);
@@ -703,11 +703,10 @@ impl Catalog {
                 let (client, _) = catalog
                     .upstream()
                     .musicbrainz(RequestPriority::UserInitiated);
-                let group = mb_retry(|| {
-                    client.resolve_release_to_release_group(&release, Criticality::IdentityCritical)
-                })
-                .await
-                .map_err(mb_error)?;
+                let group = client
+                    .resolve_release_to_release_group(&release, Criticality::IdentityCritical)
+                    .await
+                    .map_err(mb_error)?;
                 let ttl = if group.is_some() {
                     RELEASE_GROUP_TTL
                 } else {

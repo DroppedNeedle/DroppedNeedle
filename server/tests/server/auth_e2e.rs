@@ -37,7 +37,7 @@ use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 use droppedneedle_kernel::runtime_config::{
     ConfigStore, Crypto, Secret, secret_sections::WrappedSettings,
 };
-use droppedneedle_providers::{InMemoryProviderCache, Providers};
+use droppedneedle_providers::Providers;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 use utoipa::OpenApi as _;
@@ -166,10 +166,12 @@ impl E2e {
             p,
             auth.users.clone(),
             droppedneedle_catalog::reads::ReadsInputs {
-                // Unpaced: every provider sits on the discard port, so
+                // Unpaced: no provider answers here, so
                 // pacing would only add whole seconds of waiting to rows
                 // that are bound to answer "provider down" anyway.
-                providers: Arc::new(Providers::unpaced()),
+                providers: Arc::new(Providers::unpaced(Arc::new(
+                    droppedneedle_providers::executor::ScriptedWire::new(),
+                ))),
                 ..crate::common::reads_inputs(&p.config.root_app_dir)
             },
             &library,
@@ -200,7 +202,9 @@ impl E2e {
                 &reads,
             ),
         );
-        let providers = Arc::new(Providers::unpaced());
+        let providers = Arc::new(Providers::unpaced(Arc::new(
+            droppedneedle_providers::executor::ScriptedWire::new(),
+        )));
         let backup_dir = p.config.root_app_dir.join("backups");
         let jobs = droppedneedle::bootstrap::jobs::JobsSetup::build(
             p,
@@ -222,7 +226,7 @@ impl E2e {
         let admin = droppedneedle::admin::AdminSetup::new(
             auth.users.clone(),
             acquire.requests.quota.clone(),
-            Arc::new(InMemoryProviderCache::new()),
+            providers.cache.clone(),
             providers.clone(),
         )
         .with_db(droppedneedle::admin::AdminDb::new(p.db.clone()))

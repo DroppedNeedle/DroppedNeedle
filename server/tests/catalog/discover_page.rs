@@ -204,24 +204,28 @@ impl QueueSources for Scripted {
         &'a self,
         _t: &'a str,
         _l: u32,
+        _p: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         ok(Vec::new())
     }
     fn musicbrainz_release_group_of<'a>(
         &'a self,
         _r: &'a str,
+        _p: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<String>>> {
         ok(None)
     }
     fn musicbrainz_release_group<'a>(
         &'a self,
         _m: &'a str,
+        _p: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<ReleaseGroupFacts>>> {
         ok(None)
     }
     fn musicbrainz_artist<'a>(
         &'a self,
         _m: &'a str,
+        _p: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<ArtistFacts>>> {
         ok(None)
     }

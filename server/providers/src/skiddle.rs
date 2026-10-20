@@ -311,7 +311,7 @@ impl From<SkiddleError> for ProviderError {
         match error {
             SkiddleError::Transport(message) => Self::Transport {
                 provider: SOURCE,
-                message,
+                kind: super::error::TransportKind::named(&message),
             },
             SkiddleError::RateLimited => Self::RateLimited {
                 provider: SOURCE,
@@ -326,6 +326,7 @@ impl From<SkiddleError> for ProviderError {
             // Both are deterministic for the payload: a retry gets the same answer.
             SkiddleError::Decode(message) | SkiddleError::Envelope(message) => Self::Payload {
                 provider: SOURCE,
+                kind: super::error::PayloadKind::Decode,
                 message,
             },
         }

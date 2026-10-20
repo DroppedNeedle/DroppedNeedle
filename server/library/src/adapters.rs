@@ -30,14 +30,13 @@ use super::matching::{
 use super::publish::PublishError;
 use super::publish::planner::SpaceProbe;
 use super::scan::seams::{ScannedTags, TagReadError, TagReader};
-use droppedneedle_providers::adapters::{HealthSink, ReqwestGet};
+use droppedneedle_providers::ProviderError;
+use droppedneedle_providers::adapters::ReqwestGet;
 use droppedneedle_providers::discogs;
 use droppedneedle_providers::musicbrainz::models::{
     ArtistCreditName, LabelInfo, Medium as MbMedium, ReleaseGroupRef,
 };
-use droppedneedle_providers::musicbrainz::{
-    Criticality, MbError, MusicBrainzClient, ReqwestMbTransport,
-};
+use droppedneedle_providers::musicbrainz::{Criticality, MusicBrainzView};
 use droppedneedle_providers::slots::RequestPriority;
 
 // ---------------------------------------------------------------------------
@@ -452,7 +451,7 @@ fn now_seconds() -> f64 {
 }
 
 /// The production MusicBrainz client the contribution adapter drives.
-pub type ContribMbClient = MusicBrainzClient<ReqwestMbTransport, HealthSink>;
+pub type ContribMbClient = MusicBrainzView;
 
 /// Live MusicBrainz reads for contributions. Two clients over the same
 /// transport and limiter: one waits at user priority (the curator is on
@@ -491,9 +490,19 @@ impl LiveMusicBrainzContrib {
     }
 }
 
-fn mb_contrib_error(error: MbError) -> ContribError {
+/// Whether MusicBrainz could not answer, or the source cannot be used:
+/// worth asking again later, unlike an answer that does not fit.
+fn mb_unanswered(error: &ProviderError) -> bool {
+    error.is_retriable()
+        || matches!(
+            error,
+            ProviderError::NotConfigured { .. } | ProviderError::Invalid { .. }
+        )
+}
+
+fn mb_contrib_error(error: ProviderError) -> ContribError {
     match error {
-        MbError::Unavailable(_) | MbError::RateLimited { .. } | MbError::Misconfigured(_) => {
+        error if mb_unanswered(&error) => {
             tracing::warn!(%error, "MusicBrainz contribution read failed");
             ContribError::ProviderUnavailable
         }
@@ -669,13 +678,20 @@ impl MusicBrainzContrib for LiveMusicBrainzContrib {
                 .await;
             let found = match found {
                 Ok(found) => found,
-                Err(MbError::InvalidMbid(_)) => return Ok(None),
-                Err(MbError::RateLimited { retry_after_secs }) => {
+                // MusicBrainz answers 400 "Invalid mbid." for an id it rejects.
+                Err(ProviderError::BadRequest { status: 400, .. }) => return Ok(None),
+                Err(
+                    ProviderError::RateLimited { retry_after, .. }
+                    | ProviderError::Unavailable {
+                        retry_after: retry_after @ Some(_),
+                        ..
+                    },
+                ) => {
                     return Err(ProviderFailure::Unavailable {
-                        retry_after_seconds: retry_after_secs,
+                        retry_after_seconds: retry_after.map(|wait| wait.as_secs_f64()),
                     });
                 }
-                Err(error @ (MbError::Unavailable(_) | MbError::Misconfigured(_))) => {
+                Err(error) if mb_unanswered(&error) => {
                     tracing::warn!(%error, "MusicBrainz release verification unavailable");
                     return Err(ProviderFailure::Unavailable {
                         retry_after_seconds: None,

@@ -21,7 +21,7 @@ use super::models::{
     PluginDetails, PurchaseLink, ReleaseItem,
 };
 use super::{
-    AUDIODB_FOUND_TTL, AUDIODB_MISSING_TTL, Catalog, MISS_TTL, is_mbid, mb_error, mb_retry,
+    AUDIODB_FOUND_TTL, AUDIODB_MISSING_TTL, Catalog, MISS_TTL, is_mbid, mb_error, mb_search_error,
     record_mb_down,
 };
 use crate::reads::collections::state::AutoDownloadState;
@@ -238,15 +238,14 @@ impl Catalog {
             let (client, _) = catalog
                 .upstream()
                 .musicbrainz(RequestPriority::UserInitiated);
-            let found = mb_retry(|| {
-                client.lookup_artist(
+            let found = client
+                .lookup_artist(
                     &mbid,
                     &["aliases", "tags", "url-rels"],
                     Criticality::IdentityCritical,
                 )
-            })
-            .await
-            .map_err(mb_error)?;
+                .await
+                .map_err(mb_error)?;
             match found {
                 None => Ok((None, Some(MISS_TTL))),
                 Some(lookup) => {
@@ -560,16 +559,15 @@ impl Catalog {
                 let (client, _) = catalog
                     .upstream()
                     .musicbrainz(RequestPriority::UserInitiated);
-                let page = mb_retry(|| {
-                    client.browse_artist_release_groups(
+                let page = client
+                    .browse_artist_release_groups(
                         &artist,
                         MAX_PAGE_LIMIT,
                         0,
                         Criticality::IdentityCritical,
                     )
-                })
-                .await
-                .map_err(mb_error)?;
+                    .await
+                    .map_err(mb_search_error)?;
                 let total = page.count;
                 let mut seen = HashSet::new();
                 let items: Vec<ReleaseGroupItem> = page
@@ -655,16 +653,15 @@ impl Catalog {
             if u64::from(offset) >= total {
                 break;
             }
-            let page = mb_retry(|| {
-                client.browse_artist_release_groups(
+            let page = client
+                .browse_artist_release_groups(
                     artist,
                     MAX_PAGE_LIMIT,
                     offset,
                     Criticality::IdentityCritical,
                 )
-            })
-            .await
-            .map_err(mb_error)?;
+                .await
+                .map_err(mb_search_error)?;
             if page.items.is_empty() {
                 break;
             }

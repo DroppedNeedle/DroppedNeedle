@@ -5,7 +5,8 @@
 //! same-entity lookup between two well-formed MBIDs; BrainzMash requests
 //! must also stay on the one approved origin and path allowlist.
 
-use super::{MbError, is_valid_mbid};
+use super::{SOURCE, is_valid_mbid};
+use crate::error::ProviderError;
 
 /// One followed redirect hop: same entity on both ends, both MBIDs valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,8 +149,11 @@ const BRAINZMASH_ENTITY_PATHS: [&str; 6] = [
 /// Allow only the MusicBrainz WS/2 entity paths this application uses (v2
 /// `validate_brainzmash_path`): one or two segments, allowlisted entity,
 /// and an ASCII-alphanumeric-and-dash second segment (MBIDs qualify).
-pub fn validate_brainzmash_path(path: &str) -> Result<String, MbError> {
-    let rejected = || MbError::Misconfigured(format!("invalid brainzmash API path: {path}"));
+pub fn validate_brainzmash_path(path: &str) -> Result<String, ProviderError> {
+    let rejected = || ProviderError::Invalid {
+        provider: SOURCE,
+        reason: "not a BrainzMash API path",
+    };
     if !path.starts_with('/') || path.contains(['\\', '%', '?', '#']) || path.contains("//") {
         return Err(rejected());
     }
@@ -177,9 +181,11 @@ pub fn validate_brainzmash_path(path: &str) -> Result<String, MbError> {
 /// credentials, no fragment, and a `/ws/2/` path. The query string (v2
 /// validates `urlsplit(...).path`, so `?fmt=json` Locations pass) is
 /// ignored for path validation.
-pub fn validate_brainzmash_request_url(url: &str) -> Result<(), MbError> {
-    let rejected =
-        || MbError::Misconfigured("brainzmash request authority is not approved".to_owned());
+pub fn validate_brainzmash_request_url(url: &str) -> Result<(), ProviderError> {
+    let rejected = || ProviderError::Invalid {
+        provider: SOURCE,
+        reason: "not the approved BrainzMash address",
+    };
     let (scheme, host, port, path) = split_origin(url).ok_or_else(rejected)?;
     if scheme != "https" || host != BRAINZMASH_HOST || port.is_some() {
         return Err(rejected());

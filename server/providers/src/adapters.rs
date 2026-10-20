@@ -19,13 +19,12 @@
 //! - [`ProviderClient`](super::client::ProviderClient) conformance: no
 //!   client performs cache writes yet, so claiming `cache_prefixes` would be
 //!   vacuous conformance. The impls land with cache-aside integration.
-//! - `MbTransport` / `CaaTransport`: typed ports whose requests carry
-//!   redirect-hop validation the catalog GET port cannot express; each keeps
-//!   its own reqwest adapter in its module.
-//! - Providers without a verified rate row (LRCLIB, Discogs, iTunes,
-//!   Wikidata, Archive, previews, YouTube, geocoding, GitHub, Skiddle,
-//!   Ticketmaster): pacing one invents policy, so [`CorePacer::for_source`]
-//!   declines them until their rows are verified.
+//! - `CaaTransport`: a typed port whose requests carry redirect-hop
+//!   validation the catalog GET port cannot express; it keeps its own
+//!   reqwest adapter in its module.
+//!
+//! These bridges go as each client moves onto the
+//! [`executor`](super::executor), which paces through its rate row itself.
 
 use std::{sync::Arc, time::Instant};
 
@@ -65,12 +64,10 @@ pub struct CorePacer {
 
 impl CorePacer {
     /// Pace `source` through the shared deps, or `None` when the source has
-    /// no verified rate row. The row is checked against the policy table,
-    /// not the limiter set, so the test-only unpaced set still builds
-    /// clients (and never waits).
+    /// no fixed row in the rate table.
     #[must_use]
     pub fn for_source(providers: Arc<Providers>, source: &'static str) -> Option<Self> {
-        super::limiter::policy_for(source)?;
+        super::rates::fixed_policy(source)?;
         Some(Self { providers, source })
     }
 
@@ -221,17 +218,15 @@ mod tests {
 
     #[test]
     fn pacer_covers_verified_sources_only() {
-        let providers = Arc::new(Providers::with_memory_cache());
+        let providers = Arc::new(Providers::closed());
         assert!(CorePacer::for_source(providers.clone(), "lastfm").is_some());
         assert!(CorePacer::for_source(providers.clone(), "musicbrainz").is_some());
-        // No verified row: inventing a pace would be fabricated policy.
-        assert!(CorePacer::for_source(providers.clone(), "lrclib").is_none());
         assert!(CorePacer::for_source(providers, "slskd").is_none());
     }
 
     #[tokio::test]
     async fn pacer_acquire_takes_a_limiter_token() {
-        let providers = Arc::new(Providers::with_memory_cache());
+        let providers = Arc::new(Providers::closed());
         let pacer = CorePacer::for_source(providers.clone(), "lastfm").unwrap();
         pacer.acquire().await;
         let limiter = providers.limiter("lastfm").unwrap();
@@ -267,7 +262,7 @@ mod tests {
 
     #[test]
     fn health_sink_counts_wire_failures_only() {
-        let providers = Providers::with_memory_cache();
+        let providers = Providers::closed();
         let sink = HealthSink::new(&providers);
         for _ in 0..5 {
             sink.record_quiet("lastfm", "invalid JSON".to_owned());

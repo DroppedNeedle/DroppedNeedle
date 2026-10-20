@@ -101,7 +101,10 @@ are observations, not an allowance or SLA.
 DroppedNeedle therefore applies its own policy before every BrainzMash request and retry:
 
 - 10 requests per second;
-- token capacity 1, so local queue concurrency cannot create a wire burst;
+- token capacity 1 and one request in flight at a time, so local queue concurrency cannot
+  create a wire burst;
+- after a 429, a pause for the `Retry-After` it names, or one that doubles from 1 second to
+  a minute while 429s name no wait;
 - the Official source uses 1 request per second and the same capacity-1 wire policy; and
 - explicit typed failures when the provider is unavailable or returns an unsupported result.
 

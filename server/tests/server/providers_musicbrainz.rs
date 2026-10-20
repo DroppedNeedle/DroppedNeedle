@@ -1,15 +1,19 @@
 //! MusicBrainz, the BrainzMash mirror and the Cover Art Archive over a
-//! scripted transport: tolerant decode with required identity ids,
+//! scripted wire: tolerant decode with required identity ids,
 //! identity-critical failure, Retry-After, the canonical-id rules
 //! (redirects, ranking without substitution), the mirror's path and URL
 //! allowlists, and CAA URL and image-type checks.
 
+use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::runtime_config::sections::{MbSourceMode, MusicBrainzSettings};
-use droppedneedle_providers::DegradationSink;
-use droppedneedle_providers::{coverart, musicbrainz};
+use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire, Sent};
+use droppedneedle_providers::{
+    PayloadKind, ProviderEndpoints, ProviderError, Providers, RequestPriority, TransportKind,
+    coverart, musicbrainz,
+};
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const RELEASE_MBID: &str = "aff0622e-7bd3-4fb6-9ca3-0fa19dd2340b";
@@ -21,50 +25,55 @@ const CANONICAL_RECORDING_MBID: &str = "beaf82cd-24f9-4163-b1a9-022339a30f77";
 const ARTIST_MBID: &str = "5441c29d-3602-4898-b1a1-b77fa23b8e50";
 const GROUP_MBID: &str = "dcff25f1-702d-3b5e-b0da-d48172e6e62a";
 
-/// Scripted MusicBrainz transport: outcomes queue per request URL, every
-/// request recorded. Unscripted URLs fail loudly so tests stay explicit.
+/// Scripted MusicBrainz: outcomes queue per URL (the last one repeating),
+/// every request recorded. An unscripted URL gets no answer.
+#[derive(Clone)]
 struct FakeMb {
-    scripts: Mutex<HashMap<String, VecDeque<Result<musicbrainz::RawResponse, String>>>>,
-    seen: Mutex<Vec<musicbrainz::MbRequest>>,
+    wire: Arc<ScriptedWire>,
+    providers: Arc<Providers>,
 }
 
 impl FakeMb {
     fn new() -> Self {
-        Self {
-            scripts: Mutex::new(HashMap::new()),
-            seen: Mutex::new(Vec::new()),
-        }
+        let wire = Arc::new(ScriptedWire::new());
+        let providers = Arc::new(Providers::over_wire(
+            wire.clone(),
+            Arc::new(SystemClock),
+            ProviderEndpoints {
+                musicbrainz: musicbrainz::MB_API_BASE.to_owned(),
+                brainzmash: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
+            },
+        ));
+        Self { wire, providers }
     }
 
-    fn script(&self, url: &str, outcome: Result<musicbrainz::RawResponse, String>) {
-        self.scripts
-            .lock()
-            .unwrap()
-            .entry(url.to_owned())
-            .or_default()
-            .push_back(outcome);
+    /// Queue an answer for `url`, or a dead connection for `Err`.
+    fn script(&self, url: &str, outcome: Result<Scripted, String>) {
+        let outcome = outcome.unwrap_or(Scripted::Transport(TransportKind::Connect));
+        self.wire.on(Method::Get, url, outcome);
     }
 
-    fn seen(&self) -> Vec<musicbrainz::MbRequest> {
-        self.seen.lock().unwrap().clone()
+    fn seen(&self) -> Vec<Sent> {
+        self.wire.sent()
+    }
+
+    /// Reads against `source` at user priority.
+    fn client(&self, source: musicbrainz::MbSource) -> musicbrainz::MusicBrainzView {
+        self.providers
+            .musicbrainz
+            .fixed(source, RequestPriority::UserInitiated)
     }
 }
 
-impl musicbrainz::MbTransport for FakeMb {
-    async fn get(
-        &self,
-        request: &musicbrainz::MbRequest,
-    ) -> Result<musicbrainz::RawResponse, musicbrainz::TransportError> {
-        self.seen.lock().unwrap().push(request.clone());
-        let mut scripts = self.scripts.lock().unwrap();
-        match scripts.get_mut(&request.url).and_then(VecDeque::pop_front) {
-            Some(Ok(response)) => Ok(response),
-            Some(Err(cause)) => Err(musicbrainz::TransportError(cause)),
-            None => Err(musicbrainz::TransportError(format!(
-                "unscripted {}",
-                request.url
-            ))),
-        }
+/// One scripted answer.
+fn raw(status: u16, headers: Vec<(&str, &str)>, body: Vec<u8>) -> Scripted {
+    Scripted::Answer {
+        status,
+        headers: headers
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect(),
+        body,
     }
 }
 
@@ -114,97 +123,6 @@ impl coverart::CaaTransport for FakeCaa {
     }
 }
 
-/// Degradation sink that keeps every record for assertions.
-struct VecSink {
-    records: Mutex<Vec<(String, String)>>,
-}
-
-impl VecSink {
-    fn new() -> Self {
-        Self {
-            records: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn records(&self) -> Vec<(String, String)> {
-        self.records.lock().unwrap().clone()
-    }
-}
-
-/// Shared sink handle: the client records through this while the test
-/// reads the same `Arc`. A newtype because the orphan rule forbids
-/// implementing the foreign sink for `Arc` directly.
-#[derive(Clone)]
-struct SharedSink(Arc<VecSink>);
-
-impl DegradationSink for SharedSink {
-    fn record(&self, source: &'static str, message: String) {
-        self.0
-            .records
-            .lock()
-            .unwrap()
-            .push((source.to_owned(), message));
-    }
-}
-
-use std::sync::Arc;
-
-fn fast_mb(
-    scripts: Vec<(String, Result<musicbrainz::RawResponse, String>)>,
-) -> (Arc<SharedFakeMb>, Arc<VecSink>) {
-    let fake = Arc::new(SharedFakeMb::new());
-    for (url, outcome) in scripts {
-        fake.script(&url, outcome);
-    }
-    let sink = Arc::new(VecSink::new());
-    (fake, sink)
-}
-
-/// Reference-counted fake so client and test share one script.
-struct SharedFakeMb {
-    inner: FakeMb,
-}
-
-impl SharedFakeMb {
-    fn new() -> Self {
-        Self {
-            inner: FakeMb::new(),
-        }
-    }
-
-    fn script(&self, url: &str, outcome: Result<musicbrainz::RawResponse, String>) {
-        self.inner.script(url, outcome);
-    }
-
-    fn seen(&self) -> Vec<musicbrainz::MbRequest> {
-        self.inner.seen()
-    }
-}
-
-impl musicbrainz::MbTransport for SharedFakeMb {
-    async fn get(
-        &self,
-        request: &musicbrainz::MbRequest,
-    ) -> Result<musicbrainz::RawResponse, musicbrainz::TransportError> {
-        musicbrainz::MbTransport::get(&self.inner, request).await
-    }
-}
-
-/// Shared fake transport: the client and the test hold clones of one
-/// script. A newtype because the orphan rule forbids implementing the
-/// foreign port for `Arc` directly.
-#[derive(Clone)]
-struct SharedMb(Arc<SharedFakeMb>);
-
-impl musicbrainz::MbTransport for SharedMb {
-    async fn get(
-        &self,
-        request: &musicbrainz::MbRequest,
-    ) -> Result<musicbrainz::RawResponse, musicbrainz::TransportError> {
-        musicbrainz::MbTransport::get(self.0.as_ref(), request).await
-    }
-}
-
 /// Shared cover-art fake, newtyped for the same orphan-rule reason.
 #[derive(Clone)]
 struct SharedCaa(Arc<FakeCaa>);
@@ -218,15 +136,12 @@ impl coverart::CaaTransport for SharedCaa {
     }
 }
 
-fn unpaced() -> musicbrainz::MbPacing {
-    musicbrainz::MbPacing::new(Arc::new(droppedneedle_providers::Providers::unpaced()))
+fn fast_mb() -> FakeMb {
+    FakeMb::new()
 }
 
-fn official_client(
-    fake: Arc<SharedFakeMb>,
-    sink: Arc<VecSink>,
-) -> musicbrainz::MusicBrainzClient<SharedMb, SharedSink> {
-    musicbrainz::MusicBrainzClient::official(SharedMb(fake), unpaced()).with_sink(SharedSink(sink))
+fn official_client(fake: FakeMb) -> musicbrainz::MusicBrainzView {
+    fake.client(musicbrainz::MbSource::official())
 }
 
 fn fast_caa(fake: Arc<FakeCaa>) -> coverart::CaaClient<SharedCaa> {
@@ -239,24 +154,27 @@ fn mb_url(path: &str) -> String {
     format!("{}{path}", musicbrainz::MB_API_BASE)
 }
 
-fn query_value(request: &musicbrainz::MbRequest, key: &str) -> Option<String> {
-    request
-        .query
-        .iter()
-        .find(|(name, _)| name == key)
-        .map(|(_, value)| value.clone())
+fn query_value(request: &Sent, key: &str) -> Option<String> {
+    request.query(key)
+}
+
+/// Run `read` in a request scope and say whether it marked the request
+/// degraded.
+async fn degrades<T>(read: impl std::future::Future<Output = T>) -> (T, bool) {
+    let (value, context) = droppedneedle_providers::scoped(read).await;
+    (value, context.has_degradation())
 }
 
 // ---------------------------------------------------------------------------
 // Contract: tolerant wire, strict identity, honest absence.
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn search_tolerates_unknown_fields_at_every_level() {
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     fake.script(
         &mb_url("/release"),
-        Ok(musicbrainz::RawResponse::new(
+        Ok(raw(
             200,
             vec![],
             serde_json::json!({
@@ -285,7 +203,7 @@ async fn search_tolerates_unknown_fields_at_every_level() {
             .into_bytes(),
         )),
     );
-    let client = official_client(fake.clone(), sink);
+    let client = official_client(fake.clone());
     let page = client
         .search_releases(
             "Goldberg Variations",
@@ -307,43 +225,39 @@ async fn search_tolerates_unknown_fields_at_every_level() {
     assert_eq!(fake.seen().len(), 1);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn missing_identity_id_fails_decoding() {
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     fake.script(
         &mb_url(&format!("/release/{RELEASE_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
-            200,
-            vec![],
-            br#"{"title": "id-less"}"#.to_vec(),
-        )),
+        Ok(raw(200, vec![], br#"{"title": "id-less"}"#.to_vec())),
     );
-    let client = official_client(fake, sink);
+    let client = official_client(fake.clone());
     let error = client
         .lookup_release(RELEASE_MBID, &[], musicbrainz::Criticality::BestEffort)
         .await
         .expect_err("missing id must fail");
     assert!(
-        matches!(error, musicbrainz::MbError::Contract(_)),
+        matches!(error, ProviderError::Payload { .. }),
         "got {error:?}"
     );
 
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     fake.script(
         &mb_url("/release"),
-        Ok(musicbrainz::RawResponse::new(
+        Ok(raw(
             200,
             vec![],
             br#"{"count": 1, "offset": 0, "releases": [{"title": "id-less"}]}"#.to_vec(),
         )),
     );
-    let client = official_client(fake, sink);
+    let client = official_client(fake.clone());
     let error = client
         .search_releases("x", "y", 5, musicbrainz::Criticality::BestEffort)
         .await
         .expect_err("id-less hit must fail");
     assert!(
-        matches!(error, musicbrainz::MbError::Contract(_)),
+        matches!(error, ProviderError::Payload { .. }),
         "got {error:?}"
     );
 
@@ -352,74 +266,64 @@ async fn missing_identity_id_fails_decoding() {
         .await
         .expect_err("malformed mbid must fail");
     assert!(
-        matches!(error, musicbrainz::MbError::InvalidMbid(_)),
+        matches!(error, ProviderError::Invalid { .. }),
         "got {error:?}"
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn not_found_is_absence_never_an_empty_struct() {
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     let missing = "00000000-0000-0000-0000-000000000001";
     fake.script(
         &mb_url(&format!("/release/{missing}")),
-        Ok(musicbrainz::RawResponse::new(
-            404,
-            vec![],
-            br#"{"error":"Not Found"}"#.to_vec(),
-        )),
+        Ok(raw(404, vec![], br#"{"error":"Not Found"}"#.to_vec())),
     );
-    fake.script(
-        &mb_url("/release"),
-        Ok(musicbrainz::RawResponse::new(404, vec![], Vec::new())),
-    );
-    fake.script(
-        &mb_url("/url"),
-        Ok(musicbrainz::RawResponse::new(404, vec![], Vec::new())),
-    );
-    let client = official_client(fake, sink.clone());
-    let found = client
-        .lookup_release(missing, &[], musicbrainz::Criticality::IdentityCritical)
-        .await
-        .expect("404 lookup resolves");
-    assert!(found.is_none(), "404 is None, not an empty release");
-    let page = client
-        .search_releases(
-            "nothing",
-            "nobody",
-            5,
-            musicbrainz::Criticality::IdentityCritical,
-        )
-        .await
-        .expect("404 search resolves");
-    assert!(page.items.is_empty() && page.count == 0);
-    let resolved = client
-        .resolve_url(
-            "https://www.discogs.com/release/1",
-            &["release-rels"],
-            musicbrainz::Criticality::IdentityCritical,
-        )
-        .await
-        .expect("404 url resolves");
-    assert!(resolved.relations.is_empty());
-    assert!(
-        sink.records().is_empty(),
-        "definitive absence records no degradation"
-    );
+    fake.script(&mb_url("/release"), Ok(raw(404, vec![], Vec::new())));
+    fake.script(&mb_url("/url"), Ok(raw(404, vec![], Vec::new())));
+    let client = official_client(fake.clone());
+    let ((), degraded) = degrades(async {
+        let found = client
+            .lookup_release(missing, &[], musicbrainz::Criticality::IdentityCritical)
+            .await
+            .expect("404 lookup resolves");
+        assert!(found.is_none(), "404 is None, not an empty release");
+        let page = client
+            .search_releases(
+                "nothing",
+                "nobody",
+                5,
+                musicbrainz::Criticality::IdentityCritical,
+            )
+            .await
+            .expect("404 search resolves");
+        assert!(page.items.is_empty() && page.count == 0);
+        let resolved = client
+            .resolve_url(
+                "https://www.discogs.com/release/1",
+                &["release-rels"],
+                musicbrainz::Criticality::IdentityCritical,
+            )
+            .await
+            .expect("404 url resolves");
+        assert!(resolved.relations.is_empty());
+    })
+    .await;
+    assert!(!degraded, "definitive absence records no degradation");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn requests_carry_user_agent_fmt_and_sorted_includes() {
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     fake.script(
         &mb_url(&format!("/release/{RELEASE_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
+        Ok(raw(
             200,
             vec![],
             format!(r#"{{"id": "{RELEASE_MBID}"}}"#).into_bytes(),
         )),
     );
-    let client = official_client(fake.clone(), sink);
+    let client = official_client(fake.clone());
     client
         .lookup_release(
             &RELEASE_MBID.to_ascii_uppercase(),
@@ -437,71 +341,52 @@ async fn requests_carry_user_agent_fmt_and_sorted_includes() {
         Some("artist-credits+recordings")
     );
     assert!(
-        request.url.ends_with(&format!("/release/{RELEASE_MBID}")),
+        request
+            .url
+            .path()
+            .ends_with(&format!("/release/{RELEASE_MBID}")),
         "mbid normalized: {}",
         request.url
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn identity_critical_dead_provider_fails_typed() {
     for critical in [musicbrainz::Criticality::IdentityCritical] {
-        let (fake, sink) = fast_mb(vec![]);
+        let fake = fast_mb();
         fake.script(
             &mb_url(&format!("/release/{RELEASE_MBID}")),
             Err("connection refused".to_owned()),
         );
-        let client = official_client(fake, sink.clone());
+        let client = official_client(fake.clone());
         let error = client
             .lookup_release(RELEASE_MBID, &[], critical)
             .await
             .expect_err("dead provider fails identity-critical");
         assert!(
-            matches!(error, musicbrainz::MbError::Unavailable(_)),
+            matches!(error, ProviderError::Transport { .. }),
             "got {error:?}"
         );
-        assert!(
-            sink.records().is_empty(),
-            "typed failure needs no degradation record"
-        );
 
-        let (fake, sink) = fast_mb(vec![]);
+        let fake = fast_mb();
         fake.script(
             &mb_url(&format!("/release/{RELEASE_MBID}")),
-            Ok(musicbrainz::RawResponse::new(500, vec![], Vec::new())),
+            Ok(raw(500, vec![], Vec::new())),
         );
-        let client = official_client(fake, sink);
+        let client = official_client(fake.clone());
         let error = client
             .lookup_release(RELEASE_MBID, &[], critical)
             .await
             .expect_err("500 fails identity-critical");
         assert!(
-            matches!(error, musicbrainz::MbError::Unavailable(_)),
+            matches!(error, ProviderError::Server { status: 500, .. }),
             "got {error:?}"
         );
     }
 }
 
-/// The production transport, pointed at a local server in place of
-/// musicbrainz.org.
-struct LocalMb {
-    real: musicbrainz::ReqwestMbTransport,
-    base: String,
-}
-
-impl musicbrainz::MbTransport for LocalMb {
-    async fn get(
-        &self,
-        request: &musicbrainz::MbRequest,
-    ) -> Result<musicbrainz::RawResponse, musicbrainz::TransportError> {
-        let mut local = request.clone();
-        local.url = local.url.replacen(musicbrainz::MB_API_BASE, &self.base, 1);
-        self.real.get(&local).await
-    }
-}
-
-/// An answer past the cap is refused as a dead provider, not read whole,
-/// even when the server never says how long it is.
+/// An answer past the cap is refused unread, even when the server never
+/// says how long it is.
 #[tokio::test]
 async fn an_answer_over_the_cap_is_refused_unread() {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -524,16 +409,25 @@ async fn an_answer_over_the_cap_is_refused_unread() {
                 let head = "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nconnection: close\r\n\r\n";
                 let _ = socket.write_all(head.as_bytes()).await;
                 let _ = socket
-                    .write_all(&vec![b' '; musicbrainz::transport::MAX_BODY_BYTES + 1])
+                    .write_all(&vec![b' '; musicbrainz::MAX_BODY_BYTES + 1])
                     .await;
             });
         }
     });
-    let transport = LocalMb {
-        real: musicbrainz::ReqwestMbTransport::new(reqwest::Client::new()),
-        base: format!("http://{address}/ws/2"),
-    };
-    let client = musicbrainz::MusicBrainzClient::official(transport, unpaced());
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
+    let base = format!("http://{address}/ws/2");
+    let providers = Providers::over_wire(
+        Arc::new(droppedneedle_providers::ReqwestWire::new(&http)),
+        Arc::new(SystemClock),
+        ProviderEndpoints {
+            musicbrainz: base.clone(),
+            brainzmash: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
+        },
+    );
+    let client = providers.musicbrainz.fixed(
+        musicbrainz::MbSource::Official { base_url: base },
+        RequestPriority::UserInitiated,
+    );
 
     let error = client
         .lookup_release(
@@ -543,26 +437,26 @@ async fn an_answer_over_the_cap_is_refused_unread() {
         )
         .await
         .expect_err("an oversized answer is refused");
-    match error {
-        musicbrainz::MbError::Unavailable(cause) => {
-            assert!(cause.contains("body larger than"), "{cause}");
-        }
-        other => panic!("got {other:?}"),
-    }
+    assert!(
+        matches!(
+            error,
+            ProviderError::Payload {
+                kind: PayloadKind::TooLarge,
+                ..
+            }
+        ),
+        "got {error:?}"
+    );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn rate_limit_surfaces_retry_after_and_degrades_best_effort() {
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     fake.script(
         &mb_url(&format!("/release/{RELEASE_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
-            429,
-            vec![("Retry-After", "5")],
-            Vec::new(),
-        )),
+        Ok(raw(429, vec![("Retry-After", "5")], Vec::new())),
     );
-    let client = official_client(fake, sink.clone());
+    let client = official_client(fake.clone());
     let error = client
         .lookup_release(
             RELEASE_MBID,
@@ -572,18 +466,18 @@ async fn rate_limit_surfaces_retry_after_and_degrades_best_effort() {
         .await
         .expect_err("429 fails identity-critical");
     match error {
-        musicbrainz::MbError::RateLimited { retry_after_secs } => {
-            assert_eq!(retry_after_secs, Some(5.0))
+        ProviderError::RateLimited { retry_after, .. } => {
+            assert_eq!(retry_after, Some(Duration::from_secs(5)))
         }
         other => panic!("got {other:?}"),
     }
 
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     fake.script(
         &mb_url(&format!("/release/{RELEASE_MBID}")),
-        Ok(musicbrainz::RawResponse::new(503, vec![], Vec::new())),
+        Ok(raw(503, vec![], Vec::new())),
     );
-    let client = official_client(fake, sink.clone());
+    let client = official_client(fake.clone());
     let error = client
         .lookup_release(
             RELEASE_MBID,
@@ -595,40 +489,40 @@ async fn rate_limit_surfaces_retry_after_and_degrades_best_effort() {
     assert!(
         matches!(
             error,
-            musicbrainz::MbError::RateLimited {
-                retry_after_secs: None
+            ProviderError::RateLimited {
+                retry_after: None,
+                ..
             }
         ),
         "got {error:?}"
     );
 
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     fake.script(
         &mb_url(&format!("/release/{RELEASE_MBID}")),
-        Ok(musicbrainz::RawResponse::new(429, vec![], Vec::new())),
+        Ok(raw(429, vec![], Vec::new())),
     );
-    let client = official_client(fake, sink.clone());
-    let found = client
-        .lookup_release(RELEASE_MBID, &[], musicbrainz::Criticality::BestEffort)
-        .await
-        .expect("429 degrades best-effort");
-    assert!(found.is_none());
-    assert_eq!(sink.records().len(), 1);
+    let client = official_client(fake.clone());
+    let (found, degraded) =
+        degrades(client.lookup_release(RELEASE_MBID, &[], musicbrainz::Criticality::BestEffort))
+            .await;
+    assert!(found.expect("429 degrades best-effort").is_none());
+    assert!(degraded, "the request is marked degraded");
 }
 
 // ---------------------------------------------------------------------------
 // Quirks: every live-cited behavior, with its citation.
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn explicit_nulls_decode_instead_of_failing() {
     // Live 2026-07-28 (null packaging pair, null catalogue number),
     // 2026-08-03 (null work type pair), 2026-08-15 (null status and
     // primary-type pairs): each pair is nullable independently.
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     fake.script(
         &mb_url(&format!("/release/{RELEASE_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
+        Ok(raw(
             200,
             vec![],
             serde_json::json!({
@@ -658,7 +552,7 @@ async fn explicit_nulls_decode_instead_of_failing() {
             .into_bytes(),
         )),
     );
-    let client = official_client(fake, sink);
+    let client = official_client(fake.clone());
     let found = client
         .lookup_release(
             RELEASE_MBID,
@@ -675,10 +569,10 @@ async fn explicit_nulls_decode_instead_of_failing() {
     let group = release.release_group.expect("group present");
     assert!(group.primary_type.is_none() && group.primary_type_id.is_none());
 
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     fake.script(
         &mb_url(&format!("/release/{RELEASE_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
+        Ok(raw(
             200,
             vec![],
             serde_json::json!({
@@ -689,13 +583,13 @@ async fn explicit_nulls_decode_instead_of_failing() {
             .into_bytes(),
         )),
     );
-    let client = official_client(fake, sink);
+    let client = official_client(fake.clone());
     let error = client
         .lookup_release(RELEASE_MBID, &[], musicbrainz::Criticality::BestEffort)
         .await
         .expect_err("relation type-id stays required (live 2026-08-15)");
     assert!(
-        matches!(error, musicbrainz::MbError::Contract(_)),
+        matches!(error, ProviderError::Payload { .. }),
         "got {error:?}"
     );
 }
@@ -767,26 +661,26 @@ fn ranking_orders_one_recording_without_substitution() {
     assert!(rank < worse);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn exact_release_fails_closed_without_provider_group() {
     // Live 2026-08-10: Clairo _Immunity_ omits `release-group` without the
     // include; absence after that request never becomes an assumed group.
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     fake.script(
         &mb_url(&format!("/release/{IMMUNITY_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
+        Ok(raw(
             200,
             vec![],
             format!(r#"{{"id": "{IMMUNITY_MBID}", "title": "Immunity"}}"#).into_bytes(),
         )),
     );
-    let client = official_client(fake.clone(), sink);
+    let client = official_client(fake.clone());
     let error = client
         .lookup_exact_release(IMMUNITY_MBID, musicbrainz::Criticality::IdentityCritical)
         .await
         .expect_err("missing group fails closed");
     assert!(
-        matches!(error, musicbrainz::MbError::Contract(_)),
+        matches!(error, ProviderError::Payload { .. }),
         "got {error:?}"
     );
     let request = &fake.seen()[0];
@@ -798,10 +692,10 @@ async fn exact_release_fails_closed_without_provider_group() {
         "exact release always requests release-groups"
     );
 
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     fake.script(
         &mb_url(&format!("/release/{IMMUNITY_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
+        Ok(raw(
             200,
             vec![],
             serde_json::json!({
@@ -812,7 +706,11 @@ async fn exact_release_fails_closed_without_provider_group() {
             .into_bytes(),
         )),
     );
-    let client = official_client(fake, sink);
+    fake.script(
+        &mb_url(&format!("/release/{IMMUNITY_MBID}")),
+        Err("reset".to_owned()),
+    );
+    let client = official_client(fake.clone());
     let found = client
         .lookup_exact_release(IMMUNITY_MBID, musicbrainz::Criticality::IdentityCritical)
         .await
@@ -825,21 +723,21 @@ async fn exact_release_fails_closed_without_provider_group() {
     let group = client
         .resolve_release_to_release_group(IMMUNITY_MBID, musicbrainz::Criticality::BestEffort)
         .await
-        .expect("unscripted follow-up degrades to absence");
+        .expect("a dead follow-up degrades to absence");
     assert!(
         group.is_none(),
         "dead provider on best-effort resolves to None"
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn retired_recording_redirect_proves_canonical_id() {
     // Live 2026-08-10: retired recording MBIDs 301 to a canonical
     // replacement; equivalence holds only after the lookup proves it.
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     fake.script(
         &mb_url(&format!("/recording/{RETIRED_RECORDING_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
+        Ok(raw(
             301,
             vec![(
                 "Location",
@@ -853,14 +751,18 @@ async fn retired_recording_redirect_proves_canonical_id() {
     );
     fake.script(
         &mb_url(&format!("/recording/{CANONICAL_RECORDING_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
+        Ok(raw(
             200,
             vec![],
             format!(r#"{{"id": "{CANONICAL_RECORDING_MBID}", "title": "Merged Track"}}"#)
                 .into_bytes(),
         )),
     );
-    let client = official_client(fake.clone(), sink);
+    fake.script(
+        &mb_url(&format!("/recording/{RETIRED_RECORDING_MBID}")),
+        Err("reset".to_owned()),
+    );
+    let client = official_client(fake.clone());
     let resolved = client
         .resolve_recording_mbid(
             RETIRED_RECORDING_MBID,
@@ -880,16 +782,16 @@ async fn retired_recording_redirect_proves_canonical_id() {
         .await;
     assert!(
         found.is_err(),
-        "unscripted follow-up fails loudly, never silently"
+        "a dead follow-up fails loudly, never silently"
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn foreign_and_browse_redirects_are_rejected() {
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     fake.script(
         &mb_url(&format!("/release/{RELEASE_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
+        Ok(raw(
             301,
             vec![(
                 "Location",
@@ -900,7 +802,7 @@ async fn foreign_and_browse_redirects_are_rejected() {
     );
     fake.script(
         &mb_url("/release"),
-        Ok(musicbrainz::RawResponse::new(
+        Ok(raw(
             301,
             vec![(
                 "Location",
@@ -909,13 +811,13 @@ async fn foreign_and_browse_redirects_are_rejected() {
             Vec::new(),
         )),
     );
-    let client = official_client(fake, sink);
+    let client = official_client(fake.clone());
     let error = client
         .lookup_release(RELEASE_MBID, &[], musicbrainz::Criticality::BestEffort)
         .await
         .expect_err("foreign redirect rejected");
     assert!(
-        matches!(error, musicbrainz::MbError::RedirectRejected(_)),
+        matches!(error, ProviderError::Redirect { .. }),
         "got {error:?}"
     );
     let error = client
@@ -923,7 +825,7 @@ async fn foreign_and_browse_redirects_are_rejected() {
         .await
         .expect_err("search redirect rejected");
     assert!(
-        matches!(error, musicbrainz::MbError::RedirectRejected(_)),
+        matches!(error, ProviderError::Redirect { .. }),
         "got {error:?}"
     );
 }
@@ -995,18 +897,19 @@ fn brainzmash_request_url_validation_holds() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn brainzmash_binding_invalid_fails_closed_without_wire() {
-    let (fake, sink) = fast_mb(vec![]);
-    let client =
-        musicbrainz::MusicBrainzClient::brainzmash(SharedMb(fake.clone()), false, unpaced())
-            .with_sink(SharedSink(sink));
+    let fake = fast_mb();
+    let client = fake.client(musicbrainz::MbSource::BrainzMash {
+        base_url: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
+        binding_valid: false,
+    });
     let error = client
         .lookup_release(RELEASE_MBID, &[], musicbrainz::Criticality::BestEffort)
         .await
         .expect_err("invalid binding fails closed");
     assert!(
-        matches!(error, musicbrainz::MbError::Misconfigured(_)),
+        matches!(error, ProviderError::NotConfigured { .. }),
         "got {error:?}"
     );
     assert!(
@@ -1015,49 +918,26 @@ async fn brainzmash_binding_invalid_fails_closed_without_wire() {
     );
 }
 
-#[tokio::test]
-async fn user_requests_fail_fast_during_a_long_brainzmash_cooldown() {
-    let (fake, sink) = fast_mb(vec![]);
-    let providers = Arc::new(droppedneedle_providers::Providers::unpaced());
-    let pacing = musicbrainz::MbPacing::new(providers);
-    pacing.cooldown().note_cooldown(Some(30.0));
-    let client = musicbrainz::MusicBrainzClient::brainzmash(SharedMb(fake.clone()), true, pacing)
-        .with_sink(SharedSink(sink));
-    let started = std::time::Instant::now();
-    let error = client
-        .lookup_release(
-            RELEASE_MBID,
-            &[],
-            musicbrainz::Criticality::IdentityCritical,
-        )
-        .await
-        .expect_err("a user request does not wait out 30 s");
-    assert!(
-        matches!(error, musicbrainz::MbError::RateLimited { retry_after_secs: Some(secs) } if secs > 2.5),
-        "got {error:?}"
-    );
-    assert!(started.elapsed() < std::time::Duration::from_secs(2));
-    assert!(fake.seen().is_empty(), "nothing is sent while cooling down");
-}
-
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn the_source_is_read_at_every_request() {
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     let mirror_base = "http://mirror.test/ws/2";
     for base in [musicbrainz::MB_API_BASE, mirror_base] {
         fake.script(
             &format!("{base}/release/{RELEASE_MBID}"),
-            Ok(musicbrainz::RawResponse::new(404, vec![], Vec::new())),
+            Ok(raw(404, vec![], Vec::new())),
         );
     }
     let dir = crate::common::ScratchDir::new("mb-live-source");
     let config = crate::common::config_store(&dir);
-    let client =
-        official_client(fake.clone(), sink).with_live_source(musicbrainz::LiveSource::new(
+    let client = fake.providers.musicbrainz.live(
+        musicbrainz::LiveSource::new(
             config.live(),
             musicbrainz::MB_API_BASE,
             "http://127.0.0.1:9",
-        ));
+        ),
+        RequestPriority::UserInitiated,
+    );
     for mode in [MbSourceMode::Official, MbSourceMode::Mirror] {
         config
             .save_blocking(MusicBrainzSettings {
@@ -1072,35 +952,16 @@ async fn the_source_is_read_at_every_request() {
             .await
             .expect("404 resolves");
     }
-    let urls: Vec<String> = fake.seen().into_iter().map(|request| request.url).collect();
+    let urls: Vec<String> = fake
+        .seen()
+        .into_iter()
+        .map(|request| request.url.to_string())
+        .collect();
     assert!(urls[0].starts_with(musicbrainz::MB_API_BASE), "{urls:?}");
     assert!(
         urls[1].starts_with(mirror_base),
         "a settings switch applies at once: {urls:?}"
     );
-}
-
-#[test]
-fn brainzmash_cooldown_honors_retry_after_then_backs_off() {
-    let scheduler = musicbrainz::BrainzMashCooldown::default();
-    assert!(scheduler.remaining().is_zero());
-    let selected = scheduler.note_cooldown(Some(5.0));
-    assert_eq!(selected, 5.0);
-    assert!(!scheduler.remaining().is_zero());
-    scheduler.note_success();
-    assert!(scheduler.remaining().is_zero());
-
-    let first = scheduler.note_cooldown(None);
-    assert!(
-        (0.5..=1.0).contains(&first),
-        "first backoff in [0.5, 1]: {first}"
-    );
-    let second = scheduler.note_cooldown(None);
-    assert!(
-        (1.0..=2.0).contains(&second),
-        "second backoff in [1, 2]: {second}"
-    );
-    assert_eq!(scheduler.note_cooldown(Some(9999.0)), 60.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1442,16 +1303,12 @@ async fn lookup_relations(
     body: &serde_json::Value,
 ) -> droppedneedle_library::matching::model::ReleaseRelations {
     use droppedneedle_library::identify::sources::{RELATION_INCLUDES, relations_from_wire};
-    let (fake, sink) = fast_mb(vec![]);
+    let fake = fast_mb();
     fake.script(
         &mb_url(&format!("/release/{CLASSICAL_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
-            200,
-            vec![],
-            serde_json::to_vec(body).expect("body"),
-        )),
+        Ok(raw(200, vec![], serde_json::to_vec(body).expect("body"))),
     );
-    let client = official_client(fake.clone(), sink);
+    let client = official_client(fake.clone());
     let lookup = client
         .lookup_release(
             CLASSICAL_MBID,
@@ -1474,7 +1331,7 @@ async fn lookup_relations(
 /// orchestra is a performer, a writer its own role). A recording or work
 /// that came without its relationship list is left out, never read as
 /// "no credits".
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn credits_decode_from_the_recorded_answers() {
     let relations = lookup_relations(&relations_probe("release_relations_classical.json")).await;
     assert_eq!(relations.fetched_at_ms, 7);

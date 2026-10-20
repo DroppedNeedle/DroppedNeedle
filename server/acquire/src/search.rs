@@ -17,11 +17,7 @@ use super::usenet::newznab::NewznabIndexer;
 use super::usenet::prowlarr::ProwlarrIndexer;
 use droppedneedle_kernel::runtime_config::sections::{UsenetBackend, UsenetBackendSetting};
 use droppedneedle_providers::RequestPriority;
-use droppedneedle_providers::adapters::HealthSink;
-use droppedneedle_providers::degradation::DegradationSink;
-use droppedneedle_providers::musicbrainz::{
-    Criticality, MbPacing, MbTransport, MusicBrainzClient, ReqwestMbTransport,
-};
+use droppedneedle_providers::musicbrainz::{Criticality, LiveSource, MusicBrainzView};
 
 /// Candidates returned per search, at most. The wanted loop only needs to
 /// know a candidate exists; the worker re-searches at enqueue time.
@@ -145,18 +141,18 @@ impl ReleasePoll for NoReleasePoll {
 /// `get_artist_release_groups_with_context`, `BACKGROUND_SYNC`). The
 /// browse list is complete, so a release cannot hide behind search
 /// ranking. A provider outage is an error, never an empty page.
-pub struct MusicBrainzReleasePoll<T: MbTransport, S: DegradationSink> {
-    client: MusicBrainzClient<T, S>,
+pub struct MusicBrainzReleasePoll {
+    client: MusicBrainzView,
 }
 
-impl<T: MbTransport, S: DegradationSink> MusicBrainzReleasePoll<T, S> {
+impl MusicBrainzReleasePoll {
     /// Poll over one client (callers set background priority on it).
-    pub fn new(client: MusicBrainzClient<T, S>) -> Self {
+    pub fn new(client: MusicBrainzView) -> Self {
         Self { client }
     }
 }
 
-impl<T: MbTransport, S: DegradationSink> ReleasePoll for MusicBrainzReleasePoll<T, S> {
+impl ReleasePoll for MusicBrainzReleasePoll {
     fn poll_releases<'a>(
         &'a self,
         artist_mbid: &'a str,
@@ -197,18 +193,12 @@ impl<T: MbTransport, S: DegradationSink> ReleasePoll for MusicBrainzReleasePoll<
 /// configured MusicBrainz source read per request, failures counted
 /// toward system health.
 pub fn live_release_poll(
-    http: &droppedneedle_kernel::http_client::HttpClientFactory,
-    providers: Arc<droppedneedle_providers::Providers>,
-    source: droppedneedle_providers::musicbrainz::LiveSource,
-) -> MusicBrainzReleasePoll<ReqwestMbTransport, HealthSink> {
-    let health = HealthSink::new(&providers);
+    providers: &droppedneedle_providers::Providers,
+    source: LiveSource,
+) -> MusicBrainzReleasePoll {
     MusicBrainzReleasePoll::new(
-        MusicBrainzClient::official(
-            ReqwestMbTransport::new(http.no_redirect().clone()),
-            MbPacing::new(providers),
-        )
-        .with_live_source(source)
-        .with_priority(RequestPriority::BackgroundSync)
-        .with_sink(health),
+        providers
+            .musicbrainz
+            .live(source, RequestPriority::BackgroundSync),
     )
 }

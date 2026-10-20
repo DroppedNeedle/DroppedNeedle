@@ -10,6 +10,7 @@
 //! set so an artist appears once on the page, ownership is marked from
 //! the library, and album shelves are deduplicated.
 
+use droppedneedle_providers::RequestPriority;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Mutex;
@@ -232,6 +233,7 @@ impl Builder<'_> {
             sources: self.sources,
             db: self.queue_db,
             settings,
+            priority: RequestPriority::BackgroundSync,
         }
     }
 
@@ -1776,7 +1778,7 @@ pub async fn weekly_exploration(
         RESOLVE_BUDGET,
         join_all(releases.iter().map(|release| async move {
             let group = sources
-                .musicbrainz_release_group_of(release)
+                .musicbrainz_release_group_of(release, RequestPriority::BackgroundSync)
                 .await
                 .ok()
                 .flatten();

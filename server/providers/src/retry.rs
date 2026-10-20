@@ -170,7 +170,7 @@ mod tests {
     fn transport() -> ProviderError {
         ProviderError::Transport {
             provider: "musicbrainz",
-            message: "reset".to_owned(),
+            kind: crate::error::TransportKind::Other,
         }
     }
 

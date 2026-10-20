@@ -1,55 +1,39 @@
-//! Shared provider core: pacing, retry, caching, coalescing, degradation.
+//! Shared provider core: the executor, the rate table, caching,
+//! coalescing, degradation.
 //!
-//! Every upstream client builds on this module instead of
-//! reimplementing resilience. The pieces:
+//! Every upstream client builds on this crate instead of reimplementing
+//! resilience. The pieces:
 //!
+//! - [`executor`]: the one way a provider request goes out. Pacing at the
+//!   caller's priority, a deadline, a capped read, typed classification,
+//!   retry inside a budget, `Retry-After` as a cooldown, and one record of
+//!   the outcome for health and the request's degradation notes.
+//! - [`rates`]: the one rate table, every row with its date and basis.
+//! - [`limiter`]: the token buckets built from the table, with priority
+//!   waiters, cooldowns and in-flight caps.
 //! - [`error`]: typed [`ProviderError`](error::ProviderError) with distinct
-//!   401/403/404/400 semantics (no blanket non-2xx mapping) and `Retry-After`
-//!   / rate-limit header honoring for 429/503.
-//! - [`limiter`]: token-bucket limiters with priority waiters, one per
-//!   verified policy row (MusicBrainz 1/s hard, BrainzMash 10/s,
-//!   ListenBrainz 1/s, AudioDB 30/min, AcoustID 3/s, Cover Art Archive
-//!   ~1/s + backoff, Last.fm 5/s + backoff).
-//! - [`retry`]: idempotency-aware retry with exponential backoff, jitter,
-//!   `Retry-After` override, and an optional budget. Writes run exactly once.
-//! - [`slots`]: priority-queue lanes (user / image / background). Background
-//!   jobs pass the background priority explicitly at the call site.
+//!   401/403/404/400 semantics and `Retry-After` parsing.
+//! - [`slots`]: priority-queue lanes (user / image / background).
 //! - [`cache`]: cache-aside helpers with registered key prefixes and
 //!   per-source invalidation.
 //! - [`singleflight`]: request coalescing for concurrent identical fetches.
-//! - [`degradation`]: typed outcomes plus the request-scoped degradation
-//!   context. Optional sources fail record-then-`None`; the recording is the
-//!   error signal.
-//! - [`matrix`]: the operation/source matrix. Only a dead primary source
-//!   fails the request, per operation.
-//! - [`client`]: the [`ProviderClient`](client::ProviderClient) surface every
-//!   client implements, plus the [`check_client_contract`](client::check_client_contract)
-//!   conformance harness for client tests.
-//! - [`adapters`]: bridges from the shared core seams
-//!   onto production (limiter-backed pacing, context-backed degradation
-//!   recording, one shared reqwest transport). The enrichment aggregator
-//!   and its role adapters live in `reads::enrichment`: providers never
-//!   depend on reads.
+//! - [`degradation`]: the request-scoped degradation context.
+//! - [`adapters`]: the pacing and recording bridges the clients not yet on
+//!   the executor still use.
 //!
 //! # Wiring
 //!
 //! ```rust,ignore
-//! let providers = providers::Providers::with_memory_cache();
+//! let providers = Providers::build(&platform, endpoints);
 //! ```
 //!
 //! # Provider clients
 //!
 //! Each client is reached by module path
 //! (`providers::musicbrainz::MusicBrainzClient`, ...). The names are not
-//! re-exported at this root, on purpose: several collide across
-//! modules (`musicbrainz::MusicBrainzClient` is the concrete HTTP client
-//! while `reads::enrichment::MusicBrainzClient` is a role trait, and the
-//! same holds for `LastFmClient`, `LyricsLookup`, `IntegrationStatus`, and
-//! `ProviderError`), so the module path is the disambiguator. The shared
-//! seams the clients pace, record, and fetch through
-//! ([`Pacer`](limiter::Pacer), [`DegradationSink`](degradation::DegradationSink),
-//! [`HttpPort`](client::HttpPort)) live in the core modules and are
-//! re-exported at this root; see [`adapters`] for their production bridges.
+//! re-exported at this root, on purpose: several collide across modules
+//! and with the role traits in `reads::enrichment`, so the module path is
+//! the disambiguator.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
@@ -63,6 +47,7 @@ pub mod coverart;
 pub mod degradation;
 pub mod discogs;
 pub mod error;
+pub mod executor;
 pub mod geocoding;
 pub mod github;
 pub mod health;
@@ -75,6 +60,7 @@ pub mod matrix;
 pub mod musicbrainz;
 pub mod plextv;
 pub mod preview;
+pub mod rates;
 pub mod retry;
 pub mod singleflight;
 pub mod skiddle;
@@ -84,6 +70,9 @@ pub mod wikidata;
 pub mod youtube;
 
 use std::sync::Arc;
+
+use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::platform::Platform;
 
 pub use adapters::{CorePacer, CoreSink, HealthSink, ReqwestGet};
 pub use cache::{
@@ -97,90 +86,148 @@ pub use degradation::{
     DegradationContext, DegradationSink, IntegrationStatus, NoopSink, ProviderOutcome,
     aggregate_status, degraded_none, record_current, scoped, with_current,
 };
-pub use error::{MAX_RETRY_AFTER, ProviderError, classify_status, parse_retry_after};
-pub use limiter::{LimiterSet, OverCapacity, Pacer, RateLimiter, RatePolicy, policy_for};
+pub use error::{
+    MAX_RETRY_AFTER, PayloadKind, ProviderError, TransportKind, classify_status, parse_retry_after,
+};
+pub use executor::{Executor, ReqwestWire, Wire};
+pub use limiter::{LimiterSet, OverCapacity, Pacer, RateLimiter, RatePolicy, RequestPriority};
 pub use matrix::{OperationKind, SourceRole, apply, role};
 pub use retry::{RetryPolicy, execute};
 pub use singleflight::Singleflight;
-pub use slots::{RequestPriority, SlotError, SlotManager, SlotStats, USER_QUIET_WINDOW};
+pub use slots::{SlotError, SlotManager, SlotStats, USER_QUIET_WINDOW};
 
-/// The shared provider dependencies, built once at boot and cloned into
-/// every provider client: the verified limiters, the three slot lanes, the
-/// byte cache, the MusicBrainz pacing state, and the service health
-/// registry the clients' failures feed.
+/// Where the providers on the executor live. Filled from the server's one
+/// list of outside addresses; tests point it at loopback or scripted
+/// hosts.
+#[derive(Debug, Clone)]
+pub struct ProviderEndpoints {
+    /// Official MusicBrainz API root.
+    pub musicbrainz: String,
+    /// BrainzMash API root.
+    pub brainzmash: String,
+}
+
+impl ProviderEndpoints {
+    /// Every address on the discard port, where nothing listens, so a
+    /// test can never reach a real provider.
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn closed() -> Self {
+        Self {
+            musicbrainz: "http://127.0.0.1:9/musicbrainz/ws/2".to_owned(),
+            brainzmash: "http://127.0.0.1:9/brainzmash/ws/2".to_owned(),
+        }
+    }
+}
+
+/// The shared provider dependencies, built once at boot and shared by
+/// every area: the limiters of the rate table, the slot lanes, the byte
+/// cache, the service health registry, and the clients that send through
+/// the executor.
 #[derive(Debug)]
 pub struct Providers {
-    /// One token bucket per verified policy row.
+    /// One token bucket per rate table row.
     pub limiters: LimiterSet,
     /// User / image / background slot lanes.
     pub slots: SlotManager,
     /// Shared byte cache behind every client's cache-aside reads.
-    pub cache: Arc<dyn ProviderCache>,
-    /// MusicBrainz pacing state (BrainzMash cooldown, mirror limiter),
-    /// shared by every MusicBrainz client.
-    pub musicbrainz: musicbrainz::MbPacingState,
+    pub cache: Arc<InMemoryProviderCache>,
     /// Which services are degraded right now, for `GET /system/health`.
     pub health: Arc<health::ServiceHealth>,
+    /// MusicBrainz: the official service, BrainzMash and a mirror.
+    pub musicbrainz: musicbrainz::MusicBrainzClient,
 }
 
 impl Providers {
-    /// Build the shared deps around one cache.
+    /// The providers over the real network, with the platform's HTTP
+    /// clients and clock.
     #[must_use]
-    pub fn new(cache: Arc<dyn ProviderCache>) -> Self {
-        Self {
-            limiters: LimiterSet::new(),
-            slots: SlotManager::new(),
-            cache,
-            musicbrainz: musicbrainz::MbPacingState::default(),
-            health: Arc::new(health::ServiceHealth::new()),
-        }
+    pub fn build(platform: &Platform, endpoints: ProviderEndpoints) -> Self {
+        Self::over_wire(
+            Arc::new(executor::ReqwestWire::new(&platform.http)),
+            Arc::clone(&platform.clock),
+            endpoints,
+        )
     }
 
-    /// Shared deps with no limiter rows and an in-process cache, so tests
-    /// never wait on pacing. Production builds through [`Providers::new`].
+    /// The providers over `wire`, reading wall time from `clock`. The one
+    /// builder: [`build`](Self::build) passes the real network, tests a
+    /// scripted wire or one that reaches a loopback server.
+    #[must_use]
+    pub fn over_wire(
+        wire: Arc<dyn Wire>,
+        clock: Arc<dyn Clock>,
+        endpoints: ProviderEndpoints,
+    ) -> Self {
+        Self::assemble(wire, clock, endpoints, LimiterSet::new())
+    }
+
+    /// The providers over `wire` with every limiter unpaced, for suites
+    /// that do not care about pacing: cooldowns and in-flight caps still
+    /// hold, rates do not. Every address is on the discard port.
     #[cfg(any(test, feature = "test-support"))]
     #[must_use]
-    pub fn unpaced() -> Self {
+    pub fn unpaced(wire: Arc<dyn Wire>) -> Self {
+        Self::assemble(
+            wire,
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+            ProviderEndpoints::closed(),
+            LimiterSet::unpaced(),
+        )
+    }
+
+    fn assemble(
+        wire: Arc<dyn Wire>,
+        clock: Arc<dyn Clock>,
+        endpoints: ProviderEndpoints,
+        limiters: LimiterSet,
+    ) -> Self {
+        let health = Arc::new(health::ServiceHealth::new());
+        let executor = |spec: &'static executor::Spec, row: &str| {
+            let limiter = limiters.shared(row).cloned().unwrap_or_else(|| {
+                // Every executor names a row of the table; a test pins it.
+                tracing::error!(row, "no rate row; pacing at one request a second");
+                Arc::new(RateLimiter::new(RatePolicy::new(1.0, 1)))
+            });
+            Executor::new(
+                spec,
+                limiter,
+                Arc::clone(&wire),
+                Arc::clone(&health),
+                Arc::clone(&clock),
+            )
+        };
+        let musicbrainz = musicbrainz::MusicBrainzClient::new(
+            executor(&musicbrainz::client::OFFICIAL, "musicbrainz"),
+            executor(&musicbrainz::client::BRAINZMASH, "brainzmash"),
+            executor(&musicbrainz::client::MIRROR, "musicbrainz-mirror"),
+            &endpoints.musicbrainz,
+            &endpoints.brainzmash,
+        );
         Self {
-            limiters: LimiterSet::unpaced(),
-            ..Self::with_memory_cache()
+            limiters,
+            slots: SlotManager::new(),
+            cache: Arc::new(InMemoryProviderCache::new()),
+            health,
+            musicbrainz,
         }
     }
 
-    /// Build the shared deps with the in-process TTL cache.
+    /// The providers over a wire nothing answers on, for tests that never
+    /// reach a provider through the executor.
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
-    pub fn with_memory_cache() -> Self {
-        Self::new(Arc::new(InMemoryProviderCache::new()))
+    pub fn closed() -> Self {
+        Self::over_wire(
+            Arc::new(executor::ScriptedWire::new()),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+            ProviderEndpoints::closed(),
+        )
     }
 
     /// One provider's limiter, or `None` for providers without a row.
     #[must_use]
     pub fn limiter(&self, source: &str) -> Option<&RateLimiter> {
         self.limiters.limiter(source)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn deps_carry_every_limiter() {
-        let providers = Providers::with_memory_cache();
-        for source in [
-            "musicbrainz",
-            "brainzmash",
-            "listenbrainz",
-            "audiodb",
-            "acoustid",
-            "coverartarchive",
-            "lastfm",
-        ] {
-            assert!(
-                providers.limiter(source).is_some(),
-                "deps carry a {source} limiter"
-            );
-        }
-        assert!(providers.limiter("slskd").is_none());
     }
 }

@@ -160,6 +160,12 @@ impl Outbound {
             lrclib: self.lrclib.clone(),
             github_releases: self.github_releases.clone(),
             youtube: self.youtube.clone(),
+        }
+    }
+
+    /// The addresses of the providers built once for every area.
+    pub fn providers(&self) -> droppedneedle_providers::ProviderEndpoints {
+        droppedneedle_providers::ProviderEndpoints {
             musicbrainz: self.musicbrainz.clone(),
             brainzmash: self.brainzmash.clone(),
         }
@@ -215,16 +221,5 @@ impl Outbound {
             api: self.github_api.clone(),
             codeload: self.github_codeload.clone(),
         }
-    }
-
-    /// The MusicBrainz source the saved settings select, read at each
-    /// request, with the two built-in roots taken from here.
-    pub fn musicbrainz_source(
-        &self,
-        settings: droppedneedle_kernel::runtime_config::Live<
-            droppedneedle_kernel::runtime_config::sections::MusicBrainzSettings,
-        >,
-    ) -> musicbrainz::LiveSource {
-        musicbrainz::LiveSource::new(settings, &self.musicbrainz, &self.brainzmash)
     }
 }

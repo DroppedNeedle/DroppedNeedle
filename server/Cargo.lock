@@ -854,6 +854,7 @@ dependencies = [
  "caseless",
  "droppedneedle-kernel",
  "futures-util",
+ "getrandom 0.3.4",
  "md5",
  "reqwest",
  "serde",

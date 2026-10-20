@@ -161,7 +161,7 @@ impl From<GeocodingError> for ProviderError {
         match error {
             GeocodingError::Transport(message) => Self::Transport {
                 provider: SOURCE,
-                message,
+                kind: super::error::TransportKind::named(&message),
             },
             GeocodingError::RateLimited => Self::RateLimited {
                 provider: SOURCE,
@@ -175,6 +175,7 @@ impl From<GeocodingError> for ProviderError {
             }
             GeocodingError::Decode(message) => Self::Payload {
                 provider: SOURCE,
+                kind: super::error::PayloadKind::Decode,
                 message,
             },
         }

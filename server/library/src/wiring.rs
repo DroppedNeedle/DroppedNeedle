@@ -199,9 +199,6 @@ impl LibrarySetup {
         use droppedneedle_providers::RequestPriority;
         use droppedneedle_providers::acoustid::AcoustIdClient;
         use droppedneedle_providers::adapters::{CorePacer, HealthSink};
-        use droppedneedle_providers::musicbrainz::{
-            MbPacing, MusicBrainzClient, ReqwestMbTransport,
-        };
 
         let http = &platform.http;
         // Identification is background work on the source settings name,
@@ -209,15 +206,8 @@ impl LibrarySetup {
         // Both clients count their failures toward system health, so an
         // outage during a background lookup shows on the health dot too.
         let health = HealthSink::new(&providers);
-        let mb_client = |priority: RequestPriority| {
-            MusicBrainzClient::official(
-                ReqwestMbTransport::new(http.no_redirect().clone()),
-                MbPacing::new(providers.clone()),
-            )
-            .with_live_source(mb_source.clone())
-            .with_priority(priority)
-            .with_sink(health.clone())
-        };
+        let mb_client =
+            |priority: RequestPriority| providers.musicbrainz.live(mb_source.clone(), priority);
         let musicbrainz = mb_client(RequestPriority::BackgroundSync);
         // Downloads being imported look releases up through their own
         // client on the same limiter and source setting.

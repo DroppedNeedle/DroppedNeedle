@@ -32,9 +32,9 @@ use droppedneedle_providers::cache::cache_aside_json;
 use droppedneedle_providers::lastfm::{self, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::{self, ListenBrainzClient, ListenBrainzCredentials};
 use droppedneedle_providers::musicbrainz::models::{ArtistCreditName, Relation};
-use droppedneedle_providers::musicbrainz::{Criticality, MbError, is_valid_mbid};
+use droppedneedle_providers::musicbrainz::{Criticality, is_valid_mbid};
 use droppedneedle_providers::wikidata::WikidataClient;
-use droppedneedle_providers::{Providers, RequestPriority};
+use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
 
 /// How long a popularity refusal keeps Last.fm standing in.
 const POPULARITY_DOWN_FOR: Duration = Duration::from_secs(10 * 60);
@@ -201,10 +201,14 @@ fn lastfm_option<T>(outcome: lastfm::Outcome<T>) -> SourceResult<Option<T>> {
 
 /// A MusicBrainz lookup answer: a malformed or refused id is a definite
 /// miss, anything else that failed stays an error.
-fn musicbrainz_option<T>(result: Result<Option<T>, MbError>) -> SourceResult<Option<T>> {
+fn musicbrainz_option<T>(result: Result<Option<T>, ProviderError>) -> SourceResult<Option<T>> {
     match result {
         Ok(found) => Ok(found),
-        Err(MbError::InvalidMbid(_) | MbError::Rejected(400 | 404)) => Ok(None),
+        Err(
+            ProviderError::BadRequest { status: 400, .. }
+            | ProviderError::NotFound { .. }
+            | ProviderError::Invalid { .. },
+        ) => Ok(None),
         Err(error) => Err(error.to_string()),
     }
 }
@@ -722,6 +726,7 @@ impl QueueSources for LiveSources {
         &'a self,
         tag: &'a str,
         limit: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         Box::pin(async move {
             let ttl = crate::reads::catalog::SEARCH_TTL * 2;
@@ -734,7 +739,7 @@ impl QueueSources for LiveSources {
                 // Ask for extra rows: the type exclusions drop some.
                 let asked = ((limit as f64 * 1.5) as u32).clamp(25, 100);
                 let page = self
-                    .musicbrainz(RequestPriority::BackgroundSync)
+                    .musicbrainz(priority)
                     .search_release_groups_by_tag(tag, asked, 0, Criticality::BestEffort)
                     .await
                     .map_err(|error| error.to_string())?;
@@ -770,13 +775,14 @@ impl QueueSources for LiveSources {
     fn musicbrainz_release_group_of<'a>(
         &'a self,
         release_mbid: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<String>>> {
         Box::pin(async move {
             if !is_valid_mbid(release_mbid) {
                 return Ok(None);
             }
             musicbrainz_option(
-                self.musicbrainz(RequestPriority::BackgroundSync)
+                self.musicbrainz(priority)
                     .resolve_release_to_release_group(release_mbid, Criticality::IdentityCritical)
                     .await,
             )
@@ -786,13 +792,14 @@ impl QueueSources for LiveSources {
     fn musicbrainz_release_group<'a>(
         &'a self,
         mbid: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<ReleaseGroupFacts>>> {
         Box::pin(async move {
             if !is_valid_mbid(mbid) {
                 return Ok(None);
             }
             let found = musicbrainz_option(
-                self.musicbrainz(RequestPriority::BackgroundSync)
+                self.musicbrainz(priority)
                     .lookup_release_group(
                         mbid,
                         &["artist-credits", "releases", "tags", "url-rels"],
@@ -828,13 +835,14 @@ impl QueueSources for LiveSources {
     fn musicbrainz_artist<'a>(
         &'a self,
         mbid: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<ArtistFacts>>> {
         Box::pin(async move {
             if !is_valid_mbid(mbid) {
                 return Ok(None);
             }
             let found = musicbrainz_option(
-                self.musicbrainz(RequestPriority::BackgroundSync)
+                self.musicbrainz(priority)
                     .lookup_artist(mbid, &["url-rels"], Criticality::BestEffort)
                     .await,
             )?;

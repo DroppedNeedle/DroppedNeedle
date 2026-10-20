@@ -9,6 +9,7 @@
 use crate::reads::catalog::mapping::clean_lastfm_bio;
 use crate::reads::discover::models::{DiscoverQueuePreview, QueueEnrichment};
 use crate::reads::discover::ports::{ProviderFailure, YouTubeSource};
+use droppedneedle_providers::RequestPriority;
 
 use super::sources::{QueueSources, SourceResult};
 
@@ -62,7 +63,9 @@ pub async fn enrich(
 ) -> QueueEnrichment {
     let facts = quiet(
         "musicbrainz release group",
-        sources.musicbrainz_release_group(release_group_mbid).await,
+        sources
+            .musicbrainz_release_group(release_group_mbid, RequestPriority::UserInitiated)
+            .await,
     )
     .unwrap_or_default();
     let album = facts.title.clone();
@@ -123,7 +126,12 @@ async fn artist_details(
     let mut country = None;
     let mut description = None;
     if let Some(mbid) = artist_mbid {
-        let facts = quiet("musicbrainz artist", sources.musicbrainz_artist(mbid).await);
+        let facts = quiet(
+            "musicbrainz artist",
+            sources
+                .musicbrainz_artist(mbid, RequestPriority::UserInitiated)
+                .await,
+        );
         if let Some(facts) = facts {
             country = facts.country;
             if let Some(url) = facts.wiki_url {
@@ -176,7 +184,7 @@ pub async fn preview(
     release_group_mbid: &str,
 ) -> Result<DiscoverQueuePreview, ProviderFailure> {
     let facts = sources
-        .musicbrainz_release_group(release_group_mbid)
+        .musicbrainz_release_group(release_group_mbid, RequestPriority::UserInitiated)
         .await
         .map_err(ProviderFailure::failed)?;
     let Some(facts) = facts else {

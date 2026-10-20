@@ -6,9 +6,8 @@
 
 use futures_util::future::BoxFuture;
 
-use droppedneedle_providers::degradation::DegradationSink;
 use droppedneedle_providers::musicbrainz::{
-    Criticality, MbRelease, MbTransport, MusicBrainzClient, parse_year,
+    Criticality, LiveSource, MbRelease, MusicBrainzView, parse_year,
 };
 
 /// Various Artists: a compilation credit that no Soulseek path carries.
@@ -106,18 +105,18 @@ pub trait AlbumLookup: Send + Sync {
 }
 
 /// [`AlbumLookup`] over the MusicBrainz client.
-pub struct MusicBrainzAlbums<T: MbTransport, S: DegradationSink> {
-    client: MusicBrainzClient<T, S>,
+pub struct MusicBrainzAlbums {
+    client: MusicBrainzView,
 }
 
-impl<T: MbTransport, S: DegradationSink> MusicBrainzAlbums<T, S> {
+impl MusicBrainzAlbums {
     /// Lookups over one client.
-    pub fn new(client: MusicBrainzClient<T, S>) -> Self {
+    pub fn new(client: MusicBrainzView) -> Self {
         Self { client }
     }
 }
 
-impl<T: MbTransport, S: DegradationSink> AlbumLookup for MusicBrainzAlbums<T, S> {
+impl AlbumLookup for MusicBrainzAlbums {
     fn recording_releases<'a>(
         &'a self,
         recording_mbid: &'a str,
@@ -172,27 +171,13 @@ impl<T: MbTransport, S: DegradationSink> AlbumLookup for MusicBrainzAlbums<T, S>
 /// the configured MusicBrainz source read per request, failures counted
 /// toward system health.
 pub fn live_albums(
-    http: &droppedneedle_kernel::http_client::HttpClientFactory,
-    providers: std::sync::Arc<droppedneedle_providers::Providers>,
-    source: droppedneedle_providers::musicbrainz::LiveSource,
-) -> MusicBrainzAlbums<
-    droppedneedle_providers::musicbrainz::ReqwestMbTransport,
-    droppedneedle_providers::adapters::HealthSink,
-> {
-    use droppedneedle_providers::RequestPriority;
-    use droppedneedle_providers::adapters::HealthSink;
-    use droppedneedle_providers::musicbrainz::{MbPacing, ReqwestMbTransport};
-
-    let health = HealthSink::new(&providers);
-    MusicBrainzAlbums::new(
-        MusicBrainzClient::official(
-            ReqwestMbTransport::new(http.no_redirect().clone()),
-            MbPacing::new(providers),
-        )
-        .with_live_source(source)
-        .with_priority(RequestPriority::BackgroundSync)
-        .with_sink(health),
-    )
+    providers: &droppedneedle_providers::Providers,
+    source: LiveSource,
+) -> MusicBrainzAlbums {
+    MusicBrainzAlbums::new(providers.musicbrainz.live(
+        source,
+        droppedneedle_providers::RequestPriority::BackgroundSync,
+    ))
 }
 
 /// The wire release as acquisition reads it: audio media only, tracks

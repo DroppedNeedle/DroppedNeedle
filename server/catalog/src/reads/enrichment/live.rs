@@ -522,6 +522,22 @@ mod tests {
     use super::*;
     use droppedneedle_kernel::http_client::HttpClientFactory;
 
+    /// The providers with every address on the discard port, where nothing
+    /// listens.
+    fn closed_providers() -> Arc<Providers> {
+        let closed = "http://127.0.0.1:9".to_owned();
+        Arc::new(Providers::over_wire(
+            Arc::new(droppedneedle_providers::ReqwestWire::new(
+                &HttpClientFactory::new().unwrap(),
+            )),
+            Arc::new(droppedneedle_kernel::clock::SystemClock),
+            droppedneedle_providers::ProviderEndpoints {
+                musicbrainz: closed.clone(),
+                brainzmash: closed,
+            },
+        ))
+    }
+
     #[test]
     fn core_error_maps_to_a_leg_error_with_its_source() {
         let leg: enrich::ProviderError = CoreError::NotFound { provider: "lastfm" }.into();
@@ -628,8 +644,7 @@ mod tests {
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let pacer = CorePacer::for_source(Arc::new(Providers::with_memory_cache()), "listenbrainz")
-            .unwrap();
+        let pacer = CorePacer::for_source(closed_providers(), "listenbrainz").unwrap();
         let role = LiveListenBrainz::with_base(
             HttpClientFactory::new().unwrap().shared().clone(),
             &format!("http://{address}"),
@@ -672,8 +687,7 @@ mod tests {
         assert_eq!(top[0].listen_count, 10);
 
         // A dead upstream becomes a leg error, never invented rows.
-        let pacer = CorePacer::for_source(Arc::new(Providers::with_memory_cache()), "listenbrainz")
-            .unwrap();
+        let pacer = CorePacer::for_source(closed_providers(), "listenbrainz").unwrap();
         let dead = LiveListenBrainz::with_base(
             HttpClientFactory::new().unwrap().shared().clone(),
             "http://127.0.0.1:9/",
@@ -695,7 +709,7 @@ mod tests {
         use crate::reads::search::ports::EnrichmentPort as _;
 
         let http = HttpClientFactory::new().unwrap();
-        let providers = Arc::new(Providers::with_memory_cache());
+        let providers = closed_providers();
         // Nothing listens on the discard port.
         let closed = || "http://127.0.0.1:9".to_owned();
         let endpoints = crate::reads::catalog::upstream::Endpoints {
@@ -711,8 +725,6 @@ mod tests {
             lrclib: closed(),
             github_releases: closed(),
             youtube: closed(),
-            musicbrainz: closed(),
-            brainzmash: closed(),
         };
         let dir = std::env::temp_dir().join(format!("dn-enrich-off-{}", std::process::id()));
         let crypto = droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]);

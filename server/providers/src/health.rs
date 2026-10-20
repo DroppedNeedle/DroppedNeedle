@@ -76,6 +76,16 @@ const WATCHED: &[Watched] = &[
     },
 ];
 
+/// How many failures in a row mark `source` degraded, or `None` for a
+/// source nobody watches.
+#[must_use]
+pub fn threshold(source: &str) -> Option<usize> {
+    WATCHED
+        .iter()
+        .find(|watched| watched.source == source)
+        .map(|watched| watched.threshold)
+}
+
 /// A live degraded entry, as the health route reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DegradedService {

@@ -1,20 +1,17 @@
 //! Token-bucket rate limiters with priority waiters.
 //!
-//! Each provider gets one [`RateLimiter`] built from its verified [`RatePolicy`]
-//! row. The bucket refills continuously at `per_second` tokens up to `burst`,
-//! and waiters queue by [`RequestPriority`](super::slots::RequestPriority):
-//! a user-facing lookup admitted while a background sync waits jumps ahead of
-//! it, exactly like v2's heap-ordered waiters. Background jobs pass the
-//! background priority explicitly at the call site; nothing here guesses it.
+//! Each row of the rate table ([`RATES`](crate::rates::RATES)) gets one
+//! [`RateLimiter`]. The bucket refills continuously at `per_second` tokens
+//! up to `burst`, and waiters queue by [`RequestPriority`]: a user-facing
+//! lookup admitted while a background sync waits jumps ahead of it.
+//! Background jobs pass the background priority explicitly at the call
+//! site; nothing here guesses it.
 //!
-//! The policy rows below encode the verified per-provider table: MusicBrainz
-//! 1/s hard, the BrainzMash mirror 10/s, ListenBrainz 1/s, AudioDB 30/min
-//! free tier, AcoustID 3/s, Cover Art Archive conservative ~1/s with
-//! backoff, Last.fm 5/s with backoff. Two rows differ from v2's running config on purpose: v2 paced
-//! ListenBrainz at 2.5/s against a 1/s documented allocation (now fixed to
-//! the verified 1/s), and v2's cover-art lane self-throttled at 10/s (now
-//! conservative ~1/s per the verified row). Raise a row only by re-verifying
-//! against the provider's documented limit.
+//! A limiter also carries what its provider said about load: a cooldown
+//! (`Retry-After`, a run of failures) during which nothing is granted, the
+//! run of failed calls behind that cooldown, and, for rows that document a
+//! concurrency limit, how many requests are in flight. The rates
+//! themselves live only in the table.
 
 use std::{
     cmp::Ordering,
@@ -23,17 +20,50 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering as AtomicOrdering},
     },
+    time::Duration,
 };
 
 use thiserror::Error;
 use tokio::sync::oneshot;
+use tokio::time::Instant;
 
-use super::slots::RequestPriority;
+use crate::rates::{RATES, Rate, RateRow};
 
-/// Floating-point slack for token comparisons, ports v2's `EPSILON`.
+/// Floating-point slack for token comparisons.
 const EPSILON: f64 = 1e-9;
 
-/// One provider's verified rate row: sustained rate plus burst capacity.
+/// How long a waiter blocked only by the in-flight cap sleeps before it
+/// looks again. A finished request wakes it sooner.
+const IN_FLIGHT_RECHECK: Duration = Duration::from_secs(1);
+
+/// Which lane a provider call runs in. Lower wins ties in the rate limiter;
+/// the slot manager maps each level to its lane. There is no default: every
+/// caller names its priority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RequestPriority {
+    /// A request the user is waiting on right now.
+    UserInitiated = 0,
+    /// Cover-art fetch: user-visible but degradable to a placeholder.
+    ImageFetch = 1,
+    /// Speculative fetch for content about to scroll into view.
+    PrefetchVisible = 2,
+    /// Explicit background work: syncs, imports, refreshes. Background jobs
+    /// pass this level (or `Opportunistic`) at the call site.
+    BackgroundSync = 3,
+    /// Nice-to-have work that yields to everything else.
+    Opportunistic = 4,
+}
+
+impl RequestPriority {
+    /// Whether someone is looking at the page this call serves.
+    #[must_use]
+    pub const fn is_user_facing(self) -> bool {
+        matches!(self, Self::UserInitiated | Self::ImageFetch)
+    }
+}
+
+/// One bucket's shape: sustained rate plus burst capacity. A rate of zero
+/// or less means unpaced.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RatePolicy {
     /// Sustained tokens per second.
@@ -43,71 +73,15 @@ pub struct RatePolicy {
 }
 
 impl RatePolicy {
-    /// One verified row.
+    /// One bucket shape.
     #[must_use]
     pub const fn new(per_second: f64, burst: u32) -> Self {
         Self { per_second, burst }
     }
-}
 
-/// MusicBrainz: 1 req/s hard, no burst. The capacity of 1 means two callers
-/// can never squeeze into the same instant.
-pub const MUSICBRAINZ_POLICY: RatePolicy = RatePolicy::new(1.0, 1);
-/// BrainzMash, the server-owned MusicBrainz mirror: 10 req/s sustained with
-/// no burst (v2 `_BRAINZMASH_RATE_LIMIT`, one in flight).
-pub const BRAINZMASH_POLICY: RatePolicy = RatePolicy::new(10.0, 1);
-/// ListenBrainz: 1 req/s, no burst.
-pub const LISTENBRAINZ_POLICY: RatePolicy = RatePolicy::new(1.0, 1);
-/// AudioDB free tier: 30 req/min, paced as 0.5/s with a small burst of 2.
-pub const AUDIODB_POLICY: RatePolicy = RatePolicy::new(0.5, 2);
-/// AcoustID: 3 req/s with a one-second burst.
-pub const ACOUSTID_POLICY: RatePolicy = RatePolicy::new(3.0, 3);
-/// Cover Art Archive: no documented allocation, so conservative ~1/s with a
-/// burst of 2; 429/503 backoff stays the real governor.
-pub const COVERARTARCHIVE_POLICY: RatePolicy = RatePolicy::new(1.0, 2);
-/// Last.fm: 5/s community practice with a two-second burst; errors back off.
-pub const LASTFM_POLICY: RatePolicy = RatePolicy::new(5.0, 10);
-
-/// Look up one provider's verified row by lowercase name, or `None` for
-/// providers without a row (LAN services take no limiter at all).
-#[must_use]
-pub const fn policy_for(source: &str) -> Option<RatePolicy> {
-    // `const fn` with `str` matching keeps this usable in const contexts.
-    if source.len() == "musicbrainz".len() && matches_name(source, "musicbrainz") {
-        return Some(MUSICBRAINZ_POLICY);
+    fn paced(&self) -> bool {
+        self.per_second.is_finite() && self.per_second > 0.0
     }
-    if source.len() == "brainzmash".len() && matches_name(source, "brainzmash") {
-        return Some(BRAINZMASH_POLICY);
-    }
-    if source.len() == "listenbrainz".len() && matches_name(source, "listenbrainz") {
-        return Some(LISTENBRAINZ_POLICY);
-    }
-    if source.len() == "audiodb".len() && matches_name(source, "audiodb") {
-        return Some(AUDIODB_POLICY);
-    }
-    if source.len() == "acoustid".len() && matches_name(source, "acoustid") {
-        return Some(ACOUSTID_POLICY);
-    }
-    if source.len() == "coverartarchive".len() && matches_name(source, "coverartarchive") {
-        return Some(COVERARTARCHIVE_POLICY);
-    }
-    if source.len() == "lastfm".len() && matches_name(source, "lastfm") {
-        return Some(LASTFM_POLICY);
-    }
-    None
-}
-
-const fn matches_name(value: &str, expected: &str) -> bool {
-    let left = value.as_bytes();
-    let right = expected.as_bytes();
-    let mut index = 0;
-    while index < left.len() {
-        if left[index] != right[index] {
-            return false;
-        }
-        index += 1;
-    }
-    true
 }
 
 /// Acquiring more tokens than the bucket holds would wait forever.
@@ -127,6 +101,8 @@ struct Waiter {
     priority: u8,
     sequence: u64,
     tokens: u32,
+    /// Whether the grant also takes an in-flight slot.
+    slot: bool,
     grant: Option<oneshot::Sender<()>>,
     cancelled: Arc<AtomicBool>,
 }
@@ -154,28 +130,71 @@ impl Ord for Waiter {
 
 #[derive(Debug)]
 struct BucketState {
+    policy: RatePolicy,
+    max_in_flight: Option<u32>,
     tokens: f64,
-    updated: tokio::time::Instant,
+    updated: Instant,
+    paused_until: Option<Instant>,
+    in_flight: u32,
+    failure_run: u32,
+    headerless_streak: u32,
     waiters: BinaryHeap<Waiter>,
     sequence: u64,
 }
 
 impl BucketState {
-    fn refresh(&mut self, burst: f64, per_second: f64) {
-        let now = tokio::time::Instant::now();
-        let elapsed = now.duration_since(self.updated).as_secs_f64();
-        self.tokens = burst.min(self.tokens + elapsed * per_second);
+    fn refresh(&mut self) {
+        let now = Instant::now();
+        if let Some(until) = self.paused_until {
+            if now < until {
+                self.updated = now;
+                return;
+            }
+            // The pause is over: refill from empty, starting when it ended.
+            self.paused_until = None;
+            self.updated = until;
+        }
+        if self.policy.paced() {
+            let elapsed = now.duration_since(self.updated).as_secs_f64();
+            self.tokens =
+                f64::from(self.policy.burst).min(self.tokens + elapsed * self.policy.per_second);
+        }
         self.updated = now;
     }
 
+    fn paused(&self) -> bool {
+        self.paused_until
+            .is_some_and(|until| Instant::now() < until)
+    }
+
+    fn has_tokens(&self, tokens: u32) -> bool {
+        !self.policy.paced() || self.tokens + EPSILON >= f64::from(tokens)
+    }
+
+    fn has_slot(&self, slot: bool) -> bool {
+        !slot || self.max_in_flight.is_none_or(|max| self.in_flight < max)
+    }
+
+    fn take(&mut self, tokens: u32, slot: bool) {
+        if self.policy.paced() {
+            self.tokens -= f64::from(tokens);
+        }
+        if slot {
+            self.in_flight += 1;
+        }
+    }
+
     /// Grant every grantable head waiter in priority order, dropping
-    /// cancelled entries the way v2 drops done futures.
+    /// cancelled entries.
     fn grant_locked(&mut self) {
+        if self.paused() {
+            return;
+        }
         while let Some(mut head) = self.waiters.pop() {
             if head.cancelled.load(AtomicOrdering::Acquire) {
                 continue;
             }
-            if self.tokens + EPSILON < f64::from(head.tokens) {
+            if !self.has_tokens(head.tokens) || !self.has_slot(head.slot) {
                 self.waiters.push(head);
                 return;
             }
@@ -186,53 +205,117 @@ impl BucketState {
             if grant.send(()).is_err() {
                 continue;
             }
-            self.tokens -= f64::from(head.tokens);
+            self.take(head.tokens, head.slot);
         }
+    }
+
+    fn head_wait(&self) -> Duration {
+        let floor = Duration::from_millis(1);
+        if let Some(until) = self.paused_until {
+            let now = Instant::now();
+            if now < until {
+                return until.duration_since(now).max(floor);
+            }
+        }
+        let Some(head) = self.waiters.peek() else {
+            return floor;
+        };
+        if !self.has_tokens(head.tokens) {
+            let deficit = f64::from(head.tokens) - self.tokens;
+            let wait = Duration::from_secs_f64((deficit / self.policy.per_second).max(0.0));
+            return wait.max(floor);
+        }
+        if !self.has_slot(head.slot) {
+            return IN_FLIGHT_RECHECK;
+        }
+        floor
     }
 }
 
 /// Marks the queued waiter cancelled if the `acquire` future drops first,
-/// so a cancelled caller never consumes a later grant.
-struct CancelOnDrop {
+/// so a cancelled caller never consumes a later grant. A slot grant that
+/// arrived but was never collected is handed back.
+struct Pending<'a> {
+    limiter: &'a RateLimiter,
     flag: Arc<AtomicBool>,
+    notified: Option<oneshot::Receiver<()>>,
+    slot: bool,
 }
 
-impl Drop for CancelOnDrop {
+impl Drop for Pending<'_> {
     fn drop(&mut self) {
         self.flag.store(true, AtomicOrdering::Release);
+        if self.slot
+            && let Some(mut notified) = self.notified.take()
+            && notified.try_recv().is_ok()
+        {
+            self.limiter.release_slot();
+        }
+    }
+}
+
+/// An in-flight slot, held from the grant until the answer has been read.
+/// Dropping it lets the next waiter in.
+#[derive(Debug)]
+pub struct InFlight<'a> {
+    limiter: &'a RateLimiter,
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        self.limiter.release_slot();
     }
 }
 
 /// A token-bucket limiter with priority-ordered waiters.
 ///
-/// Cheap to share (`&self` methods only); providers hold one behind an `Arc`
-/// inside [`LimiterSet`]. The mutex is a plain std mutex held only across
-/// microsecond bookkeeping, never across an await.
+/// Cheap to share (`&self` methods only). The mutex is a plain std mutex
+/// held only across microsecond bookkeeping, never across an await.
 #[derive(Debug)]
 pub struct RateLimiter {
-    policy: RatePolicy,
     state: Mutex<BucketState>,
 }
 
 impl RateLimiter {
-    /// Build a full bucket from one verified row.
+    /// Build a full bucket of one shape.
     #[must_use]
     pub fn new(policy: RatePolicy) -> Self {
+        Self::shaped(policy, None)
+    }
+
+    /// Build the bucket of one table row. An operator-set rate starts
+    /// unpaced until the first request hands it over with
+    /// [`retune`](Self::retune).
+    #[must_use]
+    pub fn from_row(row: &RateRow) -> Self {
+        let per_second = match row.per_second {
+            Rate::Fixed(per_second) => per_second,
+            Rate::Setting => 0.0,
+        };
+        Self::shaped(RatePolicy::new(per_second, row.burst), row.max_in_flight)
+    }
+
+    fn shaped(policy: RatePolicy, max_in_flight: Option<u32>) -> Self {
         Self {
-            policy,
             state: Mutex::new(BucketState {
+                policy,
+                max_in_flight,
                 tokens: f64::from(policy.burst),
-                updated: tokio::time::Instant::now(),
+                updated: Instant::now(),
+                paused_until: None,
+                in_flight: 0,
+                failure_run: 0,
+                headerless_streak: 0,
                 waiters: BinaryHeap::new(),
                 sequence: 0,
             }),
         }
     }
 
-    /// The verified row this limiter enforces.
+    /// The shape this limiter enforces now.
     #[must_use]
-    pub const fn policy(&self) -> RatePolicy {
-        self.policy
+    pub fn policy(&self) -> RatePolicy {
+        self.lock().policy
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, BucketState> {
@@ -253,10 +336,6 @@ impl RateLimiter {
 
     /// Wait for `tokens` at an explicit priority.
     ///
-    /// Background jobs pass [`RequestPriority::BackgroundSync`] (or
-    /// `Opportunistic`) here; the type forces the choice into the open at
-    /// every call site instead of defaulting silently.
-    ///
     /// # Errors
     ///
     /// Returns [`OverCapacity`] when `tokens` exceeds the burst capacity.
@@ -265,19 +344,47 @@ impl RateLimiter {
         tokens: u32,
         priority: RequestPriority,
     ) -> Result<(), OverCapacity> {
-        if tokens > self.policy.burst {
-            return Err(OverCapacity {
-                tokens,
-                burst: self.policy.burst,
-            });
-        }
+        self.wait_for(tokens, priority, false).await
+    }
+
+    /// Wait for one token and one in-flight slot at `priority`. The slot is
+    /// held until the returned guard drops. Rows without a concurrency
+    /// limit hand out slots freely.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OverCapacity`] when the bucket holds no tokens at all.
+    pub async fn acquire_slot(
+        &self,
+        priority: RequestPriority,
+    ) -> Result<InFlight<'_>, OverCapacity> {
+        self.wait_for(1, priority, true).await?;
+        Ok(InFlight { limiter: self })
+    }
+
+    async fn wait_for(
+        &self,
+        tokens: u32,
+        priority: RequestPriority,
+        slot: bool,
+    ) -> Result<(), OverCapacity> {
+        let (grant, notified) = oneshot::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
-        let (grant, mut notified) = oneshot::channel();
         {
             let mut state = self.lock();
-            state.refresh(f64::from(self.policy.burst), self.policy.per_second);
-            if state.waiters.is_empty() && state.tokens + EPSILON >= f64::from(tokens) {
-                state.tokens -= f64::from(tokens);
+            if state.policy.paced() && tokens > state.policy.burst {
+                return Err(OverCapacity {
+                    tokens,
+                    burst: state.policy.burst,
+                });
+            }
+            state.refresh();
+            if state.waiters.is_empty()
+                && !state.paused()
+                && state.has_tokens(tokens)
+                && state.has_slot(slot)
+            {
+                state.take(tokens, slot);
                 return Ok(());
             }
             let sequence = state.sequence;
@@ -286,130 +393,206 @@ impl RateLimiter {
                 priority: priority as u8,
                 sequence,
                 tokens,
+                slot,
                 grant: Some(grant),
                 cancelled: Arc::clone(&cancelled),
             });
             state.grant_locked();
         }
-        let _cancel = CancelOnDrop { flag: cancelled };
+        let mut pending = Pending {
+            limiter: self,
+            flag: cancelled,
+            notified: Some(notified),
+            slot,
+        };
         loop {
-            // A latched grant is never lost, so check before parking.
-            if notified.try_recv().is_ok() {
-                return Ok(());
-            }
             let wait = {
                 let mut state = self.lock();
-                state.refresh(f64::from(self.policy.burst), self.policy.per_second);
+                state.refresh();
                 state.grant_locked();
-                state.head_wait(f64::from(self.policy.burst), self.policy.per_second)
+                state.head_wait()
             };
+            let Some(notified) = pending.notified.as_mut() else {
+                return Ok(());
+            };
+            // A latched grant is never lost, so check before parking.
+            if notified.try_recv().is_ok() {
+                pending.notified = None;
+                return Ok(());
+            }
             tokio::select! {
                 biased;
-                _ = &mut notified => return Ok(()),
+                _ = notified => {
+                    pending.notified = None;
+                    return Ok(());
+                }
                 () = tokio::time::sleep(wait) => {}
             }
         }
     }
 
+    fn release_slot(&self) {
+        let mut state = self.lock();
+        state.in_flight = state.in_flight.saturating_sub(1);
+        state.refresh();
+        state.grant_locked();
+    }
+
     /// Take `tokens` without waiting: `true` when granted, `false` when the
-    /// bucket is short or another caller already queues.
+    /// bucket is short, cooling down, or another caller already queues.
     pub fn try_acquire(&self, tokens: u32) -> bool {
         let mut state = self.lock();
-        state.refresh(f64::from(self.policy.burst), self.policy.per_second);
-        if !state.waiters.is_empty() {
+        state.refresh();
+        if !state.waiters.is_empty() || state.paused() || !state.has_tokens(tokens) {
             return false;
         }
-        if state.tokens + EPSILON >= f64::from(tokens) {
-            state.tokens -= f64::from(tokens);
-            return true;
-        }
-        false
+        state.take(tokens, false);
+        true
     }
 
     /// Whole tokens currently available.
     #[must_use]
     pub fn remaining(&self) -> u32 {
         let mut state = self.lock();
-        state.refresh(f64::from(self.policy.burst), self.policy.per_second);
+        state.refresh();
         state.tokens.max(0.0) as u32
     }
 
-    /// How long until `tokens` are available, rounded up. Zero when the
-    /// bucket already covers the request.
+    /// How long until `tokens` are available, rounded up to whole seconds.
+    /// Zero when the bucket already covers the request.
     #[must_use]
-    pub fn retry_after(&self, tokens: u32) -> std::time::Duration {
+    pub fn retry_after(&self, tokens: u32) -> Duration {
         let mut state = self.lock();
-        state.refresh(f64::from(self.policy.burst), self.policy.per_second);
-        if state.tokens + EPSILON >= f64::from(tokens) {
-            return std::time::Duration::ZERO;
+        state.refresh();
+        let pause = state
+            .paused_until
+            .map_or(Duration::ZERO, |until| until.duration_since(Instant::now()));
+        if pause.is_zero() && state.has_tokens(tokens) {
+            return Duration::ZERO;
         }
-        let deficit = f64::from(tokens) - state.tokens;
-        let seconds = (deficit / self.policy.per_second).ceil().max(0.0);
-        std::time::Duration::from_secs_f64(seconds)
+        let deficit = (f64::from(tokens) - state.tokens).max(0.0);
+        let refill = if state.policy.paced() {
+            deficit / state.policy.per_second
+        } else {
+            0.0
+        };
+        Duration::from_secs_f64((pause.as_secs_f64() + refill).ceil())
     }
 
-    /// Refill to burst. Tests and provider reconfiguration use this; the
-    /// limiter never resets itself in production.
+    /// Grant nothing for `delay`, then refill from empty, so a provider
+    /// that said "slow down" never gets a burst the moment it ends. A
+    /// longer cooldown already running is kept.
+    pub fn cool_down(&self, delay: Duration) {
+        let mut state = self.lock();
+        state.refresh();
+        let until = Instant::now() + delay;
+        if state.paused_until.is_none_or(|current| current < until) {
+            state.paused_until = Some(until);
+        }
+        state.tokens = 0.0;
+    }
+
+    /// How much of a cooldown is left; zero when none runs.
+    #[must_use]
+    pub fn cooling_for(&self) -> Duration {
+        self.lock().paused_until.map_or(Duration::ZERO, |until| {
+            until.saturating_duration_since(Instant::now())
+        })
+    }
+
+    /// Change the rate in place for an operator-set row. Tokens are kept,
+    /// capped at the burst; zero or less makes the row unpaced.
+    pub fn retune(&self, per_second: f64) {
+        let mut state = self.lock();
+        if state.policy.per_second == per_second {
+            return;
+        }
+        state.refresh();
+        state.policy.per_second = per_second;
+        state.tokens = state.tokens.min(f64::from(state.policy.burst));
+        state.grant_locked();
+    }
+
+    /// Count one failed call in the row's run and return the run's length.
+    pub fn note_failure(&self) -> u32 {
+        let mut state = self.lock();
+        state.failure_run = state.failure_run.saturating_add(1);
+        state.failure_run
+    }
+
+    /// The provider answered: its run of failures starts over.
+    pub fn note_answer(&self) {
+        self.lock().failure_run = 0;
+    }
+
+    /// Count one 429 that named no wait and return how many came in a row.
+    pub fn note_headerless_limit(&self) -> u32 {
+        let mut state = self.lock();
+        state.headerless_streak = state.headerless_streak.saturating_add(1);
+        state.headerless_streak
+    }
+
+    /// A clean answer ends the run of 429s that named no wait.
+    pub fn clear_headerless_limits(&self) {
+        self.lock().headerless_streak = 0;
+    }
+
+    /// Refill to burst and end any cooldown.
     pub fn reset(&self) {
         let mut state = self.lock();
-        state.tokens = f64::from(self.policy.burst);
-        state.updated = tokio::time::Instant::now();
+        state.tokens = f64::from(state.policy.burst);
+        state.paused_until = None;
+        state.updated = Instant::now();
     }
 }
 
-impl BucketState {
-    fn head_wait(&self, _burst: f64, per_second: f64) -> std::time::Duration {
-        let Some(head) = self.waiters.peek() else {
-            // Our own waiter is queued, so this is unreachable in practice;
-            // re-drive quickly rather than stalling if it ever happens.
-            return std::time::Duration::from_millis(1);
-        };
-        let deficit = f64::from(head.tokens) - self.tokens;
-        if deficit <= EPSILON {
-            return std::time::Duration::from_millis(1);
-        }
-        let seconds = deficit / per_second;
-        let wait = std::time::Duration::from_secs_f64(seconds.max(0.0));
-        wait.max(std::time::Duration::from_millis(1))
-    }
-}
-
-/// The verified provider limiters, built once and shared.
+/// The limiters of every table row, built once and shared.
 #[derive(Debug)]
 pub struct LimiterSet {
-    limiters: Vec<(&'static str, RateLimiter)>,
+    limiters: Vec<(&'static str, Arc<RateLimiter>)>,
 }
 
 impl LimiterSet {
-    /// Build one limiter per verified policy row.
+    /// One limiter per row of [`RATES`].
     #[must_use]
     pub fn new() -> Self {
         Self {
-            limiters: vec![
-                ("musicbrainz", RateLimiter::new(MUSICBRAINZ_POLICY)),
-                ("brainzmash", RateLimiter::new(BRAINZMASH_POLICY)),
-                ("listenbrainz", RateLimiter::new(LISTENBRAINZ_POLICY)),
-                ("audiodb", RateLimiter::new(AUDIODB_POLICY)),
-                ("acoustid", RateLimiter::new(ACOUSTID_POLICY)),
-                ("coverartarchive", RateLimiter::new(COVERARTARCHIVE_POLICY)),
-                ("lastfm", RateLimiter::new(LASTFM_POLICY)),
-            ],
+            limiters: RATES
+                .iter()
+                .map(|row| (row.source, Arc::new(RateLimiter::from_row(row))))
+                .collect(),
         }
     }
 
-    /// A set with no rows, so nothing waits. Tests only: production always
-    /// paces through [`LimiterSet::new`].
+    /// One limiter per row, none of them paced. Tests only: production
+    /// always paces through [`LimiterSet::new`].
     #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn unpaced() -> Self {
         Self {
-            limiters: Vec::new(),
+            limiters: RATES
+                .iter()
+                .map(|row| {
+                    let unpaced = RateRow {
+                        per_second: Rate::Fixed(0.0),
+                        ..*row
+                    };
+                    (row.source, Arc::new(RateLimiter::from_row(&unpaced)))
+                })
+                .collect(),
         }
     }
 
-    /// One provider's limiter, or `None` for providers without a row.
+    /// One row's limiter, or `None` for providers without a row.
     #[must_use]
     pub fn limiter(&self, source: &str) -> Option<&RateLimiter> {
+        self.shared(source).map(AsRef::as_ref)
+    }
+
+    /// One row's limiter as a shared handle, for the executor that paces
+    /// through it.
+    #[must_use]
+    pub fn shared(&self, source: &str) -> Option<&Arc<RateLimiter>> {
         self.limiters
             .iter()
             .find(|(name, _)| *name == source)
@@ -432,8 +615,7 @@ impl Default for LimiterSet {
 /// Pacing port behind the audio clients: one token per upstream call. One
 /// trait for all four audio clients, so one fake paces every client and the
 /// production [`CorePacer`](super::adapters::CorePacer) implements it once
-/// against the verified bucket. Slot-lane admission stays at explicit call
-/// sites because this seam carries no priority to choose a lane with.
+/// against the table's bucket.
 pub trait Pacer: Send + Sync {
     /// Wait until one upstream call may proceed.
     fn acquire(&self) -> impl std::future::Future<Output = ()> + Send;
@@ -443,41 +625,9 @@ pub trait Pacer: Send + Sync {
 mod tests {
     use super::*;
 
-    #[test]
-    fn table_holds_the_verified_rows() {
-        let set = LimiterSet::new();
-        assert_eq!(
-            set.sources(),
-            [
-                "musicbrainz",
-                "brainzmash",
-                "listenbrainz",
-                "audiodb",
-                "acoustid",
-                "coverartarchive",
-                "lastfm"
-            ]
-        );
-        assert_eq!(policy_for("musicbrainz"), Some(MUSICBRAINZ_POLICY));
-        assert_eq!(policy_for("slskd"), None);
-        assert_eq!(policy_for("MUSICBRAINZ"), None);
-    }
-
-    #[test]
-    fn musicbrainz_row_is_one_per_second_hard() {
-        assert_eq!(MUSICBRAINZ_POLICY.per_second, 1.0);
-        assert_eq!(MUSICBRAINZ_POLICY.burst, 1);
-        assert_eq!(BRAINZMASH_POLICY, RatePolicy::new(10.0, 1));
-        assert_eq!(LISTENBRAINZ_POLICY, RatePolicy::new(1.0, 1));
-        assert_eq!(AUDIODB_POLICY, RatePolicy::new(0.5, 2));
-        assert_eq!(ACOUSTID_POLICY, RatePolicy::new(3.0, 3));
-        assert_eq!(COVERARTARCHIVE_POLICY, RatePolicy::new(1.0, 2));
-        assert_eq!(LASTFM_POLICY, RatePolicy::new(5.0, 10));
-    }
-
     #[tokio::test]
     async fn over_capacity_fails_instead_of_waiting_forever() {
-        let limiter = RateLimiter::new(MUSICBRAINZ_POLICY);
+        let limiter = RateLimiter::new(RatePolicy::new(1.0, 1));
         let error = limiter
             .acquire_with_priority(2, RequestPriority::UserInitiated)
             .await
@@ -493,10 +643,9 @@ mod tests {
 
     #[tokio::test]
     async fn user_waiter_jumps_ahead_of_background_waiter() {
-        use std::sync::Arc;
         use tokio::sync::Mutex as AsyncMutex;
 
-        let limiter = Arc::new(RateLimiter::new(MUSICBRAINZ_POLICY));
+        let limiter = Arc::new(RateLimiter::new(RatePolicy::new(1.0, 1)));
         limiter.acquire().await.expect("first token is free");
         assert!(!limiter.try_acquire(1));
 
@@ -513,7 +662,7 @@ mod tests {
             })
         };
         // Let the background caller queue first.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
         let user = {
             let limiter = Arc::clone(&limiter);
             let order = Arc::clone(&order);
@@ -532,12 +681,45 @@ mod tests {
 
     #[test]
     fn retry_after_rounds_up_to_whole_seconds() {
-        let limiter = RateLimiter::new(AUDIODB_POLICY);
+        let limiter = RateLimiter::new(RatePolicy::new(0.5, 2));
         assert!(limiter.try_acquire(2));
         // 0.5/s with an empty bucket: one token needs 2s.
-        assert_eq!(limiter.retry_after(1), std::time::Duration::from_secs(2));
+        assert_eq!(limiter.retry_after(1), Duration::from_secs(2));
         limiter.reset();
-        assert_eq!(limiter.retry_after(1), std::time::Duration::ZERO);
+        assert_eq!(limiter.retry_after(1), Duration::ZERO);
         assert_eq!(limiter.remaining(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_in_flight_cap_holds_until_the_slot_is_released() {
+        let row = RateRow {
+            source: "test",
+            per_second: Rate::Fixed(100.0),
+            burst: 5,
+            max_in_flight: Some(1),
+            verified_on: "2026-10-20",
+            basis: "test",
+            url: "",
+        };
+        let limiter = Arc::new(RateLimiter::from_row(&row));
+        let first = limiter
+            .acquire_slot(RequestPriority::UserInitiated)
+            .await
+            .expect("first slot");
+        let second = {
+            let limiter = Arc::clone(&limiter);
+            tokio::spawn(async move {
+                let _slot = limiter
+                    .acquire_slot(RequestPriority::UserInitiated)
+                    .await
+                    .expect("second slot");
+                Instant::now()
+            })
+        };
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let released = Instant::now();
+        drop(first);
+        let granted = second.await.expect("joins");
+        assert!(granted >= released, "the second waits for the first");
     }
 }

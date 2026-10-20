@@ -23,9 +23,7 @@ use droppedneedle_providers::adapters::{CorePacer, HealthSink, ReqwestGet};
 use droppedneedle_providers::audiodb::{self, AudioDbClient};
 use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::{self, ListenBrainzClient, ListenBrainzCredentials};
-use droppedneedle_providers::musicbrainz::{
-    MbPacing, MbSource, MusicBrainzClient, ReqwestMbTransport,
-};
+use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzView};
 use droppedneedle_providers::{ProviderCache, Providers, RequestPriority};
 
 /// The settings the catalog reads, once per call.
@@ -161,14 +159,10 @@ pub struct Endpoints {
     pub github_releases: String,
     /// YouTube Data API host.
     pub youtube: String,
-    /// Official MusicBrainz API root.
-    pub musicbrainz: String,
-    /// BrainzMash API root.
-    pub brainzmash: String,
 }
 
 /// The MusicBrainz client type the catalog uses.
-pub type CatalogMusicBrainz = MusicBrainzClient<ReqwestMbTransport, HealthSink>;
+pub type CatalogMusicBrainz = MusicBrainzView;
 /// The ListenBrainz client type the catalog uses.
 pub type CatalogListenBrainz = ListenBrainzClient<CorePacer, HealthSink>;
 /// The Last.fm client type the catalog uses.
@@ -180,7 +174,6 @@ pub type CatalogAudioDb = AudioDbClient<CorePacer, HealthSink>;
 #[derive(Clone)]
 pub struct Upstream {
     http: reqwest::Client,
-    no_redirect: reqwest::Client,
     providers: Arc<Providers>,
     settings: Arc<dyn CatalogSettings>,
     users: UsersDeps,
@@ -246,21 +239,13 @@ impl Upstream {
         users: UsersDeps,
         endpoints: Endpoints,
     ) -> Self {
-        Self::from_clients(
-            http.shared().clone(),
-            http.no_redirect().clone(),
-            providers,
-            settings,
-            users,
-            endpoints,
-        )
+        Self::from_clients(http.shared().clone(), providers, settings, users, endpoints)
     }
 
-    /// Assemble from the factory's two clients when only the clients are
-    /// at hand (the discover wiring receives them, not the factory).
+    /// Assemble from the factory's shared client when only the client is
+    /// at hand (the discover wiring receives it, not the factory).
     pub fn from_clients(
         http: reqwest::Client,
-        no_redirect: reqwest::Client,
         providers: Arc<Providers>,
         settings: Arc<dyn CatalogSettings>,
         users: UsersDeps,
@@ -268,7 +253,6 @@ impl Upstream {
     ) -> Self {
         Self {
             http,
-            no_redirect,
             providers,
             settings,
             users,
@@ -299,25 +283,15 @@ impl Upstream {
     pub fn musicbrainz(&self, priority: RequestPriority) -> (CatalogMusicBrainz, String) {
         // Settings that do not read get a source that sends nothing and a
         // fixed namespace that no real source shares.
+        let musicbrainz = &self.providers.musicbrainz;
         let (source, namespace) = match self.settings.musicbrainz() {
             Some(settings) => (
-                MbSource::from_settings(
-                    &settings,
-                    &self.endpoints.musicbrainz,
-                    &self.endpoints.brainzmash,
-                ),
+                musicbrainz.source_from(&settings),
                 format!("{}:g{}", settings.source_id, settings.generation),
             ),
             None => (MbSource::Unreadable, UNREADABLE_NAMESPACE.to_owned()),
         };
-        let client = MusicBrainzClient::new(
-            ReqwestMbTransport::new(self.no_redirect.clone()),
-            source,
-            MbPacing::new(self.providers.clone()),
-        )
-        .with_sink(HealthSink::new(&self.providers))
-        .with_priority(priority);
-        (client, namespace)
+        (musicbrainz.fixed(source, priority), namespace)
     }
 
     /// The ListenBrainz client, or `None` when ListenBrainz is switched off.

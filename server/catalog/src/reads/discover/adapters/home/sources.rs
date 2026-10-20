@@ -298,7 +298,7 @@ impl HomeSources for LiveSources {
             );
             self.cached(key, tag_ttl().max(ARTIST_TTL), async {
                 let page = self
-                    .musicbrainz(RequestPriority::BackgroundSync)
+                    .musicbrainz(RequestPriority::UserInitiated)
                     .search_artists_by_tag_from(tag, limit, offset, Criticality::BestEffort)
                     .await
                     .map_err(|error| error.to_string())?;
@@ -336,7 +336,7 @@ impl HomeSources for LiveSources {
                 // Ask for extra rows: the type exclusions drop some (v2).
                 let asked = ((limit as f64 * 1.5) as u32).clamp(25, 100);
                 let page = self
-                    .musicbrainz(RequestPriority::BackgroundSync)
+                    .musicbrainz(RequestPriority::UserInitiated)
                     .search_release_groups_by_tag(tag, asked, offset, Criticality::BestEffort)
                     .await
                     .map_err(|error| error.to_string())?;

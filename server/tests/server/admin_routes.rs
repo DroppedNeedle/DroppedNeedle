@@ -59,8 +59,11 @@ impl Rig {
                 droppedneedle_acquire::db::AcquireDb::new(runtime.db().clone()),
             ),
         );
-        let cache = Arc::new(droppedneedle_providers::InMemoryProviderCache::new());
-        let providers = Arc::new(droppedneedle_providers::Providers::new(cache.clone()));
+        let providers = Arc::new(droppedneedle_providers::Providers::build(
+            &platform,
+            crate::common::closed_outbound().providers(),
+        ));
+        let cache = providers.cache.clone();
         let scans = droppedneedle::bootstrap::jobs::ScansEnded::default();
         let mut jobs = droppedneedle::bootstrap::jobs::JobsSetup::build(
             &platform,
@@ -728,11 +731,11 @@ async fn quota_override_for_an_unmirrored_user_is_not_found() {
     let rig = Rig::open("quota-unmirrored").await;
     let elsewhere = AuthRig::new("quota-unmirrored-users").await;
     let user = elsewhere.seed_user("ursula", Role::User).await;
-    let providers = Arc::new(droppedneedle_providers::Providers::new(rig.cache.clone()));
+    let providers = Arc::new(droppedneedle_providers::Providers::closed());
     let admin = AdminSetup::new(
         elsewhere.deps.clone(),
         rig.quota.clone(),
-        rig.cache.clone(),
+        providers.cache.clone(),
         providers,
     )
     .with_db(AdminDb::new(rig.runtime.db().clone()));

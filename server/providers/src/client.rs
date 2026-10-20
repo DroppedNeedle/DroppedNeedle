@@ -17,7 +17,7 @@
 //!
 //! ```rust,no_run
 //! use droppedneedle_providers::client::ProviderClient;
-//! use droppedneedle_providers::limiter::{RatePolicy, policy_for};
+//! use droppedneedle_providers::{limiter::RatePolicy, rates::fixed_policy};
 //!
 //! pub struct MusicBrainzClient {
 //!     // ... http client, cache handle, singleflight, deps ...
@@ -29,7 +29,7 @@
 //!     }
 //!
 //!     fn rate_policy(&self) -> RatePolicy {
-//!         policy_for("musicbrainz").expect("verified row exists")
+//!         fixed_policy("musicbrainz").expect("verified row exists")
 //!     }
 //!
 //!     fn cache_prefixes(&self) -> &'static [&'static str] {
@@ -48,7 +48,8 @@ use thiserror::Error;
 use super::{
     cache::{prefix_is_registered, prefixes_for},
     error::{ProviderError, classify_status},
-    limiter::{RatePolicy, policy_for},
+    limiter::RatePolicy,
+    rates::fixed_policy,
 };
 
 /// One scripted or live HTTP answer on the catalog GET port.
@@ -92,7 +93,7 @@ pub trait ProviderClient: Send + Sync {
     /// Lowercase provider key, e.g. `"musicbrainz"`.
     fn source(&self) -> &'static str;
 
-    /// The verified rate row, always `policy_for(Self::source)`.
+    /// The verified rate row, always `fixed_policy(Self::source)`.
     fn rate_policy(&self) -> RatePolicy;
 
     /// Cache prefixes this client writes. Each must sit under one of the
@@ -141,7 +142,7 @@ pub fn check_client_contract<C: ProviderClient>(client: &C) -> Result<(), Contra
         ));
     }
 
-    match policy_for(source) {
+    match fixed_policy(source) {
         Some(expected) if expected == client.rate_policy() => {}
         Some(expected) => failures.push(format!(
             "rate_policy {:?} does not match the verified row {expected:?} for {source:?}",
@@ -251,7 +252,7 @@ mod tests {
         }
 
         fn rate_policy(&self) -> RatePolicy {
-            policy_for("lastfm").expect("verified row exists in tests")
+            fixed_policy("lastfm").expect("verified row exists in tests")
         }
 
         fn cache_prefixes(&self) -> &'static [&'static str] {
@@ -267,7 +268,7 @@ mod tests {
         }
 
         fn rate_policy(&self) -> RatePolicy {
-            policy_for("audiodb").expect("verified row exists in tests")
+            fixed_policy("audiodb").expect("verified row exists in tests")
         }
 
         fn cache_prefixes(&self) -> &'static [&'static str] {
@@ -308,7 +309,7 @@ mod tests {
         }
 
         fn rate_policy(&self) -> RatePolicy {
-            policy_for("lastfm").expect("verified row exists in tests")
+            fixed_policy("lastfm").expect("verified row exists in tests")
         }
 
         fn cache_prefixes(&self) -> &'static [&'static str] {

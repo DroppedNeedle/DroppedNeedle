@@ -46,8 +46,11 @@ impl Rig {
                 droppedneedle_acquire::db::AcquireDb::new(runtime.db().clone()),
             ),
         );
-        let cache = Arc::new(droppedneedle_providers::InMemoryProviderCache::new());
-        let providers = Arc::new(droppedneedle_providers::Providers::new(cache.clone()));
+        let providers = Arc::new(droppedneedle_providers::Providers::build(
+            &platform,
+            crate::common::closed_outbound().providers(),
+        ));
+        let cache = providers.cache.clone();
         let backup_dir = dir.join("backups");
         let admin = AdminSetup::new(rig.deps.clone(), quota, cache, providers)
             .with_db(AdminDb::new(runtime.db().clone()))

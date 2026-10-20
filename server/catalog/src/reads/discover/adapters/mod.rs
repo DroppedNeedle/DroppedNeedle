@@ -180,7 +180,6 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
 fn live_upstream(inputs: &DiscoverInputs, config: &ConfigStore) -> Upstream {
     Upstream::from_clients(
         inputs.http.clone(),
-        inputs.no_redirect.clone(),
         inputs.providers.clone(),
         Arc::new(LiveCatalogSettings::new(config)),
         inputs.users.clone(),

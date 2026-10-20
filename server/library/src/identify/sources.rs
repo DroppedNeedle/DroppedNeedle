@@ -33,9 +33,10 @@ use droppedneedle_providers::degradation::DegradationSink;
 use droppedneedle_providers::limiter::Pacer;
 use droppedneedle_providers::musicbrainz::models::Relation;
 use droppedneedle_providers::musicbrainz::{
-    ArtistCreditName, Criticality, MbError, MbRelease, MbTransport, MusicBrainzClient,
-    ReleaseSearchHit, build_release_match_query, hit_score, is_valid_mbid,
+    ArtistCreditName, Criticality, MbRelease, MusicBrainzView, ReleaseSearchHit,
+    build_release_match_query, hit_score, is_valid_mbid,
 };
+use droppedneedle_providers::{PayloadKind, ProviderError};
 
 /// The provider could not answer; the job waits and retries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,7 +262,7 @@ const RELEASE_INCLUDES: [&str; 6] = [
     "release-groups",
 ];
 
-impl<T: MbTransport, S: DegradationSink> ReleaseSource for MusicBrainzClient<T, S> {
+impl ReleaseSource for MusicBrainzView {
     fn search<'a>(
         &'a self,
         title: &'a str,
@@ -340,7 +341,7 @@ impl<T: MbTransport, S: DegradationSink> ReleaseSource for MusicBrainzClient<T, 
     ) -> BoxFuture<'a, Result<ArtistAnswer, Unanswered>> {
         Box::pin(async move {
             let asked = mbid.trim().to_ascii_lowercase();
-            let unanswered = |error: MbError, retry_after_secs| Unanswered {
+            let unanswered = |error: ProviderError, retry_after_secs| Unanswered {
                 error: SourceError(error.to_string()),
                 retry_after_secs,
             };
@@ -359,15 +360,27 @@ impl<T: MbTransport, S: DegradationSink> ReleaseSource for MusicBrainzClient<T, 
                     })
                 }
                 Ok(None) => Ok(ArtistAnswer::Missing),
+                // A 400 is MusicBrainz's "Invalid mbid." answer. A request
+                // refused before sending or an answer too large to read
+                // says nothing about the id, so the check stays pending.
                 Err(
-                    error @ (MbError::InvalidMbid(_)
-                    | MbError::RedirectRejected(_)
-                    | MbError::Contract(_)),
+                    error @ (ProviderError::BadRequest { status: 400, .. }
+                    | ProviderError::Redirect { .. }
+                    | ProviderError::Payload {
+                        kind: PayloadKind::Decode | PayloadKind::Contract,
+                        ..
+                    }),
                 ) => Ok(ArtistAnswer::Refused(error.to_string())),
-                Err(error @ MbError::RateLimited { retry_after_secs }) => {
-                    Err(unanswered(error, retry_after_secs))
+                Err(error) => {
+                    let retry_after = match &error {
+                        ProviderError::RateLimited { retry_after, .. }
+                        | ProviderError::Unavailable { retry_after, .. } => {
+                            retry_after.map(|wait| wait.as_secs_f64())
+                        }
+                        _ => None,
+                    };
+                    Err(unanswered(error, retry_after))
                 }
-                Err(error) => Err(unanswered(error, None)),
             }
         })
     }

@@ -164,7 +164,7 @@ mod tests {
                             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                             Err::<String, _>(ProviderError::Transport {
                                 provider: "lastfm",
-                                message: "reset".to_owned(),
+                                kind: crate::error::TransportKind::Other,
                             })
                         }
                     })

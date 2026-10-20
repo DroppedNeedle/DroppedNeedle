@@ -9,7 +9,8 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use super::MbError;
+use crate::error::{PayloadKind, ProviderError};
+use crate::executor::short;
 
 /// One artist-credit entry: credited name, join phrase, and artist.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -658,14 +659,23 @@ pub struct SearchPage<T> {
 }
 
 /// Decode one search page from the entity array inside the envelope.
-pub(crate) fn decode_search_page<T>(body: &[u8], array_key: &str) -> Result<SearchPage<T>, MbError>
+pub(crate) fn decode_search_page<T>(
+    body: &[u8],
+    array_key: &str,
+) -> Result<SearchPage<T>, ProviderError>
 where
     T: for<'de> Deserialize<'de>,
 {
-    let envelope: HashMap<String, serde_json::Value> = serde_json::from_slice(body)
-        .map_err(|error| MbError::Contract(format!("unparseable search payload: {error}")))?;
-    let missing_id = |error: serde_json::Error| {
-        MbError::Contract(format!("search hit breaks the identity contract: {error}"))
+    let envelope: HashMap<String, serde_json::Value> =
+        serde_json::from_slice(body).map_err(|error| ProviderError::Payload {
+            provider: super::SOURCE,
+            kind: PayloadKind::Decode,
+            message: short(&format!("unparseable search payload: {error}")),
+        })?;
+    let missing_id = |error: serde_json::Error| ProviderError::Payload {
+        provider: super::SOURCE,
+        kind: PayloadKind::Contract,
+        message: short(&format!("search hit breaks the identity contract: {error}")),
     };
     let items = match envelope.get(array_key) {
         None => Vec::new(),

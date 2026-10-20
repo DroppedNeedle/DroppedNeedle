@@ -138,8 +138,6 @@ impl Fixtures {
             lrclib: format!("{}/lrclib", self.base),
             github_releases: format!("{}/releases", self.base),
             youtube: format!("{}/youtube", self.base),
-            musicbrainz: format!("{}/musicbrainz", self.base),
-            brainzmash: format!("{}/brainzmash", self.base),
         }
     }
 }
@@ -374,7 +372,9 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRi
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
     let upstream = Upstream::new(
         &http,
-        Arc::new(Providers::unpaced()),
+        Arc::new(Providers::unpaced(Arc::new(
+            droppedneedle_providers::ReqwestWire::new(&http),
+        ))),
         Arc::new(TestSettings { mb_url }),
         rig.deps.clone(),
         fixtures.endpoints(),
@@ -842,7 +842,9 @@ async fn lastfm_reads_fall_back_to_the_instance_key() {
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
     let upstream = Upstream::new(
         &http,
-        Arc::new(Providers::unpaced()),
+        Arc::new(Providers::unpaced(Arc::new(
+            droppedneedle_providers::executor::ScriptedWire::new(),
+        ))),
         Arc::new(TestSettings {
             mb_url: String::new(),
         }),

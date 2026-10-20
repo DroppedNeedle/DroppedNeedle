@@ -15,14 +15,53 @@
 
 use std::time::Duration;
 
+use droppedneedle_kernel::clock::{Clock, SystemClock};
 use thiserror::Error;
 
-/// Upper bound on any honored `Retry-After` / rate-limit delay.
-///
-/// Ports v2's `_MB_MAX_RETRY_AFTER_SECONDS`: a provider asking for a longer
-/// wait still only holds one minute of backoff here; the retry budget stops
-/// earlier anyway when the caller configured one.
+/// Upper bound on a `Retry-After` honored by [`parse_retry_after`]. The
+/// executor caps by each provider's own limit instead.
 pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
+
+/// Why a request got no answer. Fixed text only: a transport error never
+/// carries the URL, which can hold a key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum TransportKind {
+    /// No answer before the deadline.
+    #[error("timed out")]
+    Timeout,
+    /// The connection could not be made (DNS, refused, TLS).
+    #[error("connection failed")]
+    Connect,
+    /// Anything else below HTTP: a reset, a broken body.
+    #[error("request failed")]
+    Other,
+}
+
+impl TransportKind {
+    /// The kind behind one of the fixed labels the event clients use.
+    #[must_use]
+    pub fn named(label: &str) -> Self {
+        match label {
+            "timed out" => Self::Timeout,
+            "connection failed" => Self::Connect,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// What was wrong with an answer's body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum PayloadKind {
+    /// Larger than the cap it was read under.
+    #[error("that is too large")]
+    TooLarge,
+    /// Not the shape the provider documents.
+    #[error("that does not decode")]
+    Decode,
+    /// Decoded, but breaks the provider's verified contract.
+    #[error("that breaks its contract")]
+    Contract,
+}
 
 /// One typed upstream failure.
 ///
@@ -61,10 +100,10 @@ pub enum ProviderError {
         /// The exact 4xx status, kept for logs.
         status: u16,
     },
-    /// A 3xx redirect. Provider clients never follow redirects on their own
-    /// (an unexpected redirect is a configuration or endpoint change, not a
-    /// lookup answer), so this is a deterministic failure, never retried.
-    #[error("{provider} answered a redirect ({status}); redirects are never followed here")]
+    /// A 3xx redirect that is not followed: not allowed for this request,
+    /// to a place its rule refuses, or past the hop limit. Deterministic,
+    /// never retried.
+    #[error("{provider} answered a redirect ({status}) that is not followed")]
     Redirect {
         /// Lowercase provider key.
         provider: &'static str,
@@ -77,7 +116,7 @@ pub enum ProviderError {
     RateLimited {
         /// Lowercase provider key.
         provider: &'static str,
-        /// Honored `Retry-After`, already capped at [`MAX_RETRY_AFTER`].
+        /// The wait the provider asked for, capped at its limit.
         retry_after: Option<Duration>,
     },
     /// Temporarily unavailable (HTTP 503). Retriable, like 429.
@@ -85,7 +124,7 @@ pub enum ProviderError {
     Unavailable {
         /// Lowercase provider key.
         provider: &'static str,
-        /// Honored `Retry-After`, already capped at [`MAX_RETRY_AFTER`].
+        /// The wait the provider asked for, capped at its limit.
         retry_after: Option<Duration>,
     },
     /// Any other 5xx. Retriable: the next attempt may land on a healthy host.
@@ -97,23 +136,25 @@ pub enum ProviderError {
         status: u16,
     },
     /// The request never got an answer: DNS, connect, TLS, timeout, reset.
-    /// Always retriable. The message stays transport-shaped (no bodies).
-    #[error("{provider} could not be reached: {message}")]
+    /// Always retriable. Carries only the kind, never the URL.
+    #[error("{provider} could not be reached ({kind})")]
     Transport {
         /// Lowercase provider key.
         provider: &'static str,
-        /// Short transport description, safe for logs.
-        message: String,
+        /// What went wrong below HTTP.
+        kind: TransportKind,
     },
-    /// A 2xx answer whose payload violates the provider's verified contract
-    /// (a required identity field arriving null, a mistyped object). Ports
-    /// v2's `InvalidExternalPayloadError`: deterministic per payload, never
-    /// retried, and must not trip the provider's shared breaker.
-    #[error("{provider} answered a payload that violates its contract: {message}")]
+    /// An answer whose body is unusable: too large, undecodable, or
+    /// breaking the provider's verified contract (a required identity
+    /// field arriving null). Deterministic per payload, never retried, and
+    /// never counted as an outage: the service answered.
+    #[error("{provider} answered a payload {kind}: {message}")]
     Payload {
         /// Lowercase provider key.
         provider: &'static str,
-        /// What failed to decode, safe for logs.
+        /// What was wrong.
+        kind: PayloadKind,
+        /// The decoder's account, one short line; never the body.
         message: String,
     },
     /// The provider switched this sub-API off on purpose (ports v2's
@@ -136,6 +177,16 @@ pub enum ProviderError {
         provider: &'static str,
         /// What is missing, safe for logs.
         message: String,
+    },
+    /// We refused to send: the request would be malformed (a bad MBID, a
+    /// path the provider would not accept). Deterministic, never retried
+    /// and never counted against the provider.
+    #[error("{provider} request refused before sending: {reason}")]
+    Invalid {
+        /// Lowercase provider key.
+        provider: &'static str,
+        /// Why, in a fixed phrase.
+        reason: &'static str,
     },
 }
 
@@ -172,6 +223,9 @@ impl ProviderError {
                 provider: source, ..
             }
             | Self::NotConfigured {
+                provider: source, ..
+            }
+            | Self::Invalid {
                 provider: source, ..
             } => source,
         }
@@ -218,7 +272,10 @@ impl ProviderError {
     /// input, so they are tracked separately in degradation summaries.
     #[must_use]
     pub const fn is_deterministic(&self) -> bool {
-        matches!(self, Self::Payload { .. } | Self::Disabled { .. })
+        matches!(
+            self,
+            Self::Payload { .. } | Self::Disabled { .. } | Self::Invalid { .. }
+        )
     }
 }
 
@@ -266,23 +323,24 @@ pub fn classify_status(
     })
 }
 
-/// Read the wait-before-retry from a response's headers.
+/// Read the wait-before-retry from a response's headers, uncapped.
 ///
-/// `headers` yields lowercase-friendly `(name, value)` pairs so this stays
-/// free of any HTTP client type; callers adapt from their header map. Lookup
-/// order: `Retry-After` first (delta-seconds or HTTP date), then the
-/// `RateLimit-Reset` delta-seconds draft header, then `X-RateLimit-Reset` as
-/// unix-epoch seconds. Anything unparseable, in the past, or missing yields
-/// `None`.
+/// `headers` yields `(name, value)` pairs so this stays free of any HTTP
+/// client type. Lookup order: `Retry-After` first (delta-seconds or HTTP
+/// date), then the `RateLimit-Reset` delta-seconds draft header, then
+/// `X-RateLimit-Reset` as unix-epoch seconds. Dates and epochs are read
+/// against `now_unix`, the kernel clock's time. Anything unparseable, in
+/// the past, or missing yields `None`.
 #[must_use]
 pub fn retry_delay_from_headers<'a>(
     headers: impl IntoIterator<Item = (&'a str, &'a str)>,
+    now_unix: i64,
 ) -> Option<Duration> {
     let mut reset_delta: Option<&str> = None;
     let mut reset_epoch: Option<&str> = None;
     for (name, value) in headers {
         if name.eq_ignore_ascii_case("retry-after") {
-            if let Some(delay) = parse_retry_after(Some(value)) {
+            if let Some(delay) = parse_retry_after_at(value, now_unix) {
                 return Some(delay);
             }
         } else if name.eq_ignore_ascii_case("ratelimit-reset") {
@@ -297,67 +355,56 @@ pub fn retry_delay_from_headers<'a>(
         return Some(delay);
     }
     if let Some(value) = reset_epoch
-        && let Some(delay) = parse_epoch_seconds(value)
+        && let Some(delay) = parse_epoch_seconds(value, now_unix)
     {
         return Some(delay);
     }
     None
 }
 
-/// Parse one `Retry-After` value: delta-seconds or an HTTP date.
-///
-/// Ports v2's `_parse_retry_after_seconds`: plain numbers first, then the
-/// three HTTP date shapes, past or negative values ignored (`None`), honored
-/// values capped at [`MAX_RETRY_AFTER`].
+/// Parse one `Retry-After` value, capped at [`MAX_RETRY_AFTER`], for the
+/// clients that do not send through the executor yet. It reads the
+/// kernel's system clock; the executor passes its own clock to
+/// [`retry_delay_from_headers`] instead.
 #[must_use]
 pub fn parse_retry_after(value: Option<&str>) -> Option<Duration> {
-    let text = value?.trim();
+    parse_retry_after_at(value?, SystemClock.now_unix()).map(|delay| delay.min(MAX_RETRY_AFTER))
+}
+
+/// Parse one `Retry-After` value: delta-seconds or an HTTP date read
+/// against `now_unix`. Plain numbers first, then the three HTTP date
+/// shapes; past or negative values mean no usable signal.
+fn parse_retry_after_at(value: &str, now_unix: i64) -> Option<Duration> {
+    let text = value.trim();
     if text.is_empty() {
         return None;
     }
     if let Some(delay) = parse_delta_seconds(text) {
         return Some(delay);
     }
-    let when = parse_http_date(text)?;
-    let now = unix_now();
-    let seconds = when.saturating_sub(now);
-    // A past date means "no usable signal", exactly like v2's negative check.
-    if when < now {
-        return None;
-    }
-    Some(cap_retry_after(Duration::from_secs(seconds)))
+    wait_until(parse_http_date(text)?, now_unix)
 }
 
 /// Parse delta-seconds (`Retry-After: 120`, `RateLimit-Reset: 5`).
-/// Fractional values are accepted and truncated, matching v2's float parse.
+/// Fractional values are accepted, matching v2's float parse.
 fn parse_delta_seconds(text: &str) -> Option<Duration> {
     let seconds: f64 = text.trim().parse().ok()?;
     if !seconds.is_finite() || seconds < 0.0 {
         return None;
     }
-    Some(cap_retry_after(Duration::from_secs_f64(seconds)))
+    Duration::try_from_secs_f64(seconds).ok()
 }
 
 /// Parse unix-epoch seconds (`X-RateLimit-Reset: 1730000000`) into the wait
-/// from now. Past epochs yield `None`.
-fn parse_epoch_seconds(text: &str) -> Option<Duration> {
-    let when: u64 = text.trim().parse().ok()?;
-    let now = unix_now();
-    if when < now {
-        return None;
-    }
-    Some(cap_retry_after(Duration::from_secs(when - now)))
+/// from `now_unix`. Past epochs yield `None`.
+fn parse_epoch_seconds(text: &str, now_unix: i64) -> Option<Duration> {
+    wait_until(text.trim().parse().ok()?, now_unix)
 }
 
-fn cap_retry_after(delay: Duration) -> Duration {
-    delay.min(MAX_RETRY_AFTER)
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or(0)
+/// The wait from `now_unix` until `when`, or `None` once it has passed.
+fn wait_until(when: u64, now_unix: i64) -> Option<Duration> {
+    let now = u64::try_from(now_unix).unwrap_or(0);
+    (when >= now).then(|| Duration::from_secs(when - now))
 }
 
 /// Parse the three HTTP date shapes (IMF-fixdate, RFC 850, ANSI C asctime)
@@ -555,6 +602,7 @@ mod tests {
         }
         let payload = ProviderError::Payload {
             provider: "musicbrainz",
+            kind: PayloadKind::Contract,
             message: "null where an MBID belongs".to_owned(),
         };
         assert!(!payload.is_retriable());
@@ -596,23 +644,29 @@ mod tests {
 
     #[test]
     fn header_lookup_prefers_retry_after_then_rate_limit_resets() {
-        let headers = [("X-RateLimit-Reset", "9999999999"), ("Retry-After", "4")];
+        let now = 1_700_000_000;
+        let headers = [("X-RateLimit-Reset", "1700000090"), ("Retry-After", "4")];
         assert_eq!(
-            retry_delay_from_headers(headers),
+            retry_delay_from_headers(headers, now),
             Some(Duration::from_secs(4))
         );
         let headers = [("ratelimit-reset", "9")];
         assert_eq!(
-            retry_delay_from_headers(headers),
+            retry_delay_from_headers(headers, now),
             Some(Duration::from_secs(9))
         );
-        let headers = [("X-RateLimit-Reset", "9999999999")];
-        assert_eq!(retry_delay_from_headers(headers), Some(MAX_RETRY_AFTER));
-        // A reset epoch in the past carries no wait.
+        let headers = [("X-RateLimit-Reset", "1700000090")];
+        assert_eq!(
+            retry_delay_from_headers(headers, now),
+            Some(Duration::from_secs(90))
+        );
+        // A reset epoch or a date in the past carries no wait.
         let headers = [("X-RateLimit-Reset", "1000000000")];
-        assert_eq!(retry_delay_from_headers(headers), None);
+        assert_eq!(retry_delay_from_headers(headers, now), None);
+        let headers = [("Retry-After", "Sun, 06 Nov 1994 08:49:37 GMT")];
+        assert_eq!(retry_delay_from_headers(headers, now), None);
         let headers = [("Content-Type", "application/json")];
-        assert_eq!(retry_delay_from_headers(headers), None);
+        assert_eq!(retry_delay_from_headers(headers, now), None);
     }
 
     #[test]

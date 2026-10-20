@@ -199,7 +199,7 @@ pub fn reads_inputs(dir: &Path) -> droppedneedle_catalog::reads::ReadsInputs {
         cover_cache_max_bytes: 16 * 1024 * 1024,
         http: http.shared().clone(),
         no_redirect: http.no_redirect().clone(),
-        providers: Arc::new(droppedneedle_providers::Providers::with_memory_cache()),
+        providers: Arc::new(droppedneedle_providers::Providers::closed()),
         listenbrainz_links: Arc::new(
             droppedneedle_plugins::scrobble::MemoryListenBrainzLinkStore::new(Arc::new(
                 droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32])

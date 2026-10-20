@@ -21,7 +21,6 @@ pub mod jobs;
 pub mod mount;
 pub mod observability;
 pub mod platform;
-pub mod provider_policy;
 pub mod runtime_config;
 pub mod schema;
 

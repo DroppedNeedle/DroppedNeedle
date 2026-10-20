@@ -12,6 +12,7 @@
 //! Every provider read is allowed to fail: the failure is logged and that
 //! pool is simply empty.
 
+use droppedneedle_providers::RequestPriority;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
@@ -42,6 +43,9 @@ pub struct BuildContext<'a> {
     pub db: &'a QueueDb,
     /// Settings read at the start of this build.
     pub settings: &'a QueueSettings,
+    /// User-initiated while someone waits for the build, background for
+    /// the warm cycle.
+    pub priority: RequestPriority,
 }
 
 /// The cover URL a card shows.
@@ -450,7 +454,7 @@ async fn genre_albums(
     let top: Vec<String> = genres.into_iter().take(4).collect();
     let found = join_all(
         top.iter()
-            .map(|genre| ctx.sources.musicbrainz_tag_albums(genre, 8)),
+            .map(|genre| ctx.sources.musicbrainz_tag_albums(genre, 8, ctx.priority)),
     )
     .await;
     let mut items = Vec::new();
@@ -783,10 +787,18 @@ pub async fn resolve_release_groups(
         .into_iter()
         .take(ctx.settings.lastfm_mbid_max_lookups)
     {
-        let group = match ctx.sources.musicbrainz_release_group_of(&release).await {
+        let group = match ctx
+            .sources
+            .musicbrainz_release_group_of(&release, ctx.priority)
+            .await
+        {
             Ok(Some(group)) => Some(group.to_ascii_lowercase()),
             Ok(None) if is_valid_mbid(&release) => {
-                match ctx.sources.musicbrainz_release_group(&release).await {
+                match ctx
+                    .sources
+                    .musicbrainz_release_group(&release, ctx.priority)
+                    .await
+                {
                     Ok(Some(_)) => Some(release.clone()),
                     Ok(None) => None,
                     Err(cause) => {
@@ -860,7 +872,9 @@ async fn trending_filler(
             }
             let albums = or_empty(
                 "musicbrainz decade tags",
-                ctx.sources.musicbrainz_tag_albums(tag, 25).await,
+                ctx.sources
+                    .musicbrainz_tag_albums(tag, 25, ctx.priority)
+                    .await,
             );
             let left = target - wildcards.len();
             wildcards.extend(trending_cards(albums, &mut exclude, left, "Trending"));

@@ -9,35 +9,30 @@
 //! only after a lookup proves the redirect).
 //!
 //! Layout:
-//! - [`client`]: the [`MusicBrainzClient`] (status semantics, criticality
-//!   routing, redirect walking).
-//! - [`transport`]: the [`MbTransport`] port and its reqwest adapter.
-//! - [`pacing`]: process-wide pacing through the shared provider limiters
-//!   plus the BrainzMash cooldown.
+//! - [`client`]: the [`MusicBrainzClient`] with its three executors
+//!   (official, BrainzMash, a self-hosted mirror) and the
+//!   [`MusicBrainzView`] callers read through (status semantics,
+//!   criticality routing, redirect walking).
 //! - [`redirects`]: redirect-hop and BrainzMash URL validation.
 //! - [`models`]: the wire shapes.
 //!
-//! Degradation rides the shared [`DegradationSink`](super::degradation::DegradationSink)
-//! under the `musicbrainz` source key. Redirect hops are returned to the
-//! caller, never persisted here. Retries live above this client (typed
-//! errors carry retry hints); the BrainzMash cooldown is the one exception.
+//! Every request goes through the provider executor, which paces, retries,
+//! cools down and records health. Redirect hops are returned to the
+//! caller, never persisted here.
 
 pub mod client;
 pub mod models;
-pub mod pacing;
 pub mod redirects;
-pub mod transport;
 
-pub use client::{Lookup, MusicBrainzClient};
+pub use client::{Lookup, MusicBrainzClient, MusicBrainzView};
 pub use models::*;
-pub use pacing::{BrainzMashCooldown, MbPacing, MbPacingState};
 pub use redirects::{
     BRAINZMASH_HOST, RedirectHop, brainzmash_redirect_path, lookup_redirect_pair,
     official_redirect_hop, validate_brainzmash_path, validate_brainzmash_request_url,
 };
-pub use transport::{MbRequest, MbTransport, RawResponse, ReqwestMbTransport, TransportError};
 
-use thiserror::Error;
+/// The provider name MusicBrainz failures carry.
+pub const SOURCE: &str = "musicbrainz";
 
 /// Official MusicBrainz web-service root.
 pub const MB_API_BASE: &str = "https://musicbrainz.org/ws/2";
@@ -46,7 +41,10 @@ pub const BRAINZMASH_API_BASE: &str = "https://api.brainzmash.cc/ws/2";
 /// Redirect follows per logical lookup (v2 `_BRAINZMASH_MAX_REDIRECTS`).
 pub const MAX_REDIRECT_HOPS: usize = 2;
 /// BrainzMash cooldown ceiling (v2 `_BRAINZMASH_MAX_COOLDOWN_SECONDS`).
-pub const BRAINZMASH_MAX_COOLDOWN_SECS: f64 = 60.0;
+pub const BRAINZMASH_MAX_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(60);
+/// Largest MusicBrainz answer read. A box-set release with every medium,
+/// track and credit comes back whole and can pass 4 MiB.
+pub const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// Largest page MusicBrainz serves for search and browse requests.
 pub const MAX_PAGE_LIMIT: u32 = 100;
 
@@ -186,56 +184,6 @@ pub enum Criticality {
     /// Display, search acceleration, optional enrichment: provider death
     /// records a degradation and resolves to absence.
     BestEffort,
-}
-
-/// Typed MusicBrainz failures. `None`/empty still means absence; these
-/// variants mean the provider could not answer or answered badly.
-#[derive(Debug, Error, PartialEq)]
-pub enum MbError {
-    /// Transport dead or 5xx (other than the rate-limit 503): retriable.
-    #[error("musicbrainz unavailable: {0}")]
-    Unavailable(String),
-    /// 429, or 503 which MusicBrainz also uses for rate limiting (v2
-    /// `_mb_api_get_attempt` labels 503 "rate limited"). Carries the
-    /// honored Retry-After delay when the response gave one.
-    #[error("musicbrainz rate limited")]
-    RateLimited {
-        /// Seconds to wait before retrying, when the response said.
-        retry_after_secs: Option<f64>,
-    },
-    /// Syntactically valid MBID the service rejects, e.g. the all-zero
-    /// UUID answered 400 `{"error":"Invalid mbid."}` (live 2026-07-21,
-    /// `musicbrainz_MANAGEMENT_API_NOTES.md`).
-    #[error("musicbrainz rejected the request as invalid: {0}")]
-    InvalidMbid(String),
-    /// Other 4xx: the request is wrong, retrying will not help.
-    #[error("musicbrainz rejected the request (HTTP {0})")]
-    Rejected(u16),
-    /// A redirect the client refuses to follow: foreign host, scheme or
-    /// port shift, off-`/ws/2` path, or a non-lookup shape such as a
-    /// browse URL (v2 `_lookup_redirect_pair` persists lookup-shaped hops
-    /// only, since a 301 on `/release-group?artist=` names an artist).
-    #[error("musicbrainz redirect rejected: {0}")]
-    RedirectRejected(String),
-    /// The wire answered 200 but the payload breaks the provider contract
-    /// (unparseable body or a missing required identity field). Never
-    /// masked as absence: a contract break is a signal, not a miss.
-    #[error("musicbrainz contract break: {0}")]
-    Contract(String),
-    /// Local configuration refuses the request (BrainzMash binding not
-    /// valid, unapproved endpoint, bad path). Fail fast, never send.
-    #[error("musicbrainz misconfigured: {0}")]
-    Misconfigured(String),
-}
-
-/// Parse Retry-After in either legal shape: delay seconds or an HTTP date.
-/// Delegates to the core [`parse_retry_after`](super::error::parse_retry_after),
-/// which covers all three HTTP date shapes where the old local parser read
-/// IMF-fixdate only. Mirrors v2 `_parse_retry_after_seconds`: unparseable,
-/// non-finite, and negative values yield `None`; valid values clamp to 60
-/// seconds.
-pub fn parse_retry_after_secs(value: Option<&str>) -> Option<f64> {
-    super::error::parse_retry_after(value).map(|delay| delay.as_secs_f64())
 }
 
 /// True for the `8-4-4-4-12` hex MBID shape (v2 `is_valid_mbid` rejects

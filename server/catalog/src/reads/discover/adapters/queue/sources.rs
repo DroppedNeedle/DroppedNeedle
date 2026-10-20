@@ -5,6 +5,7 @@
 //! double. Every read is fallible with a log-only cause: a failed source
 //! shrinks the deck or blanks a field, it never fails the whole request.
 
+use droppedneedle_providers::RequestPriority;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -280,22 +281,26 @@ pub trait QueueSources: Send + Sync {
         &'a self,
         tag: &'a str,
         limit: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>>;
     /// The release group a release belongs to. `Ok(None)` is a definite
     /// "no such release".
     fn musicbrainz_release_group_of<'a>(
         &'a self,
         release_mbid: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<String>>>;
     /// Release-group facts for a card. `Ok(None)` is a definite miss.
     fn musicbrainz_release_group<'a>(
         &'a self,
         mbid: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<ReleaseGroupFacts>>>;
     /// Artist facts for a card.
     fn musicbrainz_artist<'a>(
         &'a self,
         mbid: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<ArtistFacts>>>;
     /// A YouTube link from a release's URL relationships.
     fn musicbrainz_release_video<'a>(

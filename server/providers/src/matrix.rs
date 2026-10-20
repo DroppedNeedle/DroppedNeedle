@@ -141,7 +141,7 @@ mod tests {
     fn transport(source: &'static str) -> ProviderError {
         ProviderError::Transport {
             provider: source,
-            message: "reset".to_owned(),
+            kind: crate::error::TransportKind::Other,
         }
     }
 

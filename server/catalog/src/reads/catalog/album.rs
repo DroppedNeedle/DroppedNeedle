@@ -21,7 +21,7 @@ use super::models::{
 };
 use super::ports::PurchaseQuery;
 use super::{
-    AUDIODB_FOUND_TTL, AUDIODB_MISSING_TTL, Catalog, MISS_TTL, is_mbid, mb_error, mb_retry,
+    AUDIODB_FOUND_TTL, AUDIODB_MISSING_TTL, Catalog, MISS_TTL, is_mbid, mb_error, mb_search_error,
     record_mb_down,
 };
 
@@ -278,27 +278,24 @@ impl Catalog {
                 let (client, _) = catalog
                     .upstream()
                     .musicbrainz(RequestPriority::UserInitiated);
-                let mut found = mb_retry(|| {
-                    client.lookup_release_group(&id, &GROUP_INCLUDES, Criticality::IdentityCritical)
-                })
-                .await
-                .map_err(mb_error)?;
-                if found.is_none() {
-                    let resolved = mb_retry(|| {
-                        client.resolve_release_to_release_group(&id, Criticality::IdentityCritical)
-                    })
+                let mut found = client
+                    .lookup_release_group(&id, &GROUP_INCLUDES, Criticality::IdentityCritical)
                     .await
                     .map_err(mb_error)?;
+                if found.is_none() {
+                    let resolved = client
+                        .resolve_release_to_release_group(&id, Criticality::IdentityCritical)
+                        .await
+                        .map_err(mb_error)?;
                     if let Some(group_id) = resolved.filter(|group_id| *group_id != id) {
-                        found = mb_retry(|| {
-                            client.lookup_release_group(
+                        found = client
+                            .lookup_release_group(
                                 &group_id,
                                 &GROUP_INCLUDES,
                                 Criticality::IdentityCritical,
                             )
-                        })
-                        .await
-                        .map_err(mb_error)?;
+                            .await
+                            .map_err(mb_error)?;
                     }
                 }
                 match found {
@@ -323,7 +320,9 @@ impl Catalog {
             .await
     }
 
-    /// The cached release detail, fetching at `priority` on a miss.
+    /// The cached release detail, fetching at `priority` on a miss. A page
+    /// never joins a background fetch of the same release: it would wait
+    /// behind every user request in the queue.
     pub(super) async fn release_detail_at(
         &self,
         mbid: &str,
@@ -331,25 +330,25 @@ impl Catalog {
     ) -> Result<ReleaseCore, CatalogError> {
         let catalog = self.clone();
         let id = mbid.to_owned();
-        self.cached(
-            &self.inner.flights.release,
-            self.release_key(mbid),
-            move || async move {
-                let (client, _) = catalog.upstream().musicbrainz(priority);
-                let found = mb_retry(|| {
-                    client.lookup_release(&id, &RELEASE_INCLUDES, Criticality::IdentityCritical)
-                })
+        let flights = if priority.is_user_facing() {
+            &self.inner.flights.release
+        } else {
+            &self.inner.flights.release_background
+        };
+        self.cached(flights, self.release_key(mbid), move || async move {
+            let (client, _) = catalog.upstream().musicbrainz(priority);
+            let found = client
+                .lookup_release(&id, &RELEASE_INCLUDES, Criticality::IdentityCritical)
                 .await
                 .map_err(mb_error)?;
-                Ok(match found {
-                    None => (None, Some(MISS_TTL)),
-                    Some(lookup) => (
-                        Some(ReleaseDetail::from_wire(lookup.entity)),
-                        Some(album_ttl(false)),
-                    ),
-                })
-            },
-        )
+            Ok(match found {
+                None => (None, Some(MISS_TTL)),
+                Some(lookup) => (
+                    Some(ReleaseDetail::from_wire(lookup.entity)),
+                    Some(album_ttl(false)),
+                ),
+            })
+        })
         .await
     }
 
@@ -796,16 +795,15 @@ impl Catalog {
                     let mut items: Vec<AlbumEditionItem> = Vec::new();
                     for page in 0..EDITION_PAGES {
                         let offset = page * EDITION_PAGE;
-                        let found = mb_retry(|| {
-                            client.search_release_group_editions(
+                        let found = client
+                            .search_release_group_editions(
                                 &group,
                                 EDITION_PAGE,
                                 offset,
                                 Criticality::IdentityCritical,
                             )
-                        })
-                        .await
-                        .map_err(mb_error)?;
+                            .await
+                            .map_err(mb_search_error)?;
                         let total = found.count;
                         let got = found.items.len();
                         items.extend(

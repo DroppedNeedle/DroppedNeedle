@@ -22,6 +22,7 @@
 pub mod library;
 pub mod plan;
 
+use droppedneedle_providers::RequestPriority;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -249,10 +250,12 @@ impl LiveRadio {
             albums_per_similar: albums_per,
             ..QueueSettings::read(&self.settings)
         };
+        // A radio plan is built while the listener waits.
         let ctx = BuildContext {
             sources: self.sources.as_ref(),
             db: &self.queue_db,
             settings: &settings,
+            priority: RequestPriority::UserInitiated,
         };
         let excluded = HashSet::new();
         if use_lastfm && user.lastfm {
@@ -895,7 +898,8 @@ impl LiveRadio {
         let found = join_all(genres.iter().map(|genre| {
             timed(
                 "musicbrainz tag albums",
-                self.sources.musicbrainz_tag_albums(genre, 8),
+                self.sources
+                    .musicbrainz_tag_albums(genre, 8, RequestPriority::UserInitiated),
             )
         }))
         .await;

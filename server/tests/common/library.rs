@@ -183,10 +183,14 @@ pub fn library_with(
     let mut outbound = super::closed_outbound();
     outbound.identify_providers = Port::given(identify);
     outbound.contribution_providers = Port::given(ScriptedContrib::default().providers());
+    let providers = Arc::new(Providers::unpaced(Arc::new(
+        droppedneedle_providers::executor::ScriptedWire::new(),
+    )));
+    let mb_source = providers.musicbrainz.live_source(platform.settings.live());
     LibrarySetup::build(
         platform,
-        Arc::new(Providers::unpaced()),
-        outbound.musicbrainz_source(platform.settings.live()),
+        providers,
+        mb_source,
         droppedneedle_kernel::jobs::queue::JobQueue::new(
             platform.db.clone(),
             Arc::new(droppedneedle_kernel::clock::SystemClock),

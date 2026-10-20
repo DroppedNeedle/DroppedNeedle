@@ -39,8 +39,8 @@ use std::time::Duration;
 use serde::{Serialize, de::DeserializeOwned};
 
 use droppedneedle_kernel::mount::{Routes, routes};
+use droppedneedle_providers::ProviderError;
 use droppedneedle_providers::Singleflight;
-use droppedneedle_providers::musicbrainz::MbError;
 
 use self::error::CatalogError;
 use self::library::LocalCatalog;
@@ -78,6 +78,7 @@ struct Flights {
     release_groups: Singleflight<artist::ReleaseGroupList, CatalogError>,
     group: Singleflight<album::GroupCore, CatalogError>,
     release: Singleflight<album::ReleaseCore, CatalogError>,
+    release_background: Singleflight<album::ReleaseCore, CatalogError>,
     extended: Singleflight<artist::Biography, CatalogError>,
     search: Singleflight<search::RemoteHits, CatalogError>,
     other: Singleflight<serde_json::Value, CatalogError>,
@@ -248,37 +249,24 @@ impl Catalog {
     }
 }
 
-/// Map a MusicBrainz failure onto the catalog error. A rejected MBID is the
-/// caller's fault; everything else means MusicBrainz could not answer.
-fn mb_error(error: MbError) -> CatalogError {
+/// Map a failed MusicBrainz lookup onto the catalog error. An id
+/// MusicBrainz rejects (its 400 "Invalid mbid.") is the caller's fault;
+/// everything else means MusicBrainz could not answer. The executor has
+/// already retried what may be retried within a page's budget.
+fn mb_error(error: ProviderError) -> CatalogError {
     match error {
-        MbError::InvalidMbid(_) => {
+        ProviderError::BadRequest { status: 400, .. } => {
             CatalogError::Invalid("MusicBrainz does not accept this id".to_owned())
         }
         other => CatalogError::Unavailable(other.to_string()),
     }
 }
 
-/// Run one MusicBrainz read with a single bounded retry: a rate limit
-/// waits out its `Retry-After` when that is short, a dead connection waits
-/// half a second. Reads are idempotent, so retrying is safe; the bound
-/// keeps a page from hanging on a struggling mirror.
-async fn mb_retry<T, F, Fut>(mut call: F) -> Result<T, MbError>
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<T, MbError>>,
-{
-    const MAX_WAIT_SECS: f64 = 2.5;
-    let wait = match call().await {
-        Err(MbError::RateLimited { retry_after_secs }) => match retry_after_secs.unwrap_or(1.0) {
-            secs if secs <= MAX_WAIT_SECS => Duration::from_secs_f64(secs.max(0.0)),
-            _ => return Err(MbError::RateLimited { retry_after_secs }),
-        },
-        Err(MbError::Unavailable(_)) => Duration::from_millis(500),
-        other => return other,
-    };
-    tokio::time::sleep(wait).await;
-    call().await
+/// Map a failed MusicBrainz search or browse onto the catalog error: a
+/// rejected query is not an id the caller got wrong, so every failure means
+/// MusicBrainz could not answer.
+fn mb_search_error(error: ProviderError) -> CatalogError {
+    CatalogError::Unavailable(error.to_string())
 }
 
 /// Record a MusicBrainz outage in the request's degradation context.

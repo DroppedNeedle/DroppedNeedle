@@ -23,22 +23,7 @@ use std::{
 use thiserror::Error;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 
-/// Which lane a provider call runs in. Lower wins ties in the rate limiter;
-/// the slot manager maps each level to its lane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum RequestPriority {
-    /// A request the user is waiting on right now.
-    UserInitiated = 0,
-    /// Cover-art fetch: user-visible but degradable to a placeholder.
-    ImageFetch = 1,
-    /// Speculative fetch for content about to scroll into view.
-    PrefetchVisible = 2,
-    /// Explicit background work: syncs, imports, refreshes. Background jobs
-    /// pass this level (or `Opportunistic`) at the call site.
-    BackgroundSync = 3,
-    /// Nice-to-have work that yields to everything else.
-    Opportunistic = 4,
-}
+pub use crate::limiter::RequestPriority;
 
 /// How long the background lane waits for user activity to go quiet.
 pub const USER_QUIET_WINDOW: Duration = Duration::from_secs(2);

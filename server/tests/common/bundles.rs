@@ -47,8 +47,8 @@ pub fn acquire_at(
     collections: &Stores,
 ) -> AcquireSetup {
     let outbound = super::closed_outbound();
-    let providers = Arc::new(Providers::with_memory_cache());
-    let mb_source = outbound.musicbrainz_source(platform.settings.live());
+    let providers = Arc::new(Providers::build(platform, outbound.providers()));
+    let mb_source = providers.musicbrainz.live_source(platform.settings.live());
     AcquireSetup::build(
         platform,
         users,
@@ -63,14 +63,11 @@ pub fn acquire_at(
                 library,
             )),
             album_lookup: Arc::new(droppedneedle_acquire::target::lookup::live_albums(
-                &platform.http,
-                providers.clone(),
+                &providers,
                 mb_source.clone(),
             )),
             release_poll: Arc::new(droppedneedle_acquire::search::live_release_poll(
-                &platform.http,
-                providers.clone(),
-                mb_source,
+                &providers, mb_source,
             )),
             plugins: idle_host(platform, library.fs.clone()),
             collections: collections.clone(),
@@ -97,7 +94,9 @@ pub fn reads_at(
     let catalog = Catalog::new(
         Upstream::new(
             &platform.http,
-            Arc::new(Providers::unpaced()),
+            Arc::new(Providers::unpaced(Arc::new(
+                droppedneedle_providers::executor::ScriptedWire::new(),
+            ))),
             Arc::new(LiveCatalogSettings::new(&platform.settings)),
             users.clone(),
             super::closed_endpoints(),

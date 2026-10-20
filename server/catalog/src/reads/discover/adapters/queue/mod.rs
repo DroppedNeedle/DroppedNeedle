@@ -20,6 +20,7 @@ pub mod select;
 pub mod sources;
 pub mod store;
 
+use droppedneedle_providers::RequestPriority;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -405,20 +406,34 @@ impl Inner {
         let inner = Arc::clone(self);
         let user = user_id.to_owned();
         let built_for = source.clone();
-        let task = tokio::spawn(async move { inner.run_build(user, built_for, run).await });
+        // Someone who asked waits for the deck; the warm cycle does not.
+        let priority = if scheduled {
+            RequestPriority::BackgroundSync
+        } else {
+            RequestPriority::UserInitiated
+        };
+        let task =
+            tokio::spawn(async move { inner.run_build(user, built_for, run, priority).await });
         state.task = Some(task.abort_handle());
         generate_response("started", state.status(&settings, now))
     }
 
     /// One background build. Its result lands only if no newer build or
     /// source switch replaced it meanwhile.
-    async fn run_build(self: Arc<Self>, user_id: String, source: String, run: u64) {
+    async fn run_build(
+        self: Arc<Self>,
+        user_id: String,
+        source: String,
+        run: u64,
+        priority: RequestPriority,
+    ) {
         let settings = QueueSettings::read(&self.settings);
         self.prune_if_due(&settings).await;
         let ctx = BuildContext {
             sources: self.sources.as_ref(),
             db: &self.db,
             settings: &settings,
+            priority,
         };
         let outcome = build_deck(&ctx, &user_id, settings.queue_size).await;
         let saved = {
@@ -520,10 +535,12 @@ impl Inner {
         count: Option<usize>,
     ) -> Result<QueueDeck, ProviderFailure> {
         let settings = QueueSettings::read(&self.settings);
+        // The request waits for this deck.
         let ctx = BuildContext {
             sources: self.sources.as_ref(),
             db: &self.db,
             settings: &settings,
+            priority: RequestPriority::UserInitiated,
         };
         let items = build_deck(&ctx, user_id, count.unwrap_or(settings.queue_size))
             .await

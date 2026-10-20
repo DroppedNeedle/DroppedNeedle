@@ -475,7 +475,7 @@ impl From<TicketmasterError> for ProviderError {
         match error {
             TicketmasterError::Transport(message) => Self::Transport {
                 provider: SOURCE,
-                message,
+                kind: super::error::TransportKind::named(&message),
             },
             TicketmasterError::RateLimited { retry_after_secs } => Self::RateLimited {
                 provider: SOURCE,
@@ -491,6 +491,7 @@ impl From<TicketmasterError> for ProviderError {
             }
             TicketmasterError::Decode(message) => Self::Payload {
                 provider: SOURCE,
+                kind: super::error::PayloadKind::Decode,
                 message,
             },
         }

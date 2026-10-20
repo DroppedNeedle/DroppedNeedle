@@ -17,10 +17,10 @@ use std::sync::{Arc, Mutex};
 use droppedneedle_library::identify;
 use droppedneedle_library::matching::decide::REVIEW_CEILING;
 use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseTrack};
-use droppedneedle_providers::Providers;
-use droppedneedle_providers::musicbrainz::{
-    MbPacing, MbRequest, MbTransport, MusicBrainzClient, RawResponse, TransportError,
-};
+use droppedneedle_providers::executor::{Prepared, Wire, WireAnswer, WireError};
+use droppedneedle_providers::musicbrainz::{self, MbSource};
+use droppedneedle_providers::{Providers, RequestPriority, TransportKind};
+use futures_util::future::BoxFuture;
 use identify::models::EvidenceClass;
 use identify::models::{
     DecisionSource, IdentificationOutcome, IdentifyKind, LocalAlbumFacts, LocalTrackFacts,
@@ -43,6 +43,23 @@ fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(format!("tests/fixtures/musicbrainz/{name}")).expect("fixture reads")
 }
 
+/// One scripted answer.
+#[derive(Clone)]
+struct RawResponse(WireAnswer);
+
+impl RawResponse {
+    fn new(status: u16, headers: Vec<(&str, &str)>, body: Vec<u8>) -> Self {
+        Self(WireAnswer {
+            status,
+            headers: headers
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect(),
+            body,
+        })
+    }
+}
+
 /// Scripted MusicBrainz: routes by path, 404 for anything unscripted,
 /// every request recorded. No live network.
 struct FakeMb {
@@ -51,23 +68,27 @@ struct FakeMb {
     down: bool,
 }
 
-impl MbTransport for FakeMb {
-    async fn get(&self, request: &MbRequest) -> Result<RawResponse, TransportError> {
-        let path = request
-            .url
-            .split("/ws/2")
-            .nth(1)
-            .unwrap_or_default()
-            .to_owned();
-        self.seen.lock().expect("seen").push(path.clone());
-        if self.down {
-            return Err(TransportError("wire is down".to_owned()));
-        }
-        Ok(self
-            .routes
-            .get(&path)
-            .cloned()
-            .unwrap_or_else(|| RawResponse::new(404, Vec::new(), b"{}".to_vec())))
+impl Wire for FakeMb {
+    fn send<'a>(&'a self, prepared: Prepared<'a>) -> BoxFuture<'a, Result<WireAnswer, WireError>> {
+        Box::pin(async move {
+            let path = prepared
+                .url
+                .path()
+                .split("/ws/2")
+                .nth(1)
+                .unwrap_or_default()
+                .to_owned();
+            self.seen.lock().expect("seen").push(path.clone());
+            if self.down {
+                return Err(WireError::Transport(TransportKind::Connect));
+            }
+            Ok(self
+                .routes
+                .get(&path)
+                .cloned()
+                .unwrap_or_else(|| RawResponse::new(404, Vec::new(), b"{}".to_vec()))
+                .0)
+        })
     }
 }
 
@@ -125,12 +146,19 @@ fn rig_on(routes: HashMap<String, RawResponse>, down: bool, source: Source) -> R
         seen: seen.clone(),
         down,
     };
-    let pacing = MbPacing::new(Arc::new(Providers::unpaced()));
-    let musicbrainz = match source {
-        Source::Official => MusicBrainzClient::official(transport, pacing),
-        Source::BrainzMash => MusicBrainzClient::brainzmash(transport, true, pacing),
-        Source::Unbound => MusicBrainzClient::brainzmash(transport, false, pacing),
+    let providers = Providers::unpaced(Arc::new(transport));
+    let brainzmash = |binding_valid| MbSource::BrainzMash {
+        base_url: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
+        binding_valid,
     };
+    let source = match source {
+        Source::Official => MbSource::official(),
+        Source::BrainzMash => brainzmash(true),
+        Source::Unbound => brainzmash(false),
+    };
+    let musicbrainz = providers
+        .musicbrainz
+        .fixed(source, RequestPriority::BackgroundSync);
     let dir = ScratchDir::new("lib-matching");
     let path = dir.join("app.db");
     migrated_db(&path);
@@ -1023,7 +1051,8 @@ async fn ids_musicbrainz_keeps_apart_are_asked_again_after_a_month() {
 }
 
 /// MusicBrainz down, refusing this install (403), or not set up: the batch
-/// stops at the first id, which stays pending, and nothing is written.
+/// stops at the first id, which stays pending, and nothing is written. A
+/// dead wire is tried three times, as all background reads are.
 #[tokio::test]
 async fn no_answer_leaves_the_ids_pending() {
     let refused = HashMap::from([
@@ -1037,7 +1066,7 @@ async fn no_answer_leaves_the_ids_pending() {
         ),
     ]);
     for (rig, requests) in [
-        (rig_on(probe_routes(), true, Source::BrainzMash), 1),
+        (rig_on(probe_routes(), true, Source::BrainzMash), 3),
         (rig_on(refused, false, Source::BrainzMash), 1),
         (rig_on(probe_routes(), false, Source::Unbound), 0),
     ] {

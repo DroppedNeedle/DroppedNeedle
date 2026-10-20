@@ -13,7 +13,7 @@ use droppedneedle_providers::musicbrainz::{Criticality, hit_score};
 
 use super::error::CatalogError;
 use super::mapping;
-use super::{Catalog, SEARCH_TTL, mb_error, mb_retry};
+use super::{Catalog, SEARCH_TTL, mb_search_error};
 
 /// Stale bucket copies live six hours (v2 `SEARCH_STALE_CACHE_TTL`).
 const STALE_TTL: Duration = Duration::from_secs(6 * 3600);
@@ -106,11 +106,10 @@ impl Catalog {
                 .upstream()
                 .musicbrainz(RequestPriority::UserInitiated);
             let wide = (limit * 2).clamp(25, 100);
-            let page = mb_retry(|| {
-                client.search_artists_text(&text, wide, offset, Criticality::IdentityCritical)
-            })
-            .await
-            .map_err(mb_error)?;
+            let page = client
+                .search_artists_text(&text, wide, offset, Criticality::IdentityCritical)
+                .await
+                .map_err(mb_search_error)?;
             let mut seen = HashSet::new();
             let items: Vec<RemoteHit> = page
                 .items
@@ -189,16 +188,10 @@ impl Catalog {
                 .upstream()
                 .musicbrainz(RequestPriority::UserInitiated);
             let wide = (limit + limit / 2).clamp(25, 100);
-            let page = mb_retry(|| {
-                client.search_release_groups_text(
-                    &text,
-                    wide,
-                    offset,
-                    Criticality::IdentityCritical,
-                )
-            })
-            .await
-            .map_err(mb_error)?;
+            let page = client
+                .search_release_groups_text(&text, wide, offset, Criticality::IdentityCritical)
+                .await
+                .map_err(mb_search_error)?;
             let mut seen = HashSet::new();
             let items: Vec<RemoteHit> = page
                 .items
