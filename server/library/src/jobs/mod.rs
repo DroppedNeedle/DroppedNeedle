@@ -1,8 +1,8 @@
 //! Library operation jobs: how a `library_operation_jobs` row and its
 //! `library_operation_work` items are queued, claimed, kept alive, put
-//! back, halted, finished and recovered. Management and re-identification
-//! keep their own domain rows beside a job and write the job and work rows
-//! only through here; repairs still hold some job SQL of their own.
+//! back, halted, finished and recovered. Management, re-identification
+//! and repairs keep their own domain rows beside a job and write the job
+//! and work rows only through here.
 //!
 //! The lease is the kernel's lease core (claim under a fresh owner,
 //! heartbeat, release, recover) over this table's own statements, so a
@@ -33,8 +33,10 @@ pub const LEASE_SECS: f64 = 60.0;
 
 /// The wakeup the management loop listens on.
 pub const MANAGEMENT_WAKEUP: &str = "library-management";
-/// The wakeup the operations loop (re-identification, repairs) listens on.
+/// The wakeup the operations loop (re-identification) listens on.
 pub const OPERATIONS_WAKEUP: &str = "library-operations";
+/// The wakeup the repairs loop listens on.
+pub const REPAIRS_WAKEUP: &str = "library-repairs";
 
 /// This table's lease statements, for the kernel's lease core.
 const STATEMENTS: LeaseStatements = LeaseStatements {
@@ -98,7 +100,10 @@ fn map_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<OperationJob> {
 pub fn wake(wakeups: &WorkWakeups, kind: OperationKind) {
     wakeups.notify(match kind {
         OperationKind::LibraryManagement => MANAGEMENT_WAKEUP,
-        _ => OPERATIONS_WAKEUP,
+        OperationKind::Repair => REPAIRS_WAKEUP,
+        OperationKind::BulkReviewApply | OperationKind::ExplicitReidentification => {
+            OPERATIONS_WAKEUP
+        }
     });
 }
 
@@ -143,6 +148,28 @@ pub fn insert(tx: &Transaction<'_>, new: &NewJob<'_>) -> rusqlite::Result<()> {
             ":work_count": new.expected_work_count,
             ":key": new.idempotency_key,
             ":now": new.now,
+        })
+        .map(drop)
+}
+
+/// Record a job of `kind` that is already done with `code`, under
+/// idempotency key `key`: a marker that something happened once. Nothing
+/// when the key is taken.
+pub fn insert_done(
+    tx: &Transaction<'_>,
+    id: &str,
+    kind: OperationKind,
+    code: &str,
+    key: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    tx.prepare_cached(sql::INSERT_DONE.text())?
+        .execute(named_params! {
+            ":id": id,
+            ":kind": kind,
+            ":code": code,
+            ":key": key,
+            ":now": now,
         })
         .map(drop)
 }
@@ -291,8 +318,34 @@ pub fn release(tx: &Transaction<'_>, job_id: &str, owner: &str, now: f64) -> Res
     let Some(rowid) = rowid(tx, job_id)? else {
         return Ok(false);
     };
-    work_back_to_pending(tx, job_id, now)?;
+    work_back_to_pending(tx, job_id, None, now)?;
     lease::release(tx, &STATEMENTS, rowid, owner, millis(now)).map_err(db_error)
+}
+
+/// As [`release`], but no claim takes the job again before `retry_at`,
+/// and its running work keeps `reason` as why it waits. False when
+/// `owner` no longer held the job.
+pub fn release_until(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    owner: &str,
+    retry_at: f64,
+    reason: Option<&str>,
+    now: f64,
+) -> Result<bool, DbError> {
+    if !holds(tx, job_id, owner)? {
+        return Ok(false);
+    }
+    let Some(rowid) = rowid(tx, job_id)? else {
+        return Ok(false);
+    };
+    work_back_to_pending(tx, job_id, reason, now)?;
+    if !lease::release(tx, &STATEMENTS, rowid, owner, millis(now)).map_err(db_error)? {
+        return Ok(false);
+    }
+    tx.prepare_cached(sql::RETRY_AT.text())?
+        .execute(named_params! { ":id": job_id, ":at": retry_at })?;
+    Ok(true)
 }
 
 /// True while `owner` holds the running job.
@@ -330,13 +383,18 @@ pub fn checkpoint(
     };
     tx.prepare_cached(sql::HALT.text())?
         .execute(named_params! { ":id": job_id, ":state": state, ":code": code, ":now": now })?;
-    work_back_to_pending(tx, job_id, now)?;
+    work_back_to_pending(tx, job_id, None, now)?;
     job(tx, job_id)
 }
 
-fn work_back_to_pending(tx: &Transaction<'_>, job_id: &str, now: f64) -> rusqlite::Result<()> {
+fn work_back_to_pending(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    reason: Option<&str>,
+    now: f64,
+) -> rusqlite::Result<()> {
     tx.prepare_cached(sql::WORK_BACK_TO_PENDING.text())?
-        .execute(named_params! { ":job": job_id, ":now": now })
+        .execute(named_params! { ":job": job_id, ":code": reason, ":now": now })
         .map(drop)
 }
 
@@ -396,6 +454,36 @@ pub fn park_ready(
     let changed = tx
         .prepare_cached(sql::PARK_READY.text())?
         .execute(named_params! { ":id": job_id, ":owner": owner, ":now": now })?;
+    Ok(changed == 1)
+}
+
+/// `owner`'s running job checked its work and waits for a person, its
+/// counts kept and `code` saying why. False when it no longer held the
+/// job.
+pub fn report_ready(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    owner: &str,
+    code: &str,
+    now: f64,
+) -> rusqlite::Result<bool> {
+    let changed = tx
+        .prepare_cached(sql::REPORT_READY.text())?
+        .execute(named_params! { ":id": job_id, ":owner": owner, ":code": code, ":now": now })?;
+    Ok(changed == 1)
+}
+
+/// Set a ready job aside with `code`, its work never done. False when it
+/// was not ready.
+pub fn cancel_ready(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    code: &str,
+    now: f64,
+) -> rusqlite::Result<bool> {
+    let changed = tx
+        .prepare_cached(sql::CANCEL_READY.text())?
+        .execute(named_params! { ":id": job_id, ":code": code, ":now": now })?;
     Ok(changed == 1)
 }
 
@@ -510,7 +598,7 @@ pub fn finish_work(
     ordinal: i64,
     state: WorkState,
     failure_code: Option<&str>,
-    result_json: &str,
+    result_json: Option<&str>,
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.prepare_cached(sql::FINISH_WORK.text())?

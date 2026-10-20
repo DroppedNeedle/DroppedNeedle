@@ -19,8 +19,10 @@
 //!   start and after each scan that ends.
 //!
 //! All four are operation jobs (`library_operation_jobs`, kind `repair`)
-//! run by the operations loop in short turns, never during a scan, and
-//! controlled like any other job. A repair check changes nothing; Apply
+//! run one at a time by their own loop, never during a scan, and
+//! controlled like any other job. They are claimed, kept and recovered
+//! through [`crate::jobs`], and a queued or resumed job wakes the loop.
+//! A repair check changes nothing; Apply
 //! and automatic acceptance do, and each edition they change can be
 //! undone from the album's edition panel (an automatic acceptance also
 //! from the readiness report). Detaches, placements and catalog cleanup
@@ -41,39 +43,127 @@ pub mod reasons;
 pub mod service;
 pub mod store;
 
+use std::time::Duration;
+
+use droppedneedle_kernel::jobs::queue::lease::Owner;
+use droppedneedle_kernel::jobs::{
+    AlreadyRunning, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
+};
+
+use crate::jobs::REPAIRS_WAKEUP;
+use crate::operations::models::OperationError;
 use crate::wiring::LibrarySetup;
 use service::Repairs;
 
-/// One worker turn on a blocking thread: the store is synchronous SQLite.
-/// True when a repair job was worked on. Never runs during a scan.
+/// How long the worker waits for a wakeup before it looks anyway: a
+/// queued or resumed job wakes it, while the cleanups and play filings
+/// that follow a scan or an identification are found by looking.
+const IDLE_CEILING: Duration = Duration::from_secs(2);
+
+/// The repairs worker's name on the supervisor.
+pub const JOB_NAME: &str = "library-repairs";
+
+/// Start the repairs worker on its own loop, so a long check never holds
+/// up re-identifications. Its first turn runs at once and requeues the
+/// repair jobs an earlier process left running; after that a queued job
+/// wakes it.
+pub fn start(setup: &LibrarySetup, supervisor: &Supervisor) -> Result<(), AlreadyRunning> {
+    let mut wake = setup.wakeups.subscribe(REPAIRS_WAKEUP);
+    wake.mark_changed();
+    supervisor.on_wakeup(
+        JOB_NAME,
+        wake,
+        Schedule::new(IDLE_CEILING),
+        RepairsTick {
+            setup: setup.clone(),
+            repairs: Repairs::new(setup),
+            owners: Owner::new(),
+            recovered: false,
+        },
+    )
+}
+
+/// One turn: work jobs until none is due.
+struct RepairsTick {
+    setup: LibrarySetup,
+    /// Kept across turns: it remembers which scans it already followed up.
+    repairs: Repairs,
+    /// Each job is claimed under an owner never used before.
+    owners: Owner,
+    /// Whether start recovery ran.
+    recovered: bool,
+}
+
+impl Tick for RepairsTick {
+    async fn tick(&mut self, ctx: &TickCtx) -> TickResult {
+        let repairs = self.repairs.stopping_with(ctx.token().clone());
+        if !self.recovered {
+            self.recovered = recover_at_start(&repairs).await;
+        }
+        while !ctx.token().is_cancelled() {
+            if !tick(&self.setup, &repairs, &self.owners.mint()).await {
+                break;
+            }
+        }
+        Ok(Next::Continue)
+    }
+}
+
+/// Requeue the repair jobs an earlier process left running. False when it
+/// did not run; the next turn tries again.
+async fn recover_at_start(repairs: &Repairs) -> bool {
+    let repairs = repairs.clone();
+    match blocking(move || Ok(Some(repairs.recover_at_start()?))).await {
+        Some(requeued) => {
+            if requeued > 0 {
+                tracing::info!(requeued, "repair jobs from the previous run requeued");
+            }
+            true
+        }
+        None => false,
+    }
+}
+
+/// Claim the next due repair job and work on it until it is done, waits,
+/// or is halted. True when a job was worked on. Never runs during a scan.
 pub async fn tick(setup: &LibrarySetup, repairs: &Repairs, worker: &str) -> bool {
     let (setup, repairs, worker) = (setup.clone(), repairs.clone(), worker.to_owned());
     let handle = tokio::runtime::Handle::current();
-    let outcome = tokio::task::spawn_blocking(move || {
+    let worked = blocking(move || {
         if !setup.coordinator.current().is_empty() {
             return Ok(None);
         }
         droppedneedle_kernel::db::block_on(&handle, "repairs_turn", repairs.run_next(&worker))?
     })
     .await;
-    match outcome {
-        Ok(Ok(Some(job))) => {
+    match worked {
+        Some(job) => {
             tracing::debug!(
                 job_id = job.id,
                 state = job.state.as_str(),
                 code = job.terminal_code.as_deref().unwrap_or(""),
-                "repair turn finished"
+                "repair job left the worker"
             );
             true
         }
-        Ok(Ok(None)) => false,
+        None => false,
+    }
+}
+
+/// Run `work` on a blocking thread: the store is synchronous SQLite.
+/// `None` when it had nothing, failed or panicked; a failure is logged.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<Option<T>, OperationError> + Send + 'static,
+) -> Option<T> {
+    match tokio::task::spawn_blocking(work).await {
+        Ok(Ok(value)) => value,
         Ok(Err(error)) => {
-            tracing::warn!(%error, "repair turn failed");
-            false
+            tracing::warn!(%error, "repair step failed");
+            None
         }
         Err(error) => {
-            tracing::error!(%error, "repair turn panicked");
-            false
+            tracing::error!(%error, "repair step panicked");
+            None
         }
     }
 }

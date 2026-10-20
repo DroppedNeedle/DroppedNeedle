@@ -92,7 +92,7 @@ impl Operations {
     /// candidates. Blocking.
     pub fn get(&self, job_id: &str) -> Result<OperationDetail, OperationError> {
         self.db.read_blocking("operations.get", |conn| {
-            let job = store::job(conn, job_id)?
+            let job = jobs::job(conn, job_id)?
                 .ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))?;
             let (results, results_truncated) = store::work_results(conn, job_id)?;
             let (candidates, selected_candidate_key) = if job.is_reidentification() {

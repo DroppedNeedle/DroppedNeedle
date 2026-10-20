@@ -509,7 +509,7 @@ pub fn finish_work(
         ordinal,
         state,
         failure.map(|reason| reason.code.as_str()),
-        &result.to_string(),
+        Some(&result.to_string()),
         now,
     )
 }

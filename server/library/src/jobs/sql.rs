@@ -23,6 +23,12 @@ droppedneedle_kernel::sql! {
              created_at, updated_at) \
              VALUES (:id, :kind, 'queued', :requested_by, :catalog_revision, :work_count, :key, \
              :now, :now)";
+    /// A job of a kind that is already done, under an idempotency key;
+    /// nothing when the key is taken.
+    pub(super) INSERT_DONE = "INSERT INTO library_operation_jobs (id, kind, state, \
+             terminal_code, idempotency_key, created_at, updated_at, terminal_at) \
+             VALUES (:id, :kind, 'succeeded', :code, :key, :now, :now, :now) \
+             ON CONFLICT DO NOTHING";
     /// A new pending work item.
     pub(super) INSERT_WORK = "INSERT INTO library_operation_work (job_id, ordinal, \
              local_album_id, local_track_id, expected_subject_revision, expected_input_revision, \
@@ -93,9 +99,11 @@ droppedneedle_kernel::sql! {
              terminal_at = CASE WHEN :state = 'stopped' THEN :now ELSE terminal_at END, \
              row_revision = row_revision + 1, event_revision = event_revision + 1 \
              WHERE id = :id";
-    /// A job's running work goes back to pending.
+    /// A job's running work goes back to pending, with `:code` as its
+    /// reason when one is given.
     pub(super) WORK_BACK_TO_PENDING = "UPDATE library_operation_work SET state = 'pending', \
-             updated_at = :now, row_revision = row_revision + 1 \
+             failure_code = COALESCE(:code, failure_code), updated_at = :now, \
+             row_revision = row_revision + 1 \
              WHERE job_id = :job AND state = 'running'";
     /// End an owner's running job.
     pub(super) FINISH = "UPDATE library_operation_jobs SET state = :state, \
@@ -114,6 +122,23 @@ droppedneedle_kernel::sql! {
              updated_at = :now, expected_work_count = 0, row_revision = row_revision + 1, \
              event_revision = event_revision + 1 \
              WHERE id = :id AND state = 'running' AND lease_owner = :owner";
+    /// An owner's running job has checked its work and waits for a
+    /// person, its counts and code kept.
+    pub(super) REPORT_READY = "UPDATE library_operation_jobs SET state = 'ready', \
+             terminal_code = :code, terminal_at = NULL, lease_owner = NULL, \
+             lease_expires_at = NULL, heartbeat_at = NULL, updated_at = :now, \
+             row_revision = row_revision + 1, event_revision = event_revision + 1 \
+             WHERE id = :id AND state = 'running' AND lease_owner = :owner";
+    /// Set a ready job aside without doing its work.
+    pub(super) CANCEL_READY = "UPDATE library_operation_jobs SET state = 'cancelled', \
+             terminal_code = :code, terminal_at = :now, control_request = 'none', \
+             lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL, \
+             updated_at = :now, row_revision = row_revision + 1, \
+             event_revision = event_revision + 1 \
+             WHERE id = :id AND state = 'ready'";
+    /// A released job waits until `:at` before a claim takes it again.
+    pub(super) RETRY_AT = "UPDATE library_operation_jobs SET next_attempt_at = :at \
+             WHERE id = :id AND state = 'queued'";
     /// End a ready job that has nothing to write, as done.
     pub(super) COMPLETE_READY = "UPDATE library_operation_jobs SET state = 'succeeded', \
              terminal_code = :code, terminal_at = :now, expected_work_count = 0, \
@@ -123,8 +148,9 @@ droppedneedle_kernel::sql! {
     /// Queue a job again with fresh counts for `:work_count` items.
     pub(super) QUEUE_WORK = "UPDATE library_operation_jobs SET state = 'queued', \
              expected_work_count = :work_count, completed_count = 0, succeeded_count = 0, \
-             failed_count = 0, skipped_count = 0, terminal_code = NULL, updated_at = :now, \
-             row_revision = row_revision + 1, event_revision = event_revision + 1 \
+             failed_count = 0, skipped_count = 0, terminal_code = NULL, terminal_at = NULL, \
+             updated_at = :now, row_revision = row_revision + 1, \
+             event_revision = event_revision + 1 \
              WHERE id = :id";
     /// Set a management preview aside: one still planning or waiting to be
     /// applied, under the revision the caller saw.

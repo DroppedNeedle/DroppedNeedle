@@ -5363,6 +5363,112 @@ async fn the_management_loop_recovers_at_start_and_wakes_on_enqueue() {
         .await;
 }
 
+/// The repairs worker on its own loop: its first turn requeues and
+/// finishes a repair job a stopped process left running, and a job queued
+/// later starts on the wakeup its queueing sent. No other library loop
+/// runs.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_repairs_loop_recovers_at_start_and_wakes_on_enqueue() {
+    use droppedneedle_library::jobs::REPAIRS_WAKEUP;
+    use droppedneedle_library::repairs::models::Purpose;
+    use droppedneedle_library::repairs::service::Repairs;
+
+    let scratch = Scratch {
+        dir: ScratchDir::new("lib-repairs-loop"),
+        identify: Arc::new(FakeProviders::default()),
+        enrichment: None,
+    };
+    crate::common::migrated_db(&scratch.join("app.db"));
+    let db = droppedneedle_kernel::db::Db::open_for_tests(&scratch.join("app.db"))
+        .expect("database opens");
+    let platform = crate::common::TestPlatform::on(&db, &scratch)
+        .settings(Arc::new(
+            ConfigStore::scratch(
+                &scratch,
+                Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
+            )
+            .expect("config opens"),
+        ))
+        .build()
+        .await;
+    let library = library_with(&platform, scratch.identify.clone(), None);
+    let repairs = Repairs::new(&library);
+    // A recheck of an empty library: its report is ready once it runs.
+    let check = |key: &str| {
+        repairs
+            .create(
+                Purpose::ExistingMatches,
+                "admin",
+                key,
+                Vec::new(),
+                None,
+                "test-matcher".to_owned(),
+            )
+            .expect("check queued")
+            .id
+    };
+    // Waits on the job's own state, woken by each commit; the bound only
+    // stops a hang.
+    let settled = |job_id: String| {
+        let (repairs, mut commits) = (repairs.clone(), db.commits());
+        async move {
+            let wait = async {
+                loop {
+                    let job_id = job_id.clone();
+                    let read = repairs.clone();
+                    let state = tokio::task::spawn_blocking(move || {
+                        read.get(&job_id, Purpose::ExistingMatches)
+                            .expect("detail")
+                            .detail
+                            .job
+                            .state
+                    })
+                    .await
+                    .expect("detail joins");
+                    if state.as_str() == "ready" {
+                        return;
+                    }
+                    commits.changed().await.expect("database open");
+                }
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(60), wait)
+                .await
+                .expect("the report is ready");
+        }
+    };
+
+    // A process held the job and stopped before its lease ran out.
+    let interrupted = check("repair-interrupted");
+    db.run_sql(&format!(
+        "UPDATE library_operation_jobs SET state = 'running', lease_owner = 'stopped', \
+         lease_expires_at = unixepoch('now') + 600, heartbeat_at = unixepoch('now') \
+         WHERE id = '{interrupted}'"
+    ))
+    .expect("job held by a stopped process");
+
+    droppedneedle_library::repairs::start(&library, &platform.supervisor)
+        .expect("repairs loop starts");
+    settled(interrupted).await;
+
+    let woken_at = library.wakeups.revision(REPAIRS_WAKEUP);
+    let queued = check("repair-queued");
+    assert_ne!(
+        library.wakeups.revision(REPAIRS_WAKEUP),
+        woken_at,
+        "queueing the job woke the worker"
+    );
+    settled(queued).await;
+
+    assert_eq!(
+        platform.supervisor.running_names(),
+        vec![droppedneedle_library::repairs::JOB_NAME.to_owned()]
+    );
+    platform
+        .supervisor
+        .shutdown(std::time::Duration::from_secs(5))
+        .await;
+}
+
 /// A Library Management job end to end:
 /// - an album whose edition is a best guess is left alone with its reason;
 /// - once confirmed, picking one file still plans (and moves) the whole

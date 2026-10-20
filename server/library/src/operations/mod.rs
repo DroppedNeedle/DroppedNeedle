@@ -39,15 +39,15 @@ use crate::wiring::LibrarySetup;
 use service::Operations;
 
 /// How long the worker waits for a wakeup before it looks anyway: a
-/// queued re-identification wakes it, while repairs and edition remaps
-/// are found by looking.
+/// queued re-identification wakes it, while edition remaps are found by
+/// looking.
 const IDLE_CEILING: Duration = Duration::from_secs(2);
 
 /// The operations worker's name on the supervisor.
 pub const JOB_NAME: &str = "library-operations";
 
-/// Start the operations worker (re-identifications, then repairs, then
-/// edition remaps): one job at a time, never while a scan runs (the scan
+/// Start the operations worker (re-identifications, then edition
+/// remaps): one job at a time, never while a scan runs (the scan
 /// may be changing the very files a job reads). Its first turn runs at
 /// once and requeues the re-identifications an earlier process left
 /// running.
@@ -60,7 +60,6 @@ pub(crate) fn start(setup: &LibrarySetup, supervisor: &Supervisor) -> Result<(),
         Schedule::new(IDLE_CEILING),
         OperationsTick {
             ops: Operations::new(setup),
-            repairs: crate::repairs::service::Repairs::new(setup),
             owners: Owner::new(),
             setup: setup.clone(),
             recovered: false,
@@ -72,7 +71,6 @@ pub(crate) fn start(setup: &LibrarySetup, supervisor: &Supervisor) -> Result<(),
 struct OperationsTick {
     setup: LibrarySetup,
     ops: Operations,
-    repairs: crate::repairs::service::Repairs,
     /// Each step claims under an owner never used before.
     owners: Owner,
     /// Whether start recovery ran.
@@ -86,7 +84,6 @@ impl Tick for OperationsTick {
         }
         while !ctx.token().is_cancelled() {
             if !(tick(&self.setup, &self.ops, &self.owners.mint()).await
-                || crate::repairs::tick(&self.setup, &self.repairs, &self.owners.mint()).await
                 || remap_tick(&self.setup, &self.ops).await)
             {
                 break;

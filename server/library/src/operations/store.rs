@@ -12,7 +12,6 @@
 //! transaction; [`super::service`] owns the transactions. The catalog
 //! decisions a person makes on an album live in [`super::decisions`].
 
-use droppedneedle_kernel::db::DbError;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use sha2::{Digest as _, Sha256};
 
@@ -27,15 +26,13 @@ use crate::management::profile::root_assignment;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 
-pub use crate::jobs::{checkpoint, claim_work, holds, job};
-
 /// Work results a job detail shows; the rest are counted, not listed.
 const RESULTS_SHOWN: usize = 100;
 pub(super) const PROVIDER: &str = "musicbrainz";
 
 /// The job after a write that must have found it.
 pub(crate) fn job_after(conn: &Connection, job_id: &str) -> Result<OperationJob, OperationError> {
-    job(conn, job_id)?.ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))
+    jobs::job(conn, job_id)?.ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))
 }
 
 /// The first work results of a job, and whether more exist.
@@ -382,7 +379,7 @@ fn live_reidentification(
         )
         .optional()?;
     match id {
-        Some(id) => job(conn, &id),
+        Some(id) => jobs::job(conn, &id),
         None => Ok(None),
     }
 }
@@ -401,7 +398,8 @@ pub fn request_control(
     idempotency_key: Option<&str>,
     now: f64,
 ) -> Result<OperationJob, OperationError> {
-    let current = job(tx, job_id)?.ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))?;
+    let current =
+        jobs::job(tx, job_id)?.ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))?;
     if let Some(key) = idempotency_key {
         if key.trim().is_empty() {
             return Err(OperationError::Invalid(reasons::CONTROL_KEY_EMPTY));
@@ -456,33 +454,6 @@ pub fn request_control(
 // The worker side.
 // ---------------------------------------------------------------------------
 
-/// Requeue the repair jobs whose lease ran out.
-pub fn recover_expired(tx: &Transaction<'_>, now: f64) -> Result<u64, DbError> {
-    jobs::recover_expired(tx, OperationKind::Repair, now)
-}
-
-/// Requeue the jobs of `kind` whose lease ran out, then claim the next
-/// due one for `worker`.
-pub fn claim_kind(
-    tx: &Transaction<'_>,
-    kind: OperationKind,
-    worker: &str,
-    now: f64,
-) -> Result<Option<OperationJob>, DbError> {
-    jobs::claim(tx, kind, worker, now)
-}
-
-/// Keep holding a running job: push its lease forward. False when the
-/// worker lost it (stopped, or recovered by another worker).
-pub fn extend_lease(
-    tx: &Transaction<'_>,
-    job_id: &str,
-    worker: &str,
-    now: f64,
-) -> Result<bool, DbError> {
-    jobs::heartbeat(tx, job_id, worker, now)
-}
-
 /// End a running job with no evaluation (the album went away or moved).
 pub fn fail(
     tx: &Transaction<'_>,
@@ -491,7 +462,7 @@ pub fn fail(
     code: &str,
     now: f64,
 ) -> rusqlite::Result<Option<OperationJob>> {
-    if holds(tx, job_id, worker)? {
+    if jobs::holds(tx, job_id, worker)? {
         jobs::finish_running_work(tx, job_id, WorkState::Failed, Some(code), None, now)?;
         jobs::finish(
             tx,
@@ -503,19 +474,7 @@ pub fn fail(
             now,
         )?;
     }
-    job(tx, job_id)
-}
-
-/// A scan started while the job ran: hand the work back without counting
-/// an attempt, so the job evaluates again once the scan is done.
-pub fn requeue_for_scan(
-    tx: &Transaction<'_>,
-    job_id: &str,
-    worker: &str,
-    now: f64,
-) -> Result<Option<OperationJob>, DbError> {
-    jobs::release(tx, job_id, worker, now)?;
-    Ok(job(tx, job_id)?)
+    jobs::job(tx, job_id)
 }
 
 /// End a running re-identification whose album went to the
@@ -526,7 +485,7 @@ pub fn hand_over(
     worker: &str,
     now: f64,
 ) -> rusqlite::Result<Option<OperationJob>> {
-    if holds(tx, job_id, worker)? {
+    if jobs::holds(tx, job_id, worker)? {
         jobs::finish_running_work(
             tx,
             job_id,
@@ -545,5 +504,5 @@ pub fn hand_over(
             now,
         )?;
     }
-    job(tx, job_id)
+    jobs::job(tx, job_id)
 }

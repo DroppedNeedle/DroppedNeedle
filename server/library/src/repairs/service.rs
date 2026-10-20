@@ -7,7 +7,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use rusqlite::Transaction;
 
@@ -25,23 +25,22 @@ use crate::clock::{now_ms, now_unix};
 use crate::identify::models::{IdentifyKind, LocalAlbumFacts, RecallResult};
 use crate::identify::service::IdentifyService;
 use crate::identify::sqlite::{SqliteIdentifyStore, album_input_revision};
+use crate::jobs::{self, OperationState, WorkState};
 use crate::operations::models::{
     Control, OperationDetail, OperationError, OperationJob, OperationKind,
     ReidentificationCandidate,
 };
 use crate::operations::reidentify::evaluation;
 use crate::operations::service::Operations;
-use crate::operations::store as jobs;
+use crate::scan::watcher::WorkWakeups;
 use crate::wiring::{LibrarySetup, ScanCoordinator};
 use droppedneedle_kernel::db::{Db, Lane};
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_kernel::jobs::schedule::SplitMix64;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 
-/// How long one worker turn may run before the job goes back to the
-/// queue, so other operations get their turn.
-const TURN: Duration = Duration::from_secs(2);
 /// Wait before a job the database was too busy for goes on, plus up to
 /// as much again.
 const BUSY_RETRY: Duration = Duration::from_secs(5);
@@ -89,6 +88,10 @@ pub struct Repairs {
     /// checked; `None` until the first look after a server start.
     track_id_scan: Arc<Mutex<Option<Option<String>>>>,
     management: Live<LibraryManagement>,
+    wakeups: WorkWakeups,
+    /// The worker hands its job back between albums once this is
+    /// cancelled, so a stopping server never waits out a whole job.
+    shutdown: Option<CancellationToken>,
 }
 
 impl Repairs {
@@ -106,7 +109,28 @@ impl Repairs {
             plays_scan: Arc::new(Mutex::new(None)),
             track_id_scan: Arc::new(Mutex::new(None)),
             management: setup.settings.management.clone(),
+            wakeups: setup.wakeups.clone(),
+            shutdown: None,
         }
+    }
+
+    /// The same service, handing its job back between albums once
+    /// `shutdown` is cancelled.
+    pub fn stopping_with(&self, shutdown: CancellationToken) -> Self {
+        Self {
+            shutdown: Some(shutdown),
+            ..self.clone()
+        }
+    }
+
+    /// Whether the worker must hand its job back: a scan started, or the
+    /// server is stopping.
+    fn must_yield(&self) -> bool {
+        !self.coordinator.current().is_empty()
+            || self
+                .shutdown
+                .as_ref()
+                .is_some_and(CancellationToken::is_cancelled)
     }
 
     /// Queue a cleanup of albums identification just finished with (v2's
@@ -179,10 +203,13 @@ impl Repairs {
             source_matcher_version,
             target_matcher_version,
         };
-        self.db
+        let job = self
+            .db
             .write_blocking(Lane::Foreground, "repairs.create", |tx| {
                 store::create(tx, &new, now_unix())
-            })
+            })?;
+        jobs::wake(&self.wakeups, OperationKind::Repair);
+        Ok(job)
     }
 
     pub fn estimate_repair(&self, root_ids: Vec<String>) -> Result<RepairEstimate, OperationError> {
@@ -279,10 +306,13 @@ impl Repairs {
         if !confirmation {
             return Err(OperationError::Invalid(reasons::CONFIRMATION_REQUIRED));
         }
-        self.db
+        let job = self
+            .db
             .write_blocking(Lane::Foreground, "repairs.begin_apply", |tx| {
                 store::begin_apply(tx, job_id, purpose, expected_row_revision, now_unix())
-            })
+            })?;
+        jobs::wake(&self.wakeups, OperationKind::Repair);
+        Ok(job)
     }
 
     /// Dismiss a ready preparation report.
@@ -495,36 +525,23 @@ impl Repairs {
         queued
     }
 
-    /// One turn of a play filing job: batch after batch until no row is
-    /// left, the turn is used up, a scan starts, or the job is paused or
-    /// stopped. Each batch is one transaction that also saves where the
-    /// job is, so the next turn (or the next server start) goes on from
-    /// there.
+    /// Work on a play filing job: batch after batch until no row is left,
+    /// a scan starts, the server stops, or the job is paused or stopped.
+    /// Each batch is one transaction that also saves where the job is, so
+    /// the next claim (or the next server start) goes on from there.
     fn file_plays(
         &self,
         job_id: &str,
         worker: &str,
-        started: Instant,
     ) -> Result<Option<OperationJob>, OperationError> {
         loop {
-            let scanning = !self.coordinator.current().is_empty();
-            let halted = self
+            let yielding = self.must_yield();
+            let left = self
                 .db
                 .write_blocking(Lane::Background, "repairs.file_plays", |tx| {
                     let now = now_unix();
-                    if scanning {
-                        return Ok::<_, OperationError>(Some(jobs::requeue_for_scan(
-                            tx, job_id, worker, now,
-                        )?));
-                    }
-                    if let Some(left) = jobs::checkpoint(tx, job_id, worker, now)? {
-                        return Ok(Some(Some(left)));
-                    }
-                    if started.elapsed() >= TURN {
-                        return Ok(Some(store::yield_job(tx, job_id, worker, None, None, now)?));
-                    }
-                    if !jobs::extend_lease(tx, job_id, worker, now)? {
-                        return Ok(Some(jobs::job(tx, job_id)?));
+                    if let Some(left) = halt(tx, job_id, worker, yielding, now)? {
+                        return Ok::<_, OperationError>(Some(left));
                     }
                     if !plays::step(tx, job_id, plays::BATCH, now)? {
                         return Ok(None);
@@ -533,12 +550,12 @@ impl Repairs {
                         tx,
                         job_id,
                         worker,
-                        "succeeded",
+                        OperationState::Succeeded,
                         plays::FILED,
                         now,
                     )?))
                 })?;
-            let Some(left) = halted else {
+            let Some(left) = left else {
                 continue;
             };
             let filed = left
@@ -592,7 +609,21 @@ impl Repairs {
         profile.is_some_and(|profile| profile.identity.automatic_edition_acceptance_enabled)
     }
 
-    /// Claim the next due repair job and work on it for one turn. Returns
+    /// Requeue every repair job an earlier process left running, with its
+    /// running work. The loop's first turn calls this. Blocking.
+    pub fn recover_at_start(&self) -> Result<u64, OperationError> {
+        self.db
+            .write_blocking(Lane::Background, "repairs.recover_at_start", |tx| {
+                Ok::<_, OperationError>(jobs::recover_at_start(
+                    tx,
+                    OperationKind::Repair,
+                    now_unix(),
+                )?)
+            })
+    }
+
+    /// Requeue the repair jobs whose worker vanished, claim the next due
+    /// one and work on it until it is done, waits, or is halted. Returns
     /// the job as it was left, or `None` when nothing was due. Store calls
     /// block: run this on a blocking thread.
     pub async fn run_next(&self, worker: &str) -> Result<Option<OperationJob>, OperationError> {
@@ -601,30 +632,23 @@ impl Repairs {
         self.queue_hygiene_after_scan()?;
         self.queue_hygiene_after_identification()?;
         self.queue_play_filing()?;
-        let now = now_unix();
-        let claimed =
-            self.db
-                .write_blocking(Lane::Background, "repairs.recover_expired", |tx| {
-                    jobs::recover_expired(tx, now)?;
-                    Ok::<_, OperationError>(jobs::claim_kind(
-                        tx,
-                        OperationKind::Repair,
-                        worker,
-                        now,
-                    )?)
-                })?;
+        let claimed = self
+            .db
+            .write_blocking(Lane::Background, "repairs.claim", |tx| {
+                Ok::<_, OperationError>(jobs::claim(tx, OperationKind::Repair, worker, now_unix())?)
+            })?;
         let Some(job) = claimed else {
             return Ok(None);
         };
-        match self.turn(&job, worker).await {
+        match self.work(&job, worker).await {
             Err(OperationError::Busy(cause)) => self.wait_busy(&job.id, worker, cause),
             left => left,
         }
     }
 
-    /// A turn the database was too busy for: the job goes back to the
-    /// queue as it stood and waits a few seconds, plus up to as much again.
-    /// A put-back that fails leaves it to its lease.
+    /// Work the database was too busy for: the job goes back to the queue
+    /// as it stood and waits a few seconds, plus up to as much again. A
+    /// put-back that fails leaves it to its lease.
     fn wait_busy(
         &self,
         job_id: &str,
@@ -636,15 +660,9 @@ impl Repairs {
         let jitter = SplitMix64::new(SplitMix64::seed_from_time()).below_duration(BUSY_RETRY);
         let retry_at = now + (BUSY_RETRY + jitter).as_secs_f64();
         self.db
-            .write_blocking(Lane::Background, "repairs.yield_job", |tx| {
-                Ok::<_, OperationError>(store::yield_job(
-                    tx,
-                    job_id,
-                    worker,
-                    None,
-                    Some(retry_at),
-                    now,
-                )?)
+            .write_blocking(Lane::Background, "repairs.wait_busy", |tx| {
+                jobs::release_until(tx, job_id, worker, retry_at, None, now)?;
+                Ok::<_, OperationError>(jobs::job(tx, job_id)?)
             })
             .map_err(|error| {
                 tracing::warn!(%error, job_id, "repair job not put back; its lease brings it back");
@@ -652,8 +670,8 @@ impl Repairs {
             })
     }
 
-    /// Work on a claimed repair job for one turn.
-    async fn turn(
+    /// Work on a claimed repair job, album by album.
+    async fn work(
         &self,
         job: &OperationJob,
         worker: &str,
@@ -670,7 +688,7 @@ impl Repairs {
                         tx,
                         &job.id,
                         worker,
-                        "failed",
+                        OperationState::Failed,
                         "MISSING_SNAPSHOT",
                         now_unix(),
                     )?)
@@ -678,41 +696,20 @@ impl Repairs {
             );
         };
         let actor = job.requested_by_user_id.clone();
-        let started = Instant::now();
         if snap.purpose == Purpose::PlayHistoryFiling {
-            return self.file_plays(&job.id, worker, started);
+            return self.file_plays(&job.id, worker);
         }
         loop {
-            let scanning = !self.coordinator.current().is_empty();
-            let halted =
-                self.db
-                    .write_blocking(Lane::Background, "repairs.requeue_for_scan", |tx| {
-                        let now = now_unix();
-                        if scanning {
-                            return Ok::<_, OperationError>(jobs::requeue_for_scan(
-                                tx, &job.id, worker, now,
-                            )?);
-                        }
-                        if let Some(left) = jobs::checkpoint(tx, &job.id, worker, now)? {
-                            return Ok(Some(left));
-                        }
-                        if started.elapsed() >= TURN {
-                            return Ok(store::yield_job(tx, &job.id, worker, None, None, now)?);
-                        }
-                        Ok(None)
-                    })?;
-            if let Some(left) = halted {
-                return Ok(Some(left));
-            }
+            let yielding = self.must_yield();
             let next = self
                 .db
                 .write_blocking(Lane::Background, "repairs.claim_album", |tx| {
                     let now = now_unix();
+                    if let Some(left) = halt(tx, &job.id, worker, yielding, now)? {
+                        return Ok::<_, OperationError>(Err(left));
+                    }
                     match store::claim_album(tx, &job.id, now)? {
-                        Some(work) => {
-                            jobs::extend_lease(tx, &job.id, worker, now)?;
-                            Ok::<_, OperationError>(Ok(work))
-                        }
+                        Some(work) => Ok(Ok(work)),
                         None => Ok(Err(self.finish(tx, &job.id, worker, &snap, now)?)),
                     }
                 })?;
@@ -724,19 +721,22 @@ impl Repairs {
                 (Purpose::CatalogIdentityHygiene, _) => {
                     self.db
                         .write_blocking(Lane::Background, "repairs.clean_album", |tx| {
+                            if !jobs::holds(tx, &job.id, worker)? {
+                                return Ok(());
+                            }
                             let now = now_unix();
                             let changed = hygiene::clean_album(tx, &album_id, &job.id, now)?;
                             let state = if changed.is_some() {
-                                "succeeded"
+                                WorkState::Succeeded
                             } else {
-                                "skipped"
+                                WorkState::Skipped
                             };
                             store::finish_work(
                                 tx,
                                 &job.id,
                                 worker,
                                 ordinal,
-                                state,
+                                state.as_str(),
                                 None,
                                 changed.as_ref(),
                                 now,
@@ -747,6 +747,9 @@ impl Repairs {
                 (_, Phase::Apply) => {
                     self.db
                         .write_blocking(Lane::Background, "repairs.apply_album", |tx| {
+                            if !jobs::holds(tx, &job.id, worker)? {
+                                return Ok(());
+                            }
                             apply_album(
                                 tx,
                                 &job.id,
@@ -783,17 +786,18 @@ impl Repairs {
                     Checked::Deferred => {
                         return self.db.write_blocking(
                             Lane::Background,
-                            "repairs.yield_job",
+                            "repairs.provider_deferred",
                             |tx| {
                                 let now = now_unix();
-                                Ok(store::yield_job(
+                                jobs::release_until(
                                     tx,
                                     &job.id,
                                     worker,
+                                    now + PROVIDER_RETRY_SECS,
                                     Some("PROVIDER_DEFERRED"),
-                                    Some(now + PROVIDER_RETRY_SECS),
                                     now,
-                                )?)
+                                )?;
+                                Ok(jobs::job(tx, &job.id)?)
                             },
                         );
                     }
@@ -816,13 +820,18 @@ impl Repairs {
                 tx,
                 job_id,
                 worker,
-                "succeeded",
+                OperationState::Succeeded,
                 "CATALOG_IDENTITY_HYGIENE_COMPLETED",
                 now,
             )?,
-            (_, Phase::Apply) => {
-                store::end(tx, job_id, worker, "succeeded", "APPLY_COMPLETED", now)?
-            }
+            (_, Phase::Apply) => store::end(
+                tx,
+                job_id,
+                worker,
+                OperationState::Succeeded,
+                "APPLY_COMPLETED",
+                now,
+            )?,
             (_, Phase::DryRun) => store::mark_ready(tx, job_id, worker, snap, now)?,
         })
     }
@@ -961,6 +970,30 @@ fn summary_for(recall: &RecallResult, candidate: &ReidentificationCandidate) -> 
         competing_count: 1,
         auto_gate: None,
     }
+}
+
+/// Before the next album or batch: hand the job back when `yielding` (a
+/// scan started or the server is stopping), honour a pause or stop, and
+/// keep the lease. `Some` with the job as it was left when the worker
+/// must let go of it.
+fn halt(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    worker: &str,
+    yielding: bool,
+    now: f64,
+) -> Result<Option<Option<OperationJob>>, OperationError> {
+    if yielding {
+        jobs::release(tx, job_id, worker, now)?;
+        return Ok(Some(jobs::job(tx, job_id)?));
+    }
+    if let Some(left) = jobs::checkpoint(tx, job_id, worker, now)? {
+        return Ok(Some(Some(left)));
+    }
+    if !jobs::heartbeat(tx, job_id, worker, now)? {
+        return Ok(Some(jobs::job(tx, job_id)?));
+    }
+    Ok(None)
 }
 
 /// Whether a queueing step is over for its marker: anything but a busy

@@ -42,6 +42,7 @@ pub const LOOPS: &[&str] = &[
     super::contrib::worker::UPKEEP_JOB,
     super::operations::JOB_NAME,
     super::management::JOB_NAME,
+    super::repairs::JOB_NAME,
     PUBLISH_JOB,
 ];
 
@@ -493,6 +494,7 @@ pub(crate) fn start_loops(
     super::contrib::worker::start_upkeep(supervisor, setup.contrib_worker.clone())?;
     super::operations::start(setup, supervisor)?;
     super::management::start(setup, supervisor)?;
+    super::repairs::start(setup, supervisor)?;
     let leftovers = setup.clone();
     supervisor.one_shot(LEFTOVERS_JOB, move |ctx| leftover_pass(leftovers, ctx))?;
     let publish = setup.clone();

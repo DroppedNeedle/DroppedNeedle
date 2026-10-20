@@ -5,8 +5,8 @@
 //! and `library_identity_repair_findings` (one verdict per album).
 //!
 //! Plain SQL on the caller's connection or transaction; the service owns
-//! the transactions. Job claiming, controls, leases and checkpoints are
-//! the shared operation job SQL in [`crate::operations::store`].
+//! the transactions. The job and work rows themselves are queued, claimed,
+//! counted and ended through [`crate::jobs`].
 
 use std::collections::BTreeMap;
 
@@ -19,9 +19,10 @@ use super::models::{
     Purpose, RepairEstimate, Scope, Summary, Verdict,
 };
 use super::reasons;
+use crate::jobs::{self, NewJob, OperationState, Tally, WorkState};
 use crate::operations::decisions::live_automatic_edition_undo;
 use crate::operations::models::{OperationError, OperationJob, OperationKind};
-use crate::operations::store::{self as jobs, album_revisions};
+use crate::operations::store::{album_revisions, job_after};
 
 const PROVIDER: &str = "musicbrainz";
 
@@ -200,18 +201,28 @@ pub fn create(
         )
         .optional()?
         .unwrap_or(0);
-    tx.execute(
-        "INSERT INTO library_operation_jobs (id, kind, state, requested_by_user_id, \
-         input_catalog_revision, expected_work_count, idempotency_key, created_at, updated_at) \
-         VALUES (?1, 'repair', 'queued', (SELECT id FROM auth_users WHERE id = ?2), ?3, 0, ?4, \
-         ?5, ?5)",
-        params![
-            new.job_id,
-            new.requested_by_user_id,
-            catalog_revision,
-            new.idempotency_key,
-            now
-        ],
+    // A requester whose account is gone leaves the job unattributed.
+    let requested_by: Option<String> = match &new.requested_by_user_id {
+        Some(user_id) => tx
+            .query_row(
+                "SELECT id FROM auth_users WHERE id = ?1",
+                params![user_id],
+                |row| row.get(0),
+            )
+            .optional()?,
+        None => None,
+    };
+    jobs::insert(
+        tx,
+        &NewJob {
+            id: &new.job_id,
+            kind: OperationKind::Repair,
+            requested_by: requested_by.as_deref(),
+            idempotency_key: Some(&new.idempotency_key),
+            catalog_revision: Some(catalog_revision),
+            expected_work_count: 0,
+            now,
+        },
     )?;
     let action = match new.purpose {
         Purpose::CatalogIdentityHygiene => "catalog_identity_hygiene",
@@ -281,7 +292,7 @@ pub fn create(
         "UPDATE library_operation_jobs SET expected_work_count = ?2 WHERE id = ?1",
         params![new.job_id, staged as i64],
     )?;
-    jobs::job_after(tx, &new.job_id)
+    job_after(tx, &new.job_id)
 }
 
 /// The hygiene job queued once per database (v2's backfill key), so an
@@ -444,14 +455,14 @@ pub fn mark_track_id_backfill(
     job_id: &str,
     now: f64,
 ) -> rusqlite::Result<()> {
-    tx.execute(
-        "INSERT INTO library_operation_jobs (id, kind, state, terminal_code, idempotency_key, \
-         created_at, updated_at, terminal_at) \
-         VALUES (?1, 'repair', 'succeeded', 'IDENTIFY_QUEUED', ?2, ?3, ?3, ?3) \
-         ON CONFLICT DO NOTHING",
-        params![job_id, TRACK_ID_BACKFILL_KEY, now],
-    )?;
-    Ok(())
+    jobs::insert_done(
+        tx,
+        job_id,
+        OperationKind::Repair,
+        "IDENTIFY_QUEUED",
+        TRACK_ID_BACKFILL_KEY,
+        now,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -462,9 +473,16 @@ fn active_count(conn: &Connection, purpose: Purpose) -> rusqlite::Result<i64> {
     conn.query_row(
         "SELECT COUNT(*) FROM library_operation_jobs j \
          JOIN library_repair_snapshots s ON s.job_id = j.id \
-         WHERE j.kind = 'repair' AND j.state IN ('queued','running','paused','ready') \
+         WHERE j.kind = ?2 AND j.state IN (?3, ?4, ?5, ?6) \
          AND COALESCE(json_extract(s.scope_json, '$.purpose'), 'existing_matches') = ?1",
-        params![purpose.as_str()],
+        params![
+            purpose.as_str(),
+            OperationKind::Repair,
+            OperationState::Queued,
+            OperationState::Running,
+            OperationState::Paused,
+            OperationState::Ready,
+        ],
         |row| row.get(0),
     )
 }
@@ -561,13 +579,19 @@ pub fn history(
     let mut stmt = conn.prepare(
         "SELECT j.id FROM library_operation_jobs j \
          JOIN library_repair_snapshots s ON s.job_id = j.id \
-         WHERE j.kind = 'repair' \
+         WHERE j.kind = ?5 \
          AND COALESCE(json_extract(s.scope_json, '$.purpose'), 'existing_matches') = ?1 \
          AND (?2 IS NULL OR j.created_at < ?2 OR (j.created_at = ?2 AND j.id < ?3)) \
          ORDER BY j.created_at DESC, j.id DESC LIMIT ?4",
     )?;
     stmt.query_map(
-        params![purpose.as_str(), created, id, limit as i64],
+        params![
+            purpose.as_str(),
+            created,
+            id,
+            limit as i64,
+            OperationKind::Repair
+        ],
         |row| row.get(0),
     )?
     .collect()
@@ -700,7 +724,8 @@ pub fn claim_album(
     Ok(Some((ordinal, album.unwrap_or_default())))
 }
 
-/// Close one work item and count it on the job.
+/// Close one work item and count it on the job, while `worker` holds
+/// the job. `state` is a work state's stored text.
 #[allow(clippy::too_many_arguments)]
 pub fn finish_work(
     tx: &Transaction<'_>,
@@ -712,33 +737,21 @@ pub fn finish_work(
     result: Option<&serde_json::Value>,
     now: f64,
 ) -> rusqlite::Result<()> {
-    tx.execute(
-        "UPDATE library_operation_work SET state = ?3, failure_code = ?4, result_json = ?5, \
-         updated_at = ?6, row_revision = row_revision + 1 WHERE job_id = ?1 AND ordinal = ?2",
-        params![
-            job_id,
-            ordinal,
-            state,
-            failure_code,
-            result.map(|value| value.to_string()),
-            now
-        ],
-    )?;
-    let counter = match state {
-        "succeeded" => "succeeded_count",
-        "failed" => "failed_count",
-        _ => "skipped_count",
-    };
-    tx.execute(
-        &format!(
-            "UPDATE library_operation_jobs SET completed_count = completed_count + 1, \
-             {counter} = {counter} + 1, updated_at = ?3, row_revision = row_revision + 1, \
-             event_revision = event_revision + 1 \
-             WHERE id = ?1 AND state = 'running' AND lease_owner = ?2"
-        ),
-        params![job_id, worker, now],
-    )?;
-    Ok(())
+    let state = WorkState::parse(state).ok_or_else(|| {
+        rusqlite::Error::ToSqlConversionFailure(format!("not a work state: {state}").into())
+    })?;
+    if !jobs::holds(tx, job_id, worker)? {
+        return Ok(());
+    }
+    jobs::finish_work(
+        tx,
+        job_id,
+        ordinal,
+        state,
+        failure_code,
+        result.map(|value| value.to_string()).as_deref(),
+        now,
+    )
 }
 
 /// Store one album's verdict and close its work item.
@@ -802,7 +815,7 @@ pub fn save_finding(
         job_id,
         worker,
         ordinal,
-        "succeeded",
+        WorkState::Succeeded.as_str(),
         None,
         Some(&serde_json::json!({
             "finding_code": verdict.finding_code,
@@ -850,33 +863,6 @@ pub fn auto_accept(
     Ok(true)
 }
 
-/// Release a running job back to the queue: it used its turn, or must
-/// wait until `retry_at` (MusicBrainz was down). The running item goes
-/// back to pending.
-pub fn yield_job(
-    tx: &Transaction<'_>,
-    job_id: &str,
-    worker: &str,
-    failure_code: Option<&str>,
-    retry_at: Option<f64>,
-    now: f64,
-) -> rusqlite::Result<Option<OperationJob>> {
-    tx.execute(
-        "UPDATE library_operation_work SET state = 'pending', \
-         failure_code = COALESCE(?2, failure_code), updated_at = ?3, \
-         row_revision = row_revision + 1 WHERE job_id = ?1 AND state = 'running'",
-        params![job_id, failure_code, now],
-    )?;
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = 'queued', lease_owner = NULL, \
-         lease_expires_at = NULL, heartbeat_at = NULL, next_attempt_at = ?3, updated_at = ?4, \
-         row_revision = row_revision + 1, event_revision = event_revision + 1 \
-         WHERE id = ?1 AND state = 'running' AND lease_owner = ?2",
-        params![job_id, worker, retry_at, now],
-    )?;
-    jobs::job(tx, job_id)
-}
-
 /// Every album was checked: write the report summary and wait for Apply.
 pub fn mark_ready(
     tx: &Transaction<'_>,
@@ -890,26 +876,21 @@ pub fn mark_ready(
         "UPDATE library_repair_snapshots SET result_json = ?2 WHERE job_id = ?1",
         params![job_id, serde_json::to_string(&summary).unwrap_or_default()],
     )?;
-    end(tx, job_id, worker, "ready", "DRY_RUN_READY", now)
+    jobs::report_ready(tx, job_id, worker, "DRY_RUN_READY", now)?;
+    jobs::job(tx, job_id)
 }
 
-/// End a running job (`succeeded` or `failed`) with `code`.
+/// End `worker`'s running job in `state` with `code`, its counts as the
+/// work left them.
 pub fn end(
     tx: &Transaction<'_>,
     job_id: &str,
     worker: &str,
-    state: &str,
+    state: OperationState,
     code: &str,
     now: f64,
 ) -> rusqlite::Result<Option<OperationJob>> {
-    let terminal = if state == "ready" { None } else { Some(now) };
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = ?3, terminal_code = ?4, terminal_at = ?5, \
-         lease_owner = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?6, \
-         row_revision = row_revision + 1, event_revision = event_revision + 1 \
-         WHERE id = ?1 AND state = 'running' AND lease_owner = ?2",
-        params![job_id, worker, state, code, terminal, now],
-    )?;
+    jobs::finish(tx, job_id, worker, state, code, Tally::AsCounted, now)?;
     jobs::job(tx, job_id)
 }
 
@@ -996,7 +977,7 @@ pub fn begin_apply(
     {
         return Err(OperationError::Invalid(reasons::RULES_CHANGED));
     }
-    if job.state.as_str() != "ready" || job.row_revision != expected_row_revision {
+    if job.state != OperationState::Ready || job.row_revision != expected_row_revision {
         return Err(OperationError::Conflict(reasons::REPORT_CHANGED));
     }
     tx.execute(
@@ -1013,19 +994,16 @@ pub fn begin_apply(
          WHERE f.job_id = ?1 AND f.apply_eligible = 1 AND f.state = 'open'",
         params![job_id, now],
     )?;
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = 'queued', expected_work_count = ?2, \
-         completed_count = 0, succeeded_count = 0, failed_count = 0, skipped_count = 0, \
-         terminal_code = NULL, terminal_at = NULL, updated_at = ?3, \
-         row_revision = row_revision + 1, event_revision = event_revision + 1 WHERE id = ?1",
-        params![job_id, staged as i64, now],
-    )?;
+    jobs::queue_work(tx, job_id, staged as i64, now)?;
     tx.execute(
         "UPDATE library_repair_snapshots SET phase = 'apply' WHERE job_id = ?1",
         params![job_id],
     )?;
-    jobs::job_after(tx, job_id)
+    job_after(tx, job_id)
 }
+
+/// The code a dismissed preparation report ends with.
+const DISCARDED: &str = "IDENTITY_PREPARATION_DISCARDED";
 
 /// Dismiss a ready preparation report without changing anything.
 pub fn discard(
@@ -1035,26 +1013,17 @@ pub fn discard(
     now: f64,
 ) -> Result<OperationJob, OperationError> {
     let (job, snap) = repair_job(tx, job_id, Purpose::ManagementReadiness)?;
-    if job.state.as_str() == "cancelled"
-        && job.terminal_code.as_deref() == Some("IDENTITY_PREPARATION_DISCARDED")
-    {
+    if job.state == OperationState::Cancelled && job.terminal_code.as_deref() == Some(DISCARDED) {
         return Ok(job);
     }
-    if job.state.as_str() != "ready"
+    if job.state != OperationState::Ready
         || snap.phase != Phase::DryRun
         || job.row_revision != expected_row_revision
     {
         return Err(OperationError::Conflict(reasons::REPORT_CHANGED));
     }
-    tx.execute(
-        "UPDATE library_operation_jobs SET state = 'cancelled', \
-         terminal_code = 'IDENTITY_PREPARATION_DISCARDED', terminal_at = ?2, \
-         control_request = 'none', lease_owner = NULL, lease_expires_at = NULL, \
-         heartbeat_at = NULL, updated_at = ?2, row_revision = row_revision + 1, \
-         event_revision = event_revision + 1 WHERE id = ?1",
-        params![job_id, now],
-    )?;
-    jobs::job_after(tx, job_id)
+    jobs::cancel_ready(tx, job_id, DISCARDED, now)?;
+    job_after(tx, job_id)
 }
 
 /// The open, eligible finding Apply works on for one album.
