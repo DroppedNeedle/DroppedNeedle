@@ -28,9 +28,7 @@ use serde::Deserialize;
 use crate::RequestPriority;
 use crate::client::{decode, parse_base, unusable_base};
 use crate::error::ProviderError;
-use crate::executor::{
-    Answer, Backoff, Executor, Request, Spec, USER_COOLDOWN_WAIT, Url, standard_classify,
-};
+use crate::executor::{Answer, Backoff, Executor, Request, Spec, Url, standard_classify};
 
 /// The provider name errors carry, and its rate row.
 pub const SOURCE: &str = "github";
@@ -136,22 +134,20 @@ impl GitHubClient {
 
     /// All non-draft releases, newest first, with the hourly memo. Every
     /// failure degrades to `[]` with a log line and is not remembered. A
-    /// person's check never waits for a request: while the row has none to
-    /// give within [`USER_COOLDOWN_WAIT`] (a rest, or the hourly allowance
-    /// spent on failures), it answers `[]` at once without sending.
+    /// person's check that the executor turns down because the row has no
+    /// request free soon answers `[]` at once without sending.
     pub async fn fetch_releases(&self, priority: RequestPriority) -> Vec<GitHubRelease> {
         if let Some(cached) = self.memo_get().await {
             return cached;
-        }
-        if priority.is_user_facing() && self.executor.limiter().retry_after(1) > USER_COOLDOWN_WAIT
-        {
-            tracing::debug!("github releases skipped: no request free soon");
-            return Vec::new();
         }
         match self.fetch(priority).await {
             Ok(releases) => {
                 self.memo_put(releases.clone()).await;
                 releases
+            }
+            Err(error @ ProviderError::RateLimited { .. }) => {
+                tracing::debug!(%error, "github releases skipped");
+                Vec::new()
             }
             Err(error) => {
                 tracing::warn!(%error, "github releases unavailable");

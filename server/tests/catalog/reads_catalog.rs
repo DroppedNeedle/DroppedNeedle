@@ -972,3 +972,68 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
         "remembered for the outage wait, until {until} (asked at {before})"
     );
 }
+
+/// A cold artist image waits its turn behind a busy MusicBrainz instead of
+/// being turned down like a page: the image resolve asks at image
+/// priority, so it finds the artist and its thumbnail rather than coming
+/// back incomplete, which would hold the image blank for the outage wait.
+#[tokio::test]
+async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
+    use droppedneedle_catalog::reads::catalog::precache::CatalogArtistImages;
+    use droppedneedle_catalog::reads::platform::artwork::ArtistImageSource as _;
+    use droppedneedle_providers::executor::ScriptedWire;
+    use droppedneedle_providers::{ProviderEndpoints, RequestPriority, audiodb, musicbrainz};
+    use std::time::Duration;
+
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &format!("{}/artist/{ARTIST}", musicbrainz::MB_API_BASE),
+        200,
+        &[],
+        fixture("mb_artist.json"),
+    );
+    wire.answer(
+        &format!("{}/123/artist-mb.php", audiodb::DEFAULT_BASE_URL),
+        200,
+        &[],
+        upstream_fixture("audiodb_artist"),
+    );
+    let providers = Arc::new(Providers::over_wire(
+        wire.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ProviderEndpoints {
+            musicbrainz: musicbrainz::MB_API_BASE.to_owned(),
+            audiodb: audiodb::DEFAULT_BASE_URL.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    ));
+    let (pool, _dir) = crate::common::migrated_pool("reads-catalog-busy-mb").await;
+    let rig = AuthRig::new("reads-catalog-busy-mb").await;
+    let catalog = Catalog::new(
+        Upstream::new(
+            providers.clone(),
+            Arc::new(TestSettings {
+                mb_url: musicbrainz::MB_API_BASE.to_owned(),
+            }),
+            rig.deps.clone(),
+        ),
+        LocalCatalog::new(pool),
+    );
+
+    // One request a second, resting two more: a page would wait three.
+    tokio::time::pause();
+    providers
+        .limiter("musicbrainz")
+        .unwrap()
+        .cool_down(Duration::from_secs(2));
+    let started = tokio::time::Instant::now();
+    let candidates = CatalogArtistImages(catalog)
+        .candidates(ARTIST, RequestPriority::ImageFetch)
+        .await;
+    assert!(!candidates.incomplete, "the resolve is settled");
+    assert_eq!(
+        candidates.urls,
+        ["https://r2.theaudiodb.com/images/media/artist/thumb/radiohead.jpg"]
+    );
+    assert!(started.elapsed() >= Duration::from_secs(2), "it waited");
+}

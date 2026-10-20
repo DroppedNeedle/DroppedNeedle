@@ -70,7 +70,7 @@ impl Catalog {
 
     /// Fetch and cache the artist page's data.
     async fn warm_artist_page(&self, mbid: &str) {
-        if let Err(error) = self.build_artist(mbid).await {
+        if let Err(error) = self.build_artist(mbid, BACKGROUND).await {
             tracing::debug!(artist = mbid, %error, "precache: artist page not cached");
         }
     }
@@ -131,7 +131,7 @@ impl Catalog {
         mbid: &str,
         priority: droppedneedle_providers::RequestPriority,
     ) -> ArtistImageCandidates {
-        let detail = match self.artist_detail(mbid).await {
+        let detail = match self.artist_detail(mbid, priority).await {
             Ok(Some(detail)) => detail,
             Ok(None) => return ArtistImageCandidates::default(),
             Err(error) => {

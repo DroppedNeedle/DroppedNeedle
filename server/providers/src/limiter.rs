@@ -94,6 +94,20 @@ pub struct OverCapacity {
     pub burst: u32,
 }
 
+/// Why a bounded wait for a request ended without one.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum Refused {
+    /// The bucket holds no tokens at all.
+    #[error(transparent)]
+    OverCapacity(#[from] OverCapacity),
+    /// The caller's turn would come later than it can wait.
+    #[error("no request free for {wait:?}")]
+    TooLong {
+        /// About how long the turn would take.
+        wait: Duration,
+    },
+}
+
 /// One queued waiter. Orders as a min-heap on (priority, sequence) so the
 /// most urgent, longest-waiting caller grants first.
 #[derive(Debug)]
@@ -207,6 +221,31 @@ impl BucketState {
             }
             self.take(head.tokens, head.slot);
         }
+    }
+
+    /// How long a new waiter at `priority` asking for `tokens` would wait:
+    /// the rest of any cooldown, then the refill that covers every live
+    /// waiter at the same or a higher priority (they go first) and itself.
+    /// Lower-priority waiters do not count, since it goes ahead of them. A
+    /// wait for an in-flight slot cannot be known and is not counted; the
+    /// deadline in [`RateLimiter::acquire_slot_within`] covers it.
+    fn turn_wait(&self, tokens: u32, priority: RequestPriority) -> Duration {
+        let pause = self.paused_until.map_or(Duration::ZERO, |until| {
+            until.saturating_duration_since(Instant::now())
+        });
+        if !self.policy.paced() {
+            return pause;
+        }
+        let ahead: u32 = self
+            .waiters
+            .iter()
+            .filter(|waiter| {
+                waiter.priority <= priority as u8 && !waiter.cancelled.load(AtomicOrdering::Acquire)
+            })
+            .map(|waiter| waiter.tokens)
+            .sum();
+        let deficit = (f64::from(ahead.saturating_add(tokens)) - self.tokens).max(0.0);
+        pause + Duration::from_secs_f64(deficit / self.policy.per_second)
     }
 
     fn head_wait(&self) -> Duration {
@@ -335,7 +374,33 @@ impl RateLimiter {
         &self,
         priority: RequestPriority,
     ) -> Result<InFlight<'_>, OverCapacity> {
-        self.wait_for(1, priority, true).await?;
+        match self.wait_for(1, priority, true, None).await {
+            Ok(()) => Ok(InFlight { limiter: self }),
+            Err(Refused::OverCapacity(error)) => Err(error),
+            // An unbounded wait never gives up.
+            Err(Refused::TooLong { .. }) => Err(OverCapacity {
+                tokens: 1,
+                burst: self.policy().burst,
+            }),
+        }
+    }
+
+    /// Like [`acquire_slot`](Self::acquire_slot), for a caller that can wait
+    /// at most `within`. A turn that would come later, counting the bucket
+    /// and the waiters ahead at the same or a higher priority, is refused
+    /// at once without queueing. A wait that runs past `within` anyway (a
+    /// more urgent caller arrived, or the in-flight cap held) gives up then.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused::TooLong`] with about how long the turn would take, or
+    /// [`Refused::OverCapacity`] when the bucket holds no tokens at all.
+    pub async fn acquire_slot_within(
+        &self,
+        priority: RequestPriority,
+        within: Duration,
+    ) -> Result<InFlight<'_>, Refused> {
+        self.wait_for(1, priority, true, Some(within)).await?;
         Ok(InFlight { limiter: self })
     }
 
@@ -344,16 +409,17 @@ impl RateLimiter {
         tokens: u32,
         priority: RequestPriority,
         slot: bool,
-    ) -> Result<(), OverCapacity> {
+        within: Option<Duration>,
+    ) -> Result<(), Refused> {
         let (grant, notified) = oneshot::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
         {
             let mut state = self.lock();
             if state.policy.paced() && tokens > state.policy.burst {
-                return Err(OverCapacity {
+                return Err(Refused::OverCapacity(OverCapacity {
                     tokens,
                     burst: state.policy.burst,
-                });
+                }));
             }
             state.refresh();
             if state.waiters.is_empty()
@@ -363,6 +429,12 @@ impl RateLimiter {
             {
                 state.take(tokens, slot);
                 return Ok(());
+            }
+            if let Some(within) = within {
+                let wait = state.turn_wait(tokens, priority);
+                if wait > within {
+                    return Err(Refused::TooLong { wait });
+                }
             }
             let sequence = state.sequence;
             state.sequence += 1;
@@ -376,6 +448,7 @@ impl RateLimiter {
             });
             state.grant_locked();
         }
+        let deadline = within.map(|within| Instant::now() + within);
         let mut pending = Pending {
             limiter: self,
             flag: cancelled,
@@ -397,6 +470,27 @@ impl RateLimiter {
                 pending.notified = None;
                 return Ok(());
             }
+            let wait = match deadline {
+                Some(deadline) if Instant::now() >= deadline => {
+                    // Grants are sent under the lock, so with it held a
+                    // grant either arrived already, and is used, or never
+                    // comes: no token is lost.
+                    let state = self.lock();
+                    pending.flag.store(true, AtomicOrdering::Release);
+                    if notified.try_recv().is_ok() {
+                        drop(state);
+                        pending.notified = None;
+                        return Ok(());
+                    }
+                    let wait = state.turn_wait(tokens, priority);
+                    drop(state);
+                    return Err(Refused::TooLong {
+                        wait: wait.max(IN_FLIGHT_RECHECK),
+                    });
+                }
+                Some(deadline) => wait.min(deadline - Instant::now()),
+                None => wait,
+            };
             tokio::select! {
                 biased;
                 _ = notified => {

@@ -75,6 +75,7 @@ struct Inner {
 #[derive(Default)]
 struct Flights {
     artist: Singleflight<artist::ArtistCore, CatalogError>,
+    artist_background: Singleflight<artist::ArtistCore, CatalogError>,
     release_groups: Singleflight<artist::ReleaseGroupList, CatalogError>,
     group: Singleflight<album::GroupCore, CatalogError>,
     release: Singleflight<album::ReleaseCore, CatalogError>,

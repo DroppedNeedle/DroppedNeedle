@@ -231,15 +231,25 @@ impl Catalog {
         format!("mb:artist_rgs:{namespace}:{mbid}")
     }
 
-    /// The cached MusicBrainz artist detail, `None` for a definitive miss.
-    pub(super) async fn artist_detail(&self, mbid: &str) -> Result<ArtistCore, CatalogError> {
+    /// The cached MusicBrainz artist detail at `priority`, `None` for a
+    /// definitive miss. A page joins only a flight a page started, so it
+    /// never waits behind an image resolve or a warm-up queued at a lower
+    /// priority.
+    pub(super) async fn artist_detail(
+        &self,
+        mbid: &str,
+        priority: RequestPriority,
+    ) -> Result<ArtistCore, CatalogError> {
         let key = self.artist_detail_key(mbid);
+        let flights = if priority == RequestPriority::UserInitiated {
+            &self.inner.flights.artist
+        } else {
+            &self.inner.flights.artist_background
+        };
         let catalog = self.clone();
         let mbid = mbid.to_owned();
-        self.cached(&self.inner.flights.artist, key, move || async move {
-            let (client, _) = catalog
-                .upstream()
-                .musicbrainz(RequestPriority::UserInitiated);
+        self.cached(flights, key, move || async move {
+            let (client, _) = catalog.upstream().musicbrainz(priority);
             let found = client
                 .lookup_artist(
                     &mbid,
@@ -264,7 +274,8 @@ impl Catalog {
     /// A dead MusicBrainz falls back to the library's own rows.
     pub async fn artist(&self, user_id: &str, raw_mbid: &str) -> Result<ArtistInfo, CatalogError> {
         let mbid = checked_mbid(raw_mbid, "artist")?;
-        let (result, context) = scoped(self.build_artist(&mbid)).await;
+        let (result, context) =
+            scoped(self.build_artist(&mbid, RequestPriority::UserInitiated)).await;
         let mut info = result?;
         info.service_status = mapping::service_status(&context);
         if let Some(follow) = self.follows().status(user_id, &info.musicbrainz_id).await {
@@ -275,8 +286,15 @@ impl Catalog {
         Ok(info)
     }
 
-    pub(super) async fn build_artist(&self, mbid: &str) -> Result<ArtistInfo, CatalogError> {
-        let (detail, list) = tokio::join!(self.artist_detail(mbid), self.release_groups(mbid));
+    pub(super) async fn build_artist(
+        &self,
+        mbid: &str,
+        priority: RequestPriority,
+    ) -> Result<ArtistInfo, CatalogError> {
+        let (detail, list) = tokio::join!(
+            self.artist_detail(mbid, priority),
+            self.release_groups(mbid)
+        );
         let detail = match detail {
             Ok(Some(detail)) => detail,
             Ok(None) => return Err(CatalogError::NotFound),
@@ -468,7 +486,10 @@ impl Catalog {
         raw_mbid: &str,
     ) -> Result<ArtistExtendedInfo, CatalogError> {
         let mbid = checked_mbid(raw_mbid, "artist")?;
-        let detail = match self.artist_detail(&mbid).await {
+        let detail = match self
+            .artist_detail(&mbid, RequestPriority::UserInitiated)
+            .await
+        {
             Ok(Some(detail)) => detail,
             Ok(None) => return Ok(ArtistExtendedInfo::default()),
             Err(error) => {
@@ -906,7 +927,10 @@ impl Catalog {
         fallback_name: &str,
     ) -> Result<ArtistPurchaseOptionsResponse, CatalogError> {
         let mbid = checked_mbid(raw_mbid, "artist")?;
-        let detail = match self.artist_detail(&mbid).await {
+        let detail = match self
+            .artist_detail(&mbid, RequestPriority::UserInitiated)
+            .await
+        {
             Ok(detail) => detail,
             Err(error) => {
                 tracing::warn!(artist = %mbid, %error, "artist store links unavailable");

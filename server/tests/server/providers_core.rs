@@ -358,6 +358,86 @@ async fn a_run_of_failures_rests_the_provider() {
     assert!(started.elapsed() >= Duration::from_secs(29));
 }
 
+/// A page never waits past its budget for a request. On a slow row
+/// whose bucket is spent, a person's call that would wait longer than
+/// 2.5 s, counting the bucket and the people queued ahead of it, is
+/// refused at once with the wait and sends nothing; one whose turn is
+/// close waits for it. Background work queued on the same row still waits
+/// and is sent, and so does an image fetch, whose caller bounds the wait.
+#[tokio::test(start_paused = true)]
+async fn a_page_never_waits_past_its_budget_for_a_request() {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(Method::Get, &url("item"), answer(200, &[], "{}"));
+    let row = |per_second| {
+        Executor::new(
+            &SPEC,
+            Arc::new(RateLimiter::new(RatePolicy::new(per_second, 1))),
+            wire.clone(),
+            Arc::new(ServiceHealth::new()),
+            Arc::new(SystemClock),
+        )
+    };
+    let spawn = |executor: &Executor, priority| {
+        let executor = executor.clone();
+        tokio::spawn(async move { executor.send(get("item"), priority).await })
+    };
+
+    // One request every five seconds, the bucket spent, a sync queued.
+    let slow = row(0.2);
+    slow.send(get("item"), RequestPriority::BackgroundSync)
+        .await
+        .expect("the burst");
+    let background = spawn(&slow, RequestPriority::BackgroundSync);
+    tokio::task::yield_now().await;
+    let started = Instant::now();
+    let declined = slow
+        .send(get("item"), RequestPriority::UserInitiated)
+        .await
+        .expect_err("a page does not wait five seconds");
+    assert_eq!(started.elapsed(), Duration::ZERO, "refused at once");
+    let ProviderError::RateLimited {
+        retry_after: Some(wait),
+        ..
+    } = declined
+    else {
+        panic!("a rate-limit refusal with its wait: {declined:?}");
+    };
+    assert!(wait > Duration::from_secs(4) && wait <= Duration::from_secs(5));
+    assert_eq!(wire.sent().len(), 1, "nothing sent for the page");
+    background
+        .await
+        .unwrap()
+        .expect("background work waits its turn");
+    assert!(started.elapsed() >= Duration::from_secs(4));
+    assert_eq!(wire.sent().len(), 2);
+
+    // An image fetch keeps fetching: its caller bounds the person's wait.
+    let started = Instant::now();
+    slow.send(get("item"), RequestPriority::ImageFetch)
+        .await
+        .expect("an image fetch waits its turn");
+    assert!(started.elapsed() >= Duration::from_secs(4));
+    assert_eq!(wire.sent().len(), 3);
+
+    // One a second: two people queued ahead put the third past the budget.
+    let paced = row(1.0);
+    paced
+        .send(get("item"), RequestPriority::UserInitiated)
+        .await
+        .expect("the burst");
+    let first = spawn(&paced, RequestPriority::UserInitiated);
+    let second = spawn(&paced, RequestPriority::UserInitiated);
+    tokio::task::yield_now().await;
+    let third = paced
+        .send(get("item"), RequestPriority::UserInitiated)
+        .await
+        .expect_err("third in line is three seconds away");
+    assert!(matches!(third, ProviderError::RateLimited { .. }));
+    first.await.unwrap().expect("one second away");
+    second.await.unwrap().expect("two seconds away");
+    assert_eq!(wire.sent().len(), 6);
+}
+
 fn providers_over(wire: &Arc<ScriptedWire>) -> Providers {
     Providers::over_wire(
         wire.clone(),

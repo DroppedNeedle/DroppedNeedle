@@ -29,10 +29,13 @@ pub use reqwest::Url;
 use crate::degradation::{IntegrationStatus, record_current};
 use crate::error::{PayloadKind, ProviderError, TransportKind, retry_delay_from_headers};
 use crate::health::{self, ServiceHealth};
-use crate::limiter::{RateLimiter, RequestPriority};
+use crate::limiter::{RateLimiter, Refused, RequestPriority};
 
-/// Longest cooldown a user-facing call waits out. Past it the call fails
-/// at once and the page answers from what it has.
+/// Longest a page's call waits for each request it sends, a cooldown and
+/// the queue ahead of it included; the bound is per request, so a retry
+/// gets its own. Past it the call fails at once and the page answers from
+/// what it has. An image fetch is turned down only by a cooldown longer
+/// than this.
 pub const USER_COOLDOWN_WAIT: Duration = Duration::from_millis(2500);
 
 /// How long a provider rests after a run of failed calls.
@@ -587,35 +590,51 @@ impl Executor {
     /// # Errors
     ///
     /// The typed failure of the last attempt, or
-    /// [`ProviderError::RateLimited`] at once when a user-facing call
-    /// meets a long cooldown.
+    /// [`ProviderError::RateLimited`] at once, with the wait, when a page's
+    /// call would not get a request within [`USER_COOLDOWN_WAIT`], or an
+    /// image fetch meets a longer cooldown.
     pub async fn send(
         &self,
         request: Request,
         priority: RequestPriority,
     ) -> Result<Reply, ProviderError> {
+        // An image fetch is not bounded here: its callers bound the
+        // person's wait themselves and keep fetching, so it is turned down
+        // only during a long cooldown.
         let cooling = self.limiter.cooling_for();
-        if priority.is_user_facing() && cooling > USER_COOLDOWN_WAIT {
-            let declined = ProviderError::RateLimited {
-                provider: self.spec.source,
-                retry_after: Some(cooling),
-            };
-            tracing::debug!(provider = self.spec.source, error = %declined, "provider call declined");
-            record_current(self.spec.source, IntegrationStatus::Error, false);
-            return Err(declined);
+        if priority == RequestPriority::ImageFetch && cooling > USER_COOLDOWN_WAIT {
+            return Err(self.decline(cooling));
         }
         let budget = Budget::for_priority(priority);
         let mut first_sent: Option<Instant> = None;
+        let mut last_error: Option<ProviderError> = None;
         let mut attempt = 1;
         loop {
-            let slot =
-                self.limiter
+            // A page's request never queues longer than this.
+            let within = (priority == RequestPriority::UserInitiated).then_some(USER_COOLDOWN_WAIT);
+            let slot = match within {
+                Some(within) => self.limiter.acquire_slot_within(priority, within).await,
+                None => self
+                    .limiter
                     .acquire_slot(priority)
                     .await
-                    .map_err(|_| ProviderError::Invalid {
+                    .map_err(Refused::from),
+            };
+            let slot = match slot {
+                Ok(slot) => slot,
+                Err(Refused::TooLong { wait }) => {
+                    return Err(match last_error {
+                        Some(error) => self.finish(error),
+                        None => self.decline(wait),
+                    });
+                }
+                Err(Refused::OverCapacity(_)) => {
+                    return Err(ProviderError::Invalid {
                         provider: self.spec.source,
                         reason: "the rate row grants no requests",
-                    })?;
+                    });
+                }
+            };
             let sent = *first_sent.get_or_insert_with(Instant::now);
             let outcome = self.attempt(&request).await;
             // The slot and the token are never held through a sleep.
@@ -646,9 +665,22 @@ impl Executor {
             let Some(wait) = wait else {
                 return Err(self.finish(error));
             };
+            last_error = Some(error);
             tokio::time::sleep(wait).await;
             attempt += 1;
         }
+    }
+
+    /// Turn down a person's call whose turn is `wait` away, without
+    /// sending. A local decline is quiet: it is no failure of the provider.
+    fn decline(&self, wait: Duration) -> ProviderError {
+        let declined = ProviderError::RateLimited {
+            provider: self.spec.source,
+            retry_after: Some(wait),
+        };
+        tracing::debug!(provider = self.spec.source, error = %declined, "provider call declined");
+        record_current(self.spec.source, IntegrationStatus::Error, false);
+        declined
     }
 
     /// One attempt, redirects included, inside the spec's deadline.
