@@ -114,6 +114,7 @@ fn worker_over(journal: &Arc<Journal>) -> Arc<DownloadWorker> {
                 ..WorkerConfig::default()
             },
             droppedneedle_kernel::events::EventHub::new(),
+            Default::default(),
         )
         .with_landing(landing),
     )
@@ -335,6 +336,7 @@ async fn failed_retry_insert_retries_next_pass() {
             ..WorkerConfig::default()
         },
         droppedneedle_kernel::events::EventHub::new(),
+        Default::default(),
     ));
 
     worker.run_once(1).await;

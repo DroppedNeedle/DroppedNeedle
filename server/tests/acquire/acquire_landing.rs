@@ -267,6 +267,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
                     ..WorkerConfig::default()
                 },
                 droppedneedle_kernel::events::EventHub::new(),
+                Default::default(),
             )
             .with_landing(acquire.landing.clone())
             .with_settled(settled_hook(acquire.flows.clone())),
@@ -500,6 +501,7 @@ async fn held_files_import_as_upgrades_or_discard() {
                     ..WorkerConfig::default()
                 },
                 droppedneedle_kernel::events::EventHub::new(),
+                Default::default(),
             )
             .with_landing(acquire.landing.clone()),
         )
@@ -1065,6 +1067,7 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
                 ..WorkerConfig::default()
             },
             droppedneedle_kernel::events::EventHub::new(),
+            Default::default(),
         )
         .with_landing(acquire.landing.clone()),
     );
@@ -1585,6 +1588,7 @@ impl JoinRig {
                     ..WorkerConfig::default()
                 },
                 droppedneedle_kernel::events::EventHub::new(),
+                Default::default(),
             )
             .with_landing(self.acquire.landing.clone()),
         )

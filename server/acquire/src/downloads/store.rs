@@ -864,6 +864,21 @@ impl<'conn> DownloadStore<'conn> {
         self.get_attempt(attempt_id)
     }
 
+    /// Downloads whose source files cleanup could not remove: tasks with a
+    /// row needing attention or a retried cleanup that failed three times.
+    /// Fewer failures are a blip the next retry usually clears.
+    pub fn cleanup_warning_count(&self) -> Result<u64, StoreError> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(DISTINCT task_id) FROM download_attempts \
+             WHERE state = 'needs_attention' \
+                OR (state IN ('cleanup_pending', 'workspace_removed') \
+                    AND cleanup_failures >= 3)",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(u64::try_from(count).unwrap_or(0))
+    }
+
     /// True when any non-terminal journal row still references this job.
     /// The orphan reconciler treats "any row" as owned; only a clean
     /// lookup with zero rows lets a folder be considered debris.

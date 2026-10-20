@@ -127,6 +127,7 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
             ..WorkerConfig::default()
         },
         events.clone(),
+        Default::default(),
     );
     if review {
         worker = worker.with_targets(targets.clone());

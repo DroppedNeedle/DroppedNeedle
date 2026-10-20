@@ -737,6 +737,7 @@ impl AcquireSetup {
         ));
         let ready = worker_settings.clone();
         let collections = ports.collections;
+        let health = ports.providers.health.clone();
         let core = core(
             &stores,
             ids.clone(),
@@ -860,11 +861,16 @@ impl AcquireSetup {
 
         // Worker over the live sources and tuning.
         let worker = Arc::new(
-            DownloadWorker::new(core.journal.clone(), worker_settings, events.clone())
-                .with_plugin_events(ports.plugins)
-                .with_targets(clients.targets().clone())
-                .with_landing(landing.clone())
-                .with_settled(settled_hook(core.flows.clone())),
+            DownloadWorker::new(
+                core.journal.clone(),
+                worker_settings,
+                events.clone(),
+                health,
+            )
+            .with_plugin_events(ports.plugins)
+            .with_targets(clients.targets().clone())
+            .with_landing(landing.clone())
+            .with_settled(settled_hook(core.flows.clone())),
         );
         let search_jobs = Arc::new(SearchJobs::new(
             JobStore::new(db.clone()),
@@ -1051,6 +1057,7 @@ impl AcquireSetup {
                     ..WorkerConfig::default()
                 },
                 events.clone(),
+                Default::default(),
             )
             .with_landing(landing.clone())
             .with_settled(settled_hook(core.flows.clone())),

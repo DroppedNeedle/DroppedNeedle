@@ -12,7 +12,7 @@
 //!   verdicts complete, fail over, or requeue their tasks;
 //! - retry: terminal tasks whose backoff elapsed spawn successors;
 //! - cleanup: claimed journal rows abort and discard client records and
-//!   settle;
+//!   settle; downloads whose cleanup keeps failing show on service health;
 //! - orphans (hourly): complete-dir debris with no owner is removed.
 //!
 //! Sources and tuning are resolved at the start of every pass, so saved
@@ -23,7 +23,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::dispatch::Journal;
 use super::downloads::manifest::{DownloadManifest, ExpectedFile, ManifestCodec};
@@ -51,6 +51,7 @@ use super::target::reasons::TrackReason;
 use droppedneedle_kernel::jobs::{
     AlreadyRunning, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
 };
+use droppedneedle_providers::health::ServiceHealth;
 
 mod controls;
 mod landings;
@@ -70,6 +71,13 @@ pub const WORKER_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Orphan sweep runs every Nth pass (hourly at the 30s cadence).
 const ORPHAN_EVERY_NTH_PASS: u64 = 120;
+
+/// Service health key of the cleanup warning.
+const CLEANUP_HEALTH_SERVICE: &str = "acquisition_cleanup";
+
+/// How long the cleanup warning outlives the pass that reported it, so it
+/// lapses once the worker stops.
+const CLEANUP_HEALTH_TTL: Duration = Duration::from_secs(90);
 
 /// Enqueue backoff after a pass where no source could serve a task.
 const ENQUEUE_BACKOFF_SECONDS: f64 = 15.0 * 60.0;
@@ -244,13 +252,24 @@ pub enum Source {
 pub struct FixedSource {
     mount: PathBuf,
     paths: Vec<PathBuf>,
+    discard_fails: std::sync::atomic::AtomicBool,
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl FixedSource {
     /// Downloads land at `paths`, inside the downloads folder `mount`.
     pub fn new(mount: PathBuf, paths: Vec<PathBuf>) -> Self {
-        Self { mount, paths }
+        Self {
+            mount,
+            paths,
+            discard_fails: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Make every later discard fail (or succeed again).
+    pub fn fail_discards(&self, fail: bool) {
+        self.discard_fails
+            .store(fail, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn names(&self) -> Vec<String> {
@@ -343,7 +362,16 @@ impl Source {
             Self::Sab(source) => source.discard(handle).await,
             Self::Plugin(source) => source.discard(handle).await,
             #[cfg(any(test, feature = "test-support"))]
-            Self::Fixed(_) => Ok(true),
+            Self::Fixed(source) => {
+                if source
+                    .discard_fails
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    Err(SourceError::LocalFault("discard refused".to_owned()))
+                } else {
+                    Ok(true)
+                }
+            }
         }
     }
 
@@ -586,6 +614,8 @@ pub struct DownloadWorker {
     targets: Option<Arc<Targets>>,
     /// Looks running off the pass, and tasks already looked at.
     reviews: review::Reviews,
+    /// Where the cleanup warning is shown.
+    health: Arc<ServiceHealth>,
 }
 
 /// Called after a landing settles a task, so its requests and wanted
@@ -595,19 +625,22 @@ pub type SettledHook =
 
 impl DownloadWorker {
     /// Wire the worker over the shared journal and the saved settings,
-    /// sending live progress to `events`.
+    /// sending live progress to `events` and the cleanup warning to
+    /// `health`.
     pub fn new(
         journal: Arc<Journal>,
         settings: Arc<super::wiring::WorkerSettings>,
         events: droppedneedle_kernel::events::EventHub,
+        health: Arc<ServiceHealth>,
     ) -> Self {
-        Self::over(journal, Inputs::Live(settings), events)
+        Self::over(journal, Inputs::Live(settings), events, health)
     }
 
     fn over(
         journal: Arc<Journal>,
         inputs: Inputs,
         events: droppedneedle_kernel::events::EventHub,
+        health: Arc<ServiceHealth>,
     ) -> Self {
         let ownership = JournalOwnership::new(journal.clone(), None);
         Self {
@@ -627,6 +660,7 @@ impl DownloadWorker {
             wake: tokio::sync::watch::Sender::new(0),
             targets: None,
             reviews: review::Reviews::default(),
+            health,
         }
     }
 
@@ -713,6 +747,7 @@ impl DownloadWorker {
         sources: Vec<Source>,
         config: WorkerConfig,
         events: droppedneedle_kernel::events::EventHub,
+        health: Arc<ServiceHealth>,
     ) -> Self {
         Self::over(
             journal,
@@ -721,6 +756,7 @@ impl DownloadWorker {
                 config: Box::new(config),
             },
             events,
+            health,
         )
     }
 
@@ -1578,6 +1614,36 @@ impl DownloadWorker {
         for attempt in claimed {
             self.cleanup_one(pass, &attempt).await;
         }
+        self.report_cleanup_health().await;
+    }
+
+    /// Show downloads whose source files keep failing to clear on service
+    /// health, or clear the warning once none are left. A read failure
+    /// leaves the entry as it is.
+    async fn report_cleanup_health(&self) {
+        let Some(count) = self
+            .step("downloads.cleanup_count", |store| {
+                store.cleanup_warning_count()
+            })
+            .await
+        else {
+            return;
+        };
+        if count == 0 {
+            self.health.heal(CLEANUP_HEALTH_SERVICE);
+            return;
+        }
+        let plural = if count == 1 { "" } else { "s" };
+        self.health.report(
+            CLEANUP_HEALTH_SERVICE,
+            "source files",
+            format!(
+                "Temporary files couldn't be removed for {count} download{plural}. \
+                 Your library is safe. Retrying automatically."
+            ),
+            CLEANUP_HEALTH_TTL,
+            Instant::now(),
+        );
     }
 
     /// Settle one claimed cleanup row.

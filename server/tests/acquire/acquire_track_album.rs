@@ -203,6 +203,7 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
             ..WorkerConfig::default()
         },
         droppedneedle_kernel::events::EventHub::new(),
+        Default::default(),
     ));
     worker.run_once(1).await;
 

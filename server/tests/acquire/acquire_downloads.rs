@@ -9,7 +9,13 @@
 use droppedneedle_acquire::downloads;
 
 use std::path::PathBuf;
-use std::time::SystemTime;
+use std::sync::Arc;
+use std::time::{Instant, SystemTime};
+
+use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::dispatch::Journal;
+use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, Source, WorkerConfig};
+use droppedneedle_providers::health::ServiceHealth;
 
 use downloads::quarantine::{QuarantineReason, is_local_fault};
 use downloads::recovery::{
@@ -895,4 +901,77 @@ fn reimport_starts_tasks_whose_files_remain() {
     );
     assert!(!store.begin_reimport("live", now).unwrap());
     assert!(!store.begin_reimport("missing", now).unwrap());
+}
+
+// A download whose temporary files keep failing to clear shows on service
+// health with v2's warning once its retried cleanup has failed three
+// times, and the warning clears as soon as a cleanup succeeds.
+#[tokio::test]
+async fn failing_cleanup_shows_on_service_health_until_it_clears() {
+    let db = AcquireDb::scratch().unwrap();
+    db.add_user("u1", "brief", "user").await.unwrap();
+    let journal = Arc::new(Journal::new(db.clone()));
+    journal
+        .run("test.seed", |store| {
+            store.insert_task(&new_task("t1"), 1_000.0)?;
+            store.transition_task("t1", TaskStatus::Cancelled, 1_000.0, None)?;
+            store.insert_attempt(
+                "t1-a0",
+                "t1",
+                "plugin:fixed",
+                0,
+                "fixed-t1-0",
+                "{}",
+                AttemptState::CleanupPending,
+                1_000.0,
+            )
+        })
+        .await
+        .unwrap();
+    let staging = db.path().parent().unwrap().join("staging");
+    let source = Arc::new(FixedSource::new(staging.join("downloads"), Vec::new()));
+    source.fail_discards(true);
+    let health = Arc::new(ServiceHealth::new());
+    let worker = Arc::new(DownloadWorker::fixed(
+        journal,
+        vec![Source::Fixed(source.clone())],
+        WorkerConfig {
+            staging_root: staging,
+            ..WorkerConfig::default()
+        },
+        droppedneedle_kernel::events::EventHub::new(),
+        health.clone(),
+    ));
+    // Each failed cleanup backs off; make the row due again without waiting.
+    let due_now = || {
+        db.write("test.due", |tx| {
+            tx.execute("UPDATE download_attempts SET next_retry_at = 0", [])?;
+            Ok(())
+        })
+    };
+
+    for pass in 1..=2 {
+        due_now().await.unwrap();
+        worker.run_once(pass).await;
+        assert!(
+            health.current(Instant::now()).is_empty(),
+            "failure {pass} is a blip"
+        );
+    }
+    due_now().await.unwrap();
+    worker.run_once(3).await;
+    let live = health.current(Instant::now());
+    assert_eq!(live.len(), 1, "{live:?}");
+    assert_eq!(live[0].service, "acquisition_cleanup");
+    assert_eq!(live[0].capability, "source files");
+    assert_eq!(
+        live[0].message,
+        "Temporary files couldn't be removed for 1 download. \
+         Your library is safe. Retrying automatically."
+    );
+
+    source.fail_discards(false);
+    due_now().await.unwrap();
+    worker.run_once(4).await;
+    assert!(health.current(Instant::now()).is_empty());
 }

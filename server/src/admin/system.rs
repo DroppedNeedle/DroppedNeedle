@@ -39,7 +39,7 @@ impl From<DegradedService> for ServiceHealthItem {
             service: entry.service.to_owned(),
             capability: entry.capability.to_owned(),
             severity: "degraded".to_owned(),
-            message: entry.message.to_owned(),
+            message: entry.message,
             fallback: None,
             degraded_seconds: entry.degraded_for.as_secs(),
         }

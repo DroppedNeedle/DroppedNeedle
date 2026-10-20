@@ -9,6 +9,10 @@
 //! the service counts, each answered request clears the count, and a run
 //! of failures inside a short window marks the service. One blip never
 //! flags a service; a sustained outage does.
+//!
+//! A loop that counts its own trouble (the download cleanup) reports its
+//! entry directly with [`ServiceHealth::report`], each pass, and heals it
+//! once the count is back to zero.
 
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -97,14 +101,15 @@ pub struct DegradedService {
     /// What is affected.
     pub capability: &'static str,
     /// One user-facing line.
-    pub message: &'static str,
+    pub message: String,
     /// How long it has been degraded.
     pub degraded_for: Duration,
 }
 
 #[derive(Debug)]
 struct Entry {
-    watched: &'static Watched,
+    capability: &'static str,
+    message: String,
     since: Instant,
     until: Instant,
 }
@@ -113,12 +118,6 @@ struct Entry {
 struct State {
     degraded: BTreeMap<&'static str, Entry>,
     failures: HashMap<&'static str, VecDeque<Instant>>,
-}
-
-impl std::fmt::Debug for Watched {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.source)
-    }
 }
 
 /// The registry. One per process, held by the shared provider deps.
@@ -153,19 +152,33 @@ impl ServiceHealth {
                 .front()
                 .is_some_and(|first| now.saturating_duration_since(*first) <= FAILURE_WINDOW);
         if sustained {
-            let since = state
-                .degraded
-                .get(watched.source)
-                .map_or(now, |entry| entry.since);
-            state.degraded.insert(
+            state.mark(
                 watched.source,
-                Entry {
-                    watched,
-                    since,
-                    until: now + ENTRY_TTL,
-                },
+                watched.capability,
+                watched.message.to_owned(),
+                now + ENTRY_TTL,
+                now,
             );
         }
+    }
+
+    /// Mark `service` degraded with a message built by the caller, until
+    /// `ttl` from `now`. A caller that stops reporting lets it lapse.
+    pub fn report(
+        &self,
+        service: &'static str,
+        capability: &'static str,
+        message: String,
+        ttl: Duration,
+        now: Instant,
+    ) {
+        self.lock()
+            .mark(service, capability, message, now + ttl, now);
+    }
+
+    /// Clear a reported entry now.
+    pub fn heal(&self, service: &str) {
+        self.lock().degraded.remove(service);
     }
 
     /// `source` answered: its run of failures starts over. A live entry
@@ -186,11 +199,11 @@ impl ServiceHealth {
         state.degraded.retain(|_, entry| entry.until >= now);
         state
             .degraded
-            .values()
-            .map(|entry| DegradedService {
-                service: entry.watched.source,
-                capability: entry.watched.capability,
-                message: entry.watched.message,
+            .iter()
+            .map(|(service, entry)| DegradedService {
+                service,
+                capability: entry.capability,
+                message: entry.message.clone(),
                 degraded_for: now.saturating_duration_since(entry.since),
             })
             .collect()
@@ -200,6 +213,29 @@ impl ServiceHealth {
         self.state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl State {
+    /// Insert or refresh an entry, keeping when it first went degraded.
+    fn mark(
+        &mut self,
+        service: &'static str,
+        capability: &'static str,
+        message: String,
+        until: Instant,
+        now: Instant,
+    ) {
+        let since = self.degraded.get(service).map_or(now, |entry| entry.since);
+        self.degraded.insert(
+            service,
+            Entry {
+                capability,
+                message,
+                since,
+                until,
+            },
+        );
     }
 }
 
