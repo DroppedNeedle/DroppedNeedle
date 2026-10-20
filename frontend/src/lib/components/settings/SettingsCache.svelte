@@ -68,10 +68,6 @@
 		}
 	}
 
-	function clearSource(source: string) {
-		return clear({ scope: 'source', source }, `Clear the cached ${source} responses?`);
-	}
-
 	async function refreshImages() {
 		try {
 			await precacheMutation.mutateAsync();
@@ -144,16 +140,6 @@
 		<div class="space-y-4">
 			<h3 class="text-xl font-semibold">Clear cache</h3>
 			<div class="flex flex-wrap gap-2">
-				{#each stats.sources ?? [] as source (source)}
-					<Button
-						variant="outline"
-						size="sm"
-						onclick={() => clearSource(source)}
-						disabled={clearMutation.isPending}
-					>
-						Clear {source}
-					</Button>
-				{/each}
 				<Button
 					variant="outline"
 					size="sm"

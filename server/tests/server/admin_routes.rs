@@ -13,7 +13,7 @@ use axum::http::{Request, StatusCode};
 use droppedneedle::admin::{AdminDb, AdminSetup};
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::db::{DbRuntime, Lane};
-use droppedneedle_providers::ProviderCache as _;
+use droppedneedle_providers::{CacheKey, Source};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -28,7 +28,7 @@ struct Rig {
     rig: AuthRig,
     admin_id: String,
     user_id: String,
-    cache: Arc<droppedneedle_providers::InMemoryProviderCache>,
+    cache: droppedneedle_providers::ProviderCacheStore,
     quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
     jobs: droppedneedle::bootstrap::jobs::JobsSetup,
     /// The count the library bumps when a scan ends.
@@ -62,6 +62,7 @@ impl Rig {
         let providers = Arc::new(droppedneedle_providers::Providers::build(
             &platform,
             crate::common::closed_outbound().providers(),
+            droppedneedle_kernel::db::cache::CacheDb::scratch(),
         ));
         let cache = providers.cache.clone();
         let scans = droppedneedle::bootstrap::jobs::ScansEnded::default();
@@ -241,28 +242,49 @@ async fn queue_stats_reports_a_failed_checkpoint_as_a_code() {
 }
 
 #[tokio::test]
-async fn cache_clear_all_and_per_source() {
+async fn cache_clear_provider_data_then_all() {
     let rig = Rig::open("cache-clear").await;
-    rig.cache
-        .set_bytes("mb:artist:search:x", vec![1], Duration::from_secs(60))
-        .await;
-    rig.cache
-        .set_bytes("mb:rg:detail:y", vec![2], Duration::from_secs(60))
-        .await;
-    rig.cache
-        .set_bytes("lfm_user:recents", vec![3], Duration::from_secs(60))
-        .await;
+    let minute = Duration::from_secs(60);
+    rig.cache.set_bytes(
+        &CacheKey::new(Source::MusicBrainz, &["ns", "artist", "x"]),
+        vec![1],
+        minute,
+    );
+    rig.cache.set_bytes(
+        &CacheKey::new(Source::LastFm, &["page_recent", "molly", "10"]).personal(),
+        vec![2],
+        minute,
+    );
+    // Puts are queued: a waited delete commits after them.
+    rig.cache.forget(&[]).await;
+    let (status, body) = call(rig.admin_app(), "GET", "/api/v3/admin/cache/stats", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["entries"], Value::from(2), "{body}");
+    assert_eq!(body["provider_data_on"], Value::from(true));
 
     let (status, body) = call(
+        rig.admin_app(),
+        "POST",
+        "/api/v3/admin/cache/clear",
+        Some(json!({"scope": "provider_data"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["cleared_entries"], Value::from(2));
+    assert_eq!(body["remaining_entries"], Value::from(0));
+
+    let (status, _) = call(
         rig.admin_app(),
         "POST",
         "/api/v3/admin/cache/clear",
         Some(json!({"scope": "source", "source": "musicbrainz"})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["cleared_entries"], Value::from(2));
-    assert_eq!(body["remaining_entries"], Value::from(1));
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "per-source clears are gone"
+    );
 
     let (status, body) = call(
         rig.admin_app(),
@@ -272,8 +294,7 @@ async fn cache_clear_all_and_per_source() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["cleared_entries"], Value::from(1));
-    assert_eq!(body["remaining_entries"], Value::from(0));
+    assert_eq!(body["cleared_entries"], Value::from(0));
 }
 
 /// Phases that never finish, holding a run open for the 409 brief.

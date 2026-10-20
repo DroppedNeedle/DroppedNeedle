@@ -167,7 +167,6 @@ impl SettingsSetup {
         use crate::settings::section_prefs::{MemorySectionPrefsStore, StaticLinkStatus};
         use droppedneedle_kernel::jobs::events_kick::NoopKick;
         use droppedneedle_kernel::runtime_config::Crypto;
-        use droppedneedle_providers::InMemoryProviderCache;
 
         /// Scratch-dir sequence so parallel test states never share a store.
         static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -182,10 +181,7 @@ impl SettingsSetup {
         // No runner: a save answers at once and its effects never run.
         let (effects, _) = Effects::new(
             store.clone(),
-            Arc::new(LiveSaveEffects::new(
-                Arc::new(InMemoryProviderCache::new()),
-                Arc::new(NoopKick),
-            )),
+            Arc::new(LiveSaveEffects::new(Arc::new(NoopKick))),
         );
         let management = Arc::new(LibraryManagementService::new(store.clone()));
         let mut setup = Self::assemble(

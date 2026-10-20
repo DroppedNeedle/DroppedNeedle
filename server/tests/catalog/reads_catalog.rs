@@ -1122,6 +1122,9 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
             ..ProviderEndpoints::closed()
         },
     ));
+    // Puts are queued: a waited delete commits after every put before it,
+    // so the second reads see whatever the first ones stored.
+    let cache = providers.cache.clone();
     let (pool, _dir) = crate::common::migrated_pool("reads-catalog-passing").await;
     let rig = AuthRig::new("reads-catalog-passing").await;
     let catalog = Catalog::new(
@@ -1147,6 +1150,7 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
     };
     let first = songs().await.unwrap();
     assert_eq!(first.songs[0].release_group_mbid, None, "the lookup failed");
+    cache.forget(&[]).await;
     let second = songs().await.unwrap();
     assert_eq!(
         second.songs[0].release_group_mbid.as_deref(),
@@ -1165,6 +1169,7 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
         .await
         .unwrap();
     assert_eq!(ids(&first.albums), [DUMMY_GROUP], "one artist failed");
+    cache.forget(&[]).await;
     let second = catalog
         .similar_albums(USER, OK_COMPUTER, ARTIST, 2)
         .await
@@ -1174,4 +1179,61 @@ async fn a_passing_failure_is_not_cached_as_a_short_section() {
         [BORN_TO_DIE, DUMMY_GROUP],
         "both artists once ListenBrainz answers"
     );
+}
+
+/// Provider answers outlive a restart: an album header read once from
+/// MusicBrainz is answered from the cache file after the app restarts with
+/// MusicBrainz gone.
+#[tokio::test]
+async fn provider_answers_survive_a_restart() {
+    const JSON: [(&str, &str); 1] = [("content-type", "application/json")];
+    let hits = Arc::new(Mutex::new(0_usize));
+    let counter = hits.clone();
+    let group_path = format!("/release-group/{OK_COMPUTER}");
+    let stub = axum::Router::new().fallback(move |uri: Uri| {
+        let counter = counter.clone();
+        let found = uri.path().ends_with(&group_path);
+        async move {
+            if found {
+                *counter.lock().unwrap() += 1;
+                (StatusCode::OK, JSON, fixture("mb_release_group.json"))
+            } else {
+                (StatusCode::NOT_FOUND, JSON, "{}".to_owned())
+            }
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, stub).await.unwrap();
+    });
+    let app = TestApp::start_with(
+        "provider-cache-restart",
+        crate::common::outbound_at(&origin),
+    )
+    .await;
+    let admin = app.login_admin().await;
+    let auth = [("authorization", admin.as_str())];
+    let basic = format!("/api/v3/albums/{OK_COMPUTER}/basic");
+
+    let (status, body) = app.call("GET", &basic, &auth, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["title"], "OK Computer");
+    assert_eq!(*hits.lock().unwrap(), 1);
+    app.until("the answer is in the cache file", || async {
+        let (_, stats) = app
+            .call("GET", "/api/v3/admin/cache/stats", &auth, None)
+            .await;
+        (stats["entries"].as_u64().unwrap_or(0) > 0).then_some(())
+    })
+    .await;
+
+    server.abort();
+    let _ = server.await;
+    let app = app.restart().await;
+    let (status, body) = app.call("GET", &basic, &auth, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["title"], "OK Computer");
+    assert_eq!(*hits.lock().unwrap(), 1, "answered from the cache file");
+    app.stop().await;
 }

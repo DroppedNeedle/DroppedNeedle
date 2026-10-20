@@ -286,8 +286,9 @@ machine and its data folders can run it.
 - **Cache tab buttons and tiles.** v2's cache was split into memory, disk
   metadata and library parts, each with its own count and its own clear
   button. Those parts no longer exist. Settings > Cache in v3 counts cached
-  provider responses and cached images, and clears one provider, the
-  images, or everything.
+  provider answers and cached images, and clears the images or everything.
+  Provider answers are kept in `metadata-cache.db` and survive a restart;
+  saving a setting never clears them.
 - **Settings nothing used, and the cache and pacing knobs.** These v2
   settings are gone. Most were never read; the cache lifetimes and the
   library image pacing now use fixed values equal to v2's defaults. An
@@ -612,6 +613,9 @@ A backup of the v3 database (the ones in `cache/backups`, or a copy that
 without it, v3 refuses to start on that database rather than lose the
 stored secrets. The database remembers which key it belongs to, so a key
 file from another instance or another backup is refused as well.
+
+Backups leave out `metadata-cache.db` on purpose: it holds only provider
+answers that are fetched again when needed.
 
 If that key is lost for good, stop the server and run
 `droppedneedle-tool reset-key --yes`. It gives the instance a new key and

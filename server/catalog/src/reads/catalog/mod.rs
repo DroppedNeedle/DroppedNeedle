@@ -41,6 +41,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_providers::ProviderError;
 use droppedneedle_providers::Singleflight;
+use droppedneedle_providers::{CacheKey, Source};
 
 use self::error::CatalogError;
 use self::library::LocalCatalog;
@@ -146,7 +147,7 @@ impl Catalog {
     async fn cached<T, F, Fut>(
         &self,
         flights: &Singleflight<T, CatalogError>,
-        key: String,
+        key: CacheKey,
         fetch: F,
     ) -> Result<T, CatalogError>
     where
@@ -159,15 +160,15 @@ impl Catalog {
         {
             return Ok(value);
         }
-        let cache = self.upstream().cache_handle();
-        let store_key = key.clone();
+        let cache = self.upstream().cache().clone();
+        let flight = key.as_str().to_owned();
         flights
-            .run(&key, move || async move {
+            .run(&flight, move || async move {
                 let (value, ttl) = fetch().await?;
                 if let Some(ttl) = ttl.filter(|ttl| !ttl.is_zero())
                     && let Ok(bytes) = serde_json::to_vec(&value)
                 {
-                    cache.set_bytes(&store_key, bytes, ttl).await;
+                    cache.set_bytes(&key, bytes, ttl);
                 }
                 Ok(value)
             })
@@ -192,8 +193,7 @@ impl Catalog {
         if token.is_empty() {
             return Ok(models::PluginDetails::default());
         }
-        let key =
-            droppedneedle_providers::digest_key("plugin_details:", &[kind, mbid, &token], "v1");
+        let key = CacheKey::hashed(Source::Plugins, "details", &[kind, mbid, &token]);
         let catalog = self.clone();
         let value = self
             .cached(&self.inner.flights.other, key, move || async move {
@@ -207,11 +207,9 @@ impl Catalog {
         Ok(serde_json::from_value(value).unwrap_or_default())
     }
 
-    /// Drop cached entries by exact key.
-    async fn forget(&self, keys: &[String]) {
-        for key in keys {
-            self.upstream().cache().delete(key).await;
-        }
+    /// Drop cached entries by exact key, once committed.
+    async fn forget(&self, keys: &[CacheKey]) {
+        self.upstream().cache().forget(keys).await;
     }
 
     /// Owned and requested flags for a set of album MBIDs. A failed read

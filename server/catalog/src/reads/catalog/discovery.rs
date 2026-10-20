@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use droppedneedle_kernel::runtime_config::sections::MusicSource;
 use droppedneedle_providers::musicbrainz::Criticality;
 use droppedneedle_providers::{
-    IntegrationStatus, RequestPriority, lastfm, listenbrainz, record_current,
+    CacheKey, IntegrationStatus, RequestPriority, Source, lastfm, listenbrainz, record_current,
 };
 
 use super::artist::ReleaseGroupList;
@@ -56,11 +56,11 @@ enum Section {
 }
 
 impl Section {
-    fn key_prefix(self) -> &'static str {
+    fn key_part(self) -> &'static str {
         match self {
-            Self::Similar => "lb_similar_artists:",
-            Self::TopSongs => "artist_discovery:top_songs:",
-            Self::TopAlbums => "artist_discovery:top_albums:",
+            Self::Similar => "similar_artists",
+            Self::TopSongs => "top_songs",
+            Self::TopAlbums => "top_albums",
         }
     }
 }
@@ -154,16 +154,25 @@ impl Catalog {
         } else {
             &self.inner.flights.other_background
         };
-        let key = format!(
-            "{}{}:{}:{}",
-            section.key_prefix(),
-            match source {
-                DiscoverySource::Listenbrainz => "lb",
-                DiscoverySource::Lastfm => "lfm",
-            },
-            mbid,
-            count
-        );
+        let count_part = count.to_string();
+        let key = match (source, section) {
+            (DiscoverySource::Listenbrainz, _) => CacheKey::new(
+                Source::ListenBrainz,
+                &[section.key_part(), mbid, &count_part],
+            ),
+            // Last.fm titles are matched against the MusicBrainz
+            // discography, so the MusicBrainz source is in the key.
+            (DiscoverySource::Lastfm, Section::TopAlbums) => {
+                let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
+                CacheKey::new(
+                    Source::LastFm,
+                    &[&namespace, section.key_part(), mbid, &count_part],
+                )
+            }
+            (DiscoverySource::Lastfm, _) => {
+                CacheKey::new(Source::LastFm, &[section.key_part(), mbid, &count_part])
+            }
+        };
         let unconfigured = Answer {
             rows: SectionRows::default(),
             source,
@@ -565,7 +574,10 @@ impl Catalog {
                 configured: false,
             });
         };
-        let key = format!("lb_similar_albums:{album}:{artist}:{count}");
+        let key = CacheKey::new(
+            Source::ListenBrainz,
+            &["similar_albums", &album, &artist, &count.to_string()],
+        );
         let catalog = self.clone();
         let (lb_album, lb_artist) = (album.clone(), artist.clone());
         let value = self
@@ -664,7 +676,10 @@ impl Catalog {
             return Vec::new();
         };
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        let key = format!("lfm_similar_albums:{namespace}:{album}:{count}");
+        let key = CacheKey::new(
+            Source::LastFm,
+            &[&namespace, "similar_albums", album, &count.to_string()],
+        );
         let catalog = self.clone();
         let album = album.to_owned();
         let similar = similar.to_vec();
@@ -773,9 +788,9 @@ impl Catalog {
         release: &str,
     ) -> Result<Option<String>, CatalogError> {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        let key = format!(
-            "mb:release_to_rg:{namespace}:{}",
-            release.to_ascii_lowercase()
+        let key = CacheKey::new(
+            Source::MusicBrainz,
+            &[&namespace, "release_to_rg", &release.to_ascii_lowercase()],
         );
         let catalog = self.clone();
         let release = release.to_owned();

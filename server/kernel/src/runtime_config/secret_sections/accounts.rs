@@ -20,7 +20,6 @@ pub struct ListenBrainzConnection {
 
 impl Section for ListenBrainzConnection {
     const KEY: &'static str = "listenbrainz_settings";
-    const EFFECTS: &'static [Effect] = &[Effect::Invalidate(&[CacheRoot::ListenBrainz])];
 }
 
 impl SecretSection for ListenBrainzConnection {

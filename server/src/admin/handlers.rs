@@ -97,7 +97,7 @@ pub async fn restore_report(
         .map(Json)
 }
 
-/// Provider-cache counters.
+/// Provider data and image cache counters.
 #[utoipa::path(
     get,
     tag = "admin",
@@ -111,7 +111,7 @@ pub async fn cache_stats(
     Json(super::cache::cache_stats(&admin.cache, admin.covers.as_ref()).await)
 }
 
-/// Clear the provider cache: everything, or one source's keys.
+/// Clear provider data, the cached images, or both.
 #[utoipa::path(
     post,
     tag = "admin",

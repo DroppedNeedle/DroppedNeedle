@@ -303,24 +303,6 @@ impl ArtworkCache {
         cleared
     }
 
-    /// Forget every TheAudioDB album thumbnail (the admin "clear AudioDB").
-    /// Their key records go at once; the images themselves age out of the
-    /// cache like any unused image. Returns how many records went.
-    pub async fn clear_audiodb(&self) -> u64 {
-        let dir = self.root.join(AUDIODB_KEYS_DIR);
-        blocking(move || {
-            let count = count_files(&dir);
-            if let Err(error) = std::fs::remove_dir_all(&dir)
-                && error.kind() != std::io::ErrorKind::NotFound
-            {
-                tracing::warn!(%error, path = %dir.display(), "AudioDB thumbnail clear incomplete");
-            }
-            count
-        })
-        .await
-        .unwrap_or(0)
-    }
-
     /// Load the blob index from disk once, by scanning the blob folders.
     async fn ensure_index(&self) {
         if self.lock().is_some() {
@@ -561,18 +543,6 @@ fn clean_key_files(
         }
     }
     (removed, kept)
-}
-
-/// Files under `dir`, one shard level deep.
-fn count_files(dir: &Path) -> u64 {
-    let Ok(shards) = std::fs::read_dir(dir) else {
-        return 0;
-    };
-    shards
-        .flatten()
-        .filter_map(|shard| std::fs::read_dir(shard.path()).ok())
-        .map(|files| files.flatten().count() as u64)
-        .sum()
 }
 
 /// Every blob on disk with its size; older files count as less recently

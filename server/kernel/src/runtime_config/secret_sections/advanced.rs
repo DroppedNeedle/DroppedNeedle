@@ -82,7 +82,6 @@ impl Default for AdvancedSettings {
 
 impl Section for AdvancedSettings {
     const KEY: &'static str = "advanced_settings";
-    const EFFECTS: &'static [Effect] = &[Effect::Invalidate(&[CacheRoot::AudioDb])];
 
     fn validate(&self) -> Result<(), ConfigError> {
         let key = Self::KEY;

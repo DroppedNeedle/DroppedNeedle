@@ -6,7 +6,8 @@
 //! open event streams. Then it drains HTTP connections while the supervisor
 //! stops its loops, both until the deadline. A long stream held open by a
 //! client therefore never keeps scans or downloads running. Whatever is
-//! still running at the deadline is aborted with a warning. The database
+//! still running at the deadline is aborted with a warning. The provider
+//! cache file's writer then commits what it holds and stops, the database
 //! closes last with what is left, and the caller gets the rest for its own
 //! runtime and the data lock to hold until the process exits.
 
@@ -21,7 +22,8 @@ use thiserror::Error;
 use tokio::{net::TcpListener, time::Instant};
 
 use droppedneedle_kernel::{
-    config::BindHost, db::DbRuntime, db::datalock::DataLock, events::EventHub, jobs::Supervisor,
+    config::BindHost, db::DbRuntime, db::cache::CacheDb, db::datalock::DataLock, events::EventHub,
+    jobs::Supervisor,
 };
 
 /// Listen backlog, the usual server default.
@@ -92,18 +94,21 @@ pub struct Background {
     supervisor: Supervisor,
     events: EventHub,
     runtime: DbRuntime,
+    cache_db: CacheDb,
     data_lock: DataLock,
 }
 
 impl Background {
     /// The supervisor every loop runs on, whose token is the one stop; the
     /// hub whose streams end at shutdown; the database, closed last; and
-    /// the data lock, handed back to the caller at the end.
+    /// the provider cache file, stopped after the loops; and the data lock,
+    /// handed back to the caller at the end.
     pub fn new(
         grace: Duration,
         supervisor: Supervisor,
         events: EventHub,
         runtime: DbRuntime,
+        cache_db: CacheDb,
         data_lock: DataLock,
     ) -> Self {
         Self {
@@ -111,6 +116,7 @@ impl Background {
             supervisor,
             events,
             runtime,
+            cache_db,
             data_lock,
         }
     }
@@ -143,6 +149,7 @@ pub async fn serve(
         supervisor,
         events,
         runtime,
+        cache_db,
         data_lock,
     } = background;
     let stop = supervisor.token().clone();
@@ -185,6 +192,11 @@ pub async fn serve(
     // The database gets what is left, with the same floor the loops' last
     // rows get, so a write queued at the deadline still has a moment.
     let last = deadline + LAST_WRITES_FLOOR;
+    // The provider cache's writer commits what it holds, then stops and
+    // lets go of the file's lock, so a server started next can open it.
+    cache_db
+        .shutdown_within(last.saturating_duration_since(Instant::now()))
+        .await;
     runtime
         .shutdown_within(last.saturating_duration_since(Instant::now()))
         .await;

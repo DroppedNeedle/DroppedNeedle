@@ -1,6 +1,7 @@
 //! Open what the [`Platform`] is made of, in the order a safe start needs:
 //! the data lock, the data-directory checks, the key, the database, the
-//! loop supervisor, the web UI, the settings and the key check.
+//! provider cache file, the loop supervisor, the web UI, the settings and
+//! the key check.
 
 use std::sync::Arc;
 
@@ -8,7 +9,7 @@ use droppedneedle_auth::federated::settings::InstallIds;
 use droppedneedle_kernel::{
     clock::{Clock, SystemClock},
     config::AppConfig,
-    db::{DbConfig, DbRuntime, datalock::DataLock, error::DbError, open_runtime},
+    db::{DbConfig, DbRuntime, cache::CacheDb, datalock::DataLock, error::DbError, open_runtime},
     http_client::HttpClientFactory,
     ids::UuidGenerator,
     jobs::{CancellationToken, Supervisor},
@@ -28,13 +29,17 @@ use super::{
 };
 
 /// The opened platform, with what boot keeps for itself: the database
-/// runtime (backups, checkpoints and the shutdown), the stamped web UI and
-/// the data lock, held until the process exits.
+/// runtime (backups, checkpoints and the shutdown), the provider cache
+/// file, the stamped web UI and the data lock, held until the process
+/// exits.
 pub struct Opened {
     /// What every area is built from.
     pub platform: Platform,
     /// The database runtime behind `platform.db`.
     pub runtime: DbRuntime,
+    /// The provider cache file. Only the providers' cache store holds it;
+    /// boot keeps a handle to stop it at shutdown.
+    pub cache_db: CacheDb,
     /// The web UI, or `None` when no build was found.
     pub web: Option<WebUi>,
     /// The data directory's lock.
@@ -69,6 +74,10 @@ pub async fn open_platform(config: AppConfig) -> Result<Opened, BootError> {
     )
     .await?;
     let db = runtime.db().clone();
+    // After the data lock and the data-directory check, so a refused
+    // folder never gains a new file. It takes a lock of its own: the
+    // database may live elsewhere.
+    let cache_db = CacheDb::open(&config.cache_dir, &config.library_db_path).await;
     // The one clock: the supervisor stamps its rows with it, and the
     // platform hands it to every area.
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
@@ -98,6 +107,7 @@ pub async fn open_platform(config: AppConfig) -> Result<Opened, BootError> {
     Ok(Opened {
         platform,
         runtime,
+        cache_db,
         web,
         data_lock,
     })

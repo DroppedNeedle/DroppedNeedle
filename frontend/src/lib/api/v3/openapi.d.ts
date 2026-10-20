@@ -349,7 +349,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Clear the provider cache: everything, or one source's keys. */
+        /** Clear provider data, the cached images, or both. */
         post: operations["clear_cache"];
         delete?: never;
         options?: never;
@@ -364,7 +364,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Provider-cache counters. */
+        /** Provider data and image cache counters. */
         get: operations["cache_stats"];
         put?: never;
         post?: never;
@@ -11329,33 +11329,37 @@ export interface components {
              */
             verified: boolean;
         };
-        /** @description Cache-clear request. Empty scope clears everything. */
+        /** @description Cache-clear request. No scope clears everything. */
         CacheClearBody: {
-            /**
-             * @description `all` (default: provider responses and images), `source` (one
-             *     provider's responses), `covers` (cover and artist images only) or
-             *     `audiodb` (TheAudioDB answers and album thumbnails).
-             */
-            scope?: string | null;
-            /** @description Source name when `scope` is `source`. */
-            source?: string | null;
+            /** @description What to clear. */
+            scope?: components["schemas"]["CacheClearScope"];
         };
         /** @description What one cache clear dropped. */
         CacheClearResponse: {
             /**
              * Format: int64
-             * @description Cover and artist images deleted from disk (for the `audiodb`
-             *     scope, AudioDB album thumbnails forgotten).
+             * @description Cover and artist images deleted from disk.
              */
             cleared_cover_images: number;
-            /** @description Entries dropped. */
+            /**
+             * Format: int64
+             * @description Provider answers dropped.
+             */
             cleared_entries: number;
             /** @description Plain-language summary. */
             message: string;
-            /** @description Entries left behind. */
+            /**
+             * Format: int64
+             * @description Provider answers left behind.
+             */
             remaining_entries: number;
         };
-        /** @description Provider byte-cache counters. */
+        /**
+         * @description What a cache clear drops.
+         * @enum {string}
+         */
+        CacheClearScope: "all" | "provider_data" | "covers";
+        /** @description Provider data and image cache counters. */
         CacheStatsResponse: {
             /**
              * Format: int64
@@ -11367,10 +11371,18 @@ export interface components {
              * @description Cover and artist images on disk.
              */
             cover_images: number;
-            /** @description Entries currently held. */
+            /**
+             * Format: int64
+             * @description Provider answers held.
+             */
             entries: number;
-            /** @description Registered invalidation roots by source. */
-            sources: string[];
+            /**
+             * @description Whether the provider cache file is working. When it is not, every
+             *     provider answer is fetched each time.
+             */
+            provider_data_on: boolean;
+            /** @description Rows and bytes per provider. */
+            sources: components["schemas"]["ProviderSourceStats"][];
         };
         /** @description `POST /cache/sync/cancel` answer. */
         CacheSyncCancelResponse: {
@@ -18567,6 +18579,11 @@ export interface components {
          * @enum {string}
          */
         ProviderChoiceBody: "detach" | "retain_survivor";
+        /**
+         * @description Where a cached answer came from. Every key starts with one.
+         * @enum {string}
+         */
+        ProviderDataSource: "musicbrainz" | "listenbrainz" | "lastfm" | "audiodb" | "wikidata" | "purchase" | "plugins" | "youtube" | "lrclib";
         /** @description One provider's limiter posture. */
         ProviderLimiterView: {
             /**
@@ -18586,6 +18603,21 @@ export interface components {
             remaining: number;
             /** @description Provider name, e.g. `musicbrainz`. */
             source: string;
+        };
+        /** @description What one provider holds in the cache file. */
+        ProviderSourceStats: {
+            /**
+             * Format: int64
+             * @description Their size in bytes.
+             */
+            bytes: number;
+            /**
+             * Format: int64
+             * @description Answers held.
+             */
+            rows: number;
+            /** @description The provider. */
+            source: components["schemas"]["ProviderDataSource"];
         };
         /** @description Provider limiter and slot snapshot. */
         ProviderStatsResponse: {

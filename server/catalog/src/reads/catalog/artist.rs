@@ -5,11 +5,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::degradation::scoped;
 use droppedneedle_providers::musicbrainz::{
     Criticality, MAX_PAGE_LIMIT, MbArtist, ReleaseGroupRef,
 };
+use droppedneedle_providers::{CacheKey, RequestPriority, Source};
 
 use super::error::CatalogError;
 use super::mapping;
@@ -220,15 +220,33 @@ pub(super) fn checked_mbid(raw: &str, what: &str) -> Result<String, CatalogError
 
 impl Catalog {
     /// Cache key of the MusicBrainz artist detail.
-    pub(super) fn artist_detail_key(&self, mbid: &str) -> String {
+    pub(super) fn artist_detail_key(&self, mbid: &str) -> CacheKey {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        format!("mb:artist:detail:{namespace}:{mbid}")
+        CacheKey::new(Source::MusicBrainz, &[&namespace, "artist", mbid])
     }
 
     /// Cache key of the artist's release-group list.
-    pub(super) fn release_groups_key(&self, mbid: &str) -> String {
+    pub(super) fn release_groups_key(&self, mbid: &str) -> CacheKey {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        format!("mb:artist_rgs:{namespace}:{mbid}")
+        CacheKey::new(Source::MusicBrainz, &[&namespace, "artist_rgs", mbid])
+    }
+
+    /// Cache key of TheAudioDB's artist art. A name match may be another
+    /// artist's picture, so whether the name search is on is in the key.
+    pub(super) fn audiodb_artist_key(&self, mbid: &str) -> CacheKey {
+        let fallback = self
+            .upstream()
+            .settings()
+            .advanced()
+            .audiodb_name_search_fallback;
+        CacheKey::new(
+            Source::AudioDb,
+            &[
+                if fallback { "by_name" } else { "by_id" },
+                "artist",
+                &mbid.to_ascii_lowercase(),
+            ],
+        )
     }
 
     /// The cached MusicBrainz artist detail at `priority`, `None` for a
@@ -401,7 +419,7 @@ impl Catalog {
         let bytes = self
             .upstream()
             .cache()
-            .get_bytes(&audiodb_artist_key(mbid))
+            .get_bytes(&self.audiodb_artist_key(mbid))
             .await?;
         serde_json::from_slice::<AudioDbArtistEntry>(&bytes)
             .ok()?
@@ -420,7 +438,7 @@ impl Catalog {
     pub(super) async fn artist_images_known(&self, mbid: &str) -> bool {
         self.upstream()
             .cache()
-            .get_bytes(&audiodb_artist_key(mbid))
+            .get_bytes(&self.audiodb_artist_key(mbid))
             .await
             .is_some()
     }
@@ -439,7 +457,7 @@ impl Catalog {
         let Some(client) = self.upstream().audiodb(&advanced) else {
             return Some(None);
         };
-        let key = audiodb_artist_key(mbid);
+        let key = self.audiodb_artist_key(mbid);
         if let Some(bytes) = self.upstream().cache().get_bytes(&key).await
             && let Ok(entry) = serde_json::from_slice::<AudioDbArtistEntry>(&bytes)
         {
@@ -473,7 +491,7 @@ impl Catalog {
         if let Ok(bytes) = serde_json::to_vec(&AudioDbArtistEntry {
             images: images.clone(),
         }) {
-            self.upstream().cache().set_bytes(&key, bytes, ttl).await;
+            self.upstream().cache().set_bytes(&key, bytes, ttl);
         }
         Some(images)
     }
@@ -538,7 +556,8 @@ impl Catalog {
         if detail.wiki_url.is_none() && detail.wikidata_id.is_none() {
             return Biography::default();
         }
-        let key = format!("artist_info:extended:{}", detail.mbid);
+        let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
+        let key = CacheKey::new(Source::Wikidata, &[&namespace, "bio", &detail.mbid]);
         let flights = if priority.is_user_facing() {
             &self.inner.flights.extended
         } else {
@@ -638,7 +657,7 @@ impl Catalog {
     fn spawn_discography_walker(
         &self,
         artist: String,
-        key: String,
+        key: CacheKey,
         seed: Vec<ReleaseGroupItem>,
         total: u64,
     ) {
@@ -648,7 +667,7 @@ impl Catalog {
                 .warming
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
-            if !warming.insert(key.clone()) {
+            if !warming.insert(key.as_str().to_owned()) {
                 return;
             }
         }
@@ -663,14 +682,14 @@ impl Catalog {
                 .warming
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner())
-                .remove(&key);
+                .remove(key.as_str());
         });
     }
 
     async fn walk_discography(
         &self,
         artist: &str,
-        key: &str,
+        key: &CacheKey,
         mut items: Vec<ReleaseGroupItem>,
         total: u64,
     ) -> Result<(), CatalogError> {
@@ -711,10 +730,7 @@ impl Catalog {
         };
         let bytes = serde_json::to_vec(&list)
             .map_err(|error| CatalogError::Internal(format!("discography encode: {error}")))?;
-        self.upstream()
-            .cache()
-            .set_bytes(key, bytes, ARTIST_TTL)
-            .await;
+        self.upstream().cache().set_bytes(key, bytes, ARTIST_TTL);
         Ok(())
     }
 
@@ -865,7 +881,7 @@ impl Catalog {
         let Some((client, creds)) = self.upstream().lastfm(user_id).await else {
             return Ok(LastFmArtistEnrichment::default());
         };
-        let key = format!("lfm_artist_info:{mbid}");
+        let key = CacheKey::new(Source::LastFm, &["artist_info", &mbid]);
         let name = artist_name.to_owned();
         let value = self
             .cached(&self.inner.flights.other, key, move || async move {
@@ -954,10 +970,6 @@ impl Catalog {
             },
         })
     }
-}
-
-fn audiodb_artist_key(mbid: &str) -> String {
-    format!("audiodb_artist:{}", mbid.to_ascii_lowercase())
 }
 
 /// Which discography section an item belongs to.

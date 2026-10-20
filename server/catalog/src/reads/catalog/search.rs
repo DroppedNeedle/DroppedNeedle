@@ -8,8 +8,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use droppedneedle_providers::RequestPriority;
-use droppedneedle_providers::digest_key;
 use droppedneedle_providers::musicbrainz::{Criticality, hit_score};
+use droppedneedle_providers::{CacheKey, Source};
 
 use super::error::CatalogError;
 use super::mapping;
@@ -96,8 +96,8 @@ impl Catalog {
             &limit.to_string(),
             &offset.to_string(),
         ];
-        let key = digest_key("mb:artist:search:", &parts, "v1");
-        let stale = digest_key("mb:artist:search:stale:", &parts, "v1");
+        let key = CacheKey::hashed(Source::MusicBrainz, "artist_search", &parts);
+        let stale = CacheKey::hashed(Source::MusicBrainz, "artist_search_stale", &parts);
         let catalog = self.clone();
         let text = query.trim().to_owned();
         let ttl = SEARCH_TTL;
@@ -178,8 +178,8 @@ impl Catalog {
             &offset.to_string(),
             filter_key.as_str(),
         ];
-        let key = digest_key("mb:album:search:", &parts, "v1");
-        let stale = digest_key("mb:album:search:stale:", &parts, "v1");
+        let key = CacheKey::hashed(Source::MusicBrainz, "album_search", &parts);
+        let stale = CacheKey::hashed(Source::MusicBrainz, "album_search_stale", &parts);
         let catalog = self.clone();
         let text = query.trim().to_owned();
         let ttl = SEARCH_TTL * 2;
@@ -241,8 +241,8 @@ impl Catalog {
     /// copy; failures fall back to it.
     async fn remote_bucket<F, Fut>(
         &self,
-        key: String,
-        stale_key: String,
+        key: CacheKey,
+        stale_key: CacheKey,
         deadline: Duration,
         fetch: F,
     ) -> RemoteBucket
@@ -264,8 +264,7 @@ impl Catalog {
                 {
                     self.upstream()
                         .cache()
-                        .set_bytes(&stale_key, bytes, STALE_TTL)
-                        .await;
+                        .set_bytes(&stale_key, bytes, STALE_TTL);
                 }
                 return RemoteBucket {
                     hits: hits.items,

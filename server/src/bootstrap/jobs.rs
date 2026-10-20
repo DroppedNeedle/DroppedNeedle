@@ -23,6 +23,7 @@ use tokio::sync::watch;
 
 use droppedneedle_catalog::concerts::ConcertsSweep;
 use droppedneedle_kernel::db::CheckpointService;
+use droppedneedle_kernel::db::cache::CacheError;
 use droppedneedle_kernel::jobs::cache_sync::CacheSyncStatus;
 use droppedneedle_kernel::jobs::checkpoint::{self, CheckpointRunner};
 use droppedneedle_kernel::jobs::discovery_demand::{self, DemandTick, NoDemand};
@@ -35,7 +36,8 @@ use droppedneedle_kernel::jobs::precache_phases::{LibraryPrecache, PrecacheSourc
 use droppedneedle_kernel::jobs::presence;
 use droppedneedle_kernel::jobs::queue::{self, Handlers, JobHandler, JobQueue, KindSpec};
 use droppedneedle_kernel::jobs::{
-    AlreadyRunning, BoxFuture, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
+    AlreadyRunning, BoxFuture, FnTick, Next, Schedule, Supervisor, Tick, TickCtx, TickError,
+    TickResult,
 };
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::secret_sections::EventsSettings;
@@ -44,6 +46,7 @@ use droppedneedle_media::remotes::playlist_sync::{
     NavidromeSyncSettings, PlaylistSyncState, ProdPlaylistSync,
 };
 use droppedneedle_media::remotes::presence_feed::{MediaJobs, RegistryFeed, RemoteSessionPollers};
+use droppedneedle_providers::ProviderCacheStore;
 
 /// Checkpoint passes over the runtime's service.
 #[derive(Clone, Debug)]
@@ -632,4 +635,42 @@ pub mod scripted {
 /// The boot error for a loop name that is already taken.
 fn already_running(name: &'static str) -> impl FnOnce(AlreadyRunning) -> String {
     move |_| format!("{name} is already running")
+}
+
+/// The provider cache sweep's loop name.
+pub const PROVIDER_CACHE_SWEEP: &str = "provider-cache-sweep";
+/// How often rows past their keep time are deleted.
+pub const PROVIDER_CACHE_SWEEP_EVERY: Duration = Duration::from_secs(3_600);
+
+/// Start the hourly sweep of the provider cache file: rows past their keep
+/// time go, then the file's journal is cut back. The first pass waits a
+/// whole interval, so boot never pays for it.
+pub fn spawn_provider_cache_sweep(
+    supervisor: &Supervisor,
+    cache: ProviderCacheStore,
+) -> Result<(), AlreadyRunning> {
+    supervisor.periodic(
+        PROVIDER_CACHE_SWEEP,
+        Schedule::new(PROVIDER_CACHE_SWEEP_EVERY)
+            .with_initial_delay(PROVIDER_CACHE_SWEEP_EVERY)
+            .with_jitter(Duration::from_secs(60))
+            .with_jittered_start(),
+        FnTick(move |_| {
+            let cache = cache.clone();
+            async move {
+                match cache.sweep().await {
+                    Ok(swept) => {
+                        tracing::debug!(swept, "provider cache swept");
+                        Ok(Next::Continue)
+                    }
+                    // The cache is off for this run: nothing to sweep.
+                    Err(CacheError::Off) => Ok(Next::Finish),
+                    Err(error) => Err(TickError::new(
+                        "PROVIDER_CACHE_SWEEP_FAILED",
+                        error.to_string(),
+                    )),
+                }
+            }
+        }),
+    )
 }

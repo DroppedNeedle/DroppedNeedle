@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::{Section, validation};
-use crate::runtime_config::effects::{CacheRoot, Effect};
 use crate::runtime_config::error::ConfigError;
 
 // --- musicbrainz_settings -------------------------------------------------
@@ -221,7 +220,6 @@ impl MusicBrainzSettings {
 
 impl Section for MusicBrainzSettings {
     const KEY: &'static str = "musicbrainz_settings";
-    const EFFECTS: &'static [Effect] = &[Effect::Invalidate(&[CacheRoot::MusicBrainz])];
 
     fn validate(&self) -> Result<(), ConfigError> {
         let key = Self::KEY;

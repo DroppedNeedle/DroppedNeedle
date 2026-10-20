@@ -72,11 +72,13 @@
 //! inside, [`datalock`] is the file lock the server holds and the offline
 //! tool takes exclusively, `scratch` is the self-removing directory tests
 //! write under, [`statement`] declares the SQL every area keeps in its
-//! `sql.rs`, `sql` is this module's own, and [`error`] holds the typed
-//! errors.
+//! `sql.rs`, `sql` is this module's own, [`error`] holds the typed
+//! errors, and [`cache`] is the provider cache's own throwaway file, with
+//! its own writer and readers.
 
 pub mod analyze;
 pub mod backup;
+pub mod cache;
 pub mod checkpoint;
 pub mod datalock;
 pub mod durable;

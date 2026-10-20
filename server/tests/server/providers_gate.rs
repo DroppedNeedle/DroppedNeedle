@@ -81,6 +81,7 @@ const RULES: &[Rule] = &[
                 "slskd runs one search and one enqueue at a time; a LAN service is never paced",
             ),
             ("library/src/scan/pool.rs", LOCAL),
+            ("kernel/src/db/cache/mod.rs", LOCAL),
         ],
     },
     Rule {

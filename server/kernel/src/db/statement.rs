@@ -17,8 +17,9 @@
 //! ```
 //!
 //! A block whose statements run against a v2 database (the exporter's)
-//! starts with `schema = V2;`; every other block is written against the
-//! application schema.
+//! starts with `schema = V2;`, and the provider cache file's block with
+//! `schema = Cache;`; every other block is written against the application
+//! schema.
 //!
 //! A statement becomes a [`Statement`] constant and a fragment a `&str`
 //! constant. `+` joins literals and `&str` constants at compile time, so a
@@ -32,7 +33,8 @@
 //! joins its files' lists in one function at its root, and the schema test
 //! prepares every statement, and every family over every combination of
 //! its choices, against a copy of the migrated template, or for a
-//! `schema = V2` block against the v2 fixture database. Preparing proves
+//! `schema = V2` block against the v2 fixture database (a `schema = Cache`
+//! block against a file built from the cache schema). Preparing proves
 //! the tables and columns a statement names exist and that the text is one
 //! valid statement; it does not prove the call site binds the right number
 //! of values, that a column list matches its row mapper, or the query plan.
@@ -199,6 +201,8 @@ pub enum Schema {
     App,
     /// A v2 database, read by the exporter.
     V2,
+    /// The provider cache file.
+    Cache,
 }
 
 /// One declaration in a `sql!` block.

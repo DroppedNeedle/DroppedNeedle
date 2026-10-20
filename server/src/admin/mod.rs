@@ -25,7 +25,7 @@ use std::sync::Arc;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::{BackupService, CheckpointService, Db};
 use droppedneedle_kernel::mount::{Routes, routes};
-use droppedneedle_providers::{InMemoryProviderCache, Providers};
+use droppedneedle_providers::{ProviderCacheStore, Providers};
 
 pub use error::AdminError;
 pub use models::{
@@ -58,8 +58,8 @@ pub struct AdminSetup {
     pub users: UsersDeps,
     /// Live quota ledger (shared with acquisition enforcement).
     pub quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
-    /// Provider byte cache (shared with the provider clients).
-    pub cache: Arc<InMemoryProviderCache>,
+    /// Provider answer cache (shared with the provider clients).
+    pub cache: ProviderCacheStore,
     /// Provider limiters and slot lanes for provider stats.
     pub providers: Arc<Providers>,
     /// Database handles. `None` on unwired test states.
@@ -82,7 +82,7 @@ impl AdminSetup {
     pub fn new(
         users: UsersDeps,
         quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
-        cache: Arc<InMemoryProviderCache>,
+        cache: ProviderCacheStore,
         providers: Arc<Providers>,
     ) -> Self {
         Self {

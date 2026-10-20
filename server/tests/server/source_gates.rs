@@ -237,8 +237,9 @@ fn the_library_waits_through_the_database_runtime() {
 }
 
 /// Where long-lived tasks start: the loop supervisor (`kernel/src/jobs/`)
-/// and the database runtime's own threads (`kernel/src/db/`), which stop
-/// with `DbRuntime::shutdown`. Any other spawn in shipping code is listed
+/// and the database's own threads (`kernel/src/db/`), which stop with
+/// `DbRuntime::shutdown`, and the provider cache's writer, which stops with
+/// `CacheDb::shutdown_within`. Any other spawn in shipping code is listed
 /// below with its count in that file and why it is not a loop: work a
 /// request or a loop starts and waits for, or that logs its own end.
 const SPAWN_PLACES: &[&str] = &["kernel/src/jobs/", "kernel/src/db/"];
@@ -270,8 +271,7 @@ const PLUGIN_REPLACED: &str =
     "stops a replaced plugin runtime off the request path; plugin lifecycle";
 const PLUGIN_CHILD: &str =
     "the plugin child's I/O pumps and host-call answers, ended with its pipes";
-const CACHE_HOOK: &str =
-    "cache invalidation after a ListenBrainz link change, off the request path";
+const PROVIDER_FETCH: &str = "a provider fetch shared by its callers, which stores its answer when they stop waiting and logs a panic";
 const BOOT_STEP: &str = "boot-time file work, awaited before serving";
 const HTTP_SERVER: &str = "the HTTP server, joined by serve at the shutdown deadline";
 const OFFLINE_TOOL: &str = "the offline tool's file work, awaited";
@@ -377,7 +377,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("plugins/src/handlers.rs", 3, REQUEST),
     ("plugins/src/host.rs", 1, PLUGIN_REPLACED),
     ("plugins/src/process.rs", 5, PLUGIN_CHILD),
-    ("plugins/src/wiring.rs", 1, CACHE_HOOK),
+    ("providers/src/cache.rs", 1, PROVIDER_FETCH),
     ("providers/src/youtube.rs", 1, REQUEST),
     ("src/admin/handlers.rs", 1, REQUEST),
     ("src/bootstrap/key_check.rs", 1, BOOT_STEP),

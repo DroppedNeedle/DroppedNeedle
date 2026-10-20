@@ -49,6 +49,7 @@ impl Rig {
         let providers = Arc::new(droppedneedle_providers::Providers::build(
             &platform,
             crate::common::closed_outbound().providers(),
+            droppedneedle_kernel::db::cache::CacheDb::scratch(),
         ));
         let cache = providers.cache.clone();
         let backup_dir = dir.join("backups");

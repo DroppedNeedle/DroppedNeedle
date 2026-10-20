@@ -47,7 +47,11 @@ pub fn acquire_at(
     collections: &Stores,
 ) -> AcquireSetup {
     let outbound = super::closed_outbound();
-    let providers = Arc::new(Providers::build(platform, outbound.providers()));
+    let providers = Arc::new(Providers::build(
+        platform,
+        outbound.providers(),
+        droppedneedle_kernel::db::cache::CacheDb::scratch(),
+    ));
     let mb_source = providers.musicbrainz.live_source(platform.settings.live());
     AcquireSetup::build(
         platform,

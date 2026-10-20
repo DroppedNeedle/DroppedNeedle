@@ -23,10 +23,12 @@ time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 unicode-normalization.workspace = true
+utoipa.workspace = true
 
 [features]
 # Fakes and test constructors for the test suites above.
 test-support = ["droppedneedle-kernel/test-support"]
 
 [dev-dependencies]
+droppedneedle-kernel = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }

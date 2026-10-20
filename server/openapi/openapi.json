@@ -722,7 +722,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Clear the provider cache: everything, or one source's keys.",
+        "summary": "Clear provider data, the cached images, or both.",
         "operationId": "clear_cache",
         "requestBody": {
           "content": {
@@ -760,7 +760,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Provider-cache counters.",
+        "summary": "Provider data and image cache counters.",
         "operationId": "cache_stats",
         "responses": {
           "200": {
@@ -38192,21 +38192,11 @@
       },
       "CacheClearBody": {
         "type": "object",
-        "description": "Cache-clear request. Empty scope clears everything.",
+        "description": "Cache-clear request. No scope clears everything.",
         "properties": {
           "scope": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "`all` (default: provider responses and images), `source` (one\nprovider's responses), `covers` (cover and artist images only) or\n`audiodb` (TheAudioDB answers and album thumbnails)."
-          },
-          "source": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Source name when `scope` is `source`."
+            "$ref": "#/components/schemas/CacheClearScope",
+            "description": "What to clear."
           }
         }
       },
@@ -38223,12 +38213,13 @@
           "cleared_cover_images": {
             "type": "integer",
             "format": "int64",
-            "description": "Cover and artist images deleted from disk (for the `audiodb`\nscope, AudioDB album thumbnails forgotten).",
+            "description": "Cover and artist images deleted from disk.",
             "minimum": 0
           },
           "cleared_entries": {
             "type": "integer",
-            "description": "Entries dropped.",
+            "format": "int64",
+            "description": "Provider answers dropped.",
             "minimum": 0
           },
           "message": {
@@ -38237,17 +38228,28 @@
           },
           "remaining_entries": {
             "type": "integer",
-            "description": "Entries left behind.",
+            "format": "int64",
+            "description": "Provider answers left behind.",
             "minimum": 0
           }
         }
       },
+      "CacheClearScope": {
+        "type": "string",
+        "description": "What a cache clear drops.",
+        "enum": [
+          "all",
+          "provider_data",
+          "covers"
+        ]
+      },
       "CacheStatsResponse": {
         "type": "object",
-        "description": "Provider byte-cache counters.",
+        "description": "Provider data and image cache counters.",
         "required": [
           "entries",
           "sources",
+          "provider_data_on",
           "cover_images",
           "cover_bytes"
         ],
@@ -38266,15 +38268,20 @@
           },
           "entries": {
             "type": "integer",
-            "description": "Entries currently held.",
+            "format": "int64",
+            "description": "Provider answers held.",
             "minimum": 0
+          },
+          "provider_data_on": {
+            "type": "boolean",
+            "description": "Whether the provider cache file is working. When it is not, every\nprovider answer is fetched each time."
           },
           "sources": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/ProviderSourceStats"
             },
-            "description": "Registered invalidation roots by source."
+            "description": "Rows and bytes per provider."
           }
         }
       },
@@ -54321,6 +54328,21 @@
           "retain_survivor"
         ]
       },
+      "ProviderDataSource": {
+        "type": "string",
+        "description": "Where a cached answer came from. Every key starts with one.",
+        "enum": [
+          "musicbrainz",
+          "listenbrainz",
+          "lastfm",
+          "audiodb",
+          "wikidata",
+          "purchase",
+          "plugins",
+          "youtube",
+          "lrclib"
+        ]
+      },
       "ProviderLimiterView": {
         "type": "object",
         "description": "One provider's limiter posture.",
@@ -54351,6 +54373,33 @@
           "source": {
             "type": "string",
             "description": "Provider name, e.g. `musicbrainz`."
+          }
+        }
+      },
+      "ProviderSourceStats": {
+        "type": "object",
+        "description": "What one provider holds in the cache file.",
+        "required": [
+          "source",
+          "rows",
+          "bytes"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Their size in bytes.",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Answers held.",
+            "minimum": 0
+          },
+          "source": {
+            "$ref": "#/components/schemas/ProviderDataSource",
+            "description": "The provider."
           }
         }
       },

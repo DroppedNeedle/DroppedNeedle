@@ -2,12 +2,13 @@
 //!
 //! Each section declares on its type what a change to it sets off
 //! ([`Section::EFFECTS`](droppedneedle_kernel::runtime_config::Section::EFFECTS)):
-//! provider caches to drop, cached responses to clear, the events sweep to
-//! kick, the download worker to wake. The [`EffectsRunner`] runs them on
+//! the events sweep to kick, the download worker to wake. No save clears a
+//! cache: a cached provider answer's key carries every value that changes
+//! it. The [`EffectsRunner`] runs them on
 //! the section's change notice, so every committed save runs them, whoever
 //! made it. A settings route marks the section before its save and
 //! waits in [`Effects::saved`] before it answers, so the next read after a
-//! save never sees a stale cache. A route save that left the row as it was
+//! save sees what the save set off. A route save that left the row as it was
 //! runs the section's effects itself, as an explicit save always has.
 
 use std::collections::HashMap;
@@ -21,13 +22,12 @@ use droppedneedle_kernel::jobs::events_kick::EventsKick;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::effects::Effect;
 use droppedneedle_kernel::runtime_config::registry;
-use droppedneedle_providers::cache::{ProviderCache, invalidate_source};
 
-/// Carries out one effect. Production wires the shared cache, the events
-/// sweep and the download worker; tests record.
+/// Carries out one effect. Production wires the events sweep and the
+/// download worker; tests record.
 pub trait SaveEffects: Send + Sync {
-    /// Carry out `effect`. It cannot fail: invalidation counts, kicks
-    /// collapse, a wake only signals.
+    /// Carry out `effect`. It cannot fail: kicks collapse, a wake only
+    /// signals.
     fn run(&self, effect: Effect) -> BoxFuture<'_, ()>;
 }
 
@@ -35,11 +35,8 @@ pub trait SaveEffects: Send + Sync {
 /// waits for the pass and cannot fail.
 pub type DownloadWake = Arc<dyn Fn() + Send + Sync>;
 
-/// Production effects: provider-cache invalidation, the events kick and
-/// the download worker's wake.
+/// Production effects: the events kick and the download worker's wake.
 pub struct LiveSaveEffects {
-    /// Provider cache to invalidate.
-    pub cache: Arc<dyn ProviderCache>,
     /// Events sweep kick.
     pub kick: Arc<dyn EventsKick>,
     /// Download worker wake, where a worker runs.
@@ -47,10 +44,9 @@ pub struct LiveSaveEffects {
 }
 
 impl LiveSaveEffects {
-    /// Build over the shared cache and a kick.
-    pub fn new(cache: Arc<dyn ProviderCache>, kick: Arc<dyn EventsKick>) -> Self {
+    /// Build over a kick.
+    pub fn new(kick: Arc<dyn EventsKick>) -> Self {
         Self {
-            cache,
             kick,
             download_wake: None,
         }
@@ -68,16 +64,6 @@ impl SaveEffects for LiveSaveEffects {
     fn run(&self, effect: Effect) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             match effect {
-                Effect::Invalidate(roots) => {
-                    for root in roots {
-                        invalidate_source(self.cache.as_ref(), root.as_str()).await;
-                    }
-                }
-                Effect::ClearPrefixes(prefixes) => {
-                    for prefix in prefixes {
-                        self.cache.clear_prefix(prefix).await;
-                    }
-                }
                 Effect::KickEventsSweep => self.kick.kick(),
                 Effect::WakeDownloads => {
                     if let Some(wake) = &self.download_wake {

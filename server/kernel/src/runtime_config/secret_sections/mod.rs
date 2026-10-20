@@ -28,7 +28,7 @@ pub use downloads::*;
 pub use library::*;
 pub use media_servers::*;
 
-use crate::runtime_config::effects::{CacheRoot, Effect};
+use crate::runtime_config::effects::Effect;
 use crate::runtime_config::error::ConfigError;
 use crate::runtime_config::secret::Secret;
 use crate::runtime_config::sections::{

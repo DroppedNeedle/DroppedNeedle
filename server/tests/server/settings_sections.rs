@@ -25,7 +25,7 @@ use droppedneedle::settings::verify::{
 };
 use droppedneedle::settings::wiring::SettingsSetup;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
-use droppedneedle_kernel::runtime_config::effects::{CacheRoot, Effect};
+use droppedneedle_kernel::runtime_config::effects::Effect;
 use droppedneedle_kernel::runtime_config::mask::SECRET_MASK;
 use droppedneedle_kernel::runtime_config::secret_sections::{JellyfinConnection, TypedLibrary};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
@@ -294,10 +294,7 @@ async fn advanced_round_trip_masks() {
     let echoed = service.save_masked(body).await.expect("saves");
     assert_eq!(echoed.discover_queue_size, 15);
     assert_eq!(echoed.audiodb_api_key.expose(), SECRET_MASK);
-    assert_eq!(
-        effects.calls(),
-        vec![Effect::Invalidate(&[CacheRoot::AudioDb])]
-    );
+    assert!(effects.calls().is_empty(), "a save clears no cache");
 
     let stored = service
         .store
@@ -311,7 +308,7 @@ async fn advanced_round_trip_masks() {
     let revision = service.store.revision(AdvancedSettings::KEY);
     service.save_masked(echoed).await.expect("resaves");
     assert_eq!(service.store.revision(AdvancedSettings::KEY), revision);
-    assert_eq!(effects.calls().len(), 2);
+    assert!(effects.calls().is_empty());
     let stored = service
         .store
         .get_raw::<AdvancedSettings>()
@@ -365,10 +362,7 @@ async fn library_round_trip_cas_and_paths() {
         .await
         .expect("saves");
     assert_eq!(saved.settings.acoustid_api_key.expose(), SECRET_MASK);
-    assert_eq!(
-        effects.calls(),
-        vec![Effect::Invalidate(&[CacheRoot::AcoustId])]
-    );
+    assert!(effects.calls().is_empty(), "a save clears no cache");
     let stored = service.store.get_raw::<TypedLibrary>().expect("raw reads");
     assert_eq!(stored.acoustid_api_key.expose(), "acoustid-secret");
 
@@ -1184,12 +1178,10 @@ async fn live_probes_hit_stubs() {
     assert!(!probes.oidc("  ").await.valid);
 }
 
-/// Live fan-out sweeps exactly the saved section's cache roots and kicks
-/// the events sweep only for the Events section.
+/// Live fan-out kicks the events sweep only for the Events section.
 #[tokio::test]
-async fn live_save_effects_sweep_only_the_saved_section() {
+async fn live_save_effects_kick_only_for_events() {
     use std::sync::atomic::AtomicBool;
-    use std::time::Duration;
 
     use droppedneedle::settings::effects::LiveSaveEffects;
     use droppedneedle_kernel::jobs::events_kick::FnKick;
@@ -1198,27 +1190,12 @@ async fn live_save_effects_sweep_only_the_saved_section() {
         AdvancedSettings, EventsSettings, ListenBrainzConnection,
     };
     use droppedneedle_kernel::runtime_config::sections::{MusicBrainzSettings, UserPreferences};
-    use droppedneedle_providers::InMemoryProviderCache;
-    use droppedneedle_providers::ProviderCache as _;
 
-    let cache = Arc::new(InMemoryProviderCache::new());
-    for key in [
-        "lb_x",
-        "mb:artist:search:x",
-        "audiodb_x",
-        "acoustid:x",
-        "lfm_x",
-    ] {
-        cache.set_bytes(key, vec![1], Duration::from_secs(60)).await;
-    }
     let kicked = Arc::new(AtomicBool::new(false));
     let kick_flag = kicked.clone();
-    let effects = LiveSaveEffects::new(
-        cache.clone(),
-        Arc::new(FnKick {
-            kick_fn: move || kick_flag.store(true, Ordering::SeqCst),
-        }),
-    );
+    let effects = LiveSaveEffects::new(Arc::new(FnKick {
+        kick_fn: move || kick_flag.store(true, Ordering::SeqCst),
+    }));
 
     async fn saved<S: Section>(effects: &LiveSaveEffects) {
         for effect in S::EFFECTS {
@@ -1227,19 +1204,12 @@ async fn live_save_effects_sweep_only_the_saved_section() {
     }
 
     saved::<MusicBrainzSettings>(&effects).await;
-    assert_eq!(cache.len().await, 4);
-    assert!(!kicked.load(Ordering::SeqCst));
-
     saved::<ListenBrainzConnection>(&effects).await;
     saved::<AdvancedSettings>(&effects).await;
     saved::<TypedLibrary>(&effects).await;
-    assert_eq!(cache.len().await, 1);
+    saved::<UserPreferences>(&effects).await;
     assert!(!kicked.load(Ordering::SeqCst));
 
     saved::<EventsSettings>(&effects).await;
     assert!(kicked.load(Ordering::SeqCst));
-    assert_eq!(cache.len().await, 1);
-
-    saved::<UserPreferences>(&effects).await;
-    assert_eq!(cache.len().await, 1);
 }

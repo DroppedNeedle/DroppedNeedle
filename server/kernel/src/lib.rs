@@ -29,6 +29,7 @@ pub mod schema;
 pub fn statement_files() -> Vec<db::statement::StatementFile> {
     vec![
         db::sql::registered(),
+        db::cache::sql::registered(),
         jobs::queue::sql::registered(),
         runtime_config::sql::registered(),
     ]

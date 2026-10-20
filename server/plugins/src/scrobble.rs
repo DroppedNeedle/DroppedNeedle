@@ -590,25 +590,6 @@ impl MixApprovalHook for NoopMixApprovalHook {
     }
 }
 
-/// Cache invalidation after a link mutation. v2 resets the ListenBrainz
-/// circuit breaker and clears the dependent caches on every per-user
-/// change; the production hook does the same once those singletons exist
-/// in v3.
-pub trait ConnectionChangedHook: Send + Sync {
-    /// A ListenBrainz link changed.
-    fn on_listenbrainz_connection_changed(&self);
-}
-
-/// No-op hook for tests.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct NoopConnectionChangedHook;
-
-#[cfg(any(test, feature = "test-support"))]
-impl ConnectionChangedHook for NoopConnectionChangedHook {
-    fn on_listenbrainz_connection_changed(&self) {}
-}
-
 /// Live presence privacy: a saved `now_playing_visibility` must reach the
 /// now-playing feed at once, not after a restart (v2
 /// `NowPlayingService.set_visibility`). Playback owns the feed; this seam
@@ -673,8 +654,6 @@ pub struct ScrobbleDeps {
     pub verifier: Arc<dyn ListenBrainzVerifier>,
     /// Personal-mix hook.
     pub mix_hook: Arc<dyn MixApprovalHook>,
-    /// Link-change hook.
-    pub cache_hook: Arc<dyn ConnectionChangedHook>,
     /// Presence privacy hook.
     pub visibility_hook: Arc<dyn VisibilityHook>,
 }
@@ -686,14 +665,12 @@ impl ScrobbleDeps {
         links: Arc<dyn ListenBrainzLinkStore>,
         verifier: Arc<dyn ListenBrainzVerifier>,
         mix_hook: Arc<dyn MixApprovalHook>,
-        cache_hook: Arc<dyn ConnectionChangedHook>,
     ) -> Self {
         Self {
             prefs,
             links,
             verifier,
             mix_hook,
-            cache_hook,
             visibility_hook: Arc::new(NoopVisibilityHook),
         }
     }
@@ -751,7 +728,6 @@ pub async fn connect_listenbrainz(
             tracing::warn!("listenbrainz link save failed: {reason}");
             ConnectError::StoreFailed(reason)
         })?;
-    deps.cache_hook.on_listenbrainz_connection_changed();
     Ok(ListenBrainzLink {
         username: username.to_owned(),
     })
@@ -759,11 +735,7 @@ pub async fn connect_listenbrainz(
 
 /// Disconnect one user's ListenBrainz account. False means there was none.
 pub async fn disconnect_listenbrainz(deps: &ScrobbleDeps, user_id: &str) -> bool {
-    let removed = deps.links.delete(user_id).await;
-    if removed {
-        deps.cache_hook.on_listenbrainz_connection_changed();
-    }
-    removed
+    deps.links.delete(user_id).await
 }
 
 /// Read one user's prefs.

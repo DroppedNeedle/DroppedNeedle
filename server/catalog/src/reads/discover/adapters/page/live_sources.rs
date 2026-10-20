@@ -25,8 +25,8 @@ use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
 use droppedneedle_media::remotes::connections::ResolveError;
 use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
 use droppedneedle_media::remotes::models::SourceName;
-use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::musicbrainz::Criticality;
+use droppedneedle_providers::{CacheKey, RequestPriority, Source};
 
 /// The algorithm ListenBrainz names its weekly exploration playlist after.
 const WEEKLY_EXPLORATION_PATCH: &str = "weekly-exploration";
@@ -84,7 +84,10 @@ impl PageSources for LiveSources {
         count: u32,
     ) -> BoxFuture<'_, SourceResult<Vec<ArtistRow>>> {
         Box::pin(async move {
-            let key = format!("lb_page:sitewide_artists:{count}");
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &["page_sitewide_artists", &count.to_string()],
+            );
             self.cached(key, ARTIST_TTL, async {
                 let rows = self.listenbrainz_result(
                     self.lb()
@@ -134,9 +137,13 @@ impl PageSources for LiveSources {
             if self.listenbrainz_popularity_down() {
                 return Ok(Vec::new());
             }
-            let key = format!(
-                "lb_page:artist_ranked:{}:{count}",
-                artist_mbid.to_lowercase()
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &[
+                    "page_artist_ranked",
+                    &artist_mbid.to_lowercase(),
+                    &count.to_string(),
+                ],
             );
             self.cached(key, ARTIST_TTL, async {
                 let creds = self.credentials(user_id).await;
@@ -168,7 +175,10 @@ impl PageSources for LiveSources {
         count: u32,
     ) -> BoxFuture<'_, SourceResult<Vec<RankedAlbum>>> {
         Box::pin(async move {
-            let key = format!("lb_page:trending_ranked:{count}");
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &["page_trending_ranked", &count.to_string()],
+            );
             self.cached(key, ARTIST_TTL, async {
                 let rows = self.listenbrainz_result(
                     self.lb()
@@ -188,11 +198,16 @@ impl PageSources for LiveSources {
         count: u32,
     ) -> BoxFuture<'a, SourceResult<Vec<RankedAlbum>>> {
         Box::pin(async move {
-            let key = format!(
-                "lb_page:user_ranked:{}:{}:{count}",
-                username.to_lowercase(),
-                range.as_str()
-            );
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &[
+                    "page_user_ranked",
+                    &username.to_lowercase(),
+                    range.as_str(),
+                    &count.to_string(),
+                ],
+            )
+            .personal();
             self.cached(key, USER_STATS_TTL, async {
                 let rows = self.listenbrainz_result(
                     self.lb()
@@ -210,7 +225,11 @@ impl PageSources for LiveSources {
         username: &'a str,
     ) -> BoxFuture<'a, SourceResult<Vec<(String, i64)>>> {
         Box::pin(async move {
-            let key = format!("lb_page:genre_counts:{}", username.to_lowercase());
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &["page_genre_counts", &username.to_lowercase()],
+            )
+            .personal();
             self.cached(key, ARTIST_TTL, async {
                 let rows =
                     self.listenbrainz_result(self.lb().user_genre_activity(username, BUILD).await)?;
@@ -228,7 +247,11 @@ impl PageSources for LiveSources {
         username: &'a str,
     ) -> BoxFuture<'a, SourceResult<Vec<String>>> {
         Box::pin(async move {
-            let key = format!("lb_page:similar_users:{}", username.to_lowercase());
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &["page_similar_users", &username.to_lowercase()],
+            )
+            .personal();
             self.cached(key, ARTIST_TTL, async {
                 self.listenbrainz_result(self.lb().similar_users(username, BUILD).await)
             })
@@ -242,7 +265,11 @@ impl PageSources for LiveSources {
         username: &'a str,
     ) -> BoxFuture<'a, SourceResult<Option<WeeklyPlaylist>>> {
         Box::pin(async move {
-            let key = format!("lb_page:weekly:{}", username.to_lowercase());
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &["page_weekly", &username.to_lowercase()],
+            )
+            .personal();
             self.cached(key, USER_STATS_TTL, async {
                 let creds = self.credentials(user_id).await;
                 let lb = self.lb();
@@ -317,7 +344,10 @@ impl PageSources for LiveSources {
                 .mbid
                 .clone()
                 .unwrap_or_else(|| artist.name.trim().to_lowercase());
-            let key = format!("lfm_page:similar_scored:{id}:{limit}");
+            let key = CacheKey::new(
+                Source::LastFm,
+                &["page_similar_scored", &id, &limit.to_string()],
+            );
             self.cached(key, ARTIST_TTL, async {
                 let rows = lastfm_result(
                     client
@@ -349,7 +379,11 @@ impl PageSources for LiveSources {
             let Some((client, creds)) = self.lastfm(user_id).await else {
                 return Ok(Vec::new());
             };
-            let key = format!("lfm_page:weekly_artists:{}", username.to_lowercase());
+            let key = CacheKey::new(
+                Source::LastFm,
+                &["page_weekly_artists", &username.to_lowercase()],
+            )
+            .personal();
             self.cached(key, USER_STATS_TTL, async {
                 let rows = lastfm_result(
                     client
@@ -378,7 +412,11 @@ impl PageSources for LiveSources {
             let Some((client, creds)) = self.lastfm(user_id).await else {
                 return Ok(Vec::new());
             };
-            let key = format!("lfm_page:weekly_albums:{}", username.to_lowercase());
+            let key = CacheKey::new(
+                Source::LastFm,
+                &["page_weekly_albums", &username.to_lowercase()],
+            )
+            .personal();
             self.cached(key, USER_STATS_TTL, async {
                 let rows = lastfm_result(
                     client
@@ -401,7 +439,11 @@ impl PageSources for LiveSources {
             let Some((client, creds)) = self.lastfm(user_id).await else {
                 return Ok(Vec::new());
             };
-            let key = format!("lfm_page:recent:{}:{limit}", username.to_lowercase());
+            let key = CacheKey::new(
+                Source::LastFm,
+                &["page_recent", &username.to_lowercase(), &limit.to_string()],
+            )
+            .personal();
             self.cached(key, USER_STATS_TTL, async {
                 let rows = lastfm_result(
                     client
@@ -437,7 +479,7 @@ impl PageSources for LiveSources {
                 .mbid
                 .clone()
                 .unwrap_or_else(|| artist.name.trim().to_lowercase());
-            let key = format!("lfm_page:artist_tags:{id}");
+            let key = CacheKey::new(Source::LastFm, &["page_artist_tags", &id]);
             self.cached(key, ARTIST_TTL, async {
                 let Some(info) = lastfm_result(
                     client
@@ -469,7 +511,10 @@ impl PageSources for LiveSources {
             let Some((client, creds)) = self.lastfm(user_id).await else {
                 return Ok(Vec::new());
             };
-            let key = format!("lfm_page:tag_artists:{}:{limit}", tag.to_lowercase());
+            let key = CacheKey::new(
+                Source::LastFm,
+                &["page_tag_artists", &tag.to_lowercase(), &limit.to_string()],
+            );
             self.cached(key, ARTIST_TTL, async {
                 let rows =
                     lastfm_result(client.tag_top_artists(&creds, tag, limit, priority).await)?;
@@ -492,10 +537,14 @@ impl PageSources for LiveSources {
         limit: u32,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         Box::pin(async move {
-            let key = format!(
-                "mb_artists_by_tag:{}:{}:{limit}",
-                self.source_key(),
-                tag.trim().to_lowercase()
+            let key = CacheKey::new(
+                Source::MusicBrainz,
+                &[
+                    &self.source_key(),
+                    "artists_by_tag",
+                    &tag.trim().to_lowercase(),
+                    &limit.to_string(),
+                ],
             );
             self.cached(key, ARTIST_TTL, async {
                 let page = self

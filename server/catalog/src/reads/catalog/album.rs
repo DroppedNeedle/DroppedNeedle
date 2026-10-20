@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::degradation::scoped;
 use droppedneedle_providers::musicbrainz::{Criticality, MbRelease, MbReleaseGroup};
+use droppedneedle_providers::{CacheKey, RequestPriority, Source};
 
 use super::artist::{LASTFM_TTL, checked_mbid};
 use super::error::CatalogError;
@@ -221,10 +221,6 @@ struct AudioDbAlbumEntry {
     images: Option<AlbumImages>,
 }
 
-fn audiodb_album_key(mbid: &str) -> String {
-    format!("audiodb_album:{}", mbid.to_ascii_lowercase())
-}
-
 /// An album page in the library, kept for a day.
 const LIBRARY_ALBUM_TTL: Duration = Duration::from_secs(86400);
 /// Any other album page, kept for six hours.
@@ -253,14 +249,32 @@ const EDITION_PAGE: u32 = 100;
 const EDITION_PAGES: u32 = 5;
 
 impl Catalog {
-    pub(super) fn group_key(&self, mbid: &str) -> String {
+    pub(super) fn group_key(&self, mbid: &str) -> CacheKey {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        format!("mb:rg:detail:{namespace}:{mbid}")
+        CacheKey::new(Source::MusicBrainz, &[&namespace, "rg", mbid])
     }
 
-    fn release_key(&self, mbid: &str) -> String {
+    fn release_key(&self, mbid: &str) -> CacheKey {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        format!("mb:release:detail:{namespace}:{mbid}")
+        CacheKey::new(Source::MusicBrainz, &[&namespace, "release", mbid])
+    }
+
+    /// Cache key of TheAudioDB's album art. A name match may be another
+    /// album's art, so whether the name search is on is in the key.
+    fn audiodb_album_key(&self, mbid: &str) -> CacheKey {
+        let fallback = self
+            .upstream()
+            .settings()
+            .advanced()
+            .audiodb_name_search_fallback;
+        CacheKey::new(
+            Source::AudioDb,
+            &[
+                if fallback { "by_name" } else { "by_id" },
+                "album",
+                &mbid.to_ascii_lowercase(),
+            ],
+        )
     }
 
     /// The cached release-group detail. Sources that hand over a release
@@ -674,7 +688,7 @@ impl Catalog {
         let bytes = self
             .upstream()
             .cache()
-            .get_bytes(&audiodb_album_key(mbid))
+            .get_bytes(&self.audiodb_album_key(mbid))
             .await?;
         serde_json::from_slice::<AudioDbAlbumEntry>(&bytes)
             .ok()?
@@ -699,7 +713,7 @@ impl Catalog {
         let Some(client) = self.upstream().audiodb(&advanced) else {
             return Some(None);
         };
-        let key = audiodb_album_key(&group.mbid);
+        let key = self.audiodb_album_key(&group.mbid);
         if let Some(bytes) = self.upstream().cache().get_bytes(&key).await
             && let Ok(entry) = serde_json::from_slice::<AudioDbAlbumEntry>(&bytes)
         {
@@ -733,7 +747,7 @@ impl Catalog {
         if let Ok(bytes) = serde_json::to_vec(&AudioDbAlbumEntry {
             images: images.clone(),
         }) {
-            self.upstream().cache().set_bytes(&key, bytes, ttl).await;
+            self.upstream().cache().set_bytes(&key, bytes, ttl);
         }
         Some(images)
     }
@@ -778,9 +792,12 @@ impl Catalog {
         })
     }
 
-    fn editions_key(&self, mbid: &str) -> String {
+    fn editions_key(&self, mbid: &str) -> CacheKey {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        format!("mb:rg:editions:{namespace}:{}", mbid.to_ascii_lowercase())
+        CacheKey::new(
+            Source::MusicBrainz,
+            &[&namespace, "rg_editions", &mbid.to_ascii_lowercase()],
+        )
     }
 
     /// Every release of one group from MusicBrainz's release index, cached
@@ -862,11 +879,11 @@ impl Catalog {
     pub async fn album_refresh(&self, raw_id: &str) -> Result<AlbumBasicInfo, CatalogError> {
         let id = self.album_id(raw_id).await?;
         let region = self.upstream().settings().store_region();
-        let mut keys = vec![self.group_key(&id), audiodb_album_key(&id)];
+        let mut keys = vec![self.group_key(&id), self.audiodb_album_key(&id)];
         keys.extend(region.iter().map(|region| self.purchase_key(&id, region)));
         if let Ok(Some(group)) = self.group_detail(&id).await {
             keys.push(self.group_key(&group.mbid));
-            keys.push(audiodb_album_key(&group.mbid));
+            keys.push(self.audiodb_album_key(&group.mbid));
             keys.extend(
                 group
                     .releases
@@ -885,17 +902,17 @@ impl Catalog {
 
     /// The purchase cache key: per MusicBrainz source, store region and set
     /// of extra link providers.
-    fn purchase_key(&self, mbid: &str, region: &str) -> String {
+    fn purchase_key(&self, mbid: &str, region: &str) -> CacheKey {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        droppedneedle_providers::digest_key(
-            "getit:",
+        CacheKey::hashed(
+            Source::Purchase,
+            "links",
             &[
                 &namespace,
                 &mbid.to_ascii_lowercase(),
                 &region.to_ascii_uppercase(),
                 &self.purchase_links.token(),
             ],
-            "v1",
         )
     }
 
@@ -1069,10 +1086,10 @@ impl Catalog {
         let Some((client, creds)) = self.upstream().lastfm(user_id).await else {
             return Ok(LastFmAlbumEnrichment::default());
         };
-        let key = droppedneedle_providers::digest_key(
-            "lfm_album_info:",
+        let key = CacheKey::hashed(
+            Source::LastFm,
+            "album_info",
             &[&id, artist_name, album_name],
-            "v1",
         );
         let artist = artist_name.to_owned();
         let album = album_name.to_owned();

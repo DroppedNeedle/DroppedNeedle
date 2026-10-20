@@ -216,6 +216,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let Opened {
         platform,
         runtime,
+        cache_db,
         web,
         data_lock,
     } = open_platform(config).await?;
@@ -235,9 +236,9 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let plugin_host = droppedneedle_plugins::wiring::new_host(p, &plugin_ticks, library_fs.clone());
     // Shared provider deps first: auth links Last.fm accounts through the
     // one Last.fm client, and the reads enrichment pair paces through these
-    // same limiters, so production holds one limiter set. The byte cache
+    // same limiters, so production holds one limiter set. The answer cache
     // stays shared with the admin stats and clear routes.
-    let providers = Arc::new(Providers::build(p, outbound.providers()));
+    let providers = Arc::new(Providers::build(p, outbound.providers(), cache_db.clone()));
     let provider_cache = providers.cache.clone();
     let auth = AuthSetup::build_with_upstreams(
         p,
@@ -445,7 +446,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let (effects, effects_runner) = Effects::new(
         config_store.clone(),
         Arc::new(
-            LiveSaveEffects::new(provider_cache.clone(), jobs.events_kick())
+            LiveSaveEffects::new(jobs.events_kick())
                 .with_download_wake(Arc::new(move || download_worker.wake())),
         ),
     );
@@ -484,7 +485,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         p,
         plugin_host,
         plugin_ticks,
-        provider_cache,
         outbound.plugin_hosts(),
         providers.listenbrainz.clone(),
     )
@@ -535,6 +535,9 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     droppedneedle_kernel::events::downloads::start(supervisor, events.clone(), db.clone())
         .map_err(|error| stage("event loops")(error.to_string()))?;
     jobs.spawn_loops().map_err(stage("jobs loops"))?;
+    jobs::spawn_provider_cache_sweep(supervisor, providers.cache.clone()).map_err(|_| {
+        stage("jobs loops")("the provider cache sweep is already running".to_owned())
+    })?;
 
     let router = create_app_with_web(state.clone(), web);
     Ok(Built {
@@ -545,6 +548,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             supervisor.clone(),
             events.clone(),
             runtime,
+            cache_db,
             data_lock,
         ),
     })

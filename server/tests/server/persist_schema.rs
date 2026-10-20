@@ -3994,6 +3994,11 @@ fn every_registered_statement_prepares() {
     droppedneedle_tool::tooling::fixture::build_v2_fixture(&v2_root).expect("v2 fixture builds");
     let v2 = rusqlite::Connection::open(v2_root.join("cache").join("library.db"))
         .expect("v2 fixture opens");
+    let cache =
+        rusqlite::Connection::open(dir.join("metadata-cache.db")).expect("cache file opens");
+    cache
+        .execute_batch(droppedneedle_kernel::db::cache::SCHEMA)
+        .expect("cache schema builds");
     let (mut statements, mut families, mut made) = (0, 0, 0);
     for (schema, declared) in registered
         .values()
@@ -4002,6 +4007,7 @@ fn every_registered_statement_prepares() {
         let connection = match schema {
             Schema::App => &app,
             Schema::V2 => &v2,
+            Schema::Cache => &cache,
         };
         match declared {
             Declared::Statement(statement) => {

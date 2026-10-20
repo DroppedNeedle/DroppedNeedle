@@ -5,8 +5,8 @@
 //! one client per service (MusicBrainz, the Cover Art Archive,
 //! ListenBrainz, Last.fm, TheAudioDB, AcoustID, Discogs, iTunes, Deezer,
 //! LRCLIB, Wikidata, Ticketmaster, Skiddle, Open-Meteo, YouTube, GitHub
-//! and the image hosts), the limiters, the byte cache and the service
-//! health registry. Each client sends through its own [`Executor`].
+//! and the image hosts), the limiters, the provider answer cache and the
+//! service health registry. Each client sends through its own [`Executor`].
 //!
 //! - [`executor`]: sends one request. It waits for a token at the caller's
 //!   priority, sends with a deadline, reads the body under a cap, types the
@@ -22,7 +22,8 @@
 //!   apart, and the `Retry-After` reader.
 //! - [`health`]: which services are degraded right now.
 //! - [`degradation`]: the per-request record of which sources failed.
-//! - [`cache`]: cache-aside reads with per-source key prefixes.
+//! - [`cache`]: provider answers kept in the cache file, keyed by source,
+//!   behind one fetch helper.
 //! - [`singleflight`]: one fetch for many identical callers.
 //! - [`slots`]: the user, image and background lanes the admin view shows.
 //!
@@ -65,12 +66,10 @@ pub mod youtube;
 use std::sync::Arc;
 
 use droppedneedle_kernel::clock::Clock;
+use droppedneedle_kernel::db::cache::CacheDb;
 use droppedneedle_kernel::platform::Platform;
 
-pub use cache::{
-    InMemoryProviderCache, ProviderCache, cache_aside_json, digest_key, invalidate_source,
-    prefixes_for,
-};
+pub use cache::{CacheKey, Fetched, Policy, ProviderCacheStore, Source};
 pub use degradation::{DegradationContext, IntegrationStatus, record_current, scoped};
 pub use error::{MAX_RETRY_AFTER, PayloadKind, ProviderError, TransportKind};
 pub use executor::{Executor, ReqwestWire, Wire};
@@ -154,8 +153,8 @@ impl ProviderEndpoints {
 }
 
 /// The shared provider dependencies, built once at boot and shared by
-/// every area: the limiters of the rate table, the slot lanes, the byte
-/// cache, the service health registry, and the clients that send through
+/// every area: the limiters of the rate table, the slot lanes, the
+/// provider answer cache, the service health registry, and the clients that send through
 /// the executor.
 #[derive(Debug)]
 pub struct Providers {
@@ -163,8 +162,8 @@ pub struct Providers {
     pub limiters: LimiterSet,
     /// User / image / background slot lanes.
     pub slots: SlotManager,
-    /// Shared byte cache behind every client's cache-aside reads.
-    pub cache: Arc<InMemoryProviderCache>,
+    /// Provider answers kept in the cache file.
+    pub cache: ProviderCacheStore,
     /// Which services are degraded right now, for `GET /system/health`.
     pub health: Arc<health::ServiceHealth>,
     /// MusicBrainz: the official service, BrainzMash and a mirror.
@@ -209,26 +208,35 @@ pub struct Providers {
 
 impl Providers {
     /// The providers over the real network, with the platform's HTTP
-    /// clients and clock.
+    /// clients and clock, keeping answers in `cache`.
     #[must_use]
-    pub fn build(platform: &Platform, endpoints: ProviderEndpoints) -> Self {
-        Self::over_wire(
+    pub fn build(platform: &Platform, endpoints: ProviderEndpoints, cache: CacheDb) -> Self {
+        Self::assemble(
             Arc::new(executor::ReqwestWire::new(&platform.http)),
             Arc::clone(&platform.clock),
             endpoints,
+            LimiterSet::new(),
+            cache,
         )
     }
 
-    /// The providers over `wire`, reading wall time from `clock`. The one
-    /// builder: [`build`](Self::build) passes the real network, tests a
-    /// scripted wire or one that reaches a loopback server.
+    /// The providers over `wire`, reading wall time from `clock`, with a
+    /// cache in a scratch file. Tests pass a scripted wire or one that
+    /// reaches a loopback server.
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn over_wire(
         wire: Arc<dyn Wire>,
         clock: Arc<dyn Clock>,
         endpoints: ProviderEndpoints,
     ) -> Self {
-        Self::assemble(wire, clock, endpoints, LimiterSet::new())
+        Self::assemble(
+            wire,
+            clock,
+            endpoints,
+            LimiterSet::new(),
+            CacheDb::scratch(),
+        )
     }
 
     /// The providers over `wire` with every limiter unpaced, for suites
@@ -249,6 +257,7 @@ impl Providers {
             Arc::new(droppedneedle_kernel::clock::SystemClock),
             endpoints,
             LimiterSet::unpaced(),
+            CacheDb::scratch(),
         )
     }
 
@@ -257,7 +266,9 @@ impl Providers {
         clock: Arc<dyn Clock>,
         endpoints: ProviderEndpoints,
         limiters: LimiterSet,
+        cache: CacheDb,
     ) -> Self {
+        let cache = ProviderCacheStore::new(cache, Arc::clone(&clock));
         let health = Arc::new(health::ServiceHealth::new());
         let executor = |spec: &'static executor::Spec, row: &str| {
             Executor::new(
@@ -340,7 +351,7 @@ impl Providers {
         Self {
             limiters,
             slots: SlotManager::new(),
-            cache: Arc::new(InMemoryProviderCache::new()),
+            cache,
             health,
             musicbrainz,
             coverart,

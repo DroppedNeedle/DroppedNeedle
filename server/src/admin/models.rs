@@ -71,30 +71,52 @@ pub struct RestoreReport {
     pub checks: Vec<RestoreCheck>,
 }
 
-/// Provider byte-cache counters.
+/// Provider data and image cache counters.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct CacheStatsResponse {
-    /// Entries currently held.
-    pub entries: usize,
-    /// Registered invalidation roots by source.
-    pub sources: Vec<String>,
+    /// Provider answers held.
+    pub entries: u64,
+    /// Rows and bytes per provider.
+    pub sources: Vec<ProviderSourceStats>,
+    /// Whether the provider cache file is working. When it is not, every
+    /// provider answer is fetched each time.
+    pub provider_data_on: bool,
     /// Cover and artist images on disk.
     pub cover_images: u64,
     /// Their total size in bytes.
     pub cover_bytes: u64,
 }
 
-/// Cache-clear request. Empty scope clears everything.
+/// What one provider holds in the cache file.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ProviderSourceStats {
+    /// The provider.
+    pub source: droppedneedle_providers::Source,
+    /// Answers held.
+    pub rows: u64,
+    /// Their size in bytes.
+    pub bytes: u64,
+}
+
+/// What a cache clear drops.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheClearScope {
+    /// Provider data and images.
+    #[default]
+    All,
+    /// Provider answers only.
+    ProviderData,
+    /// Cover and artist images only.
+    Covers,
+}
+
+/// Cache-clear request. No scope clears everything.
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
 pub struct CacheClearBody {
-    /// `all` (default: provider responses and images), `source` (one
-    /// provider's responses), `covers` (cover and artist images only) or
-    /// `audiodb` (TheAudioDB answers and album thumbnails).
+    /// What to clear.
     #[serde(default)]
-    pub scope: Option<String>,
-    /// Source name when `scope` is `source`.
-    #[serde(default)]
-    pub source: Option<String>,
+    pub scope: CacheClearScope,
 }
 
 /// What one cache clear dropped.
@@ -102,12 +124,11 @@ pub struct CacheClearBody {
 pub struct CacheClearResponse {
     /// Plain-language summary.
     pub message: String,
-    /// Entries dropped.
-    pub cleared_entries: usize,
-    /// Entries left behind.
-    pub remaining_entries: usize,
-    /// Cover and artist images deleted from disk (for the `audiodb`
-    /// scope, AudioDB album thumbnails forgotten).
+    /// Provider answers dropped.
+    pub cleared_entries: u64,
+    /// Provider answers left behind.
+    pub remaining_entries: u64,
+    /// Cover and artist images deleted from disk.
     pub cleared_cover_images: u64,
 }
 

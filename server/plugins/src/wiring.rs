@@ -22,7 +22,6 @@ use droppedneedle_kernel::jobs::Supervisor;
 use droppedneedle_kernel::jobs::plugin_ticks::SqliteTickStore;
 use droppedneedle_kernel::mount::Routes;
 use droppedneedle_kernel::platform::Platform;
-use droppedneedle_providers::cache::{ProviderCache, invalidate_source};
 
 use super::handlers::{
     ExtRateLimiter, PluginsDeps, ScrobbleHttpDeps, plugin_routes, scrobble_routes,
@@ -32,8 +31,8 @@ use super::install::{GitHubHosts, ReqwestFetcher, ZipUnpacker};
 use super::process::ProcessLauncher;
 use super::runtime::PluginLauncher;
 use super::scrobble::{
-    ConnectionChangedHook, ListenBrainzLinkStore, NoopMixApprovalHook, ScrobbleDeps,
-    ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
+    ListenBrainzLinkStore, NoopMixApprovalHook, ScrobbleDeps, ScrobblePrefsStore,
+    SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
 };
 use super::ticks::{PluginTickLoops, TICK_CANCEL_GRACE, TickLoopSync, TickStoreKind};
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
@@ -101,24 +100,6 @@ pub fn new_host(
     )
 }
 
-/// Link-change hook over the shared provider cache: a ListenBrainz link
-/// mutation invalidates the dependent cached reads, the way v2 resets its
-/// breaker and clears caches on every per-user change. The invalidation
-/// spawns off the request path; the request never waits on it.
-#[derive(Clone)]
-pub struct ListenBrainzCacheHook {
-    cache: Arc<dyn ProviderCache>,
-}
-
-impl ConnectionChangedHook for ListenBrainzCacheHook {
-    fn on_listenbrainz_connection_changed(&self) {
-        let cache = Arc::clone(&self.cache);
-        tokio::spawn(async move {
-            invalidate_source(cache.as_ref(), "listenbrainz").await;
-        });
-    }
-}
-
 /// Removes a test bundle's scratch folder once the last clone drops.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug)]
@@ -146,14 +127,12 @@ pub struct PluginsSetup {
 impl PluginsSetup {
     /// Bind the production seams over a host from [`new_host`] and the
     /// tick store it was given: SQLite scrobble stores, the ListenBrainz
-    /// client as the link verifier, the HTTP fetcher, cache invalidation on
-    /// link changes, and tick loops over the shared loop supervisor. Loads
+    /// client as the link verifier, the HTTP fetcher, and tick loops over the shared loop supervisor. Loads
     /// the host, which starts the enabled plugins.
     pub fn build(
         platform: &Platform,
         host: Arc<PluginHost>,
         ticks: TickStoreKind,
-        cache: Arc<dyn ProviderCache>,
         github: GitHubHosts,
         listenbrainz: ListenBrainzClient,
     ) -> Self {
@@ -163,7 +142,6 @@ impl PluginsSetup {
             platform.http.shared().clone(),
             github,
             listenbrainz,
-            cache,
             platform.supervisor.clone(),
             ticks,
             Arc::new(SqliteScrobblePrefsStore::new(db.clone())),
@@ -190,7 +168,6 @@ impl PluginsSetup {
         use droppedneedle_kernel::http_client::HttpClientFactory;
         use droppedneedle_kernel::jobs::plugin_ticks::MemoryTickStore;
         use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
-        use droppedneedle_providers::InMemoryProviderCache;
 
         /// Scratch-dir sequence so parallel test states never share a store.
         static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -210,7 +187,6 @@ impl PluginsSetup {
         )?);
         let crypto =
             Arc::new(Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?);
-        let cache: Arc<dyn ProviderCache> = Arc::new(InMemoryProviderCache::new());
         let ticks = TickStoreKind::Memory(MemoryTickStore::new());
         let host = PluginHost::new(
             dir.join("plugins"),
@@ -227,7 +203,6 @@ impl PluginsSetup {
                 codeload: super::install::CODELOAD_BASE.to_owned(),
             },
             listenbrainz,
-            cache,
             supervisor,
             ticks,
             Arc::new(MemoryScrobblePrefsStore::new()),
@@ -245,7 +220,6 @@ impl PluginsSetup {
         http: reqwest::Client,
         github: GitHubHosts,
         listenbrainz: ListenBrainzClient,
-        cache: Arc<dyn ProviderCache>,
         supervisor: Supervisor,
         ticks: TickStoreKind,
         prefs: Arc<dyn ScrobblePrefsStore>,
@@ -268,7 +242,6 @@ impl PluginsSetup {
                 links,
                 Arc::new(listenbrainz),
                 Arc::new(NoopMixApprovalHook),
-                Arc::new(ListenBrainzCacheHook { cache }),
             ),
             mix_state: Arc::new(StaticMixState),
         };

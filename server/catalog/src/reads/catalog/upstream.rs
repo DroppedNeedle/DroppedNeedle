@@ -4,7 +4,7 @@
 //! Clients are cheap (a reqwest handle plus pacing), so each call builds
 //! the ones it needs from the settings as they are right now: a source
 //! switch, a new AudioDB key or a Last.fm toggle takes effect on the next
-//! request without a restart. Pacing and the byte cache come from the one
+//! request without a restart. Pacing and the answer cache come from the one
 //! shared [`Providers`], so every client in the process respects the same
 //! rate rows.
 
@@ -26,7 +26,7 @@ use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCred
 use droppedneedle_providers::lrclib::LrclibClient;
 use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzView};
 use droppedneedle_providers::wikidata::WikidataClient;
-use droppedneedle_providers::{ProviderCache, ProviderError, Providers, RequestPriority};
+use droppedneedle_providers::{ProviderCacheStore, ProviderError, Providers, RequestPriority};
 
 /// The settings the catalog reads, once per call.
 pub trait CatalogSettings: Send + Sync {
@@ -270,15 +270,9 @@ impl Upstream {
         self.settings.as_ref()
     }
 
-    /// The shared byte cache.
-    pub fn cache(&self) -> &dyn ProviderCache {
-        self.providers.cache.as_ref()
-    }
-
-    /// An owned handle on the shared byte cache, for work that outlives
-    /// the borrow (coalesced fetches).
-    pub fn cache_handle(&self) -> Arc<dyn ProviderCache> {
-        self.providers.cache.clone()
+    /// The shared provider answer cache.
+    pub fn cache(&self) -> &ProviderCacheStore {
+        &self.providers.cache
     }
 
     /// A MusicBrainz client for the configured source, plus the cache

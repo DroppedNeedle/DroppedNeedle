@@ -22,8 +22,8 @@ use crate::reads::discover::adapters::queue::sources::{
 };
 use crate::reads::discover::models::WeeklyExploration;
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure};
-use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::musicbrainz::Criticality;
+use droppedneedle_providers::{CacheKey, RequestPriority, Source};
 
 /// One loved track (ListenBrainz feedback or Last.fm loved tracks).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -188,7 +188,11 @@ impl HomeSources for LiveSources {
         count: u32,
     ) -> BoxFuture<'a, SourceResult<Vec<LovedTrack>>> {
         Box::pin(async move {
-            let key = format!("lb_home:loved:{}:{count}", username.to_lowercase());
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &["home_loved", &username.to_lowercase(), &count.to_string()],
+            )
+            .personal();
             self.cached(key, USER_STATS_TTL, async {
                 let rows = self.listenbrainz_result(
                     self.lb()
@@ -247,7 +251,15 @@ impl HomeSources for LiveSources {
             let Some((client, creds)) = self.lastfm(user_id).await else {
                 return Ok(Vec::new());
             };
-            let key = format!("lfm_home:top_albums:{}:{limit}", username.to_lowercase());
+            let key = CacheKey::new(
+                Source::LastFm,
+                &[
+                    "home_top_albums",
+                    &username.to_lowercase(),
+                    &limit.to_string(),
+                ],
+            )
+            .personal();
             self.cached(key, USER_STATS_TTL, async {
                 let rows = lastfm_result(
                     client
@@ -279,7 +291,11 @@ impl HomeSources for LiveSources {
             let Some((client, creds)) = self.lastfm(user_id).await else {
                 return Ok(Vec::new());
             };
-            let key = format!("lfm_home:loved:{}:{limit}", username.to_lowercase());
+            let key = CacheKey::new(
+                Source::LastFm,
+                &["home_loved", &username.to_lowercase(), &limit.to_string()],
+            )
+            .personal();
             self.cached(key, USER_STATS_TTL, async {
                 let rows = lastfm_result(
                     client
@@ -299,10 +315,15 @@ impl HomeSources for LiveSources {
         offset: u32,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         Box::pin(async move {
-            let key = format!(
-                "mb_genre_artists:{}:{}:{limit}:{offset}",
-                QueueSources::source_key(self),
-                tag.trim().to_lowercase()
+            let key = CacheKey::new(
+                Source::MusicBrainz,
+                &[
+                    &QueueSources::source_key(self),
+                    "genre_artists",
+                    &tag.trim().to_lowercase(),
+                    &limit.to_string(),
+                    &offset.to_string(),
+                ],
             );
             self.cached(key, tag_ttl().max(ARTIST_TTL), async {
                 let page = self
@@ -335,10 +356,15 @@ impl HomeSources for LiveSources {
         offset: u32,
     ) -> BoxFuture<'a, SourceResult<Vec<TagAlbum>>> {
         Box::pin(async move {
-            let key = format!(
-                "mb_genre_albums:{}:{}:{limit}:{offset}",
-                QueueSources::source_key(self),
-                tag.trim().to_lowercase()
+            let key = CacheKey::new(
+                Source::MusicBrainz,
+                &[
+                    &QueueSources::source_key(self),
+                    "genre_albums",
+                    &tag.trim().to_lowercase(),
+                    &limit.to_string(),
+                    &offset.to_string(),
+                ],
             );
             self.cached(key, tag_ttl(), async {
                 // Ask for extra rows: the type exclusions drop some (v2).

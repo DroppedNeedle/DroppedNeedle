@@ -866,6 +866,7 @@ dependencies = [
  "tokio",
  "tracing",
  "unicode-normalization",
+ "utoipa",
 ]
 
 [[package]]

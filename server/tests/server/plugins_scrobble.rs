@@ -18,9 +18,8 @@ use droppedneedle_plugins::fakes::FakeVerifier;
 use droppedneedle_plugins::handlers::{ScrobbleHttpDeps, scrobble_routes};
 use droppedneedle_plugins::scrobble::{
     ListenBrainzLinkStore, MemoryListenBrainzLinkStore, MemoryScrobblePrefsStore,
-    NoopConnectionChangedHook, NoopMixApprovalHook, ScrobbleDeps, ScrobblePrefsPatch,
-    ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
-    connect_listenbrainz,
+    NoopMixApprovalHook, ScrobbleDeps, ScrobblePrefsPatch, ScrobblePrefsStore,
+    SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState, connect_listenbrainz,
 };
 use droppedneedle_providers::listenbrainz::VerifyOutcome;
 use tower::ServiceExt as _;
@@ -46,7 +45,6 @@ fn rig() -> Rig {
         Arc::new(MemoryListenBrainzLinkStore::new(test_crypto())),
         verifier.clone(),
         Arc::new(NoopMixApprovalHook),
-        Arc::new(NoopConnectionChangedHook),
     );
     let http = ScrobbleHttpDeps {
         deps: ScrobbleDeps::new(
@@ -54,7 +52,6 @@ fn rig() -> Rig {
             deps.links.clone(),
             deps.verifier.clone(),
             deps.mix_hook.clone(),
-            deps.cache_hook.clone(),
         ),
         mix_state: Arc::new(StaticMixState),
     };

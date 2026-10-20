@@ -29,12 +29,11 @@ use droppedneedle_media::remotes::connections::{ConnectionResolver, ResolveError
 use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
 use droppedneedle_media::remotes::models::SourceName;
 use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
-use droppedneedle_providers::cache::cache_aside_json;
 use droppedneedle_providers::lastfm::LastFmCredentials;
 use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
 use droppedneedle_providers::musicbrainz::models::{ArtistCreditName, Relation};
 use droppedneedle_providers::musicbrainz::{Criticality, is_valid_mbid};
-use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
+use droppedneedle_providers::{CacheKey, ProviderError, Providers, RequestPriority, Source};
 
 /// How long a popularity refusal keeps Last.fm standing in.
 const POPULARITY_DOWN_FOR: Duration = Duration::from_secs(10 * 60);
@@ -82,7 +81,7 @@ impl LiveSources {
 
     pub(in crate::reads::discover::adapters) async fn cached<T, Fut>(
         &self,
-        key: String,
+        key: CacheKey,
         ttl: Duration,
         fetch: Fut,
     ) -> SourceResult<T>
@@ -90,7 +89,17 @@ impl LiveSources {
         T: Serialize + DeserializeOwned,
         Fut: Future<Output = SourceResult<T>>,
     {
-        cache_aside_json(self.upstream.cache(), &key, ttl, || fetch).await
+        let cache = self.upstream.cache();
+        if let Some(hit) = cache.get_bytes(&key).await
+            && let Ok(decoded) = serde_json::from_slice::<T>(&hit)
+        {
+            return Ok(decoded);
+        }
+        let fresh = fetch.await?;
+        if let Ok(bytes) = serde_json::to_vec(&fresh) {
+            cache.set_bytes(&key, bytes, ttl);
+        }
+        Ok(fresh)
     }
 
     /// The user's ListenBrainz identity, lending the token to reads that
@@ -258,11 +267,16 @@ impl QueueSources for LiveSources {
         priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         Box::pin(async move {
-            let key = format!(
-                "lb_queue:top_artists:{}:{}:{count}",
-                username.to_lowercase(),
-                range.as_str()
-            );
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &[
+                    "queue_top_artists",
+                    &username.to_lowercase(),
+                    range.as_str(),
+                    &count.to_string(),
+                ],
+            )
+            .personal();
             self.cached(key, USER_STATS_TTL, async {
                 let rows = self.listenbrainz_result(
                     self.lb()
@@ -290,11 +304,16 @@ impl QueueSources for LiveSources {
         priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         Box::pin(async move {
-            let key = format!(
-                "lb_queue:top_albums:{}:{}:{count}",
-                username.to_lowercase(),
-                range.as_str()
-            );
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &[
+                    "queue_top_albums",
+                    &username.to_lowercase(),
+                    range.as_str(),
+                    &count.to_string(),
+                ],
+            )
+            .personal();
             self.cached(key, USER_STATS_TTL, async {
                 let rows = self.listenbrainz_result(
                     self.lb()
@@ -325,7 +344,14 @@ impl QueueSources for LiveSources {
         priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         Box::pin(async move {
-            let key = format!("lb_queue:similar:{}:{limit}", artist_mbid.to_lowercase());
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &[
+                    "queue_similar",
+                    &artist_mbid.to_lowercase(),
+                    &limit.to_string(),
+                ],
+            );
             self.cached(key, ARTIST_TTL, async {
                 let creds = self.credentials(user_id).await;
                 let rows = self.listenbrainz_result(
@@ -357,9 +383,13 @@ impl QueueSources for LiveSources {
             if self.listenbrainz_popularity_down() {
                 return Ok(Vec::new());
             }
-            let key = format!(
-                "lb_queue:artist_albums:{}:{count}",
-                artist_mbid.to_lowercase()
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &[
+                    "queue_artist_albums",
+                    &artist_mbid.to_lowercase(),
+                    &count.to_string(),
+                ],
             );
             self.cached(key, ARTIST_TTL, async {
                 let creds = self.credentials(user_id).await;
@@ -389,7 +419,11 @@ impl QueueSources for LiveSources {
         priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<String>>> {
         Box::pin(async move {
-            let key = format!("lb_queue:genres:{}", username.to_lowercase());
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &["queue_genres", &username.to_lowercase()],
+            )
+            .personal();
             self.cached(key, ARTIST_TTL, async {
                 let rows = self
                     .listenbrainz_result(self.lb().user_genre_activity(username, priority).await)?;
@@ -405,7 +439,11 @@ impl QueueSources for LiveSources {
         priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         Box::pin(async move {
-            let key = format!("lb_queue:fresh:{}", username.to_lowercase());
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &["queue_fresh", &username.to_lowercase()],
+            )
+            .personal();
             self.cached(key, ARTIST_TTL, async {
                 let rows = self
                     .listenbrainz_result(self.lb().user_fresh_releases(username, priority).await)?;
@@ -433,7 +471,11 @@ impl QueueSources for LiveSources {
         priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<String>>> {
         Box::pin(async move {
-            let key = format!("lb_queue:loved:{}:{count}", username.to_lowercase());
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &["queue_loved", &username.to_lowercase(), &count.to_string()],
+            )
+            .personal();
             self.cached(key, USER_STATS_TTL, async {
                 self.listenbrainz_result(
                     self.lb()
@@ -451,7 +493,10 @@ impl QueueSources for LiveSources {
         priority: RequestPriority,
     ) -> BoxFuture<'_, SourceResult<Vec<AlbumRow>>> {
         Box::pin(async move {
-            let key = format!("lb_queue:trending:{count}");
+            let key = CacheKey::new(
+                Source::ListenBrainz,
+                &["queue_trending", &count.to_string()],
+            );
             self.cached(key, ARTIST_TTL, async {
                 let rows = self.listenbrainz_result(
                     self.lb()
@@ -482,7 +527,12 @@ impl QueueSources for LiveSources {
     ) -> BoxFuture<'a, SourceResult<HashMap<String, i64>>> {
         Box::pin(async move {
             let cache = self.upstream.cache();
-            let key_of = |mbid: &str| format!("lb_rg_popularity:{}", mbid.to_lowercase());
+            let key_of = |mbid: &str| {
+                CacheKey::new(
+                    Source::ListenBrainz,
+                    &["rg_popularity", &mbid.to_lowercase()],
+                )
+            };
             let mut counts = HashMap::new();
             let mut missing = Vec::new();
             for mbid in release_group_mbids {
@@ -508,7 +558,7 @@ impl QueueSources for LiveSources {
             )?;
             for (mbid, count) in fetched {
                 if let Ok(bytes) = serde_json::to_vec(&count) {
-                    cache.set_bytes(&key_of(&mbid), bytes, ARTIST_TTL).await;
+                    cache.set_bytes(&key_of(&mbid), bytes, ARTIST_TTL);
                 }
                 if let Some(asked) = missing
                     .iter()
@@ -539,7 +589,15 @@ impl QueueSources for LiveSources {
             let Some((client, creds)) = self.lastfm(user_id).await else {
                 return Ok(Vec::new());
             };
-            let key = format!("lfm_queue:top_artists:{}:{limit}", username.to_lowercase());
+            let key = CacheKey::new(
+                Source::LastFm,
+                &[
+                    "queue_top_artists",
+                    &username.to_lowercase(),
+                    &limit.to_string(),
+                ],
+            )
+            .personal();
             self.cached(key, USER_STATS_TTL, async {
                 let rows = lastfm_result(
                     client
@@ -570,7 +628,14 @@ impl QueueSources for LiveSources {
             let Some((client, creds)) = self.lastfm(user_id).await else {
                 return Ok(Vec::new());
             };
-            let key = format!("lfm_queue:similar:{}:{limit}", lastfm_artist_key(artist));
+            let key = CacheKey::new(
+                Source::LastFm,
+                &[
+                    "queue_similar",
+                    &lastfm_artist_key(artist),
+                    &limit.to_string(),
+                ],
+            );
             self.cached(key, ARTIST_TTL, async {
                 let rows = lastfm_result(
                     client
@@ -607,7 +672,14 @@ impl QueueSources for LiveSources {
             let Some((client, creds)) = self.lastfm(user_id).await else {
                 return Ok(Vec::new());
             };
-            let key = format!("lfm_queue:albums:{}:{limit}", lastfm_artist_key(artist));
+            let key = CacheKey::new(
+                Source::LastFm,
+                &[
+                    "queue_albums",
+                    &lastfm_artist_key(artist),
+                    &limit.to_string(),
+                ],
+            );
             self.cached(key, ARTIST_TTL, async {
                 let rows = lastfm_result(
                     client
@@ -643,7 +715,7 @@ impl QueueSources for LiveSources {
             let Some((client, creds)) = self.lastfm(user_id).await else {
                 return Ok(Vec::new());
             };
-            let key = format!("lfm_queue:chart:{limit}");
+            let key = CacheKey::new(Source::LastFm, &["queue_chart", &limit.to_string()]);
             self.cached(key, ARTIST_TTL, async {
                 let rows = lastfm_result(client.chart_top_artists(&creds, limit, priority).await)?;
                 Ok(rows
@@ -748,10 +820,14 @@ impl QueueSources for LiveSources {
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         Box::pin(async move {
             let ttl = crate::reads::catalog::SEARCH_TTL * 2;
-            let key = format!(
-                "mb_rg_by_tag:{}:{}:{limit}",
-                self.source_key(),
-                tag.trim().to_lowercase()
+            let key = CacheKey::new(
+                Source::MusicBrainz,
+                &[
+                    &self.source_key(),
+                    "rg_by_tag",
+                    &tag.trim().to_lowercase(),
+                    &limit.to_string(),
+                ],
             );
             self.cached(key, ttl, async {
                 // Ask for extra rows: the type exclusions drop some.
