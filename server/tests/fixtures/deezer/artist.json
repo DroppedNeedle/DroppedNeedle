@@ -1,0 +1,16 @@
+{
+  "id": 415,
+  "name": "Nirvana",
+  "link": "https://www.deezer.com/artist/415",
+  "share": "https://www.deezer.com/artist/415?utm_source=deezer&utm_content=artist-415&utm_term=REDACTED&utm_medium=web",
+  "picture": "https://api.deezer.com/artist/415/image",
+  "picture_small": "https://cdn-images.dzcdn.net/images/artist/3ec5542ff520ee74e2befdaba32ef2ef/56x56-000000-80-0-0.jpg",
+  "picture_medium": "https://cdn-images.dzcdn.net/images/artist/3ec5542ff520ee74e2befdaba32ef2ef/250x250-000000-80-0-0.jpg",
+  "picture_big": "https://cdn-images.dzcdn.net/images/artist/3ec5542ff520ee74e2befdaba32ef2ef/500x500-000000-80-0-0.jpg",
+  "picture_xl": "https://cdn-images.dzcdn.net/images/artist/3ec5542ff520ee74e2befdaba32ef2ef/1000x1000-000000-80-0-0.jpg",
+  "nb_album": 25,
+  "nb_fan": 10091798,
+  "radio": true,
+  "tracklist": "https://api.deezer.com/artist/415/top?limit=50",
+  "type": "artist"
+}

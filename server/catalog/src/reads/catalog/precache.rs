@@ -16,6 +16,7 @@ use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 
 use super::Catalog;
+use super::error::CatalogError;
 
 /// Discovery section sizes the precache warms: the page defaults, so the
 /// cached answers are the ones an artist page asks for.
@@ -124,48 +125,144 @@ impl Catalog {
             .map(|images| images.and_then(|images| images.album_thumb_url))
     }
 
-    /// Candidate image URLs for an artist: TheAudioDB's thumbnail, else
-    /// the Wikidata portrait, the providers asked at `priority`. A page
-    /// reads TheAudioDB from the cache only and queues a fill on a miss;
-    /// background work asks it directly.
+    /// Candidate image URLs for an artist, best first, the providers asked
+    /// at `priority`: TheAudioDB's thumbnail, else the pictures of the one
+    /// Wikidata item carrying the artist's MBID (Deezer's, then Commons'),
+    /// else, when no single item carries it, the portrait MusicBrainz's
+    /// Wikidata link leads to. A page reads TheAudioDB from the cache only
+    /// and queues a fill on a miss, so a cold page asks neither MusicBrainz
+    /// nor TheAudioDB when Wikidata knows the MBID; background work asks
+    /// TheAudioDB directly.
     pub async fn artist_image_candidates(
         &self,
         mbid: &str,
         priority: droppedneedle_providers::RequestPriority,
     ) -> ArtistImageCandidates {
-        let detail = match self.artist_detail(mbid, priority).await {
-            Ok(Some(detail)) => detail,
-            Ok(None) => return ArtistImageCandidates::default(),
+        let mut candidates = ArtistImageCandidates::default();
+        let mut detail = None;
+        if priority.is_user_facing() {
+            let cached = self.page_artist_images(mbid, mbid).await;
+            if let Some(thumb) = cached.and_then(|images| images.thumb_url) {
+                candidates.urls.push(thumb);
+                return candidates;
+            }
+        } else {
+            let found = match self.artist_detail(mbid, priority).await {
+                Ok(Some(found)) => found,
+                Ok(None) => return ArtistImageCandidates::default(),
+                Err(error) => return musicbrainz_unavailable(mbid, &error),
+            };
+            match self
+                .artist_images_lookup(&found.mbid, &found.name, priority)
+                .await
+            {
+                Some(images) => {
+                    if let Some(thumb) = images.and_then(|images| images.thumb_url) {
+                        candidates.urls.push(thumb);
+                        return candidates;
+                    }
+                }
+                None => candidates.incomplete = true,
+            }
+            detail = Some(found);
+        }
+        let canonical = detail.as_ref().map_or(mbid, |found| found.mbid.as_str());
+        match self.wikidata_artist_pictures(canonical, priority).await {
+            WikidataPictures::Matched { urls, failed } => {
+                candidates.urls = urls;
+                candidates.incomplete |= failed;
+                return candidates;
+            }
+            WikidataPictures::NoMatch { failed } => candidates.incomplete |= failed,
+        }
+        let detail = match detail {
+            Some(found) => found,
+            None => match self.artist_detail(mbid, priority).await {
+                Ok(Some(found)) => {
+                    // A merged MBID: TheAudioDB's answer is kept under the
+                    // artist's current one.
+                    if found.mbid != mbid
+                        && let Some(thumb) = self
+                            .cached_artist_images(&found.mbid)
+                            .await
+                            .and_then(|images| images.thumb_url)
+                    {
+                        candidates.urls.push(thumb);
+                        return candidates;
+                    }
+                    found
+                }
+                Ok(None) => return candidates,
+                Err(error) => return musicbrainz_unavailable(mbid, &error),
+            },
+        };
+        let biography = self.biography(&detail, priority).await;
+        // A failed portrait lookup keeps the short outage marker.
+        candidates.incomplete |= biography.image_failed;
+        candidates.urls.extend(biography.image);
+        candidates
+    }
+
+    /// The pictures of the one Wikidata item whose MusicBrainz artist id
+    /// (P434) is `mbid`: Deezer's picture by the item's Deezer artist id
+    /// (P2722), else its Commons image (P18). Matched by exact id, never by
+    /// name.
+    async fn wikidata_artist_pictures(
+        &self,
+        mbid: &str,
+        priority: droppedneedle_providers::RequestPriority,
+    ) -> WikidataPictures {
+        let wiki = self.upstream().wikidata();
+        let item = match wiki.item_for_musicbrainz_artist(mbid, priority).await {
+            Ok(Some(item)) => item,
+            Ok(None) => return WikidataPictures::NoMatch { failed: false },
             Err(error) => {
-                tracing::debug!(artist = mbid, %error, "artist image: MusicBrainz unavailable");
-                return ArtistImageCandidates {
+                tracing::debug!(artist = mbid, %error, "artist image: Wikidata search failed");
+                return WikidataPictures::NoMatch { failed: true };
+            }
+        };
+        let ids = match wiki.artist_picture_ids(&item, priority).await {
+            Ok(ids) => ids.unwrap_or_default(),
+            Err(error) => {
+                tracing::debug!(artist = mbid, %error, "artist image: Wikidata claims failed");
+                return WikidataPictures::Matched {
                     urls: Vec::new(),
-                    incomplete: true,
+                    failed: true,
                 };
             }
         };
-        let mut candidates = ArtistImageCandidates::default();
-        let audiodb = if priority.is_user_facing() {
-            Some(self.page_artist_images(&detail.mbid, mbid).await)
-        } else {
-            self.artist_images_lookup(&detail.mbid, &detail.name, priority)
+        let mut failed = false;
+        if let Some(deezer_id) = ids.deezer_artist {
+            match self
+                .upstream()
+                .deezer()
+                .deezer_artist_picture(deezer_id, priority)
                 .await
-        };
-        match audiodb {
-            Some(images) => {
-                if let Some(thumb) = images.and_then(|images| images.thumb_url) {
-                    candidates.urls.push(thumb);
+            {
+                Ok(Some(url)) => {
+                    return WikidataPictures::Matched {
+                        urls: vec![url],
+                        failed: false,
+                    };
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::debug!(artist = mbid, %error, "artist image: Deezer failed");
+                    failed = true;
                 }
             }
-            None => candidates.incomplete = true,
         }
-        if candidates.urls.is_empty() {
-            let biography = self.biography(&detail, priority).await;
-            // A failed portrait lookup keeps the short outage marker.
-            candidates.incomplete |= biography.image_failed;
-            candidates.urls.extend(biography.image);
+        let mut urls = Vec::new();
+        if let Some(file) = &ids.commons_file {
+            match wiki.commons_image(file, priority).await {
+                Ok(url) => urls.extend(url),
+                Err(error) => {
+                    tracing::debug!(artist = mbid, %error, "artist image: Commons failed");
+                    failed = true;
+                }
+            }
         }
-        candidates
+        WikidataPictures::Matched { urls, failed }
     }
 
     /// Fetch and cache TheAudioDB's answer for an artist at background
@@ -184,6 +281,25 @@ impl Catalog {
             .await
             .flatten()
             .is_some_and(|images| images.thumb_url.is_some())
+    }
+}
+
+/// What the exact-id Wikidata step found for an artist.
+enum WikidataPictures {
+    /// No single item carries the MBID; `failed` when the search failed.
+    NoMatch { failed: bool },
+    /// The item's pictures, best first; `failed` when a lookup behind them
+    /// failed.
+    Matched { urls: Vec<String>, failed: bool },
+}
+
+/// Candidates for an artist MusicBrainz could not look up: none, asked
+/// again soon.
+fn musicbrainz_unavailable(mbid: &str, error: &CatalogError) -> ArtistImageCandidates {
+    tracing::debug!(artist = mbid, %error, "artist image: MusicBrainz unavailable");
+    ArtistImageCandidates {
+        urls: Vec::new(),
+        incomplete: true,
     }
 }
 

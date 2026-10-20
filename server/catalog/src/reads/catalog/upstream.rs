@@ -25,6 +25,7 @@ use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
 use droppedneedle_providers::lrclib::LrclibClient;
 use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzView};
+use droppedneedle_providers::preview::PreviewClient;
 use droppedneedle_providers::wikidata::WikidataClient;
 use droppedneedle_providers::{ProviderCacheStore, ProviderError, Providers, RequestPriority};
 
@@ -341,6 +342,11 @@ impl Upstream {
     /// The Wikidata, Wikipedia and Commons client.
     pub fn wikidata(&self) -> &WikidataClient {
         &self.providers.wikidata
+    }
+
+    /// The Deezer client behind artist pictures.
+    pub fn deezer(&self) -> &PreviewClient {
+        &self.providers.previews
     }
 
     /// The iTunes Search client behind purchase links.

@@ -307,6 +307,7 @@ impl Providers {
         let images = images::ImageClient::new(
             executor(&images::AUDIODB_SPEC, images::AUDIODB_MEDIA),
             executor(&images::WIKIMEDIA_SPEC, images::WIKIMEDIA_MEDIA),
+            executor(&images::DEEZER_SPEC, preview::DEEZER),
         );
         let discogs = discogs::DiscogsClient::new(
             executor(&discogs::SPEC, discogs::SOURCE),

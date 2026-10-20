@@ -4,9 +4,10 @@
 //! Tolerant of unknown fields. Identity is required: an entity without its
 //! `id`, a page that is neither found nor marked `missing` or `invalid`, a
 //! Commons image row without its `url`, and a claim value without its `value`
-//! each fail decoding. Absence has its own shapes: a page marked `missing` or
-//! `invalid`, a Commons file with no image info, a property with no statement,
-//! and an error answer whose code names no entity or a merged item.
+//! each fail decoding, and so does a search hit without its title. Absence has
+//! its own shapes: a page marked `missing` or `invalid`, a Commons file with no
+//! image info, a property with no statement, a search with no hits, and an
+//! error answer whose code names no entity or a merged item.
 
 use std::collections::HashMap;
 
@@ -42,9 +43,13 @@ pub struct Sitelink {
     pub title: Option<String>,
 }
 
-/// A claims answer, `GET /w/api.php?action=wbgetclaims` on www.wikidata.org.
+/// A claims answer, `GET /w/api.php?action=wbgetclaims` on www.wikidata.org,
+/// for one property or, with no `property`, for all of them. `wbgetclaims`
+/// takes one property or none: `property=P18|P2722` is refused with an error
+/// answer, so the artist picture lookup reads every claim in one call.
 ///
 /// Verified against www.wikidata.org/w/api.php on 2026-10-20: tests/fixtures/wikidata/claims_p18_found.json.
+/// Every claim of an item: tests/fixtures/wikidata/claims_all.json.
 /// A property with no statement: tests/fixtures/wikidata/claims_no_statement.json.
 /// An id that names no entity: tests/fixtures/wikidata/claims_no_such_entity.json.
 /// An id the id builder refuses: tests/fixtures/wikidata/claims_invalid_id.json.
@@ -71,12 +76,26 @@ pub struct WikidataError {
     pub code: String,
 }
 
-/// One statement. Only its main value is read.
+/// One statement. Only its main value and rank are read.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Claim {
     /// The main value. Absent for a statement with no value.
     #[serde(default)]
     pub mainsnak: Option<Snak>,
+    /// `preferred`, `normal` or `deprecated`.
+    #[serde(default)]
+    pub rank: Option<String>,
+}
+
+impl Claim {
+    /// The statement's string value, unless the statement is deprecated.
+    #[must_use]
+    pub fn text(&self) -> Option<&str> {
+        if self.rank.as_deref() == Some("deprecated") {
+            return None;
+        }
+        self.mainsnak.as_ref()?.datavalue.as_ref()?.value.text()
+    }
 }
 
 /// The main value of a statement.
@@ -95,27 +114,64 @@ pub struct DataValue {
 }
 
 /// A datavalue's value. A `commonsMedia` statement carries its file name as a
-/// string. Entity references, quantities and times decode as `Other` and are
+/// string, and an `external-id` statement (such as P2722, the Deezer artist id)
+/// its id. Entity references, quantities and times decode as `Other` and are
 /// not read.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum ClaimValue {
-    /// A Commons file name.
-    File(String),
+    /// A string: a Commons file name or an external id.
+    Text(String),
     /// Any other value. Kept so one unread statement does not fail the answer.
     #[allow(dead_code)]
     Other(IgnoredAny),
 }
 
 impl ClaimValue {
-    /// The Commons file name, when the value is one.
+    /// The value, when it is a string.
     #[must_use]
-    pub fn file_name(&self) -> Option<&str> {
+    pub fn text(&self) -> Option<&str> {
         match self {
-            Self::File(name) => Some(name),
+            Self::Text(text) => Some(text),
             Self::Other(_) => None,
         }
     }
+}
+
+/// The full-text search, `GET /w/api.php?action=query&list=search`, sent as
+/// `srsearch=haswbstatement:P434=<mbid>`.
+///
+/// Verified against www.wikidata.org/w/api.php on 2026-10-20: tests/fixtures/wikidata/search_p434.json.
+/// A search with no hits is an empty `search`: tests/fixtures/wikidata/search_p434_no_hits.json.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SearchAnswer {
+    /// The search block. An error answer has none and fails decoding.
+    pub query: SearchQuery,
+}
+
+/// The search block.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SearchQuery {
+    /// Totals, when the API sends them.
+    #[serde(default)]
+    pub searchinfo: Option<SearchInfo>,
+    /// The hits, at most as many as `srlimit` asked for.
+    pub search: Vec<SearchHit>,
+}
+
+/// The search totals.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SearchInfo {
+    /// Every item matching the query, beyond the hits sent.
+    #[serde(default)]
+    pub totalhits: Option<u64>,
+}
+
+/// One search hit. Its title is the item id (`Q...`) in the main namespace.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SearchHit {
+    /// The item id. Required: a hit without it fails decoding.
+    pub title: String,
 }
 
 /// The `query` block of a MediaWiki answer.

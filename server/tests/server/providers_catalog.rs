@@ -1,7 +1,7 @@
 //! Discogs, iTunes, preview (Deezer and iTunes), LRCLIB and Wikidata
 //! clients against the scripted provider wire: the decode of each real
-//! wire shape, identity gates, absence, and each provider's own rate-limit
-//! defaults. What every other status becomes is pinned in `providers_core`.
+//! wire shape, identity gates, absence, the exact-id artist picture match,
+//! and each provider's own rate-limit defaults. What every other status becomes is pinned in `providers_core`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -961,4 +961,122 @@ async fn wikidata_no_single_entity_for_the_id_asked_is_a_payload_error() {
             }
         ));
     }
+}
+
+/// An artist's picture is found by exact id, never by name: only the one
+/// item whose MusicBrainz artist id (P434) is the artist's matches, and only
+/// a plain positive integer is taken as its Deezer artist id (P2722).
+#[tokio::test]
+async fn wikidata_artist_picture_matches_by_exact_id() {
+    const NIRVANA: &str = "5b11f4ce-a62d-471e-81fc-a69a8278c7da";
+    let hits = |total: u64, titles: &[&str]| {
+        let search: Vec<_> = titles
+            .iter()
+            .map(|title| serde_json::json!({"ns": 0, "title": title, "pageid": 1}))
+            .collect();
+        serde_json::json!({"query": {"searchinfo": {"totalhits": total}, "search": search}})
+            .to_string()
+    };
+    let searches = [
+        (
+            "one hit",
+            include_str!("../fixtures/wikidata/search_p434.json").to_owned(),
+            Some("Q11649"),
+        ),
+        (
+            "no hit",
+            include_str!("../fixtures/wikidata/search_p434_no_hits.json").to_owned(),
+            None,
+        ),
+        ("two hits", hits(2, &["Q11649", "Q2"]), None),
+        ("one hit of several", hits(3, &["Q11649"]), None),
+        (
+            "a hit that is not an item",
+            hits(1, &["Property:P434"]),
+            None,
+        ),
+    ];
+    for (name, body, item) in searches {
+        let wire = scripted(CLAIMS, &[(200, &[], body.as_str())]);
+        let found = catalog_providers(&wire)
+            .wikidata
+            .item_for_musicbrainz_artist(NIRVANA, PRIORITY)
+            .await
+            .unwrap();
+        assert_eq!(found.as_deref(), item, "{name}");
+        assert_eq!(
+            wire.sent()[0].query("srsearch").as_deref(),
+            Some("haswbstatement:P434=5b11f4ce-a62d-471e-81fc-a69a8278c7da"),
+            "{name}"
+        );
+    }
+
+    let wire = scripted(CLAIMS, &[]);
+    let by_name = catalog_providers(&wire)
+        .wikidata
+        .item_for_musicbrainz_artist("Nirvana", PRIORITY)
+        .await
+        .unwrap();
+    assert_eq!(by_name, None);
+    assert!(wire.sent().is_empty(), "a name is never searched");
+
+    let claim = |value: serde_json::Value, rank: &str| serde_json::json!({"mainsnak": {"datavalue": {"value": value, "type": "string"}}, "rank": rank});
+    let picture_ids = |body: String| async move {
+        let wire = scripted(CLAIMS, &[(200, &[], body.as_str())]);
+        catalog_providers(&wire)
+            .wikidata
+            .artist_picture_ids("Q11649", PRIORITY)
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    let deezer_ids = [
+        ("415", Some(415)),
+        ("0", None),
+        ("-415", None),
+        ("+415", None),
+        (" 415", None),
+        ("4.15", None),
+        ("415a", None),
+        ("", None),
+        ("99999999999999999999999", None),
+    ];
+    for (value, id) in deezer_ids {
+        let body = serde_json::json!({"claims": {"P2722": [claim(value.into(), "normal")]}});
+        let ids = picture_ids(body.to_string()).await;
+        assert_eq!(ids.deezer_artist, id, "P2722 {value:?}");
+    }
+    let body = serde_json::json!({"claims": {"P2722": [
+        claim("1".into(), "deprecated"),
+        claim(serde_json::json!({"id": "Q1"}), "normal"),
+        claim("415".into(), "normal"),
+    ]}});
+    let ids = picture_ids(body.to_string()).await;
+    assert_eq!(
+        ids.deezer_artist,
+        Some(415),
+        "deprecated and non-text claims are skipped"
+    );
+
+    let wire = scripted(
+        CLAIMS,
+        &[(
+            200,
+            &[],
+            include_str!("../fixtures/wikidata/claims_all.json"),
+        )],
+    );
+    let ids = catalog_providers(&wire)
+        .wikidata
+        .artist_picture_ids("Q11649", PRIORITY)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ids.deezer_artist, Some(415));
+    assert_eq!(ids.commons_file.as_deref(), Some("Nirvana around 1992.jpg"));
+    assert_eq!(
+        wire.sent()[0].query("property"),
+        None,
+        "one call reads both"
+    );
 }

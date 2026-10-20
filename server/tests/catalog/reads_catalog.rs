@@ -1001,6 +1001,14 @@ async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
         &[],
         upstream_fixture("audiodb_artist"),
     );
+    // No Wikidata item carries the MBID, so the portrait comes through
+    // MusicBrainz's Wikidata link.
+    wire.answer(
+        &format!("{}/w/api.php", wikidata::WIKIDATA_BASE),
+        200,
+        &[],
+        include_str!("../fixtures/wikidata/search_p434_no_hits.json"),
+    );
     wire.answer(
         &format!("{}/w/api.php", wikidata::WIKIDATA_BASE),
         200,

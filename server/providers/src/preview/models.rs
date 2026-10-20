@@ -1,10 +1,10 @@
-//! Deezer wire shapes for the preview legs.
+//! Deezer wire shapes for the preview legs and the artist picture.
 //!
-//! Tolerant of unknown fields. A track's and an album's id is the identity of
-//! the answer and is required: one without it fails decoding. A track whose
-//! preview is missing, null or empty is absence for that track only. An error
-//! answer is an error object inside a 200; the classifier in `preview.rs` reads
-//! it before these shapes decode.
+//! Tolerant of unknown fields. A track's, an album's and an artist's id is the
+//! identity of the answer and is required: one without it fails decoding. A
+//! track whose preview is missing, null or empty is absence for that track
+//! only. An error answer is an error object inside a 200; the classifier in
+//! `preview.rs` reads it before these shapes decode.
 
 use serde::Deserialize;
 
@@ -77,6 +77,23 @@ pub struct Album {
 pub struct AlbumTracks {
     /// The tracks, in album order.
     pub data: Vec<Track>,
+}
+
+/// One artist, `GET /artist/{id}`. Its picture is read by exact id.
+///
+/// Verified against api.deezer.com/artist/415 on 2026-10-20: tests/fixtures/deezer/artist.json.
+/// The picture URLs point at cdn-images.dzcdn.net (the 1000 px one answered
+/// 200 image/jpeg with no redirect). `picture` itself is
+/// `api.deezer.com/artist/{id}/image`, which answers a 302 to the same CDN.
+/// An unknown id gets the error object, code 800:
+/// tests/fixtures/deezer/artist_not_found.json.
+#[derive(Debug, Deserialize)]
+pub struct DeezerArtist {
+    /// Deezer artist id.
+    pub id: i64,
+    /// The 1000 by 1000 picture URL.
+    #[serde(default)]
+    pub picture_xl: Option<String>,
 }
 
 /// The error object Deezer answers with inside a 200. An unknown album id gets

@@ -21,6 +21,9 @@ enum Provider {
     DeezerTrack,
     DeezerAlbumSearch,
     DeezerAlbumTracks,
+    DeezerArtist,
+    WikidataSearch,
+    WikidataPictureClaims,
     ItunesAlbum,
     ItunesTrack,
     ItunesAlbumTracks,
@@ -93,6 +96,24 @@ const ROWS: &[Row] = &[
         provider: Provider::DeezerAlbumTracks,
         body: DEEZER_ALBUM_TRACKS_BODY,
         identity: "/data/0/id",
+    },
+    Row {
+        name: "deezer /artist/{id}, artist id",
+        provider: Provider::DeezerArtist,
+        body: include_str!("../fixtures/deezer/artist.json"),
+        identity: "/id",
+    },
+    Row {
+        name: "wikidata list=search, item id",
+        provider: Provider::WikidataSearch,
+        body: include_str!("../fixtures/wikidata/search_p434.json"),
+        identity: "/query/search/0/title",
+    },
+    Row {
+        name: "wikidata wbgetclaims for every property, claims",
+        provider: Provider::WikidataPictureClaims,
+        body: include_str!("../fixtures/wikidata/claims_all.json"),
+        identity: "/claims",
     },
     Row {
         name: "itunes /search album, collection id",
@@ -245,6 +266,27 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                 .itunes_track_preview("Nirvana", "Smells Like Teen Spirit", PRIORITY)
                 .await?;
             Ok(found.is_some())
+        }
+        Provider::DeezerArtist => {
+            let picture = deezer(&[("/artist/415", body)])
+                .previews
+                .deezer_artist_picture(415, PRIORITY)
+                .await?;
+            Ok(picture.is_some())
+        }
+        Provider::WikidataSearch => {
+            let item = wikidata_answers(&[(WIKIDATA_CLAIMS_URL, body)])
+                .wikidata
+                .item_for_musicbrainz_artist("5b11f4ce-a62d-471e-81fc-a69a8278c7da", PRIORITY)
+                .await?;
+            Ok(item.is_some())
+        }
+        Provider::WikidataPictureClaims => {
+            let ids = wikidata_answers(&[(WIKIDATA_CLAIMS_URL, body)])
+                .wikidata
+                .artist_picture_ids("Q11649", PRIORITY)
+                .await?;
+            Ok(ids.is_some_and(|ids| ids.deezer_artist.is_some()))
         }
         Provider::ItunesAlbumTracks => {
             let tracks = itunes(body)

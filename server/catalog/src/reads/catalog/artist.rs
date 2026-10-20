@@ -428,7 +428,7 @@ impl Catalog {
 
     /// TheAudioDB images already in the cache; never dials out, so the
     /// header stays fast.
-    async fn cached_artist_images(&self, mbid: &str) -> Option<ArtistImages> {
+    pub(super) async fn cached_artist_images(&self, mbid: &str) -> Option<ArtistImages> {
         self.cached_audiodb_answer(&self.audiodb_artist_key(mbid))
             .await
             .flatten()

@@ -20,11 +20,21 @@ than the five-a-second row in the rate table.
   album id Deezer does not hold. Deezer answers with an error object inside a
   200, not with a 404.
 
+- `artist.json`: HTTP 200 for `GET /artist/415` (Nirvana), the artist picture
+  call. Its `picture_*` URLs are on `cdn-images.dzcdn.net`; the 1000 px one
+  answered 200 `image/jpeg` with no redirect. `picture` is
+  `api.deezer.com/artist/415/image`, which answers a 302 to the same CDN URL.
+- `artist_not_found.json`: HTTP 200 for `GET /artist/99999999999`, an artist id
+  Deezer does not hold: the same error object, code 800.
+
 The preview URLs in `search_artist.json` and `album_tracks.json` are signed (an
 `hdnea` token) and expire, so the token in each of the 22 URLs is replaced by
 `REDACTED`. The client resolves a preview URL just in time (see `preview.rs`).
 
-All five bodies are unchanged except re-indented (two spaces) and those tokens.
+The tracking value in `artist.json`'s `share` link (`utm_term`) is replaced by
+`REDACTED` too. The two artist answers were fetched on 2026-10-20 as well.
+
+All seven bodies are unchanged except re-indented (two spaces) and those values.
 No field was replaced for copyright: the answers hold titles, names, ids, flags
 and links, and no lyric or biography text. None of them holds a key, a token or
 personal data.

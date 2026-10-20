@@ -25,11 +25,11 @@
 //! outlasts [`WARM_WAIT`] keeps running in the background while the web
 //! route answers 202 ("warming"), which the frontend polls.
 //!
-//! Artist images come from TheAudioDB's artist thumbnail, else the
-//! Wikidata portrait (v2's order, minus the Lidarr and Jellyfin sources v3
-//! does not mirror). A page reads TheAudioDB from the cache only; a miss
-//! queues a background fill (see [`warm`]) and the page goes on to the
-//! portrait. The catalog names the candidate URLs through
+//! Artist images come from TheAudioDB's artist thumbnail, else the Deezer
+//! picture and then the Commons portrait of the one Wikidata item carrying
+//! the artist's MBID, matched by exact id. A page reads TheAudioDB from the
+//! cache only; a miss queues a background fill (see [`warm`]) and the page
+//! goes on to Wikidata. The catalog names the candidate URLs through
 //! [`ArtistImageSource`]; the image itself is downloaded once, from an
 //! allowed host only (see
 //! [`check_image_url`](droppedneedle_providers::images::check_image_url)),
@@ -91,15 +91,16 @@ pub const AUDIODB_SOURCE: &str = "audiodb";
 /// How long a precache run waits for one image before moving on (the
 /// fetch keeps going in the background).
 pub const PRECACHE_WAIT: Duration = Duration::from_secs(60);
-/// Artist images resolved at once. Each resolve asks MusicBrainz and
-/// TheAudioDB, which are paced, so more would only queue.
+/// Artist images resolved at once. Each resolve asks Wikidata, which takes
+/// one request at a time, and then Deezer or Commons (MusicBrainz too when
+/// Wikidata has no match), so more would only queue.
 pub const ARTIST_RESOLVE_PERMITS: usize = 4;
 
 /// Candidate artist image URLs, best first.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ArtistImageCandidates {
-    /// URLs to try in order: TheAudioDB thumbnail, then the Wikidata
-    /// portrait.
+    /// URLs to try in order: TheAudioDB thumbnail, then the Deezer picture,
+    /// then the Commons portrait.
     pub urls: Vec<String>,
     /// A source could not answer, so "no image" is not settled yet and is
     /// asked again sooner.

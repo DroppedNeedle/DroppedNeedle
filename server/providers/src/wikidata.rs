@@ -4,7 +4,10 @@
 //! arrive in two hops (Wikidata entity to the English Wikipedia title, then
 //! the plain-text intro extract); artist images arrive in two more (the P18
 //! "image" claim filename, then the Commons file URL). Relation targets
-//! reuse the same claims path with a caller-chosen property.
+//! reuse the same claims path with a caller-chosen property. An artist's
+//! picture can also be found from its MusicBrainz id alone: a statement
+//! search finds the one item carrying that id (P434), and one claims call
+//! reads its Commons image (P18) and Deezer artist id (P2722).
 //!
 //! Absence-vs-outage semantics, carried over from v2: a
 //! clean miss (no sitelink, no extract, no claim) is `Ok(None)` and is
@@ -31,7 +34,8 @@ use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
 use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 
 use models::{
-    Claim, ClaimsAnswer, Entity, EntityData, ExtractAnswer, ImageAnswer, ImagePage, WikiPage,
+    Claim, ClaimsAnswer, Entity, EntityData, ExtractAnswer, ImageAnswer, ImagePage, SearchAnswer,
+    WikiPage,
 };
 
 /// The provider name errors carry.
@@ -61,6 +65,10 @@ pub const WIKIPEDIA_PATTERN: &str = "https://{lang}.wikipedia.org";
 pub const COMMONS_BASE: &str = "https://commons.wikimedia.org";
 /// The "image" property behind artist photos.
 pub const PROPERTY_IMAGE: &str = "P18";
+/// The property holding an item's MusicBrainz artist id.
+pub const PROPERTY_MUSICBRAINZ_ARTIST: &str = "P434";
+/// The property holding an item's Deezer artist id.
+pub const PROPERTY_DEEZER_ARTIST: &str = "P2722";
 
 /// Width Commons scales artist portraits to: big enough for any artist
 /// header, without downloading multi-megabyte originals. A standard Commons
@@ -219,6 +227,67 @@ fn reads_as_absent(code: &str) -> bool {
         code,
         "no-such-entity" | "param-invalid" | "unresolved-redirect"
     )
+}
+
+/// The ids an artist's picture is found by, read from its Wikidata item.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArtistPictureIds {
+    /// The Commons file name (P18).
+    pub commons_file: Option<String>,
+    /// The Deezer artist id (P2722).
+    pub deezer_artist: Option<u64>,
+}
+
+/// The one item a P434 search found. No hit, or more than one, is no match:
+/// a picture is never chosen between items.
+fn single_item(answer: &SearchAnswer) -> Option<String> {
+    let query = &answer.query;
+    let total = query.searchinfo.as_ref().and_then(|info| info.totalhits);
+    if query.search.len() != 1 || total.is_some_and(|total| total != 1) {
+        return None;
+    }
+    query
+        .search
+        .first()
+        .map(|hit| hit.title.as_str())
+        .filter(|title| is_item_id(title))
+        .map(str::to_owned)
+}
+
+/// The first usable P18 and P2722 values among an item's claims.
+fn picture_ids(claims: &HashMap<String, Vec<Claim>>) -> ArtistPictureIds {
+    let texts = |property: &str| {
+        claims
+            .get(property)
+            .into_iter()
+            .flatten()
+            .filter_map(Claim::text)
+    };
+    ArtistPictureIds {
+        commons_file: texts(PROPERTY_IMAGE)
+            .find(|name| !name.is_empty())
+            .map(str::to_owned),
+        deezer_artist: texts(PROPERTY_DEEZER_ARTIST).find_map(deezer_artist_id),
+    }
+}
+
+/// A Deezer artist id: a plain positive integer, digits only. Anything else
+/// is ignored.
+#[must_use]
+pub fn deezer_artist_id(raw: &str) -> Option<u64> {
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<u64>().ok().filter(|id| *id > 0)
+}
+
+/// True for a MusicBrainz id in its canonical form (lowercase hex, 8-4-4-4-12).
+fn is_mbid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(at, b)| match at {
+            8 | 13 | 18 | 23 => b == b'-',
+            _ => b.is_ascii_digit() || (b'a'..=b'f').contains(&b),
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -389,6 +458,19 @@ impl WikidataClient {
         let Some(filename) = filename.filter(|name| !name.is_empty()) else {
             return Ok(None);
         };
+        self.commons_image(&filename, priority).await
+    }
+
+    /// The scaled Commons URL of one file (a P18 value).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
+    pub async fn commons_image(
+        &self,
+        filename: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<String>, ProviderError> {
         let titles = format!("File:{filename}");
         let Some(reply) = self
             .get(
@@ -424,7 +506,10 @@ impl WikidataClient {
         property: &str,
         priority: RequestPriority,
     ) -> Result<Option<String>, ProviderError> {
-        let Some(claims) = self.fetch_claims(wikidata_id, property, priority).await? else {
+        let Some(claims) = self
+            .fetch_claims(wikidata_id, Some(property), priority)
+            .await?
+        else {
             return Ok(None);
         };
         Ok(claims
@@ -432,11 +517,66 @@ impl WikidataClient {
             .and_then(|statements| statements.first())
             .and_then(|claim| claim.mainsnak.as_ref())
             .and_then(|snak| snak.datavalue.as_ref())
-            .and_then(|datavalue| datavalue.value.file_name())
+            .and_then(|datavalue| datavalue.value.text())
             .map(str::to_owned))
     }
 
-    /// Fetch one property's statements, with 404 as absence. An id that is not
+    /// The item whose MusicBrainz artist id (P434) is `mbid`, by exact
+    /// statement search. `None` when no item or more than one has it, and
+    /// for a value that is not an MBID (never sent).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
+    pub async fn item_for_musicbrainz_artist(
+        &self,
+        mbid: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<String>, ProviderError> {
+        if !is_mbid(mbid) {
+            return Ok(None);
+        }
+        let search = format!("haswbstatement:{PROPERTY_MUSICBRAINZ_ARTIST}={mbid}");
+        let Some(reply) = self
+            .get(
+                self.wikidata.as_ref(),
+                &["w", "api.php"],
+                &[
+                    ("action", "query"),
+                    ("list", "search"),
+                    ("srsearch", search.as_str()),
+                    ("srlimit", "2"),
+                    ("srprop", ""),
+                    ("format", "json"),
+                ],
+                priority,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        let answer: SearchAnswer = decode(&reply)?;
+        Ok(single_item(&answer))
+    }
+
+    /// The Commons file (P18) and Deezer artist id (P2722) of one item, in
+    /// one claims call for all its properties. Absent as `fetch_claims` reads
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
+    pub async fn artist_picture_ids(
+        &self,
+        wikidata_id: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<ArtistPictureIds>, ProviderError> {
+        let claims = self.fetch_claims(wikidata_id, None, priority).await?;
+        Ok(claims.as_ref().map(picture_ids))
+    }
+
+    /// Fetch one property's statements, or every property's with `None`,
+    /// with 404 as absence. An id that is not
     /// an item id is never sent and reads as absence, and so does an error
     /// answer that `reads_as_absent` lists. Any other error answer is a payload
     /// error.
@@ -447,24 +587,17 @@ impl WikidataClient {
     async fn fetch_claims(
         &self,
         wikidata_id: &str,
-        property: &str,
+        property: Option<&str>,
         priority: RequestPriority,
     ) -> Result<Option<HashMap<String, Vec<Claim>>>, ProviderError> {
         if !is_item_id(wikidata_id) {
             return Ok(None);
         }
+        let mut query = vec![("action", "wbgetclaims"), ("entity", wikidata_id)];
+        query.extend(property.map(|property| ("property", property)));
+        query.push(("format", "json"));
         let Some(reply) = self
-            .get(
-                self.wikidata.as_ref(),
-                &["w", "api.php"],
-                &[
-                    ("action", "wbgetclaims"),
-                    ("entity", wikidata_id),
-                    ("property", property),
-                    ("format", "json"),
-                ],
-                priority,
-            )
+            .get(self.wikidata.as_ref(), &["w", "api.php"], &query, priority)
             .await?
         else {
             return Ok(None);

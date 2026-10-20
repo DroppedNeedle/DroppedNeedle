@@ -1,4 +1,5 @@
-//! 30-second track and album previews via Deezer (primary) and iTunes (fallback).
+//! 30-second track and album previews via Deezer (primary) and iTunes (fallback),
+//! and Deezer artist pictures by Deezer artist id.
 //!
 //! A Rust port of v2's preview repository. Both APIs are keyless. Deezer
 //! matches better (field-scoped query syntax, ordered album track lists);
@@ -31,7 +32,7 @@ use crate::itunes::models::SongSearch;
 
 mod models;
 
-use self::models::{AlbumSearch, AlbumTracks, DeezerFault, Track, TrackSearch};
+use self::models::{AlbumSearch, AlbumTracks, DeezerArtist, DeezerFault, Track, TrackSearch};
 
 /// Live Deezer API origin.
 pub const DEEZER_API_BASE: &str = "https://api.deezer.com";
@@ -145,6 +146,20 @@ pub struct PreviewClient {
     itunes: ITunesClient,
 }
 
+/// False for a picture URL with an empty image hash
+/// (`/images/artist//1000x1000-...`), the form Deezer's default silhouette is
+/// reported to take. Not verified: no artist without a picture was found to
+/// record.
+fn has_picture(url: &str) -> bool {
+    Url::parse(url).is_ok_and(|url| {
+        url.path_segments().is_some_and(|mut segments| {
+            segments.next() == Some("images")
+                && segments.next() == Some("artist")
+                && segments.next().is_some_and(|hash| !hash.is_empty())
+        })
+    })
+}
+
 /// The title a Deezer track shows: the short title when it has one.
 fn deezer_title(hit: &Track) -> String {
     if hit.title_short.is_empty() {
@@ -188,6 +203,32 @@ impl PreviewClient {
             Err(ProviderError::NotFound { .. }) => Ok(None),
             Err(error) => Err(error),
         }
+    }
+
+    /// The picture URL of Deezer artist `artist_id`: its 1000 px picture,
+    /// `None` when Deezer has no such artist, answers another id, or has no
+    /// picture for it.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
+    pub async fn deezer_artist_picture(
+        &self,
+        artist_id: u64,
+        priority: RequestPriority,
+    ) -> Result<Option<String>, ProviderError> {
+        let id = artist_id.to_string();
+        let Some(reply) = self
+            .deezer_get(&["artist", id.as_str()], &[], priority)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let artist: DeezerArtist = decode(&reply)?;
+        if u64::try_from(artist.id).ok() != Some(artist_id) {
+            return Ok(None);
+        }
+        Ok(artist.picture_xl.filter(|url| has_picture(url)))
     }
 
     /// One track preview via Deezer's field-scoped search.

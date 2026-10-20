@@ -2,11 +2,11 @@
 //! provider's own data names.
 //!
 //! The URLs come from upstream answers, so only https addresses on the
-//! hosts TheAudioDB and Wikimedia serve images from are fetched
+//! hosts TheAudioDB, Wikimedia and Deezer serve images from are fetched
 //! ([`check_image_url`]), and every redirect hop is checked the same way.
-//! TheAudioDB's image host paces at the `audiodb-media` row and the
-//! Wikimedia hosts at the `wikimedia-media` row, with its documented
-//! concurrency.
+//! TheAudioDB's image host paces at the `audiodb-media` row, the Wikimedia
+//! hosts at the `wikimedia-media` row, with its documented concurrency, and
+//! Deezer's image host at the `deezer` row its API shares.
 
 use std::time::Duration;
 
@@ -20,6 +20,10 @@ use crate::executor::{
 pub const AUDIODB_MEDIA: &str = "audiodb-media";
 /// The rate row and provider name of the Wikimedia image hosts.
 pub const WIKIMEDIA_MEDIA: &str = "wikimedia-media";
+/// The host Deezer serves artist pictures from. Checked 2026-10-20: every
+/// picture URL of `api.deezer.com/artist/415` was on this host, and the
+/// 1000 px one answered 200 image/jpeg with no redirect. Exact host only.
+pub const DEEZER_CDN_HOST: &str = "cdn-images.dzcdn.net";
 /// Redirect hops followed for one image, each checked like the first URL.
 pub const MAX_IMAGE_REDIRECTS: usize = 3;
 /// Largest image read unless the caller asks for less.
@@ -29,6 +33,8 @@ const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 pub static AUDIODB_SPEC: Spec = spec(AUDIODB_MEDIA);
 /// The Wikimedia image hosts on the wire.
 pub static WIKIMEDIA_SPEC: Spec = spec(WIKIMEDIA_MEDIA);
+/// Deezer's image host on the wire, paced at the `deezer` row.
+pub static DEEZER_SPEC: Spec = spec(crate::preview::DEEZER);
 
 const fn spec(source: &'static str) -> Spec {
     Spec {
@@ -49,9 +55,9 @@ static HOPS: RedirectRule = RedirectRule {
 };
 
 /// Validate a third-party image URL: https on the default port, no credentials,
-/// and a host TheAudioDB or Wikimedia serves images from (widened to Wikimedia
-/// for the Wikidata portraits). The URLs come from upstream data, so this keeps
-/// the server from being pointed anywhere else.
+/// and a host TheAudioDB, Wikimedia or Deezer serves images from. The URLs come
+/// from upstream data, so this keeps the server from being pointed anywhere
+/// else.
 #[must_use]
 pub fn check_image_url(raw: &str) -> Option<Url> {
     let url = Url::parse(raw.trim()).ok()?;
@@ -69,7 +75,8 @@ pub fn check_image_url(raw: &str) -> Option<Url> {
         // Scaled Commons portraits come from this host. Checked 2026-10-19:
         // the 1280 px thumburl of File:RadioheadO2211125 composite.jpg
         // answered 200 image/jpeg with no redirect. Exact host only.
-        || host == "thumb.wikimedia.org";
+        || host == "thumb.wikimedia.org"
+        || host == DEEZER_CDN_HOST;
     allowed.then_some(url)
 }
 
@@ -77,20 +84,25 @@ fn is_audiodb(host: &str) -> bool {
     host == "theaudiodb.com" || host.ends_with(".theaudiodb.com")
 }
 
-/// The image client over its two executors. Built once with the providers;
-/// cheap to clone.
+/// The image client over its three executors. Built once with the
+/// providers; cheap to clone.
 #[derive(Debug, Clone)]
 pub struct ImageClient {
     audiodb: Executor,
     wikimedia: Executor,
+    deezer: Executor,
 }
 
 impl ImageClient {
-    /// The client sending TheAudioDB's images through `audiodb` and
-    /// Wikimedia's through `wikimedia`.
+    /// The client sending TheAudioDB's images through `audiodb`,
+    /// Wikimedia's through `wikimedia` and Deezer's through `deezer`.
     #[must_use]
-    pub fn new(audiodb: Executor, wikimedia: Executor) -> Self {
-        Self { audiodb, wikimedia }
+    pub fn new(audiodb: Executor, wikimedia: Executor, deezer: Executor) -> Self {
+        Self {
+            audiodb,
+            wikimedia,
+            deezer,
+        }
     }
 
     /// The bytes at `raw`, read up to `max_body`, at `priority`.
@@ -112,8 +124,10 @@ impl ImageClient {
                 reason: "the image address is outside the allowed hosts",
             });
         };
-        let executor = match url.domain() {
-            Some(host) if is_audiodb(&host.to_ascii_lowercase()) => &self.audiodb,
+        let host = url.domain().map(str::to_ascii_lowercase);
+        let executor = match host.as_deref() {
+            Some(host) if is_audiodb(host) => &self.audiodb,
+            Some(DEEZER_CDN_HOST) => &self.deezer,
             _ => &self.wikimedia,
         };
         let request = Request::get_url(url)
@@ -162,6 +176,34 @@ mod tests {
             ),
             (
                 "https://user@thumb.wikimedia.org/commons/1280px-Radiohead.jpg",
+                false,
+            ),
+            (
+                "https://cdn-images.dzcdn.net/images/artist/3ec5542ff520ee74e2befdaba32ef2ef/1000x1000-000000-80-0-0.jpg",
+                true,
+            ),
+            (
+                "https://CDN-IMAGES.DZCDN.NET/images/artist/3ec5542ff520ee74e2befdaba32ef2ef/1000x1000-000000-80-0-0.jpg",
+                true,
+            ),
+            (
+                "https://cdn-images.dzcdn.net.example.com/images/artist/x/1000x1000-000000-80-0-0.jpg",
+                false,
+            ),
+            (
+                "https://evil-cdn-images.dzcdn.net/images/artist/x/1000x1000-000000-80-0-0.jpg",
+                false,
+            ),
+            (
+                "https://e-cdns-images.dzcdn.net/images/artist/x/1000x1000-000000-80-0-0.jpg",
+                false,
+            ),
+            (
+                "https://dzcdn.net/images/artist/x/1000x1000-000000-80-0-0.jpg",
+                false,
+            ),
+            (
+                "http://cdn-images.dzcdn.net/images/artist/x/1000x1000-000000-80-0-0.jpg",
                 false,
             ),
         ];
