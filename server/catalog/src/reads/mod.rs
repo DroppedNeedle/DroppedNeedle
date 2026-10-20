@@ -60,6 +60,8 @@ pub struct ReadsPorts {
     pub library_files: droppedneedle_media::stream::local_files::LibraryFiles,
     /// Discovery batches file their albums through this.
     pub batch_requests: Arc<dyn discover::adapters::batches::BatchRequests>,
+    /// Where discover, home and genre pages queue their image warm.
+    pub cover_warm: Option<platform::artwork::warm::CoverWarm>,
 }
 
 /// The cover and artist image service: local and Cover Art Archive art
@@ -108,6 +110,7 @@ impl ReadsSetup {
             artwork,
             library_files,
             batch_requests,
+            cover_warm,
         } = ports;
         let discover = discover::adapters::production_deps(
             discover::adapters::DiscoverInputs {
@@ -120,7 +123,7 @@ impl ReadsSetup {
                 discover_warmer: inputs.discover_warmer,
                 clock: Arc::clone(&platform.clock),
                 batch_requests,
-                artwork: Some(artwork.clone()),
+                warm: cover_warm,
             },
             settings,
         );

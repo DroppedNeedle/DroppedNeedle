@@ -226,6 +226,11 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // The jobs table areas enqueue through; its kinds' runners start with
     // the other loops.
     let queues = jobs::QueueSetup::new(p);
+    // Pages queue the background warm of their covers and artist images.
+    let cover_warm = droppedneedle_catalog::reads::platform::artwork::warm::CoverWarm::new(
+        db.clone(),
+        queues.queue().clone(),
+    );
 
     // The library roots' lease table: the publisher and plugin library
     // writes hold the same leases.
@@ -277,7 +282,8 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         LocalCatalog::new(db.sqlx().clone()),
     )
     .with_purchase_links(Arc::new(PluginPurchaseLinks(plugin_host.clone())))
-    .with_details(Arc::new(PluginDetailsSource(plugin_host.clone())));
+    .with_details(Arc::new(PluginDetailsSource(plugin_host.clone())))
+    .with_cover_warm(cover_warm.clone());
     let artwork = droppedneedle_catalog::reads::artwork(p, &reads_inputs, catalog.clone());
     let collections_db = CollectionsDb::new(db.clone());
     let collections = Stores::new(&collections_db);
@@ -339,6 +345,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
                 acquire.requests.clone(),
                 Some(library.clone()),
             )),
+            cover_warm: Some(cover_warm),
         },
     );
     let (media, media_workers) = MediaSetup::build(
@@ -430,6 +437,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     )
     .with_mixer(mix_hooks.clone())
     .with_precache_sources_from(&reads, config_store)
+    .with_cover_warm_jobs(&reads)
     .with_discovery_demand(Arc::new(
         droppedneedle_catalog::reads::discover::demand::ContentDemand(
             reads.discover.content.clone(),

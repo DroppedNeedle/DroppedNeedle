@@ -60,8 +60,8 @@ pub struct DiscoverInputs {
     pub discover_warmer: bool,
     /// The kernel clock, which dates the YouTube daily budget.
     pub clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
-    /// The cover and artist image cache, which genre pages warm.
-    pub artwork: Option<crate::reads::platform::artwork::ArtworkService>,
+    /// Where built pages queue the warm of their covers and artist images.
+    pub warm: Option<crate::reads::platform::artwork::warm::CoverWarm>,
     /// The requests side of discovery batches.
     pub batch_requests: Arc<dyn batches::BatchRequests>,
 }
@@ -121,9 +121,9 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
             integrations: content::IntegrationSettings::new(config),
             queues: queues.clone(),
             warmer_enabled: inputs.discover_warmer,
+            warm: inputs.warm.clone(),
         },
         charts,
-        artwork: inputs.artwork.clone(),
     });
     ReadsDeps {
         content: Arc::new(

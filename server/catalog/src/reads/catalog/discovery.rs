@@ -27,6 +27,7 @@ use super::models::{
 };
 use super::{Catalog, MISS_TTL, is_mbid, mb_error, record_mb_down};
 use crate::reads::cache_hold::CacheHold;
+use crate::reads::platform::artwork::warm::WarmTargets;
 
 /// Empty answers are kept ten minutes (v2 `DISCOVERY_EMPTY_CACHE_TTL`).
 const EMPTY_TTL: Duration = Duration::from_secs(600);
@@ -406,6 +407,13 @@ impl Catalog {
         let owned = self.artist_flags(&ids).await;
         for artist in &mut similar {
             artist.in_library = owned.contains(&artist.musicbrainz_id.to_ascii_lowercase());
+        }
+        if priority.is_user_facing() {
+            let mut targets = WarmTargets::default();
+            for id in &ids {
+                targets.artist(Some(id));
+            }
+            self.warm_covers("similar", targets);
         }
         Ok(SimilarArtistsResponse {
             similar_artists: similar,

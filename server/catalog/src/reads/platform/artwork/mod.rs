@@ -44,6 +44,7 @@ pub mod cache;
 pub mod local;
 pub mod remote;
 pub mod resize;
+pub mod warm;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -202,7 +203,7 @@ impl ArtworkService {
     }
 
     /// Resolve and cache the artist's image now (the precache and the
-    /// genre prewarm, at background priority), waiting up to
+    /// page warm jobs, at background priority), waiting up to
     /// [`PRECACHE_WAIT`]. True when an image is cached.
     pub async fn warm_artist_image(&self, artist_mbid: &str) -> bool {
         matches!(
@@ -229,7 +230,7 @@ impl ArtworkService {
     }
 
     /// Fetch and cache a release group's 500 px cover now (the precache
-    /// and the grid prewarm), asking the archive at `priority`.
+    /// and the page warm jobs), asking the archive at `priority`.
     pub async fn warm_release_group_cover(&self, mbid: &str, priority: RequestPriority) -> bool {
         matches!(
             self.mbid_cover(

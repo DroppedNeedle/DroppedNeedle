@@ -46,6 +46,7 @@ use droppedneedle_providers::{CacheKey, Source};
 use self::error::CatalogError;
 use self::library::LocalCatalog;
 use self::upstream::Upstream;
+use crate::reads::platform::artwork::warm::{CoverWarm, WarmTargets};
 
 /// Negative-cache lifetime for MusicBrainz misses (v2
 /// `_ARTIST_NOT_FOUND_TTL_SECONDS`), short so a fresh MusicBrainz edit
@@ -59,6 +60,7 @@ pub struct Catalog {
     follows: Arc<dyn ports::FollowLookup>,
     purchase_links: Arc<dyn ports::PurchaseLinkSource>,
     details: Arc<dyn ports::DetailsSource>,
+    cover_warm: Option<CoverWarm>,
 }
 
 /// How long plugin details are kept.
@@ -101,6 +103,21 @@ impl Catalog {
             follows: Arc::new(ports::NoFollows),
             purchase_links: Arc::new(ports::NoPurchaseLinks),
             details: Arc::new(ports::NoDetails),
+            cover_warm: None,
+        }
+    }
+
+    /// Queue a background warm of the images an artist page shows here.
+    #[must_use]
+    pub fn with_cover_warm(mut self, warm: CoverWarm) -> Self {
+        self.cover_warm = Some(warm);
+        self
+    }
+
+    /// Queue a background warm of `targets`, when warming is wired.
+    fn warm_covers(&self, page: &'static str, targets: WarmTargets) {
+        if let Some(warm) = &self.cover_warm {
+            warm.queue(page, targets);
         }
     }
 

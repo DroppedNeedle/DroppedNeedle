@@ -256,6 +256,8 @@ const REQUEST: &str = "blocking file or store work, awaited by the request that 
 const CATALOG_WARM: &str =
     "a background catalog warm a read starts, once per key; it logs its own end";
 const DISCOVER_BUILD: &str = "a discover or home build a visit starts; it logs its own end";
+const WARM_ENQUEUE: &str =
+    "a page's image warm, queued off the request path; it logs its own failure";
 const FAN_OUT: &str = "enrichment calls fanned out and joined by their caller";
 const BENCHMARKS: &str = "the read benchmarks, a test-only module";
 const IMAGE_WORK: &str = "image work off the async workers, awaited by the request";
@@ -311,11 +313,6 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
         DISCOVER_BUILD,
     ),
     (
-        "catalog/src/reads/discover/adapters/home/genre.rs",
-        1,
-        DISCOVER_BUILD,
-    ),
-    (
         "catalog/src/reads/discover/adapters/home/mod.rs",
         1,
         DISCOVER_BUILD,
@@ -338,6 +335,11 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("catalog/src/reads/platform/artwork/local.rs", 1, IMAGE_WORK),
     ("catalog/src/reads/platform/artwork/mod.rs", 2, COVER_FLIGHT),
     ("catalog/src/reads/platform/artwork/mod.rs", 2, IMAGE_WORK),
+    (
+        "catalog/src/reads/platform/artwork/warm.rs",
+        1,
+        WARM_ENQUEUE,
+    ),
     ("compat/src/adapters/library.rs", 1, REQUEST),
     ("compat/src/adapters/subsonic_store.rs", 1, REQUEST),
     ("kernel/src/runtime_config/store.rs", 4, AWAITED),

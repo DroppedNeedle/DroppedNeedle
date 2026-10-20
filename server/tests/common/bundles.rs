@@ -123,6 +123,7 @@ pub fn reads_at(
             artwork,
             library_files: LibraryFiles::new(platform.db.sqlx().clone(), library.root_source()),
             batch_requests,
+            cover_warm: None,
         },
     )
 }

@@ -431,6 +431,7 @@ fn page_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
         integrations: IntegrationSettings::new(&config),
         queues: Arc::new(FakeQueues),
         warmer_enabled: false,
+        warm: None,
     });
     let clock = ManualClock::at(1_790_000_000_000);
     let deps = ReadsDeps {

@@ -215,6 +215,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
             &crate::common::config_store(&dir),
         ),
         art.clone(),
+        None,
     );
 
     // First visit: library shelves at once, the rest building.

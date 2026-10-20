@@ -14,6 +14,8 @@
 //! records which features a user opened (`discovery_activity`), and the
 //! demand tick rebuilds those (the discover page and the queue deck)
 //! every six hours while they stay in use, retrying failures sooner.
+//! Each published page queues a background warm of its covers and artist
+//! images.
 
 pub mod build;
 pub mod library;
@@ -32,9 +34,11 @@ use crate::reads::discover::adapters::content::IntegrationSettings;
 use crate::reads::discover::adapters::queue::QueueSettings;
 use crate::reads::discover::adapters::queue::store::QueueDb;
 use crate::reads::discover::models::{
-    DiscoverActivityResponse, DiscoverResponse, IntegrationStatus, QueueBuildStatus,
+    ChartSection, DiscoverActivityResponse, DiscoverResponse, IntegrationStatus, QueueBuildStatus,
+    SectionItem,
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure, QueueStore, QueueTrigger};
+use crate::reads::platform::artwork::warm::{CoverWarm, WarmTargets};
 use build::{Builder, PageSettings};
 use droppedneedle_kernel::runtime_config::{Live, Plain, secret_sections::AdvancedSettings};
 use library::LibraryReads;
@@ -163,6 +167,7 @@ struct Inner {
     integrations: IntegrationSettings,
     queues: Arc<dyn QueueStore>,
     warmer_enabled: bool,
+    warm: Option<CoverWarm>,
     home: Option<Arc<dyn FeatureWarmer>>,
     state: Mutex<State>,
 }
@@ -189,6 +194,8 @@ pub struct PageInputs {
     pub queues: Arc<dyn QueueStore>,
     /// The deployment kill switch for the warm cycle.
     pub warmer_enabled: bool,
+    /// Where a published page queues its image warm, when anywhere.
+    pub warm: Option<CoverWarm>,
 }
 
 /// Clears a user's "building" mark however the build ends.
@@ -247,6 +254,7 @@ impl LiveDiscover {
                 integrations: inputs.integrations,
                 queues: inputs.queues,
                 warmer_enabled: inputs.warmer_enabled,
+                warm: inputs.warm,
                 home,
                 state: Mutex::new(State::default()),
             }),
@@ -539,6 +547,9 @@ impl LiveDiscover {
             }
             Err(error) => tracing::warn!(%error, "could not encode the discover page for saving"),
         }
+        if let Some(warm) = &self.inner.warm {
+            warm.queue("discover", warm_targets(&page));
+        }
         true
     }
 
@@ -693,6 +704,57 @@ impl LiveDiscover {
                 QueueBuildStatus::Ready => return true,
                 QueueBuildStatus::Idle | QueueBuildStatus::Error => return false,
             }
+        }
+    }
+}
+
+/// The covers and artist images a discover page shows, top to bottom.
+fn warm_targets(page: &DiscoverResponse) -> WarmTargets {
+    let mut targets = WarmTargets::default();
+    if let Some(picks) = &page.top_picks {
+        for pick in &picks.items {
+            targets.cover(pick.album.mbid.as_deref());
+        }
+    }
+    if let Some(lounge) = &page.listeners_like_you {
+        add_section(&mut targets, lounge);
+    }
+    if let Some(weekly) = &page.weekly_exploration {
+        for track in &weekly.tracks {
+            targets.cover(track.release_group_mbid.as_deref());
+        }
+    }
+    let made = page.daily_mixes.iter().chain(&page.radio_sections);
+    let because = page
+        .because_you_listen_to
+        .iter()
+        .map(|shelf| &shelf.section);
+    let rest = [
+        &page.fresh_releases,
+        &page.missing_essentials,
+        &page.rediscover,
+        &page.anniversaries,
+        &page.new_from_followed,
+        &page.lastfm_weekly_album_chart,
+        &page.lastfm_recent_scrobbles,
+        &page.artists_you_might_like,
+        &page.popular_in_your_genres,
+        &page.globally_trending,
+        &page.lastfm_weekly_artist_chart,
+    ];
+    for section in made.chain(because).chain(rest.into_iter().flatten()) {
+        add_section(&mut targets, section);
+    }
+    targets
+}
+
+/// A shelf's album covers and artist images.
+pub(crate) fn add_section(targets: &mut WarmTargets, section: &ChartSection) {
+    for item in &section.items {
+        match item {
+            SectionItem::Album(album) => targets.cover(album.mbid.as_deref()),
+            SectionItem::Artist(artist) => targets.artist(artist.mbid.as_deref()),
+            SectionItem::Track(_) | SectionItem::Genre(_) => {}
         }
     }
 }

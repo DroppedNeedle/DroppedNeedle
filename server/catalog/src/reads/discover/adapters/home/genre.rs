@@ -1,46 +1,31 @@
 //! The genre page (v2 `get_genre_artists`): what the library owns in the
 //! genre, what is popular in it on MusicBrainz (paged), and its artwork.
 //!
-//! Opening a genre also warms the cover and artist image cache for the
-//! popular rows in the background (v2 `GenreCoverPrewarmService`), so the
-//! page fills in quickly on the next visit. The warm-up is polite: one run
-//! per genre at a time, three genres at once, at most 100 images per run,
-//! two seconds between downloads, and images already cached are skipped
-//! without waiting.
+//! Opening a genre also queues a background warm of the popular rows'
+//! covers and artist images (v2 `GenreCoverPrewarmService`), so the page
+//! fills in quickly on the next visit.
 
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
 use sqlx::SqlitePool;
-use tokio::sync::Semaphore;
 
 use super::artwork::GenreArt;
 use super::library::HomeLibrary;
 use super::mark_owned;
 use super::shelves::{library_album, library_artist};
 use super::sources::HomeSources;
-use crate::reads::discover::adapters::page::library::fold;
 use crate::reads::discover::adapters::page::shelves::album;
 use crate::reads::discover::models::{
     ChartAlbum, ChartArtist, ChartRange, ChartSource, GenreDetailResponse, GenreLibrarySection,
     GenrePopularSection, PopularAlbumsPage, TrendingArtistsPage,
 };
 use crate::reads::discover::ports::{BoxFuture, ChartsSource, ProviderFailure};
-use crate::reads::platform::artwork::ArtworkService;
+use crate::reads::platform::artwork::warm::{CoverWarm, WarmTargets};
 
 /// Popular rows per lane at most.
 const MAX_ROWS: i64 = 100;
-/// Warm-up runs running or waiting at once; more are refused.
-const PREWARM_QUEUE_MAX: usize = 10;
 /// Owned rows per lane (v2).
 const LIBRARY_ROWS: i64 = 50;
-/// Images one warm-up run fetches at most.
-const PREWARM_MAX: usize = 100;
-/// Genres warming at once.
-const PREWARM_PARALLEL: usize = 3;
-/// Pause between two downloads of one run.
-const PREWARM_PAUSE: Duration = Duration::from_secs(2);
 
 /// Builds genre pages.
 pub struct GenrePages {
@@ -48,24 +33,24 @@ pub struct GenrePages {
     pool: SqlitePool,
     sources: Arc<dyn HomeSources>,
     art: Arc<GenreArt>,
-    prewarm: Option<Prewarm>,
+    warm: Option<CoverWarm>,
 }
 
 impl GenrePages {
     /// Pages over the library in `pool` and the provider reads in
-    /// `sources`; `artwork`, when given, is warmed for popular rows.
+    /// `sources`; `warm`, when given, warms the popular rows' images.
     pub fn new(
         pool: SqlitePool,
         sources: Arc<dyn HomeSources>,
         art: Arc<GenreArt>,
-        artwork: Option<ArtworkService>,
+        warm: Option<CoverWarm>,
     ) -> Self {
         Self {
             library: HomeLibrary::new(pool.clone()),
             pool,
             sources,
             art,
-            prewarm: artwork.map(Prewarm::new),
+            warm,
         }
     }
 
@@ -139,12 +124,15 @@ impl GenrePages {
             artists.iter_mut().collect(),
         )
         .await;
-        if let Some(prewarm) = &self.prewarm {
-            prewarm.schedule(
-                genre,
-                artists.iter().filter_map(|row| row.mbid.clone()).collect(),
-                albums.iter().filter_map(|row| row.mbid.clone()).collect(),
-            );
+        if let Some(warm) = &self.warm {
+            let mut targets = WarmTargets::default();
+            for row in &albums {
+                targets.cover(row.mbid.as_deref());
+            }
+            for row in &artists {
+                targets.artist(row.mbid.as_deref());
+            }
+            warm.queue("genre", targets);
         }
         GenreDetailResponse {
             genre: genre.to_owned(),
@@ -163,100 +151,6 @@ impl GenrePages {
             }),
             total_count: Some(artists.len() as i64),
             artists,
-        }
-    }
-}
-
-/// Background warm-up of the images a genre page shows.
-#[derive(Clone)]
-struct Prewarm {
-    artwork: ArtworkService,
-    active: Arc<Mutex<HashSet<String>>>,
-    permits: Arc<Semaphore>,
-}
-
-/// Forgets a genre's run however it ends.
-struct ActiveGuard {
-    active: Arc<Mutex<HashSet<String>>>,
-    genre: String,
-}
-
-impl Drop for ActiveGuard {
-    fn drop(&mut self) {
-        if let Ok(mut active) = self.active.lock() {
-            active.remove(&self.genre);
-        }
-    }
-}
-
-impl Prewarm {
-    fn new(artwork: ArtworkService) -> Self {
-        Self {
-            artwork,
-            active: Arc::new(Mutex::new(HashSet::new())),
-            permits: Arc::new(Semaphore::new(PREWARM_PARALLEL)),
-        }
-    }
-
-    /// Start a run for the genre unless one is going.
-    fn schedule(&self, genre: &str, artists: Vec<String>, albums: Vec<String>) {
-        let genre = fold(genre);
-        match self.active.lock() {
-            Ok(mut active) => {
-                if active.len() >= PREWARM_QUEUE_MAX || !active.insert(genre.clone()) {
-                    return;
-                }
-            }
-            Err(_) => {
-                tracing::error!("genre warm-up state lock poisoned; skipping");
-                return;
-            }
-        }
-        let guard = ActiveGuard {
-            active: self.active.clone(),
-            genre,
-        };
-        let this = self.clone();
-        tokio::spawn(async move {
-            let _guard = guard;
-            let Ok(_permit) = this.permits.clone().acquire_owned().await else {
-                return;
-            };
-            this.run(artists, albums).await;
-        });
-    }
-
-    async fn run(&self, artists: Vec<String>, albums: Vec<String>) {
-        let artists: Vec<String> = artists.into_iter().take(PREWARM_MAX).collect();
-        let albums: Vec<String> = albums
-            .into_iter()
-            .take(PREWARM_MAX.saturating_sub(artists.len()))
-            .collect();
-        let mut fetched = false;
-        for mbid in &artists {
-            if self.artwork.artist_image_cached(mbid).await {
-                continue;
-            }
-            if fetched {
-                tokio::time::sleep(PREWARM_PAUSE).await;
-            }
-            self.artwork.warm_artist_image(mbid).await;
-            fetched = true;
-        }
-        for mbid in &albums {
-            if self.artwork.release_group_cover_cached(mbid).await {
-                continue;
-            }
-            if fetched {
-                tokio::time::sleep(PREWARM_PAUSE).await;
-            }
-            self.artwork
-                .warm_release_group_cover(
-                    mbid,
-                    droppedneedle_providers::RequestPriority::BackgroundSync,
-                )
-                .await;
-            fetched = true;
         }
     }
 }

@@ -23,6 +23,7 @@ use super::{
     record_mb_down,
 };
 use crate::reads::collections::state::AutoDownloadState;
+use crate::reads::platform::artwork::warm::WarmTargets;
 
 /// Most discography pages fetched per artist (v2 `_MAX_RG_PAGES`).
 const MAX_RELEASE_GROUP_PAGES: u32 = 10;
@@ -206,6 +207,17 @@ struct AudioDbArtistEntry {
 /// An artist page, in the library or not, kept for six hours.
 const ARTIST_TTL: Duration = Duration::from_secs(6 * 3600);
 
+/// The artist's own image and the discography's covers, as the page
+/// lists them.
+fn artist_targets(info: &ArtistInfo) -> WarmTargets {
+    let mut targets = WarmTargets::default();
+    targets.artist(Some(&info.musicbrainz_id));
+    for release in info.albums.iter().chain(&info.eps).chain(&info.singles) {
+        targets.cover(Some(&release.id));
+    }
+    targets
+}
+
 /// Validate and lowercase an MBID from a path.
 pub(super) fn checked_mbid(raw: &str, what: &str) -> Result<String, CatalogError> {
     let mbid = raw.trim().to_ascii_lowercase();
@@ -295,6 +307,7 @@ impl Catalog {
         let (result, context) =
             scoped(self.build_artist(&mbid, RequestPriority::UserInitiated)).await;
         let mut info = result?;
+        self.warm_covers("artist", artist_targets(&info));
         info.service_status = mapping::service_status(&context);
         if let Some(follow) = self.follows().status(user_id, &info.musicbrainz_id).await {
             info.followed = follow.followed;

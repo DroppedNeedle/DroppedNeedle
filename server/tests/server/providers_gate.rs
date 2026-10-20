@@ -69,7 +69,6 @@ const RULES: &[Rule] = &[
                 "src/bootstrap/jobs.rs",
                 "the scripted job kind's gate, which holds a run until a test releases it",
             ),
-            ("catalog/src/reads/discover/adapters/home/genre.rs", LOCAL),
             ("catalog/src/reads/platform/artwork/mod.rs", LOCAL),
             ("catalog/src/reads/enrichment/mod.rs", LOCAL),
             (

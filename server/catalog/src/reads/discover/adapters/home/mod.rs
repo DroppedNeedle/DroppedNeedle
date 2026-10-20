@@ -14,7 +14,8 @@
 //! user's primary source), the user's top albums and loved tracks, their
 //! genres and the weekly exploration playlist. Genre tiles get artwork
 //! from the user's own collection on every answer, so new art shows
-//! without a rebuild.
+//! without a rebuild. Each kept page queues a background warm of its
+//! covers and artist images.
 
 pub mod artwork;
 pub mod genre;
@@ -32,13 +33,14 @@ use super::content::IntegrationSettings;
 use super::ownership;
 use super::page::build::genre_list;
 use super::page::shelves::SHELF_SIZE;
-use super::page::{FeatureWarmer, GENRE_ARTWORK_SCHEMA, LiveDiscover};
+use super::page::{FeatureWarmer, GENRE_ARTWORK_SCHEMA, LiveDiscover, add_section};
 use super::queue::sources::{MusicSource, UserMusic};
 use crate::reads::discover::models::{
     ChartAlbum, ChartArtist, ChartSection, DiscoverPreview, HomeResponse, IntegrationStatus,
     SectionItem,
 };
 use crate::reads::discover::ports::BoxFuture;
+use crate::reads::platform::artwork::warm::{CoverWarm, WarmTargets};
 use artwork::GenreArt;
 use library::HomeLibrary;
 use sources::HomeSources;
@@ -166,6 +168,36 @@ async fn mark_page(pool: &SqlitePool, page: &mut HomeResponse) {
     mark_owned(pool, albums, artists).await;
 }
 
+/// The covers and artist images a home page shows, top to bottom.
+fn warm_targets(page: &HomeResponse) -> WarmTargets {
+    let mut targets = WarmTargets::default();
+    let shelves = [
+        &page.recently_added,
+        &page.library_albums,
+        &page.library_artists,
+        &page.recommended_artists,
+        &page.trending_artists,
+        &page.popular_albums,
+        &page.fresh_releases,
+        &page.favorite_artists,
+        &page.your_top_albums,
+    ];
+    for section in shelves.into_iter().flatten() {
+        add_section(&mut targets, section);
+    }
+    if let Some(weekly) = &page.weekly_exploration {
+        for track in &weekly.tracks {
+            targets.cover(track.release_group_mbid.as_deref());
+        }
+    }
+    if let Some(preview) = &page.discover_preview {
+        for artist in &preview.items {
+            targets.artist(artist.mbid.as_deref());
+        }
+    }
+    targets
+}
+
 /// A page with no shelves.
 fn empty_page(status: IntegrationStatus, refreshing: bool) -> HomeResponse {
     HomeResponse {
@@ -214,6 +246,7 @@ struct Inner {
     pool: SqlitePool,
     art: Arc<GenreArt>,
     integrations: IntegrationSettings,
+    warm: Option<CoverWarm>,
     state: Mutex<State>,
 }
 
@@ -249,12 +282,14 @@ fn key_for(user_id: &str, music: &UserMusic) -> String {
 
 impl LiveHome {
     /// Home over the provider reads in `sources`, the library in `pool`
-    /// and the integration flags in `integrations`, with genre art from `art`.
+    /// and the integration flags in `integrations`, with genre art from
+    /// `art`; a kept page queues its image warm on `warm`, when given.
     pub fn new(
         sources: Arc<dyn HomeSources>,
         pool: SqlitePool,
         integrations: IntegrationSettings,
         art: Arc<GenreArt>,
+        warm: Option<CoverWarm>,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -263,6 +298,7 @@ impl LiveHome {
                 pool,
                 art,
                 integrations,
+                warm,
                 state: Mutex::new(State::default()),
             }),
         }
@@ -353,6 +389,9 @@ impl LiveHome {
         let ok = self.inner.sources.source_key() == source;
         if !ok {
             tracing::info!("MusicBrainz source changed during a home build; dropping it");
+        }
+        if ok && let Some(warm) = &self.inner.warm {
+            warm.queue("home", warm_targets(&page));
         }
         let now = now_secs();
         if let Some(mut state) = self.lock() {
@@ -590,8 +629,6 @@ pub struct HomeWiring {
     pub discover: super::page::PageInputs,
     /// The chart source genre pages are added to.
     pub charts: Arc<dyn crate::reads::discover::ports::ChartsSource>,
-    /// The image cache genre pages warm, when there is one.
-    pub artwork: Option<crate::reads::platform::artwork::ArtworkService>,
 }
 
 /// Production home: the page, the discover page whose warm cycle warms it,
@@ -606,18 +643,20 @@ pub fn wire(
     Arc<dyn crate::reads::discover::ports::ChartsSource>,
 ) {
     let art = Arc::new(GenreArt::new(HomeLibrary::new(wiring.pool.clone())));
+    let warm = wiring.discover.warm.clone();
     let home = LiveHome::new(
         wiring.sources.clone(),
         wiring.pool.clone(),
         wiring.integrations,
         art.clone(),
+        warm.clone(),
     );
     let discover = LiveDiscover::with_home(wiring.discover, Arc::new(home.clone()));
     let pages = Arc::new(genre::GenrePages::new(
         wiring.pool,
         wiring.sources,
         art.clone(),
-        wiring.artwork,
+        warm,
     ));
     let charts = Arc::new(genre::WithGenrePages::new(wiring.charts, pages));
     (home, discover, art, charts)

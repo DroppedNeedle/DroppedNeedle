@@ -398,6 +398,22 @@ impl JobsSetup {
         }
     }
 
+    /// Run the page image warm jobs through the reads' artwork service.
+    /// Without one the kind is not registered, and the start-up check
+    /// warns about any rows left queued.
+    pub fn with_cover_warm_jobs(self, reads: &droppedneedle_catalog::reads::ReadsSetup) -> Self {
+        use droppedneedle_catalog::reads::platform::artwork::warm::{self, CoverWarmJobs};
+        match &reads.artwork {
+            Some(artwork) => {
+                self.with_job(warm::SPEC, Arc::new(CoverWarmJobs::new(artwork.clone())))
+            }
+            None => {
+                tracing::warn!("no artwork service; page images are not warmed");
+                self
+            }
+        }
+    }
+
     /// The personal-mix builder the daily refresh loop drives.
     pub fn with_mixer(mut self, mixer: Arc<dyn PersonalMixer>) -> Self {
         self.mixer = mixer;

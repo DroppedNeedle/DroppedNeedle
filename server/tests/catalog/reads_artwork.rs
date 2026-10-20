@@ -322,3 +322,110 @@ async fn art_that_comes_back_gets_a_new_version() {
     let stopped = store.refresh_album_artwork(&|| true).unwrap();
     assert!(!stopped.complete, "a stop request ends the sweep early");
 }
+
+/// The covers on a user's Discover page are fetched in the background once
+/// the page is built, so a later visit draws them from disk even when the
+/// archive no longer answers. The warm runs on the jobs table, whose runner
+/// the admin view lists.
+#[tokio::test]
+async fn a_built_discover_page_warms_its_covers_onto_disk() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use axum::response::IntoResponse as _;
+    use axum::routing::get as route;
+
+    #[derive(Default)]
+    struct Archive {
+        closed: AtomicBool,
+        calls: AtomicUsize,
+    }
+    let archive = Arc::new(Archive::default());
+    let front = archive.clone();
+    let stub = Router::new()
+        .route(
+            "/listenbrainz/1/stats/sitewide/release-groups",
+            route(|| async {
+                axum::Json(serde_json::json!({"payload": {"release_groups": [{
+                    "release_group_name": "First Light",
+                    "artist_name": "Aurora",
+                    "listen_count": 900,
+                    "release_group_mbid": RG,
+                }]}}))
+            }),
+        )
+        .route(
+            &format!("/coverart/release-group/{RG}/front-500"),
+            route(move || {
+                let front = front.clone();
+                async move {
+                    front.calls.fetch_add(1, Ordering::SeqCst);
+                    if front.closed.load(Ordering::SeqCst) {
+                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
+                    ([("content-type", "image/png")], PNG_BYTES).into_response()
+                }
+            }),
+        )
+        .fallback(|| async { StatusCode::NOT_FOUND });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+    let app =
+        crate::common::TestApp::start_with("artwork-warm", crate::common::outbound_at(&origin))
+            .await;
+    let user = app.login_user("warm").await;
+    let auth = [("authorization", user.authorization.as_str())];
+
+    let (status, _) = app.call("GET", "/api/v3/discover", &auth, None).await;
+    assert_eq!(status, StatusCode::OK);
+    app.until("the page's warm job has run", || async {
+        app.db()
+            .query_row(
+                "SELECT state FROM durable_jobs WHERE kind = 'artwork.warm'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .filter(|state| state == "done")
+    })
+    .await;
+    assert_eq!(
+        archive.calls.load(Ordering::SeqCst),
+        1,
+        "the warm fetched it"
+    );
+
+    archive.closed.store(true, Ordering::SeqCst);
+    let (status, headers, body) = app
+        .raw(
+            "GET",
+            &format!("/api/v3/covers/release-group/{RG}?size=250"),
+            &auth,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, PNG_BYTES);
+    assert_eq!(headers["x-cover-source"], "cover-art-archive");
+    assert_eq!(archive.calls.load(Ordering::SeqCst), 1, "served from disk");
+
+    let admin = app.login_admin().await;
+    let (_, stats) = app
+        .call(
+            "GET",
+            "/api/v3/admin/queue-stats",
+            &[("authorization", admin.as_str())],
+            None,
+        )
+        .await;
+    assert!(
+        stats["jobs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|job| job["name"] == "job-runner:artwork.warm"),
+        "{stats}"
+    );
+    app.stop().await;
+    server.abort();
+}
