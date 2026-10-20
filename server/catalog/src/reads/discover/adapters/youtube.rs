@@ -102,21 +102,26 @@ impl YouTubeSource for LiveYouTube {
         Box::pin(self.search(SearchKind::Track, artist, track))
     }
 
-    fn is_cached(&self, artist: &str, name: &str, track: bool) -> bool {
+    fn is_cached<'a>(&'a self, artist: &'a str, name: &'a str, track: bool) -> BoxFuture<'a, bool> {
         let kind = if track {
             SearchKind::Track
         } else {
             SearchKind::Album
         };
-        self.client.is_cached(artist, name, kind)
+        Box::pin(self.client.is_cached(artist, name, kind))
     }
 
-    fn cached_tracks(&self, pairs: &[(String, String)]) -> HashMap<String, bool> {
-        let borrowed: Vec<(&str, &str)> = pairs
-            .iter()
-            .map(|(artist, track)| (artist.as_str(), track.as_str()))
-            .collect();
-        self.client.are_cached(&borrowed)
+    fn cached_tracks<'a>(
+        &'a self,
+        pairs: &'a [(String, String)],
+    ) -> BoxFuture<'a, HashMap<String, bool>> {
+        Box::pin(async move {
+            let borrowed: Vec<(&str, &str)> = pairs
+                .iter()
+                .map(|(artist, track)| (artist.as_str(), track.as_str()))
+                .collect();
+            self.client.are_cached(&borrowed).await
+        })
     }
 
     fn quota(&self) -> BoxFuture<'_, Option<YouTubeQuotaResponse>> {

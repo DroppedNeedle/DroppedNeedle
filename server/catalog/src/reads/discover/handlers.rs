@@ -535,6 +535,7 @@ pub async fn youtube_cache_check(
     ValidJson(body): ValidJson<TrackCacheCheckRequest>,
 ) -> Result<Json<TrackCacheCheckResponse>, ApiError> {
     services::youtube_cache_check(&deps, &body)
+        .await
         .map(Json)
         .map_err(ApiError::from)
 }

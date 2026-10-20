@@ -9,10 +9,11 @@
 //! edition). Optional sources degrade into `service_status`; a dead
 //! MusicBrainz falls back to the library's own copy when there is one.
 //!
-//! Every upstream answer goes through the shared provider cache with v2's
-//! lifetimes (read from settings per call) and is coalesced so identical
-//! concurrent page loads cost one upstream call. Library flags are read
-//! fresh on every request, so they never go stale behind a cache.
+//! Every upstream answer goes through the provider cache's one helper,
+//! with a fixed lifetime per kind of answer: identical concurrent loads
+//! share one upstream call, and a kept answer stands in when the provider
+//! fails. Library flags are read fresh on every request, so they never go
+//! stale behind a cache.
 //!
 //! Auth is the deny-by-default session gate: every signed-in role sees the
 //! same pages, and per-user data (Last.fm) is keyed by the session user.
@@ -40,18 +41,12 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use droppedneedle_kernel::mount::{Routes, routes};
 use droppedneedle_providers::ProviderError;
-use droppedneedle_providers::Singleflight;
-use droppedneedle_providers::{CacheKey, Source};
+use droppedneedle_providers::{CacheKey, Fetched, Policy, RequestPriority, Source};
 
 use self::error::CatalogError;
 use self::library::LocalCatalog;
 use self::upstream::Upstream;
 use crate::reads::platform::artwork::warm::{CoverWarm, WarmTargets};
-
-/// Negative-cache lifetime for MusicBrainz misses (v2
-/// `_ARTIST_NOT_FOUND_TTL_SECONDS`), short so a fresh MusicBrainz edit
-/// shows up soon.
-pub const MISS_TTL: Duration = Duration::from_secs(600);
 
 /// The catalog service. Clone shares everything.
 #[derive(Clone)]
@@ -63,31 +58,11 @@ pub struct Catalog {
     cover_warm: Option<CoverWarm>,
 }
 
-/// How long plugin details are kept.
-const PLUGIN_DETAILS_TTL: Duration = Duration::from_secs(60 * 60);
-
 struct Inner {
     upstream: Upstream,
     local: LocalCatalog,
-    flights: Flights,
-    /// Artists whose discography is being fetched in the background.
+    /// Discographies and tracklists being fetched in the background.
     warming: Mutex<HashSet<String>>,
-}
-
-/// One coalescing table per cached shape.
-#[derive(Default)]
-struct Flights {
-    artist: Singleflight<artist::ArtistCore, CatalogError>,
-    artist_background: Singleflight<artist::ArtistCore, CatalogError>,
-    release_groups: Singleflight<artist::ReleaseGroupList, CatalogError>,
-    group: Singleflight<album::GroupCore, CatalogError>,
-    release: Singleflight<album::ReleaseCore, CatalogError>,
-    release_background: Singleflight<album::ReleaseCore, CatalogError>,
-    extended: Singleflight<artist::Biography, CatalogError>,
-    extended_background: Singleflight<artist::Biography, CatalogError>,
-    search: Singleflight<search::RemoteHits, CatalogError>,
-    other: Singleflight<serde_json::Value, CatalogError>,
-    other_background: Singleflight<serde_json::Value, CatalogError>,
 }
 
 impl Catalog {
@@ -97,7 +72,6 @@ impl Catalog {
             inner: Arc::new(Inner {
                 upstream,
                 local,
-                flights: Flights::default(),
                 warming: Mutex::new(HashSet::new()),
             }),
             follows: Arc::new(ports::NoFollows),
@@ -156,42 +130,36 @@ impl Catalog {
         &self.inner.local
     }
 
-    /// Cache-aside plus coalescing for one upstream-backed value. A hit
-    /// returns the cached copy; a miss runs `fetch` once for every
-    /// concurrent caller of the same key and stores the result for the
-    /// lifetime `fetch` chose (`None` stores nothing: degraded answers are
-    /// never cached).
+    /// One provider answer through the cache helper: a fresh row as it
+    /// is, else one fetch at `priority` shared by every caller of the key,
+    /// with a kept row standing in when that fetch fails. `None` is a
+    /// stored "nothing there".
     async fn cached<T, F, Fut>(
         &self,
-        flights: &Singleflight<T, CatalogError>,
-        key: CacheKey,
+        key: &CacheKey,
+        policy: Policy,
+        priority: RequestPriority,
         fetch: F,
-    ) -> Result<T, CatalogError>
+    ) -> Result<Option<T>, CatalogError>
     where
         T: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-        F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = Result<(T, Option<Duration>), CatalogError>> + Send + 'static,
+        F: FnOnce(RequestPriority) -> Fut + Clone + Send + 'static,
+        Fut: Future<Output = Result<Fetched<T>, CatalogError>> + Send + 'static,
     {
-        if let Some(hit) = self.upstream().cache().get_bytes(&key).await
-            && let Ok(value) = serde_json::from_slice::<T>(&hit)
-        {
-            return Ok(value);
-        }
-        let cache = self.upstream().cache().clone();
-        let flight = key.as_str().to_owned();
-        flights
-            .run(&flight, move || async move {
-                let (value, ttl) = fetch().await?;
-                if let Some(ttl) = ttl.filter(|ttl| !ttl.is_zero())
-                    && let Ok(bytes) = serde_json::to_vec(&value)
-                {
-                    cache.set_bytes(&key, bytes, ttl);
-                }
-                Ok(value)
-            })
+        self.upstream()
+            .cache()
+            .get_or_fetch(key, policy, priority, fetch)
             .await
-            .map(|value| (*value).clone())
-            .map_err(|error| (*error).clone())
+    }
+
+    /// Whether any answer is held under `key`, fresh or stale. Never
+    /// dials out.
+    async fn held(&self, key: &CacheKey) -> bool {
+        self.upstream()
+            .cache()
+            .peek::<serde::de::IgnoredAny>(key)
+            .await
+            .is_some()
     }
 
     /// Plugin details for one artist or album, cached for an hour per
@@ -203,7 +171,7 @@ impl Catalog {
         fetch: F,
     ) -> Result<models::PluginDetails, CatalogError>
     where
-        F: FnOnce(Catalog) -> Fut + Send + 'static,
+        F: FnOnce(Catalog) -> Fut + Clone + Send + 'static,
         Fut: Future<Output = models::PluginDetails> + Send + 'static,
     {
         let token = self.details.token();
@@ -212,16 +180,15 @@ impl Catalog {
         }
         let key = CacheKey::hashed(Source::Plugins, "details", &[kind, mbid, &token]);
         let catalog = self.clone();
-        let value = self
-            .cached(&self.inner.flights.other, key, move || async move {
-                let details = fetch(catalog).await;
-                let value = serde_json::to_value(&details).map_err(|error| {
-                    CatalogError::Internal(format!("plugin details encode: {error}"))
-                })?;
-                Ok((value, Some(PLUGIN_DETAILS_TTL)))
-            })
+        let details = self
+            .cached(
+                &key,
+                PLUGIN_DETAILS,
+                RequestPriority::UserInitiated,
+                move |_| async move { Ok(Fetched::Found(fetch(catalog).await)) },
+            )
             .await?;
-        Ok(serde_json::from_value(value).unwrap_or_default())
+        Ok(details.unwrap_or_default())
     }
 
     /// Drop cached entries by exact key, once committed.
@@ -303,16 +270,34 @@ pub fn is_mbid(value: &str) -> bool {
     droppedneedle_providers::musicbrainz::is_valid_mbid(value)
 }
 
-// Cache lifetimes are fixed in code, not settings: one policy for every
-// install, at the values v2 shipped as defaults.
+// Cache lifetimes are fixed in code, not settings: one policy per kind of
+// answer for every install. The provider cache holds the shared ones;
+// these are the catalog's own.
 
-/// A MusicBrainz search result, reused for an hour. Tag and album
-/// searches keep theirs for twice as long.
+/// An hour. The discover and home pages keep their tag searches twice
+/// this long.
 pub const SEARCH_TTL: Duration = Duration::from_secs(3600);
-/// A TheAudioDB hit, kept for a week: artwork rarely changes.
-const AUDIODB_FOUND_TTL: Duration = Duration::from_secs(7 * 86400);
-/// A TheAudioDB miss, kept for a day so new artwork shows up soon.
-const AUDIODB_MISSING_TTL: Duration = Duration::from_secs(86400);
+
+/// Plugin details: an hour, so a plugin's new answers show up soon.
+const PLUGIN_DETAILS: Policy = Policy {
+    fresh: Duration::from_secs(3600),
+    miss: Duration::from_secs(3600),
+};
+/// Last.fm artist and album details: an hour, as v2 kept them.
+const LASTFM_DETAILS: Policy = Policy {
+    fresh: Duration::from_secs(3600),
+    miss: Duration::from_secs(3600),
+};
+/// Wikipedia and Wikidata biographies: six hours, as v2 kept them.
+const BIOGRAPHY: Policy = Policy {
+    fresh: Duration::from_secs(6 * 3600),
+    miss: Duration::from_secs(6 * 3600),
+};
+/// Purchase options: a week, as v2 kept them.
+const PURCHASE: Policy = Policy {
+    fresh: Duration::from_secs(7 * 86400),
+    miss: Duration::from_secs(7 * 86400),
+};
 
 /// Dependencies the routes need. Clone shares them.
 #[derive(Clone)]

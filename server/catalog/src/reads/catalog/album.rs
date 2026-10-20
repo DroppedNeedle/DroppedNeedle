@@ -1,15 +1,13 @@
 //! Album pages: header, tracklist, editions, artwork, Last.fm and store
 //! links.
 
-use std::time::Duration;
-
 use serde::{Deserialize, Serialize};
 
 use droppedneedle_providers::degradation::scoped;
 use droppedneedle_providers::musicbrainz::{Criticality, MbRelease, MbReleaseGroup};
-use droppedneedle_providers::{CacheKey, RequestPriority, Source};
+use droppedneedle_providers::{CacheKey, Fetched, Policy, ProviderError, RequestPriority, Source};
 
-use super::artist::{LASTFM_TTL, checked_mbid};
+use super::artist::checked_mbid;
 use super::error::CatalogError;
 use super::mapping;
 use super::models::{
@@ -19,8 +17,7 @@ use super::models::{
 };
 use super::ports::PurchaseQuery;
 use super::{
-    AUDIODB_FOUND_TTL, AUDIODB_MISSING_TTL, Catalog, MISS_TTL, is_mbid, mb_error, mb_search_error,
-    record_mb_down,
+    Catalog, LASTFM_DETAILS, PURCHASE, is_mbid, mb_error, mb_search_error, record_mb_down,
 };
 
 /// Includes for the release-group lookup: one call serves the header, the
@@ -30,8 +27,6 @@ const GROUP_INCLUDES: [&str; 4] = ["artist-credits", "media", "releases", "url-r
 const RELEASE_INCLUDES: [&str; 3] = ["labels", "recordings", "url-rels"];
 /// Releases consulted for store links (v2 `_MAX_RELEASE_LOOKUPS`).
 const MAX_PURCHASE_LOOKUPS: usize = 2;
-/// Purchase options are kept a week (v2 `_CACHE_TTL_SECONDS`).
-const PURCHASE_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
 /// Ranked editions tried when the chosen one has no tracklist.
 const TRACKLIST_CANDIDATES: usize = 3;
 
@@ -215,25 +210,6 @@ fn collect_links(
     }
 }
 
-/// One cached TheAudioDB album lookup: images, or a remembered miss.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AudioDbAlbumEntry {
-    images: Option<AlbumImages>,
-}
-
-/// An album page in the library, kept for a day.
-const LIBRARY_ALBUM_TTL: Duration = Duration::from_secs(86400);
-/// Any other album page, kept for six hours.
-const OTHER_ALBUM_TTL: Duration = Duration::from_secs(6 * 3600);
-
-fn album_ttl(in_library: bool) -> Duration {
-    if in_library {
-        LIBRARY_ALBUM_TTL
-    } else {
-        OTHER_ALBUM_TTL
-    }
-}
-
 /// The edition an album page shows and why.
 struct Selection {
     selected: Option<String>,
@@ -281,15 +257,25 @@ impl Catalog {
     /// MBID where a group belongs (v2 issue #78) resolve through the
     /// release before the miss is final.
     pub(super) async fn group_detail(&self, mbid: &str) -> Result<GroupCore, CatalogError> {
+        self.group_detail_at(mbid, RequestPriority::UserInitiated)
+            .await
+    }
+
+    /// The cached release-group detail, fetching at `priority` when none
+    /// is fresh.
+    pub(super) async fn group_detail_at(
+        &self,
+        mbid: &str,
+        priority: RequestPriority,
+    ) -> Result<GroupCore, CatalogError> {
         let catalog = self.clone();
         let id = mbid.to_owned();
         self.cached(
-            &self.inner.flights.group,
-            self.group_key(mbid),
-            move || async move {
-                let (client, _) = catalog
-                    .upstream()
-                    .musicbrainz(RequestPriority::UserInitiated);
+            &self.group_key(mbid),
+            Policy::MUSICBRAINZ_ENTITY,
+            priority,
+            move |priority| async move {
+                let (client, _) = catalog.upstream().musicbrainz(priority);
                 let mut found = client
                     .lookup_release_group(&id, &GROUP_INCLUDES, Criticality::IdentityCritical)
                     .await
@@ -310,17 +296,10 @@ impl Catalog {
                             .map_err(mb_error)?;
                     }
                 }
-                match found {
-                    None => Ok((None, Some(MISS_TTL))),
-                    Some(lookup) => {
-                        let detail = GroupDetail::from_wire(lookup.entity);
-                        let (owned, _) = catalog
-                            .album_flags(std::slice::from_ref(&detail.mbid))
-                            .await;
-                        let ttl = album_ttl(!owned.is_empty());
-                        Ok((Some(detail), Some(ttl)))
-                    }
-                }
+                Ok(match found {
+                    None => Fetched::Missing,
+                    Some(lookup) => Fetched::Found(GroupDetail::from_wire(lookup.entity)),
+                })
             },
         )
         .await
@@ -342,36 +321,32 @@ impl Catalog {
     ) -> Result<ReleaseCore, CatalogError> {
         let catalog = self.clone();
         let id = mbid.to_owned();
-        let flights = if priority.is_user_facing() {
-            &self.inner.flights.release
-        } else {
-            &self.inner.flights.release_background
-        };
-        self.cached(flights, self.release_key(mbid), move || async move {
-            let (client, _) = catalog.upstream().musicbrainz(priority);
-            let found = client
-                .lookup_release(&id, &RELEASE_INCLUDES, Criticality::IdentityCritical)
-                .await
-                .map_err(mb_error)?;
-            Ok(match found {
-                None => (None, Some(MISS_TTL)),
-                Some(lookup) => (
-                    Some(ReleaseDetail::from_wire(lookup.entity)),
-                    Some(album_ttl(false)),
-                ),
-            })
-        })
+        self.cached(
+            &self.release_key(mbid),
+            Policy::MUSICBRAINZ_ENTITY,
+            priority,
+            move |priority| async move {
+                let (client, _) = catalog.upstream().musicbrainz(priority);
+                let found = client
+                    .lookup_release(&id, &RELEASE_INCLUDES, Criticality::IdentityCritical)
+                    .await
+                    .map_err(mb_error)?;
+                Ok(match found {
+                    None => Fetched::Missing,
+                    Some(lookup) => Fetched::Found(ReleaseDetail::from_wire(lookup.entity)),
+                })
+            },
+        )
         .await
     }
 
-    /// A release detail already in the cache; never dials out.
+    /// A release detail already held, fresh or stale; never dials out.
     pub(super) async fn cached_release_detail(&self, mbid: &str) -> Option<ReleaseDetail> {
-        let bytes = self
-            .upstream()
+        self.upstream()
             .cache()
-            .get_bytes(&self.release_key(mbid))
-            .await?;
-        serde_json::from_slice::<ReleaseCore>(&bytes).ok().flatten()
+            .peek(&self.release_key(mbid))
+            .await
+            .flatten()
     }
 
     /// The release-group MBID a route's album id names. A library album
@@ -545,7 +520,11 @@ impl Catalog {
             .map(|(_, release)| release.id.clone())
     }
 
-    async fn tracks_for_group(&self, group: &GroupDetail) -> Result<AlbumTracksInfo, CatalogError> {
+    async fn tracks_for_group(
+        &self,
+        group: &GroupDetail,
+        priority: RequestPriority,
+    ) -> Result<AlbumTracksInfo, CatalogError> {
         let selection = self.select_edition(group).await?;
         let mut candidates: Vec<String> = selection.selected.iter().cloned().collect();
         for release in group.ranked().into_iter().take(TRACKLIST_CANDIDATES) {
@@ -554,7 +533,7 @@ impl Catalog {
             }
         }
         for candidate in candidates {
-            let Some(release) = self.release_detail(&candidate).await? else {
+            let Some(release) = self.release_detail_at(&candidate, priority).await? else {
                 continue;
             };
             if release.tracks.is_empty() {
@@ -615,7 +594,10 @@ impl Catalog {
     pub async fn album_tracks(&self, raw_id: &str) -> Result<AlbumTracksInfo, CatalogError> {
         let id = self.album_id(raw_id).await?;
         match self.group_detail(&id).await {
-            Ok(Some(group)) => self.tracks_for_group(&group).await,
+            Ok(Some(group)) => {
+                self.tracks_for_group(&group, RequestPriority::UserInitiated)
+                    .await
+            }
             Ok(None) => Err(CatalogError::NotFound),
             Err(error) => {
                 if matches!(error, CatalogError::Unavailable(_))
@@ -631,15 +613,20 @@ impl Catalog {
     /// `GET /albums/{album_id}`: header, tracklist and TheAudioDB artwork.
     pub async fn album(&self, raw_id: &str) -> Result<AlbumInfo, CatalogError> {
         let id = self.album_id(raw_id).await?;
-        let (result, context) = scoped(self.build_album(&id)).await;
+        let (result, context) = scoped(self.build_album(&id, RequestPriority::UserInitiated)).await;
         result.map(|mut info| {
             info.basic.service_status = mapping::service_status(&context);
             info
         })
     }
 
-    async fn build_album(&self, id: &str) -> Result<AlbumInfo, CatalogError> {
-        let group = match self.group_detail(id).await {
+    /// The album page with its providers asked at `priority`.
+    pub(super) async fn build_album(
+        &self,
+        id: &str,
+        priority: RequestPriority,
+    ) -> Result<AlbumInfo, CatalogError> {
+        let group = match self.group_detail_at(id, priority).await {
             Ok(Some(group)) => group,
             Ok(None) => return Err(CatalogError::NotFound),
             Err(error) => {
@@ -660,9 +647,10 @@ impl Catalog {
         };
         let (basic, tracks, images) = tokio::join!(
             self.basic_from_group(&group),
-            self.tracks_for_group(&group),
-            self.fetch_album_images(&group)
+            self.tracks_for_group(&group, priority),
+            self.album_images_lookup(&group, priority)
         );
+        let images = images.flatten();
         let tracks = match tracks {
             Ok(tracks) => tracks,
             Err(error) => {
@@ -684,19 +672,11 @@ impl Catalog {
         })
     }
 
+    /// TheAudioDB images already held, fresh or stale; never dials out.
     async fn cached_album_images(&self, mbid: &str) -> Option<AlbumImages> {
-        let bytes = self
-            .upstream()
+        self.upstream()
             .cache()
-            .get_bytes(&self.audiodb_album_key(mbid))
-            .await?;
-        serde_json::from_slice::<AudioDbAlbumEntry>(&bytes)
-            .ok()?
-            .images
-    }
-
-    async fn fetch_album_images(&self, group: &GroupDetail) -> Option<AlbumImages> {
-        self.album_images_lookup(group, RequestPriority::UserInitiated)
+            .peek(&self.audiodb_album_key(mbid))
             .await
             .flatten()
     }
@@ -713,43 +693,43 @@ impl Catalog {
         let Some(client) = self.upstream().audiodb(&advanced) else {
             return Some(None);
         };
-        let key = self.audiodb_album_key(&group.mbid);
-        if let Some(bytes) = self.upstream().cache().get_bytes(&key).await
-            && let Ok(entry) = serde_json::from_slice::<AudioDbAlbumEntry>(&bytes)
-        {
-            return Some(entry.images);
-        }
-        let mut found = client.album_by_mbid(&group.mbid, priority).await;
-        if matches!(found, Ok(None)) && advanced.audiodb_name_search_fallback {
-            found = client
-                .search_album(&group.artist_name, &group.title, priority)
-                .await;
-        }
-        let (images, ttl) = match found {
-            Ok(Some(album)) => (
-                Some(AlbumImages {
-                    album_thumb_url: album.thumb,
-                    album_back_url: album.back,
-                    album_cdart_url: album.cdart,
-                    album_spine_url: album.spine,
-                    album_3d_case_url: album.case_3d,
-                    album_3d_flat_url: album.flat_3d,
-                    album_3d_face_url: album.face_3d,
-                    album_3d_thumb_url: album.thumb_3d,
-                }),
-                AUDIODB_FOUND_TTL,
-            ),
-            Ok(None) => (None, AUDIODB_MISSING_TTL),
-            // Recorded where it failed; nothing cached so the next visit
-            // tries again.
-            Err(_) => return None,
-        };
-        if let Ok(bytes) = serde_json::to_vec(&AudioDbAlbumEntry {
-            images: images.clone(),
-        }) {
-            self.upstream().cache().set_bytes(&key, bytes, ttl);
-        }
-        Some(images)
+        let fallback = advanced.audiodb_name_search_fallback;
+        let (mbid, artist, title) = (
+            group.mbid.clone(),
+            group.artist_name.clone(),
+            group.title.clone(),
+        );
+        let answer = self
+            .upstream()
+            .cache()
+            .get_or_fetch(
+                &self.audiodb_album_key(&group.mbid),
+                Policy::AUDIODB,
+                priority,
+                move |priority| async move {
+                    let mut found = client.album_by_mbid(&mbid, priority).await?;
+                    if found.is_none() && fallback {
+                        found = client.search_album(&artist, &title, priority).await?;
+                    }
+                    Ok::<_, ProviderError>(match found {
+                        Some(album) => Fetched::Found(AlbumImages {
+                            album_thumb_url: album.thumb,
+                            album_back_url: album.back,
+                            album_cdart_url: album.cdart,
+                            album_spine_url: album.spine,
+                            album_3d_case_url: album.case_3d,
+                            album_3d_flat_url: album.flat_3d,
+                            album_3d_face_url: album.face_3d,
+                            album_3d_thumb_url: album.thumb_3d,
+                        }),
+                        None => Fetched::Missing,
+                    })
+                },
+            )
+            .await;
+        // A failure is recorded where it happened and stores nothing, so
+        // the next visit tries again.
+        answer.ok()
     }
 
     /// `GET /albums/{album_id}/editions`: every MusicBrainz release of the
@@ -805,14 +785,13 @@ impl Catalog {
     async fn every_edition(&self, mbid: &str) -> Result<Vec<AlbumEditionItem>, CatalogError> {
         let catalog = self.clone();
         let group = mbid.to_owned();
-        let value = self
+        let items = self
             .cached(
-                &self.inner.flights.other,
-                self.editions_key(mbid),
-                move || async move {
-                    let (client, _) = catalog
-                        .upstream()
-                        .musicbrainz(RequestPriority::UserInitiated);
+                &self.editions_key(mbid),
+                Policy::MUSICBRAINZ_ENTITY,
+                RequestPriority::UserInitiated,
+                move |priority| async move {
+                    let (client, _) = catalog.upstream().musicbrainz(priority);
                     let mut items: Vec<AlbumEditionItem> = Vec::new();
                     for page in 0..EDITION_PAGES {
                         let offset = page * EDITION_PAGE;
@@ -843,15 +822,11 @@ impl Catalog {
                             break;
                         }
                     }
-                    let (owned, _) = catalog.album_flags(std::slice::from_ref(&group)).await;
-                    let ttl = album_ttl(!owned.is_empty());
-                    let value = serde_json::to_value(&items)
-                        .map_err(|error| CatalogError::Internal(error.to_string()))?;
-                    Ok((value, Some(ttl)))
+                    Ok(Fetched::Found(items))
                 },
             )
             .await?;
-        serde_json::from_value(value).map_err(|error| CatalogError::Internal(error.to_string()))
+        Ok(items.unwrap_or_default())
     }
 
     /// `GET /albums/{album_id}/editions/{release_mbid}/tracks`: one
@@ -940,16 +915,23 @@ impl Catalog {
             group.as_ref().map_or(id.as_str(), |group| &group.mbid),
             &region,
         );
-        let value = self
-            .cached(&self.inner.flights.other, key, move || async move {
-                let (options, complete) = catalog.build_purchase_options(group, &region).await?;
-                let value = serde_json::to_value(&options)
-                    .map_err(|error| CatalogError::Internal(format!("purchase encode: {error}")))?;
-                Ok((value, complete.then_some(PURCHASE_TTL)))
-            })
+        let options = self
+            .cached(
+                &key,
+                PURCHASE,
+                RequestPriority::UserInitiated,
+                move |_| async move {
+                    let (options, complete) =
+                        catalog.build_purchase_options(group, &region).await?;
+                    Ok(if complete {
+                        Fetched::Found(options)
+                    } else {
+                        Fetched::Partial(options)
+                    })
+                },
+            )
             .await?;
-        serde_json::from_value(value)
-            .map_err(|error| CatalogError::Internal(format!("purchase decode: {error}")))
+        Ok(options.unwrap_or_default())
     }
 
     /// The options plus whether every source answered (only then cached).
@@ -1093,28 +1075,21 @@ impl Catalog {
         );
         let artist = artist_name.to_owned();
         let album = album_name.to_owned();
-        let value = self
-            .cached(&self.inner.flights.other, key, move || async move {
-                let priority = RequestPriority::UserInitiated;
+        let priority = RequestPriority::UserInitiated;
+        let enrichment = self
+            .cached(&key, LASTFM_DETAILS, priority, move |priority| async move {
                 let mut found = client
                     .album_info(&creds, &artist, &album, Some(&id), priority)
-                    .await;
-                if matches!(found, Ok(None))
-                    && !artist.trim().is_empty()
-                    && !album.trim().is_empty()
-                {
+                    .await
+                    .map_err(CatalogError::Unavailable)?;
+                if found.is_none() && !artist.trim().is_empty() && !album.trim().is_empty() {
                     found = client
                         .album_info(&creds, &artist, &album, None, priority)
-                        .await;
+                        .await
+                        .map_err(CatalogError::Unavailable)?;
                 }
-                let info = match found {
-                    Ok(Some(info)) => info,
-                    Ok(None) => {
-                        return Ok((serde_json::Value::Null, Some(LASTFM_TTL)));
-                    }
-                    Err(_) => {
-                        return Ok((serde_json::Value::Null, None));
-                    }
+                let Some(info) = found else {
+                    return Ok(Fetched::Missing);
                 };
                 let enrichment = LastFmAlbumEnrichment {
                     summary: mapping::clean_lastfm_bio(&info.summary),
@@ -1130,12 +1105,11 @@ impl Catalog {
                     playcount: info.playcount,
                     url: Some(info.url).filter(|url| !url.is_empty()),
                 };
-                let value = serde_json::to_value(&enrichment)
-                    .map_err(|error| CatalogError::Internal(format!("lastfm encode: {error}")))?;
-                Ok((value, Some(LASTFM_TTL)))
+                Ok(Fetched::Found(enrichment))
             })
-            .await?;
-        Ok(serde_json::from_value(value).unwrap_or_default())
+            .await;
+        // A failure was recorded where it happened; the page shows nothing.
+        Ok(enrichment.ok().flatten().unwrap_or_default())
     }
 }
 

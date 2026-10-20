@@ -439,6 +439,14 @@ impl droppedneedle_kernel::jobs::precache_phases::PrecacheSources for ScriptedLi
         Box::pin(async move { self.record(format!("artist:{}", artist.mbid)) })
     }
 
+    fn discovery_cached<'a>(
+        &'a self,
+        _user_id: &'a str,
+        _artist_mbid: &'a str,
+    ) -> droppedneedle_kernel::jobs::BoxFuture<'a, bool> {
+        Box::pin(async { false })
+    }
+
     fn warm_discovery<'a>(
         &'a self,
         user_id: &'a str,

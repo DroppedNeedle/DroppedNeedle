@@ -1,24 +1,20 @@
 //! The MusicBrainz half of unified search: artist and release-group
-//! buckets, cached with v2's search lifetimes and backed by a six-hour
-//! stale copy that stands in when MusicBrainz is down.
+//! buckets, cached for an hour, with the kept answer standing in when
+//! MusicBrainz is down.
 
 use std::collections::HashSet;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::musicbrainz::{Criticality, hit_score};
-use droppedneedle_providers::{CacheKey, Source};
+use droppedneedle_providers::{
+    CacheKey, Fetched, IntegrationStatus, Policy, RequestPriority, Source, record_current, scoped,
+};
 
 use super::error::CatalogError;
 use super::mapping;
-use super::{Catalog, SEARCH_TTL, mb_search_error};
-
-/// Stale bucket copies live six hours (v2 `SEARCH_STALE_CACHE_TTL`).
-const STALE_TTL: Duration = Duration::from_secs(6 * 3600);
-/// Proven-empty album searches are cached ten minutes (v2).
-const EMPTY_SEARCH_TTL: Duration = Duration::from_secs(600);
+use super::{Catalog, mb_search_error};
 
 /// Which MusicBrainz bucket a hit came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +75,16 @@ pub struct RemoteBucket {
     pub state: RemoteState,
 }
 
+/// A bucket's hits as the cache keeps them: none is "nothing there", which
+/// is asked again sooner.
+fn found_hits(items: Vec<RemoteHit>) -> Fetched<RemoteHits> {
+    if items.is_empty() {
+        Fetched::Missing
+    } else {
+        Fetched::Found(RemoteHits { items })
+    }
+}
+
 impl Catalog {
     /// Search MusicBrainz artists (v2 `search_artists`): placeholder
     /// artists filtered out, at most `limit` hits.
@@ -97,14 +103,10 @@ impl Catalog {
             &offset.to_string(),
         ];
         let key = CacheKey::hashed(Source::MusicBrainz, "artist_search", &parts);
-        let stale = CacheKey::hashed(Source::MusicBrainz, "artist_search_stale", &parts);
         let catalog = self.clone();
         let text = query.trim().to_owned();
-        let ttl = SEARCH_TTL;
-        let fetch = move || async move {
-            let (client, _) = catalog
-                .upstream()
-                .musicbrainz(RequestPriority::UserInitiated);
+        let fetch = move |priority| async move {
+            let (client, _) = catalog.upstream().musicbrainz(priority);
             let wide = (limit * 2).clamp(25, 100);
             let page = client
                 .search_artists_text(&text, wide, offset, Criticality::IdentityCritical)
@@ -136,9 +138,9 @@ impl Catalog {
                 })
                 .take(limit as usize)
                 .collect();
-            Ok((RemoteHits { items }, Some(ttl)))
+            Ok(found_hits(items))
         };
-        self.remote_bucket(key, stale, deadline, fetch).await
+        self.remote_bucket(key, deadline, fetch).await
     }
 
     /// Search MusicBrainz release groups (v2 `search_albums`), filtered by
@@ -179,14 +181,10 @@ impl Catalog {
             filter_key.as_str(),
         ];
         let key = CacheKey::hashed(Source::MusicBrainz, "album_search", &parts);
-        let stale = CacheKey::hashed(Source::MusicBrainz, "album_search_stale", &parts);
         let catalog = self.clone();
         let text = query.trim().to_owned();
-        let ttl = SEARCH_TTL * 2;
-        let fetch = move || async move {
-            let (client, _) = catalog
-                .upstream()
-                .musicbrainz(RequestPriority::UserInitiated);
+        let fetch = move |priority| async move {
+            let (client, _) = catalog.upstream().musicbrainz(priority);
             let wide = (limit + limit / 2).clamp(25, 100);
             let page = client
                 .search_release_groups_text(&text, wide, offset, Criticality::IdentityCritical)
@@ -227,48 +225,48 @@ impl Catalog {
                 })
                 .take(limit as usize)
                 .collect();
-            let ttl = if items.is_empty() {
-                EMPTY_SEARCH_TTL
-            } else {
-                ttl
-            };
-            Ok((RemoteHits { items }, Some(ttl)))
+            Ok(found_hits(items))
         };
-        self.remote_bucket(key, stale, deadline, fetch).await
+        self.remote_bucket(key, deadline, fetch).await
     }
 
-    /// Run one bucket under its deadline. Fresh answers refresh the stale
-    /// copy; failures fall back to it.
+    /// Run one bucket under its deadline. A failed search falls back to
+    /// the kept answer, as does a missed deadline; either reads as stale.
     async fn remote_bucket<F, Fut>(
         &self,
         key: CacheKey,
-        stale_key: CacheKey,
         deadline: Duration,
         fetch: F,
     ) -> RemoteBucket
     where
-        F: FnOnce() -> Fut + Send + 'static,
-        Fut: std::future::Future<Output = Result<(RemoteHits, Option<Duration>), CatalogError>>
+        F: FnOnce(RequestPriority) -> Fut + Clone + Send + 'static,
+        Fut: std::future::Future<Output = Result<Fetched<RemoteHits>, CatalogError>>
             + Send
             + 'static,
     {
-        let outcome = tokio::time::timeout(
+        let (outcome, context) = scoped(tokio::time::timeout(
             deadline,
-            self.cached(&self.inner.flights.search, key, fetch),
-        )
+            self.cached(&key, Policy::SEARCH, RequestPriority::UserInitiated, fetch),
+        ))
         .await;
-        let failed = match outcome {
+        // The cache notes a kept answer served in place of a failed search
+        // as a degraded MusicBrainz.
+        let summary = context.summary();
+        let deterministic = context.deterministic_sources();
+        for (source, status) in &summary {
+            record_current(source, *status, deterministic.contains(source));
+        }
+        let source = key.source().as_str();
+        let state = match outcome {
             Ok(Ok(hits)) => {
-                if !hits.items.is_empty()
-                    && let Ok(bytes) = serde_json::to_vec(&hits)
-                {
-                    self.upstream()
-                        .cache()
-                        .set_bytes(&stale_key, bytes, STALE_TTL);
-                }
+                let stale = summary.get(source) == Some(&IntegrationStatus::Degraded);
                 return RemoteBucket {
-                    hits: hits.items,
-                    state: RemoteState::Ok,
+                    hits: hits.unwrap_or_default().items,
+                    state: if stale {
+                        RemoteState::Stale
+                    } else {
+                        RemoteState::Ok
+                    },
                 };
             }
             Ok(Err(error)) => {
@@ -277,25 +275,20 @@ impl Catalog {
             }
             Err(_) => {
                 tracing::warn!("musicbrainz search missed its deadline");
+                if let Some(Some(hits)) = self.upstream().cache().peek::<RemoteHits>(&key).await {
+                    record_current(source, IntegrationStatus::Degraded, false);
+                    return RemoteBucket {
+                        hits: hits.items,
+                        state: RemoteState::Stale,
+                    };
+                }
                 RemoteState::Timeout
             }
         };
-        droppedneedle_providers::record_current(
-            "musicbrainz",
-            droppedneedle_providers::IntegrationStatus::Error,
-            false,
-        );
-        if let Some(bytes) = self.upstream().cache().get_bytes(&stale_key).await
-            && let Ok(hits) = serde_json::from_slice::<RemoteHits>(&bytes)
-        {
-            return RemoteBucket {
-                hits: hits.items,
-                state: RemoteState::Stale,
-            };
-        }
+        record_current(source, IntegrationStatus::Error, false);
         RemoteBucket {
             hits: Vec::new(),
-            state: failed,
+            state,
         }
     }
 

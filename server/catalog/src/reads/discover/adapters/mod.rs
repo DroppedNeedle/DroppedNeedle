@@ -89,6 +89,7 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
             daily_quota_limit: DEFAULT_DAILY_QUOTA_LIMIT,
         },
         Arc::clone(&inputs.clock),
+        inputs.providers.cache.clone(),
     ) {
         Ok(client) => Arc::new(youtube::LiveYouTube::new(client, config.live())),
         Err(error) => {

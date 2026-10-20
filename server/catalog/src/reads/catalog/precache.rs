@@ -56,17 +56,12 @@ impl Catalog {
         })
     }
 
-    /// Whether the artist page's MusicBrainz data is cached.
+    /// Whether the artist page's MusicBrainz data is held, fresh or stale:
+    /// a visit refreshes a stale page, so the precache fills only what is
+    /// missing.
     async fn artist_page_cached(&self, mbid: &str) -> bool {
-        let cache = self.upstream().cache();
-        cache
-            .get_bytes(&self.artist_detail_key(mbid))
-            .await
-            .is_some()
-            && cache
-                .get_bytes(&self.release_groups_key(mbid))
-                .await
-                .is_some()
+        self.held(&self.artist_detail_key(mbid)).await
+            && self.held(&self.release_groups_key(mbid)).await
     }
 
     /// Fetch and cache the artist page's data.
@@ -93,18 +88,25 @@ impl Catalog {
         }
     }
 
-    /// Whether the album page's MusicBrainz data is cached.
+    /// Whether the artist's discovery sections are held as `user_id` reads
+    /// them, fresh or stale.
+    async fn artist_discovery_cached(&self, user_id: &str, mbid: &str) -> bool {
+        self.artist_sections_held(
+            user_id,
+            mbid,
+            (SIMILAR_COUNT, TOP_SONGS_COUNT, TOP_ALBUMS_COUNT),
+        )
+        .await
+    }
+
+    /// Whether the album page's MusicBrainz data is held, fresh or stale.
     async fn album_page_cached(&self, mbid: &str) -> bool {
-        self.upstream()
-            .cache()
-            .get_bytes(&self.group_key(mbid))
-            .await
-            .is_some()
+        self.held(&self.group_key(mbid)).await
     }
 
     /// Fetch and cache the album page's data.
     async fn warm_album_page(&self, mbid: &str) {
-        if let Err(error) = self.album(mbid).await {
+        if let Err(error) = self.build_album(mbid, BACKGROUND).await {
             tracing::debug!(album = mbid, %error, "precache: album page not cached");
         }
     }
@@ -112,7 +114,13 @@ impl Catalog {
     /// TheAudioDB thumbnail URL for a release group: `Some(None)` when it
     /// has none, `None` when the answer is not settled.
     async fn album_audiodb_thumb(&self, mbid: &str) -> Option<Option<String>> {
-        let group = match self.group_detail(mbid).await {
+        // A held group, stale or not, names the album well enough.
+        let held = self.upstream().cache().peek(&self.group_key(mbid)).await;
+        let found = match held {
+            Some(group) => Ok(group),
+            None => self.group_detail_at(mbid, BACKGROUND).await,
+        };
+        let group = match found {
             Ok(Some(group)) => group,
             Ok(None) => return Some(None),
             Err(error) => {
@@ -372,11 +380,21 @@ impl PrecacheSources for CatalogPrecache {
 
     fn warm_artist<'a>(&'a self, artist: &'a LibraryArtist) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            self.catalog.warm_artist_page(&artist.mbid).await;
+            if !self.catalog.artist_page_cached(&artist.mbid).await {
+                self.catalog.warm_artist_page(&artist.mbid).await;
+            }
             if !self.artwork.artist_image_cached(&artist.mbid).await {
                 self.artwork.warm_artist_image(&artist.mbid).await;
             }
         })
+    }
+
+    fn discovery_cached<'a>(
+        &'a self,
+        user_id: &'a str,
+        artist_mbid: &'a str,
+    ) -> BoxFuture<'a, bool> {
+        Box::pin(self.catalog.artist_discovery_cached(user_id, artist_mbid))
     }
 
     fn warm_discovery<'a>(&'a self, user_id: &'a str, artist_mbid: &'a str) -> BoxFuture<'a, ()> {
@@ -398,7 +416,17 @@ impl PrecacheSources for CatalogPrecache {
     fn warm_album<'a>(&'a self, album: &'a LibraryAlbum) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             let (_, _) = tokio::join!(
-                self.catalog.warm_album_page(&album.release_group_mbid),
+                async {
+                    if !self
+                        .catalog
+                        .album_page_cached(&album.release_group_mbid)
+                        .await
+                    {
+                        self.catalog
+                            .warm_album_page(&album.release_group_mbid)
+                            .await;
+                    }
+                },
                 self.artwork.warm_release_group_cover(
                     &album.release_group_mbid,
                     droppedneedle_providers::RequestPriority::BackgroundSync

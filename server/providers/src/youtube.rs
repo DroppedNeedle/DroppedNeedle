@@ -39,13 +39,13 @@
 //! / `check_optional_dispatch`) and provider call counters live in shared
 //! infra and are not ported here; wiring should gate background searches
 //! before calling [YouTubeClient::search_video] / [YouTubeClient::search_track].
-//! Concurrent identical searches share one HTTP call and one reservation via
-//! a per-key mutex; on a failed dispatch the waiter retries once itself
-//! rather than sharing the owner's error (v2 joins waiters onto the owner's
-//! outcome instead). Also note the sync-to-async shifts: quota getters are
-//! async here because the quota state sits behind an async lock.
-//! Wire the quota path to `<cache_dir>/youtube_quota.json`, and build one
-//! client per quota path: clones share its budget, cache and settings.
+//! Answers live in the provider cache under the `youtube` source, so a
+//! preview found before a restart costs nothing after it. Concurrent
+//! identical searches share one HTTP call and one reservation through the
+//! cache's one fetch per key, and share its outcome, a failure included.
+//! Quota getters are async because the quota state sits behind an async
+//! lock. Wire the quota path to `<cache_dir>/youtube_quota.json`, and build
+//! one client per quota path: clones share its budget and settings.
 //! There is no process-wide registry; the composition root owns the client.
 
 use std::collections::HashMap;
@@ -58,6 +58,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::RequestPriority;
+use crate::cache::{CacheKey, Fetched, KEEP, Policy, ProviderCacheStore, Source};
 use crate::client::{decode, parse_base, payload, unusable_base};
 use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
 use crate::executor::{
@@ -72,8 +73,6 @@ pub const YOUTUBE_API_HOST: &str = "https://www.googleapis.com";
 pub const DEFAULT_DAILY_QUOTA_LIMIT: u32 = 80;
 /// Largest accepted daily budget (v2 validates 1..=10000).
 pub const MAX_DAILY_QUOTA_LIMIT: u32 = 10_000;
-/// Preview cache size; oldest entries evict first.
-pub const PREVIEW_CACHE_MAX: usize = 100;
 /// Largest search answer read.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
@@ -191,13 +190,28 @@ pub enum SearchKind {
     Track,
 }
 
-/// Cache identity: the kind plus the lowercased artist/title pair.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct SearchKey {
-    kind: SearchKind,
-    artist: String,
-    title: String,
+impl SearchKind {
+    const fn key_part(self) -> &'static str {
+        match self {
+            Self::Album => "album",
+            Self::Track => "track",
+        }
+    }
 }
+
+/// Cache identity: the kind plus the artist/title pair, case folded.
+fn preview_key(kind: SearchKind, artist: &str, title: &str) -> CacheKey {
+    CacheKey::hashed(Source::YouTube, kind.key_part(), &[artist, title])
+}
+
+/// How long a preview answer is kept. Each search spends a unit of the
+/// daily quota and a found video id stays valid, so it is kept as long as
+/// the cache keeps anything; "none found" is asked again after a week, by
+/// when an upload may have appeared.
+const PREVIEWS: Policy = Policy {
+    fresh: KEEP,
+    miss: Duration::from_secs(7 * 86_400),
+};
 
 /// Connection settings. Wiring pushes fresh settings via
 /// [YouTubeClient::update_settings]; v2's live settings-getter becomes a
@@ -261,7 +275,7 @@ pub struct QuotaStatus {
 
 /// What can go wrong on a YouTube call. Configuration, the budget and the
 /// quota file are local; everything the API answers is a [`ProviderError`].
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum YoutubeError {
     /// Search is disabled, unconfigured, or the settings are invalid.
     #[error("youtube search is not configured: {0}")]
@@ -286,68 +300,12 @@ struct QuotaState {
     count: u32,
 }
 
-/// One cache entry: the found video id, or the cached absence.
-#[derive(Debug, Clone)]
-struct CacheEntry {
-    value: Option<String>,
-    touched: u64,
-}
-
-/// Small LRU over the preview cache. Absences (`None`) are cached too.
-#[derive(Debug)]
-struct PreviewCache {
-    entries: HashMap<SearchKey, CacheEntry>,
-    clock: u64,
-}
-
-impl PreviewCache {
-    fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-            clock: 0,
-        }
-    }
-
-    fn get(&mut self, key: &SearchKey) -> Option<Option<String>> {
-        let entry = self.entries.get_mut(key)?;
-        self.clock = self.clock.wrapping_add(1);
-        entry.touched = self.clock;
-        Some(entry.value.clone())
-    }
-
-    fn contains(&self, key: &SearchKey) -> bool {
-        self.entries.contains_key(key)
-    }
-
-    fn put(&mut self, key: &SearchKey, value: Option<String>) {
-        self.clock = self.clock.wrapping_add(1);
-        let touched = self.clock;
-        self.entries
-            .insert(key.clone(), CacheEntry { value, touched });
-        while self.entries.len() > PREVIEW_CACHE_MAX {
-            let oldest = self
-                .entries
-                .iter()
-                .min_by_key(|(_, entry)| entry.touched)
-                .map(|(key, _)| key.clone());
-            match oldest {
-                Some(key) => {
-                    self.entries.remove(&key);
-                }
-                None => break,
-            }
-        }
-    }
-}
-
-/// State shared by every clone of one client: the quota file
-/// guard, the preview cache, in-flight searches, and the settings snapshot.
+/// State shared by every clone of one client: the quota file guard and
+/// the settings snapshot.
 #[derive(Debug)]
 struct ClientState {
     quota_path: PathBuf,
     quota: tokio::sync::Mutex<QuotaState>,
-    cache: Mutex<PreviewCache>,
-    inflight: tokio::sync::Mutex<HashMap<SearchKey, Arc<tokio::sync::Mutex<()>>>>,
     settings: Mutex<YouTubeSettings>,
 }
 
@@ -358,6 +316,7 @@ struct ClientState {
 pub struct YouTubeClient {
     api: YouTubeApi,
     clock: Arc<dyn Clock>,
+    cache: ProviderCacheStore,
     state: Arc<ClientState>,
 }
 
@@ -371,25 +330,29 @@ impl std::fmt::Debug for YouTubeClient {
 
 impl YouTubeClient {
     /// Client over `api` with `quota_path` as its durable budget file (wire
-    /// `<cache_dir>/youtube_quota.json`), dating the budget by `clock`.
-    /// Fails when the settings are invalid or a present quota file cannot
-    /// be decoded.
+    /// `<cache_dir>/youtube_quota.json`), dating the budget by `clock` and
+    /// keeping its answers in `cache`. Fails when the settings are invalid
+    /// or a present quota file cannot be decoded.
     pub fn new(
         api: YouTubeApi,
         quota_path: PathBuf,
         settings: YouTubeSettings,
         clock: Arc<dyn Clock>,
+        cache: ProviderCacheStore,
     ) -> Result<Self, YoutubeError> {
         settings.validate()?;
         let loaded = load_quota_file(&quota_path)?;
         let state = Arc::new(ClientState {
             quota_path,
             quota: tokio::sync::Mutex::new(loaded),
-            cache: Mutex::new(PreviewCache::new()),
-            inflight: tokio::sync::Mutex::new(HashMap::new()),
             settings: Mutex::new(settings),
         });
-        Ok(Self { api, clock, state })
+        Ok(Self {
+            api,
+            clock,
+            cache,
+            state,
+        })
     }
 
     /// Replace the whole settings snapshot after validating it.
@@ -422,24 +385,21 @@ impl YouTubeClient {
     }
 
     /// True when the pair already has a cached preview (or cached absence).
-    pub fn is_cached(&self, artist: &str, title: &str, kind: SearchKind) -> bool {
-        let key = SearchKey {
-            kind,
-            artist: artist.to_lowercase(),
-            title: title.to_lowercase(),
-        };
-        self.lock_cache().contains(&key)
+    pub async fn is_cached(&self, artist: &str, title: &str, kind: SearchKind) -> bool {
+        self.cache
+            .peek::<String>(&preview_key(kind, artist, title))
+            .await
+            .is_some()
     }
 
     /// Cached flags for track pairs, keyed `artist|track` lowercased.
-    pub fn are_cached(&self, pairs: &[(&str, &str)]) -> HashMap<String, bool> {
-        pairs
-            .iter()
-            .map(|(artist, track)| {
-                let key = format!("{}|{}", artist.to_lowercase(), track.to_lowercase());
-                (key, self.is_cached(artist, track, SearchKind::Track))
-            })
-            .collect()
+    pub async fn are_cached(&self, pairs: &[(&str, &str)]) -> HashMap<String, bool> {
+        let mut cached = HashMap::new();
+        for (artist, track) in pairs {
+            let key = format!("{}|{}", artist.to_lowercase(), track.to_lowercase());
+            cached.insert(key, self.is_cached(artist, track, SearchKind::Track).await);
+        }
+        cached
     }
 
     /// Album preview search: the query gains a `full album` suffix.
@@ -464,8 +424,9 @@ impl YouTubeClient {
             .await
     }
 
-    /// One search with singleflight: concurrent identical searches share one
-    /// dispatch, so they cost one HTTP call and one quota unit.
+    /// One search through the provider cache: an answer kept from before
+    /// (a restart included) costs nothing, and concurrent identical searches
+    /// share one dispatch, so they cost one HTTP call and one quota unit.
     async fn search(
         &self,
         kind: SearchKind,
@@ -473,32 +434,19 @@ impl YouTubeClient {
         title: &str,
         priority: RequestPriority,
     ) -> Result<Option<String>, YoutubeError> {
-        let key = SearchKey {
-            kind,
-            artist: artist.to_lowercase(),
-            title: title.to_lowercase(),
-        };
-        if let Some(hit) = self.cache_get(&key) {
-            return Ok(hit);
-        }
-        let slot = {
-            let mut inflight = self.state.inflight.lock().await;
-            if let Some(slot) = inflight.get(&key) {
-                Arc::clone(slot)
-            } else {
-                let slot = Arc::new(tokio::sync::Mutex::new(()));
-                inflight.insert(key.clone(), Arc::clone(&slot));
-                slot
-            }
-        };
-        let _guard = slot.lock().await;
-        if let Some(hit) = self.cache_get(&key) {
-            self.release_slot(&key, &slot).await;
-            return Ok(hit);
-        }
-        let outcome = self.dispatch(&key, artist, title, priority).await;
-        self.release_slot(&key, &slot).await;
-        outcome
+        let client = self.clone();
+        let (artist, title) = (artist.to_owned(), title.to_owned());
+        self.cache
+            .get_or_fetch(
+                &preview_key(kind, &artist, &title),
+                PREVIEWS,
+                priority,
+                move |priority| async move {
+                    let found = client.dispatch(kind, &artist, &title, priority).await?;
+                    Ok(found.map_or(Fetched::Missing, Fetched::Found))
+                },
+            )
+            .await
     }
 
     /// Reserve-then-fetch. The reservation lands in the file before any HTTP;
@@ -506,7 +454,7 @@ impl YouTubeClient {
     /// stays charged whatever the outcome.
     async fn dispatch(
         &self,
-        key: &SearchKey,
+        kind: SearchKind,
         artist: &str,
         title: &str,
         priority: RequestPriority,
@@ -551,13 +499,11 @@ impl YouTubeClient {
             self.quota_refund(&date).await?;
             return Err(YoutubeError::QuotaExhausted);
         }
-        let query = match key.kind {
+        let query = match kind {
             SearchKind::Album => format!("{artist} {title} full album"),
             SearchKind::Track => format!("{artist} {title}"),
         };
-        let video_id = self.api.search(&api_key, &query, priority).await?;
-        self.cache_put(key, video_id.clone());
-        Ok(video_id)
+        Ok(self.api.search(&api_key, &query, priority).await?)
     }
 
     /// Reserve one unit, persisting before returning. Fails closed when the
@@ -619,26 +565,6 @@ impl YouTubeClient {
         utc_date(self.clock.now_unix())
     }
 
-    /// Drop a finished in-flight slot, but only when it is still ours (a
-    /// newer search may already have installed its own).
-    async fn release_slot(&self, key: &SearchKey, slot: &Arc<tokio::sync::Mutex<()>>) {
-        let mut inflight = self.state.inflight.lock().await;
-        let owned = inflight
-            .get(key)
-            .is_some_and(|current| Arc::ptr_eq(current, slot));
-        if owned {
-            inflight.remove(key);
-        }
-    }
-
-    fn cache_get(&self, key: &SearchKey) -> Option<Option<String>> {
-        self.lock_cache().get(key)
-    }
-
-    fn cache_put(&self, key: &SearchKey, value: Option<String>) {
-        self.lock_cache().put(key, value);
-    }
-
     fn snapshot_settings(&self) -> YouTubeSettings {
         self.lock_settings().clone()
     }
@@ -646,13 +572,6 @@ impl YouTubeClient {
     fn lock_settings(&self) -> std::sync::MutexGuard<'_, YouTubeSettings> {
         self.state
             .settings
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-    }
-
-    fn lock_cache(&self) -> std::sync::MutexGuard<'_, PreviewCache> {
-        self.state
-            .cache
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
     }

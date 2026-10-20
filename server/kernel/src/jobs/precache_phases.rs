@@ -8,8 +8,10 @@
 //! 4. `audiodb_prewarm`: TheAudioDB artwork for artists and albums whose
 //!    AudioDB answer is not cached yet. Skipped while AudioDB is off.
 //!
-//! Every phase first drops the items already cached, so a rerun after a
-//! failure or a cancel picks up where the last one stopped. A phase with
+//! Every phase first drops the items already cached, fresh or stale: a
+//! person's visit refreshes a stale answer, so a run after a scan fetches
+//! only what is new, and a rerun after a failure or a cancel picks up where
+//! the last one stopped. A phase with
 //! nothing left reports zero items, which the progress pill shows as
 //! skipped. Pacing follows the advanced settings, re-read per phase: batch
 //! sizes and delays for artists and albums (the album batch adapts to how
@@ -120,6 +122,13 @@ pub trait PrecacheSources: Send + Sync + 'static {
     fn artist_cached<'a>(&'a self, artist: &'a LibraryArtist) -> BoxFuture<'a, bool>;
     /// Fetch and cache the artist's page data and image.
     fn warm_artist<'a>(&'a self, artist: &'a LibraryArtist) -> BoxFuture<'a, ()>;
+    /// Whether the artist's discovery sections are cached as `user_id`
+    /// sees them.
+    fn discovery_cached<'a>(
+        &'a self,
+        user_id: &'a str,
+        artist_mbid: &'a str,
+    ) -> BoxFuture<'a, bool>;
     /// Fetch and cache the artist's discovery sections as `user_id` sees
     /// them.
     fn warm_discovery<'a>(&'a self, user_id: &'a str, artist_mbid: &'a str) -> BoxFuture<'a, ()>;
@@ -310,13 +319,20 @@ impl Run<'_> {
     }
 
     async fn discovery(&self, user_id: &str, artists: &[LibraryArtist]) {
-        if artists.is_empty() {
+        let mut needed = Vec::new();
+        for (index, artist) in artists.iter().enumerate() {
+            self.checked(index);
+            if !self.sources.discovery_cached(user_id, &artist.mbid).await {
+                needed.push(artist);
+            }
+        }
+        if needed.is_empty() {
             return self.skip("discovery");
         }
-        self.enter("discovery", artists.len());
+        self.enter("discovery", needed.len());
         let tuning = self.sources.tuning();
         let done = &AtomicU64::new(0);
-        stream::iter(artists)
+        stream::iter(needed)
             .for_each_concurrent(tuning.discovery_workers.max(1), |artist| async move {
                 self.sources.warm_discovery(user_id, &artist.mbid).await;
                 let count = done.fetch_add(1, Ordering::Relaxed) + 1;

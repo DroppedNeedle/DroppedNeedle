@@ -52,12 +52,20 @@ impl YouTubeSource for UnavailableYouTube {
         })
     }
 
-    fn is_cached(&self, _artist: &str, _name: &str, _track: bool) -> bool {
-        false
+    fn is_cached<'a>(
+        &'a self,
+        _artist: &'a str,
+        _name: &'a str,
+        _track: bool,
+    ) -> BoxFuture<'a, bool> {
+        Box::pin(async { false })
     }
 
-    fn cached_tracks(&self, _pairs: &[(String, String)]) -> HashMap<String, bool> {
-        HashMap::new()
+    fn cached_tracks<'a>(
+        &'a self,
+        _pairs: &'a [(String, String)],
+    ) -> BoxFuture<'a, HashMap<String, bool>> {
+        Box::pin(async { HashMap::new() })
     }
 
     fn quota(&self) -> BoxFuture<'_, Option<YouTubeQuotaResponse>> {

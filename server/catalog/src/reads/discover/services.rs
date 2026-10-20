@@ -491,7 +491,7 @@ pub async fn youtube_search(
 ) -> Result<YouTubeSearchResponse, ServiceError> {
     check_name(artist, "artist")?;
     check_name(album, "album")?;
-    let cached = deps.youtube.is_cached(artist, album, false);
+    let cached = deps.youtube.is_cached(artist, album, false).await;
     match deps.youtube.search_video(artist, album).await? {
         Some(video_id) => Ok(YouTubeSearchResponse {
             video_id: Some(video_id.clone()),
@@ -516,7 +516,7 @@ pub async fn youtube_track_search(
 ) -> Result<YouTubeSearchResponse, ServiceError> {
     check_name(artist, "artist")?;
     check_name(track, "track")?;
-    let cached = deps.youtube.is_cached(artist, track, true);
+    let cached = deps.youtube.is_cached(artist, track, true).await;
     match deps.youtube.search_track(artist, track).await? {
         Some(video_id) => Ok(YouTubeSearchResponse {
             video_id: Some(video_id.clone()),
@@ -540,7 +540,7 @@ pub async fn youtube_quota(deps: &ReadsDeps) -> Result<YouTubeQuotaResponse, Ser
 
 /// Bulk cache membership. Unconfigured YouTube answers empty, never an
 /// error: absence of the integration is not a failure.
-pub fn youtube_cache_check(
+pub async fn youtube_cache_check(
     deps: &ReadsDeps,
     body: &TrackCacheCheckRequest,
 ) -> Result<TrackCacheCheckResponse, ServiceError> {
@@ -557,7 +557,7 @@ pub fn youtube_cache_check(
             deduped.push((artist, track));
         }
     }
-    let cached = deps.youtube.cached_tracks(&deduped);
+    let cached = deps.youtube.cached_tracks(&deduped).await;
     Ok(TrackCacheCheckResponse {
         items: deduped
             .into_iter()

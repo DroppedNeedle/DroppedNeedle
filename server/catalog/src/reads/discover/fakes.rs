@@ -750,16 +750,26 @@ impl YouTubeSource for FakeYouTube {
         })
     }
 
-    fn is_cached(&self, artist: &str, name: &str, _track: bool) -> bool {
+    fn is_cached<'a>(
+        &'a self,
+        artist: &'a str,
+        name: &'a str,
+        _track: bool,
+    ) -> BoxFuture<'a, bool> {
         let key = format!("{}|{}", artist.to_lowercase(), name.to_lowercase());
-        self.cached
+        let hit = self
+            .cached
             .lock()
             .map(|cached| cached.get(&key).copied().unwrap_or(false))
-            .unwrap_or(false)
+            .unwrap_or(false);
+        Box::pin(async move { hit })
     }
 
-    fn cached_tracks(&self, pairs: &[(String, String)]) -> HashMap<String, bool> {
-        pairs
+    fn cached_tracks<'a>(
+        &'a self,
+        pairs: &'a [(String, String)],
+    ) -> BoxFuture<'a, HashMap<String, bool>> {
+        let cached = pairs
             .iter()
             .map(|(artist, track)| {
                 let key = format!("{}|{}", artist.to_lowercase(), track.to_lowercase());
@@ -770,7 +780,8 @@ impl YouTubeSource for FakeYouTube {
                     .unwrap_or(false);
                 (key, hit)
             })
-            .collect()
+            .collect();
+        Box::pin(async move { cached })
     }
 
     fn quota(&self) -> BoxFuture<'_, Option<YouTubeQuotaResponse>> {

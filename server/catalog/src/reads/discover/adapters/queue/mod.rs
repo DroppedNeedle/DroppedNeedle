@@ -36,8 +36,9 @@ use crate::reads::discover::ports::{
 };
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
-use droppedneedle_providers::singleflight::Singleflight;
-use droppedneedle_providers::{CacheKey, ProviderCacheStore, Source};
+use droppedneedle_providers::{CacheKey, Fetched, Policy, ProviderCacheStore, Source};
+
+use crate::reads::cache_hold::CacheHold;
 
 use build::{BuildContext, build_deck};
 use sources::QueueSources;
@@ -246,7 +247,6 @@ struct Inner {
     settings: Live<AdvancedSettings>,
     states: Mutex<HashMap<String, UserState>>,
     last_prune: Mutex<f64>,
-    enrichments: Singleflight<QueueEnrichment, String>,
 }
 
 /// The live queue deck.
@@ -275,7 +275,6 @@ impl LiveQueue {
                 settings,
                 states: Mutex::new(HashMap::new()),
                 last_prune: Mutex::new(0.0),
-                enrichments: Singleflight::new(),
             }),
         }
     }
@@ -561,37 +560,39 @@ impl Inner {
             Source::MusicBrainz,
             &[&self.sources.source_key(), "queue_card", &group],
         );
-        if let Some(hit) = self.cache.get_bytes(&key).await
-            && let Ok(enrichment) = serde_json::from_slice::<QueueEnrichment>(&hit)
-        {
-            return Ok(enrichment);
-        }
+        let lifetime = QueueSettings::read(&self.settings).enrich_ttl;
+        let policy = Policy {
+            fresh: lifetime,
+            miss: lifetime,
+        };
         let inner = Arc::clone(self);
         let user = user_id.to_owned();
-        let flight = key.as_str().to_owned();
-        let result = self
-            .enrichments
-            .run(&flight, move || async move {
-                let (enrichment, hold) = cards::enrich(
-                    inner.sources.as_ref(),
-                    inner.youtube.as_ref(),
-                    &user,
-                    &group,
-                )
-                .await;
-                let ttl = hold.cap(QueueSettings::read(&inner.settings).enrich_ttl);
-                if !ttl.is_zero() {
-                    match serde_json::to_vec(&enrichment) {
-                        Ok(bytes) => inner.cache.set_bytes(&key, bytes, ttl),
-                        Err(error) => tracing::debug!(%error, "queue card details not cached"),
-                    }
-                }
-                Ok::<_, String>(enrichment)
-            })
+        let found = self
+            .cache
+            .get_or_fetch(
+                &key,
+                policy,
+                RequestPriority::UserInitiated,
+                move |_| async move {
+                    let (enrichment, hold) = cards::enrich(
+                        inner.sources.as_ref(),
+                        inner.youtube.as_ref(),
+                        &user,
+                        &group,
+                    )
+                    .await;
+                    // Details built past a failed read are shown, not kept.
+                    Ok::<_, String>(if hold == CacheHold::default() {
+                        Fetched::Found(enrichment)
+                    } else {
+                        Fetched::Partial(enrichment)
+                    })
+                },
+            )
             .await;
-        result
-            .map(|enrichment| (*enrichment).clone())
-            .map_err(|cause| ProviderFailure::failed(cause.to_string()))
+        found
+            .map_err(ProviderFailure::failed)?
+            .ok_or_else(|| ProviderFailure::failed("queue card details missing"))
     }
 }
 

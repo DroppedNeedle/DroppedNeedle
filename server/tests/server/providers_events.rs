@@ -90,6 +90,7 @@ fn youtube(providers: &Providers, path: &Path, limit: u32) -> YouTubeClient {
         path.to_path_buf(),
         enabled_settings(limit),
         may_fifth(),
+        providers.cache.clone(),
     )
     .unwrap()
 }
@@ -588,6 +589,7 @@ async fn youtube_quota_survives_client_recreation() {
         path.clone(),
         enabled_settings(1),
         clock.clone(),
+        providers.cache.clone(),
     )
     .unwrap();
     assert!(matches!(
@@ -614,7 +616,7 @@ async fn youtube_failures_are_charged_not_cached() {
         Err(YoutubeError::Provider(ProviderError::Forbidden { .. }))
     ));
     assert_eq!(quota_file_json(&path)["count"], json!(1));
-    assert!(!client.is_cached("a", "album", SearchKind::Album));
+    assert!(!client.is_cached("a", "album", SearchKind::Album).await);
 
     assert_eq!(
         client

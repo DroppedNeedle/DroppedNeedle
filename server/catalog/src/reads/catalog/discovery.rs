@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 use droppedneedle_kernel::runtime_config::sections::MusicSource;
 use droppedneedle_providers::musicbrainz::Criticality;
 use droppedneedle_providers::{
-    CacheKey, IntegrationStatus, RequestPriority, Source, lastfm, listenbrainz, record_current,
+    CacheKey, Fetched, IntegrationStatus, Policy, RequestPriority, Source, lastfm, listenbrainz,
+    record_current,
 };
 
 use super::artist::ReleaseGroupList;
@@ -25,22 +26,12 @@ use super::models::{
     DiscoveryAlbum, DiscoverySource, MoreByArtistResponse, SimilarAlbumsResponse, SimilarArtist,
     SimilarArtistsResponse, TopAlbum, TopAlbumsResponse, TopSong, TopSongsResponse,
 };
-use super::{Catalog, MISS_TTL, is_mbid, mb_error, record_mb_down};
+use super::{Catalog, is_mbid, mb_error, record_mb_down};
 use crate::reads::cache_hold::CacheHold;
 use crate::reads::platform::artwork::warm::WarmTargets;
 
-/// Empty answers are kept ten minutes (v2 `DISCOVERY_EMPTY_CACHE_TTL`).
-const EMPTY_TTL: Duration = Duration::from_secs(600);
-/// Similar artists for a library artist, kept for six hours.
-const LIBRARY_DISCOVERY_TTL: Duration = Duration::from_secs(6 * 3600);
-/// Similar artists for any other artist, kept for an hour.
-const OTHER_DISCOVERY_TTL: Duration = Duration::from_secs(3600);
-/// Partial answers (a deadline hit) are kept a minute.
-const PARTIAL_TTL: Duration = Duration::from_secs(60);
 /// Releases whose tracklists top songs look up, at most.
 const MAX_TOP_SONG_RELEASES: usize = 10;
-/// Release-to-group answers are kept a week: they never change.
-const RELEASE_GROUP_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
 /// How long one request spends resolving Last.fm releases.
 const LASTFM_RESOLVE_BUDGET: Duration = Duration::from_secs(4);
 /// Similar artists consulted for similar albums (v2 uses five).
@@ -87,18 +78,26 @@ struct Answer {
     configured: bool,
 }
 
-impl Catalog {
-    fn discovery_ttl(&self, in_library: bool, empty: bool) -> Duration {
-        if empty {
-            return EMPTY_TTL;
-        }
-        if in_library {
-            LIBRARY_DISCOVERY_TTL
-        } else {
-            OTHER_DISCOVERY_TTL
-        }
-    }
+/// What a section fetch found: rows, kept when every read behind them
+/// answered, "nothing there" when empty, and `Err` when the source failed
+/// (a kept answer then stands in).
+fn section_answer(
+    rows: Option<SectionRows>,
+    hold: CacheHold,
+) -> Result<Fetched<SectionRows>, CatalogError> {
+    let Some(rows) = rows else {
+        return Err(CatalogError::Internal("discovery source failed".to_owned()));
+    };
+    Ok(if hold != CacheHold::default() {
+        Fetched::Partial(rows)
+    } else if rows.is_empty() {
+        Fetched::Missing
+    } else {
+        Fetched::Found(rows)
+    })
+}
 
+impl Catalog {
     fn preferred_source(&self, asked: Option<DiscoverySource>) -> DiscoverySource {
         asked.unwrap_or_else(|| match self.upstream().settings().primary_source() {
             MusicSource::Listenbrainz => DiscoverySource::Listenbrainz,
@@ -140,23 +139,16 @@ impl Catalog {
         Ok(first)
     }
 
-    async fn section_from(
+    /// The cache key of one section from one source.
+    fn section_key(
         &self,
         source: DiscoverySource,
-        user_id: &str,
         mbid: &str,
         count: u32,
         section: Section,
-        priority: RequestPriority,
-    ) -> Answer {
-        // A page never waits behind a warm-up's flight.
-        let flights = if priority.is_user_facing() {
-            &self.inner.flights.other
-        } else {
-            &self.inner.flights.other_background
-        };
+    ) -> CacheKey {
         let count_part = count.to_string();
-        let key = match (source, section) {
+        match (source, section) {
             (DiscoverySource::Listenbrainz, _) => CacheKey::new(
                 Source::ListenBrainz,
                 &[section.key_part(), mbid, &count_part],
@@ -173,7 +165,19 @@ impl Catalog {
             (DiscoverySource::Lastfm, _) => {
                 CacheKey::new(Source::LastFm, &[section.key_part(), mbid, &count_part])
             }
-        };
+        }
+    }
+
+    async fn section_from(
+        &self,
+        source: DiscoverySource,
+        user_id: &str,
+        mbid: &str,
+        count: u32,
+        section: Section,
+        priority: RequestPriority,
+    ) -> Answer {
+        let key = self.section_key(source, mbid, count, section);
         let unconfigured = Answer {
             rows: SectionRows::default(),
             source,
@@ -186,18 +190,23 @@ impl Catalog {
                 };
                 let catalog = self.clone();
                 let mbid = mbid.to_owned();
-                self.cached(flights, key, move || async move {
-                    let mut hold = CacheHold::default();
-                    let rows = catalog
-                        .listenbrainz_rows(
-                            &client,
-                            &creds,
-                            (&mbid, count, section, priority),
-                            &mut hold,
-                        )
-                        .await;
-                    catalog.cacheable(rows, hold, &mbid).await
-                })
+                self.cached(
+                    &key,
+                    Policy::DISCOVERY,
+                    priority,
+                    move |priority| async move {
+                        let mut hold = CacheHold::default();
+                        let rows = catalog
+                            .listenbrainz_rows(
+                                &client,
+                                &creds,
+                                (&mbid, count, section, priority),
+                                &mut hold,
+                            )
+                            .await;
+                        section_answer(rows, hold)
+                    },
+                )
                 .await
             }
             DiscoverySource::Lastfm => {
@@ -206,71 +215,92 @@ impl Catalog {
                 };
                 let catalog = self.clone();
                 let mbid = mbid.to_owned();
-                self.cached(flights, key, move || async move {
-                    // Top albums match Last.fm titles against the artist's
-                    // (cached) discography to find release groups.
-                    let mut hold = CacheHold::default();
-                    let groups = match section {
-                        Section::TopAlbums => match catalog.release_groups(&mbid).await {
-                            Ok(groups) => Some(groups),
-                            Err(error) => {
-                                note_catalog_failure(&mut hold, &error);
-                                None
+                self.cached(
+                    &key,
+                    Policy::DISCOVERY,
+                    priority,
+                    move |priority| async move {
+                        // Top albums match Last.fm titles against the artist's
+                        // (cached) discography to find release groups.
+                        let mut hold = CacheHold::default();
+                        let groups = match section {
+                            Section::TopAlbums => {
+                                match catalog.release_groups(&mbid, priority).await {
+                                    Ok(groups) => Some(groups),
+                                    Err(error) => {
+                                        note_catalog_failure(&mut hold, &error);
+                                        None
+                                    }
+                                }
                             }
-                        },
-                        _ => None,
-                    };
-                    let rows = lastfm_rows(
-                        &client,
-                        &creds,
-                        (&mbid, count, section, priority),
-                        groups.as_ref(),
-                    )
-                    .await;
-                    let (value, ttl) = catalog.cacheable(rows, hold, &mbid).await?;
-                    // Rows matched against a missing or partial discography
-                    // are kept only briefly, so links fill in once it lands.
-                    let partial = matches!(section, Section::TopAlbums)
-                        && !groups.as_ref().is_some_and(|groups| groups.complete);
-                    Ok((
-                        value,
-                        ttl.map(|ttl| if partial { ttl.min(PARTIAL_TTL) } else { ttl }),
-                    ))
-                })
+                            _ => None,
+                        };
+                        let rows = lastfm_rows(
+                            &client,
+                            &creds,
+                            (&mbid, count, section, priority),
+                            groups.as_ref(),
+                        )
+                        .await;
+                        // Rows matched against a missing or partial discography
+                        // are not kept, so links fill in once it lands.
+                        let partial = matches!(section, Section::TopAlbums)
+                            && !groups.as_ref().is_some_and(|groups| groups.complete);
+                        Ok(match section_answer(rows, hold)? {
+                            Fetched::Found(rows) if partial => Fetched::Partial(rows),
+                            answer => answer,
+                        })
+                    },
+                )
                 .await
             }
         };
-        let rows = rows
-            .ok()
-            .and_then(|value| serde_json::from_value::<SectionRows>(value).ok())
-            .unwrap_or_default();
         Answer {
-            rows,
+            rows: rows.ok().flatten().unwrap_or_default(),
             source,
             configured: true,
         }
     }
 
-    /// Wrap a section answer for the cache: failures are never cached,
-    /// empty answers briefly, real answers for the discovery lifetime,
-    /// and answers built past a failed read only as long as `hold` allows.
-    async fn cacheable(
+    /// Whether the artist's similar artists, top songs and top albums, at
+    /// these counts, are all held, fresh or stale, as `user_id` reads them.
+    /// A section ListenBrainz has nothing for counts once Last.fm's answer,
+    /// which then fills in, is held too.
+    pub(super) async fn artist_sections_held(
         &self,
-        rows: Option<SectionRows>,
-        hold: CacheHold,
+        user_id: &str,
         mbid: &str,
-    ) -> Result<(serde_json::Value, Option<Duration>), CatalogError> {
-        let Some(rows) = rows else {
-            return Ok((
-                serde_json::to_value(SectionRows::default()).unwrap_or_default(),
-                None,
-            ));
-        };
-        let in_library = !self.artist_flags(&[mbid.to_owned()]).await.is_empty();
-        let ttl = hold.cap(self.discovery_ttl(in_library, rows.is_empty()));
-        let value = serde_json::to_value(&rows)
-            .map_err(|error| CatalogError::Internal(format!("discovery encode: {error}")))?;
-        Ok((value, Some(ttl)))
+        (similar, songs, albums): (u32, u32, u32),
+    ) -> bool {
+        let listenbrainz = self.preferred_source(None) == DiscoverySource::Listenbrainz
+            && self.upstream().listenbrainz().is_some();
+        let mut lastfm = None;
+        for (section, count) in [
+            (Section::Similar, similar),
+            (Section::TopSongs, songs),
+            (Section::TopAlbums, albums),
+        ] {
+            if listenbrainz {
+                let key = self.section_key(DiscoverySource::Listenbrainz, mbid, count, section);
+                match self.upstream().cache().peek::<SectionRows>(&key).await {
+                    None => return false,
+                    Some(Some(_)) => continue,
+                    Some(None) => {}
+                }
+            }
+            let configured = match lastfm {
+                Some(configured) => configured,
+                None => *lastfm.insert(self.upstream().lastfm(user_id).await.is_some()),
+            };
+            if configured
+                && !self
+                    .held(&self.section_key(DiscoverySource::Lastfm, mbid, count, section))
+                    .await
+            {
+                return false;
+            }
+        }
+        true
     }
 
     /// ListenBrainz rows for one section; `None` when ListenBrainz failed.
@@ -586,74 +616,80 @@ impl Catalog {
             Source::ListenBrainz,
             &["similar_albums", &album, &artist, &count.to_string()],
         );
-        let catalog = self.clone();
         let (lb_album, lb_artist) = (album.clone(), artist.clone());
-        let value = self
-            .cached(&self.inner.flights.other, key, move || async move {
-                // Album pages and radio wait on this.
-                let priority = RequestPriority::UserInitiated;
-                let Ok(similar) = client
-                    .similar_artists(&lb_artist, SIMILAR_ALBUM_ARTISTS, &creds, priority)
-                    .await
-                else {
-                    return Ok((serde_json::Value::Null, None));
-                };
-                let similar: Vec<(String, String)> = similar
-                    .into_iter()
-                    .filter(|artist| is_mbid(&artist.artist_mbid))
-                    .take(SIMILAR_ALBUM_ARTISTS)
-                    .map(|artist| (artist.artist_mbid, artist.artist_name))
-                    .collect();
-                let mut albums = Vec::new();
-                let mut hold = CacheHold::default();
-                for (similar_mbid, similar_name) in &similar {
-                    let groups = match client
-                        .artist_top_release_groups(
-                            similar_mbid,
-                            ALBUMS_PER_SIMILAR_ARTIST,
-                            &creds,
-                            priority,
-                        )
+        // Album pages and radio wait on this.
+        let priority = RequestPriority::UserInitiated;
+        let rows = self
+            .cached(
+                &key,
+                Policy::DISCOVERY,
+                priority,
+                move |priority| async move {
+                    let similar = client
+                        .similar_artists(&lb_artist, SIMILAR_ALBUM_ARTISTS, &creds, priority)
                         .await
-                    {
-                        Ok(groups) => groups,
-                        Err(error) => {
-                            hold.provider(&error);
-                            continue;
+                        .map_err(CatalogError::Unavailable)?;
+                    let similar: Vec<(String, String)> = similar
+                        .into_iter()
+                        .filter(|artist| is_mbid(&artist.artist_mbid))
+                        .take(SIMILAR_ALBUM_ARTISTS)
+                        .map(|artist| (artist.artist_mbid, artist.artist_name))
+                        .collect();
+                    let mut albums = Vec::new();
+                    let mut hold = CacheHold::default();
+                    for (similar_mbid, similar_name) in &similar {
+                        let groups = match client
+                            .artist_top_release_groups(
+                                similar_mbid,
+                                ALBUMS_PER_SIMILAR_ARTIST,
+                                &creds,
+                                priority,
+                            )
+                            .await
+                        {
+                            Ok(groups) => groups,
+                            Err(error) => {
+                                hold.provider(&error);
+                                continue;
+                            }
+                        };
+                        for group in groups {
+                            if group.release_group_mbid.eq_ignore_ascii_case(&lb_album) {
+                                continue;
+                            }
+                            albums.push(DiscoveryAlbum {
+                                musicbrainz_id: group.release_group_mbid,
+                                title: group.name,
+                                artist_name: if group.artist_name.is_empty() {
+                                    similar_name.clone()
+                                } else {
+                                    group.artist_name
+                                },
+                                artist_id: Some(similar_mbid.clone()),
+                                year: None,
+                                in_library: false,
+                                requested: false,
+                                cover_url: None,
+                            });
                         }
-                    };
-                    for group in groups {
-                        if group.release_group_mbid.eq_ignore_ascii_case(&lb_album) {
-                            continue;
+                        if albums.len() >= count as usize {
+                            break;
                         }
-                        albums.push(DiscoveryAlbum {
-                            musicbrainz_id: group.release_group_mbid,
-                            title: group.name,
-                            artist_name: if group.artist_name.is_empty() {
-                                similar_name.clone()
-                            } else {
-                                group.artist_name
-                            },
-                            artist_id: Some(similar_mbid.clone()),
-                            year: None,
-                            in_library: false,
-                            requested: false,
-                            cover_url: None,
-                        });
                     }
-                    if albums.len() >= count as usize {
-                        break;
-                    }
-                }
-                albums.truncate(count as usize);
-                let ttl = hold.cap(catalog.discovery_ttl(false, albums.is_empty()));
-                let value = serde_json::to_value(SimilarAlbumRows { albums, similar }).map_err(
-                    |error| CatalogError::Internal(format!("discovery encode: {error}")),
-                )?;
-                Ok((value, Some(ttl)))
-            })
-            .await?;
-        let rows: SimilarAlbumRows = serde_json::from_value(value).unwrap_or_default();
+                    albums.truncate(count as usize);
+                    let rows = SimilarAlbumRows { albums, similar };
+                    Ok(if hold != CacheHold::default() {
+                        Fetched::Partial(rows)
+                    } else if rows.albums.is_empty() && rows.similar.is_empty() {
+                        Fetched::Missing
+                    } else {
+                        Fetched::Found(rows)
+                    })
+                },
+            )
+            .await;
+        // A failure was recorded where it happened; the section is empty.
+        let rows = rows.ok().flatten().unwrap_or_default();
         let mut albums = rows.albums;
         if albums.is_empty() && !rows.similar.is_empty() {
             albums = self
@@ -691,57 +727,36 @@ impl Catalog {
         let catalog = self.clone();
         let album = album.to_owned();
         let similar = similar.to_vec();
-        let value = self
-            .cached(&self.inner.flights.other, key, move || async move {
-                let mut albums: Vec<DiscoveryAlbum> = Vec::new();
-                let mut seen: HashSet<String> = HashSet::from([album.clone()]);
-                let mut complete = true;
-                let mut hold = CacheHold::default();
-                let deadline = tokio::time::Instant::now() + LASTFM_RESOLVE_BUDGET;
-                'artists: for (artist_mbid, artist_name) in &similar {
-                    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-                    let top = match tokio::time::timeout(
-                        remaining,
-                        client.artist_top_albums(
-                            &creds,
-                            artist_name,
-                            Some(artist_mbid),
-                            3,
-                            RequestPriority::UserInitiated,
-                        ),
-                    )
-                    .await
-                    {
-                        Ok(Ok(top)) => top,
-                        Ok(Err(error)) => {
-                            hold.provider(&error);
-                            complete = false;
-                            continue;
-                        }
-                        Err(_) => {
-                            complete = false;
-                            break 'artists;
-                        }
-                    };
-                    for item in top {
-                        if albums.len() >= count as usize {
-                            break 'artists;
-                        }
-                        let Some(release) = item.mbid.filter(|id| is_mbid(id)) else {
-                            continue;
-                        };
+        let priority = RequestPriority::UserInitiated;
+        let albums = self
+            .cached(
+                &key,
+                Policy::DISCOVERY,
+                priority,
+                move |priority| async move {
+                    let mut albums: Vec<DiscoveryAlbum> = Vec::new();
+                    let mut seen: HashSet<String> = HashSet::from([album.clone()]);
+                    let mut complete = true;
+                    let mut hold = CacheHold::default();
+                    let deadline = tokio::time::Instant::now() + LASTFM_RESOLVE_BUDGET;
+                    'artists: for (artist_mbid, artist_name) in &similar {
                         let remaining =
                             deadline.saturating_duration_since(tokio::time::Instant::now());
-                        let group = match tokio::time::timeout(
+                        let top = match tokio::time::timeout(
                             remaining,
-                            catalog.release_to_group(&release),
+                            client.artist_top_albums(
+                                &creds,
+                                artist_name,
+                                Some(artist_mbid),
+                                3,
+                                priority,
+                            ),
                         )
                         .await
                         {
-                            Ok(Ok(Some(group))) => group,
-                            Ok(Ok(None)) => continue,
+                            Ok(Ok(top)) => top,
                             Ok(Err(error)) => {
-                                note_catalog_failure(&mut hold, &error);
+                                hold.provider(&error);
                                 complete = false;
                                 continue;
                             }
@@ -750,43 +765,66 @@ impl Catalog {
                                 break 'artists;
                             }
                         };
-                        if !seen.insert(group.to_ascii_lowercase()) {
-                            continue;
+                        for item in top {
+                            if albums.len() >= count as usize {
+                                break 'artists;
+                            }
+                            let Some(release) = item.mbid.filter(|id| is_mbid(id)) else {
+                                continue;
+                            };
+                            let remaining =
+                                deadline.saturating_duration_since(tokio::time::Instant::now());
+                            let group = match tokio::time::timeout(
+                                remaining,
+                                catalog.release_to_group(&release),
+                            )
+                            .await
+                            {
+                                Ok(Ok(Some(group))) => group,
+                                Ok(Ok(None)) => continue,
+                                Ok(Err(error)) => {
+                                    note_catalog_failure(&mut hold, &error);
+                                    complete = false;
+                                    continue;
+                                }
+                                Err(_) => {
+                                    complete = false;
+                                    break 'artists;
+                                }
+                            };
+                            if !seen.insert(group.to_ascii_lowercase()) {
+                                continue;
+                            }
+                            albums.push(DiscoveryAlbum {
+                                musicbrainz_id: group,
+                                title: item.name,
+                                artist_name: if item.artist_name.is_empty() {
+                                    artist_name.clone()
+                                } else {
+                                    item.artist_name
+                                },
+                                artist_id: Some(artist_mbid.clone()),
+                                year: None,
+                                in_library: false,
+                                requested: false,
+                                cover_url: None,
+                            });
                         }
-                        albums.push(DiscoveryAlbum {
-                            musicbrainz_id: group,
-                            title: item.name,
-                            artist_name: if item.artist_name.is_empty() {
-                                artist_name.clone()
-                            } else {
-                                item.artist_name
-                            },
-                            artist_id: Some(artist_mbid.clone()),
-                            year: None,
-                            in_library: false,
-                            requested: false,
-                            cover_url: None,
-                        });
                     }
-                }
-                if !complete {
-                    record_current("lastfm", IntegrationStatus::Degraded, false);
-                }
-                let ttl = hold.cap(if complete {
-                    catalog.discovery_ttl(false, albums.is_empty())
-                } else {
-                    PARTIAL_TTL
-                });
-                let value = serde_json::to_value(&albums).map_err(|error| {
-                    CatalogError::Internal(format!("discovery encode: {error}"))
-                })?;
-                Ok((value, Some(ttl)))
-            })
+                    if !complete {
+                        record_current("lastfm", IntegrationStatus::Degraded, false);
+                    }
+                    Ok(if !complete || hold != CacheHold::default() {
+                        Fetched::Partial(albums)
+                    } else if albums.is_empty() {
+                        Fetched::Missing
+                    } else {
+                        Fetched::Found(albums)
+                    })
+                },
+            )
             .await;
-        value
-            .ok()
-            .and_then(|value| serde_json::from_value(value).ok())
-            .unwrap_or_default()
+        albums.ok().flatten().unwrap_or_default()
     }
 
     /// The release group of one release, cached a week (misses ten
@@ -803,24 +841,22 @@ impl Catalog {
         let catalog = self.clone();
         let release = release.to_owned();
         let found = self
-            .cached(&self.inner.flights.other, key, move || async move {
-                let (client, _) = catalog
-                    .upstream()
-                    .musicbrainz(RequestPriority::UserInitiated);
-                let group = client
-                    .resolve_release_to_release_group(&release, Criticality::IdentityCritical)
-                    .await
-                    .map_err(mb_error)?;
-                let ttl = if group.is_some() {
-                    RELEASE_GROUP_TTL
-                } else {
-                    MISS_TTL
-                };
-                Ok((serde_json::to_value(group).unwrap_or_default(), Some(ttl)))
-            })
+            .cached(
+                &key,
+                Policy::RELEASE_TO_GROUP,
+                RequestPriority::UserInitiated,
+                move |priority| async move {
+                    let (client, _) = catalog.upstream().musicbrainz(priority);
+                    let group = client
+                        .resolve_release_to_release_group(&release, Criticality::IdentityCritical)
+                        .await
+                        .map_err(mb_error)?;
+                    Ok(group.map_or(Fetched::Missing, Fetched::Found))
+                },
+            )
             .await;
         match found {
-            Ok(value) => Ok(serde_json::from_value(value).ok().flatten()),
+            Ok(group) => Ok(group),
             Err(error) => {
                 record_mb_down(&error);
                 Err(error)
@@ -839,7 +875,10 @@ impl Catalog {
     ) -> Result<MoreByArtistResponse, CatalogError> {
         let artist = checked_mbid(raw_artist, "artist")?;
         let album = raw_album.trim().to_ascii_lowercase();
-        let list = match self.release_groups(&artist).await {
+        let list = match self
+            .release_groups(&artist, RequestPriority::UserInitiated)
+            .await
+        {
             Ok(list) => list,
             Err(error) => {
                 tracing::warn!(artist = %artist, %error, "more-by-artist unavailable");

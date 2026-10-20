@@ -256,9 +256,12 @@ pub trait YouTubeSource: Send + Sync {
         track: &'a str,
     ) -> BoxFuture<'a, Result<Option<String>, ProviderFailure>>;
     /// Whether the pair resolves from cache.
-    fn is_cached(&self, artist: &str, name: &str, track: bool) -> bool;
+    fn is_cached<'a>(&'a self, artist: &'a str, name: &'a str, track: bool) -> BoxFuture<'a, bool>;
     /// Cache membership for deduped pairs, keyed `artist|track` (lowercased).
-    fn cached_tracks(&self, pairs: &[(String, String)]) -> HashMap<String, bool>;
+    fn cached_tracks<'a>(
+        &'a self,
+        pairs: &'a [(String, String)],
+    ) -> BoxFuture<'a, HashMap<String, bool>>;
     /// Quota state. `None` when unconfigured (the route answers 404).
     fn quota(&self) -> BoxFuture<'_, Option<YouTubeQuotaResponse>>;
 }
