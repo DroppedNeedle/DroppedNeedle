@@ -13,6 +13,7 @@ caseless.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 md5.workspace = true
+percent-encoding.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

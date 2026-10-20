@@ -34,7 +34,6 @@ use droppedneedle_providers::lastfm::LastFmCredentials;
 use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
 use droppedneedle_providers::musicbrainz::models::{ArtistCreditName, Relation};
 use droppedneedle_providers::musicbrainz::{Criticality, is_valid_mbid};
-use droppedneedle_providers::wikidata::WikidataClient;
 use droppedneedle_providers::{ProviderError, Providers, RequestPriority};
 
 /// How long a popularity refusal keeps Last.fm standing in.
@@ -948,18 +947,14 @@ impl QueueSources for LiveSources {
         &'a self,
         url: &'a str,
     ) -> BoxFuture<'a, SourceResult<Option<String>>> {
+        // Queue cards are opened by a person, like the MusicBrainz reads
+        // beside this one.
         Box::pin(async move {
-            let http = self.upstream.http_get();
-            let endpoints = self.upstream.endpoints();
-            WikidataClient::with_bases(
-                &http,
-                &endpoints.wikidata,
-                &endpoints.wikipedia,
-                &endpoints.commons,
-            )
-            .get_bio_extract(url, "en")
-            .await
-            .map_err(|error| format!("wikipedia: {error:?}"))
+            self.upstream
+                .wikidata()
+                .get_bio_extract(url, "en", RequestPriority::UserInitiated)
+                .await
+                .map_err(|error| format!("wikipedia: {error}"))
         })
     }
 }

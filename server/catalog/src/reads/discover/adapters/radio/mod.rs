@@ -57,7 +57,6 @@ use crate::reads::discover::models::{
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure, RadioFailure, RadioPlanner};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
-use droppedneedle_providers::adapters::ReqwestGet;
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use droppedneedle_providers::preview::PreviewClient;
 use library::RadioLibrary;
@@ -88,7 +87,7 @@ pub struct RadioInputs {
     /// Album pages: similar albums, more by the artist, top songs.
     pub catalog: Catalog,
     /// Keyless previews (Deezer, then iTunes).
-    pub previews: ReqwestGet,
+    pub previews: PreviewClient,
 }
 
 /// Radio over the live providers and the library.
@@ -100,7 +99,7 @@ pub struct LiveRadio {
     genres: LibraryReads,
     tracks: RadioLibrary,
     catalog: Catalog,
-    previews: ReqwestGet,
+    previews: PreviewClient,
     lookups: LookupCache,
 }
 
@@ -228,11 +227,6 @@ impl LiveRadio {
             previews: inputs.previews,
             lookups: LookupCache::default(),
         }
-    }
-
-    fn preview_client(&self) -> PreviewClient<'_, ReqwestGet> {
-        let endpoints = self.catalog.upstream().endpoints();
-        PreviewClient::with_bases(&self.previews, &endpoints.deezer, &endpoints.itunes)
     }
 
     /// One pool of albums per seed from its similar artists.
@@ -626,8 +620,8 @@ impl LiveRadio {
         if name.is_empty() {
             return Vec::new();
         }
-        self.preview_client()
-            .get_artist_top_tracks(name, TRACKS_PER_ARTIST)
+        self.previews
+            .get_artist_top_tracks(name, TRACKS_PER_ARTIST, RequestPriority::UserInitiated)
             .await
             .into_iter()
             .map(|found| track(found.title, found.artist_name, None))
@@ -780,10 +774,15 @@ impl LiveRadio {
         if let Some(found) = self.lookups.get(&key) {
             return found;
         }
-        let client = self.preview_client();
         let found = timed("radio album samples", async {
-            Ok(client
-                .get_album_preview_tracks(&item.artist_name, &item.album_name, per_album)
+            Ok(self
+                .previews
+                .get_album_preview_tracks(
+                    &item.artist_name,
+                    &item.album_name,
+                    per_album,
+                    RequestPriority::UserInitiated,
+                )
                 .await
                 .0)
         })

@@ -5,12 +5,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::degradation::scoped;
 use droppedneedle_providers::musicbrainz::{
     Criticality, MAX_PAGE_LIMIT, MbArtist, ReleaseGroupRef,
 };
-use droppedneedle_providers::wikidata::WikidataClient;
-use droppedneedle_providers::{IntegrationStatus, RequestPriority, record_current};
 
 use super::error::CatalogError;
 use super::mapping;
@@ -192,6 +191,10 @@ pub struct Biography {
     pub description: Option<String>,
     /// Wikidata/Commons portrait.
     pub image: Option<String>,
+    /// The portrait lookup failed, so "no image" is not an answer. Never
+    /// cached: a failed fetch is not stored.
+    #[serde(skip)]
+    pub image_failed: bool,
 }
 
 /// One cached TheAudioDB artist lookup: images, or a remembered miss.
@@ -474,7 +477,7 @@ impl Catalog {
             }
         };
         let (biography, images, plugins) = tokio::join!(
-            self.biography(&detail),
+            self.biography(&detail, RequestPriority::UserInitiated),
             self.fetch_artist_images(&detail.mbid, &detail.name),
             self.artist_plugin_details(&detail.name, &detail.mbid)
         );
@@ -502,37 +505,44 @@ impl Catalog {
         .unwrap_or_default()
     }
 
-    pub(super) async fn biography(&self, detail: &ArtistDetail) -> Biography {
+    /// The artist's Wikipedia intro and Wikidata portrait at `priority`. A
+    /// page joins only a flight a page started, so it never waits on a
+    /// background fetch. A failed fetch is not kept; the wiki call that
+    /// met it noted it for the request.
+    pub(super) async fn biography(
+        &self,
+        detail: &ArtistDetail,
+        priority: RequestPriority,
+    ) -> Biography {
         if detail.wiki_url.is_none() && detail.wikidata_id.is_none() {
             return Biography::default();
         }
         let key = format!("artist_info:extended:{}", detail.mbid);
+        let flights = if priority.is_user_facing() {
+            &self.inner.flights.extended
+        } else {
+            &self.inner.flights.extended_background
+        };
         let catalog = self.clone();
         let detail = detail.clone();
         let fetched = self
-            .cached(&self.inner.flights.extended, key, move || async move {
-                let http = catalog.upstream().http_get();
-                let endpoints = catalog.upstream().endpoints();
-                let wiki = WikidataClient::with_bases(
-                    &http,
-                    &endpoints.wikidata,
-                    &endpoints.wikipedia,
-                    &endpoints.commons,
-                );
+            .cached(flights, key, move || async move {
+                let wiki = catalog.upstream().wikidata();
                 let description = match &detail.wiki_url {
-                    Some(url) => wiki.get_bio_extract(url, BIO_LANGUAGE).await,
+                    Some(url) => wiki.get_bio_extract(url, BIO_LANGUAGE, priority).await,
                     None => Ok(None),
                 };
                 let image = match &detail.wikidata_id {
-                    Some(id) => wiki.get_artist_image(id).await,
+                    Some(id) => wiki.get_artist_image(id, priority).await,
                     None => Ok(None),
                 };
                 let failed = description.is_err() || image.is_err();
-                if failed {
-                    record_current("wikidata", IntegrationStatus::Error, false);
+                if let Some(error) = description.as_ref().err().or(image.as_ref().err()) {
+                    tracing::debug!(artist = %detail.mbid, %error, "artist biography incomplete");
                 }
                 let biography = Biography {
                     description: description.ok().flatten().filter(|text| !text.is_empty()),
+                    image_failed: image.is_err(),
                     image: image.ok().flatten(),
                 };
                 let ttl = (!failed).then_some(ARTIST_TTL);

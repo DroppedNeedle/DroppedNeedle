@@ -6,29 +6,19 @@ use crate::reads::discover::{
     models::{PreviewTrackItem, TrackPreviewResponse},
     ports::{AlbumSamples, BoxFuture, PreviewSource, ProviderFailure},
 };
-use droppedneedle_providers::adapters::ReqwestGet;
+use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::preview::{PreviewClient, PreviewTrack};
 
-/// Live previews over the shared HTTP client.
+/// Live previews over the one preview client. A person pressed play, so
+/// every lookup goes at user priority.
 pub struct LivePreviews {
-    http: ReqwestGet,
-    deezer: String,
-    itunes: String,
+    client: PreviewClient,
 }
 
 impl LivePreviews {
-    /// Previews over one GET transport, at the Deezer and iTunes addresses
-    /// in `endpoints`.
-    pub fn new(http: ReqwestGet, endpoints: &crate::reads::catalog::upstream::Endpoints) -> Self {
-        Self {
-            http,
-            deezer: endpoints.deezer.clone(),
-            itunes: endpoints.itunes.clone(),
-        }
-    }
-
-    fn client(&self) -> PreviewClient<'_, ReqwestGet> {
-        PreviewClient::with_bases(&self.http, &self.deezer, &self.itunes)
+    /// Previews through `client`.
+    pub fn new(client: PreviewClient) -> Self {
+        Self { client }
     }
 }
 
@@ -49,8 +39,10 @@ impl PreviewSource for LivePreviews {
         track: &'a str,
     ) -> BoxFuture<'a, Result<TrackPreviewResponse, ProviderFailure>> {
         Box::pin(async move {
-            let client = self.client();
-            let (found, provider) = client.get_track_preview(artist, track).await;
+            let (found, provider) = self
+                .client
+                .get_track_preview(artist, track, RequestPriority::UserInitiated)
+                .await;
             Ok(match found {
                 Some(found) => TrackPreviewResponse {
                     preview_url: Some(found.preview_url),
@@ -75,9 +67,11 @@ impl PreviewSource for LivePreviews {
         count: i64,
     ) -> BoxFuture<'a, Result<AlbumSamples, ProviderFailure>> {
         Box::pin(async move {
-            let client = self.client();
             let limit = usize::try_from(count).unwrap_or(0);
-            let (tracks, provider) = client.get_album_preview_tracks(artist, album, limit).await;
+            let (tracks, provider) = self
+                .client
+                .get_album_preview_tracks(artist, album, limit, RequestPriority::UserInitiated)
+                .await;
             Ok((
                 tracks.into_iter().map(item).collect(),
                 provider.map(str::to_owned),

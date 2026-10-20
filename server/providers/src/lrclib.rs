@@ -6,38 +6,43 @@
 //! automatically, because a common recording returns several plausible
 //! candidates.
 //!
-//! Transport rides the shared [`HttpPort`](super::client::HttpPort) GET port.
-//! The conservative 1 req/s local ceiling, retries, response
-//! caching (7d positive, 6h negative), and request dedup stay with wiring;
-//! degradation recording stays with enrichment, which treats "not found"
-//! as absence and `Err` as a degraded source.
+//! Requests go through the executor at the `lrclib` row, one a second: a
+//! volunteer service with no published limit. Response caching (7d
+//! positive, 6h negative) stays with wiring. A 404 is absence; every
+//! failure is a typed [`ProviderError`].
+
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::client::HttpPort;
+use crate::RequestPriority;
+use crate::client::{parse_base, payload, unusable_base};
+use crate::error::{PayloadKind, ProviderError};
+use crate::executor::{Backoff, Executor, Request, Spec, Url, standard_classify};
+use crate::limiter::RateLimiter;
 
 /// Live API origin (lrclib_API_NOTES.md).
 pub const API_BASE: &str = "https://lrclib.net";
+/// The provider name errors carry, and its rate row.
+pub const SOURCE: &str = "lrclib";
 /// Largest response body accepted before the lookup is rejected.
 pub const MAX_LYRICS_BYTES: usize = 2 * 1024 * 1024;
 /// Largest lyrics text accepted per field.
 pub const MAX_LYRICS_CHARACTERS: usize = 1_000_000;
 
-/// What can go wrong on an LRCLIB fetch.
-#[derive(Debug, Clone, PartialEq)]
-pub enum FetchError {
-    /// The wire failed (retryable, degraded).
-    Transport,
-    /// The upstream answered 429; the caller backs off this long.
-    RateLimited {
-        /// Seconds to wait before retrying.
-        retry_after_secs: f64,
-    },
-    /// Any other status, an oversized or undecodable body, or a payload
-    /// that fails the completeness gate.
-    Unusable,
-}
+/// LRCLIB on the wire: the standard rules. A 429 that names no wait rests
+/// two seconds, and no wait past thirty seconds is honoured (v2
+/// `_retry_after`).
+pub static SPEC: Spec = Spec {
+    source: SOURCE,
+    health_key: SOURCE,
+    timeout: Duration::from_secs(15),
+    max_body: MAX_LYRICS_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(2)),
+    retry_after_cap: Duration::from_secs(30),
+    classify: standard_classify,
+};
 
 // ---------------------------------------------------------------------------
 // Wire models (default-tolerant; unknown fields are ignored by serde)
@@ -145,18 +150,6 @@ pub fn signature_matches(left: &str, right: &str) -> bool {
     signature_text(left) == signature_text(right)
 }
 
-/// Parse `Retry-After` the way v2 does: a positive value caps at 30s, while
-/// a missing, unparsable, or non-positive value waits 2s (v2 `_retry_after`).
-pub fn retry_after_secs(value: Option<&str>) -> f64 {
-    if let Some(raw) = value
-        && let Ok(secs) = raw.parse::<f64>()
-        && secs > 0.0
-    {
-        return secs.min(30.0);
-    }
-    2.0
-}
-
 /// SHA-256 hex of the raw body, the provider revision (v2 `_request_exact`).
 pub fn provider_revision(body: &[u8]) -> String {
     format!("{:x}", Sha256::digest(body))
@@ -167,18 +160,32 @@ pub fn provider_revision(body: &[u8]) -> String {
 /// track/artist/album, positive duration), reject oversized lyrics text,
 /// and treat "no lyrics and not instrumental" as not found rather than an
 /// empty candidate.
-pub fn normalize_exact(body: &[u8]) -> Result<LyricsLookup, FetchError> {
+///
+/// # Errors
+///
+/// [`ProviderError::Payload`] for a body that is too large, does not
+/// decode, or fails the gates.
+pub fn normalize_exact(body: &[u8]) -> Result<LyricsLookup, ProviderError> {
     if body.len() > MAX_LYRICS_BYTES {
-        return Err(FetchError::Unusable);
+        return Err(payload(
+            SOURCE,
+            PayloadKind::TooLarge,
+            "lyrics answer over the size limit",
+        ));
     }
-    let raw: WireLyrics = serde_json::from_slice(body).map_err(|_| FetchError::Unusable)?;
+    let raw: WireLyrics = serde_json::from_slice(body)
+        .map_err(|error| payload(SOURCE, PayloadKind::Decode, &error.to_string()))?;
     if raw.id <= 0
         || raw.track_name.trim().is_empty()
         || raw.artist_name.trim().is_empty()
         || raw.album_name.trim().is_empty()
         || raw.duration <= 0.0
     {
-        return Err(FetchError::Unusable);
+        return Err(payload(
+            SOURCE,
+            PayloadKind::Contract,
+            "lyrics answer without a complete identity",
+        ));
     }
     let plain = raw
         .plain_lyrics
@@ -197,7 +204,11 @@ pub fn normalize_exact(body: &[u8]) -> Result<LyricsLookup, FetchError> {
         .flatten()
         .any(|text| text.chars().count() > MAX_LYRICS_CHARACTERS)
     {
-        return Err(FetchError::Unusable);
+        return Err(payload(
+            SOURCE,
+            PayloadKind::Contract,
+            "lyrics text over the size limit",
+        ));
     }
     if plain.is_none() && synced.is_none() && !raw.instrumental {
         return Ok(LyricsLookup::not_found());
@@ -225,63 +236,61 @@ pub fn normalize_exact(body: &[u8]) -> Result<LyricsLookup, FetchError> {
 /// LRCLIB client. The caller passes the integer duration (v2 rounds the
 /// source duration before calling); the exact call never takes a MusicBrainz
 /// id, which the endpoint does not accept (lrclib_API_NOTES.md).
-pub struct LrclibClient<'h, H: HttpPort> {
-    /// Transport port (scripted fake in tests, real HTTP in wiring).
-    pub http: &'h H,
-    /// API origin.
-    pub base_url: String,
+///
+/// Built once with the providers; cheap to clone.
+#[derive(Debug, Clone)]
+pub struct LrclibClient {
+    executor: Executor,
+    base: Option<Url>,
 }
 
-impl<'h, H: HttpPort> LrclibClient<'h, H> {
-    /// Build a client against the given origin.
-    pub fn with_base(http: &'h H, base_url: &str) -> Self {
+impl LrclibClient {
+    /// The client sending through `executor` to the origin at `base_url`.
+    #[must_use]
+    pub fn new(executor: Executor, base_url: &str) -> Self {
         Self {
-            http,
-            base_url: base_url.to_owned(),
+            executor,
+            base: parse_base(base_url, SOURCE),
         }
     }
 
-    /// Exact lyrics lookup. 404 is absence; 429 stays actionable with the
-    /// capped backoff; 5xx is `Transport` (retriable, like v2's three
-    /// attempts); anything else unusual is `Unusable`.
+    /// The limiter the client paces through, for a caller that will not
+    /// wait out a rest.
+    #[must_use]
+    pub fn limiter(&self) -> &RateLimiter {
+        self.executor.limiter()
+    }
+
+    /// Exact lyrics lookup at `priority`. A 404 is absence.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn get_exact_lyrics(
         &self,
         track_name: &str,
         artist_name: &str,
         album_name: &str,
         duration_secs: u32,
-    ) -> Result<LyricsLookup, FetchError> {
+        priority: RequestPriority,
+    ) -> Result<LyricsLookup, ProviderError> {
+        let base = self.base.as_ref().ok_or_else(|| unusable_base(SOURCE))?;
         let duration = duration_secs.to_string();
-        let reply = self
-            .http
-            .get(
-                &format!("{}/api/get", self.base_url),
-                &[
-                    ("track_name", track_name),
-                    ("artist_name", artist_name),
-                    ("album_name", album_name),
-                    ("duration", duration.as_str()),
-                ],
-            )
-            .await
-            .map_err(|_| FetchError::Transport)?;
-        if reply.status == 404 {
-            return Ok(LyricsLookup::not_found());
+        let request = Request::get(
+            base,
+            &["api", "get"],
+            &[
+                ("track_name", track_name),
+                ("artist_name", artist_name),
+                ("album_name", album_name),
+                ("duration", duration.as_str()),
+            ],
+        )
+        .map_err(|_| unusable_base(SOURCE))?;
+        match self.executor.send(request, priority).await {
+            Ok(reply) => normalize_exact(reply.bytes()),
+            Err(ProviderError::NotFound { .. }) => Ok(LyricsLookup::not_found()),
+            Err(error) => Err(error),
         }
-        if reply.status == 429 {
-            return Err(FetchError::RateLimited {
-                retry_after_secs: retry_after_secs(reply.retry_after.as_deref()),
-            });
-        }
-        if reply.status >= 500 {
-            // Retriable, matching v2's three attempts (max_attempts=3). The
-            // retry driver around `ProviderLyrics` is follow-up work: this
-            // client only labels the failure, wiring decides the attempts.
-            return Err(FetchError::Transport);
-        }
-        if reply.status != 200 {
-            return Err(FetchError::Unusable);
-        }
-        normalize_exact(&reply.body)
     }
 }

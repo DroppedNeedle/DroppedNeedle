@@ -38,7 +38,6 @@ use droppedneedle_media::remotes::connections::{
 use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
 use droppedneedle_providers::{
     Providers,
-    adapters::ReqwestGet,
     youtube::{DEFAULT_DAILY_QUOTA_LIMIT, YouTubeClient, YouTubeSettings},
 };
 
@@ -107,7 +106,7 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
         settings,
         pool: inputs.db.sqlx().clone(),
         catalog: Catalog::new(upstream, LocalCatalog::new(inputs.db.sqlx().clone())),
-        previews: ReqwestGet::new(inputs.http.clone()),
+        previews: inputs.providers.previews.clone(),
     });
     let batches = batches::LiveBatches::new(inputs.db.clone(), Some(inputs.batch_requests.clone()));
     let (home, page, genre_art, charts) = home::wire(home::HomeWiring {
@@ -139,8 +138,7 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
         batches: Arc::new(batches),
         charts,
         previews: Arc::new(previews::LivePreviews::new(
-            ReqwestGet::new(inputs.http),
-            &inputs.endpoints,
+            inputs.providers.previews.clone(),
         )),
         youtube,
         radio: Arc::new(radio),
@@ -151,8 +149,7 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
 
 /// The catalog upstreams discover reads through.
 fn live_upstream(inputs: &DiscoverInputs, config: &ConfigStore) -> Upstream {
-    Upstream::from_clients(
-        inputs.http.clone(),
+    Upstream::new(
         inputs.providers.clone(),
         Arc::new(LiveCatalogSettings::new(config)),
         inputs.users.clone(),

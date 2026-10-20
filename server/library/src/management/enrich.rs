@@ -59,9 +59,11 @@ pub trait EnrichmentPort: Send + Sync {
         album: &'a str,
         background: bool,
     ) -> BoxFuture<'a, Result<Vec<Candidate>, String>>;
+    /// `background` asks at background priority (automatic runs).
     fn lyrics<'a>(
         &'a self,
         query: &'a LyricsQuery,
+        background: bool,
     ) -> BoxFuture<'a, Result<Option<LyricsFound>, String>>;
     /// `background` asks at background priority (automatic runs).
     fn front_cover<'a>(
@@ -499,12 +501,14 @@ pub enum LyricsAnswer {
 }
 
 /// Ask LRCLIB for one track's lyrics by its exact signature (v2's
-/// accuracy gate: title, artist, album and a length within two seconds).
+/// accuracy gate: title, artist, album and a length within two seconds),
+/// at background priority for an automatic run.
 pub fn lyrics(
     port: Option<&dyn EnrichmentPort>,
     settings: &droppedneedle_kernel::runtime_config::sections::LyricsManagementSettings,
     release: &crate::matching::Release,
     track: &crate::matching::ReleaseTrack,
+    automatic: bool,
 ) -> LyricsAnswer {
     if !settings.enabled || (!settings.write_plain && !settings.write_synced) {
         return LyricsAnswer::Off;
@@ -526,7 +530,7 @@ pub fn lyrics(
         album: release.title.clone(),
         duration_seconds: length as f64 / 1000.0,
     };
-    match wait(port.lyrics(&query)) {
+    match wait(port.lyrics(&query, automatic)) {
         Some(Some(found)) => LyricsAnswer::Found(found),
         Some(None) => LyricsAnswer::Missing,
         None => LyricsAnswer::Deferred,
@@ -676,6 +680,7 @@ impl EnrichmentPort for ScriptedEnrichment {
     fn lyrics<'a>(
         &'a self,
         _query: &'a LyricsQuery,
+        _background: bool,
     ) -> BoxFuture<'a, Result<Option<LyricsFound>, String>> {
         let answer = Ok(self.lyrics.clone());
         Box::pin(async move { answer })

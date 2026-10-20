@@ -255,13 +255,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
 
     // Read live so turning ListenBrainz or lyrics on or off takes effect
     // at once.
-    let enrichment = production_enrichment(
-        http.shared(),
-        &providers,
-        &endpoints,
-        config_store.live(),
-        config_store.live(),
-    );
+    let enrichment = production_enrichment(&providers, config_store.live(), config_store.live());
     let reads_inputs = ReadsInputs {
         covers_dir: config.cache_dir.join("covers"),
         cover_cache_max_bytes: config.cover_cache_max_bytes,
@@ -277,7 +271,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // plans covers through that service.
     let catalog = Catalog::new(
         Upstream::new(
-            http,
             providers.clone(),
             Arc::new(LiveCatalogSettings::new(config_store)),
             auth.users.clone(),
@@ -582,13 +575,11 @@ fn library_ports(
         acoustid: providers.acoustid.clone(),
         library: p.settings.live(),
         upstream: Upstream::new(
-            &p.http,
             providers.clone(),
             Arc::new(LiveCatalogSettings::new(&p.settings)),
             auth.users.clone(),
             outbound.catalog(),
         ),
-        http: p.http.shared().clone(),
         artwork: Some(artwork.clone()),
         lrclib: Default::default(),
     };

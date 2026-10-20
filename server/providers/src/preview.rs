@@ -11,39 +11,42 @@
 //! never cache the URL long-term; only the enrichment layer decides
 //! what, if anything, is cached, and it must treat these URLs as short-lived.
 //!
-//! Transport rides the shared [`HttpPort`](super::client::HttpPort) GET port.
-//! Rate limiting (Deezer 5/s, iTunes 0.3/s), retries, and
-//! degradation recording stay with wiring/enrichment. The composed lookups
-//! below are infallible exactly like v2 (a dead preview source is absence,
-//! not failure); the per-leg functions stay public so wiring can account
-//! retries and degradation per upstream.
+//! Deezer requests go through the executor at the `deezer` row, iTunes
+//! requests through the [`ITunesClient`] at the `itunes` row. A 404 on
+//! either leg is absence. The composed lookups below are infallible
+//! exactly like v2 (a dead preview source is absence, not failure); the
+//! per-leg functions stay public and return typed failures.
+
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::client::HttpPort;
+use crate::RequestPriority;
+use crate::client::{decode, parse_base, unusable_base};
+use crate::error::{MAX_RETRY_AFTER, ProviderError};
+use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
+use crate::itunes::ITunesClient;
 
 /// Live Deezer API origin.
 pub const DEEZER_API_BASE: &str = "https://api.deezer.com";
+/// The provider name Deezer errors carry, and its rate row.
+pub const DEEZER: &str = "deezer";
 /// Preview length v2 stamps on every result.
 pub const PREVIEW_DURATION_S: u32 = 30;
+/// Largest Deezer page read.
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
-/// What can go wrong on one preview leg.
-#[derive(Debug, Clone, PartialEq)]
-pub enum FetchError {
-    /// The wire failed or the upstream answered an error status. 404 never
-    /// lands here: callers read it as absence (v2 raises its retriable
-    /// error for any status >= 400, but a 404 names nothing to retry).
-    Transport,
-    /// The upstream answered 429; the caller backs off this long: the
-    /// honored `Retry-After`, or the leg default (5s Deezer, 60s iTunes, as
-    /// in v2) when the response gave none.
-    RateLimited {
-        /// Seconds to wait before retrying.
-        retry_after_secs: f64,
-    },
-    /// The body did not decode.
-    Unusable,
-}
+/// Deezer on the wire: the standard rules, and a 429 that names no wait
+/// rests five seconds (v2's default).
+pub static DEEZER_SPEC: Spec = Spec {
+    source: DEEZER,
+    health_key: DEEZER,
+    timeout: Duration::from_secs(15),
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(5)),
+    retry_after_cap: MAX_RETRY_AFTER,
+    classify: standard_classify,
+};
 
 // ---------------------------------------------------------------------------
 // Wire models (default-tolerant; unknown fields are ignored by serde)
@@ -209,79 +212,85 @@ pub fn names_match(wanted: &str, got: &str) -> bool {
 // Client
 // ---------------------------------------------------------------------------
 
-/// Preview client across the Deezer and iTunes legs.
-pub struct PreviewClient<'h, H: HttpPort> {
-    /// Transport port (scripted fake in tests, real HTTP in wiring).
-    pub http: &'h H,
-    /// Deezer API origin.
-    pub deezer_base: String,
-    /// iTunes Search endpoint.
-    pub itunes_url: String,
+/// Preview client across the Deezer and iTunes legs. Built once with the
+/// providers; cheap to clone.
+#[derive(Debug, Clone)]
+pub struct PreviewClient {
+    deezer: Executor,
+    deezer_base: Option<Url>,
+    itunes: ITunesClient,
 }
 
-impl<'h, H: HttpPort> PreviewClient<'h, H> {
-    /// Build a client against the given origins.
-    pub fn with_bases(http: &'h H, deezer_base: &str, itunes_url: &str) -> Self {
+/// The title a Deezer track shows: the short title when it has one.
+fn deezer_title(hit: &DeezerTrack) -> String {
+    if hit.title_short.is_empty() {
+        hit.title.clone()
+    } else {
+        hit.title_short.clone()
+    }
+}
+
+impl PreviewClient {
+    /// The client sending Deezer requests through `deezer` to the origin
+    /// at `deezer_base`, and iTunes requests through `itunes`.
+    #[must_use]
+    pub fn new(deezer: Executor, deezer_base: &str, itunes: ITunesClient) -> Self {
         Self {
-            http,
-            deezer_base: deezer_base.to_owned(),
-            itunes_url: itunes_url.to_owned(),
+            deezer,
+            deezer_base: parse_base(deezer_base, DEEZER),
+            itunes,
         }
     }
 
-    /// Classify a non-200, non-404 status: 429 stays actionable with the
-    /// honored `Retry-After` (falling back to `fallback_secs`), anything
-    /// else 4xx/5xx is `Transport`. 404 never reaches here: callers read it
-    /// as absence.
-    fn classify(status: u16, retry_after: Option<&str>, fallback_secs: f64) -> Option<FetchError> {
-        if status == 429 {
-            return Some(FetchError::RateLimited {
-                retry_after_secs: retry_after_secs(retry_after).unwrap_or(fallback_secs),
-            });
+    /// One Deezer GET of `segments` under the origin, or `None` on a 404.
+    async fn deezer_get(
+        &self,
+        segments: &[&str],
+        query: &[(&str, &str)],
+        priority: RequestPriority,
+    ) -> Result<Option<Reply>, ProviderError> {
+        let base = self
+            .deezer_base
+            .as_ref()
+            .ok_or_else(|| unusable_base(DEEZER))?;
+        let request = Request::get(base, segments, query).map_err(|_| unusable_base(DEEZER))?;
+        match self.deezer.send(request, priority).await {
+            Ok(reply) => Ok(Some(reply)),
+            Err(ProviderError::NotFound { .. }) => Ok(None),
+            Err(error) => Err(error),
         }
-        if status >= 400 {
-            return Some(FetchError::Transport);
-        }
-        None
     }
 
     /// One track preview via Deezer's field-scoped search (v2
     /// `_deezer_track_preview`). The first hit carrying a preview URL wins.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn deezer_track_preview(
         &self,
         artist: &str,
         track: &str,
-    ) -> Result<Option<PreviewTrack>, FetchError> {
+        priority: RequestPriority,
+    ) -> Result<Option<PreviewTrack>, ProviderError> {
         let query = format!(r#"artist:"{artist}" track:"{track}""#);
-        let reply = self
-            .http
-            .get(
-                &format!("{}/search", self.deezer_base),
+        let Some(reply) = self
+            .deezer_get(
+                &["search"],
                 &[("q", query.as_str()), ("limit", "3")],
+                priority,
             )
-            .await
-            .map_err(|_| FetchError::Transport)?;
-        if reply.status == 404 {
+            .await?
+        else {
             return Ok(None);
-        }
-        if let Some(error) = Self::classify(reply.status, reply.retry_after.as_deref(), 5.0) {
-            return Err(error);
-        }
-        if reply.status != 200 {
-            return Err(FetchError::Transport);
-        }
-        let page: DeezerTrackSearchResponse =
-            serde_json::from_slice(&reply.body).map_err(|_| FetchError::Unusable)?;
-        for hit in &page.data {
-            if hit.preview.is_empty() {
-                continue;
-            }
-            return Ok(Some(PreviewTrack {
-                title: if hit.title_short.is_empty() {
-                    hit.title.clone()
-                } else {
-                    hit.title_short.clone()
-                },
+        };
+        let page: DeezerTrackSearchResponse = decode(&reply)?;
+        Ok(page
+            .data
+            .iter()
+            .find(|hit| !hit.preview.is_empty())
+            .map(|hit| PreviewTrack {
+                title: deezer_title(hit),
                 artist_name: hit
                     .artist
                     .as_ref()
@@ -290,9 +299,7 @@ impl<'h, H: HttpPort> PreviewClient<'h, H> {
                 preview_url: hit.preview.clone(),
                 duration_s: Some(PREVIEW_DURATION_S),
                 position: hit.track_position,
-            }));
-        }
-        Ok(None)
+            }))
     }
 
     /// Ordered album previews via Deezer (v2 `_deezer_album_tracks`). The
@@ -301,66 +308,54 @@ impl<'h, H: HttpPort> PreviewClient<'h, H> {
     /// missing or odd). Tracks without previews are skipped, positions fall
     /// back to list order, and the tracks page over-fetches
     /// (`max(limit, 4)`) so skipping preview-less rows still fills `limit`.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of either call or of its answer.
     pub async fn deezer_album_tracks(
         &self,
         artist: &str,
         album: &str,
         limit: usize,
-    ) -> Result<Vec<PreviewTrack>, FetchError> {
+        priority: RequestPriority,
+    ) -> Result<Vec<PreviewTrack>, ProviderError> {
         let query = format!(r#"artist:"{artist}" album:"{album}""#);
-        let reply = self
-            .http
-            .get(
-                &format!("{}/search/album", self.deezer_base),
+        let Some(reply) = self
+            .deezer_get(
+                &["search", "album"],
                 &[("q", query.as_str()), ("limit", "3")],
+                priority,
             )
-            .await
-            .map_err(|_| FetchError::Transport)?;
-        if reply.status == 404 {
+            .await?
+        else {
             return Ok(Vec::new());
-        }
-        if let Some(error) = Self::classify(reply.status, reply.retry_after.as_deref(), 5.0) {
-            return Err(error);
-        }
-        if reply.status != 200 {
-            return Err(FetchError::Transport);
-        }
-        let albums: DeezerAlbumSearchResponse =
-            serde_json::from_slice(&reply.body).map_err(|_| FetchError::Unusable)?;
-        let mut album_id = None;
-        for hit in &albums.data {
-            let hit_artist = hit.artist.as_ref().map(|a| a.name.as_str()).unwrap_or("");
-            if hit.id.is_some() && names_match(artist, hit_artist) {
-                album_id = hit.id;
-                break;
-            }
-        }
-        if album_id.is_none() {
-            album_id = albums.data.first().and_then(|hit| hit.id);
-        }
+        };
+        let albums: DeezerAlbumSearchResponse = decode(&reply)?;
+        let album_id = albums
+            .data
+            .iter()
+            .find(|hit| {
+                let hit_artist = hit.artist.as_ref().map(|a| a.name.as_str()).unwrap_or("");
+                hit.id.is_some() && names_match(artist, hit_artist)
+            })
+            .or_else(|| albums.data.first())
+            .and_then(|hit| hit.id);
         let Some(album_id) = album_id else {
             return Ok(Vec::new());
         };
+        let album_id = album_id.to_string();
         let rows = limit.max(4).to_string();
-        let reply = self
-            .http
-            .get(
-                &format!("{}/album/{album_id}/tracks", self.deezer_base),
+        let Some(reply) = self
+            .deezer_get(
+                &["album", album_id.as_str(), "tracks"],
                 &[("limit", rows.as_str())],
+                priority,
             )
-            .await
-            .map_err(|_| FetchError::Transport)?;
-        if reply.status == 404 {
+            .await?
+        else {
             return Ok(Vec::new());
-        }
-        if let Some(error) = Self::classify(reply.status, reply.retry_after.as_deref(), 5.0) {
-            return Err(error);
-        }
-        if reply.status != 200 {
-            return Err(FetchError::Transport);
-        }
-        let tracks: DeezerAlbumTracksResponse =
-            serde_json::from_slice(&reply.body).map_err(|_| FetchError::Unusable)?;
+        };
+        let tracks: DeezerAlbumTracksResponse = decode(&reply)?;
         let mut results = Vec::new();
         for hit in &tracks.data {
             if hit.preview.is_empty() {
@@ -368,11 +363,7 @@ impl<'h, H: HttpPort> PreviewClient<'h, H> {
             }
             let position = hit.track_position.or(Some(results.len() as i64 + 1));
             results.push(PreviewTrack {
-                title: if hit.title_short.is_empty() {
-                    hit.title.clone()
-                } else {
-                    hit.title_short.clone()
-                },
+                title: deezer_title(hit),
                 artist_name: hit
                     .artist
                     .as_ref()
@@ -389,81 +380,74 @@ impl<'h, H: HttpPort> PreviewClient<'h, H> {
         Ok(results)
     }
 
+    /// One iTunes song search, or `None` on a 404.
+    async fn itunes_songs(
+        &self,
+        term: &str,
+        limit: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<ITunesSearchResponse>, ProviderError> {
+        let Some(reply) = self
+            .itunes
+            .search(
+                &[("term", term), ("entity", "song"), ("limit", limit)],
+                priority,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        decode(&reply).map(Some)
+    }
+
     /// One track preview via iTunes (v2 `_itunes_track_preview`). iTunes'
     /// top hit can be a cover, so the artist is verified with the loose
     /// name match before a hit is trusted.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn itunes_track_preview(
         &self,
         artist: &str,
         track: &str,
-    ) -> Result<Option<PreviewTrack>, FetchError> {
+        priority: RequestPriority,
+    ) -> Result<Option<PreviewTrack>, ProviderError> {
         let term = format!("{artist} {track}");
-        let reply = self
-            .http
-            .get(
-                &self.itunes_url,
-                &[("term", term.as_str()), ("entity", "song"), ("limit", "5")],
-            )
-            .await
-            .map_err(|_| FetchError::Transport)?;
-        if reply.status == 404 {
+        let Some(page) = self.itunes_songs(&term, "5", priority).await? else {
             return Ok(None);
-        }
-        if let Some(error) = Self::classify(reply.status, reply.retry_after.as_deref(), 60.0) {
-            return Err(error);
-        }
-        if reply.status != 200 {
-            return Err(FetchError::Transport);
-        }
-        let page: ITunesSearchResponse =
-            serde_json::from_slice(&reply.body).map_err(|_| FetchError::Unusable)?;
-        for hit in &page.results {
-            if hit.preview_url.is_empty() {
-                continue;
-            }
-            if !names_match(artist, &hit.artist_name) {
-                continue;
-            }
-            return Ok(Some(PreviewTrack {
+        };
+        Ok(page
+            .results
+            .iter()
+            .find(|hit| !hit.preview_url.is_empty() && names_match(artist, &hit.artist_name))
+            .map(|hit| PreviewTrack {
                 title: hit.track_name.clone(),
                 artist_name: hit.artist_name.clone(),
                 preview_url: hit.preview_url.clone(),
                 duration_s: Some(PREVIEW_DURATION_S),
                 position: None,
-            }));
-        }
-        Ok(None)
+            }))
     }
 
     /// Ordered album previews via iTunes (v2 `_itunes_album_tracks`). Both
     /// the artist and the collection must loosely match, positions fall
     /// back to list order, and the results sort by position.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn itunes_album_tracks(
         &self,
         artist: &str,
         album: &str,
         limit: usize,
-    ) -> Result<Vec<PreviewTrack>, FetchError> {
+        priority: RequestPriority,
+    ) -> Result<Vec<PreviewTrack>, ProviderError> {
         let term = format!("{artist} {album}");
-        let reply = self
-            .http
-            .get(
-                &self.itunes_url,
-                &[("term", term.as_str()), ("entity", "song"), ("limit", "25")],
-            )
-            .await
-            .map_err(|_| FetchError::Transport)?;
-        if reply.status == 404 {
+        let Some(page) = self.itunes_songs(&term, "25", priority).await? else {
             return Ok(Vec::new());
-        }
-        if let Some(error) = Self::classify(reply.status, reply.retry_after.as_deref(), 60.0) {
-            return Err(error);
-        }
-        if reply.status != 200 {
-            return Err(FetchError::Transport);
-        }
-        let page: ITunesSearchResponse =
-            serde_json::from_slice(&reply.body).map_err(|_| FetchError::Unusable)?;
+        };
         let mut results = Vec::new();
         for hit in &page.results {
             if hit.preview_url.is_empty() {
@@ -495,39 +479,41 @@ impl<'h, H: HttpPort> PreviewClient<'h, H> {
     /// `get_artist_top_tracks`). The search over-fetches (`max(limit * 2,
     /// 10)`), non-matching artists are filtered out, and titles dedupe
     /// case-insensitively. Any failure is absence.
-    pub async fn get_artist_top_tracks(&self, artist: &str, limit: usize) -> Vec<PreviewTrack> {
-        let found = self.artist_top_tracks_leg(artist, limit).await;
+    pub async fn get_artist_top_tracks(
+        &self,
+        artist: &str,
+        limit: usize,
+        priority: RequestPriority,
+    ) -> Vec<PreviewTrack> {
+        let found = self.artist_top_tracks_leg(artist, limit, priority).await;
         found.unwrap_or_default()
     }
 
     /// Fallible leg behind `get_artist_top_tracks`, kept public so wiring
     /// can tell a failed fetch from an artist with no previews.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn artist_top_tracks_leg(
         &self,
         artist: &str,
         limit: usize,
-    ) -> Result<Vec<PreviewTrack>, FetchError> {
+        priority: RequestPriority,
+    ) -> Result<Vec<PreviewTrack>, ProviderError> {
         let query = format!(r#"artist:"{artist}""#);
         let rows = (limit * 2).max(10).to_string();
-        let reply = self
-            .http
-            .get(
-                &format!("{}/search", self.deezer_base),
+        let Some(reply) = self
+            .deezer_get(
+                &["search"],
                 &[("q", query.as_str()), ("limit", rows.as_str())],
+                priority,
             )
-            .await
-            .map_err(|_| FetchError::Transport)?;
-        if reply.status == 404 {
+            .await?
+        else {
             return Ok(Vec::new());
-        }
-        if let Some(error) = Self::classify(reply.status, reply.retry_after.as_deref(), 5.0) {
-            return Err(error);
-        }
-        if reply.status != 200 {
-            return Err(FetchError::Transport);
-        }
-        let page: DeezerTrackSearchResponse =
-            serde_json::from_slice(&reply.body).map_err(|_| FetchError::Unusable)?;
+        };
+        let page: DeezerTrackSearchResponse = decode(&reply)?;
         let mut results = Vec::new();
         let mut seen: Vec<String> = Vec::new();
         for hit in &page.data {
@@ -535,11 +521,7 @@ impl<'h, H: HttpPort> PreviewClient<'h, H> {
             if !names_match(artist, hit_artist) {
                 continue;
             }
-            let title = if hit.title_short.is_empty() {
-                hit.title.clone()
-            } else {
-                hit.title_short.clone()
-            };
+            let title = deezer_title(hit);
             let key = title.to_lowercase();
             if seen.contains(&key) {
                 continue;
@@ -565,19 +547,18 @@ impl<'h, H: HttpPort> PreviewClient<'h, H> {
 
     /// A single 30s preview with Deezer-to-iTunes fallback (v2
     /// `get_track_preview`). Any failure on a leg falls through to the next;
-    /// when both legs fail the lookup is absence, and enrichment records
-    /// the degradation from the legs it can still call directly.
+    /// when both legs fail the lookup is absence. Each leg's failure is
+    /// recorded by the call that met it.
     pub async fn get_track_preview(
         &self,
         artist: &str,
         track: &str,
+        priority: RequestPriority,
     ) -> (Option<PreviewTrack>, Option<&'static str>) {
-        match self.deezer_track_preview(artist, track).await {
-            Ok(Some(found)) => return (Some(found), Some("deezer")),
-            Ok(None) => {}
-            Err(_) => {}
+        if let Ok(Some(found)) = self.deezer_track_preview(artist, track, priority).await {
+            return (Some(found), Some("deezer"));
         }
-        match self.itunes_track_preview(artist, track).await {
+        match self.itunes_track_preview(artist, track, priority).await {
             Ok(Some(found)) => (Some(found), Some("itunes")),
             _ => (None, None),
         }
@@ -590,23 +571,21 @@ impl<'h, H: HttpPort> PreviewClient<'h, H> {
         artist: &str,
         album: &str,
         limit: usize,
+        priority: RequestPriority,
     ) -> (Vec<PreviewTrack>, Option<&'static str>) {
-        match self.deezer_album_tracks(artist, album, limit).await {
+        match self
+            .deezer_album_tracks(artist, album, limit, priority)
+            .await
+        {
             Ok(tracks) if !tracks.is_empty() => return (tracks, Some("deezer")),
             _ => {}
         }
-        match self.itunes_album_tracks(artist, album, limit).await {
+        match self
+            .itunes_album_tracks(artist, album, limit, priority)
+            .await
+        {
             Ok(tracks) if !tracks.is_empty() => (tracks, Some("itunes")),
             _ => (Vec::new(), None),
         }
     }
-}
-
-/// Honor a positive `Retry-After` delay; missing, unparsable, or
-/// non-positive values yield `None` so the caller falls back to the leg
-/// default.
-fn retry_after_secs(value: Option<&str>) -> Option<f64> {
-    value
-        .and_then(|raw| raw.trim().parse::<f64>().ok())
-        .filter(|secs| secs.is_finite() && *secs > 0.0)
 }

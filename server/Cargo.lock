@@ -856,6 +856,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.3.4",
  "md5",
+ "percent-encoding",
  "reqwest",
  "serde",
  "serde_json",

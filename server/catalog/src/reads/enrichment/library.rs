@@ -31,9 +31,8 @@ fn priority(background: bool) -> RequestPriority {
 /// rate limit.
 pub struct LiveEnrichment {
     pub upstream: Upstream,
-    pub http: reqwest::Client,
     pub artwork: Option<ArtworkService>,
-    pub lrclib: LrclibGate,
+    pub lrclib: LrclibAnswers,
     pub acoustid: droppedneedle_providers::acoustid::AcoustIdClient,
     /// The library settings the AcoustID key is read from, per lookup.
     pub library: droppedneedle_kernel::runtime_config::Live<
@@ -54,28 +53,22 @@ impl LiveEnrichment {
     }
 }
 
-/// LRCLIB's local pacing and answer cache (the provider notes leave both
-/// to wiring): one request a second, answers kept seven days and "no
-/// lyrics" six hours, and a 429 holds every lookup back for its
-/// `Retry-After`.
+/// LRCLIB's answer cache (the provider notes leave it to wiring): answers
+/// kept seven days and "no lyrics" six hours.
 #[derive(Default)]
-pub struct LrclibGate {
-    next_request: tokio::sync::Mutex<Option<tokio::time::Instant>>,
-    held_until: std::sync::Mutex<Option<std::time::Instant>>,
+pub struct LrclibAnswers {
     answers: std::sync::Mutex<
         std::collections::HashMap<String, (std::time::Instant, Option<LyricsFound>)>,
     >,
 }
 
-/// LRCLIB's request spacing.
-const LRCLIB_SPACING: std::time::Duration = std::time::Duration::from_secs(1);
 /// How long a found answer and a "no lyrics" answer are kept.
 const LRCLIB_FOUND_FOR: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
 const LRCLIB_MISSING_FOR: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
 /// Most answers kept; past it, expired ones go first, then the oldest.
 const LRCLIB_CACHE_ENTRIES: usize = 20_000;
 
-impl LrclibGate {
+impl LrclibAnswers {
     fn key(query: &LyricsQuery, duration: u32) -> String {
         format!(
             "{}\u{1f}{}\u{1f}{}\u{1f}{duration}",
@@ -120,36 +113,10 @@ impl LrclibGate {
         }
         answers.insert(key, (std::time::Instant::now(), answer));
     }
-
-    /// Refuse while a 429's `Retry-After` runs.
-    fn check_held(&self) -> Result<(), String> {
-        let held = self.held_until.lock().ok().and_then(|held| *held);
-        match held {
-            Some(until) if std::time::Instant::now() < until => {
-                Err("LRCLIB asked for a pause, so lyrics wait for the next run".to_owned())
-            }
-            _ => Ok(()),
-        }
-    }
-
-    fn hold(&self, seconds: f64) {
-        if let Ok(mut held) = self.held_until.lock() {
-            *held = Some(
-                std::time::Instant::now() + std::time::Duration::from_secs_f64(seconds.max(1.0)),
-            );
-        }
-    }
-
-    /// Wait for this request's slot, one a second.
-    async fn pace(&self) {
-        let mut next = self.next_request.lock().await;
-        let now = tokio::time::Instant::now();
-        let slot = next.map_or(now, |next| next.max(now));
-        *next = Some(slot + LRCLIB_SPACING);
-        drop(next);
-        tokio::time::sleep_until(slot).await;
-    }
 }
+
+/// What a planner reads while LRCLIB rests after a 429 or an outage.
+const LRCLIB_RESTING: &str = "LRCLIB asked for a pause, so lyrics wait for the next run";
 
 impl EnrichmentPort for LiveEnrichment {
     fn listenbrainz_genres<'a>(
@@ -221,31 +188,37 @@ impl EnrichmentPort for LiveEnrichment {
     fn lyrics<'a>(
         &'a self,
         query: &'a LyricsQuery,
+        background: bool,
     ) -> BoxFuture<'a, Result<Option<LyricsFound>, String>> {
-        use droppedneedle_providers::lrclib::{FetchError, LrclibClient};
+        use droppedneedle_providers::ProviderError;
         Box::pin(async move {
             let duration = query.duration_seconds.round();
             if !duration.is_finite() || duration <= 0.0 {
                 return Ok(None);
             }
-            let key = LrclibGate::key(query, duration as u32);
+            let key = LrclibAnswers::key(query, duration as u32);
             if let Some(answer) = self.lrclib.cached(&key) {
                 return Ok(answer);
             }
-            self.lrclib.check_held()?;
-            self.lrclib.pace().await;
-            let transport = droppedneedle_providers::adapters::ReqwestGet::new(self.http.clone());
-            let client = LrclibClient::with_base(&transport, &self.upstream.endpoints().lrclib);
+            let client = self.upstream.lrclib();
+            // A resting LRCLIB is not waited out: the lyrics wait for the
+            // next run, as they would for a person's preview.
+            if !client.limiter().cooling_for().is_zero() {
+                return Err(LRCLIB_RESTING.to_owned());
+            }
             let found = match client
-                .get_exact_lyrics(&query.title, &query.artist, &query.album, duration as u32)
+                .get_exact_lyrics(
+                    &query.title,
+                    &query.artist,
+                    &query.album,
+                    duration as u32,
+                    priority(background),
+                )
                 .await
             {
                 Ok(found) => found,
-                Err(FetchError::RateLimited { retry_after_secs }) => {
-                    self.lrclib.hold(retry_after_secs);
-                    return Err("LRCLIB asked for a pause, so lyrics wait for the next run".into());
-                }
-                Err(error) => return Err(format!("LRCLIB did not answer: {error:?}")),
+                Err(ProviderError::RateLimited { .. }) => return Err(LRCLIB_RESTING.to_owned()),
+                Err(error) => return Err(format!("LRCLIB did not answer: {error}")),
             };
             let answer = lyrics_answer(query, found);
             self.lrclib.remember(key, answer.clone());

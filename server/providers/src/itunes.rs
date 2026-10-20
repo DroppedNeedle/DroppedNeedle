@@ -5,37 +5,43 @@
 //! keyless Search API ranks by popularity, not relevance, so a result is
 //! only trusted when its artist fuzzy-matches the requested one.
 //!
-//! Transport rides the shared [`HttpPort`](super::client::HttpPort) GET port.
-//! Retry, rate limiting (~20 calls/minute/IP), and caching
-//! stay with wiring; degradation recording stays with enrichment, which
-//! treats `Ok(None)` as absence and `Err` as a degraded source.
+//! Requests go through the executor at the `itunes` row (about 20 calls a
+//! minute), which purchase links and the iTunes preview leg share.
+//! `Ok(None)` is absence; every failure is a typed [`ProviderError`].
+
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::client::HttpPort;
+use crate::RequestPriority;
+use crate::client::{decode, parse_base, unusable_base};
+use crate::error::{MAX_RETRY_AFTER, ProviderError};
+use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 
 /// Live Search API endpoint (ITUNES_API_NOTES.md).
 pub const SEARCH_URL: &str = "https://itunes.apple.com/search";
+/// The provider name errors carry, and its rate row.
+pub const SOURCE: &str = "itunes";
+/// Largest search page read.
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+
+/// The iTunes Search API on the wire: the standard rules, and a 429 that
+/// names no wait rests a minute (v2's default).
+pub static SPEC: Spec = Spec {
+    source: SOURCE,
+    health_key: SOURCE,
+    timeout: Duration::from_secs(15),
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(60)),
+    retry_after_cap: MAX_RETRY_AFTER,
+    classify: standard_classify,
+};
 /// Page size v2 requests.
 pub const SEARCH_LIMIT: u32 = 10;
 /// Minimum token-set score (0-100) between the requested artist and the
 /// hit's artist. Below this the hit is assumed to be a tribute or cover
 /// album that outranked the real record (v2 `_ARTIST_MATCH_THRESHOLD`).
 pub const ARTIST_MATCH_THRESHOLD: f64 = 80.0;
-
-/// What can go wrong on an iTunes fetch.
-#[derive(Debug, Clone, PartialEq)]
-pub enum FetchError {
-    /// The wire failed (retryable, degraded).
-    Transport,
-    /// The upstream answered 429; the caller backs off this long.
-    RateLimited {
-        /// Seconds to wait before retrying.
-        retry_after_secs: f64,
-    },
-    /// Any other status or an undecodable body.
-    Unusable,
-}
 
 // ---------------------------------------------------------------------------
 // Wire models (default-tolerant; unknown fields are ignored by serde)
@@ -212,70 +218,81 @@ pub fn select_album(
 // Client
 // ---------------------------------------------------------------------------
 
-/// iTunes catalog client.
-pub struct ITunesClient<'h, H: HttpPort> {
-    /// Transport port (scripted fake in tests, real HTTP in wiring).
-    pub http: &'h H,
-    /// Search endpoint; defaults to the live URL.
-    pub search_url: String,
+/// iTunes Search API client: purchase links here, and the preview leg of
+/// [`PreviewClient`](crate::preview::PreviewClient) through [`search`](Self::search).
+/// Built once with the providers; cheap to clone.
+#[derive(Debug, Clone)]
+pub struct ITunesClient {
+    executor: Executor,
+    search_url: Option<Url>,
 }
 
-impl<'h, H: HttpPort> ITunesClient<'h, H> {
-    /// Build a client against the given endpoint.
-    pub fn with_search_url(http: &'h H, search_url: &str) -> Self {
+impl ITunesClient {
+    /// The client sending through `executor` to the search endpoint at
+    /// `search_url`.
+    #[must_use]
+    pub fn new(executor: Executor, search_url: &str) -> Self {
         Self {
-            http,
-            search_url: search_url.to_owned(),
+            executor,
+            search_url: parse_base(search_url, SOURCE),
         }
     }
 
     /// The store page for an album, or `Ok(None)` when no trustworthy hit
     /// exists. A blank term makes no request at all (v2 `find_album`).
-    /// 429 stays actionable with the honored `Retry-After` (60s when the
-    /// response gave none); anything else unusual is `Transport` (wire
-    /// faults) or `Unusable`.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn find_album(
         &self,
         artist_name: &str,
         album_title: &str,
         country: &str,
-    ) -> Result<Option<AlbumResult>, FetchError> {
+        priority: RequestPriority,
+    ) -> Result<Option<AlbumResult>, ProviderError> {
         let term = format!("{artist_name} {album_title}");
         if term.trim().is_empty() {
             return Ok(None);
         }
         let limit = SEARCH_LIMIT.to_string();
-        let reply = self
-            .http
-            .get(
-                &self.search_url,
+        let Some(reply) = self
+            .search(
                 &[
                     ("term", term.trim()),
                     ("entity", "album"),
                     ("country", country),
                     ("limit", limit.as_str()),
                 ],
+                priority,
             )
-            .await
-            .map_err(|_| FetchError::Transport)?;
-        if reply.status == 429 {
-            return Err(FetchError::RateLimited {
-                retry_after_secs: retry_after_secs(reply.retry_after.as_deref()).unwrap_or(60.0),
-            });
-        }
-        if reply.status != 200 {
-            return Err(FetchError::Unusable);
-        }
-        let page: WireSearchResponse =
-            serde_json::from_slice(&reply.body).map_err(|_| FetchError::Unusable)?;
+            .await?
+        else {
+            return Ok(None);
+        };
+        let page: WireSearchResponse = decode(&reply)?;
         Ok(select_album(&page.results, artist_name, album_title))
     }
-}
 
-/// Honor a positive `Retry-After` delay; missing, unparsable, or
-/// non-positive values yield `None` so the caller falls back.
-fn retry_after_secs(value: Option<&str>) -> Option<f64> {
-    value
-        .and_then(|raw| raw.trim().parse::<f64>().ok())
-        .filter(|secs| secs.is_finite() && *secs > 0.0)
+    /// One search with `query`, or `None` on a 404.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
+    pub async fn search(
+        &self,
+        query: &[(&str, &str)],
+        priority: RequestPriority,
+    ) -> Result<Option<Reply>, ProviderError> {
+        let base = self
+            .search_url
+            .as_ref()
+            .ok_or_else(|| unusable_base(SOURCE))?;
+        let request = Request::get(base, &[], query).map_err(|_| unusable_base(SOURCE))?;
+        match self.executor.send(request, priority).await {
+            Ok(reply) => Ok(Some(reply)),
+            Err(ProviderError::NotFound { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
 }

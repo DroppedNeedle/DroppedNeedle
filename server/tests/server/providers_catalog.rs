@@ -1,92 +1,69 @@
 //! Discogs, iTunes, preview (Deezer and iTunes), LRCLIB and Wikidata
-//! clients over a scripted transport: the decode of each real
-//! wire shape, identity gates, rate limits and degradation.
+//! clients against the scripted provider wire: the decode of each real
+//! wire shape, identity gates, absence, and each provider's own rate-limit
+//! defaults. What every other status becomes is pinned in `providers_core`.
 
-use droppedneedle_providers::{HttpFault, HttpPort, HttpReply};
-use droppedneedle_providers::{discogs, itunes, lrclib, preview, wikidata};
+use std::sync::Arc;
+use std::time::Duration;
 
-// ---------------------------------------------------------------------------
-// Scripted fakes
-// ---------------------------------------------------------------------------
+use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
+use droppedneedle_providers::{
+    PayloadKind, ProviderEndpoints, ProviderError, Providers, RequestPriority, TransportKind,
+};
+use droppedneedle_providers::{discogs, itunes, lrclib};
 
-/// Generate a recording fake transport for one provider module. All
-/// fakes implement the one shared [`HttpPort`].
-macro_rules! scripted_client {
-    ($client:ident) => {
-        struct $client {
-            replies: std::sync::Mutex<std::collections::VecDeque<Result<HttpReply, HttpFault>>>,
-            calls: std::sync::Mutex<Vec<(String, Vec<(String, String)>)>>,
-        }
+const PRIORITY: RequestPriority = RequestPriority::UserInitiated;
 
-        impl $client {
-            fn scripted(replies: Vec<Result<HttpReply, HttpFault>>) -> Self {
-                Self {
-                    replies: std::sync::Mutex::new(replies.into_iter().collect()),
-                    calls: std::sync::Mutex::new(Vec::new()),
-                }
-            }
+const DISCOGS: &str = "http://fake/discogs";
+const ITUNES: &str = "http://fake/itunes/search";
+const DEEZER: &str = "http://fake/deezer";
+const LRCLIB: &str = "http://fake/lrclib/api/get";
 
-            #[allow(dead_code)] // Only some providers assert on their requests.
-            fn calls(&self) -> Vec<(String, Vec<(String, String)>)> {
-                self.calls.lock().unwrap().clone()
-            }
-        }
-
-        impl HttpPort for $client {
-            async fn get(&self, url: &str, query: &[(&str, &str)]) -> Result<HttpReply, HttpFault> {
-                self.calls.lock().unwrap().push((
-                    url.to_owned(),
-                    query
-                        .iter()
-                        .map(|(key, value)| (key.to_string(), value.to_string()))
-                        .collect(),
-                ));
-                self.replies
-                    .lock()
-                    .unwrap()
-                    .pop_front()
-                    .expect("scripted client ran out of replies")
-            }
-        }
-    };
+/// The providers over `wire`, unpaced, with the catalog family on a fake
+/// host the scripted wire answers for.
+fn catalog_providers(wire: &Arc<ScriptedWire>) -> Providers {
+    Providers::unpaced_at(
+        wire.clone(),
+        ProviderEndpoints {
+            discogs: DISCOGS.to_owned(),
+            itunes: ITUNES.to_owned(),
+            deezer: DEEZER.to_owned(),
+            lrclib: "http://fake/lrclib".to_owned(),
+            wikidata: "http://fake/data".to_owned(),
+            wikipedia: "http://fake/{lang}.wiki".to_owned(),
+            commons: "http://fake/commons".to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    )
 }
 
-/// Generate reply constructors for one provider module.
-macro_rules! reply_fns {
-    ($plain:ident, $retry:ident, $fault:ident) => {
-        fn $plain(status: u16, body: &str) -> Result<HttpReply, HttpFault> {
-            Ok(HttpReply {
-                status,
-                body: body.as_bytes().to_vec(),
-                retry_after: None,
-            })
-        }
+/// One scripted answer: status, headers, body.
+type Answer<'a> = (u16, &'a [(&'a str, &'a str)], &'a str);
 
-        fn $retry(status: u16, body: &str, retry_after: &str) -> Result<HttpReply, HttpFault> {
-            Ok(HttpReply {
-                status,
-                body: body.as_bytes().to_vec(),
-                retry_after: Some(retry_after.to_owned()),
-            })
-        }
-
-        fn $fault() -> Result<HttpReply, HttpFault> {
-            Err(HttpFault)
-        }
-    };
+/// A wire answering GETs of `url` with each of `answers` in turn.
+fn scripted(url: &str, answers: &[Answer<'_>]) -> Arc<ScriptedWire> {
+    let wire = Arc::new(ScriptedWire::new());
+    for (status, headers, body) in answers {
+        wire.answer(url, *status, headers, body.as_bytes().to_vec());
+    }
+    wire
 }
 
-scripted_client!(ScriptDiscogs);
-scripted_client!(ScriptITunes);
-scripted_client!(ScriptPreview);
-scripted_client!(ScriptLrclib);
-scripted_client!(ScriptWiki);
+/// A wire that never gets an answer from `url`.
+fn unreachable(url: &str) -> Arc<ScriptedWire> {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(
+        Method::Get,
+        url,
+        Scripted::Transport(TransportKind::Connect),
+    );
+    wire
+}
 
-reply_fns!(dreply, dreply_retry, dfault);
-reply_fns!(ireply, ireply_retry, _ifault);
-reply_fns!(preply, preply_retry, pfault);
-reply_fns!(lreply, lreply_retry, _lfault);
-reply_fns!(wreply, wreply_retry, wfault);
+/// How long `row` rests after the last call.
+fn resting(providers: &Providers, row: &str) -> Duration {
+    providers.limiter(row).expect("rate row").cooling_for()
+}
 
 // ---------------------------------------------------------------------------
 // Discogs
@@ -110,11 +87,20 @@ const DISCOGS_RELEASE: &str = r#"{
     "community": {"want": 1}, "lowest_price": 4.5, "future_field": {"n": 1}
 }"#;
 
+fn release_url(id: &str) -> String {
+    format!("{DISCOGS}/releases/{id}")
+}
+
 #[tokio::test]
 async fn discogs_contract_tolerates_unknown_fields() {
-    let http = ScriptDiscogs::scripted(vec![dreply(200, DISCOGS_RELEASE)]);
-    let client = discogs::DiscogsClient::with_base(&http, "http://fake");
-    let release = client.get_release("249504", 1.0).await.unwrap().unwrap();
+    let wire = scripted(&release_url("249504"), &[(200, &[], DISCOGS_RELEASE)]);
+    let providers = catalog_providers(&wire);
+    let release = providers
+        .discogs
+        .get_release("249504", 1.0, PRIORITY)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(release.release_id, "249504");
     assert_eq!(release.master_id.as_deref(), Some("96559"));
     assert_eq!(release.barcode.as_deref(), Some("5012394144777"));
@@ -131,63 +117,109 @@ async fn discogs_contract_incomplete_identity_is_unusable() {
         r#"{"id": 0, "title": "No Identity"}"#,
         r#"{"id": 5, "title": ""}"#,
     ] {
-        let http = ScriptDiscogs::scripted(vec![dreply(200, body)]);
-        let client = discogs::DiscogsClient::with_base(&http, "http://fake");
-        assert_eq!(
-            client.get_release("1", 1.0).await,
-            Err(discogs::FetchError::Unusable),
-            "body: {body}"
+        let wire = scripted(&release_url("1"), &[(200, &[], body)]);
+        let error = catalog_providers(&wire)
+            .discogs
+            .get_release("1", 1.0, PRIORITY)
+            .await
+            .expect_err(body);
+        assert!(
+            matches!(
+                error,
+                ProviderError::Payload {
+                    kind: PayloadKind::Contract,
+                    ..
+                }
+            ),
+            "body: {body}: {error:?}"
         );
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn discogs_degradation_429_keeps_retry_after() {
-    for (reply, expected) in [
-        (dreply_retry(429, "{}", "7"), 7.0),
-        (dreply(429, "{}"), 60.0),
-        (dreply_retry(429, "{}", "junk"), 60.0),
-        (dreply_retry(429, "{}", "0.2"), 1.0),
-    ] {
-        let http = ScriptDiscogs::scripted(vec![reply]);
-        let client = discogs::DiscogsClient::with_base(&http, "http://fake");
-        assert_eq!(
-            client.get_release("1", 1.0).await,
-            Err(discogs::FetchError::RateLimited {
-                retry_after_secs: expected
-            })
-        );
+    let wire = scripted(&release_url("1"), &[(429, &[("retry-after", "7")], "{}")]);
+    let error = catalog_providers(&wire)
+        .discogs
+        .get_release("1", 1.0, PRIORITY)
+        .await
+        .expect_err("429");
+    assert!(
+        matches!(
+            error,
+            ProviderError::RateLimited {
+                retry_after: Some(wait),
+                ..
+            } if wait == Duration::from_secs(7)
+        ),
+        "{error:?}"
+    );
+
+    // No usable wait: Discogs rests a minute.
+    for headers in [&[][..], &[("retry-after", "junk")][..]] {
+        let wire = scripted(&release_url("1"), &[(429, headers, "{}")]);
+        let providers = catalog_providers(&wire);
+        let error = providers
+            .discogs
+            .get_release("1", 1.0, PRIORITY)
+            .await
+            .expect_err("429");
+        assert!(matches!(error, ProviderError::RateLimited { .. }));
+        assert!(resting(&providers, discogs::SOURCE) >= Duration::from_secs(59));
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn discogs_degradation_500_transport_bad_json_unusable() {
-    let http = ScriptDiscogs::scripted(vec![dreply(500, "{}")]);
-    let client = discogs::DiscogsClient::with_base(&http, "http://fake");
-    assert_eq!(
-        client.get_release("1", 1.0).await,
-        Err(discogs::FetchError::Transport)
-    );
+    let wire = scripted(&release_url("1"), &[(500, &[], "{}")]);
+    let error = catalog_providers(&wire)
+        .discogs
+        .get_release("1", 1.0, PRIORITY)
+        .await
+        .expect_err("500");
+    assert!(matches!(error, ProviderError::Server { status: 500, .. }));
 
-    let http = ScriptDiscogs::scripted(vec![dfault()]);
-    let client = discogs::DiscogsClient::with_base(&http, "http://fake");
-    assert_eq!(
-        client.get_release("1", 1.0).await,
-        Err(discogs::FetchError::Transport)
-    );
+    let wire = unreachable(&release_url("1"));
+    let error = catalog_providers(&wire)
+        .discogs
+        .get_release("1", 1.0, PRIORITY)
+        .await
+        .expect_err("transport");
+    assert!(matches!(error, ProviderError::Transport { .. }));
 
-    let http = ScriptDiscogs::scripted(vec![dreply(200, "not-json")]);
-    let client = discogs::DiscogsClient::with_base(&http, "http://fake");
-    assert_eq!(
-        client.get_release("1", 1.0).await,
-        Err(discogs::FetchError::Unusable)
-    );
+    let wire = scripted(&release_url("1"), &[(200, &[], "not-json")]);
+    let error = catalog_providers(&wire)
+        .discogs
+        .get_release("1", 1.0, PRIORITY)
+        .await
+        .expect_err("bad json");
+    assert!(matches!(
+        error,
+        ProviderError::Payload {
+            kind: PayloadKind::Decode,
+            ..
+        }
+    ));
 
-    let http = ScriptDiscogs::scripted(vec![dreply(418, "{}")]);
-    let client = discogs::DiscogsClient::with_base(&http, "http://fake");
+    let wire = scripted(&release_url("1"), &[(418, &[], "{}")]);
+    let error = catalog_providers(&wire)
+        .discogs
+        .get_release("1", 1.0, PRIORITY)
+        .await
+        .expect_err("418");
+    assert!(matches!(
+        error,
+        ProviderError::BadRequest { status: 418, .. }
+    ));
+
+    let wire = scripted(&release_url("1"), &[(404, &[], "{}")]);
     assert_eq!(
-        client.get_release("1", 1.0).await,
-        Err(discogs::FetchError::Unusable)
+        catalog_providers(&wire)
+            .discogs
+            .get_release("1", 1.0, PRIORITY)
+            .await
+            .unwrap(),
+        None
     );
 }
 
@@ -203,16 +235,19 @@ async fn itunes_contract_tolerates_unknown_fields() {
          "collectionViewUrl": "https://music.apple.com/x?uo=4",
          "collectionPrice": 9.99, "currency": "USD", "extra": {"a": 1}}
     ]}"#;
-    let http = ScriptITunes::scripted(vec![ireply(200, body)]);
-    let client = itunes::ITunesClient::with_search_url(&http, "http://fake/search");
-    let found = client
-        .find_album("Nirvana", "Nevermind", "US")
+    let wire = scripted(ITUNES, &[(200, &[], body)]);
+    let found = catalog_providers(&wire)
+        .itunes
+        .find_album("Nirvana", "Nevermind", "US", PRIORITY)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(found.url, "https://music.apple.com/x?uo=4");
     assert_eq!(found.collection_name, "Nevermind");
     assert_eq!(found.artist_name, "Nirvana");
+    let sent = wire.sent();
+    assert_eq!(sent[0].query("term").as_deref(), Some("Nirvana Nevermind"));
+    assert_eq!(sent[0].query("country").as_deref(), Some("US"));
 }
 
 #[tokio::test]
@@ -227,10 +262,10 @@ async fn itunes_quirk_tribute_album_rejected_real_album_kept() {
          "collectionName": "Nevermind",
          "collectionViewUrl": "https://music.apple.com/real"}
     ]}"#;
-    let http = ScriptITunes::scripted(vec![ireply(200, body)]);
-    let client = itunes::ITunesClient::with_search_url(&http, "http://fake/search");
-    let found = client
-        .find_album("Nirvana", "Nevermind", "US")
+    let wire = scripted(ITUNES, &[(200, &[], body)]);
+    let found = catalog_providers(&wire)
+        .itunes
+        .find_album("Nirvana", "Nevermind", "US", PRIORITY)
         .await
         .unwrap()
         .unwrap();
@@ -240,48 +275,84 @@ async fn itunes_quirk_tribute_album_rejected_real_album_kept() {
     assert!(itunes::token_set_ratio("Nirvana", "Nirvana") >= 80.0);
 }
 
-#[tokio::test]
+/// A 404 is absence and every other status keeps its own meaning; before,
+/// any status but 200 and 429 read as an unusable answer.
+#[tokio::test(start_paused = true)]
 async fn itunes_degradation_429_500_bad_json() {
-    let http = ScriptITunes::scripted(vec![ireply_retry(429, "{}", "9")]);
-    let client = itunes::ITunesClient::with_search_url(&http, "http://fake/search");
+    let wire = scripted(ITUNES, &[(429, &[("retry-after", "9")], "{}")]);
+    let error = catalog_providers(&wire)
+        .itunes
+        .find_album("A", "B", "US", PRIORITY)
+        .await
+        .expect_err("429");
+    assert!(matches!(
+        error,
+        ProviderError::RateLimited { retry_after: Some(wait), .. } if wait == Duration::from_secs(9)
+    ));
+
+    let wire = scripted(ITUNES, &[(429, &[], "{}")]);
+    let providers = catalog_providers(&wire);
+    let error = providers
+        .itunes
+        .find_album("A", "B", "US", PRIORITY)
+        .await
+        .expect_err("429");
+    assert!(matches!(error, ProviderError::RateLimited { .. }));
+    assert!(resting(&providers, itunes::SOURCE) >= Duration::from_secs(59));
+
+    let wire = scripted(ITUNES, &[(500, &[], "{}")]);
+    let error = catalog_providers(&wire)
+        .itunes
+        .find_album("A", "B", "US", PRIORITY)
+        .await
+        .expect_err("500");
+    assert!(matches!(error, ProviderError::Server { status: 500, .. }));
+
+    let wire = scripted(ITUNES, &[(403, &[], "{}")]);
+    let error = catalog_providers(&wire)
+        .itunes
+        .find_album("A", "B", "US", PRIORITY)
+        .await
+        .expect_err("403");
+    assert!(matches!(error, ProviderError::Forbidden { .. }));
+
+    let wire = scripted(ITUNES, &[(404, &[], "{}")]);
     assert_eq!(
-        client.find_album("A", "B", "US").await,
-        Err(itunes::FetchError::RateLimited {
-            retry_after_secs: 9.0
-        })
+        catalog_providers(&wire)
+            .itunes
+            .find_album("A", "B", "US", PRIORITY)
+            .await
+            .unwrap(),
+        None
     );
 
-    let http = ScriptITunes::scripted(vec![ireply(429, "{}")]);
-    let client = itunes::ITunesClient::with_search_url(&http, "http://fake/search");
-    assert_eq!(
-        client.find_album("A", "B", "US").await,
-        Err(itunes::FetchError::RateLimited {
-            retry_after_secs: 60.0
-        })
-    );
-
-    let http = ScriptITunes::scripted(vec![ireply(500, "{}")]);
-    let client = itunes::ITunesClient::with_search_url(&http, "http://fake/search");
-    assert_eq!(
-        client.find_album("A", "B", "US").await,
-        Err(itunes::FetchError::Unusable)
-    );
-
-    let http = ScriptITunes::scripted(vec![ireply(200, "<html>")]);
-    let client = itunes::ITunesClient::with_search_url(&http, "http://fake/search");
-    assert_eq!(
-        client.find_album("A", "B", "US").await,
-        Err(itunes::FetchError::Unusable)
-    );
+    let wire = scripted(ITUNES, &[(200, &[], "<html>")]);
+    let error = catalog_providers(&wire)
+        .itunes
+        .find_album("A", "B", "US", PRIORITY)
+        .await
+        .expect_err("bad json");
+    assert!(matches!(
+        error,
+        ProviderError::Payload {
+            kind: PayloadKind::Decode,
+            ..
+        }
+    ));
 }
 
 // ---------------------------------------------------------------------------
 // Preview (Deezer + iTunes)
 // ---------------------------------------------------------------------------
 
-fn preview_client(http: &ScriptPreview) -> preview::PreviewClient<'_, ScriptPreview> {
-    preview::PreviewClient::with_bases(http, "http://fake/deezer", "http://fake/itunes")
+fn deezer_search() -> String {
+    format!("{DEEZER}/search")
 }
+
+const ITUNES_SONG: &str = r#"{"resultCount": 1, "results": [
+    {"artistName": "A", "trackName": "T", "collectionName": "C",
+     "previewUrl": "https://audio/t.m4a"}
+]}"#;
 
 #[tokio::test]
 async fn preview_contract_tolerant_decode() {
@@ -290,9 +361,10 @@ async fn preview_contract_tolerant_decode() {
          "track_position": 2, "preview": "https://cdn/x.mp3?hdnea=exp=1",
          "artist": {"id": 9, "name": "A"}, "unknown": [1, 2]}
     ], "total": 1, "next": null}"#;
-    let http = ScriptPreview::scripted(vec![preply(200, body)]);
-    let found = preview_client(&http)
-        .deezer_track_preview("A", "T")
+    let wire = scripted(&deezer_search(), &[(200, &[], body)]);
+    let found = catalog_providers(&wire)
+        .previews
+        .deezer_track_preview("A", "T", PRIORITY)
         .await
         .unwrap()
         .unwrap();
@@ -303,9 +375,10 @@ async fn preview_contract_tolerant_decode() {
          "previewUrl": "https://audio/x.m4a", "trackTimeMillis": 30000,
          "trackNumber": 4, "primaryGenreName": "Rock", "futureField": {"n": 1}}
     ]}"#;
-    let http = ScriptPreview::scripted(vec![preply(200, body)]);
-    let found = preview_client(&http)
-        .itunes_track_preview("A", "T")
+    let wire = scripted(ITUNES, &[(200, &[], body)]);
+    let found = catalog_providers(&wire)
+        .previews
+        .itunes_track_preview("A", "T", PRIORITY)
         .await
         .unwrap()
         .unwrap();
@@ -313,94 +386,122 @@ async fn preview_contract_tolerant_decode() {
     assert_eq!(found.duration_s, Some(30));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn preview_quirk_track_fallback_chain() {
     // Deezer empty, iTunes hit.
-    let itunes = r#"{"resultCount": 1, "results": [
-        {"artistName": "A", "trackName": "T", "collectionName": "C",
-         "previewUrl": "https://audio/t.m4a"}
-    ]}"#;
-    let http = ScriptPreview::scripted(vec![preply(200, r#"{"data": []}"#), preply(200, itunes)]);
-    let (found, provider) = preview_client(&http).get_track_preview("A", "T").await;
+    let wire = scripted(&deezer_search(), &[(200, &[], r#"{"data": []}"#)]);
+    wire.answer(ITUNES, 200, &[], ITUNES_SONG);
+    let (found, provider) = catalog_providers(&wire)
+        .previews
+        .get_track_preview("A", "T", PRIORITY)
+        .await;
     assert_eq!(found.unwrap().preview_url, "https://audio/t.m4a");
     assert_eq!(provider, Some("itunes"));
 
     // Deezer error still falls through to iTunes.
-    let http = ScriptPreview::scripted(vec![pfault(), preply(200, itunes)]);
-    let (found, provider) = preview_client(&http).get_track_preview("A", "T").await;
+    let wire = unreachable(&deezer_search());
+    wire.answer(ITUNES, 200, &[], ITUNES_SONG);
+    let (found, provider) = catalog_providers(&wire)
+        .previews
+        .get_track_preview("A", "T", PRIORITY)
+        .await;
     assert!(found.is_some());
     assert_eq!(provider, Some("itunes"));
 
     // Both legs dead is quiet absence.
-    let http = ScriptPreview::scripted(vec![pfault(), pfault()]);
-    let (found, provider) = preview_client(&http).get_track_preview("A", "T").await;
+    let wire = unreachable(&deezer_search());
+    wire.on(
+        Method::Get,
+        ITUNES,
+        Scripted::Transport(TransportKind::Connect),
+    );
+    let (found, provider) = catalog_providers(&wire)
+        .previews
+        .get_track_preview("A", "T", PRIORITY)
+        .await;
     assert_eq!(found, None);
     assert_eq!(provider, None);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn preview_degradation_leg_errors() {
-    let http = ScriptPreview::scripted(vec![preply_retry(429, "{}", "1")]);
-    assert_eq!(
-        preview_client(&http).deezer_track_preview("A", "T").await,
-        Err(preview::FetchError::RateLimited {
-            retry_after_secs: 1.0
-        })
+    let wire = scripted(&deezer_search(), &[(429, &[("retry-after", "1")], "{}")]);
+    let error = catalog_providers(&wire)
+        .previews
+        .deezer_track_preview("A", "T", PRIORITY)
+        .await
+        .expect_err("429");
+    assert!(matches!(
+        error,
+        ProviderError::RateLimited { retry_after: Some(wait), .. } if wait == Duration::from_secs(1)
+    ));
+
+    // Without a wait, Deezer rests five seconds and iTunes a minute.
+    let wire = scripted(&deezer_search(), &[(429, &[], "{}")]);
+    let providers = catalog_providers(&wire);
+    let error = providers
+        .previews
+        .deezer_track_preview("A", "T", PRIORITY)
+        .await
+        .expect_err("429");
+    assert!(matches!(error, ProviderError::RateLimited { .. }));
+    let rest = resting(&providers, "deezer");
+    assert!(
+        rest > Duration::from_secs(4) && rest <= Duration::from_secs(5),
+        "{rest:?}"
     );
 
-    let http = ScriptPreview::scripted(vec![preply(429, "{}")]);
-    assert_eq!(
-        preview_client(&http).deezer_track_preview("A", "T").await,
-        Err(preview::FetchError::RateLimited {
-            retry_after_secs: 5.0
-        })
-    );
+    let wire = scripted(ITUNES, &[(429, &[], "{}")]);
+    let providers = catalog_providers(&wire);
+    let error = providers
+        .previews
+        .itunes_track_preview("A", "T", PRIORITY)
+        .await
+        .expect_err("429");
+    assert!(matches!(error, ProviderError::RateLimited { .. }));
+    assert!(resting(&providers, itunes::SOURCE) >= Duration::from_secs(59));
 
-    let http = ScriptPreview::scripted(vec![preply_retry(429, "{}", "1")]);
+    let wire = scripted(&deezer_search(), &[(404, &[], "{}")]);
     assert_eq!(
-        preview_client(&http).itunes_track_preview("A", "T").await,
-        Err(preview::FetchError::RateLimited {
-            retry_after_secs: 1.0
-        })
-    );
-
-    let http = ScriptPreview::scripted(vec![preply(429, "{}")]);
-    assert_eq!(
-        preview_client(&http).itunes_track_preview("A", "T").await,
-        Err(preview::FetchError::RateLimited {
-            retry_after_secs: 60.0
-        })
-    );
-
-    let http = ScriptPreview::scripted(vec![preply(404, "{}")]);
-    assert_eq!(
-        preview_client(&http)
-            .deezer_track_preview("A", "T")
+        catalog_providers(&wire)
+            .previews
+            .deezer_track_preview("A", "T", PRIORITY)
             .await
             .unwrap(),
         None
     );
 
-    let http = ScriptPreview::scripted(vec![preply(404, "{}")]);
+    let wire = scripted(ITUNES, &[(404, &[], "{}")]);
     assert!(
-        preview_client(&http)
-            .itunes_album_tracks("A", "C", 4)
+        catalog_providers(&wire)
+            .previews
+            .itunes_album_tracks("A", "C", 4, PRIORITY)
             .await
             .unwrap()
             .is_empty()
     );
 
-    let http = ScriptPreview::scripted(vec![preply(500, "{}")]);
-    assert_eq!(
-        preview_client(&http).deezer_track_preview("A", "T").await,
-        Err(preview::FetchError::Transport)
-    );
+    let wire = scripted(&deezer_search(), &[(500, &[], "{}")]);
+    let error = catalog_providers(&wire)
+        .previews
+        .deezer_track_preview("A", "T", PRIORITY)
+        .await
+        .expect_err("500");
+    assert!(matches!(error, ProviderError::Server { status: 500, .. }));
 
-    let http = ScriptPreview::scripted(vec![preply(200, "nope")]);
-    assert_eq!(
-        preview_client(&http).itunes_track_preview("A", "T").await,
-        Err(preview::FetchError::Unusable)
-    );
+    let wire = scripted(ITUNES, &[(200, &[], "nope")]);
+    let error = catalog_providers(&wire)
+        .previews
+        .itunes_track_preview("A", "T", PRIORITY)
+        .await
+        .expect_err("bad json");
+    assert!(matches!(
+        error,
+        ProviderError::Payload {
+            kind: PayloadKind::Decode,
+            ..
+        }
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -415,12 +516,25 @@ const LRCLIB_HIT: &str = r#"{
     "lyricsfile": null, "future": 1
 }"#;
 
+async fn lyrics(wire: &Arc<ScriptedWire>) -> Result<lrclib::LyricsLookup, ProviderError> {
+    catalog_providers(wire)
+        .lrclib
+        .get_exact_lyrics("T", "A", "C", 60, PRIORITY)
+        .await
+}
+
 #[tokio::test]
 async fn lrclib_contract_tolerates_unknown_fields() {
-    let http = ScriptLrclib::scripted(vec![lreply(200, LRCLIB_HIT)]);
-    let client = lrclib::LrclibClient::with_base(&http, "http://fake");
-    let found = client
-        .get_exact_lyrics("Quiet Engine", "Northern Static", "Paper Lanterns", 197)
+    let wire = scripted(LRCLIB, &[(200, &[], LRCLIB_HIT)]);
+    let found = catalog_providers(&wire)
+        .lrclib
+        .get_exact_lyrics(
+            "Quiet Engine",
+            "Northern Static",
+            "Paper Lanterns",
+            197,
+            PRIORITY,
+        )
         .await
         .unwrap();
     assert!(found.found);
@@ -432,6 +546,9 @@ async fn lrclib_contract_tolerates_unknown_fields() {
     );
     assert_eq!(candidate.synced_lyrics, None);
     assert!(!candidate.instrumental);
+    let sent = wire.sent();
+    assert_eq!(sent[0].query("track_name").as_deref(), Some("Quiet Engine"));
+    assert_eq!(sent[0].query("duration").as_deref(), Some("197"));
 }
 
 #[tokio::test]
@@ -446,91 +563,108 @@ async fn lrclib_contract_completeness_gate() {
         base.replace("120.0", "0.0"),
     ];
     for body in cases {
-        let http = ScriptLrclib::scripted(vec![lreply(200, &body)]);
-        let client = lrclib::LrclibClient::with_base(&http, "http://fake");
-        assert_eq!(
-            client.get_exact_lyrics("T", "A", "C", 120).await,
-            Err(lrclib::FetchError::Unusable),
-            "body: {body}"
+        let wire = scripted(LRCLIB, &[(200, &[], &body)]);
+        let error = lyrics(&wire).await.expect_err(&body);
+        assert!(
+            matches!(
+                error,
+                ProviderError::Payload {
+                    kind: PayloadKind::Contract,
+                    ..
+                }
+            ),
+            "body: {body}: {error:?}"
         );
     }
 }
 
 #[tokio::test]
 async fn lrclib_quirk_oversized_rejected() {
-    let huge = vec![b'x'; lrclib::MAX_LYRICS_BYTES + 1];
-    let http = ScriptLrclib::scripted(vec![Ok(HttpReply {
-        status: 200,
-        body: huge,
-        retry_after: None,
-    })]);
-    let client = lrclib::LrclibClient::with_base(&http, "http://fake");
-    assert_eq!(
-        client.get_exact_lyrics("T", "A", "C", 60).await,
-        Err(lrclib::FetchError::Unusable)
-    );
+    let huge = "x".repeat(lrclib::MAX_LYRICS_BYTES + 1);
+    let wire = scripted(LRCLIB, &[(200, &[], &huge)]);
+    let error = lyrics(&wire).await.expect_err("oversized");
+    assert!(matches!(
+        error,
+        ProviderError::Payload {
+            kind: PayloadKind::TooLarge,
+            ..
+        }
+    ));
 
     let big = "x".repeat(lrclib::MAX_LYRICS_CHARACTERS + 1);
     let body = format!(
         r#"{{"id": 1, "trackName": "T", "artistName": "A", "albumName": "C",
             "duration": 60.0, "instrumental": false, "plainLyrics": "{big}"}}"#
     );
-    let http = ScriptLrclib::scripted(vec![lreply(200, &body)]);
-    let client = lrclib::LrclibClient::with_base(&http, "http://fake");
-    assert_eq!(
-        client.get_exact_lyrics("T", "A", "C", 60).await,
-        Err(lrclib::FetchError::Unusable)
-    );
+    let wire = scripted(LRCLIB, &[(200, &[], &body)]);
+    let error = lyrics(&wire).await.expect_err("oversized text");
+    assert!(matches!(
+        error,
+        ProviderError::Payload {
+            kind: PayloadKind::Contract,
+            ..
+        }
+    ));
 }
 
-#[tokio::test]
+/// A 404 is absence and every other status keeps its own meaning; before,
+/// any 4xx but 404 and 429 read as an unusable answer.
+#[tokio::test(start_paused = true)]
 async fn lrclib_degradation_404_429_500_bad_json() {
-    let http = ScriptLrclib::scripted(vec![lreply(404, "{}")]);
-    let client = lrclib::LrclibClient::with_base(&http, "http://fake");
+    let wire = scripted(LRCLIB, &[(404, &[], "{}")]);
+    assert!(!lyrics(&wire).await.unwrap().found);
+
+    // A wait past thirty seconds is held to thirty.
+    let wire = scripted(LRCLIB, &[(429, &[("retry-after", "45")], "{}")]);
+    let error = lyrics(&wire).await.expect_err("429");
+    assert!(matches!(
+        error,
+        ProviderError::RateLimited { retry_after: Some(wait), .. } if wait == Duration::from_secs(30)
+    ));
+
+    // Without a wait, LRCLIB rests two seconds.
+    let wire = scripted(LRCLIB, &[(429, &[], "{}")]);
+    let providers = catalog_providers(&wire);
+    let error = providers
+        .lrclib
+        .get_exact_lyrics("T", "A", "C", 60, PRIORITY)
+        .await
+        .expect_err("429");
+    assert!(matches!(error, ProviderError::RateLimited { .. }));
+    let rest = resting(&providers, lrclib::SOURCE);
     assert!(
-        !client
-            .get_exact_lyrics("T", "A", "C", 1)
-            .await
-            .unwrap()
-            .found
+        rest > Duration::from_secs(1) && rest <= Duration::from_secs(2),
+        "{rest:?}"
     );
 
-    let http = ScriptLrclib::scripted(vec![lreply_retry(429, "{}", "45")]);
-    let client = lrclib::LrclibClient::with_base(&http, "http://fake");
-    assert_eq!(
-        client.get_exact_lyrics("T", "A", "C", 1).await,
-        Err(lrclib::FetchError::RateLimited {
-            retry_after_secs: 30.0
-        })
-    );
+    let wire = scripted(LRCLIB, &[(500, &[], "{}")]);
+    let error = lyrics(&wire).await.expect_err("500");
+    assert!(matches!(error, ProviderError::Server { status: 500, .. }));
 
-    let http = ScriptLrclib::scripted(vec![lreply(500, "{}")]);
-    let client = lrclib::LrclibClient::with_base(&http, "http://fake");
-    assert_eq!(
-        client.get_exact_lyrics("T", "A", "C", 1).await,
-        Err(lrclib::FetchError::Transport)
-    );
+    let wire = scripted(LRCLIB, &[(400, &[], "{}")]);
+    let error = lyrics(&wire).await.expect_err("400");
+    assert!(matches!(
+        error,
+        ProviderError::BadRequest { status: 400, .. }
+    ));
 
-    let http = ScriptLrclib::scripted(vec![lreply(200, "nope")]);
-    let client = lrclib::LrclibClient::with_base(&http, "http://fake");
-    assert_eq!(
-        client.get_exact_lyrics("T", "A", "C", 1).await,
-        Err(lrclib::FetchError::Unusable)
-    );
+    let wire = scripted(LRCLIB, &[(200, &[], "nope")]);
+    let error = lyrics(&wire).await.expect_err("bad json");
+    assert!(matches!(
+        error,
+        ProviderError::Payload {
+            kind: PayloadKind::Decode,
+            ..
+        }
+    ));
 }
 
 // ---------------------------------------------------------------------------
 // Wikidata
 // ---------------------------------------------------------------------------
 
-fn wiki_client(http: &ScriptWiki) -> wikidata::WikidataClient<'_, ScriptWiki> {
-    wikidata::WikidataClient::with_bases(
-        http,
-        "http://fake/data",
-        "http://fake/{lang}.wiki",
-        "http://fake/commons",
-    )
-}
+const ENTITY: &str = "http://fake/data/wiki/Special:EntityData/Q42.json";
+const EXTRACT: &str = "http://fake/en.wiki/w/api.php";
 
 #[tokio::test]
 async fn wikidata_contract_tolerant_decode() {
@@ -539,9 +673,13 @@ async fn wikidata_contract_tolerant_decode() {
         "sitelinks": {"enwiki": {"title": "One", "badges": [], "futureField": {"n": 1}}},
         "labels": {"en": {"value": "One"}}
     }}, "success": 1}"#;
-    let http = ScriptWiki::scripted(vec![wreply(200, entity)]);
-    let title = wiki_client(&http)
-        .wikipedia_title_from_wikidata("Q1", "en")
+    let wire = scripted(
+        "http://fake/data/wiki/Special:EntityData/Q1.json",
+        &[(200, &[], entity)],
+    );
+    let title = catalog_providers(&wire)
+        .wikidata
+        .wikipedia_title_from_wikidata("Q1", "en", PRIORITY)
         .await
         .unwrap();
     assert_eq!(title.as_deref(), Some("One"));
@@ -554,82 +692,102 @@ async fn wikidata_quirk_bio_hop() {
         "sitelinks": {"enwiki": {"title": "Douglas Adams"}}}}}"#;
     let page = r#"{"query": {"pages": {"1": {
         "pageid": 1, "extract": "Douglas Adams was an author."}}}}"#;
-    let http = ScriptWiki::scripted(vec![wreply(200, entity), wreply(200, page)]);
-    let found = wiki_client(&http)
-        .get_bio_extract("https://www.wikidata.org/wiki/Q42", "en")
+    let wire = scripted(ENTITY, &[(200, &[], entity)]);
+    wire.answer(EXTRACT, 200, &[], page);
+    let found = catalog_providers(&wire)
+        .wikidata
+        .get_bio_extract("https://www.wikidata.org/wiki/Q42", "en", PRIORITY)
         .await
         .unwrap();
     assert_eq!(found.as_deref(), Some("Douglas Adams was an author."));
-    let calls = http.calls();
-    assert_eq!(calls.len(), 2);
-    assert_eq!(
-        calls[0].0,
-        "http://fake/data/wiki/Special:EntityData/Q42.json"
-    );
-    assert_eq!(calls[1].0, "http://fake/en.wiki/w/api.php");
-    assert!(
-        calls[1]
-            .1
-            .contains(&("titles".to_owned(), "Douglas Adams".to_owned()))
-    );
+    let sent = wire.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0].url.as_str(), ENTITY);
+    assert!(sent[1].url.as_str().starts_with(EXTRACT));
+    assert_eq!(sent[1].query("titles").as_deref(), Some("Douglas Adams"));
 
-    // A Wikipedia URL skips the entity hop.
-    let http = ScriptWiki::scripted(vec![wreply(200, page)]);
-    let found = wiki_client(&http)
-        .get_bio_extract("https://en.wikipedia.org/wiki/Douglas_Adams", "en")
+    // A Wikipedia URL skips the entity hop, and its title is sent decoded
+    // (encoded once by the query, never twice).
+    let wire = scripted(EXTRACT, &[(200, &[], page)]);
+    let found = catalog_providers(&wire)
+        .wikidata
+        .get_bio_extract(
+            "https://en.wikipedia.org/wiki/Sigur_R%C3%B3s",
+            "en",
+            PRIORITY,
+        )
         .await
         .unwrap();
     assert!(found.is_some());
-    assert_eq!(http.calls().len(), 1);
+    let sent = wire.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].query("titles").as_deref(), Some("Sigur_Rós"));
 }
 
-#[tokio::test]
+/// A 404 is absence and every other status keeps its own meaning; before,
+/// any status but 404 and 429 read as a transport failure.
+#[tokio::test(start_paused = true)]
 async fn wikidata_degradation_404_absent_500_transport_bad_json() {
-    let http = ScriptWiki::scripted(vec![wreply(404, "{}")]);
-    assert_eq!(
-        wiki_client(&http)
-            .wikipedia_extract("Ghost", "en")
+    let extract = |wire: Arc<ScriptedWire>| async move {
+        catalog_providers(&wire)
+            .wikidata
+            .wikipedia_extract("X", "en", PRIORITY)
             .await
-            .unwrap(),
-        None
-    );
+    };
+    let wire = scripted(EXTRACT, &[(404, &[], "{}")]);
+    assert_eq!(extract(wire).await.unwrap(), None);
 
-    let http = ScriptWiki::scripted(vec![wreply(500, "{}")]);
-    assert_eq!(
-        wiki_client(&http).wikipedia_extract("X", "en").await,
-        Err(wikidata::FetchError::Transport)
-    );
+    let wire = scripted(EXTRACT, &[(500, &[], "{}")]);
+    assert!(matches!(
+        extract(wire).await,
+        Err(ProviderError::Server { status: 500, .. })
+    ));
 
-    let http = ScriptWiki::scripted(vec![wreply(200, "nope")]);
-    assert_eq!(
-        wiki_client(&http).wikipedia_extract("X", "en").await,
-        Err(wikidata::FetchError::Unusable)
-    );
+    let wire = scripted(EXTRACT, &[(403, &[], "{}")]);
+    assert!(matches!(
+        extract(wire).await,
+        Err(ProviderError::Forbidden { .. })
+    ));
 
-    let http = ScriptWiki::scripted(vec![wfault()]);
-    assert_eq!(
-        wiki_client(&http).wikipedia_extract("X", "en").await,
-        Err(wikidata::FetchError::Transport)
-    );
+    let wire = scripted(EXTRACT, &[(200, &[], "nope")]);
+    assert!(matches!(
+        extract(wire).await,
+        Err(ProviderError::Payload {
+            kind: PayloadKind::Decode,
+            ..
+        })
+    ));
+
+    let wire = unreachable(EXTRACT);
+    assert!(matches!(
+        extract(wire).await,
+        Err(ProviderError::Transport { .. })
+    ));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn wikidata_degradation_429_honors_retry_after() {
-    let http = ScriptWiki::scripted(vec![wreply_retry(429, "{}", "7")]);
-    assert_eq!(
-        wiki_client(&http)
-            .wikipedia_title_from_wikidata("Q1", "en")
-            .await,
-        Err(wikidata::FetchError::RateLimited {
-            retry_after_secs: 7.0
-        })
+    let wire = scripted(
+        "http://fake/data/wiki/Special:EntityData/Q1.json",
+        &[(429, &[("retry-after", "7")], "{}")],
     );
+    let error = catalog_providers(&wire)
+        .wikidata
+        .wikipedia_title_from_wikidata("Q1", "en", PRIORITY)
+        .await
+        .expect_err("429");
+    assert!(matches!(
+        error,
+        ProviderError::RateLimited { retry_after: Some(wait), .. } if wait == Duration::from_secs(7)
+    ));
 
-    let http = ScriptWiki::scripted(vec![wreply(429, "{}")]);
-    assert_eq!(
-        wiki_client(&http).wikipedia_extract("X", "en").await,
-        Err(wikidata::FetchError::RateLimited {
-            retry_after_secs: 60.0
-        })
-    );
+    let wire = scripted(EXTRACT, &[(429, &[], "{}")]);
+    let providers = catalog_providers(&wire);
+    let error = providers
+        .wikidata
+        .wikipedia_extract("X", "en", PRIORITY)
+        .await
+        .expect_err("429");
+    assert!(matches!(error, ProviderError::RateLimited { .. }));
+    assert!(resting(&providers, "wikimedia-api") >= Duration::from_secs(59));
 }

@@ -18,8 +18,6 @@
 //!   per-source invalidation.
 //! - [`singleflight`]: request coalescing for concurrent identical fetches.
 //! - [`degradation`]: the request-scoped degradation context.
-//! - [`adapters`]: the shared GET port the catalog clients not yet on the
-//!   executor still use.
 //!
 //! # Wiring
 //!
@@ -39,7 +37,6 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod acoustid;
-pub mod adapters;
 pub mod audiodb;
 pub mod cache;
 pub mod client;
@@ -75,14 +72,11 @@ use std::sync::Arc;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::platform::Platform;
 
-pub use adapters::ReqwestGet;
 pub use cache::{
     InMemoryProviderCache, ProviderCache, cache_aside_bytes, cache_aside_json, digest_key,
     invalidate_source, namespaced_key, prefixes_for,
 };
-pub use client::{
-    ContractViolation, HttpFault, HttpPort, HttpReply, ProviderClient, check_client_contract,
-};
+pub use client::{ContractViolation, ProviderClient, check_client_contract};
 pub use degradation::{
     DegradationContext, DegradationSink, IntegrationStatus, NoopSink, ProviderOutcome,
     aggregate_status, degraded_none, record_current, scoped, with_current,
@@ -116,6 +110,20 @@ pub struct ProviderEndpoints {
     pub audiodb: String,
     /// AcoustID API origin.
     pub acoustid: String,
+    /// Discogs API origin.
+    pub discogs: String,
+    /// iTunes Search endpoint.
+    pub itunes: String,
+    /// Deezer API origin.
+    pub deezer: String,
+    /// LRCLIB origin.
+    pub lrclib: String,
+    /// Wikidata origin.
+    pub wikidata: String,
+    /// Wikipedia origin pattern with `{lang}`.
+    pub wikipedia: String,
+    /// Wikimedia Commons origin.
+    pub commons: String,
 }
 
 impl ProviderEndpoints {
@@ -132,6 +140,13 @@ impl ProviderEndpoints {
             lastfm: "http://127.0.0.1:9/lastfm/".to_owned(),
             audiodb: "http://127.0.0.1:9/audiodb".to_owned(),
             acoustid: "http://127.0.0.1:9/acoustid".to_owned(),
+            discogs: "http://127.0.0.1:9/discogs".to_owned(),
+            itunes: "http://127.0.0.1:9/itunes/search".to_owned(),
+            deezer: "http://127.0.0.1:9/deezer".to_owned(),
+            lrclib: "http://127.0.0.1:9/lrclib".to_owned(),
+            wikidata: "http://127.0.0.1:9/wikidata".to_owned(),
+            wikipedia: "http://127.0.0.1:9/wikipedia-{lang}".to_owned(),
+            commons: "http://127.0.0.1:9/commons".to_owned(),
         }
     }
 }
@@ -167,6 +182,16 @@ pub struct Providers {
     pub acoustid: acoustid::AcoustIdClient,
     /// Artist images and TheAudioDB thumbnails by URL.
     pub images: images::ImageClient,
+    /// Discogs releases for contributions.
+    pub discogs: discogs::DiscogsClient,
+    /// iTunes purchase links; the preview leg shares its bucket.
+    pub itunes: itunes::ITunesClient,
+    /// 30-second previews: Deezer, then iTunes.
+    pub previews: preview::PreviewClient,
+    /// LRCLIB lyrics.
+    pub lrclib: lrclib::LrclibClient,
+    /// Wikidata, Wikipedia and Commons, on one bucket.
+    pub wikidata: wikidata::WikidataClient,
 }
 
 impl Providers {
@@ -265,6 +290,25 @@ impl Providers {
             executor(&images::AUDIODB_SPEC, images::AUDIODB_MEDIA),
             executor(&images::WIKIMEDIA_SPEC, images::WIKIMEDIA_MEDIA),
         );
+        let discogs = discogs::DiscogsClient::new(
+            executor(&discogs::SPEC, discogs::SOURCE),
+            &endpoints.discogs,
+        );
+        let itunes =
+            itunes::ITunesClient::new(executor(&itunes::SPEC, itunes::SOURCE), &endpoints.itunes);
+        let previews = preview::PreviewClient::new(
+            executor(&preview::DEEZER_SPEC, preview::DEEZER),
+            &endpoints.deezer,
+            itunes.clone(),
+        );
+        let lrclib =
+            lrclib::LrclibClient::new(executor(&lrclib::SPEC, lrclib::SOURCE), &endpoints.lrclib);
+        let wikidata = wikidata::WikidataClient::new(
+            executor(&wikidata::SPEC, wikidata::RATE_ROW),
+            &endpoints.wikidata,
+            &endpoints.wikipedia,
+            &endpoints.commons,
+        );
         Self {
             limiters,
             slots: SlotManager::new(),
@@ -277,6 +321,11 @@ impl Providers {
             audiodb,
             acoustid,
             images,
+            discogs,
+            itunes,
+            previews,
+            lrclib,
+            wikidata,
         }
     }
 

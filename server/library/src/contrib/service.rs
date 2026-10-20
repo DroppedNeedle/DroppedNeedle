@@ -1186,7 +1186,8 @@ impl ContributionService {
         {
             // Display only: a Discogs outage must not hide the contribution
             // itself, so the source shows without its release this time.
-            // The display lane: one attempt, no waiting out a rate limit.
+            // The display lane: answered "unavailable" at once when Discogs
+            // has no request free or is resting, never queued behind one.
             discogs_release = match discogs
                 .get_release(&source.external_id, RequestPriority::PrefetchVisible)
                 .await

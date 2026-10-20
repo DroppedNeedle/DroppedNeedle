@@ -80,6 +80,7 @@ struct Flights {
     release: Singleflight<album::ReleaseCore, CatalogError>,
     release_background: Singleflight<album::ReleaseCore, CatalogError>,
     extended: Singleflight<artist::Biography, CatalogError>,
+    extended_background: Singleflight<artist::Biography, CatalogError>,
     search: Singleflight<search::RemoteHits, CatalogError>,
     other: Singleflight<serde_json::Value, CatalogError>,
     other_background: Singleflight<serde_json::Value, CatalogError>,

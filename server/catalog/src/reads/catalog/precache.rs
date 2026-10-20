@@ -154,10 +154,11 @@ impl Catalog {
             }
             None => candidates.incomplete = true,
         }
-        if candidates.urls.is_empty()
-            && let Some(portrait) = self.biography(&detail).await.image
-        {
-            candidates.urls.push(portrait);
+        if candidates.urls.is_empty() {
+            let biography = self.biography(&detail, priority).await;
+            // A failed portrait lookup keeps the short outage marker.
+            candidates.incomplete |= biography.image_failed;
+            candidates.urls.extend(biography.image);
         }
         candidates
     }

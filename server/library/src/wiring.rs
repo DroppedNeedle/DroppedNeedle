@@ -41,12 +41,9 @@ use droppedneedle_kernel::runtime_config::{Live, Plain};
 /// Scan coordinator over the wired seams.
 pub type ScanCoordinator = LibraryScanCoordinator<LoftyTagReader>;
 
-/// Where the library reaches its outside services, and the provider ports a
-/// test may put in place of the live clients.
+/// The provider ports a test may put in place of the live clients.
 #[derive(Clone)]
 pub struct Endpoints {
-    /// Discogs API origin (contributions).
-    pub discogs: String,
     /// What identification asks MusicBrainz and AcoustID through; `None`
     /// builds the live clients.
     pub identify_providers: Option<Arc<dyn super::identify::providers::IdentifyProviders>>,
@@ -196,7 +193,6 @@ impl LibrarySetup {
     ) -> Result<Self, String> {
         use droppedneedle_providers::RequestPriority;
 
-        let http = &platform.http;
         // Identification is background work on the source settings name,
         // read per request; user page loads go ahead of it at the limiter.
         // Both clients count their failures toward system health, so an
@@ -209,14 +205,13 @@ impl LibrarySetup {
         let imports: Arc<dyn super::identify::sources::ReleaseSource> =
             Arc::new(mb_client(RequestPriority::BackgroundSync));
         // Contributions read MusicBrainz on both lanes (the curator's page
-        // and the verification worker) and Discogs through the shared GET
-        // port.
+        // and the verification worker) and Discogs through the one Discogs
+        // client.
         let contrib = endpoints
             .contribution_providers
             .unwrap_or_else(|| ContribProviders {
                 discogs: Arc::new(super::adapters::LiveDiscogsContrib::new(
-                    droppedneedle_providers::ReqwestGet::shared(http),
-                    &endpoints.discogs,
+                    providers.discogs.clone(),
                 )),
                 musicbrainz: Arc::new(super::adapters::LiveMusicBrainzContrib::new(
                     mb_client(RequestPriority::UserInitiated),

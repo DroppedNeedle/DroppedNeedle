@@ -5,10 +5,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::degradation::scoped;
-use droppedneedle_providers::itunes::ITunesClient;
 use droppedneedle_providers::musicbrainz::{Criticality, MbRelease, MbReleaseGroup};
-use droppedneedle_providers::{IntegrationStatus, RequestPriority, record_current};
 
 use super::artist::{LASTFM_TTL, checked_mbid};
 use super::error::CatalogError;
@@ -996,9 +995,12 @@ impl Catalog {
         let mut complete = true;
         let has_digital = links.iter().any(|link| link.kind == PurchaseKind::Digital);
         if !has_digital && !artist.is_empty() && !group.title.is_empty() {
-            let http = self.upstream().http_get();
-            let itunes = ITunesClient::with_search_url(&http, &self.upstream().endpoints().itunes);
-            match itunes.find_album(artist, &group.title, region).await {
+            match self
+                .upstream()
+                .itunes()
+                .find_album(artist, &group.title, region, RequestPriority::UserInitiated)
+                .await
+            {
                 Ok(Some(found)) => links.push(PurchaseLink {
                     store: "itunes".to_owned(),
                     label: mapping::store_label("itunes")
@@ -1009,8 +1011,7 @@ impl Catalog {
                 }),
                 Ok(None) => {}
                 Err(error) => {
-                    tracing::warn!(album = %group.mbid, ?error, "itunes lookup failed");
-                    record_current("itunes", IntegrationStatus::Error, false);
+                    tracing::warn!(album = %group.mbid, %error, "itunes lookup failed");
                     complete = false;
                 }
             }

@@ -13,17 +13,40 @@
 //! parks a falsy `""` sentinel for 600s on clean misses, caches extracts
 //! for 7 days and images for 24h; those TTLs belong to the wiring.
 //!
-//! Transport rides the shared [`HttpPort`](super::client::HttpPort) GET port.
-//! Retries, dedup, caching, and degradation recording stay
-//! with wiring/enrichment. One intended difference: v2 answers
-//! `None` for any non-200 status, while this port answers `Ok(None)` only
-//! for 404 and `Err(Transport)` otherwise, so an outage cannot be mistaken
-//! for "this artist has no bio".
+//! Requests to all three wikis go through the executor at the
+//! `wikimedia-api` row, under the robot policy's rate and concurrency of
+//! one. Dedup and caching stay with wiring. One intended difference: v2
+//! answers `None` for any non-200 status, while this client answers
+//! `Ok(None)` only for 404 and a typed [`ProviderError`] otherwise, so an
+//! outage cannot be mistaken for "this artist has no bio".
 
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::time::Duration;
 
-use super::client::HttpPort;
+use crate::RequestPriority;
+use crate::client::{decode, parse_base, unusable_base};
+use crate::error::{MAX_RETRY_AFTER, ProviderError};
+use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
+
+/// The provider name errors carry.
+pub const SOURCE: &str = "wikidata";
+/// The rate row Wikidata, Wikipedia and Commons share.
+pub const RATE_ROW: &str = "wikimedia-api";
+/// Largest answer read: entities carry every language.
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+
+/// The wikis on the wire: the standard rules, and a 429 that names no wait
+/// rests a minute (v2's default).
+pub static SPEC: Spec = Spec {
+    source: SOURCE,
+    health_key: SOURCE,
+    timeout: Duration::from_secs(15),
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(60)),
+    retry_after_cap: MAX_RETRY_AFTER,
+    classify: standard_classify,
+};
 
 /// Live Wikidata origin.
 pub const WIKIDATA_BASE: &str = "https://www.wikidata.org";
@@ -33,21 +56,6 @@ pub const WIKIPEDIA_PATTERN: &str = "https://{lang}.wikipedia.org";
 pub const COMMONS_BASE: &str = "https://commons.wikimedia.org";
 /// The "image" property behind artist photos.
 pub const PROPERTY_IMAGE: &str = "P18";
-
-/// What can go wrong on a wiki fetch.
-#[derive(Debug, Clone, PartialEq)]
-pub enum FetchError {
-    /// The wire failed or the upstream answered a non-404 error status.
-    Transport,
-    /// The upstream answered 429; the caller backs off this long: the
-    /// honored `Retry-After`, or 60s when the response gave none.
-    RateLimited {
-        /// Seconds to wait before retrying.
-        retry_after_secs: f64,
-    },
-    /// The body did not decode.
-    Unusable,
-}
 
 // ---------------------------------------------------------------------------
 // Wire models (default-tolerant; unknown fields are ignored by serde)
@@ -221,31 +229,37 @@ fn wikidata_id_at(rest: &str) -> Option<String> {
 }
 
 /// Pull a page title out of a Wikipedia URL (v2 `_extract_wikipedia_title`:
-/// the `/wiki/(.+)$` pattern).
+/// the `/wiki/(.+)$` pattern), percent-decoded: it goes out again as a
+/// query value, which encodes it once.
 pub fn extract_wikipedia_title(url: &str) -> Option<String> {
     url.find("/wiki/").and_then(|pos| {
         let title = &url[pos + "/wiki/".len()..];
         if title.is_empty() {
             None
         } else {
-            Some(title.to_owned())
+            Some(percent_decode(title))
         }
     })
 }
 
-/// Percent-encode one query value (RFC 3986 unreserved set, uppercase hex).
-/// v2 quotes titles and filenames into the URL with `urllib`; this port
-/// passes them as query pairs and encodes the same bytes.
-pub fn percent_encode(value: &str) -> String {
-    let mut out = String::new();
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
+/// Decode `%XX` escapes; text that does not decode to UTF-8 is kept as it
+/// came.
+fn percent_decode(text: &str) -> String {
+    percent_encoding::percent_decode_str(text)
+        .decode_utf8()
+        .map_or_else(|_| text.to_owned(), |decoded| decoded.into_owned())
+}
+
+/// True for a Wikidata item id (`Q` and digits), the only kind sent.
+fn is_item_id(value: &str) -> bool {
+    value
+        .strip_prefix('Q')
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// True for a wiki language code (`en`, `pt-br`, `be-tarask`).
+fn is_language(value: &str) -> bool {
+    (2..=12).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
 }
 
 /// Read the `{lang}wiki` sitelink title for one entity, or `None` when the
@@ -313,82 +327,108 @@ pub fn select_commons_url(page: &WireCommonsResponse) -> Option<String> {
 // Client
 // ---------------------------------------------------------------------------
 
-/// Wikidata/Wikipedia/Commons client.
-pub struct WikidataClient<'h, H: HttpPort> {
-    /// Transport port (scripted fake in tests, real HTTP in wiring).
-    pub http: &'h H,
-    /// Wikidata origin; defaults to live.
-    pub wikidata_base: String,
-    /// Wikipedia origin pattern with `{lang}`; defaults to live.
-    pub wikipedia_pattern: String,
-    /// Commons origin; defaults to live.
-    pub commons_base: String,
+/// Wikidata/Wikipedia/Commons client. Built once with the providers; cheap
+/// to clone.
+#[derive(Debug, Clone)]
+pub struct WikidataClient {
+    executor: Executor,
+    wikidata: Option<Url>,
+    /// Wikipedia origin pattern with `{lang}`.
+    wikipedia_pattern: String,
+    commons: Option<Url>,
 }
 
-impl<'h, H: HttpPort> WikidataClient<'h, H> {
-    /// Build a client against the given origins.
-    pub fn with_bases(
-        http: &'h H,
+impl WikidataClient {
+    /// The client sending through `executor` to the given origins.
+    #[must_use]
+    pub fn new(
+        executor: Executor,
         wikidata_base: &str,
         wikipedia_pattern: &str,
         commons_base: &str,
     ) -> Self {
         Self {
-            http,
-            wikidata_base: wikidata_base.to_owned(),
-            wikipedia_pattern: wikipedia_pattern.to_owned(),
-            commons_base: commons_base.to_owned(),
+            executor,
+            wikidata: parse_base(wikidata_base, SOURCE),
+            wikipedia_pattern: wikipedia_pattern.trim().to_owned(),
+            commons: parse_base(commons_base, SOURCE),
         }
     }
 
-    fn wikipedia_base(&self, lang: &str) -> String {
-        self.wikipedia_pattern.replace("{lang}", lang)
+    /// The Wikipedia origin for `lang`, or `None` for a code that is not a
+    /// language.
+    fn wikipedia(&self, lang: &str) -> Option<Url> {
+        if !is_language(lang) {
+            return None;
+        }
+        let base = Url::parse(&self.wikipedia_pattern.replace("{lang}", lang)).ok()?;
+        (matches!(base.scheme(), "http" | "https") && !base.cannot_be_a_base()).then_some(base)
+    }
+
+    /// One GET of `segments` under `base`, or `None` on a 404.
+    async fn get(
+        &self,
+        base: Option<&Url>,
+        segments: &[&str],
+        query: &[(&str, &str)],
+        priority: RequestPriority,
+    ) -> Result<Option<Reply>, ProviderError> {
+        let base = base.ok_or_else(|| unusable_base(SOURCE))?;
+        let request = Request::get(base, segments, query).map_err(|_| unusable_base(SOURCE))?;
+        match self.executor.send(request, priority).await {
+            Ok(reply) => Ok(Some(reply)),
+            Err(ProviderError::NotFound { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// Resolve a Wikidata id to its Wikipedia title in one language (v2
-    /// `_get_wikipedia_title_from_wikidata`).
+    /// `_get_wikipedia_title_from_wikidata`). An id that is not an item id
+    /// is never sent and reads as absence.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn wikipedia_title_from_wikidata(
         &self,
         wikidata_id: &str,
         lang: &str,
-    ) -> Result<Option<String>, FetchError> {
-        let reply = self
-            .http
-            .get(
-                &format!(
-                    "{}/wiki/Special:EntityData/{wikidata_id}.json",
-                    self.wikidata_base
-                ),
-                &[],
-            )
-            .await
-            .map_err(|_| FetchError::Transport)?;
-        if reply.status == 404 {
+        priority: RequestPriority,
+    ) -> Result<Option<String>, ProviderError> {
+        if !is_item_id(wikidata_id) {
             return Ok(None);
         }
-        if reply.status == 429 {
-            return Err(FetchError::RateLimited {
-                retry_after_secs: retry_after_secs(reply.retry_after.as_deref()).unwrap_or(60.0),
-            });
-        }
-        if reply.status != 200 {
-            return Err(FetchError::Transport);
-        }
-        let page: WireEntityResponse =
-            serde_json::from_slice(&reply.body).map_err(|_| FetchError::Unusable)?;
+        let document = format!("{wikidata_id}.json");
+        let Some(reply) = self
+            .get(
+                self.wikidata.as_ref(),
+                &["wiki", "Special:EntityData", document.as_str()],
+                &[],
+                priority,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        let page: WireEntityResponse = decode(&reply)?;
         Ok(sitelink_title(&page, wikidata_id, lang))
     }
 
     /// Fetch one plain-text intro extract (v2 `_fetch_wikipedia_extract`).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn wikipedia_extract(
         &self,
         page_title: &str,
         lang: &str,
-    ) -> Result<Option<String>, FetchError> {
-        let reply = self
-            .http
+        priority: RequestPriority,
+    ) -> Result<Option<String>, ProviderError> {
+        let Some(reply) = self
             .get(
-                &format!("{}/w/api.php", self.wikipedia_base(lang)),
+                self.wikipedia(lang).as_ref(),
+                &["w", "api.php"],
                 &[
                     ("action", "query"),
                     ("titles", page_title),
@@ -397,22 +437,13 @@ impl<'h, H: HttpPort> WikidataClient<'h, H> {
                     ("explaintext", "1"),
                     ("format", "json"),
                 ],
+                priority,
             )
-            .await
-            .map_err(|_| FetchError::Transport)?;
-        if reply.status == 404 {
+            .await?
+        else {
             return Ok(None);
-        }
-        if reply.status == 429 {
-            return Err(FetchError::RateLimited {
-                retry_after_secs: retry_after_secs(reply.retry_after.as_deref()).unwrap_or(60.0),
-            });
-        }
-        if reply.status != 200 {
-            return Err(FetchError::Transport);
-        }
-        let page: WireQueryResponse =
-            serde_json::from_slice(&reply.body).map_err(|_| FetchError::Unusable)?;
+        };
+        let page: WireQueryResponse = decode(&reply)?;
         Ok(select_extract(&page))
     }
 
@@ -420,35 +451,51 @@ impl<'h, H: HttpPort> WikidataClient<'h, H> {
     /// `get_wikipedia_extract` without its cache/dedup shell, which stays
     /// with wiring). A Wikidata URL hops through the entity's sitelink;
     /// anything else is read as a Wikipedia title directly.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of either call or of its answer.
     pub async fn get_bio_extract(
         &self,
         wiki_url: &str,
         lang: &str,
-    ) -> Result<Option<String>, FetchError> {
+        priority: RequestPriority,
+    ) -> Result<Option<String>, ProviderError> {
         let title = if let Some(id) = extract_wikidata_id(wiki_url) {
-            self.wikipedia_title_from_wikidata(&id, lang).await?
+            self.wikipedia_title_from_wikidata(&id, lang, priority)
+                .await?
         } else {
             extract_wikipedia_title(wiki_url)
         };
         let Some(title) = title else {
             return Ok(None);
         };
-        self.wikipedia_extract(&title, lang).await
+        self.wikipedia_extract(&title, lang, priority).await
     }
 
     /// The artist image behind a Wikidata id (v2
     /// `get_artist_image_from_wikidata` without its cache/dedup shell): the
     /// first P18 claim's filename resolves through Commons image info.
-    pub async fn get_artist_image(&self, wikidata_id: &str) -> Result<Option<String>, FetchError> {
-        let filename = self.claim_string(wikidata_id, PROPERTY_IMAGE).await?;
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of either call or of its answer.
+    pub async fn get_artist_image(
+        &self,
+        wikidata_id: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<String>, ProviderError> {
+        let filename = self
+            .claim_string(wikidata_id, PROPERTY_IMAGE, priority)
+            .await?;
         let Some(filename) = filename.filter(|name| !name.is_empty()) else {
             return Ok(None);
         };
         let titles = format!("File:{filename}");
-        let reply = self
-            .http
+        let Some(reply) = self
             .get(
-                &format!("{}/w/api.php", self.commons_base),
+                self.commons.as_ref(),
+                &["w", "api.php"],
                 &[
                     ("action", "query"),
                     ("titles", titles.as_str()),
@@ -457,33 +504,29 @@ impl<'h, H: HttpPort> WikidataClient<'h, H> {
                     ("iiurlwidth", COMMONS_THUMB_WIDTH),
                     ("format", "json"),
                 ],
+                priority,
             )
-            .await
-            .map_err(|_| FetchError::Transport)?;
-        if reply.status == 404 {
+            .await?
+        else {
             return Ok(None);
-        }
-        if reply.status == 429 {
-            return Err(FetchError::RateLimited {
-                retry_after_secs: retry_after_secs(reply.retry_after.as_deref()).unwrap_or(60.0),
-            });
-        }
-        if reply.status != 200 {
-            return Err(FetchError::Transport);
-        }
-        let page: WireCommonsResponse =
-            serde_json::from_slice(&reply.body).map_err(|_| FetchError::Unusable)?;
+        };
+        let page: WireCommonsResponse = decode(&reply)?;
         Ok(select_commons_url(&page))
     }
 
     /// The first claim's string value for one property (the P18 path behind
     /// `get_artist_image`).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn claim_string(
         &self,
         wikidata_id: &str,
         property: &str,
-    ) -> Result<Option<String>, FetchError> {
-        let page = self.fetch_claims(wikidata_id, property).await?;
+        priority: RequestPriority,
+    ) -> Result<Option<String>, ProviderError> {
+        let page = self.fetch_claims(wikidata_id, property, priority).await?;
         let Some(page) = page else {
             return Ok(None);
         };
@@ -497,46 +540,37 @@ impl<'h, H: HttpPort> WikidataClient<'h, H> {
             .map(str::to_owned))
     }
 
-    /// Fetch one property's claims, with 404 as absence.
+    /// Fetch one property's claims, with 404 as absence. An id that is not
+    /// an item id is never sent and reads as absence.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn fetch_claims(
         &self,
         wikidata_id: &str,
         property: &str,
-    ) -> Result<Option<WireClaimsResponse>, FetchError> {
-        let reply = self
-            .http
+        priority: RequestPriority,
+    ) -> Result<Option<WireClaimsResponse>, ProviderError> {
+        if !is_item_id(wikidata_id) {
+            return Ok(None);
+        }
+        let Some(reply) = self
             .get(
-                &format!("{}/w/api.php", self.wikidata_base),
+                self.wikidata.as_ref(),
+                &["w", "api.php"],
                 &[
                     ("action", "wbgetclaims"),
                     ("entity", wikidata_id),
                     ("property", property),
                     ("format", "json"),
                 ],
+                priority,
             )
-            .await
-            .map_err(|_| FetchError::Transport)?;
-        if reply.status == 404 {
+            .await?
+        else {
             return Ok(None);
-        }
-        if reply.status == 429 {
-            return Err(FetchError::RateLimited {
-                retry_after_secs: retry_after_secs(reply.retry_after.as_deref()).unwrap_or(60.0),
-            });
-        }
-        if reply.status != 200 {
-            return Err(FetchError::Transport);
-        }
-        serde_json::from_slice(&reply.body)
-            .map(Some)
-            .map_err(|_| FetchError::Unusable)
+        };
+        decode(&reply).map(Some)
     }
-}
-
-/// Honor a positive `Retry-After` delay; missing, unparsable, or
-/// non-positive values yield `None` so the caller falls back.
-fn retry_after_secs(value: Option<&str>) -> Option<f64> {
-    value
-        .and_then(|raw| raw.trim().parse::<f64>().ok())
-        .filter(|secs| secs.is_finite() && *secs > 0.0)
 }

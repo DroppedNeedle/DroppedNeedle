@@ -1,4 +1,5 @@
-//! The common provider-client surface and its contract test.
+//! The common provider-client surface and its contract test, and the
+//! helpers the clients on the executor share.
 //!
 //! Every provider client (MusicBrainz, ListenBrainz, AudioDB, AcoustID,
 //! Cover Art Archive, Last.fm) implements [`ProviderClient`]: a lowercase
@@ -45,42 +46,60 @@ use std::time::Duration;
 
 use thiserror::Error;
 
+use serde::de::DeserializeOwned;
+
 use super::{
     cache::{prefix_is_registered, prefixes_for},
-    error::{ProviderError, classify_status},
+    degradation::{IntegrationStatus, record_current},
+    error::{PayloadKind, ProviderError, classify_status},
+    executor::{Reply, Url, short},
     limiter::RatePolicy,
     rates::fixed_policy,
 };
 
-/// One scripted or live HTTP answer on the catalog GET port.
-#[derive(Debug, Clone)]
-pub struct HttpReply {
-    /// HTTP status code.
-    pub status: u16,
-    /// Raw response body.
-    pub body: Vec<u8>,
-    /// Parsed `Retry-After` header value, when the transport saw one.
-    pub retry_after: Option<String>,
+/// A provider's address as a base requests are built under: an http or
+/// https URL that can carry a path, or `None` (logged at build time), so
+/// every call refuses instead of sending somewhere unintended.
+pub(crate) fn parse_base(raw: &str, provider: &'static str) -> Option<Url> {
+    let base = Url::parse(raw.trim())
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https") && !url.cannot_be_a_base());
+    if base.is_none() {
+        tracing::error!(provider, "the provider address is not an http or https URL");
+    }
+    base
 }
 
-/// The transport broke down before producing a status code.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HttpFault;
+/// The refusal for a call whose provider address is unusable.
+pub(crate) fn unusable_base(provider: &'static str) -> ProviderError {
+    ProviderError::Invalid {
+        provider,
+        reason: "the provider address is not usable",
+    }
+}
 
-/// Smallest HTTP surface the catalog clients need: GET with query pairs.
-/// The six catalog clients share it (plus the reply and fault types), so
-/// one fake serves every catalog client and the production
-/// [`ReqwestGet`](super::adapters::ReqwestGet) implements it once. Anything
-/// before a status line (bad URL, DNS, connect, TLS, timeout, reset,
-/// truncated body) is an [`HttpFault`]; every answered status maps into the
-/// reply, `Retry-After` included, and the client decides what it means.
-pub trait HttpPort {
-    /// GET `url` with `query` pairs.
-    fn get(
-        &self,
-        url: &str,
-        query: &[(&str, &str)],
-    ) -> impl std::future::Future<Output = Result<HttpReply, HttpFault>> + Send;
+/// Decode an answer sent with a success status. A body that does not
+/// decode is noted for the request; the service answered, so it never
+/// counts as an outage.
+pub(crate) fn decode<T: DeserializeOwned>(reply: &Reply) -> Result<T, ProviderError> {
+    reply.json().inspect_err(note_payload)
+}
+
+/// An unusable answer body (too large, undecodable, or breaking the
+/// provider's contract, such as a missing identity), noted for the request.
+pub(crate) fn payload(provider: &'static str, kind: PayloadKind, message: &str) -> ProviderError {
+    let error = ProviderError::Payload {
+        provider,
+        kind,
+        message: short(message),
+    };
+    note_payload(&error);
+    error
+}
+
+fn note_payload(error: &ProviderError) {
+    tracing::debug!(provider = error.source(), %error, "provider answer unusable");
+    record_current(error.source(), IntegrationStatus::Error, true);
 }
 
 /// The surface every provider client implements.

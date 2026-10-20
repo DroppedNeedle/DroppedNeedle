@@ -6,35 +6,41 @@
 //! decode and are dropped, exactly as in v2. Each quirk below cites the v2
 //! code or note it came from.
 //!
-//! Transport rides the shared [`HttpPort`](super::client::HttpPort) GET port.
-//! Retry, rate limiting (25 requests/minute unauthenticated,
-//! no burst), response caching (6h), and request dedup stay with wiring;
-//! degradation recording stays with enrichment, which treats `Ok(None)` and
-//! `Ok(vec![])` as absence and `Err` as a degraded source.
+//! Requests go through the executor at the `discogs` row: 25 requests a
+//! minute unauthenticated, spaced 2.4 seconds with no burst. Response
+//! caching (6h) and dedup stay with wiring. `Ok(None)` and `Ok(vec![])`
+//! are absence; every failure is a typed [`ProviderError`].
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::time::Duration;
 
-use super::client::HttpPort;
+use crate::RequestPriority;
+use crate::client::{decode, parse_base, payload, unusable_base};
+use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
+use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
+use crate::limiter::RateLimiter;
 
 /// Live API origin (discogs_API_NOTES.md, verified 2026-07-21).
 pub const API_BASE: &str = "https://api.discogs.com";
 /// Origin for canonical release/master/artist/label links.
 pub const WEB_BASE: &str = "https://www.discogs.com";
+/// The provider name errors carry, and its rate row.
+pub const SOURCE: &str = "discogs";
+/// Largest answer read: a box set's tracklist can be long.
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-/// What can go wrong on a Discogs fetch.
-#[derive(Debug, Clone, PartialEq)]
-pub enum FetchError {
-    /// The wire failed or the upstream answered 5xx (retryable, degraded).
-    Transport,
-    /// The upstream answered 429; the caller backs off this long.
-    RateLimited {
-        /// Seconds to wait before retrying.
-        retry_after_secs: f64,
-    },
-    /// Any other status, an undecodable body, or an incomplete identity.
-    Unusable,
-}
+/// Discogs on the wire: the standard rules, and a 429 that names no wait
+/// rests a minute (v2 `_retry_after`).
+pub static SPEC: Spec = Spec {
+    source: SOURCE,
+    health_key: SOURCE,
+    timeout: Duration::from_secs(15),
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(60)),
+    retry_after_cap: MAX_RETRY_AFTER,
+    classify: standard_classify,
+};
 
 // ---------------------------------------------------------------------------
 // Wire models (default-tolerant; unknown fields are ignored by serde)
@@ -694,111 +700,111 @@ pub fn normalize_candidate(item: &WireSearchResult, fetched_at: f64) -> Option<R
     })
 }
 
-/// Parse `Retry-After` the way v2 does: a present value floors at one
-/// second, while a missing or unparsable value waits a full minute
-/// (v2 `_retry_after`).
-pub fn retry_after_secs(value: Option<&str>) -> f64 {
-    match value {
-        Some(raw) => raw.parse::<f64>().map(|secs| secs.max(1.0)).unwrap_or(60.0),
-        None => 60.0,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
 
 /// Discogs catalog client. The clock stays outside: callers pass
 /// `fetched_at` so wiring owns time, and caching/dedup wrap these calls.
-pub struct DiscogsClient<'h, H: HttpPort> {
-    /// Transport port (scripted fake in tests, real HTTP in wiring).
-    pub http: &'h H,
-    /// API origin.
-    pub base_url: String,
+/// Built once with the providers; cheap to clone.
+#[derive(Debug, Clone)]
+pub struct DiscogsClient {
+    executor: Executor,
+    base: Option<Url>,
 }
 
-impl<'h, H: HttpPort> DiscogsClient<'h, H> {
-    /// Build a client against the given API origin.
-    pub fn with_base(http: &'h H, base_url: &str) -> Self {
+impl DiscogsClient {
+    /// The client sending through `executor` to the API origin at
+    /// `base_url`.
+    #[must_use]
+    pub fn new(executor: Executor, base_url: &str) -> Self {
         Self {
-            http,
-            base_url: base_url.to_owned(),
+            executor,
+            base: parse_base(base_url, SOURCE),
         }
     }
 
-    /// Fetch one release. 404 is absence (`Ok(None)`); 429 stays actionable
-    /// as `RateLimited`; 5xx and transport faults surface as `Transport` so
-    /// wiring can retry; anything else is `Unusable` (v2 `_request`).
+    /// The limiter the client paces through, for a caller that will not
+    /// wait for a turn.
+    #[must_use]
+    pub fn limiter(&self) -> &RateLimiter {
+        self.executor.limiter()
+    }
+
+    /// One GET of `segments` under the origin, or `None` on a 404.
+    async fn get(
+        &self,
+        segments: &[&str],
+        query: &[(&str, &str)],
+        priority: RequestPriority,
+    ) -> Result<Option<Reply>, ProviderError> {
+        let base = self.base.as_ref().ok_or_else(|| unusable_base(SOURCE))?;
+        let request = Request::get(base, segments, query).map_err(|_| unusable_base(SOURCE))?;
+        match self.executor.send(request, priority).await {
+            Ok(reply) => Ok(Some(reply)),
+            Err(ProviderError::NotFound { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Fetch one release. A 404 is absence (`Ok(None)`); a release without
+    /// an identity is a payload failure (v2 `_request`).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn get_release(
         &self,
         release_id: &str,
         fetched_at: f64,
-    ) -> Result<Option<Release>, FetchError> {
-        let reply = self
-            .http
-            .get(&format!("{}/releases/{release_id}", self.base_url), &[])
-            .await
-            .map_err(|_| FetchError::Transport)?;
-        if reply.status == 404 {
+        priority: RequestPriority,
+    ) -> Result<Option<Release>, ProviderError> {
+        let Some(reply) = self.get(&["releases", release_id], &[], priority).await? else {
             return Ok(None);
-        }
-        if reply.status == 429 {
-            return Err(FetchError::RateLimited {
-                retry_after_secs: retry_after_secs(reply.retry_after.as_deref()),
-            });
-        }
-        if reply.status >= 500 {
-            return Err(FetchError::Transport);
-        }
-        if reply.status != 200 {
-            return Err(FetchError::Unusable);
-        }
-        let wire: WireRelease =
-            serde_json::from_slice(&reply.body).map_err(|_| FetchError::Unusable)?;
+        };
+        let wire: WireRelease = decode(&reply)?;
         normalize_release(&wire, fetched_at)
             .map(Some)
-            .map_err(|_| FetchError::Unusable)
+            .map_err(|IncompleteRelease| {
+                payload(
+                    SOURCE,
+                    PayloadKind::Contract,
+                    "release without an id or a title",
+                )
+            })
     }
 
     /// Search releases. The limit clamps to 1..=10 and 404 is an empty page
     /// (v2 `search_releases`).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn search_releases(
         &self,
         query: &str,
         limit: u32,
         fetched_at: f64,
-    ) -> Result<Vec<ReleaseCandidate>, FetchError> {
+        priority: RequestPriority,
+    ) -> Result<Vec<ReleaseCandidate>, ProviderError> {
         let bounded = limit.clamp(1, 10);
         let normalized = normalize_query(query);
         let per_page = bounded.to_string();
-        let reply = self
-            .http
+        let Some(reply) = self
             .get(
-                &format!("{}/database/search", self.base_url),
+                &["database", "search"],
                 &[
                     ("type", "release"),
                     ("q", normalized.as_str()),
                     ("per_page", per_page.as_str()),
                 ],
+                priority,
             )
-            .await
-            .map_err(|_| FetchError::Transport)?;
-        if reply.status == 404 {
+            .await?
+        else {
             return Ok(Vec::new());
-        }
-        if reply.status == 429 {
-            return Err(FetchError::RateLimited {
-                retry_after_secs: retry_after_secs(reply.retry_after.as_deref()),
-            });
-        }
-        if reply.status >= 500 {
-            return Err(FetchError::Transport);
-        }
-        if reply.status != 200 {
-            return Err(FetchError::Unusable);
-        }
-        let wire: WireSearchResponse =
-            serde_json::from_slice(&reply.body).map_err(|_| FetchError::Unusable)?;
+        };
+        let wire: WireSearchResponse = decode(&reply)?;
         Ok(wire
             .results
             .iter()

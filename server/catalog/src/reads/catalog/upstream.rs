@@ -19,11 +19,13 @@ use droppedneedle_kernel::runtime_config::sections::{
 };
 use droppedneedle_kernel::runtime_config::{ConfigStore, Listed, Live};
 use droppedneedle_library::edition_prefs::LivePreferences;
-use droppedneedle_providers::adapters::ReqwestGet;
 use droppedneedle_providers::audiodb::AudioDbClient;
+use droppedneedle_providers::itunes::ITunesClient;
 use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
+use droppedneedle_providers::lrclib::LrclibClient;
 use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzView};
+use droppedneedle_providers::wikidata::WikidataClient;
 use droppedneedle_providers::{ProviderCache, ProviderError, Providers, RequestPriority};
 
 /// The settings the catalog reads, once per call.
@@ -135,18 +137,6 @@ impl CatalogSettings for LiveCatalogSettings {
 /// everything here at a loopback fixture server.
 #[derive(Debug, Clone)]
 pub struct Endpoints {
-    /// Wikidata origin.
-    pub wikidata: String,
-    /// Wikipedia origin pattern with `{lang}`.
-    pub wikipedia: String,
-    /// Wikimedia Commons origin.
-    pub commons: String,
-    /// iTunes Search endpoint.
-    pub itunes: String,
-    /// Deezer API origin.
-    pub deezer: String,
-    /// LRCLIB origin.
-    pub lrclib: String,
     /// The releases list behind the version check.
     pub github_releases: String,
     /// YouTube Data API host.
@@ -218,7 +208,6 @@ impl CatalogAudioDb {
 /// Everything needed to reach the catalog's upstreams.
 #[derive(Clone)]
 pub struct Upstream {
-    http: reqwest::Client,
     providers: Arc<Providers>,
     settings: Arc<dyn CatalogSettings>,
     users: UsersDeps,
@@ -275,29 +264,15 @@ pub async fn user_lastfm(users: &UsersDeps, user_id: &str) -> UserLastFm {
 }
 
 impl Upstream {
-    /// Assemble from the shared HTTP clients and provider deps, reaching
-    /// the upstreams at `endpoints`.
+    /// Assemble from the shared provider deps, reaching the upstreams not
+    /// yet among them at `endpoints`.
     pub fn new(
-        http: &droppedneedle_kernel::http_client::HttpClientFactory,
-        providers: Arc<Providers>,
-        settings: Arc<dyn CatalogSettings>,
-        users: UsersDeps,
-        endpoints: Endpoints,
-    ) -> Self {
-        Self::from_clients(http.shared().clone(), providers, settings, users, endpoints)
-    }
-
-    /// Assemble from the factory's shared client when only the client is
-    /// at hand (the discover wiring receives it, not the factory).
-    pub fn from_clients(
-        http: reqwest::Client,
         providers: Arc<Providers>,
         settings: Arc<dyn CatalogSettings>,
         users: UsersDeps,
         endpoints: Endpoints,
     ) -> Self {
         Self {
-            http,
             providers,
             settings,
             users,
@@ -384,9 +359,19 @@ impl Upstream {
         })
     }
 
-    /// The plain GET transport behind the Wikidata and iTunes clients.
-    pub fn http_get(&self) -> ReqwestGet {
-        ReqwestGet::new(self.http.clone())
+    /// The Wikidata, Wikipedia and Commons client.
+    pub fn wikidata(&self) -> &WikidataClient {
+        &self.providers.wikidata
+    }
+
+    /// The iTunes Search client behind purchase links.
+    pub fn itunes(&self) -> &ITunesClient {
+        &self.providers.itunes
+    }
+
+    /// The LRCLIB lyrics client.
+    pub fn lrclib(&self) -> &LrclibClient {
+        &self.providers.lrclib
     }
 
     /// The users store (roles, Last.fm links).

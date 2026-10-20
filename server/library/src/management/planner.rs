@@ -524,6 +524,7 @@ fn plan_file(
         &ctx.pinned.profile.enrichment.lyrics,
         release,
         release_track,
+        extras.automatic,
     );
     let tag_plan = profile::plan_tags(
         ctx.pinned,

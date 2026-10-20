@@ -369,6 +369,7 @@ fn providers_over(wire: &Arc<ScriptedWire>) -> Providers {
             lastfm: lastfm::DEFAULT_BASE_URL.to_owned(),
             audiodb: audiodb::DEFAULT_BASE_URL.to_owned(),
             acoustid: acoustid::DEFAULT_BASE_URL.to_owned(),
+            ..ProviderEndpoints::closed()
         },
     )
 }

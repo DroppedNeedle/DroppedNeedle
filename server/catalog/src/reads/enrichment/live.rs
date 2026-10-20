@@ -14,7 +14,6 @@ use droppedneedle_kernel::runtime_config::secret_sections::ListenBrainzConnectio
 use droppedneedle_kernel::runtime_config::sections::LyricsSettings;
 use droppedneedle_providers::{
     Providers, RequestPriority,
-    adapters::ReqwestGet,
     degradation::IntegrationStatus as CoreStatus,
     error::ProviderError as CoreError,
     listenbrainz::{ListenBrainzClient, ListenBrainzCredentials},
@@ -173,26 +172,21 @@ impl enrich::ListenBrainzClient for LiveListenBrainz {
     }
 }
 
-/// Live LRCLIB lyrics behind the enrichment role.
+/// Live LRCLIB lyrics behind the enrichment role, at user priority: a
+/// person opened the lyrics.
 ///
-/// The client borrows its transport, so this adapter owns the [`ReqwestGet`]
-/// and builds the client per call. Queries without a usable duration skip
-/// the wire and read as not-found: duration is a required match key on
-/// `/api/get`, so sending a fabricated zero would invent a query that can
-/// never match the track.
+/// Queries without a usable duration skip the wire and read as not-found:
+/// duration is a required match key on `/api/get`, so sending a fabricated
+/// zero would invent a query that can never match the track.
 #[derive(Debug, Clone)]
 pub struct LiveLrclib {
-    transport: ReqwestGet,
-    base_url: String,
+    client: LrclibClient,
 }
 
 impl LiveLrclib {
-    /// Lyrics reads against the given origin.
-    pub fn with_base(transport: ReqwestGet, base_url: &str) -> Self {
-        Self {
-            transport,
-            base_url: base_url.to_owned(),
-        }
+    /// Lyrics reads through `client`.
+    pub fn new(client: LrclibClient) -> Self {
+        Self { client }
     }
 }
 
@@ -221,9 +215,15 @@ impl enrich::LyricsClient for LiveLrclib {
                     synced: None,
                 });
             }
-            let client = LrclibClient::with_base(&self.transport, &self.base_url);
-            match client
-                .get_exact_lyrics(&query.title, &query.artist, album, duration)
+            match self
+                .client
+                .get_exact_lyrics(
+                    &query.title,
+                    &query.artist,
+                    album,
+                    duration,
+                    RequestPriority::UserInitiated,
+                )
                 .await
             {
                 Ok(found) => {
@@ -237,25 +237,9 @@ impl enrich::LyricsClient for LiveLrclib {
                         synced,
                     })
                 }
-                Err(error) => Err(enrich::ProviderError::new("lrclib", lrclib_cause(&error))),
+                Err(error) => Err(error.into()),
             }
         })
-    }
-}
-
-/// Log-only cause for an LRCLIB leg failure. The wire never sees this; the
-/// response carries the fixed degradation note.
-fn lrclib_cause(error: &droppedneedle_providers::lrclib::FetchError) -> String {
-    match error {
-        droppedneedle_providers::lrclib::FetchError::Transport => {
-            "lrclib transport failure".to_owned()
-        }
-        droppedneedle_providers::lrclib::FetchError::RateLimited { retry_after_secs } => {
-            format!("lrclib rate limited; retry in {retry_after_secs:.1}s")
-        }
-        droppedneedle_providers::lrclib::FetchError::Unusable => {
-            "lrclib answer unusable".to_owned()
-        }
     }
 }
 
@@ -464,26 +448,21 @@ impl enrich::LyricsClient for UnconfiguredLyrics {
     }
 }
 
-/// Build the production enrichment pair over the shared HTTP client and
-/// provider deps. ListenBrainz popularity serves only while the
+/// Build the production enrichment pair over the provider deps.
+/// ListenBrainz popularity serves only while the
 /// ListenBrainz settings are switched on, and lyrics only while the lyrics
 /// setting is, both read per call;
 /// Last.fm stays unconfigured (per-user credentials), the events feed stays
 /// unconfigured (no persistence), and MusicBrainz identity stays
 /// unconfigured (no route serves it).
 pub fn production_enrichment(
-    http: &reqwest::Client,
     providers: &Arc<Providers>,
-    endpoints: &crate::reads::catalog::upstream::Endpoints,
     listenbrainz: Live<ListenBrainzConnection>,
     lyrics: Live<LyricsSettings>,
 ) -> ProductionEnrichment {
     let lb: Arc<dyn enrich::ListenBrainzClient> =
         Arc::new(LiveListenBrainz::new(providers.listenbrainz.clone()).with_settings(listenbrainz));
-    let live_lyrics = Arc::new(LiveLrclib::with_base(
-        ReqwestGet::new(http.clone()),
-        &endpoints.lrclib,
-    ));
+    let live_lyrics = Arc::new(LiveLrclib::new(providers.lrclib.clone()));
     let lyrics_role: Arc<dyn enrich::LyricsClient> =
         Arc::new(SwitchedLyrics::new(live_lyrics.clone(), lyrics.clone()));
     let aggregator = enrich::EnrichmentAggregator::new(
@@ -527,7 +506,14 @@ mod tests {
                 listenbrainz: listenbrainz.to_owned(),
                 lastfm: closed.clone(),
                 audiodb: closed.clone(),
-                acoustid: closed,
+                acoustid: closed.clone(),
+                discogs: closed.clone(),
+                itunes: closed.clone(),
+                deezer: closed.clone(),
+                lrclib: closed.clone(),
+                wikidata: closed.clone(),
+                wikipedia: closed.clone(),
+                commons: closed,
             },
         ))
     }
@@ -593,10 +579,9 @@ mod tests {
     async fn live_lrclib_skips_queries_without_a_match_key() {
         use crate::reads::enrichment::{LyricsClient as _, LyricsQuery};
 
-        let transport = ReqwestGet::shared(&HttpClientFactory::new().unwrap());
         // Unroutable origin: any wire attempt fails, so Ok(not-found)
         // proves the skip.
-        let role = LiveLrclib::with_base(transport, "http://127.0.0.1:9/");
+        let role = LiveLrclib::new(closed_providers().lrclib.clone());
         for query in [
             LyricsQuery {
                 artist: "Artist".to_owned(),
@@ -696,20 +681,8 @@ mod tests {
         };
         use crate::reads::search::ports::EnrichmentPort as _;
 
-        let http = HttpClientFactory::new().unwrap();
-        let providers = closed_providers();
         // Nothing listens on the discard port.
-        let closed = || "http://127.0.0.1:9".to_owned();
-        let endpoints = crate::reads::catalog::upstream::Endpoints {
-            wikidata: closed(),
-            wikipedia: closed(),
-            commons: closed(),
-            itunes: closed(),
-            deezer: closed(),
-            lrclib: closed(),
-            github_releases: closed(),
-            youtube: closed(),
-        };
+        let providers = closed_providers();
         let dir = std::env::temp_dir().join(format!("dn-enrich-off-{}", std::process::id()));
         let crypto = droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]);
         let store =
@@ -718,13 +691,7 @@ mod tests {
         store
             .save_blocking(LyricsSettings { enabled: false })
             .unwrap();
-        let pair = production_enrichment(
-            http.shared(),
-            &providers,
-            &endpoints,
-            store.live(),
-            store.live(),
-        );
+        let pair = production_enrichment(&providers, store.live(), store.live());
         let _ = std::fs::remove_dir_all(&dir);
         let response = pair
             .search
@@ -752,11 +719,7 @@ mod tests {
     #[tokio::test]
     async fn switched_lyrics_follow_the_setting_per_call() {
         use enrich::LyricsClient;
-        let http = HttpClientFactory::new().unwrap();
-        let live = Arc::new(LiveLrclib::with_base(
-            ReqwestGet::new(http.shared().clone()),
-            "http://127.0.0.1:9",
-        ));
+        let live = Arc::new(LiveLrclib::new(closed_providers().lrclib.clone()));
         let dir = std::env::temp_dir().join(format!("dn-lyrics-switch-{}", std::process::id()));
         let crypto = droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32]);
         let store =

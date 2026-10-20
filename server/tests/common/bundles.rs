@@ -92,7 +92,6 @@ pub fn reads_at(
 ) -> ReadsSetup {
     let catalog = Catalog::new(
         Upstream::new(
-            &platform.http,
             Arc::new(Providers::unpaced(Arc::new(
                 droppedneedle_providers::executor::ScriptedWire::new(),
             ))),

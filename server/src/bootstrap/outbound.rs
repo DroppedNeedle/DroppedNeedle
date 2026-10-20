@@ -148,12 +148,6 @@ impl Outbound {
     /// The addresses the catalog and discovery reads use.
     pub fn catalog(&self) -> droppedneedle_catalog::reads::catalog::upstream::Endpoints {
         droppedneedle_catalog::reads::catalog::upstream::Endpoints {
-            wikidata: self.wikidata.clone(),
-            wikipedia: self.wikipedia.clone(),
-            commons: self.commons.clone(),
-            itunes: self.itunes.clone(),
-            deezer: self.deezer.clone(),
-            lrclib: self.lrclib.clone(),
             github_releases: self.github_releases.clone(),
             youtube: self.youtube.clone(),
         }
@@ -169,6 +163,13 @@ impl Outbound {
             lastfm: self.lastfm.clone(),
             audiodb: self.audiodb.clone(),
             acoustid: self.acoustid.clone(),
+            discogs: self.discogs.clone(),
+            itunes: self.itunes.clone(),
+            deezer: self.deezer.clone(),
+            lrclib: self.lrclib.clone(),
+            wikidata: self.wikidata.clone(),
+            wikipedia: self.wikipedia.clone(),
+            commons: self.commons.clone(),
         }
     }
 
@@ -197,10 +198,9 @@ impl Outbound {
         }
     }
 
-    /// The addresses and provider ports the library uses.
+    /// The provider ports the library uses.
     pub fn library(&self) -> droppedneedle_library::wiring::Endpoints {
         droppedneedle_library::wiring::Endpoints {
-            discogs: self.discogs.clone(),
             identify_providers: self.identify_providers.get(),
             contribution_providers: self.contribution_providers.get(),
         }

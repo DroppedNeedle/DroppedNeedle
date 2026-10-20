@@ -77,7 +77,11 @@ struct Fixtures {
 
 impl Fixtures {
     async fn start() -> Self {
-        let routes = Arc::new(routes());
+        Self::start_with(routes()).await
+    }
+
+    async fn start_with(routes: Vec<Route>) -> Self {
+        let routes = Arc::new(routes);
         let hits: Arc<Mutex<HashMap<String, usize>>> = Arc::default();
         let counter = hits.clone();
         let app = axum::Router::new().fallback(move |uri: Uri| {
@@ -126,15 +130,28 @@ impl Fixtures {
 
     fn endpoints(&self) -> Endpoints {
         Endpoints {
-            wikidata: format!("{}/wikidata", self.base),
-            wikipedia: format!("{}/wikipedia-{{lang}}", self.base),
-            commons: format!("{}/commons", self.base),
-            itunes: format!("{}/itunes/search", self.base),
-            deezer: format!("{}/deezer", self.base),
-            lrclib: format!("{}/lrclib", self.base),
             github_releases: format!("{}/releases", self.base),
             youtube: format!("{}/youtube", self.base),
         }
+    }
+
+    /// The providers with every catalog provider on this server.
+    fn providers(&self, http: &droppedneedle_kernel::http_client::HttpClientFactory) -> Providers {
+        Providers::unpaced_at(
+            Arc::new(droppedneedle_providers::ReqwestWire::new(http)),
+            droppedneedle_providers::ProviderEndpoints {
+                listenbrainz: format!("{}/lb", self.base),
+                lastfm: format!("{}/lastfm/2.0/", self.base),
+                audiodb: format!("{}/audiodb", self.base),
+                wikidata: format!("{}/wikidata", self.base),
+                wikipedia: format!("{}/wikipedia-{{lang}}", self.base),
+                commons: format!("{}/commons", self.base),
+                itunes: format!("{}/itunes/search", self.base),
+                deezer: format!("{}/deezer", self.base),
+                lrclib: format!("{}/lrclib", self.base),
+                ..droppedneedle_providers::ProviderEndpoints::closed()
+            },
+        )
     }
 }
 
@@ -367,16 +384,7 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRi
         .unwrap();
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
     let upstream = Upstream::new(
-        &http,
-        Arc::new(Providers::unpaced_at(
-            Arc::new(droppedneedle_providers::ReqwestWire::new(&http)),
-            droppedneedle_providers::ProviderEndpoints {
-                listenbrainz: format!("{}/lb", fixtures.base),
-                lastfm: format!("{}/lastfm/2.0/", fixtures.base),
-                audiodb: format!("{}/audiodb", fixtures.base),
-                ..droppedneedle_providers::ProviderEndpoints::closed()
-            },
-        )),
+        Arc::new(fixtures.providers(&http)),
         Arc::new(TestSettings { mb_url }),
         rig.deps.clone(),
         fixtures.endpoints(),
@@ -841,9 +849,7 @@ async fn unified_search_joins_musicbrainz_with_the_library() {
 async fn lastfm_reads_fall_back_to_the_instance_key() {
     let rig = AuthRig::new("reads-catalog").await;
     let switch = Arc::new(crate::common::auth_fakes::InstanceKeySwitch::default());
-    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
     let upstream = Upstream::new(
-        &http,
         Arc::new(Providers::unpaced(Arc::new(
             droppedneedle_providers::executor::ScriptedWire::new(),
         ))),
@@ -907,5 +913,71 @@ async fn auth_matrix_rejects_anonymous_callers_and_bad_ids() {
         fixtures.hits("/mb/ws/2/artist/radiohead"),
         0,
         "bad ids never reach MusicBrainz"
+    );
+}
+
+/// A portrait lookup that failed is not "no image": with TheAudioDB
+/// holding no thumbnail and Commons down, the artist's image is asked
+/// again after the short outage wait, never held blank for hours.
+#[tokio::test]
+async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
+    use droppedneedle_catalog::reads::catalog::precache::CatalogArtistImages;
+    use droppedneedle_catalog::reads::platform::artwork::{
+        ArtworkService, OUTAGE_TTL_SECS,
+        cache::{ArtworkCache, KeyEntry, unix_now},
+        local::LocalArtwork,
+    };
+
+    let mut routes = routes();
+    for route in &mut routes {
+        if route.path == "/audiodb/123/artist-mb.php" {
+            route.body = r#"{"artists": null}"#.to_owned();
+        }
+        if route.path == "/commons/w/api.php" {
+            route.status = 503;
+        }
+    }
+    let fixtures = Fixtures::start_with(routes).await;
+    let (pool, dir) = crate::common::migrated_pool("reads-catalog-portrait").await;
+    let rig = AuthRig::new("reads-catalog-portrait").await;
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
+    let providers = Arc::new(fixtures.providers(&http));
+    let catalog = Catalog::new(
+        Upstream::new(
+            providers.clone(),
+            Arc::new(TestSettings {
+                mb_url: format!("{}/mb/ws/2", fixtures.base),
+            }),
+            rig.deps.clone(),
+            fixtures.endpoints(),
+        ),
+        LocalCatalog::new(pool.clone()),
+    );
+    let config = crate::common::config_store(&dir.join("settings"));
+    let artwork = ArtworkService::new(
+        ArtworkCache::new(dir.join("covers"), 1024 * 1024),
+        LocalArtwork::new(pool),
+        None,
+        config.live(),
+    )
+    .with_images(Arc::new(providers.images.clone()))
+    .with_artist_source(Arc::new(CatalogArtistImages(catalog)));
+
+    let before = unix_now();
+    assert!(
+        !artwork.warm_artist_image(ARTIST).await,
+        "no image to cache"
+    );
+    assert!(
+        fixtures.hits("/commons/w/api.php") > 0,
+        "the portrait was asked for"
+    );
+    let cache = ArtworkCache::new(dir.join("covers"), 1024 * 1024);
+    let Some(KeyEntry::Miss { until }) = cache.key(&format!("artist:{ARTIST}")).await else {
+        panic!("a miss is remembered");
+    };
+    assert!(
+        (before + OUTAGE_TTL_SECS..=unix_now() + OUTAGE_TTL_SECS).contains(&until),
+        "remembered for the outage wait, until {until} (asked at {before})"
     );
 }

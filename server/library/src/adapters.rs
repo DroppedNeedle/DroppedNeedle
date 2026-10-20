@@ -31,7 +31,6 @@ use super::publish::PublishError;
 use super::publish::planner::SpaceProbe;
 use super::scan::seams::{ScannedTags, TagReadError, TagReader};
 use droppedneedle_providers::ProviderError;
-use droppedneedle_providers::adapters::ReqwestGet;
 use droppedneedle_providers::discogs;
 use droppedneedle_providers::musicbrainz::models::{
     ArtistCreditName, LabelInfo, Medium as MbMedium, ReleaseGroupRef,
@@ -785,131 +784,58 @@ impl MusicBrainzContrib for LiveMusicBrainzContrib {
     }
 }
 
-/// Discogs allows 25 unauthenticated requests a minute with no burst
-/// (`x-discogs-ratelimit: 25`, v2 API notes), so calls are spaced by this.
-const DISCOGS_SPACING: Duration = Duration::from_millis(2_400);
 /// v2 kept Discogs answers for six hours, the display limit its terms set.
 const DISCOGS_CACHE: Duration = Duration::from_secs(6 * 60 * 60);
-/// v2 retried a failed Discogs call up to three times, waiting 1-4s.
-const DISCOGS_ATTEMPTS: u32 = 3;
-/// The longest Retry-After a user call waits out in place; a longer one
-/// fails the call and holds every call until it passes.
-const DISCOGS_MAX_INLINE_WAIT: Duration = Duration::from_secs(4);
 
-/// Live Discogs reads for contributions over the shared catalog GET port:
-/// paced at 25 a minute, retried briefly, cached six hours. Only
+/// Live Discogs reads for contributions over the one Discogs client, paced
+/// at its rate row (25 a minute, no burst) and cached six hours. Only
 /// contribution metadata crosses this boundary (see `providers::discogs`).
-/// An outage surfaces as "Discogs is unavailable" with a retry hint
-/// rather than v2's silent "not found".
+/// An outage surfaces as "Discogs is unavailable" rather than v2's silent
+/// "not found".
 ///
-/// A 429's Retry-After is honoured: nothing goes to Discogs before it
-/// passes. Display reads (the `PrefetchVisible` lane) make one attempt and
-/// never wait, so a slow Discogs cannot hold up the contribution page.
+/// Every caller is a person waiting, so calls go at user priority. A
+/// display read (the `PrefetchVisible` lane) never waits for a turn: when
+/// the bucket has no request free right now, or is resting after a 429, it
+/// answers "unavailable" at once so a slow Discogs cannot hold up the
+/// contribution page.
 pub struct LiveDiscogsContrib {
-    http: ReqwestGet,
-    base_url: String,
-    next_slot: tokio::sync::Mutex<Instant>,
-    blocked_until: Mutex<Option<Instant>>,
+    client: discogs::DiscogsClient,
     releases: TtlCache<Option<DiscogsRelease>>,
     searches: TtlCache<Vec<DiscogsReleaseCandidate>>,
 }
 
 impl LiveDiscogsContrib {
-    /// Read Discogs at `base_url` through `http`.
-    pub fn new(http: ReqwestGet, base_url: &str) -> Self {
+    /// Read Discogs through `client`.
+    pub fn new(client: discogs::DiscogsClient) -> Self {
         Self {
-            http,
-            base_url: base_url.to_owned(),
-            next_slot: tokio::sync::Mutex::new(Instant::now()),
-            blocked_until: Mutex::new(None),
+            client,
             releases: TtlCache::new(DISCOGS_CACHE),
             searches: TtlCache::new(DISCOGS_CACHE),
         }
     }
 
-    /// Wait for this caller's turn under the 25-a-minute budget.
-    async fn pace(&self) {
-        let mut next = self.next_slot.lock().await;
-        let now = Instant::now();
-        if *next > now {
-            tokio::time::sleep(*next - now).await;
+    /// The priority to send at, or "unavailable" when a display read would
+    /// have to wait.
+    fn turn(&self, priority: RequestPriority) -> Result<RequestPriority, ContribError> {
+        if priority == RequestPriority::PrefetchVisible
+            && !self.client.limiter().retry_after(1).is_zero()
+        {
+            return Err(ContribError::DiscogsUnavailable);
         }
-        *next = Instant::now() + DISCOGS_SPACING;
+        Ok(RequestPriority::UserInitiated)
     }
+}
 
-    /// The time a Retry-After told us to wait until, while it holds.
-    fn blocked(&self) -> Option<Instant> {
-        let guard = self
-            .blocked_until
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.filter(|until| *until > Instant::now())
-    }
-
-    fn block_for(&self, wait: Duration) {
-        *self
-            .blocked_until
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Instant::now() + wait);
-    }
-
-    /// Run one paced call with v2's short retry on outages and 429s. The
-    /// display lane gets one attempt and no waiting.
-    async fn with_retry<T, F, Fut>(
-        &self,
-        priority: RequestPriority,
-        call: F,
-    ) -> Result<T, ContribError>
-    where
-        F: Fn() -> Fut,
-        Fut: std::future::Future<Output = Result<T, discogs::FetchError>>,
-    {
-        let display = priority == RequestPriority::PrefetchVisible;
-        let attempts = if display { 1 } else { DISCOGS_ATTEMPTS };
-        let mut attempt = 0;
-        loop {
-            if let Some(until) = self.blocked() {
-                let wait = until.saturating_duration_since(Instant::now());
-                if display || wait > DISCOGS_MAX_INLINE_WAIT {
-                    return Err(ContribError::DiscogsUnavailable);
-                }
-                tokio::time::sleep(wait).await;
-            }
-            if display {
-                // Never queue behind the pacer on the display lane.
-                match self.next_slot.try_lock() {
-                    Ok(mut next) if *next <= Instant::now() => {
-                        *next = Instant::now() + DISCOGS_SPACING;
-                    }
-                    _ => return Err(ContribError::DiscogsUnavailable),
-                }
-            } else {
-                self.pace().await;
-            }
-            let wait = match call().await {
-                Ok(value) => return Ok(value),
-                Err(discogs::FetchError::Unusable) => {
-                    tracing::warn!("Discogs answered with data it could not use");
-                    return Err(ContribError::DiscogsUnusable);
-                }
-                Err(discogs::FetchError::RateLimited { retry_after_secs }) => {
-                    let wait = Duration::from_secs_f64(retry_after_secs.max(1.0));
-                    self.block_for(wait);
-                    if wait > DISCOGS_MAX_INLINE_WAIT {
-                        tracing::warn!(?wait, "Discogs asked us to wait; holding calls until then");
-                        return Err(ContribError::DiscogsUnavailable);
-                    }
-                    wait
-                }
-                Err(discogs::FetchError::Transport) => Duration::from_secs(1 << attempt.min(2)),
-            };
-            attempt += 1;
-            if attempt >= attempts {
-                tracing::warn!(attempts, "Discogs unavailable");
-                return Err(ContribError::DiscogsUnavailable);
-            }
-            tokio::time::sleep(wait).await;
-        }
+/// What a failed Discogs call means for a contribution: an outage or a
+/// rate limit is "unavailable", anything else an answer that cannot be
+/// used. A 404 never reaches here: the client reads it as absence.
+fn discogs_error(error: ProviderError) -> ContribError {
+    if error.is_retriable() {
+        tracing::warn!(%error, "Discogs unavailable");
+        ContribError::DiscogsUnavailable
+    } else {
+        tracing::warn!(%error, "Discogs answered with data it could not use");
+        ContribError::DiscogsUnusable
     }
 }
 
@@ -1001,12 +927,10 @@ impl DiscogsContrib for LiveDiscogsContrib {
                 return Ok(hit);
             }
             let candidates = self
-                .with_retry(priority, || async {
-                    discogs::DiscogsClient::with_base(&self.http, &self.base_url)
-                        .search_releases(query, bounded, now_seconds())
-                        .await
-                })
-                .await?;
+                .client
+                .search_releases(query, bounded, now_seconds(), self.turn(priority)?)
+                .await
+                .map_err(discogs_error)?;
             let candidates: Vec<DiscogsReleaseCandidate> = candidates
                 .into_iter()
                 .map(|candidate| DiscogsReleaseCandidate {
@@ -1039,12 +963,10 @@ impl DiscogsContrib for LiveDiscogsContrib {
                 return Ok(hit);
             }
             let release = self
-                .with_retry(priority, || async {
-                    discogs::DiscogsClient::with_base(&self.http, &self.base_url)
-                        .get_release(release_id, now_seconds())
-                        .await
-                })
-                .await?
+                .client
+                .get_release(release_id, now_seconds(), self.turn(priority)?)
+                .await
+                .map_err(discogs_error)?
                 .map(contrib_release);
             self.releases.put(release_id.to_owned(), release.clone());
             Ok(release)
