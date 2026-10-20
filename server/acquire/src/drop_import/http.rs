@@ -12,8 +12,11 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{DefaultBodyLimit, Multipart, Path, State, multipart::MultipartRejection},
-    http::StatusCode,
+    extract::{
+        DefaultBodyLimit, Multipart, Path, State,
+        multipart::{MultipartError, MultipartRejection},
+    },
+    http::{HeaderMap, StatusCode, header},
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt as _;
@@ -23,7 +26,7 @@ use super::store::{ItemRecord, JobRecord};
 use super::{DropError, DropImports, MAX_FILES_PER_DROP, Viewer, extract};
 use crate::requests::error::RequestsError;
 use droppedneedle_auth::Curator;
-use droppedneedle_kernel::error::ApiError;
+use droppedneedle_kernel::error::{ApiError, PAYLOAD_TOO_LARGE};
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
 use droppedneedle_kernel::mount::{Routes, routes};
 
@@ -147,6 +150,24 @@ fn invalid(message: impl Into<String>) -> ApiError {
     })
 }
 
+fn too_large() -> ApiError {
+    ApiError::new(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        PAYLOAD_TOO_LARGE,
+        "Uploads are limited to 8 GB.",
+    )
+}
+
+/// A body that went over the limit is 413; anything else that stops the
+/// form part way is a cut-off or malformed upload.
+fn unreadable(error: MultipartError) -> ApiError {
+    if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        too_large()
+    } else {
+        invalid("The upload was cut off or malformed.")
+    }
+}
+
 /// Item ids are numbers; anything else names no item. Parsed after the
 /// role check, so a plain user always sees 403.
 fn item_number(raw: &str) -> Result<i64, ApiError> {
@@ -162,8 +183,8 @@ fn viewer(curator: &Curator) -> Viewer {
 }
 
 /// Upload files to import: audio files or `.zip` archives, at most 25
-/// per drop. Returns the new job; it keeps working in the background.
-/// `POST /api/v3/import/uploads`.
+/// per drop and 8 GB in all. Returns the new job; it keeps working in the
+/// background. `POST /api/v3/import/uploads`.
 #[utoipa::path(
     post,
     tag = "imports",
@@ -174,13 +195,25 @@ fn viewer(curator: &Curator) -> Viewer {
 pub async fn upload_handler(
     State(service): State<Arc<DropImports>>,
     curator: Curator,
+    headers: HeaderMap,
     multipart: Result<Multipart, MultipartRejection>,
 ) -> Result<(StatusCode, Json<DropImportJobResponse>), ApiError> {
     let viewer = viewer(&curator);
+    // Refused before anything is written when the sender says up front
+    // that the body is over the limit.
+    let declared = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    if declared.is_some_and(|length| length > MAX_UPLOAD_BYTES as u64) {
+        return Err(too_large());
+    }
     let multipart = multipart.map_err(|_| invalid("Send the files as a multipart form."))?;
+    tracing::info!(bytes = declared, "drop upload started");
     let incoming = service.incoming_dir();
     let mut staged = Incoming::default();
-    receive(multipart, &incoming, &mut staged.files).await?;
+    let bytes = receive(multipart, &incoming, &mut staged.files).await?;
+    let files = staged.files.len();
     let job = service
         .create_job(
             &viewer.user_id,
@@ -190,6 +223,7 @@ pub async fn upload_handler(
         .await?;
     // The job owns the files now.
     staged.files.clear();
+    tracing::info!(job_id = %job.id, files, bytes, "drop upload received");
     Ok((StatusCode::ACCEPTED, Json(job.into())))
 }
 
@@ -227,19 +261,17 @@ impl Drop for Incoming {
 
 /// Stream every `files` part to its own file under `incoming`, checking
 /// names and the count before anything lands on disk for that part.
+/// Answers the bytes written.
 async fn receive(
     mut multipart: Multipart,
     incoming: &std::path::Path,
     staged: &mut Vec<(String, PathBuf)>,
-) -> Result<(), ApiError> {
+) -> Result<u64, ApiError> {
+    let mut bytes = 0u64;
     tokio::fs::create_dir_all(incoming)
         .await
         .map_err(|error| ApiError::from(RequestsError::internal(&error)))?;
-    while let Some(mut field) = multipart
-        .next_field()
-        .await
-        .map_err(|_| invalid("The upload was cut off or malformed."))?
-    {
+    while let Some(mut field) = multipart.next_field().await.map_err(unreadable)? {
         if field.name() != Some("files") {
             continue;
         }
@@ -262,11 +294,8 @@ async fn receive(
         let mut file = tokio::fs::File::create(&path)
             .await
             .map_err(|error| ApiError::from(RequestsError::internal(&error)))?;
-        while let Some(chunk) = field
-            .chunk()
-            .await
-            .map_err(|_| invalid("The upload was cut off or malformed."))?
-        {
+        while let Some(chunk) = field.chunk().await.map_err(unreadable)? {
+            bytes += chunk.len() as u64;
             file.write_all(&chunk)
                 .await
                 .map_err(|error| ApiError::from(RequestsError::internal(&error)))?;
@@ -278,7 +307,7 @@ async fn receive(
     if staged.is_empty() {
         return Err(invalid("No files were uploaded."));
     }
-    Ok(())
+    Ok(bytes)
 }
 
 /// Your recent import jobs; admins may pass `all=true` for everyone's.

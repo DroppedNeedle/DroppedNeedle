@@ -533,12 +533,15 @@ async fn drop_zip(
     job
 }
 
-/// Start a drop job on the zip at `upload` and wait for it to settle.
+/// Start a drop job on the zip at `upload` and wait for the
+/// `drop_import_updated` event that announces it settled: a job that
+/// settles without one leaves the person's open tabs waiting on the poll.
 async fn upload_and_settle(
     acquire: &droppedneedle_acquire::AcquireSetup,
     curator: &Viewer,
     upload: PathBuf,
 ) -> JobRecord {
+    let mut events = acquire.events.subscribe(&curator.user_id);
     let job = acquire
         .drops
         .create_job(
@@ -548,14 +551,19 @@ async fn upload_and_settle(
         )
         .await
         .expect("job starts");
-    for _ in 0..200 {
+    loop {
+        let frame = tokio::time::timeout(Duration::from_secs(30), events.next())
+            .await
+            .expect("the settled drop job was announced")
+            .expect("the event hub stays open");
+        if frame.name() != "drop_import_updated" {
+            continue;
+        }
         let now = acquire.drops.get_job(curator, &job.id).await.expect("job");
         if now.status != "processing" {
             return now;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    panic!("the drop job never settled");
 }
 
 /// An entry whose header understates its size is refused whole: no part
@@ -691,4 +699,39 @@ async fn a_cut_off_upload_survives_a_sweep_that_cannot_read_its_jobs() {
     );
     drop(acquire);
     runtime.shutdown().await;
+}
+
+/// An upload whose declared length is over the 8 GB limit is refused with
+/// 413 before any of it is written, so a person learns the cap at once
+/// instead of after sending gigabytes.
+#[tokio::test]
+async fn an_upload_declared_over_the_limit_is_refused_before_writing() {
+    let app = crate::common::TestApp::start("drop-too-large").await;
+    let admin = app.login_admin().await;
+    let boundary = "too-large-boundary";
+    let form = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"big.zip\"\r\n\
+         Content-Type: application/zip\r\n\r\nPK\r\n--{boundary}--\r\n"
+    );
+    let content_type = format!("multipart/form-data; boundary={boundary}");
+    let declared = ((8u64 << 30) + 1).to_string();
+    let (status, _, bytes) = app
+        .raw_bytes(
+            "POST",
+            "/api/v3/import/uploads",
+            &[
+                ("authorization", admin.as_str()),
+                ("content-type", content_type.as_str()),
+                ("content-length", declared.as_str()),
+            ],
+            form.into_bytes(),
+        )
+        .await;
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("body is json");
+    assert_eq!(status, axum::http::StatusCode::PAYLOAD_TOO_LARGE, "{body}");
+    assert_eq!(body["error"]["code"], "PAYLOAD_TOO_LARGE");
+    assert_eq!(body["error"]["message"], "Uploads are limited to 8 GB.");
+    let incoming = app.state().acquire.drops.incoming_dir();
+    let written = std::fs::read_dir(&incoming).map_or(0, |dir| dir.count());
+    assert_eq!(written, 0, "nothing lands in {}", incoming.display());
 }

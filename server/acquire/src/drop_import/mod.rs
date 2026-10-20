@@ -446,24 +446,31 @@ impl DropImports {
             tracing::warn!(job_id, "drop import job vanished before it ran");
             return;
         };
-        if let Err(cause) = self.process_job(&job).await {
-            tracing::error!(job_id, %cause, "drop import job failed");
-            if let Err(error) = self
-                .store
-                .set_job_status(
-                    job_id,
-                    job_status::FAILED,
-                    Some("The import didn't finish. Check the server log.".to_owned()),
-                )
-                .await
-            {
-                tracing::warn!(job_id, %error, "drop import failure not recorded");
+        tracing::info!(job_id, "drop import job started");
+        let cause = match self.process_job(&job).await {
+            Ok((status, items)) => {
+                tracing::info!(job_id, status, items, "drop import job finished");
+                return;
             }
-            self.publish(&job.user_id, job_id);
+            Err(cause) => cause,
+        };
+        tracing::error!(job_id, %cause, "drop import job failed");
+        if let Err(error) = self
+            .store
+            .set_job_status(
+                job_id,
+                job_status::FAILED,
+                Some("The import didn't finish. Check the server log.".to_owned()),
+            )
+            .await
+        {
+            tracing::warn!(job_id, %error, "drop import failure not recorded");
         }
+        self.publish(&job.user_id, job_id);
     }
 
-    async fn process_job(&self, job: &JobRecord) -> Result<(), String> {
+    /// Answers the job's final status and how many items it made.
+    async fn process_job(&self, job: &JobRecord) -> Result<(&'static str, usize), String> {
         let dir = PathBuf::from(&job.staging_dir);
         let (units, notes) = tokio::task::spawn_blocking(move || extract::extract_and_group(&dir))
             .await
@@ -479,7 +486,7 @@ impl DropImports {
                 .await
                 .map_err(|error| error.0)?;
             self.publish(&job.user_id, &job.id);
-            return Ok(());
+            return Ok((job_status::FAILED, 0));
         }
         let mut items = Vec::with_capacity(units.len());
         for unit in units {
@@ -496,6 +503,7 @@ impl DropImports {
             items.push((id, unit));
         }
         self.publish(&job.user_id, &job.id);
+        let count = items.len();
         for (id, unit) in items {
             if let Err(cause) = self
                 .process_item(job, id, &unit.folder_name, unit.files)
@@ -521,7 +529,7 @@ impl DropImports {
             .map_err(|error| error.0)?;
         self.tidy(job).await;
         self.publish(&job.user_id, &job.id);
-        Ok(())
+        Ok((job_status::COMPLETED, count))
     }
 
     async fn process_item(

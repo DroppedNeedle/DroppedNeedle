@@ -2993,8 +2993,8 @@ export interface paths {
         put?: never;
         /**
          * Upload files to import: audio files or `.zip` archives, at most 25
-         *     per drop. Returns the new job; it keeps working in the background.
-         *     `POST /api/v3/import/uploads`.
+         *     per drop and 8 GB in all. Returns the new job; it keeps working in the
+         *     background. `POST /api/v3/import/uploads`.
          */
         post: operations["upload_handler"];
         delete?: never;

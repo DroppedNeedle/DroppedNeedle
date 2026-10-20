@@ -8605,7 +8605,7 @@
         "tags": [
           "imports"
         ],
-        "summary": "Upload files to import: audio files or `.zip` archives, at most 25\nper drop. Returns the new job; it keeps working in the background.\n`POST /api/v3/import/uploads`.",
+        "summary": "Upload files to import: audio files or `.zip` archives, at most 25\nper drop and 8 GB in all. Returns the new job; it keeps working in the\nbackground. `POST /api/v3/import/uploads`.",
         "operationId": "upload_handler",
         "requestBody": {
           "content": {
