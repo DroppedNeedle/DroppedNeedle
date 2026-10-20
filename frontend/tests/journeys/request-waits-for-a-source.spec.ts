@@ -44,11 +44,14 @@ test('a request made with no download source waits, then starts when one is save
 
 	// The admin adds the mock slskd and turns it on.
 	await page.goto('/settings?tab=download-client');
+	const slskd = page.locator('.client-card', {
+		has: page.getByRole('heading', { name: 'slskd', exact: true })
+	});
 	await page.getByRole('button', { name: /^slskd/ }).click();
-	await page.getByLabel('slskd URL').fill(mocks.slskd);
-	await page.getByLabel('API key', { exact: true }).fill('journey-key');
-	await page.getByRole('button', { name: 'Save settings' }).click();
-	await expect(page.getByText('Soulseek settings saved')).toBeVisible();
+	await slskd.getByLabel('slskd URL').fill(mocks.slskd);
+	await slskd.getByLabel('API key', { exact: true }).fill('journey-key');
+	await slskd.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(slskd.getByRole('status').getByText('Saved.', { exact: true })).toBeVisible();
 	await page.getByRole('checkbox', { name: 'Enable slskd download client' }).check();
 	await expect(page.getByText('Soulseek enabled')).toBeVisible();
 
