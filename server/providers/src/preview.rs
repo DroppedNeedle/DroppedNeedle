@@ -29,7 +29,7 @@ use crate::itunes::ITunesClient;
 
 mod models;
 
-use self::models::{AlbumSearch, AlbumTracks, ErrorEnvelope, Track, TrackSearch};
+use self::models::{AlbumSearch, AlbumTracks, DeezerFault, Track, TrackSearch};
 
 /// Live Deezer API origin.
 pub const DEEZER_API_BASE: &str = "https://api.deezer.com";
@@ -68,7 +68,7 @@ fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
     if status == 429 || status >= 500 {
         return standard_classify(answer);
     }
-    let Ok(envelope) = answer.reply.json::<ErrorEnvelope>() else {
+    let Ok(envelope) = answer.reply.json::<DeezerFault>() else {
         return standard_classify(answer);
     };
     let Some(error) = envelope.error else {

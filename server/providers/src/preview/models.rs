@@ -82,16 +82,16 @@ pub struct AlbumTracks {
 /// The error object Deezer answers with inside a 200. An unknown album id gets
 /// it from `/album/{id}/tracks`: tests/fixtures/deezer/album_not_found.json, 2026-10-20.
 #[derive(Debug, Deserialize)]
-pub struct ErrorEnvelope {
+pub struct DeezerFault {
     /// The error, present when the answer is one.
     #[serde(default)]
-    pub error: Option<ErrorBody>,
+    pub error: Option<DeezerFaultCode>,
 }
 
 /// Deezer's error object. Its code is what the classifier reads, so an object
 /// without one fails decoding.
 #[derive(Debug, Deserialize)]
-pub struct ErrorBody {
+pub struct DeezerFaultCode {
     /// Deezer's error number. 800 is "no data": the id names nothing.
     pub code: i64,
 }
