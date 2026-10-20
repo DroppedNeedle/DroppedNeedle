@@ -125,12 +125,13 @@ pub const RATES: &[RateRow] = &[
     RateRow {
         source: "coverartarchive",
         per_second: Rate::Fixed(10.0),
-        burst: 20,
+        burst: 1,
         max_in_flight: None,
         verified_on: "2026-10-18",
         basis: "No rate limiting rules in place; some endpoints answer 503 when a user \
-                exceeds a limit. Held at 10 per second with a burst of 20. Redirect \
-                hops to archive.org are not paced.",
+                exceeds a limit. Held at 10 per second, one at a time: a burst of 20 \
+                cold-grid fetches was followed by a five-minute refusal from every \
+                MetaBrainz host. Redirect hops to archive.org are not paced.",
         url: "https://musicbrainz.org/doc/Cover_Art_Archive/API",
     },
     RateRow {
