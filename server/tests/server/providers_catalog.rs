@@ -508,13 +508,7 @@ async fn preview_degradation_leg_errors() {
 // LRCLIB
 // ---------------------------------------------------------------------------
 
-const LRCLIB_HIT: &str = r#"{
-    "id": 42, "name": "x", "trackName": "Quiet Engine",
-    "artistName": "Northern Static", "albumName": "Paper Lanterns",
-    "duration": 197.0, "instrumental": false,
-    "plainLyrics": "line one\nline two", "syncedLyrics": null,
-    "lyricsfile": null, "future": 1
-}"#;
+const LRCLIB_FOUND: &str = include_str!("../fixtures/lrclib/get_found.json");
 
 async fn lyrics(wire: &Arc<ScriptedWire>) -> Result<lrclib::LyricsLookup, ProviderError> {
     catalog_providers(wire)
@@ -525,30 +519,31 @@ async fn lyrics(wire: &Arc<ScriptedWire>) -> Result<lrclib::LyricsLookup, Provid
 
 #[tokio::test]
 async fn lrclib_contract_tolerates_unknown_fields() {
-    let wire = scripted(LRCLIB, &[(200, &[], LRCLIB_HIT)]);
+    let wire = scripted(LRCLIB, &[(200, &[], LRCLIB_FOUND)]);
     let found = catalog_providers(&wire)
         .lrclib
         .get_exact_lyrics(
-            "Quiet Engine",
-            "Northern Static",
-            "Paper Lanterns",
-            197,
+            "Bohemian Rhapsody",
+            "Queen",
+            "A Night at the Opera",
+            355,
             PRIORITY,
         )
         .await
         .unwrap();
     assert!(found.found);
     let candidate = found.candidate.unwrap();
-    assert_eq!(candidate.provider_id, 42);
-    assert_eq!(
-        candidate.plain_lyrics.as_deref(),
-        Some("line one\nline two")
-    );
-    assert_eq!(candidate.synced_lyrics, None);
+    assert_eq!(candidate.provider_id, 19080);
+    assert_eq!(candidate.track_name, "Bohemian Rhapsody");
+    assert!(candidate.plain_lyrics.is_some());
+    assert!(candidate.synced_lyrics.is_some());
     assert!(!candidate.instrumental);
     let sent = wire.sent();
-    assert_eq!(sent[0].query("track_name").as_deref(), Some("Quiet Engine"));
-    assert_eq!(sent[0].query("duration").as_deref(), Some("197"));
+    assert_eq!(
+        sent[0].query("track_name").as_deref(),
+        Some("Bohemian Rhapsody")
+    );
+    assert_eq!(sent[0].query("duration").as_deref(), Some("355"));
 }
 
 #[tokio::test]
@@ -611,7 +606,8 @@ async fn lrclib_quirk_oversized_rejected() {
 /// any 4xx but 404 and 429 read as an unusable answer.
 #[tokio::test(start_paused = true)]
 async fn lrclib_degradation_404_429_500_bad_json() {
-    let wire = scripted(LRCLIB, &[(404, &[], "{}")]);
+    let not_found = include_str!("../fixtures/lrclib/get_not_found.json");
+    let wire = scripted(LRCLIB, &[(404, &[], not_found)]);
     assert!(!lyrics(&wire).await.unwrap().found);
 
     // A wait past thirty seconds is held to thirty.
@@ -640,6 +636,11 @@ async fn lrclib_degradation_404_429_500_bad_json() {
     let wire = scripted(LRCLIB, &[(500, &[], "{}")]);
     let error = lyrics(&wire).await.expect_err("500");
     assert!(matches!(error, ProviderError::Server { status: 500, .. }));
+
+    let busy = include_str!("../fixtures/lrclib/get_busy.json");
+    let wire = scripted(LRCLIB, &[(503, &[("retry-after", "1")], busy)]);
+    let error = lyrics(&wire).await.expect_err("503");
+    assert!(matches!(error, ProviderError::Unavailable { .. }));
 
     let wire = scripted(LRCLIB, &[(400, &[], "{}")]);
     let error = lyrics(&wire).await.expect_err("400");

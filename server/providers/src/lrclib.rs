@@ -1,15 +1,15 @@
 //! Typed LRCLIB reads for optional lyrics.
 //!
-//! A Rust port of v2's LRCLIB repository, with its API notes verified live
-//! on 2026-07-22 and reverified on 2026-08-05. Only the exact `/api/get`
-//! lookup feeds projections; `/api/search` results are never promoted
-//! automatically, because a common recording returns several plausible
-//! candidates.
+//! Only the exact `/api/get` lookup feeds projections; `/api/search` results
+//! are never promoted automatically, because a common recording returns
+//! several plausible candidates.
 //!
 //! Requests go through the executor at the `lrclib` row, one a second: a
 //! volunteer service with no published limit. Response caching (7d
 //! positive, 6h negative) stays with wiring. A 404 is absence; every
 //! failure is a typed [`ProviderError`].
+
+mod models;
 
 use std::time::Duration;
 
@@ -17,12 +17,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::RequestPriority;
-use crate::client::{parse_base, payload, unusable_base};
+use crate::client::{decode, parse_base, payload, unusable_base};
 use crate::error::{PayloadKind, ProviderError};
-use crate::executor::{Backoff, Executor, Request, Spec, Url, standard_classify};
+use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 use crate::limiter::RateLimiter;
 
-/// Live API origin (lrclib_API_NOTES.md).
+use self::models::Lyrics;
+
+/// Live API origin.
 pub const API_BASE: &str = "https://lrclib.net";
 /// The provider name errors carry, and its rate row.
 pub const SOURCE: &str = "lrclib";
@@ -42,39 +44,6 @@ pub static SPEC: Spec = Spec {
     retry_after_cap: Duration::from_secs(30),
     classify: standard_classify,
 };
-
-// ---------------------------------------------------------------------------
-// Wire models (default-tolerant; unknown fields are ignored by serde)
-// ---------------------------------------------------------------------------
-
-/// An exact-lookup answer on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct WireLyrics {
-    /// LRCLIB lyric id; 0 means the payload has no identity.
-    #[serde(default)]
-    pub id: i64,
-    /// Track title.
-    #[serde(default, rename = "trackName")]
-    pub track_name: String,
-    /// Track artist.
-    #[serde(default, rename = "artistName")]
-    pub artist_name: String,
-    /// Album title.
-    #[serde(default, rename = "albumName")]
-    pub album_name: String,
-    /// Track duration in seconds.
-    #[serde(default)]
-    pub duration: f64,
-    /// True when the track has no lyrics at all.
-    #[serde(default)]
-    pub instrumental: bool,
-    /// Plain lyrics text.
-    #[serde(default, rename = "plainLyrics")]
-    pub plain_lyrics: Option<String>,
-    /// Synced (LRC) lyrics text.
-    #[serde(default, rename = "syncedLyrics")]
-    pub synced_lyrics: Option<String>,
-}
 
 // ---------------------------------------------------------------------------
 // Normalized models
@@ -126,10 +95,9 @@ impl LyricsLookup {
 // Pure normalization
 // ---------------------------------------------------------------------------
 
-/// Fold one exact-signature field, as reverified on 2026-08-05: NFKC,
-/// typographic apostrophes to ASCII `'`, collapse whitespace, then casefold.
-/// Only the apostrophe forms are relaxed; every other text and duration
-/// gate stays strict.
+/// Fold one exact-signature field: NFKC, typographic apostrophes to ASCII
+/// `'`, collapse whitespace, then casefold. Only the apostrophe forms are
+/// relaxed; every other text and duration gate stays strict.
 pub fn signature_text(value: &str) -> String {
     use caseless::default_case_fold_str;
     use unicode_normalization::UnicodeNormalization;
@@ -154,26 +122,17 @@ pub fn provider_revision(body: &[u8]) -> String {
     format!("{:x}", Sha256::digest(body))
 }
 
-/// Normalize one exact-lookup body: reject oversized
-/// bodies, decode, enforce the completeness gate (positive id, non-blank
-/// track/artist/album, positive duration), reject oversized lyrics text,
-/// and treat "no lyrics and not instrumental" as not found rather than an
-/// empty candidate.
+/// Normalize one exact-lookup answer: decode it, enforce the completeness
+/// gate (positive id, non-blank track/artist/album, positive duration),
+/// reject oversized lyrics text, and treat "no lyrics and not instrumental"
+/// as not found rather than an empty candidate.
 ///
 /// # Errors
 ///
-/// [`ProviderError::Payload`] for a body that is too large, does not
-/// decode, or fails the gates.
-pub fn normalize_exact(body: &[u8]) -> Result<LyricsLookup, ProviderError> {
-    if body.len() > MAX_LYRICS_BYTES {
-        return Err(payload(
-            SOURCE,
-            PayloadKind::TooLarge,
-            "lyrics answer over the size limit",
-        ));
-    }
-    let raw: WireLyrics = serde_json::from_slice(body)
-        .map_err(|error| payload(SOURCE, PayloadKind::Decode, &error.to_string()))?;
+/// [`ProviderError::Payload`] for an answer that does not decode, a missing
+/// id included, or fails the gates.
+pub fn normalize_exact(reply: &Reply) -> Result<LyricsLookup, ProviderError> {
+    let raw: Lyrics = decode(reply)?;
     if raw.id <= 0
         || raw.track_name.trim().is_empty()
         || raw.artist_name.trim().is_empty()
@@ -223,7 +182,7 @@ pub fn normalize_exact(body: &[u8]) -> Result<LyricsLookup, ProviderError> {
             instrumental: raw.instrumental,
             plain_lyrics: plain,
             synced_lyrics: synced,
-            provider_revision: provider_revision(body),
+            provider_revision: provider_revision(reply.bytes()),
         }),
     })
 }
@@ -232,9 +191,9 @@ pub fn normalize_exact(body: &[u8]) -> Result<LyricsLookup, ProviderError> {
 // Client
 // ---------------------------------------------------------------------------
 
-/// LRCLIB client. The caller passes the integer duration (v2 rounds the
-/// source duration before calling); the exact call never takes a MusicBrainz
-/// id, which the endpoint does not accept (lrclib_API_NOTES.md).
+/// LRCLIB client. The caller passes the duration rounded to whole seconds;
+/// the exact call never takes a MusicBrainz id, which the endpoint does not
+/// accept.
 ///
 /// Built once with the providers; cheap to clone.
 #[derive(Debug, Clone)]
@@ -262,6 +221,8 @@ impl LrclibClient {
 
     /// Exact lyrics lookup at `priority`. A 404 is absence.
     ///
+    /// Verified against lrclib.net/api/get on 2026-10-20: tests/fixtures/lrclib/get_not_found.json.
+    ///
     /// # Errors
     ///
     /// The typed failure of the call or of its answer.
@@ -287,7 +248,7 @@ impl LrclibClient {
         )
         .map_err(|_| unusable_base(SOURCE))?;
         match self.executor.send(request, priority).await {
-            Ok(reply) => normalize_exact(reply.bytes()),
+            Ok(reply) => normalize_exact(&reply),
             Err(ProviderError::NotFound { .. }) => Ok(LyricsLookup::not_found()),
             Err(error) => Err(error),
         }

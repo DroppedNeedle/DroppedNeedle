@@ -34,6 +34,7 @@ mod providers_catalog;
 mod providers_core;
 mod providers_events;
 mod providers_gate;
+mod providers_models;
 mod providers_musicbrainz;
 mod route_gate;
 mod route_walk;

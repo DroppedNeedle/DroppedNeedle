@@ -1,0 +1,13 @@
+{
+  "id": 19080,
+  "name": "Bohemian Rhapsody",
+  "trackName": "Bohemian Rhapsody",
+  "artistName": "Queen",
+  "albumName": "A Night at the Opera",
+  "duration": 355.0,
+  "instrumental": false,
+  "hasWordSync": false,
+  "plainLyrics": "First line of the song\nSecond line of the song",
+  "syncedLyrics": "[00:00.15] First line of the song\n[00:07.13] Second line of the song",
+  "lyricsfile": "version: '1.0'\nmetadata:\n  title: Bohemian Rhapsody\n  artist: Queen\n  album: A Night at the Opera\n  duration_ms: 355000\n  instrumental: false\nlines:\n- text: First line of the song\n  start_ms: 150\n  end_ms: 7130\n- text: Second line of the song\n  start_ms: 7130\n  end_ms: 14770\n"
+}
