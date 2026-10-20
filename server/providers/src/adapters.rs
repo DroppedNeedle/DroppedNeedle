@@ -1,148 +1,17 @@
-//! Bridges from the shared provider seams onto production.
+//! The shared GET port the catalog clients not yet on the executor use.
 //!
-//! The clients reach the core through three traits ([`Pacer`](super::limiter::Pacer),
-//! [`DegradationSink`](super::degradation::DegradationSink),
-//! [`HttpPort`](super::client::HttpPort)); this module implements each once
-//! against the real core:
-//!
-//! - [`CorePacer`] paces audio-client calls through the verified per-source
-//!   [`RateLimiter`](super::limiter::RateLimiter).
-//! - [`CoreSink`] records degradation notes into the request-scoped
-//!   [`DegradationContext`](super::degradation::DegradationContext).
-//!   [`HealthSink`] does the same and also counts each failure toward the
-//!   process [`ServiceHealth`](super::health::ServiceHealth) registry.
-//! - [`ReqwestGet`] serves the catalog [`HttpPort`](super::client::HttpPort)
-//!   from one shared reqwest client.
-//!
-//! Not unified here, on purpose:
-//!
-//! - [`ProviderClient`](super::client::ProviderClient) conformance: no
-//!   client performs cache writes yet, so claiming `cache_prefixes` would be
-//!   vacuous conformance. The impls land with cache-aside integration.
-//!
-//! These bridges go as each client moves onto the
-//! [`executor`](super::executor), which paces through its rate row itself.
+//! [`ReqwestGet`] serves the catalog [`HttpPort`](super::client::HttpPort)
+//! from one shared reqwest client. It goes once those clients move onto
+//! the [`executor`](super::executor), which paces through its rate row
+//! itself.
 
-use std::{sync::Arc, time::Instant};
-
-use super::{
-    Providers,
-    client::{HttpFault, HttpPort, HttpReply},
-    degradation::{DegradationSink, IntegrationStatus as CoreStatus, record_current},
-    health::ServiceHealth,
-    limiter::Pacer,
-};
+use super::client::{HttpFault, HttpPort, HttpReply};
 use droppedneedle_kernel::http_client::HttpClientFactory;
 
 /// Largest catalog answer read. Wikidata entities carry every language
 /// and Archive.org item metadata lists every file, so either can pass
 /// 4 MiB.
 const MAX_CATALOG_BODY_BYTES: usize = 16 * 1024 * 1024;
-
-/// Limiter-backed pacing for the audio clients.
-///
-/// One pacer serves one verified source: [`for_source`](Self::for_source)
-/// returns `None` for providers without a verified rate row rather than
-/// pacing them against an invented policy. The pacer only takes limiter
-/// tokens; slot-lane admission stays at explicit call sites because the
-/// `Pacer` seam carries no priority to choose a lane with.
-///
-/// Open point for the first background caller: [`acquire`](Self::acquire)
-/// paces at user priority, and there is no `Outcome` -> retriable bridge
-/// to the audio retry seam (unbuilt). Growing the `Pacer` seam with a
-/// priority touches every audio client and fake, so it stays until a
-/// background caller needs it; the user-priority default is the safe
-/// direction (background work waits behind users, never ahead).
-#[derive(Debug, Clone)]
-pub struct CorePacer {
-    providers: Arc<Providers>,
-    source: &'static str,
-}
-
-impl CorePacer {
-    /// Pace `source` through the shared deps, or `None` when the source has
-    /// no fixed row in the rate table.
-    #[must_use]
-    pub fn for_source(providers: Arc<Providers>, source: &'static str) -> Option<Self> {
-        super::rates::fixed_policy(source)?;
-        Some(Self { providers, source })
-    }
-
-    /// Wait for one token from this pacer's bucket.
-    pub async fn acquire(&self) {
-        if let Some(limiter) = self.providers.limiter(self.source) {
-            let _ = limiter.acquire().await;
-        }
-    }
-}
-
-impl Pacer for CorePacer {
-    async fn acquire(&self) {
-        CorePacer::acquire(self).await;
-    }
-}
-
-/// Context-backed degradation recording for the provider clients.
-///
-/// Records into the current request's [`DegradationContext`](super::degradation::DegradationContext)
-/// (a no-op outside a request scope) and keeps the cause on the log line.
-/// Client sinks report failures only, so every record lands as `Error`; the
-/// deterministic flag stays false because these stringly notes cannot prove
-/// a deterministic failure the way a typed [`CoreError`] can.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CoreSink;
-
-impl DegradationSink for CoreSink {
-    fn record(&self, source: &'static str, message: String) {
-        tracing::debug!(source, cause = message, "provider leg degraded");
-        record_current(source, CoreStatus::Error, false);
-    }
-}
-
-/// [`CoreSink`] plus the process health registry: every failure is also
-/// counted toward its source's sustained-failure rule, so an outage shows
-/// on `GET /system/health` whether or not a request scope is open.
-#[derive(Debug, Clone)]
-pub struct HealthSink {
-    health: Arc<ServiceHealth>,
-}
-
-impl HealthSink {
-    /// Report into the registry the shared deps hold.
-    #[must_use]
-    pub fn new(providers: &Providers) -> Self {
-        Self {
-            health: providers.health.clone(),
-        }
-    }
-}
-
-impl HealthSink {
-    /// The service answered: its run of failures starts over.
-    pub fn record_success(&self, source: &str) {
-        self.health.record_success(source);
-    }
-}
-
-impl DegradationSink for HealthSink {
-    fn record(&self, source: &'static str, message: String) {
-        CoreSink.record(source, message);
-        self.health.record_failure(source, Instant::now());
-    }
-
-    fn record_quiet(&self, source: &'static str, message: String) {
-        CoreSink.record(source, message);
-    }
-
-    fn record_as(&self, source: &'static str, health_source: &'static str, message: String) {
-        CoreSink.record(source, message);
-        self.health.record_failure(health_source, Instant::now());
-    }
-
-    fn succeeded(&self, health_source: &'static str) {
-        self.record_success(health_source);
-    }
-}
 
 /// One shared reqwest transport behind the catalog [`HttpPort`].
 ///
@@ -210,69 +79,7 @@ impl HttpPort for ReqwestGet {
 }
 #[cfg(test)]
 mod tests {
-    use super::super::degradation::DegradationContext;
     use super::*;
-
-    #[test]
-    fn pacer_covers_verified_sources_only() {
-        let providers = Arc::new(Providers::closed());
-        assert!(CorePacer::for_source(providers.clone(), "lastfm").is_some());
-        assert!(CorePacer::for_source(providers.clone(), "musicbrainz").is_some());
-        assert!(CorePacer::for_source(providers, "slskd").is_none());
-    }
-
-    #[tokio::test]
-    async fn pacer_acquire_takes_a_limiter_token() {
-        let providers = Arc::new(Providers::closed());
-        let pacer = CorePacer::for_source(providers.clone(), "lastfm").unwrap();
-        pacer.acquire().await;
-        let limiter = providers.limiter("lastfm").unwrap();
-        assert_eq!(limiter.remaining(), 9, "one of the 10 burst tokens is gone");
-    }
-
-    #[tokio::test]
-    async fn sink_records_failures_into_the_request_scope() {
-        let sink = CoreSink;
-        let (_, context) = super::super::degradation::scoped(async {
-            <CoreSink as DegradationSink>::record(&sink, "lastfm", "error 29".to_owned());
-            <CoreSink as DegradationSink>::record(
-                &sink,
-                "musicbrainz",
-                "resolve: reset".to_owned(),
-            );
-        })
-        .await;
-        assert!(context.has_degradation());
-        assert_eq!(
-            context.summary().get("lastfm"),
-            Some(&CoreStatus::Error),
-            "sink records under the caller's source"
-        );
-        assert_eq!(
-            context.summary().get("musicbrainz"),
-            Some(&CoreStatus::Error),
-            "musicbrainz sink records under its fixed source"
-        );
-        let empty = DegradationContext::new();
-        assert!(!empty.has_degradation());
-    }
-
-    #[test]
-    fn health_sink_counts_wire_failures_only() {
-        let providers = Providers::closed();
-        let sink = HealthSink::new(&providers);
-        for _ in 0..5 {
-            sink.record_quiet("lastfm", "invalid JSON".to_owned());
-            sink.record_as(
-                "musicbrainz",
-                "musicbrainz-brainzmash",
-                "mirror 503".to_owned(),
-            );
-        }
-        let live = providers.health.current(std::time::Instant::now());
-        let services: Vec<&str> = live.iter().map(|entry| entry.service).collect();
-        assert_eq!(services, ["musicbrainz-brainzmash"]);
-    }
 
     #[tokio::test]
     async fn reqwest_transport_serves_a_catalog_port() {

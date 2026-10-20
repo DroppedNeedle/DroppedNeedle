@@ -47,8 +47,6 @@ pub type ScanCoordinator = LibraryScanCoordinator<LoftyTagReader>;
 pub struct Endpoints {
     /// Discogs API origin (contributions).
     pub discogs: String,
-    /// AcoustID API origin (identification and imports).
-    pub acoustid: String,
     /// What identification asks MusicBrainz and AcoustID through; `None`
     /// builds the live clients.
     pub identify_providers: Option<Arc<dyn super::identify::providers::IdentifyProviders>>,
@@ -197,15 +195,12 @@ impl LibrarySetup {
         ports: LibraryPorts,
     ) -> Result<Self, String> {
         use droppedneedle_providers::RequestPriority;
-        use droppedneedle_providers::acoustid::AcoustIdClient;
-        use droppedneedle_providers::adapters::{CorePacer, HealthSink};
 
         let http = &platform.http;
         // Identification is background work on the source settings name,
         // read per request; user page loads go ahead of it at the limiter.
         // Both clients count their failures toward system health, so an
         // outage during a background lookup shows on the health dot too.
-        let health = HealthSink::new(&providers);
         let mb_client =
             |priority: RequestPriority| providers.musicbrainz.live(mb_source.clone(), priority);
         let musicbrainz = mb_client(RequestPriority::BackgroundSync);
@@ -228,18 +223,10 @@ impl LibrarySetup {
                     mb_client(RequestPriority::BackgroundSync),
                 )),
             });
-        let import_pacer = CorePacer::for_source(providers.clone(), "acoustid")
-            .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
-        let import_acoustid = AcoustIdClient::new(
-            http.shared().clone(),
-            &endpoints.acoustid,
-            import_pacer,
-            health.clone(),
-        );
-        let pacer = CorePacer::for_source(providers, "acoustid")
-            .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
-        let acoustid =
-            AcoustIdClient::new(http.shared().clone(), &endpoints.acoustid, pacer, health);
+        // Identification and imports look prints up through the one
+        // AcoustID client.
+        let import_acoustid = providers.acoustid.clone();
+        let acoustid = providers.acoustid.clone();
         // Identification asks the port `endpoints` gives, or the live
         // clients when it gives none.
         let make: ProviderFactory = match endpoints.identify_providers {
@@ -277,10 +264,7 @@ impl LibrarySetup {
         queue: droppedneedle_kernel::jobs::queue::JobQueue,
         ports: LibraryPorts,
         releases: Arc<dyn super::identify::sources::ReleaseSource>,
-        import_acoustid: droppedneedle_providers::acoustid::AcoustIdClient<
-            droppedneedle_providers::adapters::CorePacer,
-            droppedneedle_providers::adapters::HealthSink,
-        >,
+        import_acoustid: droppedneedle_providers::acoustid::AcoustIdClient,
     ) -> Result<Self, String> {
         let db = &platform.db;
         let settings = LibrarySettings::new(&platform.settings);

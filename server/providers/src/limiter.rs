@@ -612,10 +612,8 @@ impl Default for LimiterSet {
     }
 }
 
-/// Pacing port behind the audio clients: one token per upstream call. One
-/// trait for all four audio clients, so one fake paces every client and the
-/// production [`CorePacer`](super::adapters::CorePacer) implements it once
-/// against the table's bucket.
+/// Pacing port: one token per upstream call. No client paces through it
+/// any more; the executor takes its tokens from the table's bucket.
 pub trait Pacer: Send + Sync {
     /// Wait until one upstream call may proceed.
     fn acquire(&self) -> impl std::future::Future<Output = ()> + Send;

@@ -28,10 +28,11 @@
 //! Wikidata portrait (v2's order, minus the Lidarr and Jellyfin sources v3
 //! does not mirror). The catalog names the candidate URLs through
 //! [`ArtistImageSource`]; the image itself is downloaded once, from an
-//! allowed host only (see [`remote::check_image_url`]), stored full size,
-//! and scaled down per requested size like local art. A grid of artists
-//! never waits on the lookups: past [`WARM_WAIT`] the route answers 202 and
-//! the resolve finishes in the background, at most
+//! allowed host only (see
+//! [`check_image_url`](droppedneedle_providers::images::check_image_url)),
+//! stored full size, and scaled down per requested size like local art. A
+//! grid of artists never waits on the lookups: past [`WARM_WAIT`] the route
+//! answers 202 and the resolve finishes in the background, at most
 //! [`ARTIST_RESOLVE_PERMITS`] at a time.
 //!
 //! TheAudioDB album thumbnails, fetched by the library precache, stand in
@@ -104,8 +105,13 @@ pub struct ArtistImageCandidates {
 /// Names the image URLs an artist has. The catalog implements it; lookups
 /// it makes are cached and paced there.
 pub trait ArtistImageSource: Send + Sync {
-    /// Candidate URLs for one artist (lowercase MBID).
-    fn candidates<'a>(&'a self, artist_mbid: &'a str) -> BoxFuture<'a, ArtistImageCandidates>;
+    /// Candidate URLs for one artist (lowercase MBID), asking the
+    /// providers at `priority`.
+    fn candidates<'a>(
+        &'a self,
+        artist_mbid: &'a str,
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, ArtistImageCandidates>;
 }
 
 /// Whether `prefer_local_cover_art` is on now, so a settings change applies
@@ -194,11 +200,13 @@ impl ArtworkService {
         self.settled(&artist_key(artist_mbid)).await
     }
 
-    /// Resolve and cache the artist's image now (the precache), waiting up
-    /// to [`PRECACHE_WAIT`]. True when an image is cached.
+    /// Resolve and cache the artist's image now (the precache and the
+    /// genre prewarm, at background priority), waiting up to
+    /// [`PRECACHE_WAIT`]. True when an image is cached.
     pub async fn warm_artist_image(&self, artist_mbid: &str) -> bool {
         matches!(
-            self.artist_original(artist_mbid, PRECACHE_WAIT).await,
+            self.artist_original(artist_mbid, PRECACHE_WAIT, RequestPriority::BackgroundSync)
+                .await,
             CoverLookup::Found(_)
         )
     }
@@ -270,8 +278,9 @@ impl ArtworkService {
     }
 
     /// Download and keep TheAudioDB's thumbnail for a release group, which
-    /// stands in when the album has no other cover (v2's AudioDB prewarm).
-    /// `None` records that AudioDB has no thumbnail.
+    /// stands in when the album has no other cover (v2's AudioDB prewarm,
+    /// at background priority). `None` records that AudioDB has no
+    /// thumbnail.
     pub async fn store_audiodb_cover(&self, mbid: &str, url: Option<&str>) {
         let key = audiodb_cover_key(mbid);
         let Some(url) = url else {
@@ -281,7 +290,7 @@ impl ArtworkService {
         let Some(images) = &self.images else {
             return;
         };
-        match images.fetch(url).await {
+        match images.fetch(url, RequestPriority::BackgroundSync).await {
             ImageFetch::Found(art) => {
                 self.cache
                     .put(Some(&key), art.bytes, &art.content_type)
@@ -317,8 +326,15 @@ impl ArtworkService {
     }
 
     /// The artist's image at full size: from the cache, or resolved in the
-    /// background while the caller waits up to `wait`.
-    async fn artist_original(&self, mbid: &str, wait: Duration) -> CoverLookup {
+    /// background while the caller waits up to `wait`, asking the
+    /// providers at `priority`. Resolves are coalesced per priority class,
+    /// so a page never waits on a background resolve of the same artist.
+    async fn artist_original(
+        &self,
+        mbid: &str,
+        wait: Duration,
+        priority: RequestPriority,
+    ) -> CoverLookup {
         let key = artist_key(mbid);
         match self.cache.key(&key).await {
             Some(KeyEntry::Hit { .. }) => {
@@ -336,14 +352,26 @@ impl ArtworkService {
         let cache = self.cache.clone();
         let permits = Arc::clone(&self.artist_permits);
         let mbid = mbid.to_owned();
+        let class = if priority.is_user_facing() {
+            "page"
+        } else {
+            "background"
+        };
         // Spawned so a resolve the caller stops waiting for still lands in
         // the cache for the next request.
         let flight = tokio::spawn(async move {
-            let flight_key = key.clone();
+            let flight_key = format!("{class}:{key}");
             flights
                 .run(&flight_key, move || async move {
                     let _permit = permits.acquire_owned().await.ok();
-                    Ok(resolve_artist(source.as_ref(), images.as_ref(), &cache, &mbid, &key).await)
+                    Ok(resolve_artist(
+                        (source.as_ref(), images.as_ref()),
+                        &cache,
+                        &mbid,
+                        &key,
+                        priority,
+                    )
+                    .await)
                 })
                 .await
         });
@@ -741,16 +769,16 @@ async fn shrink_artist_image(art: ArtworkBytes) -> ArtworkBytes {
 /// One artist image resolve: the first candidate that downloads is
 /// cached; with none, a miss marker (short when a source was down).
 async fn resolve_artist(
-    source: &dyn ArtistImageSource,
-    images: &dyn RemoteImages,
+    (source, images): (&dyn ArtistImageSource, &dyn RemoteImages),
     cache: &ArtworkCache,
     mbid: &str,
     key: &str,
+    priority: RequestPriority,
 ) -> Option<CoverBytes> {
-    let candidates = source.candidates(mbid).await;
+    let candidates = source.candidates(mbid, priority).await;
     let mut failed = candidates.incomplete;
     for url in &candidates.urls {
-        match images.fetch(url).await {
+        match images.fetch(url, priority).await {
             ImageFetch::Found(art) => {
                 let art = shrink_artist_image(art).await;
                 let hash = cache
@@ -827,7 +855,10 @@ impl CoverArt for ArtworkService {
             if !is_valid_mbid(&mbid) {
                 return CoverLookup::Missing;
             }
-            match self.artist_original(&mbid, WARM_WAIT).await {
+            match self
+                .artist_original(&mbid, WARM_WAIT, RequestPriority::ImageFetch)
+                .await
+            {
                 CoverLookup::Found(original) => {
                     CoverLookup::Found(self.sized(original, artist_size(size_px)).await)
                 }

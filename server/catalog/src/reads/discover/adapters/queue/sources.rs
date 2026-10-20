@@ -244,6 +244,7 @@ pub trait QueueSources: Send + Sync {
         user_id: &'a str,
         username: &'a str,
         limit: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>>;
     /// Artists Last.fm calls similar.
     fn lastfm_similar_artists<'a>(
@@ -251,6 +252,7 @@ pub trait QueueSources: Send + Sync {
         user_id: &'a str,
         artist: &'a ArtistRow,
         limit: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>>;
     /// An artist's top albums on Last.fm.
     fn lastfm_artist_albums<'a>(
@@ -258,12 +260,14 @@ pub trait QueueSources: Send + Sync {
         user_id: &'a str,
         artist: &'a ArtistRow,
         limit: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<LastFmAlbum>>>;
     /// The Last.fm site-wide artist chart.
     fn lastfm_chart_artists<'a>(
         &'a self,
         user_id: &'a str,
         limit: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>>;
     /// Last.fm album facts, `None` when Last.fm is off or does not know it.
     fn lastfm_album_facts<'a>(
@@ -271,6 +275,7 @@ pub trait QueueSources: Send + Sync {
         user_id: &'a str,
         artist: &'a str,
         album: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<LastFmFacts>>>;
     /// Last.fm artist facts, `None` when Last.fm is off or does not know it.
     fn lastfm_artist_facts<'a>(
@@ -278,6 +283,7 @@ pub trait QueueSources: Send + Sync {
         user_id: &'a str,
         artist: &'a str,
         mbid: Option<&'a str>,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<LastFmFacts>>>;
 
     /// Artists from the user's Jellyfin account.

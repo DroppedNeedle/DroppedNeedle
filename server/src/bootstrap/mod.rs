@@ -234,10 +234,17 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // can hold it; no plugin starts until `PluginsSetup::build` loads it.
     let plugin_ticks = droppedneedle_plugins::wiring::tick_store(p);
     let plugin_host = droppedneedle_plugins::wiring::new_host(p, &plugin_ticks, library_fs.clone());
+    // Shared provider deps first: auth links Last.fm accounts through the
+    // one Last.fm client, and the reads enrichment pair paces through these
+    // same limiters, so production holds one limiter set. The byte cache
+    // stays shared with the admin stats and clear routes.
+    let providers = Arc::new(Providers::build(p, outbound.providers()));
+    let provider_cache = providers.cache.clone();
     let auth = AuthSetup::build_with_upstreams(
         p,
         ProdAuth::new(p),
         &outbound.sign_in(),
+        &providers.lastfm,
         Arc::new(ConfiguredPlexServer::new(
             http.shared().clone(),
             config_store.live(),
@@ -246,11 +253,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         sign_in_links(p),
     );
 
-    // Shared provider deps first: the reads enrichment pair paces through
-    // these same limiters, so production holds one limiter set. The byte
-    // cache stays shared with the admin stats and clear routes.
-    let providers = Arc::new(Providers::build(p, outbound.providers()));
-    let provider_cache = providers.cache.clone();
     // Read live so turning ListenBrainz or lyrics on or off takes effect
     // at once.
     let enrichment = production_enrichment(
@@ -264,7 +266,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         covers_dir: config.cache_dir.join("covers"),
         cover_cache_max_bytes: config.cover_cache_max_bytes,
         http: http.shared().clone(),
-        no_redirect: http.no_redirect().clone(),
         providers: providers.clone(),
         listenbrainz_links: Arc::new(SqliteListenBrainzLinkStore::new(db.clone(), crypto.clone())),
         youtube_quota_path: config.cache_dir.join(QUOTA_FILE_NAME),
@@ -358,8 +359,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         Arc::new(PlaylistImportSink::new(reads.collections.clone())),
         plugin_host.clone(),
         outbound.plex_tv.clone(),
-        outbound.scrobbles(),
-        providers.listenbrainz.clone(),
+        &providers,
     )
     .map_err(stage("media setup"))?;
     // Startup recovery before serving traffic. Re-running after a clean
@@ -578,17 +578,8 @@ fn library_ports(
     fs: droppedneedle_library::scan::fs::FsCoordinator,
     acquire: &AcquireStores,
 ) -> Result<droppedneedle_library::wiring::LibraryPorts, BootError> {
-    let acoustid_pacer =
-        droppedneedle_providers::adapters::CorePacer::for_source(providers.clone(), "acoustid")
-            .ok_or_else(|| "acoustid has no verified rate row".to_owned())
-            .map_err(stage("library management"))?;
     let enrichment = LiveEnrichment {
-        acoustid: droppedneedle_providers::acoustid::AcoustIdClient::new(
-            p.http.shared().clone(),
-            &outbound.acoustid,
-            acoustid_pacer,
-            droppedneedle_providers::adapters::HealthSink::new(providers),
-        ),
+        acoustid: providers.acoustid.clone(),
         library: p.settings.live(),
         upstream: Upstream::new(
             &p.http,

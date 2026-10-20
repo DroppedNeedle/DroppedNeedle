@@ -12,13 +12,13 @@ use droppedneedle_providers::executor::{
     standard_classify,
 };
 use droppedneedle_providers::health::ServiceHealth;
-use droppedneedle_providers::listenbrainz;
 use droppedneedle_providers::musicbrainz::{self, Criticality, MbSource};
 use droppedneedle_providers::rates::{RATES, Rate};
 use droppedneedle_providers::{
     LimiterSet, PayloadKind, ProviderEndpoints, ProviderError, Providers, RateLimiter, RatePolicy,
     RequestPriority, TransportKind,
 };
+use droppedneedle_providers::{acoustid, audiodb, lastfm, listenbrainz};
 use tokio::time::Instant;
 
 const BASE: &str = "https://provider.test/api";
@@ -366,6 +366,9 @@ fn providers_over(wire: &Arc<ScriptedWire>) -> Providers {
             brainzmash: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
             coverart: coverart::COVER_ART_ARCHIVE_BASE.to_owned(),
             listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+            lastfm: lastfm::DEFAULT_BASE_URL.to_owned(),
+            audiodb: audiodb::DEFAULT_BASE_URL.to_owned(),
+            acoustid: acoustid::DEFAULT_BASE_URL.to_owned(),
         },
     )
 }
@@ -669,6 +672,186 @@ async fn listenbrainz_hooks() {
             cooling <= rest && cooling + Duration::from_millis(600) >= rest,
             "{name}: rests {cooling:?}, expected {rest:?}"
         );
+    }
+}
+
+/// The Last.fm rules: an error code inside an answer is read whatever the
+/// status. Error 6 is "no such thing", 29 rests the bucket a second, 11
+/// and 16 are a passing outage worth another try, and 10 is a refused
+/// key, never tried again.
+#[tokio::test(start_paused = true)]
+async fn lastfm_hooks() {
+    type Check = fn(&Result<Option<lastfm::ArtistInfo>, ProviderError>) -> bool;
+    let envelope = |code: i64| format!(r#"{{"error": {code}, "message": "upstream says so"}}"#);
+    let rows: Vec<(&str, Scripted, Check, usize, Duration)> = vec![
+        (
+            "error 6 in a 200",
+            answer(200, &[], &envelope(6)),
+            |result| matches!(result, Ok(None)),
+            1,
+            Duration::ZERO,
+        ),
+        (
+            "error 29 in a 200",
+            answer(200, &[], &envelope(29)),
+            |result| matches!(result, Err(ProviderError::RateLimited { retry_after: Some(wait), .. }) if *wait == Duration::from_secs(1)),
+            2,
+            Duration::from_secs(1),
+        ),
+        (
+            "error 11 in a 200",
+            answer(200, &[], &envelope(11)),
+            |result| matches!(result, Err(ProviderError::Unavailable { .. })),
+            2,
+            Duration::ZERO,
+        ),
+        (
+            "error 16 in a 200",
+            answer(200, &[], &envelope(16)),
+            |result| matches!(result, Err(ProviderError::Unavailable { .. })),
+            2,
+            Duration::ZERO,
+        ),
+        (
+            "error 10 in a 403",
+            answer(403, &[], &envelope(10)),
+            |result| matches!(result, Err(ProviderError::Unauthorized { .. })),
+            1,
+            Duration::ZERO,
+        ),
+        (
+            "an unlisted code in a 200",
+            answer(200, &[], &envelope(8)),
+            |result| matches!(result, Err(ProviderError::BadRequest { status: 200, .. })),
+            1,
+            Duration::ZERO,
+        ),
+    ];
+    let creds = lastfm::LastFmCredentials {
+        api_key: "key".to_owned(),
+        ..lastfm::LastFmCredentials::default()
+    };
+    for (name, scripted, check, sends, rest) in rows {
+        let wire = Arc::new(ScriptedWire::new());
+        wire.on(Method::Get, lastfm::DEFAULT_BASE_URL, scripted);
+        let providers = providers_over(&wire);
+        let result = providers
+            .lastfm
+            .artist_info(&creds, "Radiohead", None, RequestPriority::UserInitiated)
+            .await;
+        assert!(check(&result), "{name}: got {result:?}");
+        assert_eq!(wire.sent().len(), sends, "{name}: requests sent");
+        let cooling = providers.limiter("lastfm").unwrap().cooling_for();
+        assert!(
+            cooling <= rest && cooling + Duration::from_millis(600) >= rest,
+            "{name}: rests {cooling:?}, expected {rest:?}"
+        );
+    }
+}
+
+/// TheAudioDB paces by the key saved: the free key, or none, at the free
+/// row of 30 a minute; any other key at the premium row. A 429 that names
+/// no wait rests the free row a minute.
+#[tokio::test(start_paused = true)]
+async fn audiodb_rows_follow_the_saved_key() {
+    const ARTIST: &str = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
+    let url = |key: &str| format!("{}/{key}/artist-mb.php", audiodb::DEFAULT_BASE_URL);
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(&url("123"), 200, &[], r#"{"artists": null}"#);
+    wire.answer(&url("premium-key"), 200, &[], r#"{"artists": null}"#);
+    let providers = providers_over(&wire);
+    let free = providers.limiter("audiodb").unwrap();
+    let premium = providers.limiter("audiodb-premium").unwrap();
+    let user = RequestPriority::UserInitiated;
+
+    let found = providers.audiodb.artist_by_mbid("", ARTIST, user).await;
+    assert!(matches!(found, Ok(None)), "{found:?}");
+    assert_eq!((free.remaining(), premium.remaining()), (0, 2));
+
+    let found = providers
+        .audiodb
+        .artist_by_mbid("premium-key", ARTIST, user)
+        .await;
+    assert!(matches!(found, Ok(None)), "{found:?}");
+    assert_eq!((free.remaining(), premium.remaining()), (0, 1));
+    let paths: Vec<String> = wire
+        .sent()
+        .iter()
+        .map(|sent| sent.url.path().to_owned())
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            "/api/v1/json/123/artist-mb.php",
+            "/api/v1/json/premium-key/artist-mb.php"
+        ]
+    );
+
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(&url("123"), 429, &[], "");
+    let providers = providers_over(&wire);
+    let found = providers
+        .audiodb
+        .artist_by_mbid("123", ARTIST, RequestPriority::BackgroundSync)
+        .await;
+    assert!(
+        matches!(found, Err(ProviderError::RateLimited { .. })),
+        "{found:?}"
+    );
+    let rest = providers.limiter("audiodb").unwrap().cooling_for();
+    assert!(
+        rest > Duration::from_secs(59) && rest <= Duration::from_secs(60),
+        "rests a minute: {rest:?}"
+    );
+}
+
+/// The AcoustID rules: a 4xx naming error code 4 is a refused key, any
+/// other 4xx a rejection, and a 200 whose status is not "ok" an outage.
+#[tokio::test(start_paused = true)]
+async fn acoustid_hooks() {
+    let lookup = format!("{}/v2/lookup", acoustid::DEFAULT_BASE_URL);
+    type Check = fn(&acoustid::BatchOutcome) -> bool;
+    let rows: Vec<(&str, Scripted, Check)> = vec![
+        (
+            "code 4 in a 400",
+            answer(
+                400,
+                &[],
+                r#"{"status": "error", "error": {"code": 4, "message": "invalid API key"}}"#,
+            ),
+            |outcome| matches!(outcome, acoustid::BatchOutcome::Rejected { message } if message.contains("401")),
+        ),
+        (
+            "another 400",
+            answer(
+                400,
+                &[],
+                r#"{"status": "error", "error": {"code": 2, "message": "missing parameter"}}"#,
+            ),
+            |outcome| matches!(outcome, acoustid::BatchOutcome::Rejected { message } if message.contains("400")),
+        ),
+        (
+            "a 200 that did not succeed",
+            answer(200, &[], r#"{"status": "error"}"#),
+            |outcome| matches!(outcome, acoustid::BatchOutcome::Unavailable { .. }),
+        ),
+    ];
+    for (name, scripted, check) in rows {
+        let wire = Arc::new(ScriptedWire::new());
+        wire.on(Method::Post, &lookup, scripted);
+        let providers = providers_over(&wire);
+        let outcome = providers
+            .acoustid
+            .lookup_batch_request(
+                "key",
+                &[acoustid::BatchQuery {
+                    fingerprint: "print",
+                    duration_secs: 200,
+                }],
+                RequestPriority::UserInitiated,
+            )
+            .await;
+        assert!(check(&outcome), "{name}: got {outcome:?}");
     }
 }
 

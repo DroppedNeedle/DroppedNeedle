@@ -1,6 +1,8 @@
 //! The production enrichment port Library Management plans through: the
 //! catalog's ListenBrainz and Last.fm clients, LRCLIB, the shared artwork
-//! cache and AcoustID, behind the library's [`EnrichmentPort`].
+//! cache and AcoustID, behind the library's [`EnrichmentPort`]. A person's
+//! own preview asks at user priority, an automatic run at background
+//! priority; AcoustID lookups are fingerprinting and always background.
 
 use futures_util::future::BoxFuture;
 
@@ -12,6 +14,17 @@ use droppedneedle_library::management::enrich::{
 };
 use droppedneedle_library::management::genre::Candidate;
 use droppedneedle_library::matching::model::ReleaseExtras;
+use droppedneedle_providers::RequestPriority;
+
+/// The priority a call asks at: background for automatic runs, user for a
+/// person's own preview.
+fn priority(background: bool) -> RequestPriority {
+    if background {
+        RequestPriority::BackgroundSync
+    } else {
+        RequestPriority::UserInitiated
+    }
+}
 
 /// The production port: the catalog's ListenBrainz and Last.fm clients,
 /// LRCLIB, the shared artwork cache, and AcoustID on identification's
@@ -21,10 +34,7 @@ pub struct LiveEnrichment {
     pub http: reqwest::Client,
     pub artwork: Option<ArtworkService>,
     pub lrclib: LrclibGate,
-    pub acoustid: droppedneedle_providers::acoustid::AcoustIdClient<
-        droppedneedle_providers::adapters::CorePacer,
-        droppedneedle_providers::adapters::HealthSink,
-    >,
+    pub acoustid: droppedneedle_providers::acoustid::AcoustIdClient,
     /// The library settings the AcoustID key is read from, per lookup.
     pub library: droppedneedle_kernel::runtime_config::Live<
         droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary,
@@ -152,13 +162,12 @@ impl EnrichmentPort for LiveEnrichment {
                 .upstream
                 .listenbrainz()
                 .ok_or_else(|| "ListenBrainz is switched off".to_owned())?;
-            let priority = if background {
-                droppedneedle_providers::RequestPriority::BackgroundSync
-            } else {
-                droppedneedle_providers::RequestPriority::UserInitiated
-            };
             let groups = client
-                .release_group_genres(&[release_group_mbid.to_owned()], &creds, priority)
+                .release_group_genres(
+                    &[release_group_mbid.to_owned()],
+                    &creds,
+                    priority(background),
+                )
                 .await
                 .map_err(|error| error.to_string())?;
             Ok(groups
@@ -182,28 +191,28 @@ impl EnrichmentPort for LiveEnrichment {
         &'a self,
         artist: &'a str,
         album: &'a str,
+        background: bool,
     ) -> BoxFuture<'a, Result<Vec<Candidate>, String>> {
-        use droppedneedle_providers::lastfm::Outcome;
         Box::pin(async move {
             let (client, creds) = self
                 .upstream
                 .lastfm("")
                 .await
                 .ok_or_else(|| "Last.fm has no usable key".to_owned())?;
+            let priority = priority(background);
             let mut out = Vec::new();
             for answer in [
-                client.album_top_genres(&creds, artist, album).await,
-                client.artist_top_genres(&creds, artist).await,
+                client
+                    .album_top_genres(&creds, artist, album, priority)
+                    .await,
+                client.artist_top_genres(&creds, artist, priority).await,
             ] {
-                match answer {
-                    Outcome::Found(tags) => out.extend(tags.into_iter().map(|tag| Candidate {
-                        name: tag.name,
-                        count: Some(tag.weight),
-                        curated: false,
-                    })),
-                    Outcome::Missing => {}
-                    Outcome::Unavailable { message, .. } => return Err(message),
-                }
+                let tags = answer.map_err(|error| error.to_string())?;
+                out.extend(tags.into_iter().map(|tag| Candidate {
+                    name: tag.name,
+                    count: Some(tag.weight),
+                    curated: false,
+                }));
             }
             Ok(out)
         })
@@ -248,6 +257,7 @@ impl EnrichmentPort for LiveEnrichment {
         &'a self,
         release_mbid: &'a str,
         release_group_mbid: &'a str,
+        background: bool,
     ) -> BoxFuture<'a, Result<Option<Cover>, String>> {
         Box::pin(async move {
             let artwork = self
@@ -259,7 +269,11 @@ impl EnrichmentPort for LiveEnrichment {
                     release_mbid,
                     release_group_mbid,
                     None,
-                    droppedneedle_providers::RequestPriority::BackgroundSync,
+                    if background {
+                        RequestPriority::BackgroundSync
+                    } else {
+                        RequestPriority::ImageFetch
+                    },
                 )
                 .await
             {
@@ -281,7 +295,6 @@ impl EnrichmentPort for LiveEnrichment {
         use droppedneedle_library::identify::sources::{
             NAME_INCLUDES, RELATION_INCLUDES, names_from_wire, relations_from_wire,
         };
-        use droppedneedle_providers::RequestPriority;
         use droppedneedle_providers::musicbrainz::Criticality;
         Box::pin(async move {
             let mut includes: Vec<&str> = Vec::new();
@@ -296,12 +309,7 @@ impl EnrichmentPort for LiveEnrichment {
             if includes.is_empty() {
                 return Ok(ReleaseExtras::default());
             }
-            let priority = if background {
-                RequestPriority::BackgroundSync
-            } else {
-                RequestPriority::UserInitiated
-            };
-            let (client, _) = self.upstream.musicbrainz(priority);
+            let (client, _) = self.upstream.musicbrainz(priority(background));
             // Identity-critical: a best-effort lookup turns an outage into
             // "not found", which must never read as "none".
             let found = client
@@ -336,7 +344,11 @@ impl EnrichmentPort for LiveEnrichment {
                     duration_secs: u64::from(print.duration_seconds),
                 })
                 .collect();
-            match self.acoustid.lookup_batch_request(&key, &queries).await {
+            match self
+                .acoustid
+                .lookup_batch_request(&key, &queries, RequestPriority::BackgroundSync)
+                .await
+            {
                 BatchOutcome::Answered(entries) => {
                     let mut out = vec![Vec::new(); prints.len()];
                     for (index, results) in entries {

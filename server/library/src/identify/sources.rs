@@ -28,9 +28,8 @@ use crate::scan::coordinator::{ResolverSource as _, SharedResolver};
 use crate::scan::pool::BlockingPool;
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::acoustid::{AcoustIdClient, BatchQuery};
-use droppedneedle_providers::degradation::DegradationSink;
-use droppedneedle_providers::limiter::Pacer;
 use droppedneedle_providers::musicbrainz::models::Relation;
 use droppedneedle_providers::musicbrainz::{
     ArtistCreditName, Criticality, MbRelease, MusicBrainzView, ReleaseSearchHit,
@@ -827,21 +826,22 @@ impl FingerprintSource for NoFingerprints {
     }
 }
 
-/// Chromaprint on the blocking pool plus batched AcoustID lookups. Prints
-/// are kept per track and file revision, so a file is decoded once.
-pub struct AcoustIdFingerprints<P, S> {
-    client: AcoustIdClient<P, S>,
+/// Chromaprint on the blocking pool plus batched AcoustID lookups, at
+/// background priority: identification and imports are background work.
+/// Prints are kept per track and file revision, so a file is decoded once.
+pub struct AcoustIdFingerprints {
+    client: AcoustIdClient,
     library: Live<TypedLibrary>,
     roots: SharedResolver,
     pool: BlockingPool,
     store: Arc<SqliteIdentifyStore>,
 }
 
-impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
+impl AcoustIdFingerprints {
     /// Fingerprints with the AcoustID key in `library` and the files under
     /// the live `roots`, both read when a job needs them.
     pub fn new(
-        client: AcoustIdClient<P, S>,
+        client: AcoustIdClient,
         library: Live<TypedLibrary>,
         roots: SharedResolver,
         pool: BlockingPool,
@@ -922,7 +922,10 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
                 duration_secs: u64::from(*seconds),
             })
             .collect();
-        let found = self.client.lookup_batch(&key, &queries).await;
+        let found = self
+            .client
+            .lookup_batch(&key, &queries, RequestPriority::BackgroundSync)
+            .await;
         let mut matches = AudioMatches::default();
         for (index, heard) in &found {
             let Some((id, _, _)) = prints.get(*index) else {
@@ -970,7 +973,7 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
     }
 }
 
-impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
+impl AcoustIdFingerprints {
     /// Chromaprint each file on the blocking pool: (id, print, seconds).
     async fn print(&self, jobs: Vec<(String, PathBuf)>) -> Vec<(String, String, u32)> {
         let printed = futures_util::future::join_all(jobs.into_iter().map(|(id, path)| {
@@ -1024,7 +1027,10 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
                 duration_secs: u64::from(*seconds),
             })
             .collect();
-        let found = self.client.lookup_batch(&key, &queries).await;
+        let found = self
+            .client
+            .lookup_batch(&key, &queries, RequestPriority::BackgroundSync)
+            .await;
         found
             .into_iter()
             .filter_map(|(index, heard)| {
@@ -1035,7 +1041,7 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
     }
 }
 
-impl<P: Pacer, S: DegradationSink> FingerprintSource for AcoustIdFingerprints<P, S> {
+impl FingerprintSource for AcoustIdFingerprints {
     fn identify<'a>(&'a self, tracks: &'a [LocalTrackFacts]) -> BoxFuture<'a, AudioMatches> {
         Box::pin(self.identify_tracks(tracks))
     }

@@ -523,8 +523,11 @@ mod tests {
             droppedneedle_providers::ProviderEndpoints {
                 musicbrainz: closed.clone(),
                 brainzmash: closed.clone(),
-                coverart: closed,
+                coverart: closed.clone(),
                 listenbrainz: listenbrainz.to_owned(),
+                lastfm: closed.clone(),
+                audiodb: closed.clone(),
+                acoustid: closed,
             },
         ))
     }
@@ -698,8 +701,6 @@ mod tests {
         // Nothing listens on the discard port.
         let closed = || "http://127.0.0.1:9".to_owned();
         let endpoints = crate::reads::catalog::upstream::Endpoints {
-            lastfm: closed(),
-            audiodb: closed(),
             wikidata: closed(),
             wikipedia: closed(),
             commons: closed(),

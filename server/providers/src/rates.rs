@@ -151,7 +151,9 @@ pub const RATES: &[RateRow] = &[
         burst: 2,
         max_in_flight: Some(2),
         verified_on: "2026-10-18",
-        basis: "upload.wikimedia.org: total concurrency of at most 2.",
+        basis: "upload.wikimedia.org: total concurrency of at most 2. The policy does \
+                not name thumb.wikimedia.org or commons.wikimedia.org image pages; they \
+                share this row, unverified.",
         url: "https://wikitech.wikimedia.org/wiki/Robot_policy",
     },
     RateRow {

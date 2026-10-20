@@ -38,8 +38,7 @@ use droppedneedle_media::remotes::connections::{
 use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
 use droppedneedle_providers::{
     Providers,
-    adapters::{CorePacer, CoreSink, ReqwestGet},
-    lastfm::{self, LastFmClient},
+    adapters::ReqwestGet,
     youtube::{DEFAULT_DAILY_QUOTA_LIMIT, YouTubeClient, YouTubeSettings},
 };
 
@@ -50,8 +49,6 @@ pub struct DiscoverInputs {
     pub db: Db,
     /// The factory's shared client.
     pub http: reqwest::Client,
-    /// The factory's no-redirect client (MusicBrainz checks each hop).
-    pub no_redirect: reqwest::Client,
     /// Shared limiters (ListenBrainz paces at 1/s).
     pub providers: Arc<Providers>,
     /// Users' ListenBrainz links, for "your top albums".
@@ -73,21 +70,10 @@ pub struct DiscoverInputs {
 /// Build the production discover deps, each holding live handles from
 /// `config` on the settings it reads.
 pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDeps {
-    let lastfm_charts = match CorePacer::for_source(inputs.providers.clone(), lastfm::SOURCE) {
-        Some(pacer) => Some(charts::LastFmCharts::new(
-            LastFmClient::new(
-                inputs.http.clone(),
-                &inputs.endpoints.lastfm,
-                pacer,
-                CoreSink,
-            ),
-            inputs.users.clone(),
-        )),
-        None => {
-            tracing::error!("no last.fm rate limit row; last.fm charts are unavailable");
-            None
-        }
-    };
+    let lastfm_charts = Some(charts::LastFmCharts::new(
+        inputs.providers.lastfm.clone(),
+        inputs.users.clone(),
+    ));
     let charts: Arc<dyn ChartsSource> = Arc::new(charts::LiveCharts::new(
         inputs.providers.listenbrainz.clone(),
         inputs.listenbrainz_links.clone(),

@@ -196,8 +196,13 @@ impl Catalog {
                         Section::TopAlbums => catalog.release_groups(&mbid).await.ok(),
                         _ => None,
                     };
-                    let rows =
-                        lastfm_rows(&client, &creds, &mbid, count, section, groups.as_ref()).await;
+                    let rows = lastfm_rows(
+                        &client,
+                        &creds,
+                        (&mbid, count, section, priority),
+                        groups.as_ref(),
+                    )
+                    .await;
                     let (value, ttl) = catalog.cacheable(rows, &mbid).await?;
                     // Rows matched against a missing or partial discography
                     // are kept only briefly, so links fill in once it lands.
@@ -642,13 +647,18 @@ impl Catalog {
                     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                     let top = match tokio::time::timeout(
                         remaining,
-                        client.artist_top_albums(&creds, artist_name, Some(artist_mbid), 3),
+                        client.artist_top_albums(
+                            &creds,
+                            artist_name,
+                            Some(artist_mbid),
+                            3,
+                            RequestPriority::UserInitiated,
+                        ),
                     )
                     .await
                     {
-                        Ok(lastfm::Outcome::Found(top)) => top,
-                        Ok(lastfm::Outcome::Missing) => continue,
-                        Ok(lastfm::Outcome::Unavailable { .. }) => {
+                        Ok(Ok(top)) => top,
+                        Ok(Err(_)) => {
                             complete = false;
                             continue;
                         }
@@ -825,23 +835,15 @@ impl Catalog {
 async fn lastfm_rows(
     client: &super::upstream::CatalogLastFm,
     creds: &lastfm::LastFmCredentials,
-    mbid: &str,
-    count: u32,
-    section: Section,
+    (mbid, count, section, priority): (&str, u32, Section, RequestPriority),
     groups: Option<&ReleaseGroupList>,
 ) -> Option<SectionRows> {
-    let found = |outcome: lastfm::Outcome<Vec<lastfm::TopItem>>| match outcome {
-        lastfm::Outcome::Found(items) => Some(items),
-        lastfm::Outcome::Missing => Some(Vec::new()),
-        lastfm::Outcome::Unavailable { .. } => None,
-    };
     match section {
         Section::Similar => {
-            let similar = match client.similar_artists(creds, "", Some(mbid), count).await {
-                lastfm::Outcome::Found(similar) => similar,
-                lastfm::Outcome::Missing => Vec::new(),
-                lastfm::Outcome::Unavailable { .. } => return None,
-            };
+            let similar = client
+                .similar_artists(creds, "", Some(mbid), count, priority)
+                .await
+                .ok()?;
             Some(SectionRows {
                 similar: similar
                     .into_iter()
@@ -858,7 +860,10 @@ async fn lastfm_rows(
             })
         }
         Section::TopSongs => Some(SectionRows {
-            songs: found(client.artist_top_tracks(creds, "", Some(mbid), count).await)?
+            songs: client
+                .artist_top_tracks(creds, "", Some(mbid), count, priority)
+                .await
+                .ok()?
                 .into_iter()
                 .map(|track| TopSong {
                     title: track.name,
@@ -875,7 +880,10 @@ async fn lastfm_rows(
             ..SectionRows::default()
         }),
         Section::TopAlbums => {
-            let top = found(client.artist_top_albums(creds, "", Some(mbid), count).await)?;
+            let top = client
+                .artist_top_albums(creds, "", Some(mbid), count, priority)
+                .await
+                .ok()?;
             Some(SectionRows {
                 albums: match_lastfm_albums(top, groups),
                 ..SectionRows::default()

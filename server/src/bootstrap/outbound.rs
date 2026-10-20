@@ -148,8 +148,6 @@ impl Outbound {
     /// The addresses the catalog and discovery reads use.
     pub fn catalog(&self) -> droppedneedle_catalog::reads::catalog::upstream::Endpoints {
         droppedneedle_catalog::reads::catalog::upstream::Endpoints {
-            lastfm: self.lastfm.clone(),
-            audiodb: self.audiodb.clone(),
             wikidata: self.wikidata.clone(),
             wikipedia: self.wikipedia.clone(),
             commons: self.commons.clone(),
@@ -168,6 +166,9 @@ impl Outbound {
             brainzmash: self.brainzmash.clone(),
             coverart: self.cover_art_archive.clone(),
             listenbrainz: self.listenbrainz.clone(),
+            lastfm: self.lastfm.clone(),
+            audiodb: self.audiodb.clone(),
+            acoustid: self.acoustid.clone(),
         }
     }
 
@@ -180,18 +181,10 @@ impl Outbound {
         }
     }
 
-    /// The address Last.fm scrobbles are forwarded to.
-    pub fn scrobbles(&self) -> droppedneedle_media::playback::forwarding::Endpoints {
-        droppedneedle_media::playback::forwarding::Endpoints {
-            lastfm: self.lastfm.clone(),
-        }
-    }
-
     /// The addresses sign-in and account linking use.
     pub fn sign_in(&self) -> Upstreams {
         Upstreams {
             plex_tv: self.plex_tv.clone(),
-            lastfm: self.lastfm.clone(),
             pwned_passwords: self.pwned_passwords.clone(),
         }
     }
@@ -208,7 +201,6 @@ impl Outbound {
     pub fn library(&self) -> droppedneedle_library::wiring::Endpoints {
         droppedneedle_library::wiring::Endpoints {
             discogs: self.discogs.clone(),
-            acoustid: self.acoustid.clone(),
             identify_providers: self.identify_providers.get(),
             contribution_providers: self.contribution_providers.get(),
         }

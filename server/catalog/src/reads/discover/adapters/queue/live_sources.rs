@@ -30,7 +30,7 @@ use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
 use droppedneedle_media::remotes::models::SourceName;
 use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
 use droppedneedle_providers::cache::cache_aside_json;
-use droppedneedle_providers::lastfm::{self, LastFmCredentials};
+use droppedneedle_providers::lastfm::LastFmCredentials;
 use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
 use droppedneedle_providers::musicbrainz::models::{ArtistCreditName, Relation};
 use droppedneedle_providers::musicbrainz::{Criticality, is_valid_mbid};
@@ -168,22 +168,11 @@ impl LiveSources {
     }
 }
 
-pub(in crate::reads::discover::adapters) fn lastfm_result<T: Default>(
-    outcome: lastfm::Outcome<T>,
+/// A Last.fm answer; an unknown entity is already an empty answer.
+pub(in crate::reads::discover::adapters) fn lastfm_result<T>(
+    result: Result<T, ProviderError>,
 ) -> SourceResult<T> {
-    match outcome {
-        lastfm::Outcome::Found(value) => Ok(value),
-        lastfm::Outcome::Missing => Ok(T::default()),
-        lastfm::Outcome::Unavailable { message, .. } => Err(message),
-    }
-}
-
-fn lastfm_option<T>(outcome: lastfm::Outcome<T>) -> SourceResult<Option<T>> {
-    match outcome {
-        lastfm::Outcome::Found(value) => Ok(Some(value)),
-        lastfm::Outcome::Missing => Ok(None),
-        lastfm::Outcome::Unavailable { message, .. } => Err(message),
-    }
+    result.map_err(|error| error.to_string())
 }
 
 /// A MusicBrainz lookup answer: a malformed or refused id is a definite
@@ -545,6 +534,7 @@ impl QueueSources for LiveSources {
         user_id: &'a str,
         username: &'a str,
         limit: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         Box::pin(async move {
             let Some((client, creds)) = self.lastfm(user_id).await else {
@@ -554,7 +544,7 @@ impl QueueSources for LiveSources {
             self.cached(key, USER_STATS_TTL, async {
                 let rows = lastfm_result(
                     client
-                        .user_top_artists(&creds, username, "3month", limit)
+                        .user_top_artists(&creds, username, "3month", limit, priority)
                         .await,
                 )?;
                 Ok(rows
@@ -575,6 +565,7 @@ impl QueueSources for LiveSources {
         user_id: &'a str,
         artist: &'a ArtistRow,
         limit: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         Box::pin(async move {
             let Some((client, creds)) = self.lastfm(user_id).await else {
@@ -584,7 +575,13 @@ impl QueueSources for LiveSources {
             self.cached(key, ARTIST_TTL, async {
                 let rows = lastfm_result(
                     client
-                        .similar_artists(&creds, &artist.name, artist.mbid.as_deref(), limit)
+                        .similar_artists(
+                            &creds,
+                            &artist.name,
+                            artist.mbid.as_deref(),
+                            limit,
+                            priority,
+                        )
                         .await,
                 )?;
                 Ok(rows
@@ -605,6 +602,7 @@ impl QueueSources for LiveSources {
         user_id: &'a str,
         artist: &'a ArtistRow,
         limit: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<LastFmAlbum>>> {
         Box::pin(async move {
             let Some((client, creds)) = self.lastfm(user_id).await else {
@@ -614,7 +612,13 @@ impl QueueSources for LiveSources {
             self.cached(key, ARTIST_TTL, async {
                 let rows = lastfm_result(
                     client
-                        .artist_top_albums(&creds, &artist.name, artist.mbid.as_deref(), limit)
+                        .artist_top_albums(
+                            &creds,
+                            &artist.name,
+                            artist.mbid.as_deref(),
+                            limit,
+                            priority,
+                        )
                         .await,
                 )?;
                 Ok(rows
@@ -634,6 +638,7 @@ impl QueueSources for LiveSources {
         &'a self,
         user_id: &'a str,
         limit: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         Box::pin(async move {
             let Some((client, creds)) = self.lastfm(user_id).await else {
@@ -641,7 +646,7 @@ impl QueueSources for LiveSources {
             };
             let key = format!("lfm_queue:chart:{limit}");
             self.cached(key, ARTIST_TTL, async {
-                let rows = lastfm_result(client.chart_top_artists(&creds, limit).await)?;
+                let rows = lastfm_result(client.chart_top_artists(&creds, limit, priority).await)?;
                 Ok(rows
                     .into_iter()
                     .map(|row| ArtistRow {
@@ -660,12 +665,17 @@ impl QueueSources for LiveSources {
         user_id: &'a str,
         artist: &'a str,
         album: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<LastFmFacts>>> {
         Box::pin(async move {
             let Some((client, creds)) = self.lastfm(user_id).await else {
                 return Ok(None);
             };
-            let info = lastfm_option(client.album_info(&creds, artist, album, None).await)?;
+            let info = lastfm_result(
+                client
+                    .album_info(&creds, artist, album, None, priority)
+                    .await,
+            )?;
             Ok(info.map(|info| LastFmFacts {
                 mbid: info.mbid,
                 tags: info.tags.into_iter().map(|tag| tag.name).collect(),
@@ -679,12 +689,13 @@ impl QueueSources for LiveSources {
         user_id: &'a str,
         artist: &'a str,
         mbid: Option<&'a str>,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<LastFmFacts>>> {
         Box::pin(async move {
             let Some((client, creds)) = self.lastfm(user_id).await else {
                 return Ok(None);
             };
-            let info = lastfm_option(client.artist_info(&creds, artist, mbid).await)?;
+            let info = lastfm_result(client.artist_info(&creds, artist, mbid, priority).await)?;
             Ok(info.map(|info| LastFmFacts {
                 mbid: info.mbid,
                 tags: info.tags.into_iter().map(|tag| tag.name).collect(),

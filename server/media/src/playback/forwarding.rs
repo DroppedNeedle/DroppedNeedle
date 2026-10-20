@@ -16,10 +16,9 @@
 //! (no answer, 5xx, 429, Last.fm codes 11/16/29) are retried with backoff,
 //! up to [`SCROBBLE_ATTEMPTS`] tries; a rejected credential or a refused
 //! play is dropped with a log line. Now-playing reports are not retried: a
-//! late one is wrong. ListenBrainz submissions go through the one
-//! ListenBrainz client at background priority, so they take their tokens
-//! from the same 1/s bucket as every ListenBrainz read; Last.fm is paced
-//! here at 5/s.
+//! late one is wrong. Each service's posts go through its one provider
+//! client at background priority, so they take their tokens from the same
+//! bucket as every other call to that service.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,15 +27,15 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use droppedneedle_auth::users::stores::{LastFmStore, LastFmSwitch};
-use droppedneedle_kernel::http_client::{BodyError, read_capped};
 use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
+use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::ListenBrainzClient;
-use droppedneedle_providers::{ProviderError, RequestPriority};
+use droppedneedle_providers::{PayloadKind, ProviderError, RequestPriority};
 
 use super::ports::{ReportTrack, ScrobbleLinks, ScrobbleSinks, ScrobbleTargets, ServiceOutcome};
-use super::scrobble_models::{AdditionalInfo, LastFmError, Listen, SubmitListens, TrackMetadata};
+use super::scrobble_models::{AdditionalInfo, Listen, SubmitListens, TrackMetadata};
 
 /// Jobs waiting per service. A burst past this answers "queue full".
 pub const FORWARD_QUEUE_DEPTH: usize = 512;
@@ -46,12 +45,6 @@ pub const SCROBBLE_ATTEMPTS: u32 = 4;
 pub const BASE_BACKOFF: Duration = Duration::from_secs(5);
 /// Longest retry delay.
 pub const MAX_BACKOFF: Duration = Duration::from_secs(300);
-/// Largest Last.fm scrobble answer read.
-const MAX_LASTFM_BODY_BYTES: usize = 4 * 1024 * 1024;
-/// Per-request budget.
-pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-/// Last.fm pacing (provider policy: 5 requests per second).
-pub const LASTFM_SPACING: Duration = Duration::from_millis(200);
 
 /// One external scrobble service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -68,15 +61,6 @@ impl Service {
         match self {
             Self::LastFm => "lastfm",
             Self::ListenBrainz => "listenbrainz",
-        }
-    }
-
-    /// Spacing kept in the lane. ListenBrainz needs none here: its client
-    /// paces on the shared bucket.
-    fn spacing(self) -> Duration {
-        match self {
-            Self::LastFm => LASTFM_SPACING,
-            Self::ListenBrainz => Duration::ZERO,
         }
     }
 }
@@ -325,13 +309,6 @@ impl ScrobbleCredentials for StoredScrobbleCredentials {
     }
 }
 
-/// Where the worker sends Last.fm requests.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Endpoints {
-    /// Last.fm API endpoint.
-    pub lastfm: String,
-}
-
 /// How one delivery ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Delivery {
@@ -351,36 +328,33 @@ pub struct ForwardWorker {
 
 /// Makes the upstream calls; shared by both service lanes.
 struct Courier {
-    http: reqwest::Client,
     listenbrainz: ListenBrainzClient,
+    lastfm: LastFmClient,
     credentials: Arc<dyn ScrobbleCredentials>,
-    endpoints: Endpoints,
 }
 
 impl ForwardWorker {
-    /// Build the worker over the forwarder's queues: ListenBrainz through
-    /// the one ListenBrainz client, Last.fm through `http`.
+    /// Build the worker over the forwarder's queues, sending through the
+    /// one ListenBrainz client and the one Last.fm client.
     pub fn new(
         queues: ForwardQueues,
-        http: reqwest::Client,
         listenbrainz: ListenBrainzClient,
+        lastfm: LastFmClient,
         credentials: Arc<dyn ScrobbleCredentials>,
-        endpoints: Endpoints,
     ) -> Self {
         Self {
             queues,
             courier: Courier {
-                http,
                 listenbrainz,
+                lastfm,
                 credentials,
-                endpoints,
             },
         }
     }
 
-    /// Deliver both services' jobs side by side, each paced on its own,
-    /// until the queues close or `stop` is cancelled; what was queued before
-    /// the stop is still delivered.
+    /// Deliver both services' jobs side by side, each paced by its own
+    /// client, until the queues close or `stop` is cancelled; what was
+    /// queued before the stop is still delivered.
     pub async fn run(self, stop: CancellationToken) {
         let Self { queues, courier } = self;
         tokio::join!(
@@ -390,8 +364,8 @@ impl ForwardWorker {
     }
 }
 
-/// One service's delivery loop: jobs in order, paced by the service's
-/// policy, retries held until they come due.
+/// One service's delivery loop: jobs in order, retries held until they
+/// come due.
 async fn lane(
     courier: &Courier,
     service: Service,
@@ -399,7 +373,6 @@ async fn lane(
     stop: &CancellationToken,
 ) {
     let mut retries: Vec<(Instant, ForwardJob)> = Vec::new();
-    let mut next_slot = Instant::now();
     loop {
         let next_due = retries.iter().map(|(due, _)| *due).min();
         let job = tokio::select! {
@@ -415,8 +388,6 @@ async fn lane(
                 retries.swap_remove(index).1
             }
         };
-        tokio::time::sleep_until(next_slot).await;
-        next_slot = Instant::now() + service.spacing();
         let mut job = job;
         job.attempt += 1;
         match courier.deliver(&job).await {
@@ -528,72 +499,62 @@ impl Courier {
             ForwardKind::NowPlaying => "track.updateNowPlaying",
             ForwardKind::Scrobble => "track.scrobble",
         };
-        let mut params: Vec<(String, String)> = vec![
-            ("method".to_owned(), method.to_owned()),
-            ("api_key".to_owned(), session.api_key.clone()),
-            ("sk".to_owned(), session.session_key.clone()),
-            ("artist".to_owned(), track.artist_name.clone()),
-            ("track".to_owned(), track.track_name.clone()),
-        ];
+        let timestamp;
+        let duration;
+        let mut params: Vec<(&str, &str)> =
+            vec![("artist", &track.artist_name), ("track", &track.track_name)];
         if job.kind == ForwardKind::Scrobble {
             let Some(played_at) = track.played_at else {
                 return Delivery::Drop("scrobble has no play time".to_owned());
             };
-            params.push(("timestamp".to_owned(), played_at.to_string()));
+            timestamp = played_at.to_string();
+            params.push(("timestamp", &timestamp));
         }
         if let Some(album) = track.album_name.as_deref().filter(|name| !name.is_empty()) {
-            params.push(("album".to_owned(), album.to_owned()));
+            params.push(("album", album));
         }
         if track.duration_ms >= 1_000 {
-            params.push((
-                "duration".to_owned(),
-                (track.duration_ms / 1_000).to_string(),
-            ));
+            duration = (track.duration_ms / 1_000).to_string();
+            params.push(("duration", &duration));
         }
         if let Some(mbid) = track.mbid.as_deref().filter(|mbid| !mbid.is_empty()) {
-            params.push(("mbid".to_owned(), mbid.to_owned()));
+            params.push(("mbid", mbid));
         }
-        let signature = droppedneedle_providers::lastfm::api_sig(&params, &session.shared_secret);
-        params.push(("api_sig".to_owned(), signature));
-        params.push(("format".to_owned(), "json".to_owned()));
-        let response = self
-            .http
-            .post(&self.endpoints.lastfm)
-            .form(&params)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await;
-        let response = match response {
-            Ok(response) => response,
-            Err(error) => return Delivery::Retry(None, transport_cause(&error)),
+        let creds = LastFmCredentials {
+            api_key: session.api_key.clone(),
+            shared_secret: session.shared_secret.clone(),
+            username: None,
+            session_key: Some(session.session_key.clone()),
         };
-        let status = response.status();
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Delivery::Retry(retry_after(response.headers()), "rate limited".to_owned());
-        }
-        if status.is_server_error() {
-            return Delivery::Retry(None, format!("Last.fm answered {status}"));
-        }
-        let body = match read_capped(response, MAX_LASTFM_BODY_BYTES).await {
-            Ok(body) => body,
-            Err(BodyError::TooLarge) => {
-                return Delivery::Retry(None, "Last.fm answer exceeded the size limit".to_owned());
+        match self
+            .lastfm
+            .submit(method, &creds, &params, RequestPriority::BackgroundSync)
+            .await
+        {
+            Ok(()) => Delivery::Done,
+            // No answer, a server error, a rate limit (HTTP 429 or error
+            // 29), Last.fm offline for now (errors 11 and 16) or an answer
+            // too large to read: the queue's own ladder tries again. A wait
+            // Last.fm named counts only when it is longer than the ladder's
+            // own step.
+            Err(error)
+                if error.is_retriable()
+                    || matches!(
+                        error,
+                        ProviderError::Payload {
+                            kind: PayloadKind::TooLarge,
+                            ..
+                        }
+                    ) =>
+            {
+                Delivery::Retry(
+                    error
+                        .retry_after()
+                        .map(|wait| wait.max(backoff(job.attempt)).min(MAX_BACKOFF)),
+                    error.to_string(),
+                )
             }
-            Err(BodyError::Transport(cause)) => return Delivery::Retry(None, cause),
-        };
-        if let Ok(error) = serde_json::from_slice::<LastFmError>(&body) {
-            return match error.error {
-                11 | 16 | 29 => Delivery::Retry(
-                    None,
-                    format!("Last.fm error {}: {}", error.error, error.message),
-                ),
-                code => Delivery::Drop(format!("Last.fm error {code}: {}", error.message)),
-            };
-        }
-        if status.is_success() {
-            Delivery::Done
-        } else {
-            Delivery::Drop(format!("Last.fm refused the scrobble ({status})"))
+            Err(error) => Delivery::Drop(format!("Last.fm refused the scrobble: {error}")),
         }
     }
 }
@@ -610,27 +571,6 @@ fn backoff(attempt: u32) -> Duration {
         0
     };
     base + Duration::from_millis(jitter_ms)
-}
-
-/// A `Retry-After` in seconds, capped at the longest backoff.
-fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
-    headers
-        .get(reqwest::header::RETRY_AFTER)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|text| text.trim().parse::<u64>().ok())
-        .map(|secs| Duration::from_secs(secs).min(MAX_BACKOFF))
-}
-
-/// Transport failures without the URL (it may carry nothing secret, but
-/// the log does not need it).
-fn transport_cause(error: &reqwest::Error) -> String {
-    if error.is_timeout() {
-        "timed out".to_owned()
-    } else if error.is_connect() {
-        "could not connect".to_owned()
-    } else {
-        "request failed".to_owned()
-    }
 }
 
 async fn sleep_until(due: Option<Instant>) {

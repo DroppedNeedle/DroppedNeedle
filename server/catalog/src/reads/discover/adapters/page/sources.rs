@@ -15,6 +15,7 @@ use crate::reads::discover::adapters::queue::sources::{
     AlbumRow, ArtistRow, QueueSources, SourceResult, StatsRange,
 };
 use crate::reads::discover::ports::BoxFuture;
+use droppedneedle_providers::RequestPriority;
 
 /// An album row with the listens that rank it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -217,6 +218,7 @@ pub trait PageSources: QueueSources {
         user_id: &'a str,
         tag: &'a str,
         limit: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>>;
 
     /// Artists carrying one MusicBrainz tag.

@@ -355,9 +355,7 @@ async fn lastfm_charts_read_the_instance_key_per_call() {
     use droppedneedle_catalog::reads::discover::ports::{ChartsSource as _, ProviderFailure};
     use droppedneedle_kernel::http_client::HttpClientFactory;
     use droppedneedle_plugins::scrobble::MemoryListenBrainzLinkStore;
-    use droppedneedle_providers::Providers;
-    use droppedneedle_providers::adapters::{CorePacer, CoreSink};
-    use droppedneedle_providers::lastfm::{self, LastFmClient};
+    use droppedneedle_providers::{ProviderEndpoints, Providers, ReqwestWire};
 
     let seen: Arc<Mutex<Vec<String>>> = Arc::default();
     let record = seen.clone();
@@ -383,19 +381,20 @@ async fn lastfm_charts_read_the_instance_key_per_call() {
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
     let http = HttpClientFactory::new().unwrap();
-    let providers = Arc::new(Providers::closed());
+    let providers = Providers::unpaced_at(
+        Arc::new(ReqwestWire::new(&http)),
+        ProviderEndpoints {
+            lastfm: base,
+            ..ProviderEndpoints::closed()
+        },
+    );
     let switch = Arc::new(crate::common::auth_fakes::InstanceKeySwitch::default());
     let auth = AuthRig::new("charts").await;
     let charts = LiveCharts::new(
         providers.listenbrainz.clone(),
         Arc::new(MemoryListenBrainzLinkStore::new(auth.deps.crypto.clone())),
         Some(LastFmCharts::new(
-            LastFmClient::new(
-                http.shared().clone(),
-                &base,
-                CorePacer::for_source(providers, lastfm::SOURCE).unwrap(),
-                CoreSink,
-            ),
+            providers.lastfm.clone(),
             droppedneedle_auth::users::UsersDeps {
                 lastfm_switch: switch.clone(),
                 ..auth.deps.clone()

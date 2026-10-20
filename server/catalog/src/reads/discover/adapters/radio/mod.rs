@@ -549,7 +549,8 @@ impl LiveRadio {
         if seeds.len() < MAX_SEED_ARTISTS {
             let tagged = timed(
                 "lastfm tag artists",
-                self.sources.lastfm_tag_artists(user_id, genre, 10),
+                self.sources
+                    .lastfm_tag_artists(user_id, genre, 10, RequestPriority::UserInitiated),
             )
             .await;
             for artist in tagged {

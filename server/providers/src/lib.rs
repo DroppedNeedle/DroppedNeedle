@@ -18,8 +18,8 @@
 //!   per-source invalidation.
 //! - [`singleflight`]: request coalescing for concurrent identical fetches.
 //! - [`degradation`]: the request-scoped degradation context.
-//! - [`adapters`]: the pacing and recording bridges the clients not yet on
-//!   the executor still use.
+//! - [`adapters`]: the shared GET port the catalog clients not yet on the
+//!   executor still use.
 //!
 //! # Wiring
 //!
@@ -51,6 +51,7 @@ pub mod executor;
 pub mod geocoding;
 pub mod github;
 pub mod health;
+pub mod images;
 pub mod itunes;
 pub mod lastfm;
 pub mod limiter;
@@ -74,7 +75,7 @@ use std::sync::Arc;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::platform::Platform;
 
-pub use adapters::{CorePacer, CoreSink, HealthSink, ReqwestGet};
+pub use adapters::ReqwestGet;
 pub use cache::{
     InMemoryProviderCache, ProviderCache, cache_aside_bytes, cache_aside_json, digest_key,
     invalidate_source, namespaced_key, prefixes_for,
@@ -109,6 +110,12 @@ pub struct ProviderEndpoints {
     pub coverart: String,
     /// ListenBrainz API root.
     pub listenbrainz: String,
+    /// Last.fm API root.
+    pub lastfm: String,
+    /// TheAudioDB API root, without the key segment.
+    pub audiodb: String,
+    /// AcoustID API origin.
+    pub acoustid: String,
 }
 
 impl ProviderEndpoints {
@@ -122,6 +129,9 @@ impl ProviderEndpoints {
             brainzmash: "http://127.0.0.1:9/brainzmash/ws/2".to_owned(),
             coverart: "http://127.0.0.1:9/coverart".to_owned(),
             listenbrainz: "http://127.0.0.1:9/listenbrainz".to_owned(),
+            lastfm: "http://127.0.0.1:9/lastfm/".to_owned(),
+            audiodb: "http://127.0.0.1:9/audiodb".to_owned(),
+            acoustid: "http://127.0.0.1:9/acoustid".to_owned(),
         }
     }
 }
@@ -147,6 +157,16 @@ pub struct Providers {
     /// ListenBrainz: every read, the credential check and scrobble
     /// forwarding, on one bucket.
     pub listenbrainz: listenbrainz::ListenBrainzClient,
+    /// Last.fm: every read, account linking and scrobble forwarding, on
+    /// one bucket.
+    pub lastfm: lastfm::LastFmClient,
+    /// TheAudioDB lookups, on the free or the premium row by key.
+    pub audiodb: audiodb::AudioDbClient,
+    /// AcoustID lookups for identification, imports and Library
+    /// Management, on one bucket.
+    pub acoustid: acoustid::AcoustIdClient,
+    /// Artist images and TheAudioDB thumbnails by URL.
+    pub images: images::ImageClient,
 }
 
 impl Providers {
@@ -230,6 +250,21 @@ impl Providers {
             executor(&listenbrainz::SPEC, listenbrainz::SOURCE),
             &endpoints.listenbrainz,
         );
+        let lastfm =
+            lastfm::LastFmClient::new(executor(&lastfm::SPEC, lastfm::SOURCE), &endpoints.lastfm);
+        let audiodb = audiodb::AudioDbClient::new(
+            executor(&audiodb::SPEC, audiodb::SOURCE),
+            executor(&audiodb::SPEC, audiodb::PREMIUM_ROW),
+            &endpoints.audiodb,
+        );
+        let acoustid = acoustid::AcoustIdClient::new(
+            executor(&acoustid::SPEC, acoustid::SOURCE),
+            &endpoints.acoustid,
+        );
+        let images = images::ImageClient::new(
+            executor(&images::AUDIODB_SPEC, images::AUDIODB_MEDIA),
+            executor(&images::WIKIMEDIA_SPEC, images::WIKIMEDIA_MEDIA),
+        );
         Self {
             limiters,
             slots: SlotManager::new(),
@@ -238,6 +273,10 @@ impl Providers {
             musicbrainz,
             coverart,
             listenbrainz,
+            lastfm,
+            audiodb,
+            acoustid,
+            images,
         }
     }
 

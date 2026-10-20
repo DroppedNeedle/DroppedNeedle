@@ -215,7 +215,7 @@ pub(in crate::reads::discover::adapters) async fn seed_artists(
         let rows = or_empty(
             "lastfm top artists",
             ctx.sources
-                .lastfm_top_artists(user_id, username, 10.max(wanted as u32))
+                .lastfm_top_artists(user_id, username, 10.max(wanted as u32), ctx.priority)
                 .await,
         );
         take(rows, &mut seeds);
@@ -670,7 +670,12 @@ pub(in crate::reads::discover::adapters) async fn lastfm_pools(
         let similar = or_empty(
             "lastfm similar artists",
             ctx.sources
-                .lastfm_similar_artists(user_id, seed, settings.similar_artists_limit as u32)
+                .lastfm_similar_artists(
+                    user_id,
+                    seed,
+                    settings.similar_artists_limit as u32,
+                    ctx.priority,
+                )
                 .await,
         );
         let similar: Vec<ArtistRow> = similar
@@ -681,8 +686,12 @@ pub(in crate::reads::discover::adapters) async fn lastfm_pools(
             })
             .collect();
         let albums = join_all(similar.iter().map(|artist| {
-            ctx.sources
-                .lastfm_artist_albums(user_id, artist, settings.albums_per_similar as u32)
+            ctx.sources.lastfm_artist_albums(
+                user_id,
+                artist,
+                settings.albums_per_similar as u32,
+                ctx.priority,
+            )
         }))
         .await;
         let pairs: Vec<(ArtistRow, Vec<LastFmAlbum>)> = similar
@@ -854,7 +863,9 @@ async fn trending_filler(
     let mut wildcards = if use_lastfm {
         let mut artists = or_empty(
             "lastfm chart",
-            ctx.sources.lastfm_chart_artists(user_id, 15).await,
+            ctx.sources
+                .lastfm_chart_artists(user_id, 15, ctx.priority)
+                .await,
         );
         shuffler.shuffle(&mut artists);
         let artists: Vec<ArtistRow> = artists
@@ -902,11 +913,10 @@ async fn lastfm_trending(
     exclude: &HashSet<String>,
     target: usize,
 ) -> Vec<QueueItemLight> {
-    let albums = join_all(
-        artists
-            .iter()
-            .map(|artist| ctx.sources.lastfm_artist_albums(user_id, artist, 3)),
-    )
+    let albums = join_all(artists.iter().map(|artist| {
+        ctx.sources
+            .lastfm_artist_albums(user_id, artist, 3, ctx.priority)
+    }))
     .await;
     let pairs: Vec<(ArtistRow, Vec<LastFmAlbum>)> = artists
         .into_iter()
@@ -973,7 +983,9 @@ async fn anonymous(
     let mut items = if source == MusicSource::LastFm && user.lastfm {
         let mut artists = or_empty(
             "lastfm chart",
-            ctx.sources.lastfm_chart_artists(user_id, 15).await,
+            ctx.sources
+                .lastfm_chart_artists(user_id, 15, ctx.priority)
+                .await,
         );
         shuffler.shuffle(&mut artists);
         let artists: Vec<ArtistRow> = artists

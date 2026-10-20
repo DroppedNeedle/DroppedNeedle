@@ -1,67 +1,46 @@
 //! TheAudioDB artwork client.
 //!
-//! Ports v2's AudioDB repository plus its wire models: artist and album lookups by MusicBrainz id or by
-//! name, returning the artwork URLs TheAudioDB knows. The source is optional,
-//! so every failure fails soft into [`Outcome`]: a dead upstream records one
-//! degradation note and yields [`Outcome::Unavailable`], while "no match"
-//! yields [`Outcome::Missing`].
+//! Ports v2's AudioDB repository plus its wire models: artist and album
+//! lookups by MusicBrainz id or by name, returning the artwork URLs
+//! TheAudioDB knows. "No match" is `Ok(None)`; every failure is a typed
+//! [`ProviderError`].
 //!
-//! Pacing and degradation ride the shared core traits
-//! ([`Pacer`](super::limiter::Pacer), [`DegradationSink`](super::degradation::DegradationSink)):
-//! wire the pacer to the free 30/minute bucket or the premium bucket per v2
-//! `_make_rate_limiter`.
-//!
-//! The enabled flag and the settings API key live in user preferences in v2;
-//! wiring passes them in here ([`AudioDbClient::with_enabled`],
-//! [`AudioDbClient::with_api_key`]) so this client stays a pure HTTP caller.
+//! The key rides in the path, and which rate row a call takes follows the
+//! key the caller passes, read per call so a new key applies at once: the
+//! free key (`123`, or none saved) paces at the documented 30 requests a
+//! minute, any other key at the premium row. The free row is never raised:
+//! the shared key is banned when over-used.
 
 use std::time::Duration;
 
-use super::{DegradationSink, Pacer};
-use droppedneedle_kernel::http_client::read_capped;
+use crate::RequestPriority;
+use crate::degradation::{IntegrationStatus, record_current};
+use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
+use crate::executor::{Backoff, Executor, Request, Spec, Url, short, standard_classify};
 
 /// Default API host (v2 `AUDIODB_API_URL`, without the key segment).
 pub const DEFAULT_BASE_URL: &str = "https://www.theaudiodb.com/api/v1/json";
 /// Free key, used when no settings key is configured (v2 `AUDIODB_FREE_KEY`).
 pub const FREE_API_KEY: &str = "123";
-/// Wait hint surfaced with a 429 (v2 raises with `retry_after_seconds=60`).
-pub const RATE_LIMIT_RETRY_SECS: f64 = 60.0;
-/// Per-request wire timeout (v2 request timeout).
-pub const REQUEST_TIMEOUT_SECS: u64 = 15;
-/// Source name used for degradation records.
+/// The provider name errors carry, and the free key's rate row.
 pub const SOURCE: &str = "audiodb";
+/// The rate row a saved premium key paces at.
+pub const PREMIUM_ROW: &str = "audiodb-premium";
 /// Largest AudioDB answer read.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
-/// What a lookup produced. `Found` carries the artwork, `Missing` is an
-/// authoritative "no match" (safe to treat as a negative), and `Unavailable`
-/// covers transport failure, rate limiting, server errors, and schema
-/// failures. Every `Unavailable` is already recorded in the sink, except the
-/// disabled case, which v2 also leaves unrecorded.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Outcome<T> {
-    /// Artwork for the requested entity.
-    Found(T),
-    /// Authoritative no-match. Never recorded as degradation.
-    Missing,
-    /// The source could not answer. Already recorded in the sink.
-    Unavailable {
-        /// Seconds the caller should wait before retrying, when known.
-        retry_after_secs: Option<f64>,
-        /// Short human-readable reason (never carries secrets).
-        message: String,
-    },
-}
-
-impl<T> Outcome<T> {
-    /// Collapse to the fail-soft `Option` shape: only `Found` is `Some`.
-    pub fn into_option(self) -> Option<T> {
-        match self {
-            Outcome::Found(value) => Some(value),
-            Outcome::Missing | Outcome::Unavailable { .. } => None,
-        }
-    }
-}
+/// TheAudioDB on the wire: the standard rules, and a 429 that names no
+/// wait rests a minute, as the free API page asks
+/// (https://www.theaudiodb.com/free_music_api, read 2026-10-18).
+pub static SPEC: Spec = Spec {
+    source: SOURCE,
+    health_key: SOURCE,
+    timeout: Duration::from_secs(15),
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(60)),
+    retry_after_cap: MAX_RETRY_AFTER,
+    classify: standard_classify,
+};
 
 /// Artist artwork (v2 `AudioDBArtistResponse`). The two identity fields are
 /// required, so a payload missing them fails decode instead of yielding an
@@ -149,195 +128,188 @@ pub struct AudioDbAlbum {
     pub thumb_3d: Option<String>,
 }
 
-/// TheAudioDB client. Stateless apart from its ports; cheap to clone.
+/// TheAudioDB client over its two executors, the free row and the premium
+/// row. Holds no key; every call takes the saved one and names its
+/// priority. Built once with the providers; cheap to clone.
 #[derive(Debug, Clone)]
-pub struct AudioDbClient<P, S> {
-    http: reqwest::Client,
-    base_url: String,
-    api_key: String,
-    enabled: bool,
-    pacer: P,
-    sink: S,
+pub struct AudioDbClient {
+    free: Executor,
+    premium: Executor,
+    base: Option<Url>,
 }
 
-impl<P: Pacer, S: DegradationSink> AudioDbClient<P, S> {
-    /// Build a client against `base_url` (the production host or a fake)
-    /// using the free key. Wiring overrides both via the builders below.
-    pub fn new(http: reqwest::Client, base_url: &str, pacer: P, sink: S) -> Self {
+impl AudioDbClient {
+    /// The client sending through `free` and `premium` to the API root at
+    /// `base_url`.
+    #[must_use]
+    pub fn new(free: Executor, premium: Executor, base_url: &str) -> Self {
+        let base = Url::parse(base_url.trim())
+            .ok()
+            .filter(|url| matches!(url.scheme(), "http" | "https") && !url.cannot_be_a_base());
+        if base.is_none() {
+            tracing::error!("the AudioDB address is not an http or https URL");
+        }
         Self {
-            http,
-            base_url: base_url.trim_end_matches('/').to_owned(),
-            api_key: FREE_API_KEY.to_owned(),
-            enabled: true,
-            pacer,
-            sink,
+            free,
+            premium,
+            base,
         }
     }
 
-    /// Use `api_key` instead of the free key (v2 reads the settings key when
-    /// one is configured and otherwise falls back to `"123"`).
-    pub fn with_api_key(mut self, api_key: &str) -> Self {
-        if !api_key.trim().is_empty() {
-            self.api_key = api_key.to_owned();
+    /// The executor a call with `api_key` goes through, and the key it
+    /// sends: the free row for the free key or none, the premium row for
+    /// any other.
+    fn row_for<'a>(&'a self, api_key: &'a str) -> (&'a Executor, &'a str) {
+        let key = api_key.trim();
+        if key.is_empty() || key == FREE_API_KEY {
+            (&self.free, FREE_API_KEY)
+        } else {
+            (&self.premium, key)
         }
-        self
     }
 
     /// Look an artist up by MusicBrainz id (`artist-mb.php`).
-    pub async fn artist_by_mbid(&self, mbid: &str) -> Outcome<AudioDbArtist> {
-        if !self.enabled || mbid.is_empty() {
-            return Outcome::Missing;
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
+    pub async fn artist_by_mbid(
+        &self,
+        api_key: &str,
+        mbid: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<AudioDbArtist>, ProviderError> {
+        if mbid.is_empty() {
+            return Ok(None);
         }
-        let payload = match self.request("artist-mb.php", &[("i", mbid)]).await {
-            Ok(payload) => payload,
-            Err(outcome) => return outcome,
-        };
-        self.first(payload, "artists", &format!("artist mbid {mbid}"))
+        self.first(
+            api_key,
+            "artist-mb.php",
+            &[("i", mbid)],
+            "artists",
+            priority,
+        )
+        .await
     }
 
     /// Look an album up by MusicBrainz id (`album-mb.php`).
-    pub async fn album_by_mbid(&self, mbid: &str) -> Outcome<AudioDbAlbum> {
-        if !self.enabled || mbid.is_empty() {
-            return Outcome::Missing;
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
+    pub async fn album_by_mbid(
+        &self,
+        api_key: &str,
+        mbid: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<AudioDbAlbum>, ProviderError> {
+        if mbid.is_empty() {
+            return Ok(None);
         }
-        let payload = match self.request("album-mb.php", &[("i", mbid)]).await {
-            Ok(payload) => payload,
-            Err(outcome) => return outcome,
-        };
-        self.first(payload, "album", &format!("album mbid {mbid}"))
+        self.first(api_key, "album-mb.php", &[("i", mbid)], "album", priority)
+            .await
     }
 
     /// Search for an artist by name (`search.php`).
-    pub async fn search_artist(&self, name: &str) -> Outcome<AudioDbArtist> {
-        if !self.enabled || name.is_empty() {
-            return Outcome::Missing;
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
+    pub async fn search_artist(
+        &self,
+        api_key: &str,
+        name: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<AudioDbArtist>, ProviderError> {
+        if name.is_empty() {
+            return Ok(None);
         }
-        let payload = match self.request("search.php", &[("s", name)]).await {
-            Ok(payload) => payload,
-            Err(outcome) => return outcome,
-        };
-        self.first(payload, "artists", "artist name search")
+        self.first(api_key, "search.php", &[("s", name)], "artists", priority)
+            .await
     }
 
     /// Search for an album by artist and title (`searchalbum.php`).
-    pub async fn search_album(&self, artist: &str, album: &str) -> Outcome<AudioDbAlbum> {
-        if !self.enabled || artist.is_empty() || album.is_empty() {
-            return Outcome::Missing;
-        }
-        let payload = match self
-            .request("searchalbum.php", &[("s", artist), ("a", album)])
-            .await
-        {
-            Ok(payload) => payload,
-            Err(outcome) => return outcome,
-        };
-        self.first(payload, "album", "album name search")
-    }
-
-    /// Run one paced GET. On success the decoded envelope comes back; every
-    /// failure mode already carries its outcome (and its sink record, when
-    /// v2 records one).
-    async fn request<T>(
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
+    pub async fn search_album(
         &self,
-        endpoint: &str,
-        params: &[(&str, &str)],
-    ) -> Result<serde_json::Value, Outcome<T>> {
-        self.pacer.acquire().await;
-        let url = format!(
-            "{base}/{key}/{endpoint}",
-            base = self.base_url,
-            key = self.api_key
-        );
-        let response = match self
-            .http
-            .get(url)
-            .query(params)
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-            .send()
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                // v2 wraps transport failure in ExternalServiceError, which
-                // the retry wrapper treats as retriable and the optional
-                // funnel degrades.
-                return Err(self.unavailable(None, format!("AudioDB request failed: {error}")));
-            }
-        };
-        let status = response.status().as_u16();
-        if status == 429 {
-            return Err(self.unavailable(
-                Some(RATE_LIMIT_RETRY_SECS),
-                "AudioDB rate limit exceeded".to_owned(),
-            ));
+        api_key: &str,
+        artist: &str,
+        album: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<AudioDbAlbum>, ProviderError> {
+        if artist.is_empty() || album.is_empty() {
+            return Ok(None);
         }
-        if status == 404 {
-            // v2 returns None on 404: "not found" is an answer, not a fault.
-            return Err(Outcome::Missing);
-        }
-        if status != 200 {
-            return Err(self.unavailable(None, format!("AudioDB request failed ({status})")));
-        }
-        match read_capped(response, MAX_BODY_BYTES).await {
-            Ok(body) => match serde_json::from_slice(&body) {
-                Ok(payload) => {
-                    self.sink.succeeded(SOURCE);
-                    Ok(payload)
-                }
-                Err(_) => {
-                    let message = "AudioDB returned invalid JSON".to_owned();
-                    self.sink.record_quiet(SOURCE, message.clone());
-                    Err(Outcome::Unavailable {
-                        retry_after_secs: None,
-                        message,
-                    })
-                }
-            },
-            Err(error) => {
-                let kind = error.kind();
-                Err(self.unavailable(None, format!("AudioDB response body unreadable: {kind}")))
-            }
-        }
+        self.first(
+            api_key,
+            "searchalbum.php",
+            &[("s", artist), ("a", album)],
+            "album",
+            priority,
+        )
+        .await
     }
 
-    /// Pull the first entry of `key` out of the envelope (v2
-    /// `_extract_first`): a missing, null, empty, or non-list member means
-    /// "no match", never an error. Schema failure on the first entry records
-    /// a degradation note and yields `Unavailable`, exactly like v2's
-    /// `msgspec.convert` failure path.
-    fn first<T>(&self, payload: serde_json::Value, key: &str, what: &str) -> Outcome<T>
-    where
-        T: serde::de::DeserializeOwned,
-    {
-        let item = payload
-            .get(key)
+    /// One GET, and the first entry of `list` in its answer (v2
+    /// `_extract_first`): a 404, or a missing, null, empty or non-list
+    /// member, means "no match", never an error. An entry that does not
+    /// decode is a payload failure, noted for the request.
+    async fn first<T: serde::de::DeserializeOwned>(
+        &self,
+        api_key: &str,
+        endpoint: &str,
+        query: &[(&str, &str)],
+        list: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<T>, ProviderError> {
+        let (executor, key) = self.row_for(api_key);
+        let base = self.base.as_ref().ok_or_else(unusable_base)?;
+        let request = Request::get(base, &[key, endpoint], query).map_err(|_| unusable_base())?;
+        let reply = match executor.send(request, priority).await {
+            Ok(reply) => reply,
+            Err(ProviderError::NotFound { .. }) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let payload: serde_json::Value = reply.json().inspect_err(|error| {
+            note_shape(&error.to_string());
+        })?;
+        let Some(item) = payload
+            .get(list)
             .and_then(serde_json::Value::as_array)
             .and_then(|items| items.first())
-            .cloned();
-        match item {
-            None => Outcome::Missing,
-            Some(item) => match serde_json::from_value(item) {
-                Ok(decoded) => Outcome::Found(decoded),
-                Err(error) => {
-                    // A shape problem, not an outage: kept out of service
-                    // health.
-                    let message = format!("Schema error for {what}: {error}");
-                    self.sink.record_quiet(SOURCE, message.clone());
-                    Outcome::Unavailable {
-                        retry_after_secs: None,
-                        message,
-                    }
-                }
-            },
-        }
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        serde_json::from_value(item).map(Some).map_err(|error| {
+            let message = format!("{endpoint} entry did not decode: {error}");
+            note_shape(&message);
+            ProviderError::Payload {
+                provider: SOURCE,
+                kind: PayloadKind::Decode,
+                message: short(&message),
+            }
+        })
     }
+}
 
-    /// Build an `Unavailable` outcome and record it in the sink.
-    fn unavailable<T>(&self, retry_after_secs: Option<f64>, message: String) -> Outcome<T> {
-        self.sink.record(SOURCE, message.clone());
-        Outcome::Unavailable {
-            retry_after_secs,
-            message,
-        }
+/// An answer without the expected shape: the service answered, so it is
+/// noted for the request but never counted as an outage.
+fn note_shape(cause: &str) {
+    tracing::debug!(
+        provider = SOURCE,
+        cause,
+        "AudioDB answer had no usable shape"
+    );
+    record_current(SOURCE, IntegrationStatus::Error, true);
+}
+
+fn unusable_base() -> ProviderError {
+    ProviderError::Invalid {
+        provider: SOURCE,
+        reason: "the AudioDB address is not usable",
     }
 }

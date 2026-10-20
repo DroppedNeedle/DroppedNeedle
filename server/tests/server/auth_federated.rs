@@ -933,10 +933,9 @@ fn lastfm_router(_base: String) -> Router {
 #[tokio::test]
 async fn lastfm_links_with_the_instance_key_and_binds_tokens_to_the_user() {
     let mock = serve(lastfm_router).await;
-    let e2e = E2e::open("lastfm").await.with_upstreams(Upstreams {
-        lastfm: format!("{mock}/2.0/"),
-        ..droppedneedle::bootstrap::Outbound::live().sign_in()
-    });
+    let e2e = E2e::open("lastfm")
+        .await
+        .with_lastfm(format!("{mock}/2.0/"));
     // v2 model: the admin saves one app key pair for the whole instance.
     e2e.store
         .save_secret_blocking(LastFmSettings {

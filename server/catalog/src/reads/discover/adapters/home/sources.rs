@@ -234,7 +234,7 @@ impl HomeSources for LiveSources {
         user_id: &'a str,
         limit: u32,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
-        self.lastfm_chart_artists(user_id, limit)
+        self.lastfm_chart_artists(user_id, limit, BUILD)
     }
 
     fn lastfm_user_albums<'a>(
@@ -251,7 +251,7 @@ impl HomeSources for LiveSources {
             self.cached(key, USER_STATS_TTL, async {
                 let rows = lastfm_result(
                     client
-                        .user_top_albums(&creds, username, "1month", limit)
+                        .user_top_albums(&creds, username, "1month", limit, BUILD)
                         .await,
                 )?;
                 Ok(rows
@@ -281,7 +281,11 @@ impl HomeSources for LiveSources {
             };
             let key = format!("lfm_home:loved:{}:{limit}", username.to_lowercase());
             self.cached(key, USER_STATS_TTL, async {
-                let rows = lastfm_result(client.user_loved_tracks(&creds, username, limit).await)?;
+                let rows = lastfm_result(
+                    client
+                        .user_loved_tracks(&creds, username, limit, BUILD)
+                        .await,
+                )?;
                 Ok(rows.into_iter().map(loved_from_lastfm).collect())
             })
             .await

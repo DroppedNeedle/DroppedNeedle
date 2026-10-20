@@ -1,37 +1,31 @@
 //! Last.fm metadata client with per-user credentials.
 //!
 //! Ports the read paths of v2's Last.fm repository, its wire models, and
-//! the genre surface verified against production on 2026-07-22.
+//! the genre surface verified against production on 2026-07-22, plus the
+//! two signed account-linking calls and the signed scrobble posts.
 //!
 //! Credentials are per user, always. `LastFmCredentials` mirrors the
 //! plaintext projection of the per-user store (`auth::users::models`
-//! `LastFmConnection`, read through the `LastFmStore` trait; only the
-//! service layer holds decrypted values, in memory). There is no global
-//! key pair, on purpose:
-//! every method takes the calling user's credentials, and the client itself
-//! stores none. The one shared thing is pacing: wiring must hand every
-//! per-user client the same community limiter
-//! so the host as a whole stays under 5 calls/second.
+//! `LastFmConnection`; only the service layer holds decrypted values, in
+//! memory). There is no global key pair, on purpose: every method takes
+//! the calling user's credentials, and the client itself stores none.
 //!
-//! Pacing and degradation ride the shared core traits
-//! ([`Pacer`](super::limiter::Pacer), [`DegradationSink`](super::degradation::DegradationSink)):
-//! wiring hands every per-user client the same community pacer so the host
-//! as a whole stays under 5 calls/second.
+//! Every request goes through the one Last.fm [`Executor`], which paces at
+//! the `lastfm` row of the rate table: reads, account linking and scrobble
+//! forwarding share that bucket. Each call names its priority.
 //!
-//! Backoff signaling (not sleeping) lives here: error 29 maps to
-//! [`Outcome::Unavailable`] with a 1-second retry hint, exactly like v2's
-//! `RateLimitedError`. The retry loop and circuit breaker belong to the
-//! provider core.
-//!
-//! The two auth calls (`request_token`, `exchange_session`) are the
-//! production implementation the `LastFmAuthClient` seam
-//! (`auth::users::stores`) awaits; wiring would adapt their outcomes
-//! onto `LastFmError` (`TokenNotAuthorized` maps from the error-14 outcome).
+//! Last.fm reports its errors as a JSON envelope (`{"error": n,
+//! "message"}`), inside a 200 as often as not; the hook turns the code
+//! into a typed [`ProviderError`] (see [`classify`]).
 
 use std::time::Duration;
 
-use super::{DegradationSink, Pacer};
-use droppedneedle_kernel::http_client::read_capped;
+use crate::RequestPriority;
+use crate::degradation::{IntegrationStatus, record_current};
+use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
+use crate::executor::{
+    Answer, Backoff, Executor, Reply, Request, Spec, Url, short, standard_classify,
+};
 
 /// Default API host (v2 `LASTFM_API_URL`).
 pub const DEFAULT_BASE_URL: &str = "https://ws.audioscrobbler.com/2.0/";
@@ -40,48 +34,77 @@ pub const DEFAULT_BASE_URL: &str = "https://ws.audioscrobbler.com/2.0/";
 /// purpose; it is decoded from the documented envelope and covered by a
 /// scripted fake instead.
 pub const ERROR_RATE_LIMITED: i64 = 29;
-/// Retry hint surfaced with error 29 (v2 `retry_after_seconds=1.0`).
-pub const RATE_LIMIT_RETRY_SECS: f64 = 1.0;
-/// Per-request wire timeout (v2 request timeout).
-pub const REQUEST_TIMEOUT_SECS: u64 = 15;
-/// Source name used for degradation records.
+/// The rest after error 29 (v2 `retry_after_seconds=1.0`).
+pub const RATE_LIMIT_WAIT: Duration = Duration::from_secs(1);
+/// The provider name errors carry, and the Last.fm rate row.
 pub const SOURCE: &str = "lastfm";
 /// Largest Last.fm answer read.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
-/// What a call produced. `Found` carries the payload, `Missing` is an
-/// authoritative "unknown entity" (Last.fm error 6; safe to treat as a
-/// negative), and `Unavailable` covers everything else. Transport failure,
-/// server errors, error 29, and service-offline (error 11) are recorded in
-/// the sink; credential failures (errors 4, 9, 10, 17, 26), the
-/// token-not-authorized reply (error 14), and the not-configured case surface
-/// as `Unavailable` without a record, because v2 raises those instead of
-/// recording them.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Outcome<T> {
-    /// The upstream answer, decoded.
-    Found(T),
-    /// Authoritative unknown-entity. Never recorded as degradation.
-    Missing,
-    /// The source could not answer.
-    Unavailable {
-        /// Seconds the caller should wait before retrying, when known.
-        retry_after_secs: Option<f64>,
-        /// Short human-readable reason (never carries secrets).
-        message: String,
-        /// Whether the sink already holds a record for this failure.
-        recorded: bool,
-    },
+/// Last.fm on the wire: the envelope codes become their variants, a 429
+/// that names no wait rests the bucket a second.
+pub static SPEC: Spec = Spec {
+    source: SOURCE,
+    health_key: SOURCE,
+    timeout: Duration::from_secs(15),
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(RATE_LIMIT_WAIT),
+    retry_after_cap: MAX_RETRY_AFTER,
+    classify,
+};
+
+/// The Last.fm hook over the standard rules. A 429 or a 5xx is standard.
+/// Any other answer carrying the error envelope is read by its code,
+/// whatever the status (the live invalid-key probe saw a 403 with error
+/// 10; most errors come in a 200), per https://www.last.fm/api/errorcodes:
+///
+/// - 6, unknown entity: absence ([`ProviderError::NotFound`]);
+/// - 29, rate limit: [`ProviderError::RateLimited`] for one second;
+/// - 11 and 16, offline or temporary: [`ProviderError::Unavailable`];
+/// - 4, 10, 13, 15 and 26 (key, signature, expired token, suspended key):
+///   [`ProviderError::Unauthorized`];
+/// - 9, 14 and 17 (session, unapproved token, login required):
+///   [`ProviderError::Forbidden`];
+/// - any other code: [`ProviderError::BadRequest`] with the status;
+/// - an envelope with no usable code: [`ProviderError::Server`].
+pub fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
+    let status = answer.reply.status();
+    if status == 429 || status >= 500 {
+        return standard_classify(answer);
+    }
+    let Some(code) = envelope_code(answer.reply.bytes()) else {
+        return standard_classify(answer);
+    };
+    let provider = SOURCE;
+    Err(match code {
+        Some(6) => ProviderError::NotFound { provider },
+        Some(ERROR_RATE_LIMITED) => ProviderError::RateLimited {
+            provider,
+            retry_after: Some(RATE_LIMIT_WAIT),
+        },
+        Some(11 | 16) => ProviderError::Unavailable {
+            provider,
+            retry_after: None,
+        },
+        Some(4 | 10 | 13 | 15 | 26) => ProviderError::Unauthorized { provider },
+        Some(9 | 14 | 17) => ProviderError::Forbidden { provider },
+        Some(_) => ProviderError::BadRequest { provider, status },
+        None => ProviderError::Server { provider, status },
+    })
 }
 
-impl<T> Outcome<T> {
-    /// Collapse to the fail-soft `Option` shape: only `Found` is `Some`.
-    pub fn into_option(self) -> Option<T> {
-        match self {
-            Outcome::Found(value) => Some(value),
-            Outcome::Missing | Outcome::Unavailable { .. } => None,
-        }
+/// The code of a Last.fm error envelope: `None` when the body is not one,
+/// `Some(None)` when it is one without a usable code.
+fn envelope_code(body: &[u8]) -> Option<Option<i64>> {
+    #[derive(serde::Deserialize)]
+    struct Envelope {
+        error: serde_json::Value,
     }
+    if !body.windows(7).any(|window| window == b"\"error\"") {
+        return None;
+    }
+    let envelope: Envelope = serde_json::from_slice(body).ok()?;
+    Some(envelope.error.as_i64())
 }
 
 /// One user's Last.fm credentials, plaintext in memory only. This mirrors the
@@ -247,168 +270,202 @@ pub struct RecentTrack {
     pub image_url: String,
 }
 
-/// Last.fm client. Holds no credentials; every method takes the calling
-/// user's. Stateless apart from its ports; cheap to clone.
+/// Last.fm client over the Last.fm executor. Holds no credentials; every
+/// method takes the calling user's and names its priority. Built once
+/// with the providers; cheap to clone.
 #[derive(Debug, Clone)]
-pub struct LastFmClient<P, S> {
-    http: reqwest::Client,
-    base_url: String,
-    pacer: P,
-    sink: S,
+pub struct LastFmClient {
+    executor: Executor,
+    base: Option<Url>,
 }
 
-impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
-    /// Build a client against `base_url` (the production host or a fake).
-    pub fn new(http: reqwest::Client, base_url: &str, pacer: P, sink: S) -> Self {
-        Self {
-            http,
-            base_url: base_url.to_owned(),
-            pacer,
-            sink,
+impl LastFmClient {
+    /// The client sending through `executor` to the API root at `base_url`.
+    #[must_use]
+    pub fn new(executor: Executor, base_url: &str) -> Self {
+        let base = Url::parse(base_url.trim())
+            .ok()
+            .filter(|url| matches!(url.scheme(), "http" | "https") && !url.cannot_be_a_base());
+        if base.is_none() {
+            tracing::error!("the Last.fm address is not an http or https URL");
         }
+        Self { executor, base }
     }
 
-    /// `auth.getToken` with the user's own API key. Needs the shared secret
-    /// for the signature but no session yet.
-    pub async fn request_token(&self, creds: &LastFmCredentials) -> Outcome<AuthToken> {
-        if creds.api_key.is_empty() {
-            return self.unrecorded("Last.fm API key is not configured");
-        }
-        if creds.shared_secret.is_empty() {
-            return self.unrecorded("Last.fm shared secret is required for signed requests");
-        }
-        let payload = match self.request("auth.getToken", creds, &[], true, false).await {
-            Ok(payload) => payload,
-            Err(outcome) => return outcome,
-        };
+    /// The executor every Last.fm request goes through.
+    #[must_use]
+    pub fn executor(&self) -> &Executor {
+        &self.executor
+    }
+
+    /// `auth.getToken` with the user's own API key, signed with the shared
+    /// secret; no session yet.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::NotConfigured`] without a key or secret, otherwise
+    /// the typed failure of the call or of its answer.
+    pub async fn request_token(
+        &self,
+        creds: &LastFmCredentials,
+        priority: RequestPriority,
+    ) -> Result<AuthToken, ProviderError> {
+        let payload = self
+            .read(
+                self.call("auth.getToken", creds, &[], Signed::Yes)?,
+                priority,
+            )
+            .await?;
         match payload.get("token").and_then(serde_json::Value::as_str) {
-            Some(token) if !token.is_empty() => Outcome::Found(AuthToken {
+            Some(token) if !token.is_empty() => Ok(AuthToken {
                 token: token.to_owned(),
             }),
-            _ => self.shape_error("Last.fm auth.getToken response missing 'token'"),
+            _ => Err(shape("Last.fm auth.getToken answer has no token")),
         }
     }
 
     /// `auth.getSession` with the user's key pair and an approved token.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::Forbidden`] while the token is not approved (error
+    /// 14), [`ProviderError::NotConfigured`] without a key or secret,
+    /// otherwise the typed failure of the call or of its answer.
     pub async fn exchange_session(
         &self,
         creds: &LastFmCredentials,
         token: &str,
-    ) -> Outcome<Session> {
-        if creds.api_key.is_empty() {
-            return self.unrecorded("Last.fm API key is not configured");
-        }
-        if creds.shared_secret.is_empty() {
-            return self.unrecorded("Last.fm shared secret is required for signed requests");
-        }
-        let payload = match self
-            .request("auth.getSession", creds, &[("token", token)], true, false)
-            .await
-        {
-            Ok(payload) => payload,
-            Err(outcome) => return outcome,
-        };
+        priority: RequestPriority,
+    ) -> Result<Session, ProviderError> {
+        let payload = self
+            .read(
+                self.call("auth.getSession", creds, &[("token", token)], Signed::Yes)?,
+                priority,
+            )
+            .await?;
         // v2 reads `data["session"]` but falls back to the top level.
         let session = payload
             .get("session")
             .and_then(serde_json::Value::as_object)
-            .map_or(payload.as_object(), Some)
-            .cloned();
-        let session = match session {
-            Some(session) => session,
-            None => {
-                return self
-                    .shape_error("Last.fm auth.getSession response missing 'name' or 'key'");
-            }
+            .or(payload.as_object());
+        let text = |key: &str| {
+            session
+                .and_then(|session| session.get(key))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_owned()
         };
-        let name = session
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("");
-        let key = session
-            .get("key")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("");
+        let (name, key) = (text("name"), text("key"));
         if name.is_empty() || key.is_empty() {
-            return self.shape_error("Last.fm auth.getSession response missing 'name' or 'key'");
+            return Err(shape("Last.fm auth.getSession answer has no name or key"));
         }
-        Outcome::Found(Session {
-            name: name.to_owned(),
-            key: key.to_owned(),
-            subscriber: lenient_int(session.get("subscriber")),
+        Ok(Session {
+            name,
+            key,
+            subscriber: lenient_int(session.and_then(|session| session.get("subscriber"))),
         })
     }
 
-    /// `artist.getInfo` by name or, when given, by MusicBrainz id. Unknown
-    /// artists (error 6) yield `Missing`.
+    /// A signed form post for the session in `creds` (`track.scrobble`,
+    /// `track.updateNowPlaying`). Sent once: a post is never repeated
+    /// here, the caller's queue decides about another try.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::NotConfigured`] without a key or secret, otherwise
+    /// the typed failure of the call.
+    pub async fn submit(
+        &self,
+        method: &str,
+        creds: &LastFmCredentials,
+        params: &[(&str, &str)],
+        priority: RequestPriority,
+    ) -> Result<(), ProviderError> {
+        let request = self.call(method, creds, params, Signed::Post)?;
+        self.send(request, priority).await.map(|_| ())
+    }
+
+    /// `artist.getInfo` by name or, when given, by MusicBrainz id. `None`
+    /// when Last.fm does not know the artist (error 6).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn artist_info(
         &self,
         creds: &LastFmCredentials,
         artist: &str,
         mbid: Option<&str>,
-    ) -> Outcome<ArtistInfo> {
+        priority: RequestPriority,
+    ) -> Result<Option<ArtistInfo>, ProviderError> {
         let (key, value) = match mbid {
             Some(mbid) => ("mbid", mbid),
             None => ("artist", artist),
         };
-        let payload = match self
-            .request("artist.getInfo", creds, &[(key, value)], false, false)
-            .await
-        {
-            Ok(payload) => payload,
-            Err(outcome) => return outcome,
+        let Some(payload) = self
+            .read_found("artist.getInfo", creds, &[(key, value)], priority)
+            .await?
+        else {
+            return Ok(None);
         };
-        match parse_artist_info(&payload) {
-            Some(info) => Outcome::Found(info),
-            None => self.shape_error("Last.fm artist.getInfo response missing 'name'"),
-        }
+        parse_artist_info(&payload)
+            .map(Some)
+            .ok_or_else(|| shape("Last.fm artist.getInfo answer has no name"))
     }
 
     /// `album.getInfo` by artist plus title or, when given, by MusicBrainz
-    /// id. Unknown albums (error 6) yield `Missing`.
+    /// id. `None` when Last.fm does not know the album (error 6).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn album_info(
         &self,
         creds: &LastFmCredentials,
         artist: &str,
         album: &str,
         mbid: Option<&str>,
-    ) -> Outcome<AlbumInfo> {
+        priority: RequestPriority,
+    ) -> Result<Option<AlbumInfo>, ProviderError> {
         let params: Vec<(&str, &str)> = match mbid {
             Some(mbid) => vec![("mbid", mbid)],
             None => vec![("artist", artist), ("album", album)],
         };
-        let payload = match self
-            .request("album.getInfo", creds, &params, false, false)
-            .await
-        {
-            Ok(payload) => payload,
-            Err(outcome) => return outcome,
+        let Some(payload) = self
+            .read_found("album.getInfo", creds, &params, priority)
+            .await?
+        else {
+            return Ok(None);
         };
-        match parse_album_info(&payload) {
-            Some(info) => Outcome::Found(info),
-            None => self.shape_error("Last.fm album.getInfo response missing 'name'"),
-        }
+        parse_album_info(&payload)
+            .map(Some)
+            .ok_or_else(|| shape("Last.fm album.getInfo answer has no name"))
     }
 
-    /// `artist.getSimilar`, most similar first.
+    /// `artist.getSimilar`, most similar first; empty for an unknown
+    /// artist.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn similar_artists(
         &self,
         creds: &LastFmCredentials,
         artist: &str,
         mbid: Option<&str>,
         limit: u32,
-    ) -> Outcome<Vec<SimilarArtist>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<SimilarArtist>, ProviderError> {
         let limit_text = limit.to_string();
         let params: Vec<(&str, &str)> = match mbid {
             Some(mbid) => vec![("mbid", mbid), ("limit", &limit_text)],
             None => vec![("artist", artist), ("limit", &limit_text)],
         };
-        let payload = match self
-            .request("artist.getSimilar", creds, &params, false, false)
-            .await
-        {
-            Ok(payload) => payload,
-            Err(outcome) => return outcome,
+        let Some(payload) = self
+            .read_found("artist.getSimilar", creds, &params, priority)
+            .await?
+        else {
+            return Ok(Vec::new());
         };
         let artists = payload
             .get("similarartists")
@@ -416,63 +473,73 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
             .and_then(serde_json::Value::as_array)
             .cloned()
             .unwrap_or_default();
-        Outcome::Found(artists.iter().map(parse_similar_artist).collect())
+        Ok(artists.iter().map(parse_similar_artist).collect())
     }
 
     /// `artist.getTopTracks`, most played first.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn artist_top_tracks(
         &self,
         creds: &LastFmCredentials,
         artist: &str,
         mbid: Option<&str>,
         limit: u32,
-    ) -> Outcome<Vec<TopItem>> {
-        self.top_items(
-            "artist.getTopTracks",
-            "toptracks",
-            "track",
+        priority: RequestPriority,
+    ) -> Result<Vec<TopItem>, ProviderError> {
+        let limit_text = limit.to_string();
+        self.list_items(
+            ("artist.getTopTracks", "toptracks", "track"),
             creds,
-            artist,
-            mbid,
-            limit,
+            &artist_params(artist, mbid, &limit_text),
+            priority,
         )
         .await
     }
 
     /// `artist.getTopAlbums`, most played first.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn artist_top_albums(
         &self,
         creds: &LastFmCredentials,
         artist: &str,
         mbid: Option<&str>,
         limit: u32,
-    ) -> Outcome<Vec<TopItem>> {
-        self.top_items(
-            "artist.getTopAlbums",
-            "topalbums",
-            "album",
+        priority: RequestPriority,
+    ) -> Result<Vec<TopItem>, ProviderError> {
+        let limit_text = limit.to_string();
+        self.list_items(
+            ("artist.getTopAlbums", "topalbums", "album"),
             creds,
-            artist,
-            mbid,
-            limit,
+            &artist_params(artist, mbid, &limit_text),
+            priority,
         )
         .await
     }
 
     /// `chart.getTopArtists`: the sitewide artist chart, most played first
     /// (v2 `get_global_top_artists`). Each row's `name` is the artist.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn chart_top_artists(
         &self,
         creds: &LastFmCredentials,
         limit: u32,
-    ) -> Outcome<Vec<TopItem>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<TopItem>, ProviderError> {
         let limit_text = limit.to_string();
         self.list_items(
-            "chart.getTopArtists",
-            "artists",
-            "artist",
+            ("chart.getTopArtists", "artists", "artist"),
             creds,
             &[("limit", &limit_text)],
+            priority,
         )
         .await
     }
@@ -480,140 +547,168 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
     /// `user.getTopAlbums` for one Last.fm user over `period` (`7day`,
     /// `1month`, `12month` or `overall`), most played first (v2
     /// `get_user_top_albums`).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn user_top_albums(
         &self,
         creds: &LastFmCredentials,
         username: &str,
         period: &str,
         limit: u32,
-    ) -> Outcome<Vec<TopItem>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<TopItem>, ProviderError> {
         let limit_text = limit.to_string();
         self.list_items(
-            "user.getTopAlbums",
-            "topalbums",
-            "album",
+            ("user.getTopAlbums", "topalbums", "album"),
             creds,
             &[
                 ("user", username),
                 ("period", period),
                 ("limit", &limit_text),
             ],
+            priority,
         )
         .await
     }
 
     /// `user.getTopArtists` for one Last.fm user over `period`, most played
     /// first (v2 `get_user_top_artists`). Each row's `name` is the artist.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn user_top_artists(
         &self,
         creds: &LastFmCredentials,
         username: &str,
         period: &str,
         limit: u32,
-    ) -> Outcome<Vec<TopItem>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<TopItem>, ProviderError> {
         let limit_text = limit.to_string();
         self.list_items(
-            "user.getTopArtists",
-            "topartists",
-            "artist",
+            ("user.getTopArtists", "topartists", "artist"),
             creds,
             &[
                 ("user", username),
                 ("period", period),
                 ("limit", &limit_text),
             ],
+            priority,
         )
         .await
     }
 
     /// `user.getWeeklyArtistChart`: the user's artists this week, most
     /// played first (v2 `get_user_weekly_artist_chart`).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn user_weekly_artist_chart(
         &self,
         creds: &LastFmCredentials,
         username: &str,
-    ) -> Outcome<Vec<TopItem>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<TopItem>, ProviderError> {
         self.list_items(
-            "user.getWeeklyArtistChart",
-            "weeklyartistchart",
-            "artist",
+            ("user.getWeeklyArtistChart", "weeklyartistchart", "artist"),
             creds,
             &[("user", username)],
+            priority,
         )
         .await
     }
 
     /// `user.getWeeklyAlbumChart`: the user's albums this week, most played
     /// first (v2 `get_user_weekly_album_chart`). Album MBIDs name releases.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn user_weekly_album_chart(
         &self,
         creds: &LastFmCredentials,
         username: &str,
-    ) -> Outcome<Vec<TopItem>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<TopItem>, ProviderError> {
         self.list_items(
-            "user.getWeeklyAlbumChart",
-            "weeklyalbumchart",
-            "album",
+            ("user.getWeeklyAlbumChart", "weeklyalbumchart", "album"),
             creds,
             &[("user", username)],
+            priority,
         )
         .await
     }
 
     /// `tag.getTopArtists`: the most played artists carrying one tag (v2
     /// `get_tag_top_artists`).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn tag_top_artists(
         &self,
         creds: &LastFmCredentials,
         tag: &str,
         limit: u32,
-    ) -> Outcome<Vec<TopItem>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<TopItem>, ProviderError> {
         let limit_text = limit.to_string();
         self.list_items(
-            "tag.getTopArtists",
-            "topartists",
-            "artist",
+            ("tag.getTopArtists", "topartists", "artist"),
             creds,
             &[("tag", tag), ("limit", &limit_text)],
+            priority,
         )
         .await
     }
 
     /// `user.getLovedTracks`: the tracks one Last.fm user loved, newest
     /// first (v2 `get_user_loved_tracks`). Each row's `name` is the track.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn user_loved_tracks(
         &self,
         creds: &LastFmCredentials,
         username: &str,
         limit: u32,
-    ) -> Outcome<Vec<TopItem>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<TopItem>, ProviderError> {
         let limit_text = limit.to_string();
         self.list_items(
-            "user.getLovedTracks",
-            "lovedtracks",
-            "track",
+            ("user.getLovedTracks", "lovedtracks", "track"),
             creds,
             &[("user", username), ("limit", &limit_text)],
+            priority,
         )
         .await
     }
 
     /// `user.getRecentTracks`: the user's latest scrobbles, newest first
     /// (v2 `get_user_recent_tracks`).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn user_recent_tracks(
         &self,
         creds: &LastFmCredentials,
         username: &str,
         limit: u32,
-    ) -> Outcome<Vec<RecentTrack>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<RecentTrack>, ProviderError> {
         let limit_text = limit.to_string();
         let params = [("user", username), ("limit", limit_text.as_str())];
-        let payload = match self
-            .request("user.getRecentTracks", creds, &params, false, false)
-            .await
-        {
-            Ok(payload) => payload,
-            Err(outcome) => return outcome,
+        let Some(payload) = self
+            .read_found("user.getRecentTracks", creds, &params, priority)
+            .await?
+        else {
+            return Ok(Vec::new());
         };
         let items = payload
             .get("recenttracks")
@@ -621,41 +716,65 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
             .and_then(serde_json::Value::as_array)
             .cloned()
             .unwrap_or_default();
-        Outcome::Found(items.iter().filter_map(parse_recent_track).collect())
+        Ok(items.iter().filter_map(parse_recent_track).collect())
     }
 
-    #[allow(clippy::too_many_arguments)]
-    async fn top_items(
+    /// Weighted artist tags from the live-verified genre surface
+    /// (`artist.getTopTags` with `autocorrect=0`; verified against
+    /// production on 2026-07-22, see `lastfm_MANAGEMENT_API_NOTES.md`).
+    /// Unknown artists (error 6) answer empty, exactly like v2's empty
+    /// candidate tuple: no tags is an answer, not a fault.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
+    pub async fn artist_top_genres(
         &self,
-        method: &str,
-        envelope: &str,
-        key: &str,
         creds: &LastFmCredentials,
         artist: &str,
-        mbid: Option<&str>,
-        limit: u32,
-    ) -> Outcome<Vec<TopItem>> {
-        let limit_text = limit.to_string();
-        let params: Vec<(&str, &str)> = match mbid {
-            Some(mbid) => vec![("mbid", mbid), ("limit", &limit_text)],
-            None => vec![("artist", artist), ("limit", &limit_text)],
-        };
-        self.list_items(method, envelope, key, creds, &params).await
+        priority: RequestPriority,
+    ) -> Result<Vec<WeightedTag>, ProviderError> {
+        let params = [("artist", artist), ("autocorrect", "0")];
+        Ok(self
+            .read_found("artist.getTopTags", creds, &params, priority)
+            .await?
+            .map(|payload| top_tags(&payload))
+            .unwrap_or_default())
+    }
+
+    /// Weighted album tags from the live-verified genre surface
+    /// (`album.getTopTags` with `autocorrect=0`; same verification).
+    /// Unknown albums answer empty.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
+    pub async fn album_top_genres(
+        &self,
+        creds: &LastFmCredentials,
+        artist: &str,
+        album: &str,
+        priority: RequestPriority,
+    ) -> Result<Vec<WeightedTag>, ProviderError> {
+        let params = [("artist", artist), ("album", album), ("autocorrect", "0")];
+        Ok(self
+            .read_found("album.getTopTags", creds, &params, priority)
+            .await?
+            .map(|payload| top_tags(&payload))
+            .unwrap_or_default())
     }
 
     /// One unsigned list read: the rows under `envelope.key`, blank names
-    /// dropped. A missing list reads as empty.
+    /// dropped. A missing list, or an unknown entity, reads as empty.
     async fn list_items(
         &self,
-        method: &str,
-        envelope: &str,
-        key: &str,
+        (method, envelope, key): (&str, &str, &str),
         creds: &LastFmCredentials,
         params: &[(&str, &str)],
-    ) -> Outcome<Vec<TopItem>> {
-        let payload = match self.request(method, creds, params, false, false).await {
-            Ok(payload) => payload,
-            Err(outcome) => return outcome,
+        priority: RequestPriority,
+    ) -> Result<Vec<TopItem>, ProviderError> {
+        let Some(payload) = self.read_found(method, creds, params, priority).await? else {
+            return Ok(Vec::new());
         };
         let items = payload
             .get(envelope)
@@ -663,126 +782,58 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
             .and_then(serde_json::Value::as_array)
             .cloned()
             .unwrap_or_default();
-        Outcome::Found(items.iter().filter_map(parse_top_item).collect())
+        Ok(items.iter().filter_map(parse_top_item).collect())
     }
 
-    /// Weighted artist tags from the live-verified genre surface
-    /// (`artist.getTopTags` with `autocorrect=0`; verified against production
-    /// on 2026-07-22, see `lastfm_MANAGEMENT_API_NOTES.md`). Unknown artists
-    /// (error 6) yield an empty `Found`, exactly like v2's empty candidate
-    /// tuple: no tags is an answer, not a fault.
-    pub async fn artist_top_genres(
-        &self,
-        creds: &LastFmCredentials,
-        artist: &str,
-    ) -> Outcome<Vec<WeightedTag>> {
-        let payload = match self
-            .request(
-                "artist.getTopTags",
-                creds,
-                &[("artist", artist), ("autocorrect", "0")],
-                false,
-                false,
-            )
-            .await
-        {
-            Ok(payload) => payload,
-            Err(Outcome::Missing) => return Outcome::Found(Vec::new()),
-            Err(outcome) => return outcome,
-        };
-        self.top_tags(&payload)
-    }
-
-    /// Weighted album tags from the live-verified genre surface
-    /// (`album.getTopTags` with `autocorrect=0`; same verification). Unknown
-    /// albums yield an empty `Found`.
-    pub async fn album_top_genres(
-        &self,
-        creds: &LastFmCredentials,
-        artist: &str,
-        album: &str,
-    ) -> Outcome<Vec<WeightedTag>> {
-        let payload = match self
-            .request(
-                "album.getTopTags",
-                creds,
-                &[("artist", artist), ("album", album), ("autocorrect", "0")],
-                false,
-                false,
-            )
-            .await
-        {
-            Ok(payload) => payload,
-            Err(Outcome::Missing) => return Outcome::Found(Vec::new()),
-            Err(outcome) => return outcome,
-        };
-        self.top_tags(&payload)
-    }
-
-    /// Decode the `toptags.tag` list into weighted tags. A missing `toptags`
-    /// object reads as empty (v2's tolerant structs default it); blank names
-    /// are filtered before projecting (v2 `_management_genre_candidates`).
-    fn top_tags(&self, payload: &serde_json::Value) -> Outcome<Vec<WeightedTag>> {
-        let tags = match payload.get("toptags") {
-            None | Some(serde_json::Value::Null) => return Outcome::Found(Vec::new()),
-            Some(toptags) => match toptags.get("tag") {
-                None | Some(serde_json::Value::Null) => return Outcome::Found(Vec::new()),
-                Some(serde_json::Value::Array(tags)) => tags.clone(),
-                // Last.fm sometimes answers a single object where a list
-                // belongs; accept it rather than failing the whole read.
-                Some(single) => vec![single.clone()],
-            },
-        };
-        let mut weighted = Vec::new();
-        for tag in &tags {
-            let Some(tag) = tag.as_object() else {
-                continue;
-            };
-            let name = tag
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .trim();
-            if name.is_empty() {
-                continue;
-            }
-            weighted.push(WeightedTag {
-                name: name.to_owned(),
-                weight: lenient_int(tag.get("count")),
-            });
-        }
-        Outcome::Found(weighted)
-    }
-
-    /// Run one paced call. Signed calls sort their parameters (excluding
-    /// `format` and `callback`), concatenate key plus value, append the
-    /// shared secret, and MD5 the result (v2 `_build_api_sig`); the session
-    /// key rides along as `sk` when one is linked.
-    async fn request<T>(
+    /// One unsigned read; `None` when Last.fm does not know the entity.
+    async fn read_found(
         &self,
         method: &str,
         creds: &LastFmCredentials,
         params: &[(&str, &str)],
-        signed: bool,
-        post: bool,
-    ) -> Result<serde_json::Value, Outcome<T>> {
+        priority: RequestPriority,
+    ) -> Result<Option<serde_json::Value>, ProviderError> {
+        let request = self.call(method, creds, params, Signed::No)?;
+        match self.read(request, priority).await {
+            Ok(payload) => Ok(Some(payload)),
+            Err(ProviderError::NotFound { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Build one call. Signed calls sort their parameters (excluding
+    /// `format` and `callback`), concatenate key plus value, append the
+    /// shared secret, and MD5 the result (v2 `_build_api_sig`); the session
+    /// key rides along as `sk` when one is linked. Reads are GETs, posts
+    /// are forms; both go to the API root with its trailing slash.
+    fn call(
+        &self,
+        method: &str,
+        creds: &LastFmCredentials,
+        params: &[(&str, &str)],
+        signed: Signed,
+    ) -> Result<Request, ProviderError> {
         if creds.api_key.is_empty() {
             // v2 raises ConfigurationError: a missing key is a configuration
             // failure for this optional source, never a silent skip.
-            return Err(self.unrecorded("Last.fm API key is not configured"));
+            return Err(not_configured("Last.fm API key is not configured"));
         }
-        if signed && creds.shared_secret.is_empty() {
-            return Err(self.unrecorded("Last.fm shared secret is required for signed requests"));
+        if signed != Signed::No && creds.shared_secret.is_empty() {
+            return Err(not_configured(
+                "Last.fm shared secret is required for signed requests",
+            ));
         }
-        self.pacer.acquire().await;
-        let mut call: Vec<(String, String)> = Vec::new();
-        call.push(("method".to_owned(), method.to_owned()));
-        call.push(("api_key".to_owned(), creds.api_key.clone()));
-        call.push(("format".to_owned(), "json".to_owned()));
-        for (key, value) in params {
-            call.push(((*key).to_owned(), (*value).to_owned()));
-        }
-        if signed {
+        let mut call: Vec<(String, String)> = vec![
+            ("method".to_owned(), method.to_owned()),
+            ("api_key".to_owned(), creds.api_key.clone()),
+            ("format".to_owned(), "json".to_owned()),
+        ];
+        call.extend(
+            params
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned())),
+        );
+        if signed != Signed::No {
             if let Some(session_key) = creds.session_key.as_deref()
                 && !call.iter().any(|(key, _)| key == "sk")
             {
@@ -791,169 +842,135 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
             let signature = api_sig(&call, &creds.shared_secret);
             call.push(("api_sig".to_owned(), signature));
         }
-        let call_refs: Vec<(&str, &str)> = call
-            .iter()
-            .map(|(key, value)| (key.as_str(), value.as_str()))
-            .collect();
-        let send = if post {
-            self.http.post(self.base_url.clone()).form(&call_refs)
+        let base = self.base.as_ref().ok_or_else(unusable_base)?;
+        let request = if signed == Signed::Post {
+            Request::post_form(base, &[], call)
         } else {
-            self.http.get(self.base_url.clone()).query(&call_refs)
+            let pairs: Vec<(&str, &str)> = call
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str()))
+                .collect();
+            Request::get(base, &[], &pairs)
         };
-        let response = match send
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-            .send()
+        Ok(request.map_err(|_| unusable_base())?.trailing_slash())
+    }
+
+    /// Send one call and decode its JSON body. An answer that does not
+    /// decode is noted for the request.
+    async fn read(
+        &self,
+        request: Request,
+        priority: RequestPriority,
+    ) -> Result<serde_json::Value, ProviderError> {
+        let reply = self.send(request, priority).await?;
+        reply
+            .json()
+            .inspect_err(|error| note_shape(&error.to_string()))
+    }
+
+    /// Send one call. An error code Last.fm does not list as an outage is
+    /// still noted for the request, as the service answered with one.
+    async fn send(
+        &self,
+        request: Request,
+        priority: RequestPriority,
+    ) -> Result<Reply, ProviderError> {
+        self.executor
+            .send(request, priority)
             .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                return Err(self.recorded(None, &format!("Last.fm request failed: {error}")));
-            }
-        };
-        // Last.fm reports application errors as HTTP 200 bodies; a non-200
-        // never carries a decoded envelope (v2 raises before parsing). The
-        // live invalid-key probe saw HTTP 403 with error 10, which therefore
-        // surfaces here without ever decoding the envelope.
-        match response.status().as_u16() {
-            200 => {}
-            // Credential rejections, like the error-10 envelope in a 200:
-            // unrecorded, because v2 raises those instead of recording them.
-            401 | 403 => {
-                return Err(self.unrecorded(&format!(
-                    "Last.fm rejected the credentials (HTTP {})",
-                    response.status().as_u16()
-                )));
-            }
-            404 => return Err(Outcome::Missing),
-            // HTTP-level rate limiting, distinct from the error-29 envelope:
-            // recorded with the honored Retry-After when one parsed.
-            429 => {
-                let retry_after = response
-                    .headers()
-                    .get(reqwest::header::RETRY_AFTER)
-                    .and_then(|value| value.to_str().ok());
-                let retry_after_secs =
-                    super::error::parse_retry_after(retry_after).map(|delay| delay.as_secs_f64());
-                return Err(self.recorded(retry_after_secs, "Last.fm rate limited (HTTP 429)"));
-            }
-            status => {
-                return Err(self.recorded(None, &format!("Last.fm request failed ({status})")));
-            }
-        }
-        let payload: serde_json::Value = match read_capped(response, MAX_BODY_BYTES).await {
-            Ok(body) => match serde_json::from_slice(&body) {
-                Ok(payload) => payload,
-                Err(_) => {
-                    return Err(self.shape_error("Last.fm returned invalid JSON"));
+            .inspect_err(|error| {
+                if matches!(error, ProviderError::BadRequest { .. }) {
+                    record_current(SOURCE, IntegrationStatus::Error, true);
                 }
-            },
-            Err(error) => {
-                return Err(self.recorded(
-                    None,
-                    &format!("Last.fm response body unreadable: {}", error.kind()),
-                ));
-            }
-        };
-        // The JSON error envelope rides inside HTTP 200 (v2
-        // `_handle_error_response`).
-        if let Some(code) = payload.get("error") {
-            let message = payload
-                .get("message")
+            })
+    }
+}
+
+/// How one call is built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Signed {
+    /// An unsigned GET.
+    No,
+    /// A signed GET.
+    Yes,
+    /// A signed form post.
+    Post,
+}
+
+/// The parameters of an artist list read: by MusicBrainz id when given.
+fn artist_params<'a>(
+    artist: &'a str,
+    mbid: Option<&'a str>,
+    limit: &'a str,
+) -> Vec<(&'a str, &'a str)> {
+    match mbid {
+        Some(mbid) => vec![("mbid", mbid), ("limit", limit)],
+        None => vec![("artist", artist), ("limit", limit)],
+    }
+}
+
+/// Decode the `toptags.tag` list into weighted tags. A missing `toptags`
+/// object reads as empty (v2's tolerant structs default it); blank names
+/// are filtered before projecting (v2 `_management_genre_candidates`).
+fn top_tags(payload: &serde_json::Value) -> Vec<WeightedTag> {
+    let tags = match payload
+        .get("toptags")
+        .and_then(|toptags| toptags.get("tag"))
+    {
+        None | Some(serde_json::Value::Null) => return Vec::new(),
+        Some(serde_json::Value::Array(tags)) => tags.clone(),
+        // Last.fm sometimes answers a single object where a list belongs;
+        // accept it rather than failing the whole read.
+        Some(single) => vec![single.clone()],
+    };
+    tags.iter()
+        .filter_map(serde_json::Value::as_object)
+        .filter_map(|tag| {
+            let name = tag
+                .get("name")
                 .and_then(serde_json::Value::as_str)
-                .unwrap_or("Unknown Last.fm error");
-            let code = code.as_i64();
-            return Err(self.mapped_error(code, message));
-        }
-        self.sink.succeeded(SOURCE);
-        Ok(payload)
-    }
+                .unwrap_or("")
+                .trim();
+            (!name.is_empty()).then(|| WeightedTag {
+                name: name.to_owned(),
+                weight: lenient_int(tag.get("count")),
+            })
+        })
+        .collect()
+}
 
-    /// Map a JSON error envelope onto an outcome (v2 `LASTFM_ERROR_MAP`
-    /// plus the error-29 branch).
-    fn mapped_error<T>(&self, code: Option<i64>, message: &str) -> Outcome<T> {
-        match code {
-            // Last.fm-29: rate limiting. Surfaces immediately with a 1s hint;
-            // v2 never retries this in-repo, the caller backs off.
-            Some(ERROR_RATE_LIMITED) => self.recorded(
-                Some(RATE_LIMIT_RETRY_SECS),
-                &format!("Rate limit exceeded: {message}"),
-            ),
-            // Unknown entity. v2 raises ResourceNotFoundError, which the info
-            // and genre reads translate to None.
-            // The service answered; the entity is just not there.
-            Some(6) => {
-                self.sink.succeeded(SOURCE);
-                Outcome::Missing
-            }
-            // Credential and authorization failures. v2 raises
-            // ConfigurationError / TokenNotAuthorizedError, never recorded.
-            Some(4) => self.unrecorded(&format!(
-                "Authentication failed - invalid API key or shared secret: {message}"
-            )),
-            Some(9) => self.unrecorded(&format!(
-                "Session key expired - please re-authorize with Last.fm: {message}"
-            )),
-            Some(10) => self.unrecorded(&format!(
-                "Invalid API key - check your Last.fm API key: {message}"
-            )),
-            Some(14) => self.unrecorded(&format!("Token not yet authorized: {message}")),
-            Some(17) => self.unrecorded(&format!(
-                "Authentication required - re-authorize Last.fm or make your listening history public: {message}"
-            )),
-            Some(26) => self.unrecorded(&format!(
-                "API key has been suspended - contact Last.fm support: {message}"
-            )),
-            Some(2) => self.recorded(
-                None,
-                &format!("Invalid service - This service does not exist: {message}"),
-            ),
-            Some(3) => self.recorded(
-                None,
-                &format!("Invalid method - No method with that name in this package: {message}"),
-            ),
-            Some(11) => self.recorded(
-                None,
-                &format!("Last.fm service is temporarily offline: {message}"),
-            ),
-            Some(other) => self.recorded(
-                None,
-                &format!("Last.fm error ({other}): {message}"),
-            ),
-            // A present-but-unusable code reads as an unknown upstream error,
-            // matching v2's fallthrough for unmapped codes.
-            None => self.recorded(None, &format!("Last.fm error: {message}")),
-        }
-    }
+/// An answer that did not have the expected shape: the service answered,
+/// so it is noted for the request but never counted as an outage.
+fn note_shape(cause: &str) {
+    tracing::debug!(
+        provider = SOURCE,
+        cause,
+        "Last.fm answer had no usable shape"
+    );
+    record_current(SOURCE, IntegrationStatus::Error, true);
+}
 
-    /// Build a recorded `Unavailable` outcome.
-    fn recorded<T>(&self, retry_after_secs: Option<f64>, message: &str) -> Outcome<T> {
-        self.sink.record(SOURCE, message.to_owned());
-        Outcome::Unavailable {
-            retry_after_secs,
-            message: message.to_owned(),
-            recorded: true,
-        }
+/// A decoded answer missing what the call promises, noted for the request.
+fn shape(message: &str) -> ProviderError {
+    note_shape(message);
+    ProviderError::Payload {
+        provider: SOURCE,
+        kind: PayloadKind::Contract,
+        message: short(message),
     }
+}
 
-    /// A reply that did not decode: recorded for the request, kept out of
-    /// service health (the service answered).
-    fn shape_error<T>(&self, message: &str) -> Outcome<T> {
-        self.sink.record_quiet(SOURCE, message.to_owned());
-        Outcome::Unavailable {
-            retry_after_secs: None,
-            message: message.to_owned(),
-            recorded: true,
-        }
+fn not_configured(message: &str) -> ProviderError {
+    ProviderError::NotConfigured {
+        provider: SOURCE,
+        message: message.to_owned(),
     }
+}
 
-    /// Build an unrecorded `Unavailable` outcome for configuration and
-    /// authorization failures, which v2 raises rather than records.
-    fn unrecorded<T>(&self, message: &str) -> Outcome<T> {
-        Outcome::Unavailable {
-            retry_after_secs: None,
-            message: message.to_owned(),
-            recorded: false,
-        }
+fn unusable_base() -> ProviderError {
+    ProviderError::Invalid {
+        provider: SOURCE,
+        reason: "the Last.fm address is not usable",
     }
 }
 

@@ -321,7 +321,7 @@ impl PageSources for LiveSources {
             self.cached(key, ARTIST_TTL, async {
                 let rows = lastfm_result(
                     client
-                        .similar_artists(&creds, &artist.name, artist.mbid.as_deref(), limit)
+                        .similar_artists(&creds, &artist.name, artist.mbid.as_deref(), limit, BUILD)
                         .await,
                 )?;
                 Ok(rows
@@ -351,7 +351,11 @@ impl PageSources for LiveSources {
             };
             let key = format!("lfm_page:weekly_artists:{}", username.to_lowercase());
             self.cached(key, USER_STATS_TTL, async {
-                let rows = lastfm_result(client.user_weekly_artist_chart(&creds, username).await)?;
+                let rows = lastfm_result(
+                    client
+                        .user_weekly_artist_chart(&creds, username, BUILD)
+                        .await,
+                )?;
                 Ok(rows
                     .into_iter()
                     .map(|row| ArtistRow {
@@ -376,7 +380,11 @@ impl PageSources for LiveSources {
             };
             let key = format!("lfm_page:weekly_albums:{}", username.to_lowercase());
             self.cached(key, USER_STATS_TTL, async {
-                let rows = lastfm_result(client.user_weekly_album_chart(&creds, username).await)?;
+                let rows = lastfm_result(
+                    client
+                        .user_weekly_album_chart(&creds, username, BUILD)
+                        .await,
+                )?;
                 Ok(rows.into_iter().map(chart_album).collect())
             })
             .await
@@ -395,7 +403,11 @@ impl PageSources for LiveSources {
             };
             let key = format!("lfm_page:recent:{}:{limit}", username.to_lowercase());
             self.cached(key, USER_STATS_TTL, async {
-                let rows = lastfm_result(client.user_recent_tracks(&creds, username, limit).await)?;
+                let rows = lastfm_result(
+                    client
+                        .user_recent_tracks(&creds, username, limit, BUILD)
+                        .await,
+                )?;
                 Ok(rows
                     .into_iter()
                     .filter(|track| !track.album_name.is_empty())
@@ -427,15 +439,13 @@ impl PageSources for LiveSources {
                 .unwrap_or_else(|| artist.name.trim().to_lowercase());
             let key = format!("lfm_page:artist_tags:{id}");
             self.cached(key, ARTIST_TTL, async {
-                let info = match client
-                    .artist_info(&creds, &artist.name, artist.mbid.as_deref())
-                    .await
-                {
-                    droppedneedle_providers::lastfm::Outcome::Found(info) => info,
-                    droppedneedle_providers::lastfm::Outcome::Missing => return Ok(Vec::new()),
-                    droppedneedle_providers::lastfm::Outcome::Unavailable { message, .. } => {
-                        return Err(message);
-                    }
+                let Some(info) = lastfm_result(
+                    client
+                        .artist_info(&creds, &artist.name, artist.mbid.as_deref(), BUILD)
+                        .await,
+                )?
+                else {
+                    return Ok(Vec::new());
                 };
                 Ok(info
                     .tags
@@ -453,6 +463,7 @@ impl PageSources for LiveSources {
         user_id: &'a str,
         tag: &'a str,
         limit: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         Box::pin(async move {
             let Some((client, creds)) = self.lastfm(user_id).await else {
@@ -460,7 +471,8 @@ impl PageSources for LiveSources {
             };
             let key = format!("lfm_page:tag_artists:{}:{limit}", tag.to_lowercase());
             self.cached(key, ARTIST_TTL, async {
-                let rows = lastfm_result(client.tag_top_artists(&creds, tag, limit).await)?;
+                let rows =
+                    lastfm_result(client.tag_top_artists(&creds, tag, limit, priority).await)?;
                 Ok(rows
                     .into_iter()
                     .map(|row| ArtistRow {

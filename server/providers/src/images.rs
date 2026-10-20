@@ -1,0 +1,173 @@
+//! Artist images and TheAudioDB thumbnails, fetched by the URL a
+//! provider's own data names.
+//!
+//! The URLs come from upstream answers, so only https addresses on the
+//! hosts TheAudioDB and Wikimedia serve images from are fetched
+//! ([`check_image_url`]), and every redirect hop is checked the same way.
+//! TheAudioDB's image host paces at the `audiodb-media` row and the
+//! Wikimedia hosts at the `wikimedia-media` row, with its documented
+//! concurrency.
+
+use std::time::Duration;
+
+use crate::RequestPriority;
+use crate::error::{MAX_RETRY_AFTER, ProviderError};
+use crate::executor::{
+    Backoff, Executor, RedirectRule, Redirects, Request, Spec, Url, standard_classify,
+};
+
+/// The rate row and provider name of TheAudioDB's image host.
+pub const AUDIODB_MEDIA: &str = "audiodb-media";
+/// The rate row and provider name of the Wikimedia image hosts.
+pub const WIKIMEDIA_MEDIA: &str = "wikimedia-media";
+/// Redirect hops followed for one image, each checked like the first URL.
+pub const MAX_IMAGE_REDIRECTS: usize = 3;
+/// Largest image read unless the caller asks for less.
+const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+
+/// TheAudioDB's image host on the wire.
+pub static AUDIODB_SPEC: Spec = spec(AUDIODB_MEDIA);
+/// The Wikimedia image hosts on the wire.
+pub static WIKIMEDIA_SPEC: Spec = spec(WIKIMEDIA_MEDIA);
+
+const fn spec(source: &'static str) -> Spec {
+    Spec {
+        source,
+        health_key: source,
+        timeout: Duration::from_secs(15),
+        max_body: MAX_IMAGE_BYTES,
+        retry_after_default: Backoff::Fixed(Duration::from_secs(1)),
+        retry_after_cap: MAX_RETRY_AFTER,
+        classify: standard_classify,
+    }
+}
+
+/// A redirect is followed only to an address [`check_image_url`] allows.
+static HOPS: RedirectRule = RedirectRule {
+    max_hops: MAX_IMAGE_REDIRECTS,
+    next: |_, next| check_image_url(next.as_str()),
+};
+
+/// Validate a third-party image URL: https on the default port, no
+/// credentials, and a host TheAudioDB or Wikimedia serves images from (v2
+/// `validate_audiodb_image_url`, widened to Wikimedia for the Wikidata
+/// portraits). The URLs come from upstream data, so this keeps the server
+/// from being pointed anywhere else.
+#[must_use]
+pub fn check_image_url(raw: &str) -> Option<Url> {
+    let url = Url::parse(raw.trim()).ok()?;
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some_and(|port| port != 443)
+    {
+        return None;
+    }
+    let host = url.domain()?.to_ascii_lowercase();
+    let allowed = is_audiodb(&host)
+        || host == "upload.wikimedia.org"
+        || host == "commons.wikimedia.org"
+        // Scaled Commons portraits come from this host. Checked 2026-10-19:
+        // the 1280 px thumburl of File:RadioheadO2211125 composite.jpg
+        // answered 200 image/jpeg with no redirect. Exact host only.
+        || host == "thumb.wikimedia.org";
+    allowed.then_some(url)
+}
+
+fn is_audiodb(host: &str) -> bool {
+    host == "theaudiodb.com" || host.ends_with(".theaudiodb.com")
+}
+
+/// The image client over its two executors. Built once with the providers;
+/// cheap to clone.
+#[derive(Debug, Clone)]
+pub struct ImageClient {
+    audiodb: Executor,
+    wikimedia: Executor,
+}
+
+impl ImageClient {
+    /// The client sending TheAudioDB's images through `audiodb` and
+    /// Wikimedia's through `wikimedia`.
+    #[must_use]
+    pub fn new(audiodb: Executor, wikimedia: Executor) -> Self {
+        Self { audiodb, wikimedia }
+    }
+
+    /// The bytes at `raw`, read up to `max_body`, at `priority`.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::Invalid`] for an address outside the allowed hosts
+    /// (nothing is sent), [`ProviderError::Redirect`] for a hop to one,
+    /// otherwise the typed failure of the call.
+    pub async fn fetch(
+        &self,
+        raw: &str,
+        max_body: usize,
+        priority: RequestPriority,
+    ) -> Result<Vec<u8>, ProviderError> {
+        let Some(url) = check_image_url(raw) else {
+            return Err(ProviderError::Invalid {
+                provider: WIKIMEDIA_MEDIA,
+                reason: "the image address is outside the allowed hosts",
+            });
+        };
+        let executor = match url.domain() {
+            Some(host) if is_audiodb(&host.to_ascii_lowercase()) => &self.audiodb,
+            _ => &self.wikimedia,
+        };
+        let request = Request::get_url(url)
+            .max_body(max_body)
+            .redirects(Redirects::Follow(&HOPS));
+        let reply = executor.send(request, priority).await?;
+        Ok(reply.bytes().to_vec())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_image_url;
+
+    /// Only the listed hosts, over https on the default port, without
+    /// credentials. A host that merely starts or ends like a listed one is
+    /// refused.
+    #[test]
+    fn allows_listed_hosts_over_https_without_credentials() {
+        let cases = [
+            ("https://r2.theaudiodb.com/images/radiohead.jpg", true),
+            ("https://upload.wikimedia.org/commons/Radiohead.jpg", true),
+            (
+                "https://commons.wikimedia.org/wiki/File:Radiohead.jpg",
+                true,
+            ),
+            (
+                "https://thumb.wikimedia.org/commons/1280px-Radiohead.jpg",
+                true,
+            ),
+            (
+                "https://thumb.wikimedia.org.example.com/commons/1280px-Radiohead.jpg",
+                false,
+            ),
+            (
+                "https://xthumb.wikimedia.org/commons/1280px-Radiohead.jpg",
+                false,
+            ),
+            (
+                "http://thumb.wikimedia.org/commons/1280px-Radiohead.jpg",
+                false,
+            ),
+            (
+                "https://thumb.wikimedia.org:8443/commons/1280px-Radiohead.jpg",
+                false,
+            ),
+            (
+                "https://user@thumb.wikimedia.org/commons/1280px-Radiohead.jpg",
+                false,
+            ),
+        ];
+        for (raw, allowed) in cases {
+            assert_eq!(check_image_url(raw).is_some(), allowed, "{raw}");
+        }
+    }
+}

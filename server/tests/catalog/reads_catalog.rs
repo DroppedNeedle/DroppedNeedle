@@ -126,8 +126,6 @@ impl Fixtures {
 
     fn endpoints(&self) -> Endpoints {
         Endpoints {
-            lastfm: format!("{}/lastfm/2.0/", self.base),
-            audiodb: format!("{}/audiodb", self.base),
             wikidata: format!("{}/wikidata", self.base),
             wikipedia: format!("{}/wikipedia-{{lang}}", self.base),
             commons: format!("{}/commons", self.base),
@@ -374,6 +372,8 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRi
             Arc::new(droppedneedle_providers::ReqwestWire::new(&http)),
             droppedneedle_providers::ProviderEndpoints {
                 listenbrainz: format!("{}/lb", fixtures.base),
+                lastfm: format!("{}/lastfm/2.0/", fixtures.base),
+                audiodb: format!("{}/audiodb", fixtures.base),
                 ..droppedneedle_providers::ProviderEndpoints::closed()
             },
         )),

@@ -52,19 +52,23 @@ pub trait EnrichmentPort: Send + Sync {
         release_group_mbid: &'a str,
         background: bool,
     ) -> BoxFuture<'a, Result<Vec<Candidate>, String>>;
+    /// `background` asks at background priority (automatic runs).
     fn lastfm_genres<'a>(
         &'a self,
         artist: &'a str,
         album: &'a str,
+        background: bool,
     ) -> BoxFuture<'a, Result<Vec<Candidate>, String>>;
     fn lyrics<'a>(
         &'a self,
         query: &'a LyricsQuery,
     ) -> BoxFuture<'a, Result<Option<LyricsFound>, String>>;
+    /// `background` asks at background priority (automatic runs).
     fn front_cover<'a>(
         &'a self,
         release_mbid: &'a str,
         release_group_mbid: &'a str,
+        background: bool,
     ) -> BoxFuture<'a, Result<Option<Cover>, String>>;
     /// The parts of a release `wants` names, in one MusicBrainz lookup:
     /// its recording and work credits, its credited artists' own names
@@ -464,7 +468,7 @@ pub fn gather(
         } else {
             release.id.as_str()
         };
-        match wait(port.front_cover(release_id, &release.release_group_id)) {
+        match wait(port.front_cover(release_id, &release.release_group_id, automatic)) {
             Some(cover) => extras.cover = cover,
             None => extras.cover_deferred = true,
         }
@@ -476,7 +480,7 @@ pub fn gather(
         }
         if profile.genres.sources.contains(&GenreSource::Lastfm) {
             let artist = release.artist_text();
-            extras.genres.lastfm = wait(port.lastfm_genres(&artist, &release.title));
+            extras.genres.lastfm = wait(port.lastfm_genres(&artist, &release.title, automatic));
         }
     }
     extras
@@ -664,6 +668,7 @@ impl EnrichmentPort for ScriptedEnrichment {
         &'a self,
         _artist: &'a str,
         _album: &'a str,
+        _background: bool,
     ) -> BoxFuture<'a, Result<Vec<Candidate>, String>> {
         Box::pin(async { Err("not scripted".to_owned()) })
     }
@@ -680,6 +685,7 @@ impl EnrichmentPort for ScriptedEnrichment {
         &'a self,
         _release_mbid: &'a str,
         _release_group_mbid: &'a str,
+        _background: bool,
     ) -> BoxFuture<'a, Result<Option<Cover>, String>> {
         let answer = Ok(self.cover.clone());
         Box::pin(async move { answer })

@@ -1,351 +1,60 @@
-//! AudioDB, AcoustID and Last.fm clients against a scripted loopback
-//! server, and ListenBrainz against the scripted provider wire: the decode
-//! of each real wire shape, rate limits and Retry-After, degradation
-//! recording, and credential handling.
+//! The AudioDB, AcoustID, Last.fm and ListenBrainz clients against the
+//! scripted provider wire: the decode of each real wire shape, what goes
+//! out on the wire, and credential handling. What each status and error
+//! code becomes is pinned in `providers_core`.
 
-use droppedneedle_providers::{DegradationSink, Pacer};
+use droppedneedle_providers::executor::{Body, Method, Scripted, ScriptedWire, Sent};
+use droppedneedle_providers::{
+    PayloadKind, ProviderEndpoints, ProviderError, Providers, RequestPriority,
+};
 use droppedneedle_providers::{acoustid, audiodb, lastfm, listenbrainz};
 
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+const PRIORITY: RequestPriority = RequestPriority::UserInitiated;
 
-// ---------------------------------------------------------------------------
-// Scripted HTTP fakes
-// ---------------------------------------------------------------------------
-
-/// One request the fake observed.
-#[derive(Debug, Clone)]
-struct CapturedRequest {
-    method: String,
-    path: String,
-    body: Vec<u8>,
+/// The providers over `wire`, unpaced, with AudioDB, AcoustID and Last.fm
+/// at their real addresses.
+fn audio_providers(wire: &Arc<ScriptedWire>) -> Providers {
+    Providers::unpaced_at(
+        wire.clone(),
+        ProviderEndpoints {
+            lastfm: lastfm::DEFAULT_BASE_URL.to_owned(),
+            audiodb: audiodb::DEFAULT_BASE_URL.to_owned(),
+            acoustid: acoustid::DEFAULT_BASE_URL.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    )
 }
 
-impl CapturedRequest {
-    fn text_body(&self) -> String {
-        String::from_utf8_lossy(&self.body).into_owned()
+fn json_answer(status: u16, body: &serde_json::Value) -> Scripted {
+    bytes_answer(status, body.to_string().into_bytes())
+}
+
+fn bytes_answer(status: u16, body: Vec<u8>) -> Scripted {
+    Scripted::Answer {
+        status,
+        headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+        body,
     }
 }
 
-/// One scripted reply.
-#[derive(Debug, Clone)]
-struct ScriptedResponse {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: Vec<u8>,
-}
-
-impl ScriptedResponse {
-    fn json(status: u16, value: &serde_json::Value) -> Self {
-        Self {
-            status,
-            headers: vec![("content-type".to_owned(), "application/json".to_owned())],
-            body: serde_json::to_vec(value).unwrap_or_default(),
-        }
-    }
-
-    fn text(status: u16, body: &str) -> Self {
-        Self {
-            status,
-            headers: vec![("content-type".to_owned(), "text/plain".to_owned())],
-            body: body.as_bytes().to_vec(),
-        }
-    }
-
-    fn empty(status: u16) -> Self {
-        Self {
-            status,
-            headers: Vec::new(),
-            body: Vec::new(),
-        }
-    }
-
-    fn with_header(mut self, name: &str, value: &str) -> Self {
-        self.headers.push((name.to_owned(), value.to_owned()));
-        self
-    }
-}
-
-type Responder = Arc<dyn Fn(&CapturedRequest) -> ScriptedResponse + Send + Sync>;
-
-fn always(scripted: ScriptedResponse) -> Responder {
-    Arc::new(move |_| scripted.clone())
-}
-
-/// A scripted HTTP server on loopback. Aborted on drop.
-struct Fake {
-    base_url: String,
-    hits: Arc<Mutex<Vec<CapturedRequest>>>,
-    task: tokio::task::JoinHandle<()>,
-}
-
-impl Drop for Fake {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
-impl Fake {
-    async fn start(respond: Responder) -> Self {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("fake binds loopback");
-        let port = listener.local_addr().expect("fake has a port").port();
-        let hits: Arc<Mutex<Vec<CapturedRequest>>> = Arc::new(Mutex::new(Vec::new()));
-        let task = tokio::spawn(serve(listener, hits.clone(), respond));
-        Self {
-            base_url: format!("http://127.0.0.1:{port}"),
-            hits,
-            task,
-        }
-    }
-
-    fn hit_count(&self) -> usize {
-        self.hits.lock().expect("hits lock").len()
-    }
-
-    fn hits(&self) -> Vec<CapturedRequest> {
-        self.hits.lock().expect("hits lock").clone()
-    }
-}
-
-fn headers_end(buffer: &[u8]) -> Option<usize> {
-    buffer
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .map(|at| at + 4)
-}
-
-async fn read_exactly(stream: &mut tokio::net::TcpStream, mut need: usize, body: &mut Vec<u8>) {
-    while need > 0 {
-        let mut chunk = vec![0u8; need.min(8192)];
-        let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut chunk)).await;
-        match read {
-            Ok(Ok(0)) | Err(_) => break,
-            Ok(Ok(n)) => {
-                chunk.truncate(n);
-                body.extend_from_slice(&chunk);
-                need -= n;
-            }
-            Ok(Err(_)) => break,
-        }
-    }
-}
-
-async fn serve(
-    listener: tokio::net::TcpListener,
-    hits: Arc<Mutex<Vec<CapturedRequest>>>,
-    respond: Responder,
-) {
-    loop {
-        let accepted = listener.accept().await;
-        let Ok((mut stream, _)) = accepted else {
-            break;
-        };
-        let hits = hits.clone();
-        let respond = respond.clone();
-        tokio::spawn(async move {
-            let mut buffer: Vec<u8> = Vec::new();
-            loop {
-                let mut tmp = [0u8; 4096];
-                let read =
-                    tokio::time::timeout(Duration::from_secs(5), stream.read(&mut tmp)).await;
-                match read {
-                    Ok(Ok(0)) | Err(_) => return,
-                    Ok(Ok(n)) => {
-                        buffer.extend_from_slice(&tmp[..n]);
-                        if buffer.len() > 65536 || headers_end(&buffer).is_some() {
-                            break;
-                        }
-                    }
-                    Ok(Err(_)) => return,
-                }
-            }
-            let head_end = headers_end(&buffer).unwrap_or(buffer.len());
-            let head = String::from_utf8_lossy(&buffer[..head_end]).into_owned();
-            let mut lines = head.split("\r\n");
-            let request_line = lines.next().unwrap_or("");
-            let mut parts = request_line.split_whitespace();
-            let method = parts.next().unwrap_or("").to_owned();
-            let path = parts.next().unwrap_or("").to_owned();
-            let mut content_length = 0usize;
-            for line in lines {
-                if let Some((key, value)) = line.split_once(':')
-                    && key.trim().eq_ignore_ascii_case("content-length")
-                {
-                    content_length = value.trim().parse::<usize>().unwrap_or(0).min(1 << 20);
-                }
-            }
-            let mut body = buffer.get(head_end..).unwrap_or(&[]).to_vec();
-            if body.len() < content_length {
-                read_exactly(&mut stream, content_length - body.len(), &mut body).await;
-            }
-            body.truncate(content_length);
-            let captured = CapturedRequest { method, path, body };
-            let scripted = respond(&captured);
-            hits.lock().expect("hits lock").push(captured);
-            let reason = match scripted.status {
-                200 => "OK",
-                204 => "No Content",
-                400 => "Bad Request",
-                401 => "Unauthorized",
-                403 => "Forbidden",
-                404 => "Not Found",
-                405 => "Method Not Allowed",
-                429 => "Too Many Requests",
-                500 => "Internal Server Error",
-                _ => "Reply",
-            };
-            let mut head = format!(
-                "HTTP/1.1 {} {}\r\ncontent-length: {}\r\nconnection: close\r\n",
-                scripted.status,
-                reason,
-                scripted.body.len()
-            );
-            for (key, value) in &scripted.headers {
-                head.push_str(&format!("{key}: {value}\r\n"));
-            }
-            head.push_str("\r\n");
-            let _ = stream.write_all(head.as_bytes()).await;
-            let _ = stream.write_all(&scripted.body).await;
-        });
-    }
-}
-
-/// Percent-decode one query or form component.
-fn percent_decode(input: &str) -> String {
-    let mut bytes: Vec<u8> = Vec::with_capacity(input.len());
-    let mut chars = input.as_bytes().iter().copied();
-    while let Some(byte) = chars.next() {
-        match byte {
-            b'%' => {
-                let hex = |next: Option<u8>| {
-                    next.and_then(|digit| (digit as char).to_digit(16))
-                        .unwrap_or(0) as u8
-                };
-                bytes.push(hex(chars.next()) * 16 + hex(chars.next()));
-            }
-            b'+' => bytes.push(b' '),
-            _ => bytes.push(byte),
-        }
-    }
-    String::from_utf8_lossy(&bytes).into_owned()
-}
-
-/// Split a query string or form body into decoded pairs.
-fn pairs(encoded: &str) -> Vec<(String, String)> {
-    encoded
-        .split('&')
-        .filter(|part| !part.is_empty())
-        .filter_map(|part| part.split_once('='))
-        .map(|(key, value)| (percent_decode(key), percent_decode(value)))
-        .collect()
-}
-
-/// Split a request path into its route and decoded query pairs.
-fn route_and_query(path: &str) -> (String, Vec<(String, String)>) {
-    match path.split_once('?') {
-        Some((route, query)) => (route.to_owned(), pairs(query)),
-        None => (path.to_owned(), Vec::new()),
-    }
-}
-
-fn query_value(query: &[(String, String)], name: &str) -> Option<String> {
-    query
-        .iter()
+/// One form field of a sent request.
+fn form_value(sent: &Sent, name: &str) -> Option<String> {
+    let Body::Form(form) = &sent.body else {
+        return None;
+    };
+    form.iter()
         .find(|(key, _)| key == name)
         .map(|(_, value)| value.clone())
-}
-
-// ---------------------------------------------------------------------------
-// Port fakes
-// ---------------------------------------------------------------------------
-
-/// Recording degradation sink shared with the client under test.
-#[derive(Debug, Clone)]
-struct RecSink {
-    records: Arc<Mutex<Vec<(String, String)>>>,
-}
-
-impl RecSink {
-    fn new() -> Self {
-        Self {
-            records: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    fn count(&self) -> usize {
-        self.records.lock().expect("sink lock").len()
-    }
-
-    fn messages(&self) -> Vec<String> {
-        self.records
-            .lock()
-            .expect("sink lock")
-            .iter()
-            .map(|(_, message)| message.clone())
-            .collect()
-    }
-
-    fn sources(&self) -> Vec<String> {
-        self.records
-            .lock()
-            .expect("sink lock")
-            .iter()
-            .map(|(source, _)| source.clone())
-            .collect()
-    }
-}
-
-/// Counting pacer: every wire attempt must pace exactly once.
-#[derive(Debug, Clone)]
-struct CountingPacer {
-    count: Arc<Mutex<usize>>,
-}
-
-impl CountingPacer {
-    fn new() -> Self {
-        Self {
-            count: Arc::new(Mutex::new(0)),
-        }
-    }
-
-    fn count(&self) -> usize {
-        *self.count.lock().expect("pacer lock")
-    }
-}
-
-impl Pacer for CountingPacer {
-    async fn acquire(&self) {
-        *self.count.lock().expect("pacer lock") += 1;
-    }
-}
-
-impl DegradationSink for RecSink {
-    fn record(&self, source: &'static str, message: String) {
-        self.records
-            .lock()
-            .expect("sink lock")
-            .push((source.to_owned(), message));
-    }
-}
-
-fn http() -> reqwest::Client {
-    reqwest::Client::new()
 }
 
 // ---------------------------------------------------------------------------
 // AudioDB
 // ---------------------------------------------------------------------------
 
-fn audiodb_client(
-    fake: &Fake,
-    pacer: CountingPacer,
-    sink: RecSink,
-) -> audiodb::AudioDbClient<CountingPacer, RecSink> {
-    audiodb::AudioDbClient::new(http(), &fake.base_url, pacer, sink)
+fn audiodb_url(endpoint: &str) -> String {
+    format!("{}/123/{endpoint}", audiodb::DEFAULT_BASE_URL)
 }
 
 fn audiodb_artist_payload() -> serde_json::Value {
@@ -363,19 +72,21 @@ fn audiodb_artist_payload() -> serde_json::Value {
 
 #[tokio::test]
 async fn audiodb_artist_by_mbid_found_tolerates_unknown_fields() {
-    let fake = Fake::start(always(ScriptedResponse::json(
-        200,
-        &audiodb_artist_payload(),
-    )))
-    .await;
-    let sink = RecSink::new();
-    let client = audiodb_client(&fake, CountingPacer::new(), sink.clone());
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(
+        Method::Get,
+        &audiodb_url("artist-mb.php"),
+        json_answer(200, &audiodb_artist_payload()),
+    );
+    let providers = audio_providers(&wire);
 
-    let outcome = client
-        .artist_by_mbid("a74b1b7f-71a5-4011-9441-d0b5e4122711")
-        .await;
+    let artist = providers
+        .audiodb
+        .artist_by_mbid("", "a74b1b7f-71a5-4011-9441-d0b5e4122711", PRIORITY)
+        .await
+        .expect("answered")
+        .expect("artist found");
 
-    let artist = outcome.into_option().expect("artist found");
     assert_eq!(artist.id_artist, "111239");
     assert_eq!(artist.name, "Radiohead");
     assert_eq!(
@@ -383,71 +94,44 @@ async fn audiodb_artist_by_mbid_found_tolerates_unknown_fields() {
         Some("a74b1b7f-71a5-4011-9441-d0b5e4122711")
     );
     assert_eq!(artist.thumb.as_deref(), Some("https://thumb.example/a.jpg"));
-    assert_eq!(sink.count(), 0, "a hit records nothing");
-    let hits = fake.hits();
-    assert_eq!(hits.len(), 1);
-    let (route, query) = route_and_query(&hits[0].path);
-    assert_eq!(route, "/123/artist-mb.php");
+    let sent = wire.sent();
+    assert_eq!(sent.len(), 1);
     assert_eq!(
-        query_value(&query, "i").as_deref(),
+        sent[0].query("i").as_deref(),
         Some("a74b1b7f-71a5-4011-9441-d0b5e4122711")
     );
 }
 
+/// An entry missing its identity, or an answer that is not JSON, is a
+/// payload failure: never an empty success, never "no match".
 #[tokio::test]
-async fn audiodb_missing_identity_fails_decode_and_records() {
-    // No `idArtist`/`strArtist`: an empty success must never come back.
-    let payload = serde_json::json!({"artists": [{"strArtistThumb": "https://x/y.jpg"}]});
-    let fake = Fake::start(always(ScriptedResponse::json(200, &payload))).await;
-    let sink = RecSink::new();
-    let client = audiodb_client(&fake, CountingPacer::new(), sink.clone());
-
-    let outcome = client.artist_by_mbid("mbid").await;
-
-    assert!(outcome.into_option().is_none(), "no empty success");
-    assert_eq!(sink.count(), 1, "schema failure records");
-    assert_eq!(sink.sources(), vec!["audiodb".to_owned()]);
-    assert!(
-        sink.messages()[0].contains("Schema error"),
-        "message names the failure: {}",
-        sink.messages()[0]
-    );
-}
-
-#[tokio::test]
-async fn audiodb_http_429_hints_sixty_seconds() {
-    let fake = Fake::start(always(ScriptedResponse::empty(429))).await;
-    let sink = RecSink::new();
-    let client = audiodb_client(&fake, CountingPacer::new(), sink.clone());
-
-    let outcome = client.artist_by_mbid("mbid").await;
-
-    match outcome {
-        audiodb::Outcome::Unavailable {
-            retry_after_secs, ..
-        } => assert_eq!(retry_after_secs, Some(60.0)),
-        other => panic!("expected Unavailable, got {other:?}"),
-    }
-    assert_eq!(sink.count(), 1);
-}
-
-#[tokio::test]
-async fn audiodb_http_500_and_bad_json_record() {
-    for scripted in [
-        ScriptedResponse::empty(500),
-        ScriptedResponse::text(200, "not json"),
+async fn audiodb_unusable_answers_are_payload_failures() {
+    for body in [
+        serde_json::json!({"artists": [{"strArtistThumb": "https://x/y.jpg"}]})
+            .to_string()
+            .into_bytes(),
+        b"not json".to_vec(),
     ] {
-        let fake = Fake::start(always(scripted)).await;
-        let sink = RecSink::new();
-        let client = audiodb_client(&fake, CountingPacer::new(), sink.clone());
-
-        let outcome = client.album_by_mbid("mbid").await;
-
-        assert!(
-            matches!(outcome, audiodb::Outcome::Unavailable { .. }),
-            "server errors and bad JSON are Unavailable"
+        let wire = Arc::new(ScriptedWire::new());
+        wire.on(
+            Method::Get,
+            &audiodb_url("artist-mb.php"),
+            bytes_answer(200, body),
         );
-        assert_eq!(sink.count(), 1);
+        let found = audio_providers(&wire)
+            .audiodb
+            .artist_by_mbid("", "mbid", PRIORITY)
+            .await;
+        assert!(
+            matches!(
+                found,
+                Err(ProviderError::Payload {
+                    kind: PayloadKind::Decode,
+                    ..
+                })
+            ),
+            "got {found:?}"
+        );
     }
 }
 
@@ -455,12 +139,19 @@ async fn audiodb_http_500_and_bad_json_record() {
 // AcoustID
 // ---------------------------------------------------------------------------
 
-fn acoustid_client(
-    base_url: &str,
-    pacer: CountingPacer,
-    sink: RecSink,
-) -> acoustid::AcoustIdClient<CountingPacer, RecSink> {
-    acoustid::AcoustIdClient::new(http(), base_url, pacer, sink)
+fn acoustid_url() -> String {
+    format!("{}/v2/lookup", acoustid::DEFAULT_BASE_URL)
+}
+
+fn acoustid_providers(
+    answers: impl IntoIterator<Item = Scripted>,
+) -> (Arc<ScriptedWire>, Providers) {
+    let wire = Arc::new(ScriptedWire::new());
+    for answer in answers {
+        wire.on(Method::Post, &acoustid_url(), answer);
+    }
+    let providers = audio_providers(&wire);
+    (wire, providers)
 }
 
 fn acoustid_match_payload() -> serde_json::Value {
@@ -487,18 +178,15 @@ fn acoustid_match_payload() -> serde_json::Value {
 
 #[tokio::test]
 async fn acoustid_lookup_posts_form_and_finds_match() {
-    let fake = Fake::start(always(ScriptedResponse::json(
-        200,
-        &acoustid_match_payload(),
-    )))
-    .await;
-    let sink = RecSink::new();
-    let pacer = CountingPacer::new();
-    let client = acoustid_client(&fake.base_url, pacer.clone(), sink.clone());
+    let (wire, providers) = acoustid_providers([json_answer(200, &acoustid_match_payload())]);
 
-    let outcome = client.lookup("api-key", "fingerprint-body", 212).await;
+    let found = providers
+        .acoustid
+        .lookup("api-key", "fingerprint-body", 212, PRIORITY)
+        .await
+        .expect("answered")
+        .expect("match found");
 
-    let found = outcome.into_option().expect("match found");
     assert_eq!(found.recording_id, "REC-1");
     assert_eq!(found.recording_ids, vec!["REC-1".to_owned()]);
     assert!((found.score - 0.95).abs() < f64::EPSILON);
@@ -506,58 +194,49 @@ async fn acoustid_lookup_posts_form_and_finds_match() {
     assert_eq!(found.artist.as_deref(), Some("Radiohead"));
     assert_eq!(found.duration_secs, Some(318));
     assert_eq!(found.release_group_ids, vec!["rg1", "rg2", "rg3"]);
-    assert_eq!(sink.count(), 0, "a hit records nothing");
-    assert_eq!(pacer.count(), 1, "one wire attempt paces once");
-    let hits = fake.hits();
-    assert_eq!(hits.len(), 1);
-    let (route, _) = route_and_query(&hits[0].path);
-    assert_eq!(route, "/v2/lookup");
-    assert_eq!(hits[0].method, "POST");
-    let form = pairs(&hits[0].text_body());
-    assert_eq!(query_value(&form, "client").as_deref(), Some("api-key"));
+    let sent = wire.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].method, Method::Post);
+    assert_eq!(form_value(&sent[0], "client").as_deref(), Some("api-key"));
     assert_eq!(
-        query_value(&form, "fingerprint").as_deref(),
+        form_value(&sent[0], "fingerprint").as_deref(),
         Some("fingerprint-body")
     );
-    assert_eq!(query_value(&form, "duration").as_deref(), Some("212"));
+    assert_eq!(form_value(&sent[0], "duration").as_deref(), Some("212"));
     assert_eq!(
-        query_value(&form, "meta").as_deref(),
+        form_value(&sent[0], "meta").as_deref(),
         Some("recordings releasegroups")
     );
+}
+
+/// The batch answer for `count` prints: two strong recordings and one weak
+/// one per print.
+fn batch_payload(count: usize) -> serde_json::Value {
+    let fingerprints: Vec<serde_json::Value> = (0..count)
+        .map(|index| {
+            serde_json::json!({
+                "index": index,
+                "results": [
+                    {"score": 0.9, "id": "a", "recordings": [
+                        {"id": format!("REC-{index}"), "releases": [{"id": "REL-1"}]},
+                        {"id": format!("rec-{index}-single")}
+                    ]},
+                    {"score": 0.4, "id": "b", "recordings": [{"id": "rec-weak"}]}
+                ]
+            })
+        })
+        .collect();
+    serde_json::json!({"status": "ok", "fingerprints": fingerprints})
 }
 
 /// Twenty-five prints go out as two batch requests (20 + 5); answers map
 /// back by index, and every recording above 0.5 is kept.
 #[tokio::test]
 async fn acoustid_batch_posts_twenty_per_request() {
-    let respond: Responder = Arc::new(|request| {
-        let form = pairs(&request.text_body());
-        let count = form
-            .iter()
-            .filter(|(key, _)| key.starts_with("fingerprint."))
-            .count();
-        let fingerprints: Vec<serde_json::Value> = (0..count)
-            .map(|index| {
-                serde_json::json!({
-                    "index": index,
-                    "results": [
-                        {"score": 0.9, "id": "a", "recordings": [
-                            {"id": format!("REC-{index}"), "releases": [{"id": "REL-1"}]},
-                            {"id": format!("rec-{index}-single")}
-                        ]},
-                        {"score": 0.4, "id": "b", "recordings": [{"id": "rec-weak"}]}
-                    ]
-                })
-            })
-            .collect();
-        ScriptedResponse::json(
-            200,
-            &serde_json::json!({"status": "ok", "fingerprints": fingerprints}),
-        )
-    });
-    let fake = Fake::start(respond).await;
-    let pacer = CountingPacer::new();
-    let client = acoustid_client(&fake.base_url, pacer.clone(), RecSink::new());
+    let (wire, providers) = acoustid_providers([
+        json_answer(200, &batch_payload(20)),
+        json_answer(200, &batch_payload(5)),
+    ]);
     let prints: Vec<String> = (0..25).map(|index| format!("print-{index}")).collect();
     let queries: Vec<acoustid::BatchQuery<'_>> = prints
         .iter()
@@ -567,31 +246,37 @@ async fn acoustid_batch_posts_twenty_per_request() {
         })
         .collect();
 
-    let found = client.lookup_batch("api-key", &queries).await;
+    let found = providers
+        .acoustid
+        .lookup_batch("api-key", &queries, PRIORITY)
+        .await;
 
-    let hits = fake.hits();
-    assert_eq!(hits.len(), 2);
-    assert_eq!(pacer.count(), 2);
-    let first = pairs(&hits[0].text_body());
-    assert_eq!(query_value(&first, "batch").as_deref(), Some("1"));
+    let sent = wire.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(form_value(&sent[0], "batch").as_deref(), Some("1"));
     assert_eq!(
-        query_value(&first, "fingerprint.19").as_deref(),
+        form_value(&sent[0], "fingerprint.19").as_deref(),
         Some("print-19")
     );
-    assert_eq!(query_value(&first, "fingerprint.20"), None);
-    let second = pairs(&hits[1].text_body());
+    assert_eq!(form_value(&sent[0], "fingerprint.20"), None);
     assert_eq!(
-        query_value(&second, "fingerprint.4").as_deref(),
+        form_value(&sent[1], "fingerprint.4").as_deref(),
         Some("print-24")
     );
-    assert_eq!(query_value(&second, "duration.4").as_deref(), Some("200"));
+    assert_eq!(form_value(&sent[1], "duration.4").as_deref(), Some("200"));
     assert_eq!(found.len(), 25);
     let last = &found[&24];
     assert_eq!(last.recording_ids, vec!["rec-4", "rec-4-single"]);
     assert_eq!(last.release_ids, vec!["rel-1"]);
     // An empty key never dials out.
-    assert!(client.lookup_batch("", &queries).await.is_empty());
-    assert_eq!(fake.hit_count(), 2);
+    assert!(
+        providers
+            .acoustid
+            .lookup_batch("", &queries, PRIORITY)
+            .await
+            .is_empty()
+    );
+    assert_eq!(wire.sent().len(), 2);
 }
 
 fn acoustid_fixture(name: &str) -> Vec<u8> {
@@ -612,16 +297,12 @@ fn one_query(print: &str) -> [acoustid::BatchQuery<'_>; 1] {
 /// score, and identification reads the same recording and releases.
 #[tokio::test]
 async fn acoustid_recorded_batch_answer_decodes() {
-    let recorded = ScriptedResponse {
-        status: 200,
-        headers: vec![("content-type".to_owned(), "application/json".to_owned())],
-        body: acoustid_fixture("batch_lookup.json"),
-    };
-    let fake = Fake::start(always(recorded)).await;
-    let client = acoustid_client(&fake.base_url, CountingPacer::new(), RecSink::new());
+    let (_, providers) =
+        acoustid_providers([bytes_answer(200, acoustid_fixture("batch_lookup.json"))]);
 
-    let outcome = client
-        .lookup_batch_request("key", &one_query("print"))
+    let outcome = providers
+        .acoustid
+        .lookup_batch_request("key", &one_query("print"), PRIORITY)
         .await;
 
     let acoustid::BatchOutcome::Answered(entries) = outcome else {
@@ -638,7 +319,10 @@ async fn acoustid_recorded_batch_answer_decodes() {
     assert_eq!(recordings[0].id, "fe000616-c72c-43d4-8cba-a4083e99636b");
     assert_eq!(recordings[0].releases.as_deref().map(<[_]>::len), Some(43));
 
-    let found = client.lookup_batch("key", &one_query("print")).await;
+    let found = providers
+        .acoustid
+        .lookup_batch("key", &one_query("print"), PRIORITY)
+        .await;
     assert_eq!(
         found[&0].recording_ids,
         vec!["fe000616-c72c-43d4-8cba-a4083e99636b"]
@@ -646,70 +330,52 @@ async fn acoustid_recorded_batch_answer_decodes() {
     assert_eq!(found[&0].release_ids.len(), 43);
 }
 
-/// A bad key reads as rejected, an outage or a 429 as unavailable (the
-/// 429 with its `Retry-After`), and a result without its id fails the
-/// request's decode.
-#[tokio::test]
+/// A bad key reads as rejected; an outage, a 429 (with its `Retry-After`)
+/// or a result without its id as unavailable, so the batch waits.
+#[tokio::test(start_paused = true)]
 async fn acoustid_batch_tells_rejected_from_unavailable() {
-    let bad_key = ScriptedResponse {
-        status: 400,
-        headers: vec![("content-type".to_owned(), "application/json".to_owned())],
-        body: acoustid_fixture("invalid_key.json"),
+    let lookup = |answer: Scripted| async move {
+        let (_, providers) = acoustid_providers([answer]);
+        providers
+            .acoustid
+            .lookup_batch_request("key", &one_query("print"), PRIORITY)
+            .await
     };
-    let fake = Fake::start(always(bad_key)).await;
-    let client = acoustid_client(&fake.base_url, CountingPacer::new(), RecSink::new());
     assert!(matches!(
-        client
-            .lookup_batch_request("bad", &one_query("print"))
-            .await,
+        lookup(bytes_answer(400, acoustid_fixture("invalid_key.json"))).await,
         acoustid::BatchOutcome::Rejected { .. }
     ));
-
-    let fake = Fake::start(always(ScriptedResponse::empty(503))).await;
-    let client = acoustid_client(&fake.base_url, CountingPacer::new(), RecSink::new());
-    match client
-        .lookup_batch_request("key", &one_query("print"))
-        .await
-    {
+    match lookup(bytes_answer(503, Vec::new())).await {
         acoustid::BatchOutcome::Unavailable {
             retry_after_secs, ..
         } => assert_eq!(retry_after_secs, None),
         other => panic!("expected unavailable, got {other:?}"),
     }
-
-    let fake = Fake::start(always(
-        ScriptedResponse::empty(429).with_header("retry-after", "30"),
-    ))
-    .await;
-    let client = acoustid_client(&fake.base_url, CountingPacer::new(), RecSink::new());
-    match client
-        .lookup_batch_request("key", &one_query("print"))
-        .await
-    {
+    let limited = Scripted::Answer {
+        status: 429,
+        headers: vec![("retry-after".to_owned(), "30".to_owned())],
+        body: Vec::new(),
+    };
+    match lookup(limited).await {
         acoustid::BatchOutcome::Unavailable {
             retry_after_secs, ..
         } => assert_eq!(retry_after_secs, Some(30.0)),
         other => panic!("expected unavailable, got {other:?}"),
     }
-
     let no_id = serde_json::json!({
         "status": "ok",
         "fingerprints": [{"index": 0, "results": [
             {"score": 0.9, "recordings": [{"id": "fe000616-c72c-43d4-8cba-a4083e99636b"}]}
         ]}]
     });
-    let fake = Fake::start(always(ScriptedResponse::json(200, &no_id))).await;
-    let client = acoustid_client(&fake.base_url, CountingPacer::new(), RecSink::new());
     assert!(matches!(
-        client
-            .lookup_batch_request("key", &one_query("print"))
-            .await,
+        lookup(json_answer(200, &no_id)).await,
         acoustid::BatchOutcome::Unavailable { .. }
     ));
 }
 
 #[tokio::test]
-async fn acoustid_empty_and_low_score_results_are_missing() {
+async fn acoustid_empty_and_low_score_results_are_no_match() {
     for body in [
         serde_json::json!({"status": "ok", "results": []}),
         serde_json::json!({"status": "ok"}),
@@ -718,76 +384,46 @@ async fn acoustid_empty_and_low_score_results_are_missing() {
         // A missing score reads as 0.0 and falls below the threshold (v2).
         serde_json::json!({"status": "ok", "results": [{"recordings": []}]}),
     ] {
-        let fake = Fake::start(always(ScriptedResponse::json(200, &body))).await;
-        let sink = RecSink::new();
-        let client = acoustid_client(&fake.base_url, CountingPacer::new(), sink.clone());
+        let (_, providers) = acoustid_providers([json_answer(200, &body)]);
 
-        let outcome = client.lookup("key", "print", 200).await;
+        let found = providers
+            .acoustid
+            .lookup("key", "print", 200, PRIORITY)
+            .await;
 
         assert!(
-            matches!(outcome, acoustid::Outcome::Missing),
-            "no confident match means Missing: {body}"
+            matches!(found, Ok(None)),
+            "no confident match means no match: {body}"
         );
-        assert_eq!(sink.count(), 0, "no match records nothing");
     }
 }
 
 #[tokio::test]
-async fn acoustid_confident_match_without_recording_id_is_never_missing() {
+async fn acoustid_confident_match_without_recording_id_is_never_no_match() {
     // v2 FAIL: confident audio, nothing to key the row on. It must not read
-    // as a negative, so it surfaces Unavailable (wiring routes it to manual
-    // review, exactly like v2).
+    // as a negative, so it is a contract failure (wiring routes it to
+    // manual review, exactly like v2).
     let payload = serde_json::json!({
         "status": "ok",
         "results": [{"score": 0.99, "recordings": [{"title": "no id"}, 7, {"id": "  "}]}]
     });
-    let fake = Fake::start(always(ScriptedResponse::json(200, &payload))).await;
-    let sink = RecSink::new();
-    let client = acoustid_client(&fake.base_url, CountingPacer::new(), sink.clone());
+    let (_, providers) = acoustid_providers([json_answer(200, &payload)]);
 
-    let outcome = client.lookup("key", "print", 200).await;
+    let found = providers
+        .acoustid
+        .lookup("key", "print", 200, PRIORITY)
+        .await;
 
-    match outcome {
-        acoustid::Outcome::Unavailable { recorded, .. } => assert!(!recorded),
-        other => panic!("expected unrecorded Unavailable, got {other:?}"),
-    }
-    assert_eq!(sink.count(), 0);
-}
-
-#[tokio::test]
-async fn acoustid_429_honors_retry_after_then_defaults_to_sixty() {
-    let with_header = Fake::start(always(
-        ScriptedResponse::empty(429).with_header("retry-after", "30"),
-    ))
-    .await;
-    let client = acoustid_client(&with_header.base_url, CountingPacer::new(), RecSink::new());
-    match client.lookup("key", "print", 200).await {
-        acoustid::Outcome::Unavailable {
-            retry_after_secs, ..
-        } => assert_eq!(retry_after_secs, Some(30.0)),
-        other => panic!("expected Unavailable, got {other:?}"),
-    }
-
-    for scripted in [
-        ScriptedResponse::empty(429),
-        ScriptedResponse::empty(429).with_header("retry-after", "bogus"),
-    ] {
-        let fake = Fake::start(always(scripted)).await;
-        let sink = RecSink::new();
-        let client = acoustid_client(&fake.base_url, CountingPacer::new(), sink.clone());
-        match client.lookup("key", "print", 200).await {
-            acoustid::Outcome::Unavailable {
-                retry_after_secs,
-                recorded,
+    assert!(
+        matches!(
+            found,
+            Err(ProviderError::Payload {
+                kind: PayloadKind::Contract,
                 ..
-            } => {
-                assert_eq!(retry_after_secs, Some(60.0));
-                assert!(recorded);
-            }
-            other => panic!("expected Unavailable, got {other:?}"),
-        }
-        assert_eq!(sink.count(), 1);
-    }
+            })
+        ),
+        "got {found:?}"
+    );
 }
 
 #[test]
@@ -812,12 +448,15 @@ fn acoustid_fpcalc_tolerates_short_track_exit() {
 // Last.fm
 // ---------------------------------------------------------------------------
 
-fn lastfm_client(
-    fake: &Fake,
-    pacer: CountingPacer,
-    sink: RecSink,
-) -> lastfm::LastFmClient<CountingPacer, RecSink> {
-    lastfm::LastFmClient::new(http(), &fake.base_url, pacer, sink)
+fn lastfm_providers(answer: &serde_json::Value) -> (Arc<ScriptedWire>, Providers) {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.on(
+        Method::Get,
+        lastfm::DEFAULT_BASE_URL,
+        json_answer(200, answer),
+    );
+    let providers = audio_providers(&wire);
+    (wire, providers)
 }
 
 fn lastfm_creds() -> lastfm::LastFmCredentials {
@@ -831,34 +470,28 @@ fn lastfm_creds() -> lastfm::LastFmCredentials {
 
 #[tokio::test]
 async fn lastfm_request_token_signs_without_session() {
-    let payload = serde_json::json!({"token": "approve-me"});
-    let fake = Fake::start(always(ScriptedResponse::json(200, &payload))).await;
-    let sink = RecSink::new();
-    let client = lastfm_client(&fake, CountingPacer::new(), sink.clone());
+    let (wire, providers) = lastfm_providers(&serde_json::json!({"token": "approve-me"}));
 
-    let token = client
-        .request_token(&lastfm_creds())
+    let token = providers
+        .lastfm
+        .request_token(&lastfm_creds(), PRIORITY)
         .await
-        .into_option()
         .expect("token found");
 
     assert_eq!(token.token, "approve-me");
-    assert_eq!(sink.count(), 0);
-    let hits = fake.hits();
-    assert_eq!(hits.len(), 1);
-    let (_, query) = route_and_query(&hits[0].path);
-    assert_eq!(
-        query_value(&query, "method").as_deref(),
-        Some("auth.getToken")
-    );
-    assert_eq!(query_value(&query, "api_key").as_deref(), Some("user-key"));
-    assert_eq!(query_value(&query, "format").as_deref(), Some("json"));
-    assert_eq!(query_value(&query, "sk"), None, "no session rides yet");
-    // The signature recomputes from the captured parameters.
-    let captured_sig = query_value(&query, "api_sig").expect("call is signed");
-    let unsigned: Vec<(String, String)> = query
-        .into_iter()
+    let sent = wire.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].query("method").as_deref(), Some("auth.getToken"));
+    assert_eq!(sent[0].query("api_key").as_deref(), Some("user-key"));
+    assert_eq!(sent[0].query("format").as_deref(), Some("json"));
+    assert_eq!(sent[0].query("sk"), None, "no session rides yet");
+    // The signature recomputes from the sent parameters.
+    let captured_sig = sent[0].query("api_sig").expect("call is signed");
+    let unsigned: Vec<(String, String)> = sent[0]
+        .url
+        .query_pairs()
         .filter(|(key, _)| key != "api_sig")
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
         .collect();
     assert_eq!(
         lastfm::api_sig(&unsigned, "user-secret"),
@@ -868,123 +501,8 @@ async fn lastfm_request_token_signs_without_session() {
 }
 
 #[tokio::test]
-async fn lastfm_error_29_hints_one_second_backoff() {
-    // Last.fm-29: the documented rate-limit code, decoded from the envelope
-    // and covered here rather than provoked live (management notes).
-    let payload = serde_json::json!({"error": 29, "message": "Rate limit exceeded"});
-    let fake = Fake::start(always(ScriptedResponse::json(200, &payload))).await;
-    let sink = RecSink::new();
-    let client = lastfm_client(&fake, CountingPacer::new(), sink.clone());
-
-    let outcome = client.artist_info(&lastfm_creds(), "Radiohead", None).await;
-
-    match outcome {
-        lastfm::Outcome::Unavailable {
-            retry_after_secs,
-            recorded,
-            message,
-        } => {
-            assert_eq!(retry_after_secs, Some(1.0));
-            assert!(recorded);
-            assert!(message.contains("Rate limit"), "message: {message}");
-        }
-        other => panic!("expected Unavailable, got {other:?}"),
-    }
-    assert_eq!(sink.count(), 1);
-    assert_eq!(sink.sources(), vec!["lastfm".to_owned()]);
-}
-
-#[tokio::test]
-async fn lastfm_credential_errors_are_unrecorded() {
-    for (code, fragment) in [
-        (4, "Authentication failed"),
-        (9, "Session key expired"),
-        (10, "Invalid API key"),
-        (17, "Authentication required"),
-        (26, "suspended"),
-    ] {
-        let payload = serde_json::json!({"error": code, "message": "upstream says no"});
-        let fake = Fake::start(always(ScriptedResponse::json(200, &payload))).await;
-        let sink = RecSink::new();
-        let client = lastfm_client(&fake, CountingPacer::new(), sink.clone());
-
-        let outcome = client.artist_info(&lastfm_creds(), "Radiohead", None).await;
-
-        match outcome {
-            lastfm::Outcome::Unavailable {
-                recorded, message, ..
-            } => {
-                assert!(!recorded, "credential failures never record");
-                assert!(message.contains(fragment), "message: {message}");
-            }
-            other => panic!("expected Unavailable for {code}, got {other:?}"),
-        }
-        assert_eq!(sink.count(), 0);
-    }
-}
-
-#[tokio::test]
-async fn lastfm_http_statuses_map_without_the_envelope() {
-    // 401 reads like 403: a credential rejection, never recorded.
-    let fake = Fake::start(always(ScriptedResponse::empty(401))).await;
-    let sink = RecSink::new();
-    let client = lastfm_client(&fake, CountingPacer::new(), sink.clone());
-    let outcome = client.artist_info(&lastfm_creds(), "Radiohead", None).await;
-    assert!(
-        matches!(
-            outcome,
-            lastfm::Outcome::Unavailable {
-                recorded: false,
-                ..
-            }
-        ),
-        "got {outcome:?}"
-    );
-    assert_eq!(sink.count(), 0);
-
-    // 404 is authoritative absence, never recorded.
-    let fake = Fake::start(always(ScriptedResponse::empty(404))).await;
-    let sink = RecSink::new();
-    let client = lastfm_client(&fake, CountingPacer::new(), sink.clone());
-    let outcome = client.artist_info(&lastfm_creds(), "Radiohead", None).await;
-    assert!(matches!(outcome, lastfm::Outcome::Missing));
-    assert_eq!(sink.count(), 0);
-
-    // HTTP 429 (distinct from the error-29 envelope) records with the
-    // honored Retry-After.
-    let scripted = ScriptedResponse::empty(429).with_header("retry-after", "12");
-    let fake = Fake::start(always(scripted)).await;
-    let sink = RecSink::new();
-    let client = lastfm_client(&fake, CountingPacer::new(), sink.clone());
-    let outcome = client.artist_info(&lastfm_creds(), "Radiohead", None).await;
-    match outcome {
-        lastfm::Outcome::Unavailable {
-            retry_after_secs,
-            recorded,
-            ..
-        } => {
-            assert!(recorded);
-            assert_eq!(retry_after_secs, Some(12.0));
-        }
-        other => panic!("expected Unavailable, got {other:?}"),
-    }
-    assert_eq!(sink.count(), 1);
-
-    // Anything else unusual still records.
-    let fake = Fake::start(always(ScriptedResponse::empty(500))).await;
-    let sink = RecSink::new();
-    let client = lastfm_client(&fake, CountingPacer::new(), sink.clone());
-    let outcome = client.artist_info(&lastfm_creds(), "Radiohead", None).await;
-    assert!(
-        matches!(outcome, lastfm::Outcome::Unavailable { recorded: true, .. }),
-        "got {outcome:?}"
-    );
-    assert_eq!(sink.count(), 1);
-}
-
-#[tokio::test]
 async fn lastfm_artist_info_found_with_lenient_counts() {
-    let payload = serde_json::json!({
+    let (wire, providers) = lastfm_providers(&serde_json::json!({
         "artist": {
             "name": "Radiohead",
             "mbid": "",
@@ -998,15 +516,13 @@ async fn lastfm_artist_info_found_with_lenient_counts() {
             ]},
             "futureField": "ignored"
         }
-    });
-    let fake = Fake::start(always(ScriptedResponse::json(200, &payload))).await;
-    let sink = RecSink::new();
-    let client = lastfm_client(&fake, CountingPacer::new(), sink.clone());
+    }));
 
-    let info = client
-        .artist_info(&lastfm_creds(), "Radiohead", None)
+    let info = providers
+        .lastfm
+        .artist_info(&lastfm_creds(), "Radiohead", None, PRIORITY)
         .await
-        .into_option()
+        .expect("answered")
         .expect("artist info found");
 
     assert_eq!(info.name, "Radiohead");
@@ -1017,42 +533,33 @@ async fn lastfm_artist_info_found_with_lenient_counts() {
     assert_eq!(info.tags.len(), 1);
     assert_eq!(info.similar.len(), 2);
     assert!((info.similar[0].score - 0.92).abs() < f64::EPSILON);
-    assert_eq!(sink.count(), 0);
-    let (_, query) = route_and_query(&fake.hits()[0].path);
-    assert_eq!(
-        query_value(&query, "method").as_deref(),
-        Some("artist.getInfo")
-    );
-    assert_eq!(query_value(&query, "artist").as_deref(), Some("Radiohead"));
-    assert_eq!(
-        query_value(&query, "api_sig"),
-        None,
-        "info reads are unsigned"
-    );
+    let sent = wire.sent();
+    assert_eq!(sent[0].query("method").as_deref(), Some("artist.getInfo"));
+    assert_eq!(sent[0].query("artist").as_deref(), Some("Radiohead"));
+    assert_eq!(sent[0].query("api_sig"), None, "info reads are unsigned");
 }
 
 #[tokio::test]
 async fn lastfm_per_user_credentials_stay_isolated() {
     // One client, two users; each call carries its own key and the
     // client stores neither.
-    let payload = serde_json::json!({"artist": {"name": "x"}});
-    let fake = Fake::start(always(ScriptedResponse::json(200, &payload))).await;
-    let client = lastfm_client(&fake, CountingPacer::new(), RecSink::new());
+    let (wire, providers) = lastfm_providers(&serde_json::json!({"artist": {"name": "x"}}));
     let mut other = lastfm_creds();
     other.api_key = "other-key".to_owned();
 
-    let _ = client.artist_info(&lastfm_creds(), "a", None).await;
-    let _ = client.artist_info(&other, "a", None).await;
+    let _ = providers
+        .lastfm
+        .artist_info(&lastfm_creds(), "a", None, PRIORITY)
+        .await;
+    let _ = providers
+        .lastfm
+        .artist_info(&other, "a", None, PRIORITY)
+        .await;
 
-    let hits = fake.hits();
-    assert_eq!(hits.len(), 2);
-    let (_, first) = route_and_query(&hits[0].path);
-    let (_, second) = route_and_query(&hits[1].path);
-    assert_eq!(query_value(&first, "api_key").as_deref(), Some("user-key"));
-    assert_eq!(
-        query_value(&second, "api_key").as_deref(),
-        Some("other-key")
-    );
+    let sent = wire.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0].query("api_key").as_deref(), Some("user-key"));
+    assert_eq!(sent[1].query("api_key").as_deref(), Some("other-key"));
 }
 
 // ---------------------------------------------------------------------------

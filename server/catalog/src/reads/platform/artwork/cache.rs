@@ -239,8 +239,15 @@ impl ArtworkCache {
         }
     }
 
-    /// Record that the source had no art for `key` for `ttl_secs`.
+    /// Record that the source had no art for `key` for `ttl_secs`. A key
+    /// that already holds an image still on disk keeps it: a failed fetch
+    /// running beside one that succeeded never blanks the stored image.
     pub async fn put_miss(&self, key: &str, ttl_secs: u64) {
+        if let Some(KeyEntry::Hit { hash, .. }) = self.key(key).await
+            && self.has_blob(&hash).await
+        {
+            return;
+        }
         let path = self.key_path(key);
         let text = format!("miss\n{}\n", unix_now() + ttl_secs);
         if let Some(Err(error)) = blocking(move || write_atomic(&path, text.as_bytes())).await {
@@ -604,4 +611,35 @@ fn scan_blobs(dir: &Path) -> HashMap<String, BlobUse> {
             )
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A failure marker never overwrites a stored image: a background
+    /// fetch that fails beside a page fetch that stored the cover leaves
+    /// the cover in place.
+    #[tokio::test]
+    async fn a_failure_never_blanks_a_stored_image() {
+        let root = std::env::temp_dir().join(format!(
+            "dn-artwork-cache-{}-{}",
+            std::process::id(),
+            unix_now()
+        ));
+        let cache = ArtworkCache::new(root.clone(), 1024 * 1024);
+        let key = "caa:release-group:aff0622e-7bd3-4fb6-9ca3-0fa19dd2340b:500";
+        let hash = cache.put(Some(key), b"cover".to_vec(), "image/jpeg").await;
+
+        cache.put_miss(key, 900).await;
+
+        assert_eq!(
+            cache.key(key).await,
+            Some(KeyEntry::Hit {
+                hash,
+                content_type: "image/jpeg".to_owned()
+            })
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

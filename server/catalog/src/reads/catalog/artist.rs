@@ -6,7 +6,6 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use droppedneedle_providers::degradation::scoped;
-use droppedneedle_providers::lastfm;
 use droppedneedle_providers::musicbrainz::{
     Criticality, MAX_PAGE_LIMIT, MbArtist, ReleaseGroupRef,
 };
@@ -391,7 +390,9 @@ impl Catalog {
     /// TheAudioDB images, fetched and cached with v2's found/miss
     /// lifetimes. Off or failing reads as no images.
     async fn fetch_artist_images(&self, mbid: &str, name: &str) -> Option<ArtistImages> {
-        self.artist_images_lookup(mbid, name).await.flatten()
+        self.artist_images_lookup(mbid, name, RequestPriority::UserInitiated)
+            .await
+            .flatten()
     }
 
     /// Whether TheAudioDB's answer for the artist is cached.
@@ -405,11 +406,13 @@ impl Catalog {
 
     /// TheAudioDB images as a settled answer: `Some(None)` when AudioDB has
     /// none (or is off), `None` when it could not answer, so nothing was
-    /// cached and the caller may ask again soon.
+    /// cached and the caller may ask again soon. AudioDB is asked at
+    /// `priority`.
     pub(super) async fn artist_images_lookup(
         &self,
         mbid: &str,
         name: &str,
+        priority: RequestPriority,
     ) -> Option<Option<ArtistImages>> {
         let advanced = self.upstream().settings().advanced();
         let Some(client) = self.upstream().audiodb(&advanced) else {
@@ -421,15 +424,12 @@ impl Catalog {
         {
             return Some(entry.images);
         }
-        let mut outcome = client.artist_by_mbid(mbid).await;
-        if matches!(outcome, droppedneedle_providers::audiodb::Outcome::Missing)
-            && advanced.audiodb_name_search_fallback
-            && !name.is_empty()
-        {
-            outcome = client.search_artist(name).await;
+        let mut found = client.artist_by_mbid(mbid, priority).await;
+        if matches!(found, Ok(None)) && advanced.audiodb_name_search_fallback && !name.is_empty() {
+            found = client.search_artist(name, priority).await;
         }
-        let (images, ttl) = match outcome {
-            droppedneedle_providers::audiodb::Outcome::Found(artist) => (
+        let (images, ttl) = match found {
+            Ok(Some(artist)) => (
                 Some(ArtistImages {
                     thumb_url: artist.thumb,
                     fanart_url: artist.fanart,
@@ -444,10 +444,10 @@ impl Catalog {
                 }),
                 AUDIODB_FOUND_TTL,
             ),
-            droppedneedle_providers::audiodb::Outcome::Missing => (None, AUDIODB_MISSING_TTL),
-            // Already recorded by the client; nothing cached so the next
-            // visit tries again.
-            droppedneedle_providers::audiodb::Outcome::Unavailable { .. } => return None,
+            Ok(None) => (None, AUDIODB_MISSING_TTL),
+            // Recorded where it failed; nothing cached so the next visit
+            // tries again.
+            Err(_) => return None,
         };
         if let Ok(bytes) = serde_json::to_vec(&AudioDbArtistEntry {
             images: images.clone(),
@@ -838,12 +838,15 @@ impl Catalog {
         let name = artist_name.to_owned();
         let value = self
             .cached(&self.inner.flights.other, key, move || async move {
-                let info = match client.artist_info(&creds, &name, Some(&mbid)).await {
-                    lastfm::Outcome::Found(info) => info,
-                    lastfm::Outcome::Missing => {
+                let info = match client
+                    .artist_info(&creds, &name, Some(&mbid), RequestPriority::UserInitiated)
+                    .await
+                {
+                    Ok(Some(info)) => info,
+                    Ok(None) => {
                         return Ok((serde_json::Value::Null, Some(LASTFM_TTL)));
                     }
-                    lastfm::Outcome::Unavailable { .. } => {
+                    Err(_) => {
                         return Ok((serde_json::Value::Null, None));
                     }
                 };

@@ -127,6 +127,13 @@ impl Request {
         Ok(Self::new(Method::Get, url, Body::Empty))
     }
 
+    /// A GET of `url` exactly as given: an address a provider's own data
+    /// named, already checked by the caller.
+    #[must_use]
+    pub fn get_url(url: Url) -> Self {
+        Self::new(Method::Get, url, Body::Empty)
+    }
+
     /// A POST of form pairs to `segments` under `base`. Not idempotent
     /// unless marked so.
     ///

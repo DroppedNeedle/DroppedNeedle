@@ -1,85 +1,90 @@
 //! AcoustID fingerprint-lookup client (Tier-3 identification).
 //!
-//! Ports v2's audio fingerprinter: a lookup call posts
-//! the compressed Chromaprint fingerprint to the AcoustID web service
-//! (see <https://acoustid.org/webservice>) and the response is folded into a
-//! recording match. Everything here fails soft: a dead or confused upstream
-//! records one degradation note and yields [`Outcome::Unavailable`], while a
-//! clean "no match" yields [`Outcome::Missing`]. Library identification uses
+//! Ports v2's audio fingerprinter: a lookup call posts the compressed
+//! Chromaprint fingerprint to the AcoustID web service (see
+//! <https://acoustid.org/webservice>) and the answer is folded into a
+//! recording match. A clean "no match" is `Ok(None)`; every failure is a
+//! typed [`ProviderError`]. Library identification uses
 //! [`AcoustIdClient::lookup_batch`], which sends up to twenty fingerprints
 //! per request.
 //!
-//! Pacing and degradation ride the shared core traits
-//! ([`Pacer`](super::limiter::Pacer), [`DegradationSink`](super::degradation::DegradationSink)):
-//! wire the pacer to a 3/second bucket (per v2
-//! `service_providers.get_audio_fingerprinter`).
-//!
-//! The API key is passed to every [`AcoustIdClient::lookup`] call and never
-//! stored on the client, mirroring v2's per-call key provider: a settings
-//! change applies without a restart.
+//! Every request goes through the one AcoustID [`Executor`], at the
+//! `acoustid` row of the rate table (3 a second): identification, imports
+//! and Library Management share it. The API key is passed to every call
+//! and never stored on the client, mirroring v2's per-call key provider:
+//! a settings change applies without a restart.
 
 use std::time::Duration;
 
 use serde::Deserialize;
 
-use super::{DegradationSink, Pacer};
-use droppedneedle_kernel::http_client::read_capped;
+use crate::RequestPriority;
+use crate::degradation::{IntegrationStatus, record_current};
+use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
+use crate::executor::{Answer, Backoff, Executor, Request, Spec, Url, standard_classify};
 
 /// Default AcoustID host. Tests point the client at a scripted fake instead.
 pub const DEFAULT_BASE_URL: &str = "https://api.acoustid.org";
-/// Lookup path below the base URL (v2 `AudioFingerprinter.ACOUSTID_API`).
-pub const LOOKUP_PATH: &str = "/v2/lookup";
 /// A best result under this score is not a confident match
 /// (v2 `_ACOUSTID_MIN_SCORE`).
 pub const MIN_SCORE: f64 = 0.70;
 /// Metadata the lookup asks AcoustID to attach
 /// (v2 `meta="recordings releasegroups"`).
 pub const LOOKUP_META: &str = "recordings releasegroups";
-/// Fallback wait when a 429 carries no usable `Retry-After` header
-/// (v2 `_retry_after_seconds`, "the historical 60s window").
-pub const DEFAULT_RETRY_AFTER_SECS: f64 = 60.0;
-/// Per-request wire timeout (v2 `HttpClientFactory` acoustid timeout).
-pub const REQUEST_TIMEOUT_SECS: u64 = 15;
-/// Source name used for degradation records.
+/// The provider name errors carry, and the AcoustID rate row.
 pub const SOURCE: &str = "acoustid";
 /// Largest AcoustID answer read. A batch of [`MAX_BATCH`] fingerprints
 /// lists every release of every match, which can pass 4 MiB.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-/// What a lookup produced. `Found` carries a usable match, `Missing` is an
-/// authoritative "no match" (safe to treat as a negative), and `Unavailable`
-/// covers everything else: transport failure, rate limiting, rejection, a
-/// malformed payload, or a confident match with no recording id to key on
-/// (v2 `FAIL`, which must never read as a negative).
-#[derive(Debug, Clone, PartialEq)]
-pub enum Outcome<T> {
-    /// A usable match.
-    Found(T),
-    /// Authoritative no-match. Never recorded as degradation.
-    Missing,
-    /// The source could not answer.
-    Unavailable {
-        /// Seconds the caller should wait before retrying, when known.
-        retry_after_secs: Option<f64>,
-        /// Short human-readable reason (never carries secrets).
-        message: String,
-        /// Whether the sink already holds a record for this failure.
-        /// Transport failure, rate limiting, server errors, and malformed
-        /// payloads record; deterministic rejection and the confident-but-
-        /// unkeyable match do not, because v2 raises or queues those instead
-        /// of recording them.
-        recorded: bool,
-    },
-}
+/// AcoustID on the wire. A 4xx whose body names error code 4 is a bad key
+/// ([`ProviderError::Unauthorized`]); any other 4xx stays a rejection. A
+/// 200 whose `status` is not `ok` is [`ProviderError::Unavailable`]. A 429
+/// that names no wait rests a minute (v2 `_retry_after_seconds`, "the
+/// historical 60s window"). The error body was recorded from the live
+/// service on 2026-10-15 (`server/tests/fixtures/acoustid/`).
+pub static SPEC: Spec = Spec {
+    source: SOURCE,
+    health_key: SOURCE,
+    timeout: Duration::from_secs(15),
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(60)),
+    retry_after_cap: MAX_RETRY_AFTER,
+    classify,
+};
 
-impl<T> Outcome<T> {
-    /// Collapse to the fail-soft `Option` shape: only `Found` is `Some`.
-    pub fn into_option(self) -> Option<T> {
-        match self {
-            Outcome::Found(value) => Some(value),
-            Outcome::Missing | Outcome::Unavailable { .. } => None,
-        }
+/// The AcoustID hook over the standard rules.
+pub fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
+    #[derive(Deserialize)]
+    struct Status {
+        #[serde(default)]
+        status: Option<String>,
+        #[serde(default)]
+        error: Option<Refusal>,
     }
+    #[derive(Deserialize)]
+    struct Refusal {
+        #[serde(default)]
+        code: Option<i64>,
+    }
+    let status = answer.reply.status();
+    let body = || serde_json::from_slice::<Status>(answer.reply.bytes()).ok();
+    if (400..500).contains(&status)
+        && status != 429
+        && body().and_then(|body| body.error?.code) == Some(4)
+    {
+        return Err(ProviderError::Unauthorized { provider: SOURCE });
+    }
+    if status == 200
+        && let Some(said) = body().and_then(|body| body.status)
+        && said != "ok"
+    {
+        return Err(ProviderError::Unavailable {
+            provider: SOURCE,
+            retry_after: None,
+        });
+    }
+    standard_classify(answer)
 }
 
 /// A confident fingerprint match keyed on a MusicBrainz recording id.
@@ -103,87 +108,61 @@ pub struct FingerprintMatch {
     pub release_group_ids: Vec<String>,
 }
 
-/// AcoustID lookup client. Stateless apart from its ports; cheap to clone.
+/// AcoustID lookup client over the AcoustID executor. Built once with the
+/// providers; cheap to clone.
 #[derive(Debug, Clone)]
-pub struct AcoustIdClient<P, S> {
-    http: reqwest::Client,
-    base_url: String,
-    pacer: P,
-    sink: S,
+pub struct AcoustIdClient {
+    executor: Executor,
+    base: Option<Url>,
 }
 
-impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
-    /// Build a client against `base_url` (the production host or a fake).
-    pub fn new(http: reqwest::Client, base_url: &str, pacer: P, sink: S) -> Self {
-        Self {
-            http,
-            base_url: base_url.trim_end_matches('/').to_owned(),
-            pacer,
-            sink,
+impl AcoustIdClient {
+    /// The client sending through `executor` to the API root at `base_url`.
+    #[must_use]
+    pub fn new(executor: Executor, base_url: &str) -> Self {
+        let base = Url::parse(base_url.trim())
+            .ok()
+            .filter(|url| matches!(url.scheme(), "http" | "https") && !url.cannot_be_a_base());
+        if base.is_none() {
+            tracing::error!("the AcoustID address is not an http or https URL");
         }
+        Self { executor, base }
     }
 
-    /// Look one fingerprint up. `api_key` arrives per call (v2 reads it fresh
-    /// from settings on every lookup); an empty key means "not configured"
-    /// and short-circuits to `Missing` without touching the wire, exactly
+    /// Look one fingerprint up. `api_key` arrives per call (v2 reads it
+    /// fresh from settings on every lookup); an empty key means "not
+    /// configured" and answers `None` without touching the wire, exactly
     /// like v2's `DISABLED` result.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call, or a payload failure for an answer
+    /// that does not decode or a confident match with no recording id to
+    /// key on (v2 `FAIL`, which must never read as "no match").
     pub async fn lookup(
         &self,
         api_key: &str,
         fingerprint: &str,
         duration_secs: u64,
-    ) -> Outcome<FingerprintMatch> {
+        priority: RequestPriority,
+    ) -> Result<Option<FingerprintMatch>, ProviderError> {
         if api_key.is_empty() {
-            return Outcome::Missing;
+            return Ok(None);
         }
-        self.pacer.acquire().await;
-        let url = format!("{base}{LOOKUP_PATH}", base = self.base_url);
-        let response = match self
-            .http
-            .post(url)
-            .form(&[
-                ("client", api_key),
-                ("duration", &duration_secs.to_string()),
-                ("fingerprint", fingerprint),
-                ("meta", LOOKUP_META),
-            ])
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-            .send()
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                return self.recorded(
-                    None,
-                    format!("AcoustID lookup failed during transport: {error}"),
-                );
-            }
-        };
-        let status = response.status().as_u16();
-        if status == 429 {
-            // v2 honors Retry-After and otherwise falls back to 60s.
-            let retry_after = retry_after_secs(response.headers().get("retry-after"));
-            return self.recorded(Some(retry_after), "AcoustID rate limit exceeded".to_owned());
-        }
-        if status >= 500 {
-            return self.recorded(None, format!("AcoustID API error ({status})"));
-        }
-        if status != 200 {
-            // v2 `AcoustIDRejectedError`: deterministic 4xx rejection, never
-            // retried and never counted toward the breaker.
-            return self.unrecorded(format!("AcoustID rejected the lookup ({status})"));
-        }
-        let payload: serde_json::Value = match read_capped(response, MAX_BODY_BYTES).await {
-            Ok(body) => match serde_json::from_slice(&body) {
-                Ok(payload) => payload,
-                Err(_) => return self.malformed(),
-            },
-            Err(error) => {
-                let kind = error.kind();
-                return self.recorded(None, format!("AcoustID response body unreadable: {kind}"));
-            }
-        };
-        self.parse_lookup(payload)
+        let form = vec![
+            ("client".to_owned(), api_key.to_owned()),
+            ("duration".to_owned(), duration_secs.to_string()),
+            ("fingerprint".to_owned(), fingerprint.to_owned()),
+            ("meta".to_owned(), LOOKUP_META.to_owned()),
+        ];
+        let reply = self
+            .executor
+            .send(self.lookup_request(form)?, priority)
+            .await?;
+        let payload: serde_json::Value = reply.json().inspect_err(|error| {
+            note_shape(&error.to_string());
+        })?;
+        parse_lookup(&payload)
     }
 
     /// Look many fingerprints up, up to [`MAX_BATCH`] per request
@@ -199,6 +178,7 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
         &self,
         api_key: &str,
         queries: &[BatchQuery<'_>],
+        priority: RequestPriority,
     ) -> std::collections::HashMap<usize, BatchMatch> {
         let mut found = std::collections::HashMap::new();
         if api_key.is_empty() {
@@ -206,7 +186,8 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
         }
         for (chunk_index, chunk) in queries.chunks(MAX_BATCH).enumerate() {
             let offset = chunk_index * MAX_BATCH;
-            let BatchOutcome::Answered(entries) = self.lookup_batch_request(api_key, chunk).await
+            let BatchOutcome::Answered(entries) =
+                self.lookup_batch_request(api_key, chunk, priority).await
             else {
                 continue;
             };
@@ -220,12 +201,12 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
     }
 
     /// One batch request of at most [`MAX_BATCH`] prints (any past that
-    /// are left out). Every failure is recorded on the sink. An empty key
-    /// is rejected without touching the wire.
+    /// are left out). An empty key is rejected without touching the wire.
     pub async fn lookup_batch_request(
         &self,
         api_key: &str,
         queries: &[BatchQuery<'_>],
+        priority: RequestPriority,
     ) -> BatchOutcome {
         if api_key.is_empty() {
             return BatchOutcome::Rejected {
@@ -242,214 +223,149 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
             form.push((format!("duration.{index}"), query.duration_secs.to_string()));
             form.push((format!("fingerprint.{index}"), query.fingerprint.to_owned()));
         }
-        self.pacer.acquire().await;
-        let url = format!("{base}{LOOKUP_PATH}", base = self.base_url);
-        let response = match self
-            .http
-            .post(url)
-            .form(&form)
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-            .send()
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                return self.batch_down(
-                    None,
-                    format!("AcoustID batch lookup failed during transport: {error}"),
-                );
-            }
+        let answer = match self.lookup_request(form) {
+            Ok(request) => self.executor.send(request, priority).await,
+            Err(error) => Err(error),
         };
-        let status = response.status().as_u16();
-        if status == 429 {
-            let retry_after = retry_after_secs(response.headers().get("retry-after"));
-            return self.batch_down(
-                Some(retry_after),
-                "AcoustID batch lookup answered 429".into(),
-            );
-        }
-        if (400..500).contains(&status) {
-            let message = format!("AcoustID batch lookup answered {status}");
-            self.sink.record(SOURCE, message.clone());
-            return BatchOutcome::Rejected { message };
-        }
-        if status != 200 {
-            return self.batch_down(None, format!("AcoustID batch lookup answered {status}"));
-        }
-        let body = match read_capped(response, MAX_BODY_BYTES).await {
-            Ok(body) => body,
-            Err(error) => {
-                let kind = error.kind();
-                return self.batch_down(None, format!("AcoustID batch body unreadable: {kind}"));
-            }
-        };
-        let Ok(answer) = serde_json::from_slice::<BatchAnswer>(&body) else {
-            let message = "malformed AcoustID batch response".to_owned();
-            self.sink.record_quiet(SOURCE, message.clone());
-            return BatchOutcome::Unavailable {
-                retry_after_secs: None,
-                message,
-            };
-        };
-        if answer.status != "ok" {
-            return self.batch_down(None, "AcoustID batch lookup did not succeed".to_owned());
-        }
-        self.sink.succeeded(SOURCE);
-        BatchOutcome::Answered(
-            answer
-                .fingerprints
-                .into_iter()
-                .filter_map(|entry| Some((entry.index.value()?, entry.results.unwrap_or_default())))
-                .collect(),
-        )
-    }
-
-    /// Record a batch request AcoustID could not answer.
-    fn batch_down(&self, retry_after_secs: Option<f64>, message: String) -> BatchOutcome {
-        self.sink.record(SOURCE, message.clone());
-        BatchOutcome::Unavailable {
-            retry_after_secs,
-            message,
+        let answer = answer.and_then(|reply| {
+            reply
+                .json::<BatchAnswer>()
+                .inspect_err(|error| note_shape(&error.to_string()))
+        });
+        match answer {
+            Ok(answer) => BatchOutcome::Answered(
+                answer
+                    .fingerprints
+                    .into_iter()
+                    .filter_map(|entry| {
+                        Some((entry.index.value()?, entry.results.unwrap_or_default()))
+                    })
+                    .collect(),
+            ),
+            Err(error) => BatchOutcome::from_error(&error),
         }
     }
 
-    /// Fold a lookup payload into an outcome, following v2 `_parse_response`
-    /// branch for branch.
-    fn parse_lookup(&self, payload: serde_json::Value) -> Outcome<FingerprintMatch> {
-        let body = match payload.as_object() {
-            Some(body) => body,
-            None => return self.malformed(),
+    /// A lookup POST. It only reads, so sending it twice is safe.
+    fn lookup_request(&self, form: Vec<(String, String)>) -> Result<Request, ProviderError> {
+        let unusable = || ProviderError::Invalid {
+            provider: SOURCE,
+            reason: "the AcoustID address is not usable",
         };
-        match body.get("status").and_then(serde_json::Value::as_str) {
-            Some("ok") => self.sink.succeeded(SOURCE),
-            Some(other) => return self.recorded(None, other.to_owned()),
-            None => return self.malformed(),
-        }
-        // A missing or null `results` reads as "no results" (v2); only a
-        // non-list value is malformed.
-        let results = match body.get("results") {
-            None | Some(serde_json::Value::Null) => Vec::new(),
-            Some(serde_json::Value::Array(results)) => results.clone(),
-            Some(_) => return self.malformed(),
-        };
-        if results.is_empty() {
-            return Outcome::Missing;
-        }
-        let best = match results.first().and_then(serde_json::Value::as_object) {
-            Some(best) => best,
-            None => return self.malformed(),
-        };
-        // A missing score reads as 0.0 and falls below the threshold (v2);
-        // only a present-but-unusable score is malformed. JSON booleans must
-        // not pass as numbers.
-        let score = match best.get("score") {
-            None | Some(serde_json::Value::Null) => 0.0,
-            Some(serde_json::Value::Number(number)) => match number.as_f64() {
-                Some(score) if score.is_finite() => score,
-                _ => return self.malformed(),
-            },
-            Some(_) => return self.malformed(),
-        };
-        if score < MIN_SCORE {
-            return Outcome::Missing;
-        }
-        let recordings = match best.get("recordings") {
-            None | Some(serde_json::Value::Null) => Vec::new(),
-            Some(serde_json::Value::Array(recordings)) => recordings.clone(),
-            Some(_) => return self.malformed(),
-        };
-        let mut recording_ids: Vec<String> = Vec::new();
-        let mut seen: Vec<String> = Vec::new();
-        let mut selected: Option<&serde_json::Map<String, serde_json::Value>> = None;
-        for recording in &recordings {
-            let recording = match recording.as_object() {
-                Some(recording) => recording,
-                None => continue,
-            };
-            let id = match recording.get("id").and_then(serde_json::Value::as_str) {
-                Some(id) => id.trim().to_owned(),
-                None => continue,
-            };
-            if id.is_empty() {
-                continue;
-            }
-            // v2 dedupes recording ids case-insensitively but keeps the first
-            // spelling it saw.
-            let folded = id.to_lowercase();
-            if seen.contains(&folded) {
-                continue;
-            }
-            seen.push(folded);
-            recording_ids.push(id);
-            if selected.is_none() {
-                selected = Some(recording);
-            }
-        }
-        let recording = match selected {
-            Some(recording) => recording,
-            // Confident audio match, but nothing to key the row on (v2 FAIL).
-            // This is `Unavailable`, never `Missing`: it must not read as a
-            // negative, and v2 queues it for manual review.
-            None => {
-                return self.unrecorded("AcoustID matched audio with no recording id".to_owned());
-            }
-        };
-        let artist = joined_artist_names(recording);
-        let title = recording
-            .get("title")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|title| !title.is_empty())
-            .map(str::to_owned);
-        // `selected` is only set alongside a push, so a first id exists.
-        let recording_id = recording_ids.first().cloned().unwrap_or_default();
-        Outcome::Found(FingerprintMatch {
-            recording_id,
-            recording_ids,
-            score,
-            title,
-            artist,
-            duration_secs: recording_duration_secs(recording),
-            release_group_ids: release_group_ids(recording, best),
-        })
+        let base = self.base.as_ref().ok_or_else(unusable)?;
+        Ok(Request::post_form(base, &["v2", "lookup"], form)
+            .map_err(|_| unusable())?
+            .idempotent(true))
     }
+}
 
-    /// Build a recorded `Unavailable` outcome.
-    fn recorded(
-        &self,
-        retry_after_secs: Option<f64>,
-        message: String,
-    ) -> Outcome<FingerprintMatch> {
-        self.sink.record(SOURCE, message.clone());
-        Outcome::Unavailable {
-            retry_after_secs,
-            message,
-            recorded: true,
-        }
-    }
+/// An answer without the expected shape: the service answered, so it is
+/// noted for the request but never counted as an outage.
+fn note_shape(cause: &str) {
+    tracing::debug!(
+        provider = SOURCE,
+        cause,
+        "AcoustID answer had no usable shape"
+    );
+    record_current(SOURCE, IntegrationStatus::Error, true);
+}
 
-    /// A reply that did not decode: recorded for the request, kept out of
-    /// service health (the service answered).
-    fn malformed(&self) -> Outcome<FingerprintMatch> {
-        let message = "malformed AcoustID response".to_owned();
-        self.sink.record_quiet(SOURCE, message.clone());
-        Outcome::Unavailable {
-            retry_after_secs: None,
-            message,
-            recorded: true,
-        }
+/// A lookup answer that breaks its documented shape.
+fn malformed() -> ProviderError {
+    note_shape("malformed AcoustID answer");
+    ProviderError::Payload {
+        provider: SOURCE,
+        kind: PayloadKind::Decode,
+        message: "malformed AcoustID answer".to_owned(),
     }
+}
 
-    /// Build an unrecorded `Unavailable` outcome for deterministic
-    /// rejections and unkeyable matches, which v2 raises or queues rather
-    /// than records.
-    fn unrecorded(&self, message: String) -> Outcome<FingerprintMatch> {
-        Outcome::Unavailable {
-            retry_after_secs: None,
-            message,
-            recorded: false,
-        }
+/// Fold a lookup payload into a match, following v2 `_parse_response`
+/// branch for branch.
+fn parse_lookup(payload: &serde_json::Value) -> Result<Option<FingerprintMatch>, ProviderError> {
+    let Some(body) = payload.as_object() else {
+        return Err(malformed());
+    };
+    if body.get("status").and_then(serde_json::Value::as_str) != Some("ok") {
+        return Err(malformed());
     }
+    // A missing or null `results` reads as "no results" (v2); only a
+    // non-list value is malformed.
+    let results = match body.get("results") {
+        None | Some(serde_json::Value::Null) => return Ok(None),
+        Some(serde_json::Value::Array(results)) => results,
+        Some(_) => return Err(malformed()),
+    };
+    let Some(best) = results.first() else {
+        return Ok(None);
+    };
+    let Some(best) = best.as_object() else {
+        return Err(malformed());
+    };
+    // A missing score reads as 0.0 and falls below the threshold (v2);
+    // only a present-but-unusable score is malformed. JSON booleans must
+    // not pass as numbers.
+    let score = match best.get("score") {
+        None | Some(serde_json::Value::Null) => 0.0,
+        Some(serde_json::Value::Number(number)) => match number.as_f64() {
+            Some(score) if score.is_finite() => score,
+            _ => return Err(malformed()),
+        },
+        Some(_) => return Err(malformed()),
+    };
+    if score < MIN_SCORE {
+        return Ok(None);
+    }
+    let recordings = match best.get("recordings") {
+        None | Some(serde_json::Value::Null) => &Vec::new(),
+        Some(serde_json::Value::Array(recordings)) => recordings,
+        Some(_) => return Err(malformed()),
+    };
+    let mut recording_ids: Vec<String> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    let mut selected: Option<&serde_json::Map<String, serde_json::Value>> = None;
+    for recording in recordings.iter().filter_map(serde_json::Value::as_object) {
+        let Some(id) = recording.get("id").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let id = id.trim().to_owned();
+        if id.is_empty() {
+            continue;
+        }
+        // v2 dedupes recording ids case-insensitively but keeps the first
+        // spelling it saw.
+        let folded = id.to_lowercase();
+        if seen.contains(&folded) {
+            continue;
+        }
+        seen.push(folded);
+        recording_ids.push(id);
+        selected.get_or_insert(recording);
+    }
+    // A confident audio match with nothing to key the row on (v2 FAIL):
+    // never "no match", and v2 queues it for manual review.
+    let (Some(recording), Some(recording_id)) = (selected, recording_ids.first().cloned()) else {
+        return Err(ProviderError::Payload {
+            provider: SOURCE,
+            kind: PayloadKind::Contract,
+            message: "AcoustID matched audio with no recording id".to_owned(),
+        });
+    };
+    let title = recording
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_owned);
+    Ok(Some(FingerprintMatch {
+        recording_id,
+        recording_ids,
+        score,
+        title,
+        artist: joined_artist_names(recording),
+        duration_secs: recording_duration_secs(recording),
+        release_group_ids: release_group_ids(recording, best),
+    }))
 }
 
 /// Fingerprints per batch request: the AcoustID server's limit.
@@ -491,6 +407,27 @@ pub enum BatchOutcome {
         retry_after_secs: Option<f64>,
         message: String,
     },
+}
+
+impl BatchOutcome {
+    /// What a failed request means for the batch: a rejection asking
+    /// again cannot change, or an outage worth asking again later.
+    fn from_error(error: &ProviderError) -> Self {
+        let message = error.to_string();
+        match error {
+            ProviderError::Unauthorized { .. }
+            | ProviderError::Forbidden { .. }
+            | ProviderError::NotFound { .. }
+            | ProviderError::BadRequest { .. }
+            | ProviderError::Redirect { .. }
+            | ProviderError::NotConfigured { .. }
+            | ProviderError::Invalid { .. } => Self::Rejected { message },
+            _ => Self::Unavailable {
+                retry_after_secs: error.retry_after().map(|wait| wait.as_secs_f64()),
+                message,
+            },
+        }
+    }
 }
 
 // The batch answer's shape, verified 2026-10-15 against a live
@@ -593,16 +530,6 @@ fn push_id(ids: &mut Vec<String>, id: &str) {
     if !id.is_empty() && !ids.contains(&id) {
         ids.push(id);
     }
-}
-
-/// Parse a `Retry-After` header the way v2 `_retry_after_seconds` does:
-/// positive seconds win, anything else falls back to 60s.
-fn retry_after_secs(header: Option<&reqwest::header::HeaderValue>) -> f64 {
-    header
-        .and_then(|value| value.to_str().ok())
-        .and_then(|text| text.trim().parse::<f64>().ok())
-        .filter(|seconds| *seconds > 0.0)
-        .unwrap_or(DEFAULT_RETRY_AFTER_SECS)
 }
 
 /// Join the recording's artist names with `"; "`, skipping blanks (v2).

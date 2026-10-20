@@ -249,12 +249,10 @@ pub fn degraded_none<T>(
     None
 }
 
-/// Degradation port behind the provider clients: one note per failed
-/// optional call. One trait for every client, so one fake records for all
-/// of them and the production
-/// [`CoreSink`](super::adapters::CoreSink) implements it once against the
-/// request context. `source` is the lowercase provider key the matrix joins
-/// on; callers fold any operation detail into `message`.
+/// Degradation port: one note per failed optional call. No client reports
+/// through it any more; the executor records every outcome itself.
+/// `source` is the lowercase provider key the matrix joins on; callers
+/// fold any operation detail into `message`.
 pub trait DegradationSink: Send + Sync {
     /// Record one note that this optional source failed. The failure
     /// counts toward the source's service health.

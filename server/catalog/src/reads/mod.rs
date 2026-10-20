@@ -69,9 +69,7 @@ pub fn artwork(
     inputs: &ReadsInputs,
     artists: catalog::Catalog,
 ) -> platform::artwork::ArtworkService {
-    use platform::artwork::{
-        ArtworkService, cache::ArtworkCache, local::LocalArtwork, remote::HttpImages,
-    };
+    use platform::artwork::{ArtworkService, cache::ArtworkCache, local::LocalArtwork};
 
     ArtworkService::new(
         ArtworkCache::new(inputs.covers_dir.clone(), inputs.cover_cache_max_bytes),
@@ -79,7 +77,7 @@ pub fn artwork(
         Some(Arc::new(inputs.providers.coverart.clone())),
         platform.settings.live(),
     )
-    .with_images(Arc::new(HttpImages::new(inputs.no_redirect.clone())))
+    .with_images(Arc::new(inputs.providers.images.clone()))
     .with_artist_source(Arc::new(catalog::precache::CatalogArtistImages(artists)))
 }
 
@@ -114,7 +112,6 @@ impl ReadsSetup {
             discover::adapters::DiscoverInputs {
                 db: db.clone(),
                 http: inputs.http.clone(),
-                no_redirect: inputs.no_redirect.clone(),
                 providers: inputs.providers.clone(),
                 listenbrainz_links: inputs.listenbrainz_links.clone(),
                 youtube_quota_path: inputs.youtube_quota_path.clone(),
@@ -272,8 +269,6 @@ pub struct ReadsInputs {
     pub cover_cache_max_bytes: u64,
     /// The factory's shared client.
     pub http: reqwest::Client,
-    /// The factory's no-redirect client (cover fetches check each hop).
-    pub no_redirect: reqwest::Client,
     /// Shared provider limiters.
     pub providers: Arc<droppedneedle_providers::Providers>,
     /// Users' ListenBrainz links (your-top charts, wrapped).

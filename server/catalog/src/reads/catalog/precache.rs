@@ -119,14 +119,18 @@ impl Catalog {
                 return None;
             }
         };
-        self.album_images_lookup(&group)
+        self.album_images_lookup(&group, BACKGROUND)
             .await
             .map(|images| images.and_then(|images| images.album_thumb_url))
     }
 
-    /// Candidate image URLs for an artist: TheAudioDB's thumbnail, else
-    /// the Wikidata portrait.
-    pub async fn artist_image_candidates(&self, mbid: &str) -> ArtistImageCandidates {
+    /// Candidate image URLs for an artist: TheAudioDB's thumbnail, asked
+    /// at `priority`, else the Wikidata portrait.
+    pub async fn artist_image_candidates(
+        &self,
+        mbid: &str,
+        priority: droppedneedle_providers::RequestPriority,
+    ) -> ArtistImageCandidates {
         let detail = match self.artist_detail(mbid).await {
             Ok(Some(detail)) => detail,
             Ok(None) => return ArtistImageCandidates::default(),
@@ -139,7 +143,10 @@ impl Catalog {
             }
         };
         let mut candidates = ArtistImageCandidates::default();
-        match self.artist_images_lookup(&detail.mbid, &detail.name).await {
+        match self
+            .artist_images_lookup(&detail.mbid, &detail.name, priority)
+            .await
+        {
             Some(images) => {
                 if let Some(thumb) = images.and_then(|images| images.thumb_url) {
                     candidates.urls.push(thumb);
@@ -163,8 +170,9 @@ impl ArtistImageSource for CatalogArtistImages {
     fn candidates<'a>(
         &'a self,
         artist_mbid: &'a str,
+        priority: droppedneedle_providers::RequestPriority,
     ) -> futures_util::future::BoxFuture<'a, ArtistImageCandidates> {
-        Box::pin(self.0.artist_image_candidates(artist_mbid))
+        Box::pin(self.0.artist_image_candidates(artist_mbid, priority))
     }
 }
 
@@ -263,7 +271,7 @@ impl PrecacheSources for CatalogPrecache {
         Box::pin(async move {
             if self
                 .catalog
-                .artist_images_lookup(&artist.mbid, &artist.name)
+                .artist_images_lookup(&artist.mbid, &artist.name, BACKGROUND)
                 .await
                 .is_some()
                 && !self.artwork.artist_image_cached(&artist.mbid).await

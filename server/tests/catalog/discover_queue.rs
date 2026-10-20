@@ -175,6 +175,7 @@ impl QueueSources for Scripted {
         _u: &'a str,
         _n: &'a str,
         _l: u32,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         ok(Vec::new())
     }
@@ -183,6 +184,7 @@ impl QueueSources for Scripted {
         _u: &'a str,
         _a: &'a ArtistRow,
         _l: u32,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         ok(Vec::new())
     }
@@ -191,6 +193,7 @@ impl QueueSources for Scripted {
         _u: &'a str,
         _a: &'a ArtistRow,
         _l: u32,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<LastFmAlbum>>> {
         ok(Vec::new())
     }
@@ -198,6 +201,7 @@ impl QueueSources for Scripted {
         &'a self,
         _u: &'a str,
         _l: u32,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         ok(Vec::new())
     }
@@ -206,6 +210,7 @@ impl QueueSources for Scripted {
         _u: &'a str,
         _a: &'a str,
         _b: &'a str,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<LastFmFacts>>> {
         ok(None)
     }
@@ -214,6 +219,7 @@ impl QueueSources for Scripted {
         _u: &'a str,
         _a: &'a str,
         _m: Option<&'a str>,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<LastFmFacts>>> {
         ok(None)
     }

@@ -160,7 +160,7 @@ impl LastFmSwitch for StoreLastFmSwitch {
     }
 }
 
-/// Where the plex.tv, Last.fm and breach-check clients send their calls.
+/// Where the plex.tv and breach-check clients send their calls.
 /// Production uses the real services; the integration tests point them at
 /// local mocks. OIDC and Jellyfin need no entry: their URLs come from the
 /// settings.
@@ -168,8 +168,6 @@ impl LastFmSwitch for StoreLastFmSwitch {
 pub struct Upstreams {
     /// plex.tv account API root.
     pub plex_tv: String,
-    /// Last.fm web service root.
-    pub lastfm: String,
     /// The breach check's range URL, up to the hash prefix.
     pub pwned_passwords: String,
 }
@@ -242,13 +240,15 @@ impl AuthSetup {
     /// Build the bundle over `platform`: the sign-in clients use its
     /// shared HTTP client, OIDC its no-redirect one, and every forwarded
     /// header is read through its trusted proxies. `upstreams` gives the
-    /// plex.tv, Last.fm and breach-check addresses; `plex_server` reads
+    /// plex.tv and breach-check addresses; `lastfm` is the one Last.fm
+    /// client, which account linking goes through; `plex_server` reads
     /// the configured Plex server's machine id for the membership gate;
     /// `links` saves the media link a Plex or Jellyfin sign-in hands back.
     pub fn build_with_upstreams(
         platform: &Platform,
         auth: ProdAuth,
         upstreams: &Upstreams,
+        lastfm: &droppedneedle_providers::lastfm::LastFmClient,
         plex_server: Arc<dyn PlexServerIdentity>,
         links: MediaLinks,
     ) -> Self {
@@ -283,7 +283,7 @@ impl AuthSetup {
             clock: clock.clone(),
             ids: ids.clone(),
             crypto: crypto.clone(),
-            lastfm_client: Arc::new(LastFmAuthHttp::with_base(http.clone(), &upstreams.lastfm)),
+            lastfm_client: Arc::new(LastFmAuthHttp::new(lastfm.clone())),
             lastfm_switch: Arc::new(StoreLastFmSwitch::new(config_store.live())),
             lastfm_pending: Arc::default(),
             security: Arc::new(StoreSecurityPolicy::new(config_store.live())),

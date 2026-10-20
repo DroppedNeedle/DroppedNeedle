@@ -37,7 +37,6 @@ use crate::reads::discover::{
 };
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
-use droppedneedle_providers::adapters::{CorePacer, CoreSink};
 use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials, TopItem};
 use droppedneedle_providers::listenbrainz::{
     ListenBrainzClient,
@@ -61,15 +60,15 @@ pub struct LiveCharts {
 
 /// The Last.fm half of the charts.
 pub struct LastFmCharts {
-    client: LastFmClient<CorePacer, CoreSink>,
+    client: LastFmClient,
     users: UsersDeps,
 }
 
 impl LastFmCharts {
-    /// Last.fm charts over one paced client. `users` holds the Last.fm
-    /// switch with the instance key, read on every call, and the users'
-    /// links.
-    pub fn new(client: LastFmClient<CorePacer, CoreSink>, users: UsersDeps) -> Self {
+    /// Last.fm charts over the one Last.fm client. `users` holds the
+    /// Last.fm switch with the instance key, read on every call, and the
+    /// users' links.
+    pub fn new(client: LastFmClient, users: UsersDeps) -> Self {
         Self { client, users }
     }
 
@@ -310,14 +309,10 @@ fn rows<T>(result: Result<Vec<T>, ProviderError>) -> Result<Vec<T>, ProviderFail
 
 /// The Last.fm counterpart of [`rows`], skipping the earlier pages.
 fn lastfm_rows(
-    outcome: lastfm::Outcome<Vec<TopItem>>,
+    result: Result<Vec<TopItem>, ProviderError>,
     skip: usize,
 ) -> Result<Vec<TopItem>, ProviderFailure> {
-    match outcome {
-        lastfm::Outcome::Found(rows) => Ok(rows.into_iter().skip(skip).collect()),
-        lastfm::Outcome::Missing => Ok(Vec::new()),
-        lastfm::Outcome::Unavailable { message, .. } => Err(ProviderFailure::failed(message)),
-    }
+    Ok(rows(result)?.into_iter().skip(skip).collect())
 }
 
 impl ChartsSource for LiveCharts {
@@ -336,7 +331,10 @@ impl ChartsSource for LiveCharts {
                     let (lastfm, creds) = self.sitewide_lastfm()?;
                     let (count, skip) = lastfm_window(limit, offset);
                     lastfm_artists(lastfm_rows(
-                        lastfm.client.chart_top_artists(&creds, count).await,
+                        lastfm
+                            .client
+                            .chart_top_artists(&creds, count, PRIORITY)
+                            .await,
                         skip,
                     )?)
                 }
@@ -405,7 +403,13 @@ impl ChartsSource for LiveCharts {
                     lastfm_albums(lastfm_rows(
                         lastfm
                             .client
-                            .user_top_albums(&creds, &username, lastfm_period(range), count)
+                            .user_top_albums(
+                                &creds,
+                                &username,
+                                lastfm_period(range),
+                                count,
+                                PRIORITY,
+                            )
                             .await,
                         skip,
                     )?)

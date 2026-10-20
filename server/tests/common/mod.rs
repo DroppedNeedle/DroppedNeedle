@@ -198,7 +198,6 @@ pub fn reads_inputs(dir: &Path) -> droppedneedle_catalog::reads::ReadsInputs {
         covers_dir: dir.join("covers"),
         cover_cache_max_bytes: 16 * 1024 * 1024,
         http: http.shared().clone(),
-        no_redirect: http.no_redirect().clone(),
         providers: Arc::new(droppedneedle_providers::Providers::closed()),
         listenbrainz_links: Arc::new(
             droppedneedle_plugins::scrobble::MemoryListenBrainzLinkStore::new(Arc::new(

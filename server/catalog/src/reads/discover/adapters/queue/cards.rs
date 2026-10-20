@@ -148,7 +148,9 @@ async fn artist_details(
     }
     let album_facts = quiet(
         "lastfm album",
-        sources.lastfm_album_facts(user_id, artist, album).await,
+        sources
+            .lastfm_album_facts(user_id, artist, album, RequestPriority::UserInitiated)
+            .await,
     );
     if let Some(facts) = album_facts {
         fallback.tags = facts.tags.into_iter().take(MAX_TAGS).collect();
@@ -162,7 +164,12 @@ async fn artist_details(
     let artist_facts = quiet(
         "lastfm artist",
         sources
-            .lastfm_artist_facts(user_id, artist, artist_mbid.as_deref())
+            .lastfm_artist_facts(
+                user_id,
+                artist,
+                artist_mbid.as_deref(),
+                RequestPriority::UserInitiated,
+            )
             .await,
     );
     if let Some(facts) = artist_facts {

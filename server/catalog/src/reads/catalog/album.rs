@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use droppedneedle_providers::degradation::scoped;
 use droppedneedle_providers::itunes::ITunesClient;
-use droppedneedle_providers::lastfm;
 use droppedneedle_providers::musicbrainz::{Criticality, MbRelease, MbReleaseGroup};
 use droppedneedle_providers::{IntegrationStatus, RequestPriority, record_current};
 
@@ -684,14 +683,18 @@ impl Catalog {
     }
 
     async fn fetch_album_images(&self, group: &GroupDetail) -> Option<AlbumImages> {
-        self.album_images_lookup(group).await.flatten()
+        self.album_images_lookup(group, RequestPriority::UserInitiated)
+            .await
+            .flatten()
     }
 
     /// TheAudioDB images as a settled answer: `Some(None)` when AudioDB has
-    /// none (or is off), `None` when it could not answer.
+    /// none (or is off), `None` when it could not answer. AudioDB is asked
+    /// at `priority`.
     pub(super) async fn album_images_lookup(
         &self,
         group: &GroupDetail,
+        priority: RequestPriority,
     ) -> Option<Option<AlbumImages>> {
         let advanced = self.upstream().settings().advanced();
         let Some(client) = self.upstream().audiodb(&advanced) else {
@@ -703,14 +706,14 @@ impl Catalog {
         {
             return Some(entry.images);
         }
-        let mut outcome = client.album_by_mbid(&group.mbid).await;
-        if matches!(outcome, droppedneedle_providers::audiodb::Outcome::Missing)
-            && advanced.audiodb_name_search_fallback
-        {
-            outcome = client.search_album(&group.artist_name, &group.title).await;
+        let mut found = client.album_by_mbid(&group.mbid, priority).await;
+        if matches!(found, Ok(None)) && advanced.audiodb_name_search_fallback {
+            found = client
+                .search_album(&group.artist_name, &group.title, priority)
+                .await;
         }
-        let (images, ttl) = match outcome {
-            droppedneedle_providers::audiodb::Outcome::Found(album) => (
+        let (images, ttl) = match found {
+            Ok(Some(album)) => (
                 Some(AlbumImages {
                     album_thumb_url: album.thumb,
                     album_back_url: album.back,
@@ -723,8 +726,10 @@ impl Catalog {
                 }),
                 AUDIODB_FOUND_TTL,
             ),
-            droppedneedle_providers::audiodb::Outcome::Missing => (None, AUDIODB_MISSING_TTL),
-            droppedneedle_providers::audiodb::Outcome::Unavailable { .. } => return None,
+            Ok(None) => (None, AUDIODB_MISSING_TTL),
+            // Recorded where it failed; nothing cached so the next visit
+            // tries again.
+            Err(_) => return None,
         };
         if let Ok(bytes) = serde_json::to_vec(&AudioDbAlbumEntry {
             images: images.clone(),
@@ -1072,19 +1077,24 @@ impl Catalog {
         let album = album_name.to_owned();
         let value = self
             .cached(&self.inner.flights.other, key, move || async move {
-                let mut outcome = client.album_info(&creds, &artist, &album, Some(&id)).await;
-                if matches!(outcome, lastfm::Outcome::Missing)
+                let priority = RequestPriority::UserInitiated;
+                let mut found = client
+                    .album_info(&creds, &artist, &album, Some(&id), priority)
+                    .await;
+                if matches!(found, Ok(None))
                     && !artist.trim().is_empty()
                     && !album.trim().is_empty()
                 {
-                    outcome = client.album_info(&creds, &artist, &album, None).await;
+                    found = client
+                        .album_info(&creds, &artist, &album, None, priority)
+                        .await;
                 }
-                let info = match outcome {
-                    lastfm::Outcome::Found(info) => info,
-                    lastfm::Outcome::Missing => {
+                let info = match found {
+                    Ok(Some(info)) => info,
+                    Ok(None) => {
                         return Ok((serde_json::Value::Null, Some(LASTFM_TTL)));
                     }
-                    lastfm::Outcome::Unavailable { .. } => {
+                    Err(_) => {
                         return Ok((serde_json::Value::Null, None));
                     }
                 };

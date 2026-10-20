@@ -582,7 +582,25 @@ impl playback::forwarding::ScrobbleCredentials for FixedToken {
         'a,
         Option<playback::forwarding::LastFmSession>,
     > {
-        Box::pin(async { None })
+        Box::pin(async {
+            Some(playback::forwarding::LastFmSession {
+                api_key: "lfm-key".to_owned(),
+                shared_secret: "lfm-secret".to_owned(),
+                session_key: "lfm-session".to_owned(),
+            })
+        })
+    }
+}
+
+/// Links Last.fm only.
+struct LastFmOnly;
+
+impl playback::ports::ScrobbleLinks for LastFmOnly {
+    fn linked(&self, _user_id: &str) -> playback::ports::ScrobbleTargets {
+        playback::ports::ScrobbleTargets {
+            lastfm: true,
+            listenbrainz: false,
+        }
     }
 }
 
@@ -606,7 +624,7 @@ async fn record_listen(
 /// user's token, once: the dedup keeps a repeat submit at home.
 #[tokio::test]
 async fn a_scrobble_reaches_listenbrainz_once() {
-    use playback::forwarding::{Endpoints, ForwardWorker, ScrobbleForwarder};
+    use playback::forwarding::{ForwardWorker, ScrobbleForwarder};
     use playback::models::ScrobbleSubmitRequest;
 
     let seen: SeenListens = Arc::default();
@@ -635,12 +653,9 @@ async fn a_scrobble_reaches_listenbrainz_once() {
     );
     let worker = ForwardWorker::new(
         rx,
-        reqwest::Client::new(),
         providers.listenbrainz.clone(),
+        providers.lastfm.clone(),
         Arc::new(FixedToken),
-        Endpoints {
-            lastfm: "http://127.0.0.1:9/unused".to_owned(),
-        },
     );
     let worker = tokio::spawn(worker.run(droppedneedle_kernel::jobs::CancellationToken::new()));
     let mut rig = rig();
@@ -688,7 +703,7 @@ async fn a_scrobble_reaches_listenbrainz_once() {
 async fn a_switched_off_listenbrainz_keeps_the_listen_for_later() {
     use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
     use droppedneedle_providers::listenbrainz::DEFAULT_BASE_URL;
-    use playback::forwarding::{Endpoints, ForwardWorker, ScrobbleForwarder};
+    use playback::forwarding::{ForwardWorker, ScrobbleForwarder};
     use playback::ports::{ReportTrack, ScrobbleSinks as _, ScrobbleTargets};
 
     let wire = Arc::new(ScriptedWire::new());
@@ -723,12 +738,9 @@ async fn a_switched_off_listenbrainz_keeps_the_listen_for_later() {
     );
     let worker = ForwardWorker::new(
         rx,
-        reqwest::Client::new(),
         providers.listenbrainz.clone(),
+        providers.lastfm.clone(),
         Arc::new(FixedToken),
-        Endpoints {
-            lastfm: "http://127.0.0.1:9/unused".to_owned(),
-        },
     );
     forwarder.submit_scrobble(
         "user-1",
@@ -762,6 +774,94 @@ async fn a_switched_off_listenbrainz_keeps_the_listen_for_later() {
         2,
         "the refused listen is sent again and the second try lands"
     );
+}
+
+/// A scrobble Last.fm turns away for now (error 16, "temporarily
+/// unavailable", inside a 200) is kept and sent again, and lands once
+/// Last.fm takes it.
+#[tokio::test(start_paused = true)]
+async fn a_scrobble_last_fm_turns_away_for_now_is_delivered_later() {
+    use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
+    use droppedneedle_providers::lastfm::DEFAULT_BASE_URL;
+    use playback::forwarding::{ForwardWorker, ScrobbleForwarder};
+    use playback::ports::{ReportTrack, ScrobbleSinks as _, ScrobbleTargets};
+
+    let wire = Arc::new(ScriptedWire::new());
+    for body in [
+        r#"{"error": 16, "message": "There was a temporary error processing your request."}"#,
+        r#"{"scrobbles": {"@attr": {"accepted": 1, "ignored": 0}}}"#,
+    ] {
+        wire.on(
+            Method::Post,
+            DEFAULT_BASE_URL,
+            Scripted::Answer {
+                status: 200,
+                headers: Vec::new(),
+                body: body.as_bytes().to_vec(),
+            },
+        );
+    }
+    let providers = droppedneedle_providers::Providers::unpaced_at(
+        wire.clone(),
+        droppedneedle_providers::ProviderEndpoints {
+            lastfm: DEFAULT_BASE_URL.to_owned(),
+            ..droppedneedle_providers::ProviderEndpoints::closed()
+        },
+    );
+    let (forwarder, rx) = ScrobbleForwarder::channel(
+        Arc::new(LastFmOnly),
+        Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
+    );
+    let worker = ForwardWorker::new(
+        rx,
+        providers.listenbrainz.clone(),
+        providers.lastfm.clone(),
+        Arc::new(FixedToken),
+    );
+    forwarder.submit_scrobble(
+        "user-1",
+        &ReportTrack {
+            track_name: "Roads".to_owned(),
+            artist_name: "Portishead".to_owned(),
+            album_name: None,
+            duration_ms: 0,
+            mbid: None,
+            release_group_mbid: None,
+            source: None,
+            played_at: Some(NOW - 60),
+        },
+        ScrobbleTargets {
+            lastfm: true,
+            listenbrainz: false,
+        },
+    );
+    let worker = tokio::spawn(worker.run(droppedneedle_kernel::jobs::CancellationToken::new()));
+    // The queue stays open while the retry is due; time is virtual.
+    for _ in 0..600 {
+        if wire.sent().len() >= 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    drop(forwarder);
+    worker.await.expect("the worker ends cleanly");
+    let sent = wire.sent();
+    assert_eq!(
+        sent.len(),
+        2,
+        "the turned-away scrobble is sent again and the second try lands"
+    );
+    let droppedneedle_providers::executor::Body::Form(form) = &sent[1].body else {
+        panic!("a scrobble is a form post");
+    };
+    let field = |name: &str| {
+        form.iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    };
+    assert_eq!(field("method"), Some("track.scrobble"));
+    assert_eq!(field("sk"), Some("lfm-session"));
+    assert_eq!(field("timestamp"), Some((NOW - 60).to_string().as_str()));
 }
 
 // ---------------------------------------------------------------------------

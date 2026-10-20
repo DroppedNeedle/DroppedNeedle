@@ -107,6 +107,7 @@ impl AuthRig {
             &platform,
             auth.clone(),
             &closed_outbound().sign_in(),
+            &droppedneedle_providers::Providers::closed().lastfm,
             Arc::new(
                 droppedneedle_media::remotes::plex::ConfiguredPlexServer::new(
                     platform.http.shared().clone(),

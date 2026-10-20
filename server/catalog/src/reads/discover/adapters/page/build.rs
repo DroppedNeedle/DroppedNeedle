@@ -433,7 +433,10 @@ impl Builder<'_> {
         let trending = async {
             if primary == MusicSource::LastFm && user.lastfm {
                 tracker
-                    .run("lfm_global_top", sources.lastfm_chart_artists(user_id, 20))
+                    .run(
+                        "lfm_global_top",
+                        sources.lastfm_chart_artists(user_id, 20, RequestPriority::BackgroundSync),
+                    )
                     .await
             } else {
                 tracker
@@ -501,7 +504,12 @@ impl Builder<'_> {
                 Some(username) if primary == MusicSource::LastFm => tracker
                     .run(
                         "lfm_user_top_artists_for_genres",
-                        sources.lastfm_top_artists(user_id, username, 5),
+                        sources.lastfm_top_artists(
+                            user_id,
+                            username,
+                            5,
+                            RequestPriority::BackgroundSync,
+                        ),
                     )
                     .await
                     .unwrap_or_default(),
@@ -1225,10 +1233,10 @@ impl Builder<'_> {
                 listen_count: 0,
             })
             .collect();
-        let albums = join_all(
-            rows.iter()
-                .map(|artist| self.sources.lastfm_artist_albums(user_id, artist, 3)),
-        )
+        let albums = join_all(rows.iter().map(|artist| {
+            self.sources
+                .lastfm_artist_albums(user_id, artist, 3, RequestPriority::BackgroundSync)
+        }))
         .await;
         let releases: Vec<String> = albums
             .iter()
@@ -1464,11 +1472,10 @@ impl Builder<'_> {
         if genres.is_empty() {
             return None;
         }
-        let found = join_all(
-            genres
-                .iter()
-                .map(|genre| self.sources.lastfm_tag_artists(user_id, genre, 10)),
-        )
+        let found = join_all(genres.iter().map(|genre| {
+            self.sources
+                .lastfm_tag_artists(user_id, genre, 10, RequestPriority::BackgroundSync)
+        }))
         .await;
         let mut items = Vec::new();
         for row in found

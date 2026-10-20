@@ -19,12 +19,12 @@ use droppedneedle_kernel::runtime_config::sections::{
 };
 use droppedneedle_kernel::runtime_config::{ConfigStore, Listed, Live};
 use droppedneedle_library::edition_prefs::LivePreferences;
-use droppedneedle_providers::adapters::{CorePacer, HealthSink, ReqwestGet};
-use droppedneedle_providers::audiodb::{self, AudioDbClient};
-use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials};
+use droppedneedle_providers::adapters::ReqwestGet;
+use droppedneedle_providers::audiodb::AudioDbClient;
+use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
 use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
 use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzView};
-use droppedneedle_providers::{ProviderCache, Providers, RequestPriority};
+use droppedneedle_providers::{ProviderCache, ProviderError, Providers, RequestPriority};
 
 /// The settings the catalog reads, once per call.
 pub trait CatalogSettings: Send + Sync {
@@ -135,10 +135,6 @@ impl CatalogSettings for LiveCatalogSettings {
 /// everything here at a loopback fixture server.
 #[derive(Debug, Clone)]
 pub struct Endpoints {
-    /// Last.fm API endpoint.
-    pub lastfm: String,
-    /// TheAudioDB API root.
-    pub audiodb: String,
     /// Wikidata origin.
     pub wikidata: String,
     /// Wikipedia origin pattern with `{lang}`.
@@ -162,9 +158,62 @@ pub type CatalogMusicBrainz = MusicBrainzView;
 /// The ListenBrainz client type the catalog uses.
 pub type CatalogListenBrainz = ListenBrainzClient;
 /// The Last.fm client type the catalog uses.
-pub type CatalogLastFm = LastFmClient<CorePacer, HealthSink>;
-/// The AudioDB client type the catalog uses.
-pub type CatalogAudioDb = AudioDbClient<CorePacer, HealthSink>;
+pub type CatalogLastFm = LastFmClient;
+
+/// The AudioDB client with the key saved in Settings, read when the call
+/// was set up. The key is never printed.
+#[derive(Clone)]
+pub struct CatalogAudioDb {
+    client: AudioDbClient,
+    api_key: String,
+}
+
+impl CatalogAudioDb {
+    /// Look an artist up by MusicBrainz id.
+    pub async fn artist_by_mbid(
+        &self,
+        mbid: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<droppedneedle_providers::audiodb::AudioDbArtist>, ProviderError> {
+        self.client
+            .artist_by_mbid(&self.api_key, mbid, priority)
+            .await
+    }
+
+    /// Search for an artist by name.
+    pub async fn search_artist(
+        &self,
+        name: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<droppedneedle_providers::audiodb::AudioDbArtist>, ProviderError> {
+        self.client
+            .search_artist(&self.api_key, name, priority)
+            .await
+    }
+
+    /// Look an album up by MusicBrainz id.
+    pub async fn album_by_mbid(
+        &self,
+        mbid: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<droppedneedle_providers::audiodb::AudioDbAlbum>, ProviderError> {
+        self.client
+            .album_by_mbid(&self.api_key, mbid, priority)
+            .await
+    }
+
+    /// Search for an album by artist and title.
+    pub async fn search_album(
+        &self,
+        artist: &str,
+        album: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<droppedneedle_providers::audiodb::AudioDbAlbum>, ProviderError> {
+        self.client
+            .search_album(&self.api_key, artist, album, priority)
+            .await
+    }
+}
 
 /// Everything needed to reach the catalog's upstreams.
 #[derive(Clone)]
@@ -312,14 +361,8 @@ impl Upstream {
             Some(key) => key,
             None => instance_lastfm_key(&self.users)?,
         };
-        let pacer = CorePacer::for_source(self.providers.clone(), lastfm::SOURCE)?;
         Some((
-            LastFmClient::new(
-                self.http.clone(),
-                &self.endpoints.lastfm,
-                pacer,
-                HealthSink::new(&self.providers),
-            ),
+            self.providers.lastfm.clone(),
             LastFmCredentials {
                 api_key,
                 ..LastFmCredentials::default()
@@ -332,21 +375,13 @@ impl Upstream {
         user_lastfm(&self.users, user_id).await.api_key
     }
 
-    /// The AudioDB client with the configured key and switch.
+    /// The AudioDB client with the configured key, or `None` while
+    /// AudioDB is switched off.
     pub fn audiodb(&self, advanced: &AdvancedSettings) -> Option<CatalogAudioDb> {
-        if !advanced.audiodb_enabled {
-            return None;
-        }
-        let pacer = CorePacer::for_source(self.providers.clone(), audiodb::SOURCE)?;
-        Some(
-            AudioDbClient::new(
-                self.http.clone(),
-                &self.endpoints.audiodb,
-                pacer,
-                HealthSink::new(&self.providers),
-            )
-            .with_api_key(advanced.audiodb_api_key.expose()),
-        )
+        advanced.audiodb_enabled.then(|| CatalogAudioDb {
+            client: self.providers.audiodb.clone(),
+            api_key: advanced.audiodb_api_key.expose().to_owned(),
+        })
     }
 
     /// The plain GET transport behind the Wikidata and iTunes clients.

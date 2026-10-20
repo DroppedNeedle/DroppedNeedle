@@ -1,107 +1,57 @@
 //! The live Last.fm client for linking a user's account.
 //!
 //! Both calls are signed with the user's own shared secret (v2 signed them
-//! too). Keys, secrets, tokens and session keys never reach a log line;
-//! the request URL carries them, so transport errors drop it.
+//! too) and go through the one Last.fm client, on the same bucket as every
+//! other Last.fm call, at user priority: a person is waiting. Keys,
+//! secrets, tokens and session keys never reach a log line or an error.
 
-use std::time::Duration;
+use droppedneedle_providers::lastfm::{LastFmClient, LastFmCredentials};
+use droppedneedle_providers::{ProviderError, RequestPriority};
 
-use super::lastfm_models::{ErrorWire, SessionWire, TokenWire};
 use super::stores::{BoxFuture, LastFmAuthClient, LastFmError};
 use crate::federated::oidc::form_encode;
-use droppedneedle_kernel::http_client::{BodyError, read_capped};
-use droppedneedle_providers::lastfm::api_sig;
 
 /// Where the user approves a token.
 pub const AUTH_PAGE: &str = "https://www.last.fm/api/auth/";
-/// Request timeout (v2 parity).
-const TIMEOUT: Duration = Duration::from_secs(15);
-/// Largest answer read from the Last.fm auth API.
-const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
-/// Live [`LastFmAuthClient`] over the shared outbound client.
+/// A person waits on both calls.
+const PRIORITY: RequestPriority = RequestPriority::UserInitiated;
+
+/// Live [`LastFmAuthClient`] over the one Last.fm client.
 #[derive(Clone)]
 pub struct LastFmAuthHttp {
-    http: reqwest::Client,
-    base: String,
+    client: LastFmClient,
 }
 
 impl LastFmAuthHttp {
-    /// Build against the given API root.
-    pub fn with_base(http: reqwest::Client, base: &str) -> Self {
-        Self {
-            http,
-            base: base.to_owned(),
-        }
-    }
-
-    /// One signed GET; the decoded JSON body, or the mapped Last.fm error.
-    async fn signed_call(
-        &self,
-        method: &str,
-        api_key: &str,
-        shared_secret: &str,
-        extra: &[(&str, &str)],
-    ) -> Result<serde_json::Value, LastFmError> {
-        let mut params: Vec<(String, String)> = vec![
-            ("method".to_owned(), method.to_owned()),
-            ("api_key".to_owned(), api_key.to_owned()),
-        ];
-        params.extend(
-            extra
-                .iter()
-                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned())),
-        );
-        let signature = api_sig(&params, shared_secret);
-        params.push(("api_sig".to_owned(), signature));
-        params.push(("format".to_owned(), "json".to_owned()));
-        let response = self
-            .http
-            .get(&self.base)
-            .query(&params)
-            .timeout(TIMEOUT)
-            .send()
-            .await
-            .map_err(|cause| {
-                tracing::warn!(cause = %cause.without_url(), method, "last.fm request failed");
-                LastFmError::Transport
-            })?;
-        let status = response.status();
-        let bytes = read_capped(response, MAX_BODY_BYTES)
-            .await
-            .map_err(|cause| {
-                match cause {
-                    BodyError::TooLarge => {
-                        tracing::warn!(method, "last.fm answer exceeded the size limit");
-                    }
-                    BodyError::Transport(cause) => {
-                        tracing::warn!(%cause, method, "last.fm body read failed");
-                    }
-                }
-                LastFmError::Transport
-            })?;
-        if let Ok(error) = serde_json::from_slice::<ErrorWire>(&bytes) {
-            tracing::info!(code = error.error, message = %error.message, method, "last.fm refused the call");
-            return Err(map_error_code(error.error));
-        }
-        if !status.is_success() {
-            tracing::warn!(%status, method, "last.fm answered an error");
-            return Err(LastFmError::Transport);
-        }
-        serde_json::from_slice(&bytes).map_err(|_| {
-            tracing::warn!(method, "last.fm answered unreadable JSON");
-            LastFmError::Transport
-        })
+    /// Link accounts through `client`.
+    pub fn new(client: LastFmClient) -> Self {
+        Self { client }
     }
 }
 
-/// Last.fm error codes: 14 is an unapproved token; bad keys, signatures,
-/// tokens and suspended keys are the caller's settings; everything else
-/// (service offline, rate limit, server errors) is an outage.
-fn map_error_code(code: i64) -> LastFmError {
-    match code {
-        14 => LastFmError::TokenNotAuthorized,
-        4 | 6 | 9 | 10 | 13 | 15 | 26 => LastFmError::Configuration,
+fn credentials(api_key: &str, shared_secret: &str) -> LastFmCredentials {
+    LastFmCredentials {
+        api_key: api_key.to_owned(),
+        shared_secret: shared_secret.to_owned(),
+        username: None,
+        session_key: None,
+    }
+}
+
+/// Map a failed call. A key, signature or expired token Last.fm refused is
+/// the caller's settings; an unapproved token (error 14 and the other
+/// authorization codes) on the session exchange is the user's step still
+/// to take; anything else (offline, rate limit, server errors) is an
+/// outage.
+fn link_error(error: &ProviderError, exchanging: bool) -> LastFmError {
+    tracing::info!(%error, "last.fm refused the link call");
+    match error {
+        ProviderError::Forbidden { .. } if exchanging => LastFmError::TokenNotAuthorized,
+        ProviderError::Unauthorized { .. }
+        | ProviderError::Forbidden { .. }
+        | ProviderError::NotFound { .. }
+        | ProviderError::NotConfigured { .. } => LastFmError::Configuration,
         _ => LastFmError::Transport,
     }
 }
@@ -113,15 +63,12 @@ impl LastFmAuthClient for LastFmAuthHttp {
         shared_secret: &'a str,
     ) -> BoxFuture<'a, Result<(String, String), LastFmError>> {
         Box::pin(async move {
-            let body = self
-                .signed_call("auth.getToken", api_key, shared_secret, &[])
-                .await?;
-            let token = serde_json::from_value::<TokenWire>(body)
-                .map_err(|_| LastFmError::Transport)?
+            let token = self
+                .client
+                .request_token(&credentials(api_key, shared_secret), PRIORITY)
+                .await
+                .map_err(|error| link_error(&error, false))?
                 .token;
-            if token.is_empty() {
-                return Err(LastFmError::Transport);
-            }
             let auth_url = format!(
                 "{AUTH_PAGE}?api_key={}&token={}",
                 form_encode(api_key),
@@ -138,20 +85,11 @@ impl LastFmAuthClient for LastFmAuthHttp {
         token: &'a str,
     ) -> BoxFuture<'a, Result<(String, String), LastFmError>> {
         Box::pin(async move {
-            let body = self
-                .signed_call(
-                    "auth.getSession",
-                    api_key,
-                    shared_secret,
-                    &[("token", token)],
-                )
-                .await?;
-            let session = serde_json::from_value::<SessionWire>(body)
-                .map_err(|_| LastFmError::Transport)?
-                .session;
-            if session.name.is_empty() || session.key.is_empty() {
-                return Err(LastFmError::Transport);
-            }
+            let session = self
+                .client
+                .exchange_session(&credentials(api_key, shared_secret), token, PRIORITY)
+                .await
+                .map_err(|error| link_error(&error, true))?;
             Ok((session.name, session.key))
         })
     }
