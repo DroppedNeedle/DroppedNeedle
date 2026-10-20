@@ -3,9 +3,11 @@
 //! video link) and the on-demand video preview.
 //!
 //! Each piece is best effort: a provider that fails leaves its field
-//! empty. Last.fm fills tags and the bio when MusicBrainz and Wikipedia
-//! have none.
+//! empty, and the card's [`CacheHold`] keeps it from being cached as if
+//! that field had nothing. Last.fm fills tags and the bio when MusicBrainz
+//! and Wikipedia have none.
 
+use crate::reads::cache_hold::CacheHold;
 use crate::reads::catalog::mapping::clean_lastfm_bio;
 use crate::reads::discover::models::{DiscoverQueuePreview, QueueEnrichment};
 use crate::reads::discover::ports::{ProviderFailure, YouTubeSource};
@@ -18,9 +20,16 @@ const MAX_TAGS: usize = 10;
 /// Recordings tried for a video before falling back to search.
 const PREVIEW_RECORDINGS: usize = 3;
 
-fn quiet<T: Default>(what: &str, result: SourceResult<T>) -> T {
+fn quiet<T: Default>(what: &str, result: SourceResult<T>, hold: &mut CacheHold) -> T {
     result.unwrap_or_else(|cause| {
         tracing::debug!(read = what, %cause, "queue card read failed; leaving it out");
+        match &cause {
+            ProviderFailure::Provider(error) => hold.provider(error),
+            ProviderFailure::Failed(_) => hold.local(),
+            ProviderFailure::NotConfigured(_)
+            | ProviderFailure::NotBuilt(_)
+            | ProviderFailure::Exhausted(_) => {}
+        }
         T::default()
     })
 }
@@ -54,18 +63,21 @@ pub fn youtube_search_url(artist: &str, album: &str) -> String {
     }
 }
 
-/// Build the enrichment for one release group.
+/// Build the enrichment for one release group, with how long it may be
+/// cached given the reads that failed.
 pub async fn enrich(
     sources: &dyn QueueSources,
     youtube: &dyn YouTubeSource,
     user_id: &str,
     release_group_mbid: &str,
-) -> QueueEnrichment {
+) -> (QueueEnrichment, CacheHold) {
+    let mut hold = CacheHold::default();
     let facts = quiet(
         "musicbrainz release group",
         sources
             .musicbrainz_release_group(release_group_mbid, RequestPriority::UserInitiated)
             .await,
+        &mut hold,
     )
     .unwrap_or_default();
     let album = facts.title.clone();
@@ -83,17 +95,23 @@ pub async fn enrich(
     };
     let ids = [release_group_mbid.to_owned()];
     let listens = async {
-        quiet(
+        let mut hold = CacheHold::default();
+        let count = quiet(
             "listenbrainz listen counts",
             sources
                 .listenbrainz_listen_counts(user_id, &ids, RequestPriority::UserInitiated)
                 .await,
+            &mut hold,
         )
         .get(release_group_mbid)
-        .copied()
+        .copied();
+        (count, hold)
     };
     let about = artist_details(sources, user_id, &facts.artist_mbid, &artist, &album);
-    let (listen_count, (country, description, extra)) = tokio::join!(listens, about);
+    let ((listen_count, listens_hold), (country, description, extra)) =
+        tokio::join!(listens, about);
+    hold.merge(listens_hold);
+    hold.merge(extra.hold);
     enrichment.listen_count = listen_count;
     enrichment.country = country;
     enrichment.artist_description = description;
@@ -106,14 +124,16 @@ pub async fn enrich(
     if enrichment.youtube_url.is_none() {
         enrichment.youtube_search_available = youtube.is_configured();
     }
-    enrichment
+    (enrichment, hold)
 }
 
-/// Last.fm facts gathered while filling the bio.
+/// Last.fm facts gathered while filling the bio, and the reads that
+/// failed on the way.
 #[derive(Default)]
 struct Fallback {
     tags: Vec<String>,
     mbid: Option<String>,
+    hold: CacheHold,
 }
 
 /// Country and bio from MusicBrainz and Wikipedia, then Last.fm for the
@@ -127,22 +147,27 @@ async fn artist_details(
 ) -> (Option<String>, Option<String>, Fallback) {
     let mut country = None;
     let mut description = None;
+    let mut fallback = Fallback::default();
     if let Some(mbid) = artist_mbid {
         let facts = quiet(
             "musicbrainz artist",
             sources
                 .musicbrainz_artist(mbid, RequestPriority::UserInitiated)
                 .await,
+            &mut fallback.hold,
         );
         if let Some(facts) = facts {
             country = facts.country;
             if let Some(url) = facts.wiki_url {
-                description = quiet("wikipedia", sources.wikipedia_extract(&url).await)
-                    .filter(|text| !text.trim().is_empty());
+                description = quiet(
+                    "wikipedia",
+                    sources.wikipedia_extract(&url).await,
+                    &mut fallback.hold,
+                )
+                .filter(|text| !text.trim().is_empty());
             }
         }
     }
-    let mut fallback = Fallback::default();
     if album.is_empty() || artist.is_empty() {
         return (country, description, fallback);
     }
@@ -151,6 +176,7 @@ async fn artist_details(
         sources
             .lastfm_album_facts(user_id, artist, album, RequestPriority::UserInitiated)
             .await,
+        &mut fallback.hold,
     );
     if let Some(facts) = album_facts {
         fallback.tags = facts.tags.into_iter().take(MAX_TAGS).collect();
@@ -171,6 +197,7 @@ async fn artist_details(
                 RequestPriority::UserInitiated,
             )
             .await,
+        &mut fallback.hold,
     );
     if let Some(facts) = artist_facts {
         fallback.mbid = facts.mbid;
@@ -217,12 +244,15 @@ pub async fn preview(
     if let Some(answer) = found(facts.youtube_url.clone()) {
         return Ok(answer);
     }
+    // The preview is never cached, so what failed is not kept.
+    let mut hold = CacheHold::default();
     if let Some(release) = facts.first_release_id.as_deref() {
         // One at a time: the recordings are only read when the release
         // itself has no video link.
         let video = quiet(
             "musicbrainz release links",
             sources.musicbrainz_release_video(release).await,
+            &mut hold,
         );
         if let Some(answer) = found(video) {
             return Ok(answer);
@@ -232,11 +262,13 @@ pub async fn preview(
             sources
                 .musicbrainz_release_recordings(release, PREVIEW_RECORDINGS)
                 .await,
+            &mut hold,
         );
         for recording in recordings {
             let video = quiet(
                 "musicbrainz recording links",
                 sources.musicbrainz_recording_video(&recording).await,
+                &mut hold,
             );
             if let Some(answer) = found(video) {
                 return Ok(answer);

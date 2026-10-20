@@ -1037,3 +1037,141 @@ async fn a_cold_artist_image_waits_out_a_busy_musicbrainz() {
     );
     assert!(started.elapsed() >= Duration::from_secs(2), "it waited");
 }
+
+/// A section built past a failed ListenBrainz read is not cached as the
+/// answer: once ListenBrainz is back, the next read gets the whole one.
+/// Top songs lose their album links and similar albums lose an artist
+/// while the read behind them fails.
+#[tokio::test]
+async fn a_passing_failure_is_not_cached_as_a_short_section() {
+    use droppedneedle_catalog::reads::catalog::models::{DiscoveryAlbum, DiscoverySource};
+    use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
+    use droppedneedle_providers::{
+        ProviderEndpoints, RequestPriority, TransportKind, listenbrainz,
+    };
+
+    const LANA: &str = "b7539c32-53e7-4908-bda3-81449c367da6";
+    const PORTISHEAD: &str = "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11";
+    const CREEP: &str = "5e6f7a8b-1111-4c2d-8e3f-4a5b6c7d8e9f";
+    const BORN_TO_DIE: &str = "5e6f7a8b-2222-4c2d-8e3f-4a5b6c7d8e9f";
+    let lb = |path: &str| format!("{}/1/{path}", listenbrainz::DEFAULT_BASE_URL);
+    let down = Scripted::Transport(TransportKind::Connect);
+    let group = |id: &str, name: &str, artist: &str| {
+        json!([{
+            "artist_mbids": [],
+            "artist_name": artist,
+            "release_group_mbid": id,
+            "release_group": {"name": name},
+            "total_listen_count": 100
+        }])
+        .to_string()
+    };
+
+    // Each failing read fails both of its attempts, then answers.
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(
+        &lb(&format!("popularity/top-recordings-for-artist/{ARTIST}")),
+        200,
+        &[],
+        json!([{"recording_name": "Creep", "artist_name": "Radiohead",
+                "total_listen_count": 90, "recording_mbid": CREEP}])
+        .to_string(),
+    );
+    let recordings = lb("metadata/recording/");
+    wire.on(Method::Post, &recordings, down.clone());
+    wire.on(Method::Post, &recordings, down.clone());
+    wire.on(
+        Method::Post,
+        &recordings,
+        Scripted::Answer {
+            status: 200,
+            headers: Vec::new(),
+            body: json!({CREEP: {"release": {"release_group_mbid": OK_COMPUTER}}})
+                .to_string()
+                .into_bytes(),
+        },
+    );
+    wire.answer(
+        &lb(&format!("lb-radio/artist/{ARTIST}")),
+        200,
+        &[],
+        upstream_fixture("lb_radio_artist"),
+    );
+    let lana = lb(&format!("popularity/top-release-groups-for-artist/{LANA}"));
+    wire.on(Method::Get, &lana, down.clone());
+    wire.on(Method::Get, &lana, down);
+    wire.answer(
+        &lana,
+        200,
+        &[],
+        group(BORN_TO_DIE, "Born to Die", "Lana Del Rey"),
+    );
+    wire.answer(
+        &lb(&format!(
+            "popularity/top-release-groups-for-artist/{PORTISHEAD}"
+        )),
+        200,
+        &[],
+        group(DUMMY_GROUP, "Dummy", "Portishead"),
+    );
+    let providers = Arc::new(Providers::over_wire(
+        wire,
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        ProviderEndpoints {
+            listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    ));
+    let (pool, _dir) = crate::common::migrated_pool("reads-catalog-passing").await;
+    let rig = AuthRig::new("reads-catalog-passing").await;
+    let catalog = Catalog::new(
+        Upstream::new(
+            providers,
+            Arc::new(TestSettings {
+                mb_url: "http://127.0.0.1:9/ws/2".to_owned(),
+            }),
+            rig.deps.clone(),
+        ),
+        LocalCatalog::new(pool),
+    );
+    tokio::time::pause();
+
+    let songs = || {
+        catalog.top_songs(
+            USER,
+            ARTIST,
+            5,
+            Some(DiscoverySource::Listenbrainz),
+            RequestPriority::UserInitiated,
+        )
+    };
+    let first = songs().await.unwrap();
+    assert_eq!(first.songs[0].release_group_mbid, None, "the lookup failed");
+    let second = songs().await.unwrap();
+    assert_eq!(
+        second.songs[0].release_group_mbid.as_deref(),
+        Some(OK_COMPUTER),
+        "the song links its album once ListenBrainz answers"
+    );
+
+    let ids = |albums: &[DiscoveryAlbum]| {
+        albums
+            .iter()
+            .map(|album| album.musicbrainz_id.clone())
+            .collect::<Vec<_>>()
+    };
+    let first = catalog
+        .similar_albums(USER, OK_COMPUTER, ARTIST, 2)
+        .await
+        .unwrap();
+    assert_eq!(ids(&first.albums), [DUMMY_GROUP], "one artist failed");
+    let second = catalog
+        .similar_albums(USER, OK_COMPUTER, ARTIST, 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        ids(&second.albums),
+        [BORN_TO_DIE, DUMMY_GROUP],
+        "both artists once ListenBrainz answers"
+    );
+}

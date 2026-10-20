@@ -572,17 +572,19 @@ impl Inner {
         let result = self
             .enrichments
             .run(&key, move || async move {
-                let enrichment = cards::enrich(
+                let (enrichment, hold) = cards::enrich(
                     inner.sources.as_ref(),
                     inner.youtube.as_ref(),
                     &user,
                     &group,
                 )
                 .await;
-                let ttl = QueueSettings::read(&inner.settings).enrich_ttl;
-                match serde_json::to_vec(&enrichment) {
-                    Ok(bytes) => inner.cache.set_bytes(&flight_key, bytes, ttl).await,
-                    Err(error) => tracing::debug!(%error, "queue card details not cached"),
+                let ttl = hold.cap(QueueSettings::read(&inner.settings).enrich_ttl);
+                if !ttl.is_zero() {
+                    match serde_json::to_vec(&enrichment) {
+                        Ok(bytes) => inner.cache.set_bytes(&flight_key, bytes, ttl).await,
+                        Err(error) => tracing::debug!(%error, "queue card details not cached"),
+                    }
                 }
                 Ok::<_, String>(enrichment)
             })

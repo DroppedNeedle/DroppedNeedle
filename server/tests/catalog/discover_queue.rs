@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::{
@@ -22,12 +23,12 @@ use droppedneedle_catalog::reads::discover::adapters::queue::store::QueueDb;
 use droppedneedle_catalog::reads::discover::fakes::{
     FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeRadio, FakeYouTube,
 };
-use droppedneedle_catalog::reads::discover::ports::BoxFuture;
+use droppedneedle_catalog::reads::discover::ports::{BoxFuture, ProviderFailure, QueueStore};
 use droppedneedle_catalog::reads::discover::services::ReadsDeps;
 use droppedneedle_kernel::clock::{ManualClock, SystemClock};
 use droppedneedle_kernel::db::DbRuntime;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
-use droppedneedle_providers::Providers;
+use droppedneedle_providers::{ProviderError, Providers};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -42,8 +43,12 @@ fn group(n: u8) -> String {
 
 /// ListenBrainz answers for one linked user: one seed artist, one similar
 /// artist with five albums, and five trending albums. Everything else is
-/// empty.
-struct Scripted;
+/// empty. MusicBrainz release group reads fail while `musicbrainz_down`
+/// is set.
+#[derive(Default)]
+struct Scripted {
+    musicbrainz_down: AtomicBool,
+}
 
 fn ok<T: Send + 'static>(value: T) -> BoxFuture<'static, SourceResult<T>> {
     Box::pin(async move { Ok(value) })
@@ -251,6 +256,14 @@ impl QueueSources for Scripted {
         mbid: &'a str,
         _p: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Option<ReleaseGroupFacts>>> {
+        if self.musicbrainz_down.load(Ordering::SeqCst) {
+            return Box::pin(async {
+                Err(ProviderFailure::Provider(ProviderError::Unavailable {
+                    provider: "musicbrainz",
+                    retry_after: None,
+                }))
+            });
+        }
         ok(Some(ReleaseGroupFacts {
             title: format!("Album {mbid}"),
             artist_mbid: Some(SIMILAR.to_owned()),
@@ -302,7 +315,7 @@ fn queue_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
         })
         .expect("queue settings save");
     let queue = LiveQueue::new(
-        Arc::new(Scripted),
+        Arc::new(Scripted::default()),
         QueueDb::new(runtime.db().clone()),
         Arc::new(FakeYouTube::unconfigured()),
         Providers::closed().cache.clone(),
@@ -484,4 +497,29 @@ async fn queue_builds_honours_ignores_and_survives_restart() {
         reloaded["queue_id"], rebuilt["queue_id"],
         "the saved deck reloads"
     );
+}
+
+/// A card whose MusicBrainz read failed is not cached for the day: once
+/// MusicBrainz answers, the next read fills the card in.
+#[tokio::test]
+async fn a_card_built_during_an_outage_is_not_kept() {
+    let dir = crate::common::ScratchDir::new("discover-queue-outage");
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
+    let config = crate::common::config_store(&dir);
+    let sources = Arc::new(Scripted::default());
+    let queue = LiveQueue::new(
+        sources.clone(),
+        QueueDb::new(runtime.db().clone()),
+        Arc::new(FakeYouTube::unconfigured()),
+        Providers::closed().cache.clone(),
+        config.live(),
+    );
+
+    sources.musicbrainz_down.store(true, Ordering::SeqCst);
+    let card = queue.enrich("user-1", &group(1)).await.unwrap();
+    assert!(card.tags.is_empty(), "MusicBrainz is down");
+
+    sources.musicbrainz_down.store(false, Ordering::SeqCst);
+    let card = queue.enrich("user-1", &group(1)).await.unwrap();
+    assert_eq!(card.tags, ["shoegaze"], "the card fills in once it answers");
 }

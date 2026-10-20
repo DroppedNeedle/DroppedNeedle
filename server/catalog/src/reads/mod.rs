@@ -9,6 +9,7 @@
 //! Sessions never satisfy the wrapped routes and the wrapped key never
 //! satisfies the session gate.
 
+pub mod cache_hold;
 pub mod catalog;
 pub mod collections;
 pub mod discover;

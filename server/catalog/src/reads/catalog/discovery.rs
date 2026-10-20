@@ -26,6 +26,7 @@ use super::models::{
     SimilarArtistsResponse, TopAlbum, TopAlbumsResponse, TopSong, TopSongsResponse,
 };
 use super::{Catalog, MISS_TTL, is_mbid, mb_error, record_mb_down};
+use crate::reads::cache_hold::CacheHold;
 
 /// Empty answers are kept ten minutes (v2 `DISCOVERY_EMPTY_CACHE_TTL`).
 const EMPTY_TTL: Duration = Duration::from_secs(600);
@@ -176,10 +177,16 @@ impl Catalog {
                 let catalog = self.clone();
                 let mbid = mbid.to_owned();
                 self.cached(flights, key, move || async move {
+                    let mut hold = CacheHold::default();
                     let rows = catalog
-                        .listenbrainz_rows(&client, &creds, &mbid, count, section, priority)
+                        .listenbrainz_rows(
+                            &client,
+                            &creds,
+                            (&mbid, count, section, priority),
+                            &mut hold,
+                        )
                         .await;
-                    catalog.cacheable(rows, &mbid).await
+                    catalog.cacheable(rows, hold, &mbid).await
                 })
                 .await
             }
@@ -192,8 +199,15 @@ impl Catalog {
                 self.cached(flights, key, move || async move {
                     // Top albums match Last.fm titles against the artist's
                     // (cached) discography to find release groups.
+                    let mut hold = CacheHold::default();
                     let groups = match section {
-                        Section::TopAlbums => catalog.release_groups(&mbid).await.ok(),
+                        Section::TopAlbums => match catalog.release_groups(&mbid).await {
+                            Ok(groups) => Some(groups),
+                            Err(error) => {
+                                note_catalog_failure(&mut hold, &error);
+                                None
+                            }
+                        },
                         _ => None,
                     };
                     let rows = lastfm_rows(
@@ -203,7 +217,7 @@ impl Catalog {
                         groups.as_ref(),
                     )
                     .await;
-                    let (value, ttl) = catalog.cacheable(rows, &mbid).await?;
+                    let (value, ttl) = catalog.cacheable(rows, hold, &mbid).await?;
                     // Rows matched against a missing or partial discography
                     // are kept only briefly, so links fill in once it lands.
                     let partial = matches!(section, Section::TopAlbums)
@@ -228,10 +242,12 @@ impl Catalog {
     }
 
     /// Wrap a section answer for the cache: failures are never cached,
-    /// empty answers briefly, real answers for the discovery lifetime.
+    /// empty answers briefly, real answers for the discovery lifetime,
+    /// and answers built past a failed read only as long as `hold` allows.
     async fn cacheable(
         &self,
         rows: Option<SectionRows>,
+        hold: CacheHold,
         mbid: &str,
     ) -> Result<(serde_json::Value, Option<Duration>), CatalogError> {
         let Some(rows) = rows else {
@@ -241,21 +257,20 @@ impl Catalog {
             ));
         };
         let in_library = !self.artist_flags(&[mbid.to_owned()]).await.is_empty();
-        let ttl = self.discovery_ttl(in_library, rows.is_empty());
+        let ttl = hold.cap(self.discovery_ttl(in_library, rows.is_empty()));
         let value = serde_json::to_value(&rows)
             .map_err(|error| CatalogError::Internal(format!("discovery encode: {error}")))?;
         Ok((value, Some(ttl)))
     }
 
     /// ListenBrainz rows for one section; `None` when ListenBrainz failed.
+    /// A secondary read that failed is noted in `hold`.
     async fn listenbrainz_rows(
         &self,
         client: &super::upstream::CatalogListenBrainz,
         creds: &listenbrainz::ListenBrainzCredentials,
-        mbid: &str,
-        count: u32,
-        section: Section,
-        priority: RequestPriority,
+        (mbid, count, section, priority): (&str, u32, Section, RequestPriority),
+        hold: &mut CacheHold,
     ) -> Option<SectionRows> {
         let count = count as usize;
         match section {
@@ -291,7 +306,10 @@ impl Catalog {
                 let groups = client
                     .recording_release_groups(&ids, creds, priority)
                     .await
-                    .unwrap_or_default();
+                    .unwrap_or_else(|error| {
+                        hold.provider(&error);
+                        HashMap::new()
+                    });
                 Some(SectionRows {
                     songs: recordings
                         .into_iter()
@@ -321,10 +339,18 @@ impl Catalog {
                     Ok(groups) if !groups.is_empty() => groups,
                     // No popularity rows, or the popularity read failed: v2
                     // rebuilt the list from the top recordings instead.
-                    _ => {
+                    other => {
+                        if let Err(error) = &other {
+                            hold.provider(error);
+                        }
                         return Some(SectionRows {
-                            albums: albums_from_recordings(client, creds, mbid, count, priority)
-                                .await?,
+                            albums: albums_from_recordings(
+                                client,
+                                creds,
+                                (mbid, count, priority),
+                                hold,
+                            )
+                            .await?,
                             ..SectionRows::default()
                         });
                     }
@@ -559,8 +585,9 @@ impl Catalog {
                     .map(|artist| (artist.artist_mbid, artist.artist_name))
                     .collect();
                 let mut albums = Vec::new();
+                let mut hold = CacheHold::default();
                 for (similar_mbid, similar_name) in &similar {
-                    let Ok(groups) = client
+                    let groups = match client
                         .artist_top_release_groups(
                             similar_mbid,
                             ALBUMS_PER_SIMILAR_ARTIST,
@@ -568,8 +595,12 @@ impl Catalog {
                             priority,
                         )
                         .await
-                    else {
-                        continue;
+                    {
+                        Ok(groups) => groups,
+                        Err(error) => {
+                            hold.provider(&error);
+                            continue;
+                        }
                     };
                     for group in groups {
                         if group.release_group_mbid.eq_ignore_ascii_case(&lb_album) {
@@ -595,7 +626,7 @@ impl Catalog {
                     }
                 }
                 albums.truncate(count as usize);
-                let ttl = catalog.discovery_ttl(false, albums.is_empty());
+                let ttl = hold.cap(catalog.discovery_ttl(false, albums.is_empty()));
                 let value = serde_json::to_value(SimilarAlbumRows { albums, similar }).map_err(
                     |error| CatalogError::Internal(format!("discovery encode: {error}")),
                 )?;
@@ -642,6 +673,7 @@ impl Catalog {
                 let mut albums: Vec<DiscoveryAlbum> = Vec::new();
                 let mut seen: HashSet<String> = HashSet::from([album.clone()]);
                 let mut complete = true;
+                let mut hold = CacheHold::default();
                 let deadline = tokio::time::Instant::now() + LASTFM_RESOLVE_BUDGET;
                 'artists: for (artist_mbid, artist_name) in &similar {
                     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -658,7 +690,8 @@ impl Catalog {
                     .await
                     {
                         Ok(Ok(top)) => top,
-                        Ok(Err(_)) => {
+                        Ok(Err(error)) => {
+                            hold.provider(&error);
                             complete = false;
                             continue;
                         }
@@ -682,8 +715,13 @@ impl Catalog {
                         )
                         .await
                         {
-                            Ok(Some(group)) => group,
-                            Ok(None) => continue,
+                            Ok(Ok(Some(group))) => group,
+                            Ok(Ok(None)) => continue,
+                            Ok(Err(error)) => {
+                                note_catalog_failure(&mut hold, &error);
+                                complete = false;
+                                continue;
+                            }
                             Err(_) => {
                                 complete = false;
                                 break 'artists;
@@ -711,11 +749,11 @@ impl Catalog {
                 if !complete {
                     record_current("lastfm", IntegrationStatus::Degraded, false);
                 }
-                let ttl = if complete {
+                let ttl = hold.cap(if complete {
                     catalog.discovery_ttl(false, albums.is_empty())
                 } else {
                     PARTIAL_TTL
-                };
+                });
                 let value = serde_json::to_value(&albums).map_err(|error| {
                     CatalogError::Internal(format!("discovery encode: {error}"))
                 })?;
@@ -729,8 +767,11 @@ impl Catalog {
     }
 
     /// The release group of one release, cached a week (misses ten
-    /// minutes). `None` when MusicBrainz has no such release or failed.
-    pub(super) async fn release_to_group(&self, release: &str) -> Option<String> {
+    /// minutes). `None` when MusicBrainz has no such release.
+    pub(super) async fn release_to_group(
+        &self,
+        release: &str,
+    ) -> Result<Option<String>, CatalogError> {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
         let key = format!(
             "mb:release_to_rg:{namespace}:{}",
@@ -756,10 +797,10 @@ impl Catalog {
             })
             .await;
         match found {
-            Ok(value) => serde_json::from_value(value).ok().flatten(),
+            Ok(value) => Ok(serde_json::from_value(value).ok().flatten()),
             Err(error) => {
                 record_mb_down(&error);
-                None
+                Err(error)
             }
         }
     }
@@ -895,13 +936,13 @@ async fn lastfm_rows(
 /// Rebuild an artist's top albums from their most played recordings (v2
 /// `_get_top_albums_from_recordings_fallback`): listens add up per release
 /// group (or per release title when the group is unknown), most played
-/// first. `None` when ListenBrainz failed.
+/// first. `None` when ListenBrainz failed; a failed release group lookup
+/// is noted in `hold`.
 async fn albums_from_recordings(
     client: &super::upstream::CatalogListenBrainz,
     creds: &listenbrainz::ListenBrainzCredentials,
-    mbid: &str,
-    count: usize,
-    priority: RequestPriority,
+    (mbid, count, priority): (&str, usize, RequestPriority),
+    hold: &mut CacheHold,
 ) -> Option<Vec<TopAlbum>> {
     let recordings = client
         .artist_top_recordings(mbid, (count * 8).max(80), creds, priority)
@@ -914,7 +955,10 @@ async fn albums_from_recordings(
     let groups = client
         .recording_release_groups(&ids, creds, priority)
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|error| {
+            hold.provider(&error);
+            HashMap::new()
+        });
     let mut order: Vec<String> = Vec::new();
     let mut totals: HashMap<String, TopAlbum> = HashMap::new();
     for recording in recordings {
@@ -954,6 +998,17 @@ async fn albums_from_recordings(
     albums.sort_by(|left, right| right.listen_count.cmp(&left.listen_count));
     albums.truncate(count);
     Some(albums)
+}
+
+/// Note a catalog read an answer was built past: a MusicBrainz outage
+/// holds for its wait, a local failure is not cached, and absence or a
+/// rejected id is a real answer.
+fn note_catalog_failure(hold: &mut CacheHold, error: &CatalogError) {
+    match error {
+        CatalogError::Unavailable(error) => hold.provider(error),
+        CatalogError::Internal(_) => hold.local(),
+        CatalogError::Invalid(_) | CatalogError::NotFound | CatalogError::Missing(_) => {}
+    }
 }
 
 /// Collapse a title for matching: casefolded, whitespace collapsed.
