@@ -1153,7 +1153,7 @@ enum Exception {
     StatusOnly,
     /// Read as bytes: the body is not JSON.
     Raw,
-    /// An admitted caller gets exactly 502: the provider is down.
+    /// An admitted caller gets exactly 503: the provider is down.
     ProviderDown,
     /// An admitted caller gets exactly 503 with the internal error code.
     HonestUnavailable,
@@ -1435,8 +1435,8 @@ async fn credentialed_pass(matrix: &MatrixApp, operations: &[Operation], caller:
                 match exception {
                     Some(Exception::ProviderDown) => assert_eq!(
                         status,
-                        StatusCode::BAD_GATEWAY,
-                        "{who} {method} {uri} must 502 while charts are down: {body}"
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "{who} {method} {uri} must 503 while charts are down: {body}"
                     ),
                     Some(Exception::HonestUnavailable) => {
                         assert_eq!(
