@@ -40,12 +40,18 @@ vi.mock('$lib/api/client', () => {
 	class ApiError extends Error {
 		constructor(
 			readonly status: number,
-			message: string
+			message: string,
+			readonly code = ''
 		) {
 			super(message);
 		}
 	}
-	return { ApiError, api: { global: { v3: { GET: state.apiGet } } } };
+	class TransportError extends ApiError {
+		constructor(code: string) {
+			super(0, 'The request failed', code);
+		}
+	}
+	return { ApiError, TransportError, api: { global: { v3: { GET: state.apiGet } } } };
 });
 vi.mock('$lib/constants', () => ({
 	AUTH_FREE_PATHS: ['/login', '/setup']
@@ -106,7 +112,7 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 	}
 }));
 
-import { ApiError } from '$lib/api/client';
+import { ApiError, TransportError } from '$lib/api/client';
 import { load } from './+layout';
 
 const user: TestUser = {
@@ -152,15 +158,15 @@ describe('+layout load session bootstrap', () => {
 		state.setupRequired = false;
 	});
 
-	it('keeps the session intact and reports a busy server when /api/v3/me times out', async () => {
+	it('keeps the session intact and reports an unreachable server when /api/v3/me times out', async () => {
 		state.user = user;
 		state.apiGet
 			.mockResolvedValueOnce({ setup_required: false })
-			.mockRejectedValueOnce(new DOMException('Timed out', 'TimeoutError'));
+			.mockRejectedValueOnce(new TransportError('TRANSPORT_TIMEOUT', 'GET', '/api/v3/me'));
 
 		await expect(loadPage()).rejects.toMatchObject({
 			status: 503,
-			body: { message: 'The server is busy. Your session is safe - try again shortly.' }
+			body: { kind: 'unreachable' }
 		});
 		expect(state.clear).not.toHaveBeenCalled();
 		expect(state.user).toBe(user);

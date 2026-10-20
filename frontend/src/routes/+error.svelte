@@ -6,9 +6,15 @@
 
 	const status = $derived(page.status);
 	const isNotFound = $derived(status === 404);
-	const isBusy = $derived(status === 503);
+	const kind = $derived(page.error?.kind);
 	const heading = $derived(
-		isNotFound ? 'Off the record' : isBusy ? 'Server busy' : 'Something broke'
+		isNotFound
+			? 'Off the record'
+			: kind === 'busy'
+				? 'Server busy'
+				: kind === 'unreachable'
+					? "Can't reach the server"
+					: 'Something broke'
 	);
 	const blurb = $derived(
 		page.error?.message ??
