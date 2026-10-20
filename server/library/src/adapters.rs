@@ -31,12 +31,12 @@ use super::publish::PublishError;
 use super::publish::planner::SpaceProbe;
 use super::scan::seams::{ScannedTags, TagReadError, TagReader};
 use droppedneedle_providers::ProviderError;
+use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::discogs;
 use droppedneedle_providers::musicbrainz::models::{
     ArtistCreditName, LabelInfo, Medium as MbMedium, ReleaseGroupRef,
 };
 use droppedneedle_providers::musicbrainz::{Criticality, MusicBrainzView};
-use droppedneedle_providers::slots::RequestPriority;
 
 // ---------------------------------------------------------------------------
 // Scan -> tags: read-only tag access over the tags module.

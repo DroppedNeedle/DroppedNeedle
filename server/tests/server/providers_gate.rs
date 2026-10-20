@@ -48,10 +48,6 @@ const RULES: &[Rule] = &[
                  fallback for an executor whose row is missing",
             ),
             (
-                "providers/src/slots.rs",
-                "the admin view's lane numbers, until SlotManager is removed",
-            ),
-            (
                 "kernel/src/runtime_config/sections/musicbrainz.rs",
                 "the MusicBrainz rates Settings offers and checks; the kernel sits below the \
                  providers crate and cannot read its table",

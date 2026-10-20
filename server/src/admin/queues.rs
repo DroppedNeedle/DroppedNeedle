@@ -4,9 +4,8 @@
 //! read through [`droppedneedle_kernel::db::list_loops`], the depth of each
 //! job kind on the jobs table, and the latest checkpoint pass.
 //!
-//! Provider stats port v2's provider-counters snapshot onto the v3 pacing
-//! primitives: per-provider limiter posture (verified row plus live bucket)
-//! and slot-lane occupancy.
+//! Provider stats show each rate row's limiter (its table row plus the
+//! live bucket) and the outbound calls it has sent since start.
 
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
@@ -15,8 +14,8 @@ use super::{
     AdminDb,
     error::AdminError,
     models::{
-        CheckpointView, JobView, ProviderLimiterView, ProviderStatsResponse, QueueDepthView,
-        QueueStatsResponse, SlotView,
+        CheckpointView, JobView, ProviderCallsView, ProviderLimiterView, ProviderStatsResponse,
+        QueueDepthView, QueueStatsResponse,
     },
 };
 use droppedneedle_kernel::db::{CheckpointOutcome, CheckpointService, list_loops};
@@ -76,34 +75,30 @@ fn checkpoint_view(pass: CheckpointOutcome) -> CheckpointView {
     }
 }
 
-/// Limiter posture per provider plus slot-lane occupancy.
+/// Limiter posture per rate row plus the calls each row has sent.
 pub fn provider_stats(providers: &Arc<Providers>) -> ProviderStatsResponse {
-    let mut rows: Vec<ProviderLimiterView> = providers
-        .limiters
-        .sources()
-        .into_iter()
-        .filter_map(|source| {
-            providers.limiter(source).map(|limiter| {
-                let policy = limiter.policy();
-                ProviderLimiterView {
-                    source: source.to_owned(),
-                    per_second: policy.per_second,
-                    burst: policy.burst,
-                    remaining: limiter.remaining(),
-                }
-            })
-        })
-        .collect();
-    rows.sort_by(|left, right| left.source.cmp(&right.source));
-    let slots = providers.slots.stats();
-    ProviderStatsResponse {
-        providers: rows,
-        slots: SlotView {
-            user_slots_available: slots.user_slots_available,
-            image_slots_available: slots.image_slots_available,
-            background_slots_available: slots.background_slots_available,
-            user_active: slots.user_active,
-            background_waiters: slots.background_waiters,
-        },
+    let mut limiters = Vec::new();
+    let mut calls = Vec::new();
+    for source in providers.limiters.sources() {
+        let Some(limiter) = providers.limiter(source) else {
+            continue;
+        };
+        let policy = limiter.policy();
+        limiters.push(ProviderLimiterView {
+            source: source.to_owned(),
+            per_second: policy.per_second,
+            burst: policy.burst,
+            remaining: limiter.remaining(),
+        });
+        calls.extend(limiter.calls().into_iter().map(|count| ProviderCallsView {
+            source: source.to_owned(),
+            priority: count.priority,
+            outcome: count.outcome,
+            calls: count.calls,
+            calls_last_minute: count.last_minute,
+            body_bytes: count.body_bytes,
+        }));
     }
+    limiters.sort_by(|left, right| left.source.cmp(&right.source));
+    ProviderStatsResponse { limiters, calls }
 }

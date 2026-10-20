@@ -29,7 +29,7 @@ export const getQueueStatsQuery = (getEnabled: Getter<boolean> = () => true) =>
 		queryFn: ({ signal }) => api.global.v3.GET(DIAGNOSTICS_ENDPOINTS.queueStats(), { signal })
 	}));
 
-/** Provider rate limiters plus the outbound request slots. Same polling posture. */
+/** Rate limiters and outbound call counts. Same polling posture. */
 export const getProviderStatsQuery = (getEnabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		queryKey: DiagnosticsQueryKeyFactory.providerStats(),

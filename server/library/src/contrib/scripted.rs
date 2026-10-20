@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use droppedneedle_providers::slots::RequestPriority;
+use droppedneedle_providers::RequestPriority;
 use futures_util::future::BoxFuture;
 
 use super::error::ContribError;

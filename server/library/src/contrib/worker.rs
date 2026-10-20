@@ -22,7 +22,7 @@ use droppedneedle_kernel::jobs::queue::{JobCtx, JobError, JobHandler, JobKind, K
 use droppedneedle_kernel::jobs::{
     AlreadyRunning, BoxFuture, Next, Schedule, Supervisor, Tick, TickCtx, TickResult,
 };
-use droppedneedle_providers::slots::RequestPriority;
+use droppedneedle_providers::RequestPriority;
 use rusqlite::Transaction;
 
 use super::error::ContribError;

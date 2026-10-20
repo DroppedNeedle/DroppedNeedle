@@ -940,7 +940,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Provider limiter posture plus slot lanes.",
+        "summary": "Provider limiter posture plus the outbound calls counted since start.",
         "operationId": "provider_stats",
         "responses": {
           "200": {
@@ -38790,6 +38790,16 @@
           }
         }
       },
+      "CallOutcome": {
+        "type": "string",
+        "description": "What one call came back with.",
+        "enum": [
+          "ok",
+          "not_found",
+          "rate_limited",
+          "failed"
+        ]
+      },
       "CandidateFile": {
         "type": "object",
         "description": "One file a candidate would fetch.",
@@ -54975,6 +54985,50 @@
         ],
         "description": "Own profile. Identity only; connected services and library stats belong\nto the connections and library routes."
       },
+      "ProviderCallsView": {
+        "type": "object",
+        "description": "The calls one rate row sent at one priority that ended one way, since\nthe server started.",
+        "required": [
+          "source",
+          "priority",
+          "outcome",
+          "calls",
+          "calls_last_minute",
+          "body_bytes"
+        ],
+        "properties": {
+          "body_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Answer body bytes read, headers excluded.",
+            "minimum": 0
+          },
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Calls sent, retries included.",
+            "minimum": 0
+          },
+          "calls_last_minute": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Calls sent in the last minute.",
+            "minimum": 0
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/CallOutcome",
+            "description": "What came back."
+          },
+          "priority": {
+            "$ref": "#/components/schemas/RequestPriority",
+            "description": "How urgent the callers were."
+          },
+          "source": {
+            "type": "string",
+            "description": "Rate row name, as in the limiter rows, e.g. `musicbrainz`."
+          }
+        }
+      },
       "ProviderChoiceBody": {
         "type": "string",
         "description": "What the surviving artist keeps when the merged artists name different\nMusicBrainz artists.",
@@ -55060,22 +55114,25 @@
       },
       "ProviderStatsResponse": {
         "type": "object",
-        "description": "Provider limiter and slot snapshot.",
+        "description": "Provider limiters and the outbound calls counted since start.",
         "required": [
-          "providers",
-          "slots"
+          "limiters",
+          "calls"
         ],
         "properties": {
-          "providers": {
+          "calls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderCallsView"
+            },
+            "description": "Call counts per rate row, priority and outcome, in row order."
+          },
+          "limiters": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ProviderLimiterView"
             },
-            "description": "Limiter posture per provider."
-          },
-          "slots": {
-            "$ref": "#/components/schemas/SlotView",
-            "description": "Slot-lane posture."
+            "description": "Limiter posture per rate row, in name order."
           }
         }
       },
@@ -58164,6 +58221,17 @@
         "enum": [
           "album",
           "track"
+        ]
+      },
+      "RequestPriority": {
+        "type": "string",
+        "description": "How urgent a provider call is. Lower wins ties in the rate limiter.\nThere is no default: every caller names its priority.",
+        "enum": [
+          "user_initiated",
+          "image_fetch",
+          "prefetch_visible",
+          "background_sync",
+          "opportunistic"
         ]
       },
       "RequestStatusMessage": {
@@ -61381,43 +61449,6 @@
           },
           "reason": {
             "$ref": "#/components/schemas/ReasonView"
-          }
-        }
-      },
-      "SlotView": {
-        "type": "object",
-        "description": "Slot-lane posture.",
-        "required": [
-          "user_slots_available",
-          "image_slots_available",
-          "background_slots_available",
-          "user_active",
-          "background_waiters"
-        ],
-        "properties": {
-          "background_slots_available": {
-            "type": "integer",
-            "description": "Free background-lane permits.",
-            "minimum": 0
-          },
-          "background_waiters": {
-            "type": "integer",
-            "description": "Background callers currently waiting for quiet.",
-            "minimum": 0
-          },
-          "image_slots_available": {
-            "type": "integer",
-            "description": "Free image-lane permits.",
-            "minimum": 0
-          },
-          "user_active": {
-            "type": "boolean",
-            "description": "Whether user activity is inside the quiet window."
-          },
-          "user_slots_available": {
-            "type": "integer",
-            "description": "Free user-lane permits.",
-            "minimum": 0
           }
         }
       },

@@ -147,7 +147,7 @@ pub async fn queue_stats(
     ))
 }
 
-/// Provider limiter posture plus slot lanes.
+/// Provider limiter posture plus the outbound calls counted since start.
 #[utoipa::path(
     get,
     tag = "admin",

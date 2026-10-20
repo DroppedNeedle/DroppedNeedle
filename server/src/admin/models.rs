@@ -1,6 +1,7 @@
 //! Admin-UX wire shapes. Clean-slate v3; no v2 byte compatibility is kept.
 
 use droppedneedle_kernel::db::{CheckpointMode, JobState};
+use droppedneedle_providers::{CallOutcome, RequestPriority};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -194,28 +195,31 @@ pub struct ProviderLimiterView {
     pub remaining: u32,
 }
 
-/// Slot-lane posture.
+/// The calls one rate row sent at one priority that ended one way, since
+/// the server started.
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct SlotView {
-    /// Free user-lane permits.
-    pub user_slots_available: usize,
-    /// Free image-lane permits.
-    pub image_slots_available: usize,
-    /// Free background-lane permits.
-    pub background_slots_available: usize,
-    /// Whether user activity is inside the quiet window.
-    pub user_active: bool,
-    /// Background callers currently waiting for quiet.
-    pub background_waiters: usize,
+pub struct ProviderCallsView {
+    /// Rate row name, as in the limiter rows, e.g. `musicbrainz`.
+    pub source: String,
+    /// How urgent the callers were.
+    pub priority: RequestPriority,
+    /// What came back.
+    pub outcome: CallOutcome,
+    /// Calls sent, retries included.
+    pub calls: u64,
+    /// Calls sent in the last minute.
+    pub calls_last_minute: u64,
+    /// Answer body bytes read, headers excluded.
+    pub body_bytes: u64,
 }
 
-/// Provider limiter and slot snapshot.
+/// Provider limiters and the outbound calls counted since start.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ProviderStatsResponse {
-    /// Limiter posture per provider.
-    pub providers: Vec<ProviderLimiterView>,
-    /// Slot-lane posture.
-    pub slots: SlotView,
+    /// Limiter posture per rate row, in name order.
+    pub limiters: Vec<ProviderLimiterView>,
+    /// Call counts per rate row, priority and outcome, in row order.
+    pub calls: Vec<ProviderCallsView>,
 }
 
 /// Per-user quota overrides. `None` fields inherit the global download-policy

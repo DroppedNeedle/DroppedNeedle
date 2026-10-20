@@ -329,7 +329,7 @@ Where things live in the UI:
 | Plugins | Settings > Plugins |
 | Library images, cache counts and clearing | Settings > Cache |
 | Wrapped API | Settings > Wrapped API |
-| Outbound request slots and background jobs | Settings > Diagnostics |
+| Outbound provider calls, rate limits and background jobs | Settings > Diagnostics |
 | Discover queue and top picks tuning | Settings > Advanced |
 
 ---

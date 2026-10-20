@@ -10,8 +10,9 @@
 //! A limiter also carries what its provider said about load: a cooldown
 //! (`Retry-After`, a run of failures) during which nothing is granted, the
 //! run of failed calls behind that cooldown, and, for rows that document a
-//! concurrency limit, how many requests are in flight. The rates
-//! themselves live only in the table.
+//! concurrency limit, how many requests are in flight. It also counts the
+//! calls sent through it ([`CallTally`]). The rates themselves live only
+//! in the table.
 
 use std::{
     cmp::Ordering,
@@ -23,10 +24,12 @@ use std::{
     time::Duration,
 };
 
+use serde::Serialize;
 use thiserror::Error;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
+use crate::calls::{CallCount, CallOutcome, CallTally};
 use crate::rates::{RATES, Rate, RateRow};
 
 /// Floating-point slack for token comparisons.
@@ -36,10 +39,10 @@ const EPSILON: f64 = 1e-9;
 /// looks again. A finished request wakes it sooner.
 const IN_FLIGHT_RECHECK: Duration = Duration::from_secs(1);
 
-/// Which lane a provider call runs in. Lower wins ties in the rate limiter;
-/// the slot manager maps each level to its lane. There is no default: every
-/// caller names its priority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// How urgent a provider call is. Lower wins ties in the rate limiter.
+/// There is no default: every caller names its priority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum RequestPriority {
     /// A request the user is waiting on right now.
     UserInitiated = 0,
@@ -313,6 +316,7 @@ impl Drop for InFlight<'_> {
 #[derive(Debug)]
 pub struct RateLimiter {
     state: Mutex<BucketState>,
+    calls: CallTally,
 }
 
 impl RateLimiter {
@@ -348,6 +352,7 @@ impl RateLimiter {
                 waiters: BinaryHeap::new(),
                 sequence: 0,
             }),
+            calls: CallTally::new(),
         }
     }
 
@@ -600,6 +605,17 @@ impl RateLimiter {
     /// A clean answer ends the run of 429s that named no wait.
     pub fn clear_headerless_limits(&self) {
         self.lock().headerless_streak = 0;
+    }
+
+    /// Count one call sent through this row.
+    pub fn record_call(&self, priority: RequestPriority, outcome: CallOutcome, body_bytes: u64) {
+        self.calls.record(priority, outcome, body_bytes);
+    }
+
+    /// The calls sent through this row since the server started.
+    #[must_use]
+    pub fn calls(&self) -> Vec<CallCount> {
+        self.calls.counts()
     }
 }
 

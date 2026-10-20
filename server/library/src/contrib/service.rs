@@ -12,7 +12,7 @@ use std::sync::Arc;
 use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_providers::ProviderError;
-use droppedneedle_providers::slots::RequestPriority;
+use droppedneedle_providers::RequestPriority;
 use sha2::{Digest as _, Sha256};
 
 use super::error::ContribError;

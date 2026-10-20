@@ -4,8 +4,9 @@
 //! request of that row: it paces through the row's limiter at the
 //! caller's priority, sends with a deadline, reads the body under a cap,
 //! classifies the answer, retries what may be retried inside a budget,
-//! turns `Retry-After` into a cooldown on the limiter, and records the
-//! outcome once for service health and the request's degradation notes.
+//! turns `Retry-After` into a cooldown on the limiter, counts every
+//! request it sends on the row, and records the outcome once for service
+//! health and the request's degradation notes.
 //! What differs per provider is a [`Spec`] beside its client.
 //!
 //! Transport errors carry only a [`TransportKind`]: the URL, which can
@@ -26,6 +27,7 @@ use tokio::time::Instant;
 
 pub use reqwest::Url;
 
+use crate::calls::CallOutcome;
 use crate::degradation::{IntegrationStatus, record_current};
 use crate::error::{PayloadKind, ProviderError, TransportKind, retry_delay_from_headers};
 use crate::health::{self, ServiceHealth};
@@ -636,7 +638,7 @@ impl Executor {
                 }
             };
             let sent = *first_sent.get_or_insert_with(Instant::now);
-            let outcome = self.attempt(&request).await;
+            let outcome = self.attempt(&request, priority).await;
             // The slot and the token are never held through a sleep.
             drop(slot);
             let error = match outcome {
@@ -683,17 +685,31 @@ impl Executor {
         declined
     }
 
-    /// One attempt, redirects included, inside the spec's deadline.
-    async fn attempt(&self, request: &Request) -> Result<Reply, ProviderError> {
-        tokio::time::timeout(self.spec.timeout, self.exchange(request))
-            .await
-            .unwrap_or(Err(ProviderError::Transport {
-                provider: self.spec.source,
-                kind: TransportKind::Timeout,
-            }))
+    /// One attempt, redirects included, inside the spec's deadline, counted
+    /// on the row with the body bytes it read.
+    async fn attempt(
+        &self,
+        request: &Request,
+        priority: RequestPriority,
+    ) -> Result<Reply, ProviderError> {
+        let mut body_bytes = 0;
+        let outcome =
+            tokio::time::timeout(self.spec.timeout, self.exchange(request, &mut body_bytes))
+                .await
+                .unwrap_or(Err(ProviderError::Transport {
+                    provider: self.spec.source,
+                    kind: TransportKind::Timeout,
+                }));
+        self.limiter
+            .record_call(priority, CallOutcome::of(&outcome), body_bytes);
+        outcome
     }
 
-    async fn exchange(&self, request: &Request) -> Result<Reply, ProviderError> {
+    async fn exchange(
+        &self,
+        request: &Request,
+        body_bytes: &mut u64,
+    ) -> Result<Reply, ProviderError> {
         let provider = self.spec.source;
         let max_body = request
             .max_body
@@ -718,6 +734,7 @@ impl Executor {
                     message: format!("larger than {max_body} bytes"),
                 },
             })?;
+            *body_bytes = body_bytes.saturating_add(raw.body.len() as u64);
             let reply = Reply {
                 provider,
                 status: raw.status,

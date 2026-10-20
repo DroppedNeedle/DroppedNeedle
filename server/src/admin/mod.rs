@@ -31,8 +31,9 @@ pub use error::AdminError;
 pub use models::{
     BackupListResponse, BackupRunResponse, BackupView, CacheClearBody, CacheClearResponse,
     CacheStatsResponse, CacheSyncCancelResponse, CheckpointView, JobView, PrecacheRunResponse,
-    ProviderLimiterView, ProviderStatsResponse, QueueDepthView, QueueStatsResponse,
-    QuotaOverrideBody, QuotaOverrideView, QuotaResponse, RestoreCheck, RestoreReport, SlotView,
+    ProviderCallsView, ProviderLimiterView, ProviderStatsResponse, QueueDepthView,
+    QueueStatsResponse, QuotaOverrideBody, QuotaOverrideView, QuotaResponse, RestoreCheck,
+    RestoreReport,
 };
 pub use system::{ServiceHealthItem, SystemHealthResponse};
 

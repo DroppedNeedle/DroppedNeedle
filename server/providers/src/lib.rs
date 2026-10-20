@@ -25,7 +25,8 @@
 //! - [`cache`]: provider answers kept in the cache file, keyed by source,
 //!   behind one fetch helper.
 //! - [`singleflight`]: one fetch for many identical callers.
-//! - [`slots`]: the user, image and background lanes the admin view shows.
+//! - [`calls`]: the outbound calls each row has sent since start, by
+//!   priority and outcome, for the admin view.
 //!
 //! Each client is reached by its module path
 //! (`providers::musicbrainz::MusicBrainzClient`). The names are not
@@ -37,6 +38,7 @@
 pub mod acoustid;
 pub mod audiodb;
 pub mod cache;
+pub mod calls;
 mod client;
 pub mod coverart;
 pub mod degradation;
@@ -58,7 +60,6 @@ pub mod preview;
 pub mod rates;
 pub mod singleflight;
 pub mod skiddle;
-pub mod slots;
 pub mod ticketmaster;
 pub mod wikidata;
 pub mod youtube;
@@ -70,12 +71,12 @@ use droppedneedle_kernel::db::cache::CacheDb;
 use droppedneedle_kernel::platform::Platform;
 
 pub use cache::{CacheKey, Fetched, Policy, ProviderCacheStore, Source};
+pub use calls::{CallCount, CallOutcome};
 pub use degradation::{DegradationContext, IntegrationStatus, record_current, scoped};
 pub use error::{MAX_RETRY_AFTER, PayloadKind, ProviderError, TransportKind};
 pub use executor::{Executor, ReqwestWire, Wire};
 pub use limiter::{LimiterSet, OverCapacity, RateLimiter, RatePolicy, RequestPriority};
 pub use singleflight::Singleflight;
-pub use slots::{SlotError, SlotManager, SlotStats, USER_QUIET_WINDOW};
 
 /// Where the providers on the executor live. Filled from the server's one
 /// list of outside addresses; tests point it at loopback or scripted
@@ -153,15 +154,13 @@ impl ProviderEndpoints {
 }
 
 /// The shared provider dependencies, built once at boot and shared by
-/// every area: the limiters of the rate table, the slot lanes, the
-/// provider answer cache, the service health registry, and the clients that send through
-/// the executor.
+/// every area: the limiters of the rate table, the provider answer cache,
+/// the service health registry, and the clients that send through the
+/// executor.
 #[derive(Debug)]
 pub struct Providers {
-    /// One token bucket per rate table row.
+    /// One token bucket per rate table row, each counting its calls.
     pub limiters: LimiterSet,
-    /// User / image / background slot lanes.
-    pub slots: SlotManager,
     /// Provider answers kept in the cache file.
     pub cache: ProviderCacheStore,
     /// Which services are degraded right now, for `GET /system/health`.
@@ -350,7 +349,6 @@ impl Providers {
         );
         Self {
             limiters,
-            slots: SlotManager::new(),
             cache,
             health,
             musicbrainz,

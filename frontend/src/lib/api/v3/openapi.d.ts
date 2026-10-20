@@ -461,7 +461,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Provider limiter posture plus slot lanes. */
+        /** Provider limiter posture plus the outbound calls counted since start. */
         get: operations["provider_stats"];
         put?: never;
         post?: never;
@@ -11537,6 +11537,11 @@ export interface components {
              */
             total_items: number;
         };
+        /**
+         * @description What one call came back with.
+         * @enum {string}
+         */
+        CallOutcome: "ok" | "not_found" | "rate_limited" | "failed";
         /** @description One file a candidate would fetch. */
         CandidateFile: {
             /**
@@ -18767,6 +18772,33 @@ export interface components {
          */
         ProfileResponse: components["schemas"]["UserResponse"];
         /**
+         * @description The calls one rate row sent at one priority that ended one way, since
+         *     the server started.
+         */
+        ProviderCallsView: {
+            /**
+             * Format: int64
+             * @description Answer body bytes read, headers excluded.
+             */
+            body_bytes: number;
+            /**
+             * Format: int64
+             * @description Calls sent, retries included.
+             */
+            calls: number;
+            /**
+             * Format: int64
+             * @description Calls sent in the last minute.
+             */
+            calls_last_minute: number;
+            /** @description What came back. */
+            outcome: components["schemas"]["CallOutcome"];
+            /** @description How urgent the callers were. */
+            priority: components["schemas"]["RequestPriority"];
+            /** @description Rate row name, as in the limiter rows, e.g. `musicbrainz`. */
+            source: string;
+        };
+        /**
          * @description What the surviving artist keeps when the merged artists name different
          *     MusicBrainz artists.
          * @enum {string}
@@ -18812,12 +18844,12 @@ export interface components {
             /** @description The provider. */
             source: components["schemas"]["ProviderDataSource"];
         };
-        /** @description Provider limiter and slot snapshot. */
+        /** @description Provider limiters and the outbound calls counted since start. */
         ProviderStatsResponse: {
-            /** @description Limiter posture per provider. */
-            providers: components["schemas"]["ProviderLimiterView"][];
-            /** @description Slot-lane posture. */
-            slots: components["schemas"]["SlotView"];
+            /** @description Call counts per rate row, priority and outcome, in row order. */
+            calls: components["schemas"]["ProviderCallsView"][];
+            /** @description Limiter posture per rate row, in name order. */
+            limiters: components["schemas"]["ProviderLimiterView"][];
         };
         /** @description Single Prowlarr connection (Prowlarr multiplexes its own indexers). */
         ProwlarrConnection: {
@@ -20145,6 +20177,12 @@ export interface components {
          * @enum {string}
          */
         RequestKind: "album" | "track";
+        /**
+         * @description How urgent a provider call is. Lower wins ties in the rate limiter.
+         *     There is no default: every caller names its priority.
+         * @enum {string}
+         */
+        RequestPriority: "user_initiated" | "image_fetch" | "prefetch_visible" | "background_sync" | "opportunistic";
         /**
          * @description One grouped status detail behind the request card's expander. Intake
          *     has no producer for these yet (v2 never sent them
@@ -21550,19 +21588,6 @@ export interface components {
             /** Format: int32 */
             count: number;
             reason: components["schemas"]["ReasonView"];
-        };
-        /** @description Slot-lane posture. */
-        SlotView: {
-            /** @description Free background-lane permits. */
-            background_slots_available: number;
-            /** @description Background callers currently waiting for quiet. */
-            background_waiters: number;
-            /** @description Free image-lane permits. */
-            image_slots_available: number;
-            /** @description Whether user activity is inside the quiet window. */
-            user_active: boolean;
-            /** @description Free user-lane permits. */
-            user_slots_available: number;
         };
         /**
          * @description slskd download-client connection. Quality, timeouts and retries live in
