@@ -16,9 +16,10 @@ use futures_util::future::BoxFuture;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use super::spotify::{
-    ImportedTrack, PendingAuth, PlaylistIndex, PlaylistTrackSink, STATE_TTL_SECS,
-    SpotifyConnection, SpotifyConnectionStore, SpotifyStateStore, now_unix_secs,
+use super::spotify::{ImportedTrack, PlaylistIndex, PlaylistTrackSink};
+use super::spotify_client::now_unix_secs;
+use super::spotify_oauth::{
+    PendingAuth, STATE_TTL_SECS, SpotifyConnection, SpotifyConnectionStore, SpotifyStateStore,
 };
 use crate::db::AcquireDb;
 use droppedneedle_auth::times::{parse_iso, to_iso};

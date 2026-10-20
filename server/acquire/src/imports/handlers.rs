@@ -47,11 +47,11 @@ use super::models::{
     SpotifyAuthUrlResponse, SpotifyImportRequest, SpotifyImportResponse, SpotifyJobStatus,
     SpotifyPlaylistListResponse, SpotifyRedirectUri, SpotifySettings,
 };
-use super::spotify::{
-    AlbumMbidResolver, MAX_API_BODY_BYTES, PendingAuth, PlaylistIndex, PlaylistTrackSink,
-    SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyClient, SpotifyConnection,
-    SpotifyConnectionStore, SpotifyError, SpotifyImportService, SpotifySettingsStore,
-    SpotifyStateStore, now_unix_secs, redirect_uri,
+use super::spotify::{AlbumMbidResolver, PlaylistIndex, PlaylistTrackSink, SpotifyImportService};
+use super::spotify_client::{MAX_API_BODY_BYTES, SpotifyClient, SpotifyError, now_unix_secs};
+use super::spotify_oauth::{
+    PendingAuth, SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyConnection,
+    SpotifyConnectionStore, SpotifySettingsStore, SpotifyStateStore, redirect_uri,
 };
 
 /// Every dependency the imports routes need, injected by constructor.

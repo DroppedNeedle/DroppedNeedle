@@ -37,12 +37,13 @@ use super::imports::handlers::{ImportsDeps, imports_legacy_callback_router};
 use super::imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor};
 use super::imports::lidarr::LidarrClient;
 use super::imports::spotify::{
-    FixedMbidResolver, PlaylistIndex, PlaylistTrackSink, SpotifyClient, SpotifyImportService,
+    FixedMbidResolver, PlaylistIndex, PlaylistTrackSink, SpotifyImportService,
 };
 #[cfg(any(test, feature = "test-support"))]
-use super::imports::spotify::{
-    MemoryPlaylistIndex, MemorySpotifyConnections, MemorySpotifyStates, MemoryTrackSink,
-};
+use super::imports::spotify::{MemoryPlaylistIndex, MemoryTrackSink};
+use super::imports::spotify_client::SpotifyClient;
+#[cfg(any(test, feature = "test-support"))]
+use super::imports::spotify_oauth::{MemorySpotifyConnections, MemorySpotifyStates};
 use super::imports::spotify_store::{
     CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates,
 };
@@ -820,7 +821,7 @@ impl AcquireSetup {
                         announce_playlist_imported(&events, &job);
                     }
                     let result = result.map_err(|error| {
-                        if let super::imports::spotify::SpotifyError::Store(cause) = &error {
+                        if let super::imports::spotify_client::SpotifyError::Store(cause) = &error {
                             tracing::error!(%cause, "spotify import write failed");
                         }
                         error.user_message()
@@ -929,7 +930,7 @@ impl AcquireSetup {
             HealthProbes, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd, ScriptedSlskd,
         };
         use super::imports::lidarr::{MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings};
-        use super::imports::spotify::MemorySpotifySettings;
+        use super::imports::spotify_oauth::MemorySpotifySettings;
         use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 
         let stores = AcquireStores::over(db.clone());

@@ -33,7 +33,7 @@ use futures_util::future::BoxFuture;
 use super::db::now_epoch;
 use super::imports::lidarr::{ApprovalSink, FollowStore, LidarrSettingsStore};
 use super::imports::models::{LidarrConnectionSettings, SpotifySettings as ImportsSpotifySettings};
-use super::imports::spotify::SpotifySettingsStore;
+use super::imports::spotify_oauth::SpotifySettingsStore;
 use super::requests::bridges::FollowDecisionSink;
 use super::requests::sqlite::FollowApprovalStore;
 use droppedneedle_catalog::reads::collections::state::{

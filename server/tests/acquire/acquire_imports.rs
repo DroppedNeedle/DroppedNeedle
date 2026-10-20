@@ -31,13 +31,15 @@ use imports::lidarr::{
 };
 use imports::models::{LidarrConnectionSettings, SpotifySettings};
 use imports::spotify::{
-    FixedMbidResolver, ImportedTrack, MemoryPlaylistIndex, MemorySpotifyConnections,
-    MemorySpotifySettings, MemorySpotifyStates, MemoryTrackSink, PendingAuth, PlaylistIndex as _,
-    PlaylistTrackSink as _, SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyClient,
-    SpotifyConnectionStore, SpotifyImportService, SpotifyStateStore as _, is_allowed_cover_url,
-    redirect_uri,
+    FixedMbidResolver, ImportedTrack, MemoryPlaylistIndex, MemoryTrackSink, PlaylistIndex as _,
+    PlaylistTrackSink as _, SpotifyImportService,
 };
-use imports::spotify::{SpotifyConnection, TokenGrant};
+use imports::spotify_client::{SpotifyClient, TokenGrant, is_allowed_cover_url};
+use imports::spotify_oauth::{
+    MemorySpotifyConnections, MemorySpotifySettings, MemorySpotifyStates, PendingAuth,
+    SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyConnection, SpotifyConnectionStore,
+    SpotifyStateStore as _, redirect_uri,
+};
 use imports::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
