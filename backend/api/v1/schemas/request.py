@@ -27,6 +27,10 @@ class BatchAlbumItem(AppStruct):
     album_title: str | None = None
     year: int | None = None
     artist_mbid: str | None = None
+    # Optional edition (MusicBrainz release MBID) inside the release group named
+    # by ``musicbrainz_id``. Acquisition validates tracklist and durations
+    # against it, exactly as for a release alias the instance already knows.
+    release_mbid: str | None = None
 
 
 class BatchAlbumRequest(AppStruct):

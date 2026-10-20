@@ -354,6 +354,85 @@ async def test_request_batch_uses_one_durable_alias_lookup_for_the_maximum_batch
 
 
 @pytest.mark.asyncio
+async def test_request_batch_keeps_an_explicit_release_mbid_as_the_edition():
+    service, request_history, download_service = _make_service()
+    album_service = MagicMock()
+    album_service.resolve_album_identity = AsyncMock()
+    mbid_store = MagicMock()
+    mbid_store.get_mbid_resolution_map = AsyncMock(return_value={})
+    mbid_store.save_mbid_resolution_map = AsyncMock()
+    service._album_service = album_service
+    service._mbid_store = mbid_store
+
+    response = await service.request_batch(
+        [
+            {
+                "musicbrainz_id": "rg-1",
+                "release_mbid": "release-1",
+                "artist_name": "A",
+                "album_title": "B",
+            },
+            # The same id in both fields names no edition at all.
+            {
+                "musicbrainz_id": "rg-2",
+                "release_mbid": "rg-2",
+                "artist_name": "C",
+                "album_title": "D",
+            },
+        ],
+        user_role="admin",
+        user_id="u1",
+    )
+
+    assert response.requested == 2
+    recorded = request_history.async_bulk_record_requests.await_args.args[0]
+    assert recorded[0]["musicbrainz_id"] == "rg-1"
+    assert recorded[0]["release_mbid"] == "release-1"
+    assert recorded[1]["musicbrainz_id"] == "rg-2"
+    assert recorded[1]["release_mbid"] is None
+    dispatched = download_service.request_album.await_args_list[0].kwargs
+    assert dispatched["release_group_mbid"] == "rg-1"
+    assert dispatched["release_mbid"] == "release-1"
+    # No MusicBrainz round-trip: the batch still costs one durable lookup, and
+    # the edition the caller named is remembered as an alias of its group.
+    album_service.resolve_album_identity.assert_not_awaited()
+    mbid_store.get_mbid_resolution_map.assert_awaited_once()
+    mbid_store.save_mbid_resolution_map.assert_awaited_once_with(
+        {"release-1": "rg-1"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_request_batch_prefers_a_known_alias_over_an_explicit_release_mbid():
+    service, request_history, download_service = _make_service()
+    mbid_store = MagicMock()
+    mbid_store.get_mbid_resolution_map = AsyncMock(
+        return_value={"release-alias": "canonical-rg"}
+    )
+    mbid_store.save_mbid_resolution_map = AsyncMock()
+    service._mbid_store = mbid_store
+
+    response = await service.request_batch(
+        [
+            {
+                "musicbrainz_id": "release-alias",
+                "release_mbid": "release-other",
+                "artist_name": "A",
+                "album_title": "B",
+            }
+        ],
+        user_role="admin",
+        user_id="u1",
+    )
+
+    assert response.requested == 1
+    recorded = request_history.async_bulk_record_requests.await_args.args[0]
+    assert recorded[0]["musicbrainz_id"] == "canonical-rg"
+    assert recorded[0]["release_mbid"] == "release-alias"
+    mbid_store.save_mbid_resolution_map.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_request_batch_does_not_overwrite_an_approval_pending_request():
     service, request_history, download_service = _make_service()
     request_history.async_get_requested_mbids.return_value = {"rg-1"}
