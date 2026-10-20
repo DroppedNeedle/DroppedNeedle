@@ -1,0 +1,63 @@
+{
+  "data": [
+    {
+      "id": 1007321681,
+      "title": "A Night At The Opera",
+      "link": "https://www.deezer.com/album/1007321681",
+      "cover": "https://api.deezer.com/album/1007321681/image",
+      "cover_small": "https://cdn-images.dzcdn.net/images/cover/0b56f4eee05fa1ea753c5654b2cdb70c/56x56-000000-80-0-0.jpg",
+      "cover_medium": "https://cdn-images.dzcdn.net/images/cover/0b56f4eee05fa1ea753c5654b2cdb70c/250x250-000000-80-0-0.jpg",
+      "cover_big": "https://cdn-images.dzcdn.net/images/cover/0b56f4eee05fa1ea753c5654b2cdb70c/500x500-000000-80-0-0.jpg",
+      "cover_xl": "https://cdn-images.dzcdn.net/images/cover/0b56f4eee05fa1ea753c5654b2cdb70c/1000x1000-000000-80-0-0.jpg",
+      "md5_image": "0b56f4eee05fa1ea753c5654b2cdb70c",
+      "genre_id": 152,
+      "nb_tracks": 12,
+      "record_type": "album",
+      "tracklist": "https://api.deezer.com/album/1007321681/tracks",
+      "explicit_lyrics": false,
+      "artist": {
+        "id": 412,
+        "name": "Queen",
+        "link": "https://www.deezer.com/artist/412",
+        "picture": "https://api.deezer.com/artist/412/image",
+        "picture_small": "https://cdn-images.dzcdn.net/images/artist/71eeb9e2eeb375df35a3c0654a5a01ab/56x56-000000-80-0-0.jpg",
+        "picture_medium": "https://cdn-images.dzcdn.net/images/artist/71eeb9e2eeb375df35a3c0654a5a01ab/250x250-000000-80-0-0.jpg",
+        "picture_big": "https://cdn-images.dzcdn.net/images/artist/71eeb9e2eeb375df35a3c0654a5a01ab/500x500-000000-80-0-0.jpg",
+        "picture_xl": "https://cdn-images.dzcdn.net/images/artist/71eeb9e2eeb375df35a3c0654a5a01ab/1000x1000-000000-80-0-0.jpg",
+        "tracklist": "https://api.deezer.com/artist/412/top?limit=50",
+        "type": "artist"
+      },
+      "type": "album"
+    },
+    {
+      "id": 1007323081,
+      "title": "A Night At The Opera (Deluxe Edition)",
+      "link": "https://www.deezer.com/album/1007323081",
+      "cover": "https://api.deezer.com/album/1007323081/image",
+      "cover_small": "https://cdn-images.dzcdn.net/images/cover/0b56f4eee05fa1ea753c5654b2cdb70c/56x56-000000-80-0-0.jpg",
+      "cover_medium": "https://cdn-images.dzcdn.net/images/cover/0b56f4eee05fa1ea753c5654b2cdb70c/250x250-000000-80-0-0.jpg",
+      "cover_big": "https://cdn-images.dzcdn.net/images/cover/0b56f4eee05fa1ea753c5654b2cdb70c/500x500-000000-80-0-0.jpg",
+      "cover_xl": "https://cdn-images.dzcdn.net/images/cover/0b56f4eee05fa1ea753c5654b2cdb70c/1000x1000-000000-80-0-0.jpg",
+      "md5_image": "0b56f4eee05fa1ea753c5654b2cdb70c",
+      "genre_id": 152,
+      "nb_tracks": 18,
+      "record_type": "album",
+      "tracklist": "https://api.deezer.com/album/1007323081/tracks",
+      "explicit_lyrics": false,
+      "artist": {
+        "id": 412,
+        "name": "Queen",
+        "link": "https://www.deezer.com/artist/412",
+        "picture": "https://api.deezer.com/artist/412/image",
+        "picture_small": "https://cdn-images.dzcdn.net/images/artist/71eeb9e2eeb375df35a3c0654a5a01ab/56x56-000000-80-0-0.jpg",
+        "picture_medium": "https://cdn-images.dzcdn.net/images/artist/71eeb9e2eeb375df35a3c0654a5a01ab/250x250-000000-80-0-0.jpg",
+        "picture_big": "https://cdn-images.dzcdn.net/images/artist/71eeb9e2eeb375df35a3c0654a5a01ab/500x500-000000-80-0-0.jpg",
+        "picture_xl": "https://cdn-images.dzcdn.net/images/artist/71eeb9e2eeb375df35a3c0654a5a01ab/1000x1000-000000-80-0-0.jpg",
+        "tracklist": "https://api.deezer.com/artist/412/top?limit=50",
+        "type": "artist"
+      },
+      "type": "album"
+    }
+  ],
+  "total": 2
+}

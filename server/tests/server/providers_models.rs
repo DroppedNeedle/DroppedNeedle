@@ -18,7 +18,15 @@ const PRIORITY: RequestPriority = RequestPriority::UserInitiated;
 enum Provider {
     Lrclib,
     Geocoding,
+    DeezerTrack,
+    DeezerAlbumSearch,
+    DeezerAlbumTracks,
 }
+
+/// The album the Deezer album search fixture names first, and its track list.
+const DEEZER_ALBUM_PATH: &str = "/album/1007321681/tracks";
+const DEEZER_ALBUM_SEARCH_BODY: &str = include_str!("../fixtures/deezer/search_album.json");
+const DEEZER_ALBUM_TRACKS_BODY: &str = include_str!("../fixtures/deezer/album_tracks.json");
 
 /// One recorded answer.
 struct Row {
@@ -49,6 +57,24 @@ const ROWS: &[Row] = &[
         provider: Provider::Geocoding,
         body: include_str!("../fixtures/geocoding/search_liverpool.json"),
         identity: "/results/0/longitude",
+    },
+    Row {
+        name: "deezer /search, track id",
+        provider: Provider::DeezerTrack,
+        body: include_str!("../fixtures/deezer/search_artist.json"),
+        identity: "/data/0/id",
+    },
+    Row {
+        name: "deezer /search/album, album id",
+        provider: Provider::DeezerAlbumSearch,
+        body: DEEZER_ALBUM_SEARCH_BODY,
+        identity: "/data/0/id",
+    },
+    Row {
+        name: "deezer /album/{id}/tracks, track id",
+        provider: Provider::DeezerAlbumTracks,
+        body: DEEZER_ALBUM_TRACKS_BODY,
+        identity: "/data/0/id",
     },
 ];
 
@@ -104,7 +130,58 @@ async fn read(provider: Provider, body: &str) -> Result<bool, ProviderError> {
                 .await?;
             Ok(!cities.is_empty())
         }
+        Provider::DeezerTrack => {
+            let providers = deezer(&[("/search", body)]);
+            let found = providers
+                .previews
+                .deezer_track_preview("Queen", "Bohemian Rhapsody", PRIORITY)
+                .await?;
+            Ok(found.is_some())
+        }
+        Provider::DeezerAlbumSearch => {
+            let providers = deezer(&[
+                ("/search/album", body),
+                (DEEZER_ALBUM_PATH, DEEZER_ALBUM_TRACKS_BODY),
+            ]);
+            let tracks = providers
+                .previews
+                .deezer_album_tracks("Queen", "A Night At The Opera", 4, PRIORITY)
+                .await?;
+            Ok(!tracks.is_empty())
+        }
+        Provider::DeezerAlbumTracks => {
+            let providers = deezer(&[
+                ("/search/album", DEEZER_ALBUM_SEARCH_BODY),
+                (DEEZER_ALBUM_PATH, body),
+            ]);
+            let tracks = providers
+                .previews
+                .deezer_album_tracks("Queen", "A Night At The Opera", 4, PRIORITY)
+                .await?;
+            Ok(!tracks.is_empty())
+        }
     }
+}
+
+/// Serves each `(path, body)` from the Deezer origin and returns the providers
+/// that read them.
+fn deezer(answers: &[(&str, &str)]) -> Providers {
+    let wire = Arc::new(ScriptedWire::new());
+    for (path, body) in answers {
+        wire.answer(
+            &format!("http://fake/deezer{path}"),
+            200,
+            &[],
+            body.as_bytes().to_vec(),
+        );
+    }
+    Providers::unpaced_at(
+        wire,
+        ProviderEndpoints {
+            deezer: "http://fake/deezer".to_owned(),
+            ..ProviderEndpoints::closed()
+        },
+    )
 }
 
 #[tokio::test]

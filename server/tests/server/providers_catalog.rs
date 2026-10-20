@@ -356,11 +356,7 @@ const ITUNES_SONG: &str = r#"{"resultCount": 1, "results": [
 
 #[tokio::test]
 async fn preview_contract_tolerant_decode() {
-    let body = r#"{"data": [
-        {"id": 1, "title": "T", "title_short": "T", "duration": 200,
-         "track_position": 2, "preview": "https://cdn/x.mp3?hdnea=exp=1",
-         "artist": {"id": 9, "name": "A"}, "unknown": [1, 2]}
-    ], "total": 1, "next": null}"#;
+    let body = include_str!("../fixtures/deezer/search_artist.json");
     let wire = scripted(&deezer_search(), &[(200, &[], body)]);
     let found = catalog_providers(&wire)
         .previews
@@ -368,7 +364,11 @@ async fn preview_contract_tolerant_decode() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(found.position, Some(2));
+    assert_eq!(
+        found.title,
+        "Boggling Queen (feat. Sister smurf & simple simon)"
+    );
+    assert_eq!(found.duration_s, Some(30));
 
     let body = r#"{"resultCount": 1, "results": [
         {"artistName": "A", "trackName": "T", "collectionName": "C",
@@ -386,10 +386,63 @@ async fn preview_contract_tolerant_decode() {
     assert_eq!(found.duration_s, Some(30));
 }
 
+#[tokio::test]
+async fn preview_error_object_inside_a_200() {
+    // The recorded not-found answer, given for an album's track list, is absence.
+    let album_search = format!("{DEEZER}/search/album");
+    let album_tracks = format!("{DEEZER}/album/1007321681/tracks");
+    let albums = include_str!("../fixtures/deezer/search_album.json");
+    let wire = scripted(&album_search, &[(200, &[], albums)]);
+    wire.answer(
+        &album_tracks,
+        200,
+        &[],
+        include_str!("../fixtures/deezer/album_not_found.json"),
+    );
+    let tracks = catalog_providers(&wire)
+        .previews
+        .deezer_album_tracks("Queen", "A Night At The Opera", 4, PRIORITY)
+        .await
+        .unwrap();
+    assert!(tracks.is_empty());
+
+    // Any other code is a refusal, never absence.
+    let body = r#"{"error": {"type": "ParameterException",
+        "message": "Wrong parameter", "code": 700}}"#;
+    let wire = scripted(&deezer_search(), &[(200, &[], body)]);
+    let error = catalog_providers(&wire)
+        .previews
+        .deezer_track_preview("A", "T", PRIORITY)
+        .await
+        .expect_err("an error object");
+    assert!(matches!(
+        error,
+        ProviderError::BadRequest { status: 200, .. }
+    ));
+}
+
+#[tokio::test]
+async fn preview_track_without_preview_is_absence() {
+    // The first hit's preview is null: the next hit with one wins.
+    let body = r#"{"data": [
+        {"id": 1, "title": "T", "preview": null, "artist": {"name": "A"}},
+        {"id": 2, "title": "T", "preview": "https://cdn/t.mp3", "artist": {"name": "A"}}
+    ]}"#;
+    let wire = scripted(&deezer_search(), &[(200, &[], body)]);
+    let found = catalog_providers(&wire)
+        .previews
+        .deezer_track_preview("A", "T", PRIORITY)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.preview_url, "https://cdn/t.mp3");
+}
+
 #[tokio::test(start_paused = true)]
 async fn preview_quirk_track_fallback_chain() {
     // Deezer empty, iTunes hit.
-    let wire = scripted(&deezer_search(), &[(200, &[], r#"{"data": []}"#)]);
+    let no_hits = include_str!("../fixtures/deezer/search_track_no_hits.json");
+    let wire = scripted(&deezer_search(), &[(200, &[], no_hits)]);
     wire.answer(ITUNES, 200, &[], ITUNES_SONG);
     let (found, provider) = catalog_providers(&wire)
         .previews

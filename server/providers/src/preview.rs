@@ -1,10 +1,10 @@
 //! 30-second track and album previews via Deezer (primary) and iTunes (fallback).
 //!
-//! A Rust port of v2's preview repository with the Deezer wire shapes
-//! (live-verified
-//! 2026-07-03). Both APIs are keyless. Deezer matches better (field-scoped
-//! query syntax, ordered album track lists); iTunes results are verified
-//! against the requested artist because its top hit can be a cover.
+//! A Rust port of v2's preview repository. Both APIs are keyless. Deezer
+//! matches better (field-scoped query syntax, ordered album track lists);
+//! iTunes results are verified against the requested artist because its top
+//! hit can be a cover. The Deezer wire shapes, and the dates they were
+//! verified on, are in `preview/models.rs`.
 //!
 //! Expiry warning, carried over from the v2 module docs: Deezer preview URLs
 //! carry an `hdnea` expiry token. Callers must resolve them just-in-time and
@@ -24,8 +24,12 @@ use serde::{Deserialize, Serialize};
 use crate::RequestPriority;
 use crate::client::{decode, parse_base, unusable_base};
 use crate::error::{MAX_RETRY_AFTER, ProviderError};
-use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
+use crate::executor::{Answer, Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 use crate::itunes::ITunesClient;
+
+mod models;
+
+use self::models::{AlbumSearch, AlbumTracks, ErrorEnvelope, Track, TrackSearch};
 
 /// Live Deezer API origin.
 pub const DEEZER_API_BASE: &str = "https://api.deezer.com";
@@ -36,8 +40,9 @@ pub const PREVIEW_DURATION_S: u32 = 30;
 /// Largest Deezer page read.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
-/// Deezer on the wire: the standard rules, and a 429 that names no wait
-/// rests five seconds (v2's default).
+/// Deezer on the wire: an error object inside a 200 is read by its code (see
+/// `classify`), and a 429 that names no wait rests five seconds (v2's
+/// default).
 pub static DEEZER_SPEC: Spec = Spec {
     source: DEEZER,
     health_key: DEEZER,
@@ -45,87 +50,42 @@ pub static DEEZER_SPEC: Spec = Spec {
     max_body: MAX_BODY_BYTES,
     retry_after_default: Backoff::Fixed(Duration::from_secs(5)),
     retry_after_cap: MAX_RETRY_AFTER,
-    classify: standard_classify,
+    classify,
 };
+
+/// The Deezer hook over the standard rules. Deezer answers an error with a
+/// 200 and an error object, so that body is read by its code first:
+///
+/// - 800, no data: [`ProviderError::NotFound`], which the lookups read as
+///   absence. Seen for an unknown album id on 2026-10-20.
+/// - any other code: [`ProviderError::BadRequest`] with the status, never
+///   retried. Only 800 has been seen on the wire, so the other codes are
+///   refused rather than mapped to a guessed meaning.
+///
+/// A 429 or a 5xx is standard, whatever its body says.
+fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
+    let status = answer.reply.status();
+    if status == 429 || status >= 500 {
+        return standard_classify(answer);
+    }
+    let Ok(envelope) = answer.reply.json::<ErrorEnvelope>() else {
+        return standard_classify(answer);
+    };
+    let Some(error) = envelope.error else {
+        return standard_classify(answer);
+    };
+    Err(match error.code {
+        800 => ProviderError::NotFound { provider: DEEZER },
+        _ => ProviderError::BadRequest {
+            provider: DEEZER,
+            status,
+        },
+    })
+}
 
 // ---------------------------------------------------------------------------
 // Wire models (default-tolerant; unknown fields are ignored by serde)
 // ---------------------------------------------------------------------------
-
-/// A Deezer artist stub on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct DeezerArtist {
-    /// Deezer artist id.
-    #[serde(default)]
-    pub id: Option<i64>,
-    /// Artist name.
-    #[serde(default)]
-    pub name: String,
-}
-
-/// A Deezer track on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct DeezerTrack {
-    /// Deezer track id.
-    #[serde(default)]
-    pub id: Option<i64>,
-    /// Full title.
-    #[serde(default)]
-    pub title: String,
-    /// Short title, preferred for display.
-    #[serde(default)]
-    pub title_short: String,
-    /// Full-track duration in seconds.
-    #[serde(default)]
-    pub duration: Option<i64>,
-    /// Position within the album.
-    #[serde(default)]
-    pub track_position: Option<i64>,
-    /// 30s MP3 URL (empty when Deezer has no preview).
-    #[serde(default)]
-    pub preview: String,
-    /// Track artist stub.
-    #[serde(default)]
-    pub artist: Option<DeezerArtist>,
-}
-
-/// A Deezer track-search page on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct DeezerTrackSearchResponse {
-    /// Hits.
-    #[serde(default)]
-    pub data: Vec<DeezerTrack>,
-}
-
-/// A Deezer album on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct DeezerAlbum {
-    /// Deezer album id.
-    #[serde(default)]
-    pub id: Option<i64>,
-    /// Album title.
-    #[serde(default)]
-    pub title: String,
-    /// Album artist stub.
-    #[serde(default)]
-    pub artist: Option<DeezerArtist>,
-}
-
-/// A Deezer album-search page on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct DeezerAlbumSearchResponse {
-    /// Hits.
-    #[serde(default)]
-    pub data: Vec<DeezerAlbum>,
-}
-
-/// A Deezer album-tracks page on the wire.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct DeezerAlbumTracksResponse {
-    /// Ordered album tracks.
-    #[serde(default)]
-    pub data: Vec<DeezerTrack>,
-}
 
 /// An iTunes song hit on the wire.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -222,12 +182,17 @@ pub struct PreviewClient {
 }
 
 /// The title a Deezer track shows: the short title when it has one.
-fn deezer_title(hit: &DeezerTrack) -> String {
+fn deezer_title(hit: &Track) -> String {
     if hit.title_short.is_empty() {
         hit.title.clone()
     } else {
         hit.title_short.clone()
     }
+}
+
+/// The preview URL of a Deezer track, when Deezer has one.
+fn deezer_preview(hit: &Track) -> Option<&str> {
+    hit.preview.as_deref().filter(|url| !url.is_empty())
 }
 
 impl PreviewClient {
@@ -284,22 +249,20 @@ impl PreviewClient {
         else {
             return Ok(None);
         };
-        let page: DeezerTrackSearchResponse = decode(&reply)?;
-        Ok(page
-            .data
-            .iter()
-            .find(|hit| !hit.preview.is_empty())
-            .map(|hit| PreviewTrack {
+        let page: TrackSearch = decode(&reply)?;
+        Ok(page.data.iter().find_map(|hit| {
+            deezer_preview(hit).map(|preview_url| PreviewTrack {
                 title: deezer_title(hit),
                 artist_name: hit
                     .artist
                     .as_ref()
                     .map(|artist| artist.name.clone())
                     .unwrap_or_else(|| artist.to_owned()),
-                preview_url: hit.preview.clone(),
+                preview_url: preview_url.to_owned(),
                 duration_s: Some(PREVIEW_DURATION_S),
                 position: hit.track_position,
-            }))
+            })
+        }))
     }
 
     /// Ordered album previews via Deezer. The
@@ -330,16 +293,16 @@ impl PreviewClient {
         else {
             return Ok(Vec::new());
         };
-        let albums: DeezerAlbumSearchResponse = decode(&reply)?;
+        let albums: AlbumSearch = decode(&reply)?;
         let album_id = albums
             .data
             .iter()
             .find(|hit| {
                 let hit_artist = hit.artist.as_ref().map(|a| a.name.as_str()).unwrap_or("");
-                hit.id.is_some() && names_match(artist, hit_artist)
+                names_match(artist, hit_artist)
             })
             .or_else(|| albums.data.first())
-            .and_then(|hit| hit.id);
+            .map(|hit| hit.id);
         let Some(album_id) = album_id else {
             return Ok(Vec::new());
         };
@@ -355,12 +318,12 @@ impl PreviewClient {
         else {
             return Ok(Vec::new());
         };
-        let tracks: DeezerAlbumTracksResponse = decode(&reply)?;
+        let tracks: AlbumTracks = decode(&reply)?;
         let mut results = Vec::new();
         for hit in &tracks.data {
-            if hit.preview.is_empty() {
+            let Some(preview_url) = deezer_preview(hit) else {
                 continue;
-            }
+            };
             let position = hit.track_position.or(Some(results.len() as i64 + 1));
             results.push(PreviewTrack {
                 title: deezer_title(hit),
@@ -369,7 +332,7 @@ impl PreviewClient {
                     .as_ref()
                     .map(|artist| artist.name.clone())
                     .unwrap_or_else(|| artist.to_owned()),
-                preview_url: hit.preview.clone(),
+                preview_url: preview_url.to_owned(),
                 duration_s: Some(PREVIEW_DURATION_S),
                 position,
             });
@@ -513,7 +476,7 @@ impl PreviewClient {
         else {
             return Ok(Vec::new());
         };
-        let page: DeezerTrackSearchResponse = decode(&reply)?;
+        let page: TrackSearch = decode(&reply)?;
         let mut results = Vec::new();
         let mut seen: Vec<String> = Vec::new();
         for hit in &page.data {
@@ -534,7 +497,7 @@ impl PreviewClient {
                 } else {
                     hit_artist.to_owned()
                 },
-                preview_url: hit.preview.clone(),
+                preview_url: hit.preview.clone().unwrap_or_default(),
                 duration_s: Some(PREVIEW_DURATION_S),
                 position: None,
             });
