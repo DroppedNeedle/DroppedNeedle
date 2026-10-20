@@ -6,6 +6,7 @@
 	import LocalAlbumTrackList from '$lib/components/library/LocalAlbumTrackList.svelte';
 	import ArtistAppearancesSectionSkeleton from './ArtistAppearancesSectionSkeleton.svelte';
 	import { getLibraryArtistAppearancesQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import { ApiError } from '$lib/api/client';
 	import { albumHref } from '$lib/utils/entityRoutes';
 
 	interface Props {
@@ -16,6 +17,10 @@
 	let { artistId, className = '' }: Props = $props();
 	const appearancesQuery = getLibraryArtistAppearancesQuery(() => artistId);
 	const appearances = $derived(appearancesQuery.data?.pages.flatMap((page) => page.items) ?? []);
+	// No library artist behind the id: nothing appears, so there is no section.
+	const notInLibrary = $derived(
+		appearancesQuery.error instanceof ApiError && appearancesQuery.error.status === 404
+	);
 	const summary = $derived(appearancesQuery.data?.pages[0]);
 	const releaseCount = $derived(summary?.total ?? appearances.length);
 	const trackCount = $derived(
@@ -28,7 +33,7 @@
 	<div class={className}>
 		<ArtistAppearancesSectionSkeleton />
 	</div>
-{:else if appearancesQuery.isError}
+{:else if appearancesQuery.isError && !notInLibrary}
 	<section
 		id="section-library-appearances"
 		class="scroll-mt-24 rounded-2xl border border-error/20 bg-error/5 p-5 {className}"

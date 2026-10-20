@@ -143,7 +143,7 @@ pub async fn list_artists(
     get,
     tag = "library",
     path = "/api/v3/library/artists/{id}",
-    params(("id" = String, Path, description = "Local artist id")),
+    params(("id" = String, Path, description = "Local artist id or linked MusicBrainz artist id")),
     responses(
         (status = 200, description = "Artist", body = ArtistView),
         (status = 401, description = "Not authenticated"),
@@ -166,7 +166,7 @@ pub async fn get_artist(
     get,
     tag = "library",
     path = "/api/v3/library/artists/{id}/albums",
-    params(("id" = String, Path, description = "Local artist id"), PageQuery),
+    params(("id" = String, Path, description = "Local artist id or linked MusicBrainz artist id"), PageQuery),
     responses(
         (status = 200, description = "Led albums", body = AlbumPage),
         (status = 400, description = "Bad query string"),
@@ -191,7 +191,7 @@ pub async fn list_artist_albums(
     get,
     tag = "library",
     path = "/api/v3/library/artists/{id}/appearances",
-    params(("id" = String, Path, description = "Local artist id"), PageQuery),
+    params(("id" = String, Path, description = "Local artist id or linked MusicBrainz artist id"), PageQuery),
     responses(
         (status = 200, description = "Appearance albums", body = AlbumPage),
         (status = 400, description = "Bad query string"),

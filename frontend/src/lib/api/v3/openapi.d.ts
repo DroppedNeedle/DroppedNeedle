@@ -10816,6 +10816,12 @@ export interface components {
              * @description Albums where this artist appears without leading.
              */
             appearance_album_count: number;
+            /**
+             * Format: int64
+             * @description Streamable tracks credited to this artist on albums led by someone
+             *     else.
+             */
+            appearance_track_count: number;
             /** @description Linked MusicBrainz artist id, when identified. */
             artist_mbid?: string | null;
             /**
@@ -31476,7 +31482,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Local artist id */
+                /** @description Local artist id or linked MusicBrainz artist id */
                 id: string;
             };
             cookie?: never;
@@ -31522,7 +31528,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description Local artist id */
+                /** @description Local artist id or linked MusicBrainz artist id */
                 id: string;
             };
             cookie?: never;
@@ -31577,7 +31583,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description Local artist id */
+                /** @description Local artist id or linked MusicBrainz artist id */
                 id: string;
             };
             cookie?: never;

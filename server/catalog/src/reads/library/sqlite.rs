@@ -326,14 +326,19 @@ pub(crate) fn track_filter_fts(search: &TextSearch) -> String {
 pub(crate) const TRACK_MISS_ORACLE: &str =
     "SELECT EXISTS(SELECT 1 FROM local_tracks_fts WHERE local_tracks_fts MATCH ?)";
 
-/// Library totals: live album/artist counts plus maintained track totals.
-pub(crate) const STATS_MAIN: &str = "SELECT (SELECT COUNT(*) FROM local_albums) AS albums, \
-    (SELECT COUNT(*) FROM local_artists \
-     WHERE retired_into_artist_id IS NULL) AS artists, \
-    (SELECT COALESCE(SUM(indexed_tracks), 0) \
-     FROM library_track_format_stats) AS tracks, \
-    (SELECT COALESCE(SUM(indexed_bytes), 0) \
-     FROM library_track_format_stats) AS size_bytes";
+/// Library totals: live albums, the artists the Artists page lists (every
+/// credited artist), and the maintained track totals.
+pub(crate) fn stats_main() -> String {
+    format!(
+        "SELECT (SELECT COUNT(*) FROM local_albums) AS albums, \
+         (SELECT COUNT(*) FROM local_artists r \
+          WHERE r.retired_into_artist_id IS NULL AND {CREDITED_PREDICATE}) AS artists, \
+         (SELECT COALESCE(SUM(indexed_tracks), 0) \
+          FROM library_track_format_stats) AS tracks, \
+         (SELECT COALESCE(SUM(indexed_bytes), 0) \
+          FROM library_track_format_stats) AS size_bytes"
+    )
+}
 
 /// Per-format indexed-track counts, zero rows excluded like GROUP BY.
 pub(crate) const STATS_FORMATS: &str = "SELECT file_format AS format, indexed_tracks AS total \
@@ -392,14 +397,16 @@ const ARTIST_JOINS: &str = "FROM local_artists r \
 const ARTIST_ALBUM_COUNTS: &str = "SELECT la.album_artist_id AS id, COUNT(*) AS total \
     FROM local_albums la WHERE la.album_artist_id IN ({placeholders}) GROUP BY 1";
 
-/// Streamable credited tracks and appearance albums per artist id, one
-/// grouped pass over the page's credits. The CASE keeps the legacy
-/// appearance definition: distinct albums whose leader is someone else.
+/// Streamable credited tracks, appearance albums and appearance tracks per
+/// artist id, one grouped pass over the page's credits. The CASEs keep the
+/// legacy appearance definition: on an album whose leader is someone else.
 /// Visible to the plan tests, which assemble the same statements.
 pub(crate) const ARTIST_CREDIT_COUNTS: &str = "SELECT ata.local_artist_id AS id, \
     COUNT(DISTINCT at.id) AS tracks, \
     COUNT(DISTINCT CASE WHEN aa.album_artist_id != ata.local_artist_id \
-     THEN at.local_album_id END) AS appearances \
+     THEN at.local_album_id END) AS appearances, \
+    COUNT(DISTINCT CASE WHEN aa.album_artist_id != ata.local_artist_id \
+     THEN at.id END) AS appearance_tracks \
     FROM local_track_artists ata \
     JOIN local_tracks at ON at.id = ata.local_track_id \
     JOIN local_albums aa ON aa.id = at.local_album_id \
@@ -439,7 +446,7 @@ const WITH_MUSIC_PREDICATE: &str = "((LED) OR EXISTS (SELECT 1 FROM local_track_
 /// Visible to the plan tests, which assemble the same statements.
 pub(crate) fn artist_scope_predicate(scope: ArtistScope) -> &'static str {
     match scope {
-        ArtistScope::All => "1 = 1",
+        ArtistScope::All => CREDITED_PREDICATE,
         ArtistScope::AlbumArtists => LED_PREDICATE,
         ArtistScope::Contributors => "(NOT (LED) AND (CREDITED))",
         ArtistScope::WithMusic => WITH_MUSIC_PREDICATE,
@@ -460,12 +467,8 @@ pub(crate) fn artist_order(sort: ArtistSort, descending: bool) -> &'static str {
     }
 }
 
-fn map_artist(
-    row: &sqlx::sqlite::SqliteRow,
-    album_count: u64,
-    track_count: u64,
-    appearance_album_count: u64,
-) -> ArtistRecord {
+fn map_artist(row: &sqlx::sqlite::SqliteRow, album_count: u64, credits: Credits) -> ArtistRecord {
+    let (track_count, appearance_album_count, appearance_track_count) = credits;
     ArtistRecord {
         id: row.get("id"),
         name: row.get("name"),
@@ -474,17 +477,21 @@ fn map_artist(
         album_count,
         track_count,
         appearance_album_count,
+        appearance_track_count,
         date_added: row.get("date_added"),
     }
 }
 
+/// Streamable credited tracks, appearance albums and appearance tracks.
+type Credits = (u64, u64, u64);
+
 /// Batched artist aggregates for one id set: albums led per id, plus
-/// (streamable credited tracks, appearance albums) per id. Ids with no
+/// [`Credits`] per id. Ids with no
 /// rows are absent from the maps and read as zero.
 async fn artist_counts(
     pool: &SqlitePool,
     ids: &[String],
-) -> Result<(HashMap<String, u64>, HashMap<String, (u64, u64)>), StoreError> {
+) -> Result<(HashMap<String, u64>, HashMap<String, Credits>), StoreError> {
     let placeholders = in_placeholders(ids.len());
     let albums_sql = ARTIST_ALBUM_COUNTS.replace("{placeholders}", &placeholders);
     let mut albums = sqlx::query(&albums_sql);
@@ -515,7 +522,15 @@ async fn artist_counts(
         let id: String = row.get("id");
         let tracks: i64 = row.get("tracks");
         let appearances: i64 = row.get("appearances");
-        credit_counts.insert(id, (tracks.max(0) as u64, appearances.max(0) as u64));
+        let appearance_tracks: i64 = row.get("appearance_tracks");
+        credit_counts.insert(
+            id,
+            (
+                tracks.max(0) as u64,
+                appearances.max(0) as u64,
+                appearance_tracks.max(0) as u64,
+            ),
+        );
     }
     Ok((album_counts, credit_counts))
 }
@@ -582,11 +597,8 @@ pub(crate) async fn hydrate_artists(
     for row in &rows {
         let id: String = row.get("id");
         let album_count = album_counts.get(&id).copied().unwrap_or(0);
-        let (track_count, appearances) = credit_counts.get(&id).copied().unwrap_or((0, 0));
-        by_id.insert(
-            id.clone(),
-            map_artist(row, album_count, track_count, appearances),
-        );
+        let credits = credit_counts.get(&id).copied().unwrap_or_default();
+        by_id.insert(id.clone(), map_artist(row, album_count, credits));
     }
     Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
 }
@@ -877,7 +889,7 @@ impl LibraryCatalog for SqliteCatalog {
             };
             let records = hydrate_artists(pool, &ids).await?;
             let totals = sqlx::query(&format!(
-                "SELECT COUNT(*) AS total, \
+                "SELECT COALESCE(SUM(CASE WHEN {CREDITED_PREDICATE} THEN 1 ELSE 0 END), 0) AS total, \
                  COALESCE(SUM(CASE WHEN {LED_PREDICATE} THEN 1 ELSE 0 END), 0) AS led, \
                  COALESCE(SUM(CASE WHEN NOT ({LED_PREDICATE}) AND ({CREDITED_PREDICATE}) \
                  THEN 1 ELSE 0 END), 0) AS contributors \
@@ -936,13 +948,8 @@ impl LibraryCatalog for SqliteCatalog {
             let owned = [id.to_owned()];
             let (album_counts, credit_counts) = artist_counts(pool, &owned).await?;
             let album_count = album_counts.get(id).copied().unwrap_or(0);
-            let (track_count, appearances) = credit_counts.get(id).copied().unwrap_or((0, 0));
-            Ok(Some(map_artist(
-                &row,
-                album_count,
-                track_count,
-                appearances,
-            )))
+            let credits = credit_counts.get(id).copied().unwrap_or_default();
+            Ok(Some(map_artist(&row, album_count, credits)))
         })
     }
 
@@ -1150,7 +1157,7 @@ impl LibraryCatalog for SqliteCatalog {
             // Track totals come from the maintained per-format rows
             // (migration 0005); the zero-count rows they keep stay out of
             // the breakdown, matching GROUP BY exactly.
-            let row = sqlx::query(STATS_MAIN)
+            let row = sqlx::query(&stats_main())
                 .fetch_one(pool)
                 .await
                 .map_err(|error| internal("library.stats", error))?;

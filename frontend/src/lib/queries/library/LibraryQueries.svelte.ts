@@ -294,12 +294,15 @@ export const getLibraryArtistAlbumsQuery = (getArtistId: Getter<string>) =>
 const ARTIST_APPEARANCES_PAGE_SIZE = 20;
 
 // v3 lists the albums an artist appears on; the tracks they appear on come
-// from the track list filtered by album and artist, one read per album.
+// from the track list filtered by album and artist, one read per album. The
+// artist read first turns a MusicBrainz id into the library artist's id,
+// which the track filter needs.
 async function fetchAppearances(
-	artistId: string,
+	id: string,
 	offset: number,
 	signal: AbortSignal
 ): Promise<LibraryArtistAppearancesResponse> {
+	const artistId = (await api.global.v3.GET(LibraryV3Api.artistDetail(id), { signal })).id;
 	const page = await api.global.v3.GET(
 		LibraryV3Api.artistAppearances(artistId, { limit: ARTIST_APPEARANCES_PAGE_SIZE, offset }),
 		{ signal }

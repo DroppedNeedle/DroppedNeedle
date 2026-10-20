@@ -97,7 +97,7 @@ export function toArtistSummary(artist: ArtistView): LibraryArtistSummary {
 		album_count: artist.album_count,
 		track_count: artist.track_count,
 		appearance_release_count: artist.appearance_album_count,
-		appearance_track_count: 0,
+		appearance_track_count: artist.appearance_track_count,
 		library_relationship: relationship(artist),
 		date_added: artist.date_added ?? null,
 		row_revision: 0

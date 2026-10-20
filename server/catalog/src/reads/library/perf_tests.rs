@@ -18,8 +18,8 @@ use droppedneedle_kernel::db::{DbConfig, DbError, DbRuntime, Lane, fold_text, op
 use droppedneedle_kernel::schema::{MIGRATOR, apply_migrations, latest_version};
 use library::sqlite::{
     ALBUM_COLUMNS, ALBUM_FILTER, ALBUM_JOINS, ARTIST_CREDIT_COUNTS, LibraryDb, STATS_FORMATS,
-    STATS_MAIN, SqliteCatalog, TRACK_COLUMNS, TRACK_FILTER, TRACK_JOINS, TRACK_MISS_ORACLE,
-    album_order, artist_order, artist_scope_predicate, fts_match_phrase, track_order,
+    SqliteCatalog, TRACK_COLUMNS, TRACK_FILTER, TRACK_JOINS, TRACK_MISS_ORACLE, album_order,
+    artist_order, artist_scope_predicate, fts_match_phrase, stats_main, track_order,
 };
 use library::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, LibraryCatalog,
@@ -230,6 +230,11 @@ const LEGACY_ARTIST_COLUMNS: &str = "r.id AS id, r.display_name AS name, \
      JOIN local_albums aa ON aa.id = at.local_album_id \
      WHERE ata.local_artist_id = r.id AND at.availability = 'indexed' \
      AND aa.album_artist_id != r.id) AS appearance_album_count, \
+    (SELECT COUNT(DISTINCT at.id) FROM local_tracks at \
+     JOIN local_track_artists ata ON ata.local_track_id = at.id \
+     JOIN local_albums aa ON aa.id = at.local_album_id \
+     WHERE ata.local_artist_id = r.id AND at.availability = 'indexed' \
+     AND aa.album_artist_id != r.id) AS appearance_track_count, \
     r.created_at AS date_added";
 
 const LEGACY_ARTIST_JOINS: &str = "FROM local_artists r \
@@ -298,7 +303,7 @@ fn legacy_track_order(sort: TrackSort, descending: bool) -> &'static str {
 
 fn legacy_scope(scope: ArtistScope) -> String {
     let base = match scope {
-        ArtistScope::All => "1 = 1",
+        ArtistScope::All => "(CREDITED)",
         ArtistScope::AlbumArtists => "(LED)",
         ArtistScope::Contributors => "(NOT (LED) AND (CREDITED))",
         ArtistScope::WithMusic => {
@@ -370,6 +375,7 @@ fn map_artist(row: &sqlx::sqlite::SqliteRow) -> ArtistRecord {
     let album_count: i64 = row.get("album_count");
     let track_count: i64 = row.get("track_count");
     let appearance_album_count: i64 = row.get("appearance_album_count");
+    let appearance_track_count: i64 = row.get("appearance_track_count");
     ArtistRecord {
         id: row.get("id"),
         name: row.get("name"),
@@ -378,6 +384,7 @@ fn map_artist(row: &sqlx::sqlite::SqliteRow) -> ArtistRecord {
         album_count: album_count.max(0) as u64,
         track_count: track_count.max(0) as u64,
         appearance_album_count: appearance_album_count.max(0) as u64,
+        appearance_track_count: appearance_track_count.max(0) as u64,
         date_added: row.get("date_added"),
     }
 }
@@ -457,7 +464,7 @@ async fn legacy_artists(
     .await
     .expect("oracle lists");
     let totals = sqlx::query(&format!(
-        "SELECT COUNT(*) AS total, \
+        "SELECT COALESCE(SUM(CASE WHEN {LEGACY_CREDITED} THEN 1 ELSE 0 END), 0) AS total, \
          COALESCE(SUM(CASE WHEN {LEGACY_LED} THEN 1 ELSE 0 END), 0) AS led, \
          COALESCE(SUM(CASE WHEN NOT ({LEGACY_LED}) AND ({LEGACY_CREDITED}) \
          THEN 1 ELSE 0 END), 0) AS contributors \
@@ -560,15 +567,15 @@ async fn legacy_tracks(
 /// Live aggregation over the base tables: the ground truth the maintained
 /// totals must match after every mutation.
 async fn ground_stats(pool: &SqlitePool) -> StatsRecord {
-    let row = sqlx::query(
+    let row = sqlx::query(&format!(
         "SELECT (SELECT COUNT(*) FROM local_albums) AS albums, \
-         (SELECT COUNT(*) FROM local_artists \
-          WHERE retired_into_artist_id IS NULL) AS artists, \
+         (SELECT COUNT(*) FROM local_artists r \
+          WHERE r.retired_into_artist_id IS NULL AND {LEGACY_CREDITED}) AS artists, \
          (SELECT COUNT(*) FROM local_tracks \
           WHERE availability = 'indexed') AS tracks, \
          (SELECT COALESCE(SUM(file_size_bytes), 0) FROM local_tracks \
-          WHERE availability = 'indexed') AS size_bytes",
-    )
+          WHERE availability = 'indexed') AS size_bytes"
+    ))
     .fetch_one(pool)
     .await
     .expect("ground totals read");
@@ -830,7 +837,8 @@ async fn artists_batched_matches_legacy() {
         .list_artists(ArtistScope::All, None, ArtistSort::Name, false, 50, 0)
         .await
         .expect("lists");
-    assert_eq!((total, led, contributors), (5, 2, 1));
+    // The uncredited Various/Unknown sentinels are not listed.
+    assert_eq!((total, led, contributors), (3, 2, 1));
     let by_id: HashMap<&str, &ArtistRecord> = records
         .iter()
         .map(|record| (record.id.as_str(), record))
@@ -1226,7 +1234,7 @@ async fn assert_hot_plans(pool: &SqlitePool) {
         "title page sorts nothing: {plan:?}"
     );
 
-    for sql in [STATS_MAIN, STATS_FORMATS] {
+    for sql in [stats_main().as_str(), STATS_FORMATS] {
         let plan = explain(pool, sql, &[]).await;
         assert!(
             !plan.iter().any(|line| line.contains("SCAN local_tracks")),
@@ -3786,7 +3794,7 @@ struct Carried {
     output: Output,
     artists: Option<Vec<ArtistRecord>>,
     album_counts: HashMap<String, u64>,
-    credit_counts: HashMap<String, (u64, u64)>,
+    credit_counts: HashMap<String, (u64, u64, u64)>,
     stats: Option<StatsRecord>,
 }
 
@@ -3808,13 +3816,14 @@ impl Carried {
         if let Some(mut records) = self.artists {
             for record in &mut records {
                 record.album_count = self.album_counts.get(&record.id).copied().unwrap_or(0);
-                let (tracks, appearances) = self
+                let (tracks, appearances, appearance_tracks) = self
                     .credit_counts
                     .get(&record.id)
                     .copied()
-                    .unwrap_or((0, 0));
+                    .unwrap_or_default();
                 record.track_count = tracks;
                 record.appearance_album_count = appearances;
+                record.appearance_track_count = appearance_tracks;
             }
             return Output::Artists(in_page_order(records, page.as_ref(), |r| &r.id));
         }
@@ -3886,6 +3895,7 @@ fn replay_step(
                         album_count: 0,
                         track_count: 0,
                         appearance_album_count: 0,
+                        appearance_track_count: 0,
                         date_added: cells.get("date_added")?,
                     });
                 }
@@ -3902,9 +3912,14 @@ fn replay_step(
                     let cells = Cells { row, columns };
                     let tracks: i64 = cells.get("tracks")?;
                     let appearances: i64 = cells.get("appearances")?;
+                    let appearance_tracks: i64 = cells.get("appearance_tracks")?;
                     credit_counts.insert(
                         cells.get("id")?,
-                        (tracks.max(0) as u64, appearances.max(0) as u64),
+                        (
+                            tracks.max(0) as u64,
+                            appearances.max(0) as u64,
+                            appearance_tracks.max(0) as u64,
+                        ),
                     );
                 }
             }

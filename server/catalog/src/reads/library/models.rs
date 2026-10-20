@@ -147,6 +147,9 @@ pub struct ArtistView {
     pub track_count: u64,
     /// Albums where this artist appears without leading.
     pub appearance_album_count: u64,
+    /// Streamable tracks credited to this artist on albums led by someone
+    /// else.
+    pub appearance_track_count: u64,
     /// First import time, unix seconds.
     pub date_added: Option<f64>,
     /// True when the caller favorited this artist.

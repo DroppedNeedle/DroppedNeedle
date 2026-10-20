@@ -210,6 +210,7 @@ fn artist_view(record: &ArtistRecord, favorite: bool) -> ArtistView {
         album_count: record.album_count,
         track_count: record.track_count,
         appearance_album_count: record.appearance_album_count,
+        appearance_track_count: record.appearance_track_count,
         date_added: record.date_added,
         favorite,
     }
@@ -291,15 +292,22 @@ async fn album_record(deps: &LibraryDeps, id: &str) -> Result<AlbumRecord, Libra
         .ok_or(LibraryFailure::NotFound)
 }
 
-/// The catalog artist an id names now, as [`album_record`] does for albums.
+/// The catalog artist an id names now, as [`album_record`] does for albums,
+/// or the artist linked to it when the id is a MusicBrainz artist id, so a
+/// provider artist page can ask by the id it holds. Unknown ids are 404.
 async fn artist_record(deps: &LibraryDeps, id: &str) -> Result<ArtistRecord, LibraryFailure> {
-    let current = deps
+    if let Some(current) = deps.lookups.current_artist(id).await?
+        && let Some(record) = deps.catalog.get_artist(&current).await?
+    {
+        return Ok(record);
+    }
+    let linked = deps
         .lookups
-        .current_artist(id)
+        .artist_for_mbid(id)
         .await?
         .ok_or(LibraryFailure::NotFound)?;
     deps.catalog
-        .get_artist(&current)
+        .get_artist(&linked)
         .await?
         .ok_or(LibraryFailure::NotFound)
 }

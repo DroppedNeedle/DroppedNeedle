@@ -58,6 +58,13 @@ const DIRECT_ARTIST: &str = "SELECT id FROM ( \
      WHERE a.id = ?1 AND r.retired_into_artist_id IS NULL) \
     ORDER BY rank LIMIT 1";
 
+/// The live artist linked to one MusicBrainz artist id, by the lowercase
+/// expression index.
+const ARTIST_FOR_MBID: &str = "SELECT r.id FROM local_artist_external_identities e \
+    JOIN local_artists r ON r.id = e.local_artist_id \
+    WHERE e.provider = 'musicbrainz' AND lower(e.provider_artist_id) = lower(?1) \
+    AND r.retired_into_artist_id IS NULL ORDER BY r.id LIMIT 1";
+
 /// Live albums with a streamable track holding one of the release groups.
 const OWNERS_BY_GROUP: &str = "SELECT e.local_album_id, lower(e.release_group_mbid) \
     FROM local_album_external_identities e JOIN local_albums b ON b.id = e.local_album_id \
@@ -280,6 +287,19 @@ impl LibraryLookups for SqliteLookups {
         id: &'a str,
     ) -> BoxFuture<'a, Result<Option<String>, StoreError>> {
         Box::pin(async move { current_id(self.pool()?, "artist", id).await })
+    }
+
+    fn artist_for_mbid<'a>(
+        &'a self,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, StoreError>> {
+        Box::pin(async move {
+            sqlx::query_scalar(ARTIST_FOR_MBID)
+                .bind(mbid)
+                .fetch_optional(self.pool()?)
+                .await
+                .map_err(|error| internal("library.lookups.artist_mbid", error))
+        })
     }
 
     fn album_tracks_batch<'a>(

@@ -12136,7 +12136,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Local artist id",
+            "description": "Local artist id or linked MusicBrainz artist id",
             "required": true,
             "schema": {
               "type": "string"
@@ -12195,7 +12195,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Local artist id",
+            "description": "Local artist id or linked MusicBrainz artist id",
             "required": true,
             "schema": {
               "type": "string"
@@ -12284,7 +12284,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Local artist id",
+            "description": "Local artist id or linked MusicBrainz artist id",
             "required": true,
             "schema": {
               "type": "string"
@@ -37208,6 +37208,7 @@
           "album_count",
           "track_count",
           "appearance_album_count",
+          "appearance_track_count",
           "favorite"
         ],
         "properties": {
@@ -37221,6 +37222,12 @@
             "type": "integer",
             "format": "int64",
             "description": "Albums where this artist appears without leading.",
+            "minimum": 0
+          },
+          "appearance_track_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Streamable tracks credited to this artist on albums led by someone\nelse.",
             "minimum": 0
           },
           "artist_mbid": {

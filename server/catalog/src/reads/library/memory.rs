@@ -853,6 +853,13 @@ impl LibraryLookups for EmptyLookups {
         Box::pin(async move { Ok(Some(id.to_owned())) })
     }
 
+    fn artist_for_mbid<'a>(
+        &'a self,
+        _mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, StoreError>> {
+        Box::pin(async move { Ok(None) })
+    }
+
     fn album_tracks_batch<'a>(
         &'a self,
         _album_ids: &'a [String],

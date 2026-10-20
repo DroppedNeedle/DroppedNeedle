@@ -13,6 +13,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle_auth::users::roles::{Role, SessionKind};
 use library::LibraryDeps;
+use library::lookups::SqliteLookups;
 use library::memory::{
     FailingCatalog, FailingFavorites, FailingLyrics, MemoryCatalog, MemoryFavorites, MemoryLyrics,
 };
@@ -64,6 +65,7 @@ fn artist(id: &str, name: &str, albums: u64, tracks: u64, added: f64) -> ArtistR
         album_count: albums,
         track_count: tracks,
         appearance_album_count: 0,
+        appearance_track_count: 0,
         date_added: Some(added),
     }
 }
@@ -484,6 +486,7 @@ struct SqliteFixture {
     runtime: droppedneedle_kernel::db::DbRuntime,
     catalog: SqliteCatalog,
     favorites: SqliteFavorites,
+    lookups: SqliteLookups,
     /// Declared last so the database closes before the directory goes.
     _scratch: ScratchDir,
 }
@@ -536,7 +539,8 @@ async fn sqlite_fixture() -> SqliteFixture {
          ('al4', 'musicbrainz', 'rg1', NULL, 'manual', 1200)",
         "INSERT INTO local_artist_external_identities \
          (local_artist_id, provider, provider_artist_id, decision_source, selected_at) VALUES \
-         ('a1', 'musicbrainz', 'm1', 'manual', 1000)",
+         ('a1', 'musicbrainz', 'm1', 'manual', 1000), \
+         ('a3', 'musicbrainz', 'm3', 'manual', 1600)",
         "INSERT INTO local_album_artwork (local_album_id, source, updated_at) VALUES \
          ('al1', 'embedded', 1000)",
         "INSERT INTO local_track_genres (local_track_id, position, name, folded_name, source) VALUES \
@@ -563,6 +567,7 @@ async fn sqlite_fixture() -> SqliteFixture {
         runtime,
         catalog: SqliteCatalog::new(&db),
         favorites: SqliteFavorites::new(&db),
+        lookups: SqliteLookups::new(&db),
         _scratch: dir,
     }
 }
@@ -744,9 +749,9 @@ async fn sqlite_artists_scopes_and_credits() {
         .list_artists(ArtistScope::All, None, ArtistSort::Name, false, 50, 0)
         .await
         .expect("artists list");
-    // Three seeded plus the migration's Various/Unknown sentinels; the
-    // retired row stays out, and the uncredited sentinels join neither scope.
-    assert_eq!((total, led, contributors), (5, 2, 1));
+    // Every credited artist: the retired row and the migration's uncredited
+    // Various/Unknown sentinels stay out.
+    assert_eq!((total, led, contributors), (3, 2, 1));
     assert!(!artists.iter().any(|artist| artist.id == "ax"));
 
     let (scoped, total, _, _) = fixture
@@ -783,8 +788,13 @@ async fn sqlite_artists_scopes_and_credits() {
         .expect("lookup runs")
         .expect("a3 found");
     assert_eq!(
-        (a3.album_count, a3.track_count, a3.appearance_album_count),
-        (0, 1, 1)
+        (
+            a3.album_count,
+            a3.track_count,
+            a3.appearance_album_count,
+            a3.appearance_track_count
+        ),
+        (0, 1, 1, 1)
     );
 
     let (led_albums, total) = fixture
@@ -802,6 +812,40 @@ async fn sqlite_artists_scopes_and_credits() {
         .expect("appearances list");
     assert_eq!(total, 1);
     assert_eq!(appearances[0].id, "al3");
+}
+
+#[tokio::test]
+async fn appearances_answer_by_musicbrainz_id_as_by_library_id() {
+    let fixture = sqlite_fixture().await;
+    let deps = LibraryDeps {
+        catalog: Arc::new(fixture.catalog.clone()),
+        favorites: Arc::new(fixture.favorites.clone()),
+        lyrics: Arc::new(MemoryLyrics::default()),
+        lookups: Arc::new(fixture.lookups.clone()),
+        upgrade_policy: None,
+        tags: Arc::new(library::tags::UnwiredTagReader),
+    };
+    let (status, by_id) = get(
+        app(deps.clone(), Some(ADA)),
+        "/api/v3/library/artists/a3/appearances",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{by_id}");
+    assert_eq!(by_id["total"], 1, "{by_id}");
+    let (status, by_mbid) = get(
+        app(deps.clone(), Some(ADA)),
+        "/api/v3/library/artists/M3/appearances",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{by_mbid}");
+    assert_eq!(by_mbid, by_id);
+
+    let (status, body) = get(
+        app(deps, Some(ADA)),
+        "/api/v3/library/artists/no-such-artist/appearances",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 }
 
 #[tokio::test]
@@ -855,7 +899,8 @@ async fn sqlite_tracks_filters_and_stats() {
     let stats = fixture.catalog.stats().await.expect("stats read");
     assert_eq!(
         (stats.total_albums, stats.total_artists, stats.total_tracks),
-        (4, 5, 4)
+        (4, 3, 4),
+        "the Artists card counts what the Artists page lists, not uncredited rows"
     );
     assert_eq!(stats.total_size_bytes, 16_000_000);
     assert_eq!(stats.format_breakdown.get("flac"), Some(&3));

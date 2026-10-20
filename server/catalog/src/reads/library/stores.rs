@@ -194,6 +194,8 @@ pub struct ArtistRecord {
     pub track_count: u64,
     /// Albums with an appearance but no lead.
     pub appearance_album_count: u64,
+    /// Streamable tracks credited on albums led by someone else.
+    pub appearance_track_count: u64,
     /// First import time, unix seconds.
     pub date_added: Option<f64>,
 }
@@ -629,6 +631,13 @@ pub trait LibraryLookups: Send + Sync {
     fn current_artist<'a>(
         &'a self,
         id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, StoreError>>;
+
+    /// The live artist linked to a MusicBrainz artist id, compared without
+    /// case. None when no live artist carries it.
+    fn artist_for_mbid<'a>(
+        &'a self,
+        mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<String>, StoreError>>;
 
     /// Streamable tracks of the albums, ordered by album id, disc, track.
