@@ -4,7 +4,8 @@
 //! The scan stores a reference per album in `local_album_artwork`: the path
 //! of a folder image, or the id of the track whose tags hold the picture,
 //! plus the hash of the image bytes and a version that goes up when the
-//! hash changes. This module looks those rows up and reads the bytes back.
+//! hash changes. This module looks those rows up, stats the files behind
+//! them and reads the bytes back.
 //! Only `folder` and `embedded` rows are served from here; other sources
 //! (kept from v2) have no local bytes to read.
 
@@ -12,6 +13,7 @@ use std::path::PathBuf;
 
 use sqlx::{Row as _, SqlitePool};
 
+use droppedneedle_library::scan::{exact_stat_revision, mtime_ns_from_metadata};
 use droppedneedle_providers::coverart::sniff_image_content_type;
 
 /// Folder images and embedded pictures larger than this are not served
@@ -132,6 +134,26 @@ impl LocalArtwork {
             }));
         }
         Ok(None)
+    }
+}
+
+/// The stat of the file behind a local art row (the folder image, or the
+/// track holding the picture) in the scan's `size:mtime_ns` form, read
+/// without following a symlink. `None` when the path is not a regular file.
+pub async fn local_art_stamp(art: &LocalArt) -> Option<String> {
+    let path = art.path.clone();
+    let stamp = tokio::task::spawn_blocking(move || {
+        let meta = std::fs::symlink_metadata(&path).ok()?;
+        meta.is_file()
+            .then(|| exact_stat_revision(meta.len(), mtime_ns_from_metadata(&meta)))
+    })
+    .await;
+    match stamp {
+        Ok(stamp) => stamp,
+        Err(error) => {
+            tracing::error!(%error, "local art stat task failed");
+            None
+        }
     }
 }
 

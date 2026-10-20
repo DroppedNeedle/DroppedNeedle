@@ -14,7 +14,12 @@
 //!    has nothing.
 //!
 //! Local art larger than the asked size (250, 500 or 1200) is scaled down
-//! once (see [`resize`]) and the rendition cached next to the original.
+//! once (see [`resize`]) and only the rendition is cached, under a key that
+//! carries the file's path and stat. A grid tile then costs a stat and a
+//! small read; the original is opened again only when its stat changes. A
+//! full-size request reads the file. Originals stay out of the cache, so
+//! they never push downloaded covers out; art already no larger than the
+//! asked size is kept as that size's rendition.
 //!
 //! Every image lands in the content-addressed [`cache`], so a cover is
 //! fetched from the archive once and served from disk afterwards, and a
@@ -54,14 +59,12 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 
 use crate::reads::platform::covers::{CoverArt, CoverBytes, CoverLookup};
-use droppedneedle_providers::coverart::{
-    ArtworkBytes, DownloadSize, EntityKind, sniff_image_content_type,
-};
+use droppedneedle_providers::coverart::{ArtworkBytes, DownloadSize, EntityKind};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 use droppedneedle_providers::{PayloadKind, ProviderError, RequestPriority, Singleflight};
 
-use self::cache::{ArtworkCache, KeyEntry, unix_now};
-use self::local::{LocalArt, LocalArtwork, read_local_art};
+use self::cache::{ArtworkCache, KeyEntry, sha256_hex, unix_now};
+use self::local::{LocalArt, LocalArtwork, local_art_stamp, read_local_art};
 use self::remote::{ImageFetch, RemoteCovers, RemoteImages};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
@@ -495,12 +498,42 @@ impl ArtworkService {
         }
     }
 
-    /// A scan-recorded art row at `size` (`None` is full size): the
-    /// original from the cache or the file, scaled down once when it is
-    /// larger than the asked size.
+    /// A scan-recorded art row at `size` (`None` is full size). A sized
+    /// request is answered from the rendition recorded for the file's
+    /// current stat without opening the file. Otherwise the file is read
+    /// and scaled down once, and only the rendition is cached.
     async fn serve_local(&self, art: &LocalArt, size: Option<&str>) -> Option<CoverBytes> {
-        let original = self.local_original(art).await?;
-        Some(self.sized(original, size).await)
+        let stamp_key = match size.and_then(|size| size.parse::<u32>().ok()) {
+            Some(max) => local_art_stamp(art)
+                .await
+                .map(|stamp| local_rendition_key(art, &stamp, max)),
+            None => None,
+        };
+        if let Some(key) = &stamp_key
+            && let Some(cover) = self.cached_image(key, &art.source).await
+        {
+            return Some(CoverBytes {
+                version: Some(art.version),
+                ..cover
+            });
+        }
+        let (bytes, content_type) = read_local_art(art).await?;
+        let original = CoverBytes {
+            hash: sha256_hex(&bytes),
+            bytes,
+            content_type: content_type.to_owned(),
+            source: art.source.clone(),
+            version: Some(art.version),
+        };
+        let cover = self.sized(original, size).await;
+        if let Some(key) = stamp_key
+            && self.cache.has_blob(&cover.hash).await
+        {
+            self.cache
+                .put_key(&key, &cover.hash, &cover.content_type)
+                .await;
+        }
+        Some(cover)
     }
 
     /// `original` scaled down to `size` (`None` is full size), the rendition
@@ -550,32 +583,6 @@ impl ArtworkService {
             },
             Ok(None) | Err(_) => original,
         }
-    }
-
-    /// The original bytes of a scan-recorded art row: from the cache when
-    /// the stored hash is there, else from the file (then cached).
-    async fn local_original(&self, art: &LocalArt) -> Option<CoverBytes> {
-        if let Some(hash) = &art.content_hash
-            && let Some(bytes) = self.cache.blob(hash).await
-            && let Some(content_type) = sniff_image_content_type(&bytes)
-        {
-            return Some(CoverBytes {
-                bytes,
-                content_type: content_type.to_owned(),
-                source: art.source.clone(),
-                hash: hash.clone(),
-                version: Some(art.version),
-            });
-        }
-        let (bytes, content_type) = read_local_art(art).await?;
-        let hash = self.cache.put(None, bytes.clone(), content_type).await;
-        Some(CoverBytes {
-            bytes,
-            content_type: content_type.to_owned(),
-            source: art.source.clone(),
-            hash,
-            version: Some(art.version),
-        })
     }
 
     /// Archive cover through the cache, waiting up to `wait`. A 250 is made
@@ -680,10 +687,10 @@ impl ArtworkService {
     }
 }
 
-/// Scale local art down to `max` under a resize permit and cache the
-/// rendition under `key`. Art already small enough is recorded as its own
-/// rendition (by its existing hash) so it is not decoded again. A failed
-/// resize task caches nothing.
+/// Scale art down to `max` under a resize permit and cache the rendition
+/// under `key`. Art already small enough is stored as its own rendition
+/// (written once, by its existing hash) so it is not decoded again. A
+/// failed resize task caches nothing.
 async fn resize_and_store(
     cache: ArtworkCache,
     permits: Arc<tokio::sync::Semaphore>,
@@ -700,8 +707,13 @@ async fn resize_and_store(
             return None;
         }
     };
-    match tokio::task::spawn_blocking(move || resize::shrink_to_fit(&source, max)).await {
-        Ok(Some((bytes, content_type))) => {
+    let shrunk = tokio::task::spawn_blocking(move || {
+        let shrunk = resize::shrink_to_fit(&source, max);
+        (shrunk, source)
+    })
+    .await;
+    match shrunk {
+        Ok((Some((bytes, content_type)), _)) => {
             let hash = cache.put(Some(&key), bytes.clone(), content_type).await;
             Some(Rendition {
                 bytes,
@@ -709,12 +721,16 @@ async fn resize_and_store(
                 hash,
             })
         }
-        Ok(None) => {
-            cache.put_key(&key, &original_hash, &original_type).await;
+        Ok((None, source)) => {
+            if cache.has_blob(&original_hash).await {
+                cache.put_key(&key, &original_hash, &original_type).await;
+            } else {
+                cache.put(Some(&key), source, &original_type).await;
+            }
             None
         }
         Err(error) => {
-            tracing::error!(%error, "local art resize task failed; serving the original");
+            tracing::error!(%error, "art resize task failed; serving the original");
             None
         }
     }
@@ -787,6 +803,16 @@ fn failure_ttl_secs(error: &ProviderError) -> u64 {
         } => OUTAGE_TTL_SECS,
         _ => MISS_TTL_SECS,
     }
+}
+
+/// Cache key of a local art rendition: the file and the stat it had when the
+/// rendition was made, so a replaced image misses and is read again.
+fn local_rendition_key(art: &LocalArt, stamp: &str, max: u32) -> String {
+    format!(
+        "local:{}:{}:{stamp}:{max}",
+        art.source,
+        art.path.to_string_lossy()
+    )
 }
 
 /// Cache key of an artist's full-size image.
