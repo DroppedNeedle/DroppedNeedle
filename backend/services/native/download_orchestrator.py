@@ -2873,7 +2873,13 @@ class DownloadOrchestrator:
         error_message=None,
         process_result=None,
         manifest_override=None,
+        settle_siblings=True,
+        quiet=False,
     ) -> None:  # noqa: ANN001
+        """``settle_siblings``: a COMPLETED album also settles its older failed/partial
+        tasks (see ``_settle_satisfied_siblings``). ``quiet``: skip the user-facing
+        completion notification and the import-finished event - used for those
+        siblings, whose album the user was already told about."""
         if task.download_type == "track":
             present = 1 if status == DownloadStatus.COMPLETED else 0
             raw_expected = 1
@@ -2959,14 +2965,54 @@ class DownloadOrchestrator:
                 "expected_known": raw_expected > 0,
             },
         )
-        await self._notify_completion(task)
+        if not quiet:
+            await self._notify_completion(task)
         await self._sync_request_on_terminal(task, status)
-        if status in (DownloadStatus.COMPLETED, DownloadStatus.PARTIAL):
+        if status in (DownloadStatus.COMPLETED, DownloadStatus.PARTIAL) and not quiet:
             self._emit_import_finished(
                 release_group_mbid=getattr(task, "release_group_mbid", "") or "",
                 track_count=present,
                 source=getattr(task, "source", "") or "",
             )
+        if (
+            settle_siblings
+            and status == DownloadStatus.COMPLETED
+            and task.download_type == "album"
+            and task.release_group_mbid
+        ):
+            await self._settle_satisfied_siblings(task)
+
+    async def _settle_satisfied_siblings(self, task) -> None:  # noqa: ANN001
+        """An album just completed: every older ``failed``/``partial`` task for the same
+        release group is satisfied by it. Left alone they stay 'Failed · out of
+        retries' in the queue (Clear only removes completed/cancelled rows) and, while
+        they still have retries, each one re-runs the coverage check on its own
+        schedule. Settle them quietly as completed; best-effort per task."""
+        try:
+            siblings = await self._store.list_failed_album_tasks(
+                task.release_group_mbid, exclude_task_id=task.id
+            )
+        except Exception:  # noqa: BLE001 - settlement must never fail the real task
+            logger.warning("Could not list sibling tasks for %s", task.release_group_mbid)
+            return
+        for sibling in siblings:
+            logger.info(
+                "download.settled_by_sibling",
+                extra={
+                    "task_id": sibling.id,
+                    "satisfied_by": task.id,
+                    "release_group_mbid": task.release_group_mbid,
+                },
+            )
+            try:
+                await self._finalize(
+                    sibling,
+                    DownloadStatus.COMPLETED,
+                    settle_siblings=False,
+                    quiet=True,
+                )
+            except Exception:  # noqa: BLE001 - one bad row must not block the rest
+                logger.warning("Could not settle sibling task %s", sibling.id)
 
     async def _sync_request_on_terminal(self, task, status: str) -> None:  # noqa: ANN001
         """Bridge a terminal download status into its exact request generation."""
@@ -3797,6 +3843,7 @@ class DownloadOrchestrator:
         system retries it, giving the Soulseek network time to surface new sources.
         Skips any task that already has a newer active task for the same album/track
         + user (e.g. a manual retry or a new request)."""
+        await self._settle_exhausted_failures()
         if not self._auto_retry_enabled:
             return
 
@@ -3866,6 +3913,46 @@ class DownloadOrchestrator:
                 },
             )
             await self._create_retry_task(task)
+
+    async def _settle_exhausted_failures(self) -> None:
+        """Failures past the retry ceiling never re-enter the sweep, so an album that
+        later landed by other means (another task, a plugin source, a hand import) kept
+        its stale 'Failed · out of retries' rows forever. Re-run the same coverage check
+        the retryable path uses, only for albums the library holds something of (a
+        cheap row lookup first, so the MusicBrainz tracklist is only fetched when it
+        can matter), and settle the covered ones as completed. Never dispatches."""
+        try:
+            exhausted = await self._store.list_exhausted_album_tasks(
+                self._auto_retry_max_attempts
+            )
+        except Exception:  # noqa: BLE001 - a sweep helper must not break the sweep
+            return
+        seen_groups: set[str] = set()
+        for task in exhausted:
+            rg = task.release_group_mbid
+            if not rg or rg in seen_groups:
+                continue
+            seen_groups.add(rg)
+            try:
+                rows = await self._library.get_file_rows_for_album(rg)
+            except Exception:  # noqa: BLE001 - library read failure: try next time
+                continue
+            if not rows:
+                continue
+            coverage = await self._coverage(task, context="exhausted_retry_skip")
+            if coverage is None:
+                continue
+            covered, expected_total, _orphans = coverage
+            if expected_total > 0 and covered >= expected_total:
+                logger.info(
+                    "download.exhausted_already_satisfied",
+                    extra={
+                        "task_id": task.id,
+                        "expected": expected_total,
+                        "covered": covered,
+                    },
+                )
+                await self._finalize(task, DownloadStatus.COMPLETED)
 
     def _read_manifest(self, task_id: str) -> DownloadManifest:
         path = self._staging / task_id / "manifest.json"
