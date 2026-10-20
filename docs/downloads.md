@@ -76,7 +76,7 @@ Admins can see blocked sources (Downloads > Quarantine) with the reason each was
 
 ## Drop imports
 
-Bought music somewhere else? Drop it in. Admins and trusted users can upload up to 25 files at once on the downloads page: audio files, or `.zip` archives straight from the store. DroppedNeedle unpacks the archives (audio only), treats each top-level folder as one album, and works out which album it is the way a library scan would: MusicBrainz tags first, then the album and artist names (from the tags, or a folder named `Artist - Album`), then AcoustID fingerprints when you have set an AcoustID key.
+Bought music somewhere else? Drop it in. Admins and trusted users can upload up to 25 files at once on the downloads page, 8 GB in all: audio files, or `.zip` archives straight from the store. The drop zone shows how much has been sent. If nothing more gets through for a minute, the upload stops with an error. DroppedNeedle unpacks the archives (audio only), treats each top-level folder as one album, and works out which album it is the way a library scan would: MusicBrainz tags first, then the album and artist names (from the tags, or a folder named `Artist - Album`), then AcoustID fingerprints when you have set an AcoustID key.
 
 - A folder that matches closely is renamed with your import naming script, tagged, and added to the library. If the album is now complete, its open request and wanted watch are settled and everyone who asked for it is told.
 - If your library already keeps an edition of that album, the files must match that edition. Files of another edition wait for review instead of quietly importing as a second edition.
@@ -85,3 +85,12 @@ Bought music somewhere else? Drop it in. Admins and trusted users can upload up 
 - Anything DroppedNeedle can't place waits for review with a plain reason and what to do. Pick the album yourself with Match, or Discard to delete the files. Review items are kept for 90 days.
 
 If the server restarts in the middle of an import, that import is marked as interrupted; drop the files in again.
+
+The server log notes each upload when it starts and when it has arrived (its size and file count), and each import when it starts and finishes.
+
+### Behind a reverse proxy
+
+A proxy in front of DroppedNeedle has its own upload limits, and a large zip can hit them before DroppedNeedle sees it. An upload the proxy refuses shows an error naming the proxy; one it holds stalls and stops after a minute.
+
+- nginx accepts 1 MB by default. Set `client_max_body_size 8g;` (or `0` for no limit) in the DroppedNeedle `location`, and raise `client_body_timeout`, `proxy_send_timeout` and `proxy_read_timeout` if your uplink is slow. `proxy_request_buffering off;` passes the upload straight through instead of storing it on the proxy first.
+- Cloudflare's proxy takes at most 100 MB per request on the Free and Pro plans. Upload larger zips from your own network, at DroppedNeedle's own address, or split the album into smaller zips.

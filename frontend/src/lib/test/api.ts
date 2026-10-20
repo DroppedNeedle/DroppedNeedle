@@ -37,11 +37,17 @@ export interface FakeRequest {
 	query: URLSearchParams;
 	/** The parsed JSON body, or undefined when there is none. */
 	body: unknown;
+	/**
+	 * Uploads only: report `bytes` of the body as sent, as the browser does
+	 * while an upload is in flight. The whole body counts as sent once the
+	 * handler answers.
+	 */
+	sent?: (bytes: number) => void;
 }
 
 const replyBrand = Symbol('fakeApiReply');
 
-/** A non-2xx answer, built by `apiError`. */
+/** A non-2xx answer, built by `apiError` or `textReply`. A string body is sent as text. */
 export interface FakeReply {
 	readonly [replyBrand]: true;
 	status: number;
@@ -56,6 +62,11 @@ export function apiError(
 	details: unknown = null
 ): FakeReply {
 	return { [replyBrand]: true, status, body: { error: { code, message, details } } };
+}
+
+/** A non-2xx answer with a plain text body, as a proxy in front of the server sends. */
+export function textReply(status: number, text: string): FakeReply {
+	return { [replyBrand]: true, status, body: text };
 }
 
 type Answer<K extends RouteKey> = RouteData<K> | FakeReply;
@@ -118,6 +129,77 @@ async function readBody(body: BodyInit | null | undefined): Promise<unknown> {
 	return JSON.parse(body);
 }
 
+type Transport = (
+	input: RequestInfo | URL,
+	init?: RequestInit,
+	sent?: (bytes: number) => void
+) => Promise<Response>;
+
+function bodySize(body: unknown): number {
+	if (!(body instanceof FormData)) return typeof body === 'string' ? body.length : 0;
+	let size = 0;
+	for (const [, value] of body.entries()) {
+		size += typeof value === 'string' ? value.length : value.size;
+	}
+	return size;
+}
+
+/**
+ * The part of XMLHttpRequest the api client's upload uses, answered by the
+ * same routes as fetch. Upload progress events follow `request.sent`, then
+ * the whole body once the handler answers.
+ */
+function fakeXhr(transport: Transport) {
+	return class FakeXMLHttpRequest {
+		status = 0;
+		responseText = '';
+		withCredentials = false;
+		readonly upload: {
+			onprogress: ((event: ProgressEvent) => void) | null;
+			onload: (() => void) | null;
+		} = { onprogress: null, onload: null };
+		onload: (() => void) | null = null;
+		onerror: (() => void) | null = null;
+		ontimeout: (() => void) | null = null;
+		onabort: (() => void) | null = null;
+		private method = 'GET';
+		private url = '';
+		private done = false;
+
+		open(method: string, url: string): void {
+			this.method = method;
+			this.url = url;
+		}
+
+		abort(): void {
+			if (this.done) return;
+			this.done = true;
+			this.onabort?.();
+		}
+
+		send(body?: Document | XMLHttpRequestBodyInit | null): void {
+			const total = bodySize(body);
+			const progress = (loaded: number) => {
+				if (this.done) return;
+				this.upload.onprogress?.(
+					new ProgressEvent('progress', { loaded, total, lengthComputable: true })
+				);
+			};
+			void transport(this.url, { method: this.method, body: body as BodyInit }, progress).then(
+				async (response) => {
+					if (this.done) return;
+					progress(total);
+					this.upload.onload?.();
+					this.status = response.status;
+					this.responseText = await response.text();
+					this.done = true;
+					this.onload?.();
+				}
+			);
+		}
+	};
+}
+
 /**
  * Replace the network under the real api client for the current test. Each
  * request is matched by method and contract template and answered by its
@@ -140,7 +222,7 @@ export function fakeApi(routes: FakeRoutes): FakeApi {
 	}
 	use(routes);
 
-	async function transport(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+	const transport: Transport = async (input, init, sent) => {
 		const request = input instanceof Request ? input : undefined;
 		const method = (init?.method ?? request?.method ?? 'GET').toUpperCase();
 		const url = new URL(
@@ -160,20 +242,25 @@ export function fakeApi(routes: FakeRoutes): FakeApi {
 				url,
 				params,
 				query: url.searchParams,
-				body: await readBody(init?.body ?? (request ? await request.text() : undefined))
+				body: await readBody(init?.body ?? (request ? await request.text() : undefined)),
+				sent
 			};
 			answered.push({ key: route.key, request: fake });
 			const handler = handlers.get(route.key);
 			const answer = typeof handler === 'function' ? await handler(fake) : handler;
-			return isReply(answer) ? jsonResponse(answer.status, answer.body) : jsonResponse(200, answer);
+			if (!isReply(answer)) return jsonResponse(200, answer);
+			return typeof answer.body === 'string'
+				? new Response(answer.body, { status: answer.status })
+				: jsonResponse(answer.status, answer.body);
 		}
 		unmatched.push(`${method} ${url.pathname}${url.search}`);
 		return jsonResponse(501, {
 			error: { code: 'NOT_FAKED', message: `No fake for ${method} ${url.pathname}`, details: null }
 		});
-	}
+	};
 
 	vi.stubGlobal('fetch', vi.fn(transport));
+	vi.stubGlobal('XMLHttpRequest', fakeXhr(transport));
 	onTestFinished(() => {
 		vi.unstubAllGlobals();
 		if (unmatched.length > 0) {

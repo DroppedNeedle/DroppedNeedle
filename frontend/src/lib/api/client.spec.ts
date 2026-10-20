@@ -186,15 +186,42 @@ describe('api client', () => {
 	});
 
 	describe('api.upload', () => {
-		it('sends FormData without Content-Type header', async () => {
-			mockPageFetch.mockResolvedValue(jsonResponse({ url: '/cover.jpg' }));
-			const formData = new FormData();
-			formData.append('file', new Blob(['test']), 'test.jpg');
-			const result = await api.upload<{ url: string }>('/api/v1/upload', formData);
-			const call = mockPageFetch.mock.calls[0]!;
-			expect(call[1]!.body).toBe(formData);
-			expect(call[1]!.headers).toBeUndefined();
-			expect(result).toEqual({ url: '/cover.jpg' });
+		it('gives up as stalled only after the stall window passes with nothing sent', async () => {
+			vi.useFakeTimers();
+			const opened: { upload: { onprogress: (event: ProgressEvent) => void } }[] = [];
+			class StalledXhr {
+				upload = { onprogress: (_event: ProgressEvent) => {}, onload: () => {} };
+				onabort = () => {};
+				open() {}
+				send() {
+					opened.push(this);
+				}
+				abort() {
+					this.onabort();
+				}
+			}
+			vi.stubGlobal('XMLHttpRequest', StalledXhr);
+			const sent = (loaded: number) =>
+				opened[0]!.upload.onprogress({ loaded, total: 100 } as ProgressEvent);
+			try {
+				const outcome = api.global
+					.upload(v3('/api/v3/import/uploads'), new FormData(), { stallMs: 60_000 })
+					.catch((cause: unknown) => cause);
+				sent(10);
+				await vi.advanceTimersByTimeAsync(59_000);
+				sent(20);
+				await vi.advanceTimersByTimeAsync(59_000);
+				const settled = await Promise.race([outcome, Promise.resolve('pending')]);
+				expect(settled).toBe('pending');
+				await vi.advanceTimersByTimeAsync(1_000);
+				expect(await outcome).toMatchObject({
+					name: 'TransportError',
+					code: 'TRANSPORT_STALLED',
+					path: '/api/v3/import/uploads'
+				});
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 	});
 

@@ -15,6 +15,8 @@ Running DroppedNeedle behind a reverse proxy, telling it its public address, and
 
 Behind a reverse proxy, list the proxy in `TRUSTED_PROXY_IPS` and have it send `X-Forwarded-Proto` and the `Host` header exactly as the browser sent it, port included (or the same value as `X-Forwarded-Host`). In nginx that is `proxy_set_header Host $http_host;`, not `$host`, which drops the port. The `Secure` cookie, HSTS, per-client rate limits and the addresses that player apps are given (below) all depend on the proxy being listed and sending those headers, except that a sign-in from an `https` address listed under Public address (below) gets a `Secure` cookie either way. In one browser, the `https` address and the plain `http` address on the same host name keep separate sign-ins, and signing out at the `https` address ends both. If the proxy is on a private address and not listed, the log says so once, naming the address to add.
 
+Drop imports upload up to 8 GB in one request, far more than a proxy accepts by default. See [Drop imports behind a reverse proxy](downloads.md#behind-a-reverse-proxy) for the nginx settings and Cloudflare's limit.
+
 ## Base path
 
 With `BASE_PATH` set, everything moves under it: the web UI, `/api/v3`, the Subsonic and Jellyfin APIs, and `/health` (the container health check follows it). Point your proxy at the prefix without stripping it.

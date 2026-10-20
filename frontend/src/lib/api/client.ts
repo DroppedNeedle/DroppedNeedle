@@ -33,19 +33,22 @@ export class SessionExpiredError extends ApiError {
 	}
 }
 
-export type TransportErrorCode = 'TRANSPORT_TIMEOUT' | 'TRANSPORT_ABORTED' | 'TRANSPORT_NETWORK';
+export type TransportErrorCode =
+	'TRANSPORT_TIMEOUT' | 'TRANSPORT_ABORTED' | 'TRANSPORT_NETWORK' | 'TRANSPORT_STALLED';
+
+const TRANSPORT_MESSAGES: Record<TransportErrorCode, string> = {
+	TRANSPORT_TIMEOUT: 'The request timed out',
+	TRANSPORT_ABORTED: 'The request was cancelled',
+	TRANSPORT_NETWORK: 'The server could not be reached',
+	TRANSPORT_STALLED: 'The upload stopped'
+};
 
 export class TransportError extends ApiError {
 	readonly method: string;
 	readonly path: string;
 
 	constructor(code: TransportErrorCode, method: string, path: string) {
-		const message =
-			code === 'TRANSPORT_TIMEOUT'
-				? 'The request timed out'
-				: code === 'TRANSPORT_ABORTED'
-					? 'The request was cancelled'
-					: 'The server could not be reached';
+		const message = TRANSPORT_MESSAGES[code];
 		super(0, message, code, { method, path });
 		this.name = 'TransportError';
 		this.method = method;
@@ -58,6 +61,14 @@ export interface RequestOptions extends Omit<RequestInit, 'method' | 'body'> {
 	raw?: boolean;
 	cache?: RequestCache;
 	timeoutMs?: number;
+}
+
+export interface UploadOptions {
+	signal?: AbortSignal;
+	/** Called as the body goes out: bytes sent so far and the total. */
+	onProgress?: (sent: number, total: number) => void;
+	/** Give up when no bytes have gone out for this long while sending. */
+	stallMs?: number;
 }
 
 async function handleResponse<T = void>(res: Response): Promise<T> {
@@ -110,7 +121,8 @@ interface ApiClient {
 	head(url: string, opts?: RequestOptions): Promise<Response>;
 	/** GET answering the raw Response, for binary bodies (downloads, images). */
 	raw(url: string, opts?: RequestOptions): Promise<Response>;
-	upload<T = unknown>(url: string, body: FormData, opts?: RequestOptions): Promise<T>;
+	/** A multipart POST that can report progress; never cut off by page navigation. */
+	upload<T = unknown>(url: string, body: FormData, opts?: UploadOptions): Promise<T>;
 	/** Typed v3 client over the generated contract (same fetch flavor as the host). */
 	v3: V3Client;
 }
@@ -125,8 +137,9 @@ function transportPath(url: string): string {
 
 /**
  * The one request pipeline: timeout/abort mapping, session-cookie fetch, and
- * the ApiError taxonomy. The typed v3 client and the head, raw and upload
- * methods run through here, so their failure behavior cannot drift apart.
+ * the ApiError taxonomy. The typed v3 client and the head and raw methods run
+ * through here, and uploads share its response handling and transport errors,
+ * so their failure behavior cannot drift apart.
  */
 export async function executeRequest<T>(
 	fetchFn: FetchFn,
@@ -183,14 +196,67 @@ export async function executeRequest<T>(
 	return handleResponse<T>(res);
 }
 
+/**
+ * A multipart POST over XMLHttpRequest, the one browser API that reports
+ * bytes sent. With `stallMs`, an upload that sends nothing for that long is
+ * aborted as `TRANSPORT_STALLED`; once every byte is out, the wait for the
+ * answer has no limit. The answer goes through `handleResponse`.
+ */
+function sendUpload<T>(url: string, body: FormData, opts: UploadOptions = {}): Promise<T> {
+	const { signal, onProgress, stallMs } = opts;
+	const path = transportPath(url);
+	return new Promise<Response>((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		let stalled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const watch = () => {
+			clearTimeout(timer);
+			if (stallMs)
+				timer = setTimeout(() => {
+					stalled = true;
+					xhr.abort();
+				}, stallMs);
+		};
+		const cancel = () => xhr.abort();
+		const settle = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener('abort', cancel);
+		};
+		const fail = (code: TransportErrorCode) => {
+			settle();
+			reject(new TransportError(code, 'POST', path));
+		};
+		xhr.open('POST', getApiUrl(url));
+		xhr.withCredentials = true;
+		xhr.upload.onprogress = (event) => {
+			watch();
+			onProgress?.(event.loaded, event.total);
+		};
+		xhr.upload.onload = () => clearTimeout(timer);
+		xhr.onload = () => {
+			settle();
+			if (xhr.status < 200) return reject(new TransportError('TRANSPORT_NETWORK', 'POST', path));
+			const empty = xhr.status === 204 || xhr.status === 205 || xhr.status === 304;
+			resolve(new Response(empty ? null : xhr.responseText, { status: xhr.status }));
+		};
+		xhr.onerror = () => fail('TRANSPORT_NETWORK');
+		xhr.ontimeout = () => fail('TRANSPORT_TIMEOUT');
+		xhr.onabort = () => fail(stalled ? 'TRANSPORT_STALLED' : 'TRANSPORT_ABORTED');
+		if (signal?.aborted) return fail('TRANSPORT_ABORTED');
+		signal?.addEventListener('abort', cancel, { once: true });
+		watch();
+		xhr.send(body);
+	}).then((res) => handleResponse<T>(res));
+}
+
 function createClient(fetchFn: FetchFn): ApiClient {
 	return {
 		head: (url: string, opts?: RequestOptions) =>
 			executeRequest<Response>(fetchFn, 'HEAD', url, undefined, { ...opts, raw: true }),
 		raw: (url: string, opts?: RequestOptions) =>
 			executeRequest<Response>(fetchFn, 'GET', url, undefined, { ...opts, raw: true }),
-		upload: <T = unknown>(url: string, body: FormData, opts?: RequestOptions) =>
-			executeRequest<T>(fetchFn, 'POST', url, body, opts),
+		upload: <T = unknown>(url: string, body: FormData, opts?: UploadOptions) =>
+			sendUpload<T>(url, body, opts),
 		v3: createV3Client(fetchFn)
 	};
 }
