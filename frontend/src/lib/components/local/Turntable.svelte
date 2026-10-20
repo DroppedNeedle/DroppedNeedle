@@ -8,6 +8,7 @@
 	import LyricsPanel from '$lib/components/LyricsPanel.svelte';
 	import AudioQualityBadge from '$lib/components/AudioQualityBadge.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import { getLyricsQuery } from '$lib/queries/lyrics/LyricsQuery.svelte';
@@ -22,7 +23,6 @@
 		ChevronsLeft,
 		ChevronsRight,
 		Shuffle,
-		Disc3,
 		Sparkles,
 		Dices,
 		ListMusic,
@@ -182,9 +182,7 @@
 						className="h-full w-full object-cover"
 					/>
 				{:else}
-					<div class="flex h-full w-full items-center justify-center bg-base-300">
-						<Disc3 class="h-8 w-8 text-base-content/30" />
-					</div>
+					<CoverPlaceholder />
 				{/if}
 			</div>
 			<div

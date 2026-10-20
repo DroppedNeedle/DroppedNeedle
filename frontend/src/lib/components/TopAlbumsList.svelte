@@ -12,7 +12,6 @@
 	import IconButton from '$lib/ui/IconButton.svelte';
 	import AlbumImage from './AlbumImage.svelte';
 	import LibraryBadge from './LibraryBadge.svelte';
-	import LastFmPlaceholder from './LastFmPlaceholder.svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 
 	interface Props {
@@ -177,13 +176,9 @@
 							? 'opacity-75'
 							: ''}"
 					>
-						{#if source === 'lastfm'}
-							<LastFmPlaceholder />
-						{:else}
-							<div class="relative w-12 h-12 shrink-0 overflow-hidden rounded">
-								<CoverPlaceholder name={album.title} />
-							</div>
-						{/if}
+						<div class="relative w-12 h-12 shrink-0 overflow-hidden rounded">
+							<CoverPlaceholder name={album.title} />
+						</div>
 
 						<div class="flex-1 min-w-0">
 							<p class="font-medium text-sm truncate">{album.title}</p>

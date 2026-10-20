@@ -2,6 +2,7 @@
 	import { ChevronDown, Disc3, RefreshCw, Trash2, X } from 'lucide-svelte';
 
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import CoverPlaceholder from '$lib/ui/CoverPlaceholder.svelte';
 	import {
 		discardHeldVerdict,
 		retryDownload
@@ -82,9 +83,7 @@
 					className="h-full w-full"
 				/>
 			{:else}
-				<div class="grid h-full w-full place-items-center bg-base-300">
-					<Disc3 class="size-7 text-warning" aria-hidden="true" />
-				</div>
+				<CoverPlaceholder name={task.album_title ?? ''} />
 			{/if}
 			<span
 				class="absolute right-1 bottom-1 grid size-6 place-items-center rounded-full bg-warning text-warning-content shadow-sm"

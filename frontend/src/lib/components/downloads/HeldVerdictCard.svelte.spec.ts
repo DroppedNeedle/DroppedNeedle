@@ -116,6 +116,14 @@ describe('HeldVerdictCard.svelte', () => {
 		h.reverifyMut = vi.fn();
 	});
 
+	it('shows the colour placeholder for an album with no id', async () => {
+		await render(HeldVerdictCard, {
+			props: { task: { ...task(), release_group_mbid: '' }, items: [held(1)] }
+		} as Parameters<typeof render<typeof HeldVerdictCard>>[1]);
+
+		await expect.element(page.getByTestId('cover-placeholder')).toBeInTheDocument();
+	});
+
 	it('retries the download from the card', async () => {
 		await render(HeldVerdictCard, { props: { task: task(), items: [held(1)] } } as Parameters<
 			typeof render<typeof HeldVerdictCard>
