@@ -80,6 +80,7 @@
 //!   rejected before any mutation.
 
 pub mod archive;
+pub mod bin;
 pub mod generated;
 pub mod journal;
 pub mod operations;

@@ -170,14 +170,9 @@ fn fixture(tag: &str) -> Fixture {
     std::fs::create_dir_all(&music).unwrap();
     std::fs::create_dir_all(&incoming).unwrap();
     let sandbox = Sandbox::new(vec![
-        Root {
-            id: "music".to_string(),
-            dir: music,
-        },
-        Root {
-            id: "incoming".to_string(),
-            dir: incoming,
-        },
+        Root::library("music", music),
+        Root::library("incoming", incoming),
+        Root::bin("bin", dir.join("bin")),
     ])
     .unwrap();
     let db_path = scratch_db(&dir);
@@ -977,10 +972,7 @@ fn leftover_pass_reports_old_unjournaled_hidden_files_and_keeps_them() {
 
     let conn = open_db(&fix);
     let db = restart(&fix);
-    let roots = [Root {
-        id: "music".to_string(),
-        dir: fix.dir.join("music"),
-    }];
+    let roots = [Root::library("music", fix.dir.join("music"))];
     let now = std::time::SystemTime::now();
     let later = now + std::time::Duration::from_secs(2 * 86_400);
     let pass = |at| {
@@ -2142,6 +2134,224 @@ fn replacement_of_a_changed_file_is_refused() {
     assert!(publisher.publish(&sealed, &live, &docs).is_err());
     assert_eq!(std::fs::read(&occupier).unwrap(), b"edited-since-planning");
     assert!(!bin.exists());
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A file in the way that a bundle replaces, planted at the bundle's
+/// first destination, with its bin entry `entry`.
+fn replace_into(fix: &Fixture, bundle: &mut PlanBundle, entry: &std::path::Path) -> PathBuf {
+    let occupier = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
+    std::fs::create_dir_all(occupier.parent().unwrap()).unwrap();
+    std::fs::write(&occupier, b"replaced-library-file").unwrap();
+    bundle.items[0].replaces = Some(publish::Replacement {
+        sha256: sha256_hex(b"replaced-library-file"),
+        track_id: None,
+        recycle_to: entry.display().to_string(),
+    });
+    occupier
+}
+
+/// A replaced file goes into its recycle bin by the bin's own placement
+/// mode, not the library's. On a bin whose disk has neither a no-replace
+/// rename nor hard links it still reaches its entry, by check-then-rename
+/// into the fresh entry folder, and nothing is left pending.
+#[test]
+fn a_replaced_file_reaches_a_bin_with_no_safe_step() {
+    let fix = fixture("replace-check-bin");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let entry = fix.dir.join("bin/entry/a.flac");
+    let occupier = replace_into(&fix, &mut bundle, &entry);
+    let (sealed, live) = seal(&bundle);
+    fix.sandbox
+        .set_bin_placement_mode("bin", PlacementMode::Check);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_bin_seams(Seams {
+        skip_rename: true,
+        link_errno: Some(libc::EPERM),
+        ..Seams::default()
+    });
+
+    let outcome = publisher.publish(&sealed, &live, &docs).unwrap();
+
+    assert_eq!(outcome, PublishOutcome::Committed);
+    assert_staged(&occupier, "track-a");
+    assert_eq!(std::fs::read(&entry).unwrap(), b"replaced-library-file");
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A bin entry never reaches through a symlink below the bin's folder:
+/// one that would is refused before anything moves. A configured bin that
+/// is itself a symlink still works: it is resolved once, and its checks
+/// run on the folder it points to, so a link into a library folder is
+/// not used and each root's `.recycle` takes its place. A root's own
+/// `.recycle` that links into another library folder is not used either:
+/// that root has no bin, and no other bin stands in.
+#[test]
+fn bin_entries_never_follow_a_symlink_below_the_bin() {
+    use publish::bin::{BinRefusal, CONFIGURED_BIN_ID, choose, fresh_entry};
+    use std::os::unix::fs::symlink;
+
+    let fix = fixture("bin-symlink");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let elsewhere = fix.dir.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::create_dir_all(fix.dir.join("bin")).unwrap();
+    symlink(&elsewhere, fix.dir.join("bin/entry")).unwrap();
+    let occupier = replace_into(&fix, &mut bundle, &fix.dir.join("bin/entry/a.flac"));
+    let (sealed, live) = seal(&bundle);
+    let err = open_publisher(&fix)
+        .publish(&sealed, &live, &docs)
+        .unwrap_err();
+    assert!(matches!(err, PublishError::UnsafePath(_)), "got {err:?}");
+    assert_eq!(std::fs::read(&occupier).unwrap(), b"replaced-library-file");
+    assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+
+    let fix = fixture("bin-symlinked");
+    let music = fix.dir.join("music");
+    let library = [Root::library("music", music.clone())];
+    let disk = fix.dir.join("bin-disk");
+    std::fs::create_dir_all(&disk).unwrap();
+    let linked = fix.dir.join("bin-link");
+    symlink(&disk, &linked).unwrap();
+    let choice = choose(&linked.display().to_string(), &library, &[]);
+    let resolved = std::fs::canonicalize(&disk).unwrap();
+    assert_eq!(choice.refused, None);
+    assert_eq!(
+        choice.roots,
+        vec![Root::bin(CONFIGURED_BIN_ID, resolved.clone())]
+    );
+    std::fs::create_dir_all(music.join("Band")).unwrap();
+    let into_library = fix.dir.join("into-library");
+    symlink(music.join("Band"), &into_library).unwrap();
+    let refused = choose(&into_library.display().to_string(), &library, &[]);
+    assert_eq!(refused.refused, Some(BinRefusal::OverlapsLibrary));
+    assert_eq!(refused.roots, vec![Root::recycle_of("music", &music)]);
+
+    let mut roots = vec![
+        Root::library("music", music),
+        Root::library("incoming", fix.dir.join("incoming")),
+    ];
+    roots.extend(choice.roots);
+    let sandbox = Sandbox::new(roots).unwrap();
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let entry = fresh_entry(&resolved, "a.flac", std::time::SystemTime::now()).unwrap();
+    let occupier = replace_into(&fix, &mut bundle, &entry);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = Publisher::new(
+        sandbox,
+        restart(&fix),
+        SqliteCatalog,
+        FixedSpace(u64::MAX),
+        || DAY_50_MS,
+    );
+    assert_eq!(
+        publisher.publish(&sealed, &live, &docs).unwrap(),
+        PublishOutcome::Committed
+    );
+    assert_staged(&occupier, "track-a");
+    assert_eq!(std::fs::read(&entry).unwrap(), b"replaced-library-file");
+
+    let music = fix.dir.join("music");
+    let other = fix.dir.join("other");
+    std::fs::create_dir_all(other.join("Album")).unwrap();
+    symlink(other.join("Album"), music.join(".recycle")).unwrap();
+    let both = [
+        Root::library("music", music),
+        Root::library("other", other.clone()),
+    ];
+    let choice = choose("", &both, &[]);
+    assert_eq!(choice.roots, vec![Root::recycle_of("other", &other)]);
+    assert_eq!(
+        choice.unusable,
+        vec![("music".to_owned(), BinRefusal::OverlapsLibrary)]
+    );
+}
+
+/// When the bin is on another disk the replaced file is copied there, and
+/// the set-aside copy goes only once the bin's folder is synced. A sync
+/// that fails keeps the set-aside copy and leaves the row pending; the
+/// next pass finishes the move.
+#[test]
+fn a_bin_copy_that_did_not_sync_keeps_the_set_aside_file() {
+    let fix = fixture("bin-unsynced");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let entry = fix.dir.join("bin/entry/a.flac");
+    let occupier = replace_into(&fix, &mut bundle, &entry);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_bin_seams(Seams {
+        cross_device: true,
+        unsynced: true,
+        ..Seams::default()
+    });
+
+    let outcome = publisher.publish(&sealed, &live, &docs).unwrap();
+
+    assert_eq!(outcome, PublishOutcome::CleanupPending);
+    assert_staged(&occupier, "track-a");
+    let set_aside = hidden_leftovers(&fix.dir.join("music"))
+        .iter()
+        .filter(|path| {
+            std::fs::read(path).ok().as_deref() == Some(b"replaced-library-file".as_slice())
+        })
+        .count();
+    assert_eq!(set_aside, 1, "the set-aside copy is kept");
+    drop(publisher);
+    reconcile(&restart(&fix), &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(std::fs::read(&entry).unwrap(), b"replaced-library-file");
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// While the bins are unknown (a setting they come from cannot be read),
+/// nothing moves into a bin and no other bin stands in. A publish that
+/// would replace a file waits before anything moves; a replacement
+/// already committed stays set aside, with no `.recycle` made, until the
+/// bins are known again.
+#[test]
+fn nothing_goes_to_a_bin_while_the_bins_are_unknown() {
+    let fix = fixture("bins-unknown");
+    let music = fix.dir.join("music");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let entry = fix.dir.join("bin/entry/a.flac");
+    let occupier = replace_into(&fix, &mut bundle, &entry);
+    let (sealed, live) = seal(&bundle);
+    let unknown = fix
+        .sandbox
+        .clone()
+        .with_bins_unknown("the download settings cannot be read");
+    let mut publisher = Publisher::new(
+        unknown.clone(),
+        restart(&fix),
+        SqliteCatalog,
+        FixedSpace(u64::MAX),
+        || DAY_50_MS,
+    );
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::Interrupted(_)), "got {err:?}");
+    assert_eq!(std::fs::read(&occupier).unwrap(), b"replaced-library-file");
+    drop(publisher);
+
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterCatalogCommit));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &docs),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+    reconcile(&restart(&fix), &unknown, &SqliteCatalog).unwrap();
+    assert!(!entry.exists(), "nothing reached the bin");
+    assert!(!music.join(".recycle").exists(), "no other bin stood in");
+    let rows = JournalStore::new(&open_db(&fix))
+        .bundle("bundle-1")
+        .unwrap();
+    assert!(
+        rows.iter()
+            .any(|row| row.state == JournalState::CleanupPending)
+    );
+
+    reconcile(&restart(&fix), &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(std::fs::read(&entry).unwrap(), b"replaced-library-file");
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 

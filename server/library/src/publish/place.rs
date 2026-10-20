@@ -115,6 +115,10 @@ pub struct Seams {
     /// when the reply to a LINK that succeeded is lost and the retry finds
     /// the name taken. Wins over `link_errno` for the link test only.
     pub lost_link_reply: bool,
+    /// Every step answers EXDEV, as two filesystems do.
+    pub cross_device: bool,
+    /// The folder sync after a good placement fails.
+    pub unsynced: bool,
 }
 
 /// Place `hidden_from` at `to`, never replacing a file at `to`. `mode` is
@@ -137,6 +141,11 @@ pub(super) fn place_with(
     seams: Seams,
 ) -> Result<Placed, PlaceError> {
     let placed = run_steps(mode, hidden_from, to, seams)?;
+    if seams.unsynced {
+        return Err(PlaceError::Unsynced(std::io::Error::other(
+            "folder sync refused by a test seam",
+        )));
+    }
     let to_parent = to.parent();
     if let Some(parent) = to_parent {
         sync_dir(parent).map_err(PlaceError::Unsynced)?;
@@ -155,6 +164,9 @@ fn run_steps(
     to: &Path,
     seams: Seams,
 ) -> Result<Placed, PlaceError> {
+    if seams.cross_device {
+        return Err(PlaceError::CrossDevice);
+    }
     if !seams.skip_rename
         && let Some(renamed) = rename_noreplace(hidden_from, to)
     {
@@ -519,7 +531,7 @@ fn probe_with(root: &Path, seams: Seams) -> PlacementMode {
     }
     let measured = measure(&dir, seams);
     let cleared = clear_probe(&dir);
-    let mode = match (measured, cleared) {
+    match (measured, cleared) {
         (Ok(mode), Ok(())) => mode,
         (Err(error), _) | (Ok(_), Err(error)) => {
             tracing::warn!(
@@ -530,15 +542,7 @@ fn probe_with(root: &Path, seams: Seams) -> PlacementMode {
             );
             PlacementMode::Unknown
         }
-    };
-    if mode == PlacementMode::Check {
-        tracing::warn!(
-            root = %root.display(),
-            "this library's disk has neither a no-replace rename nor hard links; \
-             files are placed by check-then-rename, which another program can race"
-        );
     }
-    mode
 }
 
 /// Remove what a probe left: the two files and the folder. A folder

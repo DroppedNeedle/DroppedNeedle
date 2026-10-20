@@ -320,6 +320,16 @@ impl<'a> JournalWriter<'a> {
         Ok(())
     }
 
+    /// Point a replaced file that has not reached the bin yet at a fresh
+    /// bin entry. False when the row is gone or already recycled.
+    pub fn set_recycle_to(&self, id: &str, recycle_to: &str) -> Result<bool, PublishError> {
+        let changed = self
+            .tx
+            .prepare_cached(sql::JOURNAL_SET_RECYCLE_TO.text())?
+            .execute(rusqlite::params![id, recycle_to])?;
+        Ok(changed == 1)
+    }
+
     /// Move a row from `expected` to `next`, bumping its sequence. A row
     /// already at `next` is touched the same way, so the write always
     /// changes a row and syncs what came before it. A row in any other

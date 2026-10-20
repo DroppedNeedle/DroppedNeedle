@@ -12762,6 +12762,11 @@ export interface components {
             quality_recipe_error?: string | null;
             /** @description Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`. */
             quality_recipe_status: string;
+            /**
+             * @description Why the recycle bin path is not used, when it is not: each library
+             *     folder's `.recycle` takes its place. Read-only.
+             */
+            recycle_bin_warning?: string | null;
         };
         /**
          * @description `download_progress`: the worker polled one of the user's live

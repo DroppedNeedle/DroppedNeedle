@@ -8,9 +8,10 @@
 //! own `<stamp>-<id>` entry so equal names never collide; if any move
 //! fails, the files already moved go back and nothing in the catalog
 //! changes. The bin is the download settings' `recycle_bin_path` (the one
-//! upgrades use, pruned on the same retention window), else `.recycle`
-//! at the top of the file's library root, which the scanner skips and
-//! which keeps the move a rename on the same filesystem.
+//! upgrades use, pruned on the same retention window) when it overlaps no
+//! library or download folder, else `.recycle` at the top of the file's
+//! library root, which the scanner skips and which keeps the move a rename
+//! on the same filesystem. The publisher's sessions pick the same bins.
 //!
 //! Every refusal carries one [`Reason`]: a stable code, a plain sentence
 //! and what to do next. All functions here block; callers run them off
@@ -26,6 +27,8 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use super::catalog_revision::bump_catalog;
 use super::management::takeover;
 use super::operations::reasons::Reason;
+use super::publish::bin::{fresh_entry, serving};
+use super::publish::paths::Root;
 use super::scan::coordinator::ScanRequestError;
 use super::scan::models::{ScanKind, ScanRequest, ScanRequestResult, ScanScope, ScanTrigger};
 use super::scan::roots::RootRegistry;
@@ -429,32 +432,30 @@ impl<'a> Mutations<'a> {
         Ok(self.put_back(&moves, actor))
     }
 
-    /// The recycle bin a file of this library folder goes to. None while
-    /// the download settings do not read, so nothing is recycled.
+    /// The recycle bin a file of this library folder goes to: the
+    /// configured bin when it passes its checks, else the folder's own
+    /// `.recycle`. None while the download settings do not read, so
+    /// nothing is recycled.
     pub fn bin_for(&self, root_id: &str) -> Option<PathBuf> {
-        self.configured_bin().ok()?.or_else(|| {
-            self.setup
-                .live_registry()
-                .resolve(root_id)
-                .map(|root| root.path.join(super::scan::fs::RECYCLE_BIN_DIRECTORY_NAME))
-        })
+        let bins = self.bins(&self.setup.live_registry()).ok()?;
+        bin_dir(&bins, root_id).ok()
     }
 
     /// A fresh recycle-bin entry for a file named `name` from this
     /// library folder: `<bin>/<stamp>-<id>/<name>`, not created yet.
-    pub fn recycle_entry(&self, root_id: &str, name: &str) -> Option<PathBuf> {
-        if name.is_empty() || name.contains(['/', '\\']) {
-            return None;
-        }
-        let bin = self.bin_for(root_id)?;
-        Some(
-            bin.join(format!(
-                "{}-{}",
-                utc_stamp(SystemTime::now()),
-                &uuid::Uuid::new_v4().simple().to_string()[..8]
-            ))
-            .join(name),
-        )
+    /// `None` for a name that cannot be one; `Err` while no usable bin is
+    /// known for the folder.
+    pub fn recycle_entry(
+        &self,
+        root_id: &str,
+        name: &str,
+    ) -> Result<Option<PathBuf>, MutationError> {
+        let bins = self.bins(&self.setup.live_registry())?;
+        Ok(fresh_entry(
+            &bin_dir(&bins, root_id)?,
+            name,
+            SystemTime::now(),
+        ))
     }
 
     /// Undo recycle moves (an upgrade whose new file could not be placed):
@@ -640,7 +641,7 @@ impl<'a> Mutations<'a> {
         let mut guards = Vec::new();
         if recycle {
             let registry = self.setup.live_registry();
-            let configured = self.configured_bin()?;
+            let bins = self.bins(&registry)?;
             let mut planned = Vec::new();
             for track in tracks {
                 let root = registry
@@ -648,9 +649,7 @@ impl<'a> Mutations<'a> {
                     .ok_or(MutationError::Conflict(FILE_OUTSIDE_ROOT))?;
                 let path = join_inside(&root.path, &track.relative_path)
                     .ok_or(MutationError::Conflict(FILE_OUTSIDE_ROOT))?;
-                let bin = configured
-                    .clone()
-                    .unwrap_or_else(|| root.path.join(super::scan::fs::RECYCLE_BIN_DIRECTORY_NAME));
+                let bin = bin_dir(&bins, &track.root_id)?;
                 planned.push((track.root_id.clone(), path, bin));
             }
             for root_id in planned
@@ -708,25 +707,15 @@ impl<'a> Mutations<'a> {
         }
     }
 
-    /// The configured recycle bin, when it is an absolute path. `Err`
-    /// while the download settings do not read: removals then wait rather
-    /// than pick another bin.
-    fn configured_bin(&self) -> Result<Option<PathBuf>, MutationError> {
-        let Some(section) = self.setup.settings.download_policy.read() else {
-            return Err(MutationError::Store(
-                "download settings cannot be read".to_owned(),
-            ));
-        };
-        let configured = section.recycle_bin_path.clone();
-        let path = PathBuf::from(configured.trim());
-        if configured.trim().is_empty() {
-            return Ok(None);
-        }
-        if !path.is_absolute() {
-            tracing::warn!("recycle_bin_path is not absolute; using the root's .recycle");
-            return Ok(None);
-        }
-        Ok(Some(path))
+    /// The recycle bins now, chosen as the publisher's sessions choose
+    /// them. `Err` while a setting they come from does not read: removals
+    /// then wait rather than pick another bin.
+    fn bins(&self, registry: &RootRegistry) -> Result<Vec<Root>, MutationError> {
+        self.setup
+            .bins
+            .current(registry)
+            .map(|choice| choice.roots)
+            .map_err(|cause| MutationError::Store(format!("no recycle bin is known while {cause}")))
     }
 
     /// Resolve a local album id (following merges) or a release-group
@@ -833,18 +822,27 @@ fn join_inside(root: &Path, relative: &str) -> Option<PathBuf> {
     Some(root.join(relative))
 }
 
+/// The folder of the bin that serves library root `root_id`. A root whose
+/// `.recycle` failed its checks has none: its removals wait rather than
+/// pick another bin.
+fn bin_dir(bins: &[Root], root_id: &str) -> Result<PathBuf, MutationError> {
+    serving(bins, root_id)
+        .map(|bin| bin.dir.clone())
+        .ok_or_else(|| {
+            MutationError::Store(format!("library root {root_id} has no usable recycle bin"))
+        })
+}
+
 /// Move one file into its own bin entry; returns where it went.
 fn recycle_file(path: &Path, bin: &Path) -> std::io::Result<PathBuf> {
-    let name = path
+    let destination = path
         .file_name()
-        .ok_or_else(|| std::io::Error::other("file has no name"))?;
-    let entry = bin.join(format!(
-        "{}-{}",
-        utc_stamp(SystemTime::now()),
-        &uuid::Uuid::new_v4().simple().to_string()[..8]
-    ));
-    std::fs::create_dir_all(&entry)?;
-    let destination = entry.join(name);
+        .and_then(|name| name.to_str())
+        .and_then(|name| fresh_entry(bin, name, SystemTime::now()))
+        .ok_or_else(|| std::io::Error::other("file has no usable name"))?;
+    if let Some(entry) = destination.parent() {
+        std::fs::create_dir_all(entry)?;
+    }
     move_file(path, &destination)?;
     Ok(destination)
 }
@@ -983,35 +981,10 @@ fn now_secs() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// `YYYYMMDDTHHMMSS` in UTC, the stamp the bin prune reads.
-fn utc_stamp(now: SystemTime) -> String {
-    let secs = now
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or(0);
-    let days = (secs / 86_400) as i64;
-    let rest = secs % 86_400;
-    // Howard Hinnant's civil-from-days.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}{month:02}{day:02}T{:02}{:02}{:02}",
-        rest / 3600,
-        (rest % 3600) / 60,
-        rest % 60
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::publish::bin::utc_stamp;
 
     #[test]
     fn stamp_and_path_guard() {

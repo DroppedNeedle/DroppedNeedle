@@ -672,6 +672,9 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
     gate: CapabilityGate,
     injector: Option<CrashPoint>,
     place_seams: super::place::Seams,
+    /// Seams for the move of a replaced file into its bin, so a test can
+    /// give the bin a filesystem the library does not share.
+    bin_seams: super::place::Seams,
     before_place: Option<BeforePlace>,
     before_set_aside: Option<BeforePlace>,
     /// Unix milliseconds, read at the start of each publish: a publisher
@@ -754,6 +757,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             gate: CapabilityGate::production(),
             injector: None,
             place_seams: super::place::Seams::default(),
+            bin_seams: super::place::Seams::default(),
             before_place: None,
             before_set_aside: None,
             now_ms,
@@ -782,6 +786,14 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_place_seams(&mut self, seams: super::place::Seams) {
         self.place_seams = seams;
+    }
+
+    /// Make the move of a replaced file into its recycle bin behave like a
+    /// filesystem without one of its steps. Tests only; production never
+    /// calls this.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_bin_seams(&mut self, seams: super::place::Seams) {
+        self.bin_seams = seams;
     }
 
     /// Run `hook` between the last destination check and the placement.
@@ -925,6 +937,18 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                     item.track_id
                 )));
             }
+        }
+        // A replaced file's bin entry is checked before anything moves.
+        // While the bins are unknown the publish waits, as a busy database
+        // makes it.
+        for replaced in items.iter().filter_map(|item| item.replaces.as_ref()) {
+            if let Some(cause) = self.sandbox.bins_unknown() {
+                return Err(PublishError::Interrupted(format!(
+                    "no recycle bin is known while {cause}"
+                )));
+            }
+            self.sandbox
+                .ensure_under_bin(Path::new(&replaced.recycle_to))?;
         }
         CollisionGate::check_bundle(&self.sandbox, &sealed.bundle)?;
         DiskPreflight::check(&sealed.bundle, &self.space)?;
@@ -1643,18 +1667,15 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         if let (Some(replaced), Some(backup_text)) =
             (journal.replaces.as_ref(), journal.backup.as_deref())
         {
-            let backup = Path::new(backup_text);
-            self.sandbox.ensure_under_roots(backup)?;
-            let mode = self.sandbox.placement_mode(&journal.dest_root);
-            let recycle_to = Path::new(&replaced.recycle_to);
-            if paths::recycle_backup(mode, backup, recycle_to, &replaced.sha256)? {
-                durable(&self.db, "publish.journal_recycled", |tx| {
-                    JournalWriter::new(tx).set_recycled(&journal.id, now_secs())
-                })?;
-            }
-            if let Some(parent) = backup.parent() {
-                sync_dir_logged(parent);
-            }
+            super::bin::recycle_replaced(
+                &self.db,
+                &self.sandbox,
+                journal,
+                replaced,
+                Path::new(backup_text),
+                self.bin_seams,
+                std::time::UNIX_EPOCH + std::time::Duration::from_millis(self.now_ms.max(0) as u64),
+            )?;
         } else if let Some(backup_text) = journal.backup.as_deref() {
             let backup = Path::new(backup_text);
             self.sandbox.ensure_under_roots(backup)?;

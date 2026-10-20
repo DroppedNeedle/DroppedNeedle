@@ -190,10 +190,7 @@ impl PluginHost {
             .library_roots
             .iter()
             .filter(|root| !root.path.trim().is_empty() && !root.id.is_empty())
-            .map(|root| Root {
-                id: root.id.clone(),
-                dir: PathBuf::from(root.path.trim()),
-            })
+            .map(|root| Root::library(root.id.clone(), PathBuf::from(root.path.trim())))
             .collect();
         let Some(primary) = roots.first().map(|root| root.id.clone()) else {
             return Err(writes.refuse(plugin, "no library folder is set up".to_owned()));

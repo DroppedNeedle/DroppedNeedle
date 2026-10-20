@@ -1124,23 +1124,24 @@ fn finish_cleanup(db: &Db, sandbox: &Sandbox, bundle_id: &str) -> Result<(), Pub
             (journal.replaces.as_ref(), journal.backup.as_deref())
         {
             // The replaced file goes to the recycle bin, never away.
-            let moved = sandbox
-                .ensure_under_roots(Path::new(backup_text))
-                .and_then(|()| {
-                    paths::recycle_backup(
-                        sandbox.placement_mode(&journal.dest_root),
-                        Path::new(backup_text),
-                        Path::new(&replaced.recycle_to),
-                        &replaced.sha256,
-                    )
-                });
+            let moved = super::bin::recycle_replaced(
+                db,
+                sandbox,
+                &journal,
+                replaced,
+                Path::new(backup_text),
+                Seams::default(),
+                std::time::SystemTime::now(),
+            );
             match moved {
-                Ok(true) => {
-                    durable(db, "publish.journal_recycled", |tx| {
-                        JournalWriter::new(tx).set_recycled(&journal.id, now_secs())
-                    })?;
+                Ok(_) => {}
+                Err(error) if error.wrote_nothing() => return Err(error),
+                // While its bin is unknown the bins' source has logged why,
+                // once; each retry stays quiet.
+                Err(error) if sandbox.bin_for(&journal.dest_root).is_err() => {
+                    tracing::debug!(journal_id = %journal.id, %error, "replaced file waits for a recycle bin");
+                    failed = true;
                 }
-                Ok(false) => {}
                 Err(error) => {
                     tracing::warn!(journal_id = %journal.id, %error, "replaced file not recycled yet");
                     failed = true;
@@ -1392,11 +1393,4 @@ fn unwind_row(
         tracing::warn!(dir = %parent.display(), %error, "directory sync failed");
     }
     Ok(Unwound::Clean)
-}
-
-fn now_secs() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
 }

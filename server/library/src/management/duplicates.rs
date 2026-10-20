@@ -15,7 +15,7 @@ use super::planner::{self, PlanContext};
 use super::profile::{self, CompiledScripts};
 use super::reasons::ItemReason;
 use super::selection;
-use super::service::{JobSpec, Management, stale};
+use super::service::{JobSpec, Management, Refused, stale};
 use super::store::{self, Snapshot};
 use crate::mutations::MutationError;
 use crate::publish::planner::PlanKind;
@@ -229,11 +229,13 @@ impl Management {
     /// Give the publisher the file a duplicate resolution replaces: it
     /// is set aside under the publish journal, recycled to a fresh bin
     /// entry after commit, and put back if the publish unwinds.
+    /// While the download settings cannot be read no bin is known, and
+    /// the job waits as it does for a busy database.
     pub(super) fn plan_replacements(
         &self,
         items: &[super::models::PlannedItem],
         plans: &mut [crate::publish::PlanItem],
-    ) -> Result<(), ItemReason> {
+    ) -> Result<(), Refused> {
         let mutations = crate::mutations::Mutations::new(&self.setup);
         for item in items {
             let Some(first) = &item.desired.recycle_first else {
@@ -248,6 +250,7 @@ impl Management {
                 .unwrap_or_default();
             let recycle_to = mutations
                 .recycle_entry(&first.root_id, &name)
+                .map_err(|error| Refused::Busy(ManagementError::Busy(error.to_string())))?
                 .ok_or_else(|| ItemReason {
                     code: "RECYCLE_FAILED".to_owned(),
                     message: format!(

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { TriangleAlert } from 'lucide-svelte';
+
 	import {
 		getDownloadPolicyQuery,
 		saveDownloadPolicy
@@ -158,6 +160,13 @@
 						fallbacks. New work uses saved changes.
 					</p>
 				</div>
+
+				{#if section.saved?.recycle_bin_warning}
+					<div class="alert alert-warning items-start text-sm" role="status">
+						<TriangleAlert class="mt-0.5 h-5 w-5" aria-hidden="true" />
+						<p class="min-w-0 flex-1">{section.saved.recycle_bin_warning}</p>
+					</div>
+				{/if}
 
 				<QualityOrderSection
 					bind:qualityRecipe={draft.recipe}

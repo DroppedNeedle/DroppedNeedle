@@ -37,6 +37,9 @@ droppedneedle_kernel::sql! {
     /// When a replaced file reached the recycle bin.
     pub(super) JOURNAL_SET_RECYCLED = "UPDATE library_publish_replacements SET recycled_at = ?2 \
              WHERE journal_id = ?1";
+    /// A fresh bin entry (`?2`) for a replaced file not yet recycled.
+    pub(super) JOURNAL_SET_RECYCLE_TO = "UPDATE library_publish_replacements \
+             SET recycle_to = ?2 WHERE journal_id = ?1 AND recycled_at IS NULL";
     /// Another bundle (not `?2`) still unsettled for a track (`?1`).
     pub(super) UNSETTLED_FOR_TRACK = "SELECT bundle_id FROM library_publish_journal \
              WHERE track_id = ?1 AND bundle_id <> ?2 \

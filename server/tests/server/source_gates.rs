@@ -386,7 +386,7 @@ const SPAWN_SITES: &[(&str, usize, &str)] = &[
     ("src/bootstrap/serve.rs", 1, HTTP_SERVER),
     ("src/settings/library_policy_service.rs", 1, REQUEST),
     ("src/settings/services.rs", 3, REQUEST),
-    ("src/settings/wiring.rs", 1, REQUEST),
+    ("src/settings/wiring.rs", 2, REQUEST),
     ("tool/src/import/carry/avatars.rs", 2, OFFLINE_TOOL),
     ("tool/src/import/carry/bundle.rs", 1, OFFLINE_TOOL),
     ("tool/src/import/carry/held.rs", 2, OFFLINE_TOOL),

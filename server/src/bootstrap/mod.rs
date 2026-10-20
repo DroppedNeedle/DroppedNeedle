@@ -467,6 +467,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         library.management_settings.clone(),
         scans,
         &providers,
+        library.bins.clone(),
     )
     .with_section_prefs(
         Arc::new(SqliteSectionPrefsStore { db: db.clone() }),
@@ -586,6 +587,10 @@ fn library_ports(
         enrichment: Some(Arc::new(enrichment)),
         scan_completed: Arc::new(move || scans.bump()),
         fs,
+        download_trees: droppedneedle_acquire::wiring::recycle_guard(
+            &p.settings,
+            p.config.imports_dir(),
+        ),
     })
 }
 

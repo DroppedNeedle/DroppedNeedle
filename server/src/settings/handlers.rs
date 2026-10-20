@@ -760,11 +760,8 @@ pub async fn get_policy(
     State(settings): State<SettingsSetup>,
     _caller: Admin,
 ) -> JsonResult<DownloadPolicyView> {
-    settings
-        .service()
-        .get_policy()
-        .map(Json)
-        .map_err(ApiError::from)
+    let view = settings.service().get_policy()?;
+    Ok(Json(settings.with_bin_warning(view).await))
 }
 
 /// Save the acquisition policy. Read-only verdict fields in the body are
@@ -781,12 +778,8 @@ pub async fn put_policy(
     _caller: Admin,
     ValidJson(body): ValidJson<DownloadPolicy>,
 ) -> JsonResult<DownloadPolicyView> {
-    settings
-        .service()
-        .save_policy(body)
-        .await
-        .map(Json)
-        .map_err(ApiError::from)
+    let view = settings.service().save_policy(body).await?;
+    Ok(Json(settings.with_bin_warning(view).await))
 }
 
 /// Safe policy summary for the settings page: the contract sentence

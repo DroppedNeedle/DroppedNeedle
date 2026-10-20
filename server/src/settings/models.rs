@@ -68,6 +68,10 @@ pub struct DownloadPolicyView {
     pub quality_recipe_status: String,
     /// Recipe verdict detail, when any.
     pub quality_recipe_error: Option<String>,
+    /// Why the recycle bin path is not used, when it is not: each library
+    /// folder's `.recycle` takes its place. Read-only.
+    #[serde(default)]
+    pub recycle_bin_warning: Option<String>,
 }
 
 /// GET view of the MusicBrainz connection: the settled settings plus the

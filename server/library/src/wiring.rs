@@ -99,6 +99,8 @@ pub struct LibraryPorts {
     pub scan_completed: ScanCompleted,
     /// Root leases, shared with the plugin host's library writes.
     pub fs: FsCoordinator,
+    /// The download folders a configured recycle bin must stay clear of.
+    pub download_trees: super::publish::bin::DownloadTrees,
 }
 
 /// Everything `create_app` needs to mount the library engine, built once.
@@ -162,6 +164,8 @@ pub struct LibrarySetup {
     pub root_dirs: RootDirs,
     /// Download and wanted cleanup after an album removal.
     pub removal_hook: Arc<dyn AlbumRemovalHook>,
+    /// The recycle bins removals, upgrades and replaced files go to.
+    pub bins: super::publish::bin::BinSource,
     /// The shared outbound HTTP client, for media-server refreshes after a
     /// management run.
     pub http: reqwest::Client,
@@ -282,6 +286,7 @@ impl LibrarySetup {
             enrichment,
             scan_completed,
             fs,
+            download_trees,
         } = ports;
         let coordinator = Arc::new(
             ScanCoordinator::new(
@@ -335,7 +340,12 @@ impl LibrarySetup {
                 pool.clone(),
                 identify_store.clone(),
             ));
-        let publish = PublishCell::new(db.clone());
+        let bins = super::publish::bin::BinSource::new(
+            settings.download_policy.clone(),
+            settings.library.clone(),
+            download_trees,
+        );
+        let publish = PublishCell::new(db.clone(), bins.clone());
         let placement = publish.placement();
         Ok(Self {
             ids: platform.ids.clone(),
@@ -363,6 +373,7 @@ impl LibrarySetup {
             watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
             root_dirs,
             removal_hook: removal,
+            bins,
             http: platform.http.shared().clone(),
             enrichment,
         })

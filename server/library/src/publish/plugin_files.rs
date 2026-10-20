@@ -86,11 +86,7 @@ mod tests {
     fn adds_new_files_and_never_overwrites() {
         let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("plugin-files")
             .expect("scratch dir");
-        let sandbox = Sandbox::new(vec![Root {
-            id: "r1".to_owned(),
-            dir: dir.path().to_path_buf(),
-        }])
-        .expect("sandbox");
+        let sandbox = Sandbox::new(vec![Root::library("r1", dir.path())]).expect("sandbox");
         let stored =
             write_new_file(&sandbox, "r1", "notes/one.txt", b"first", |_| Ok(())).expect("written");
         assert_eq!(std::fs::read(&stored).expect("reads"), b"first");

@@ -2008,10 +2008,11 @@ impl Management {
         self.setup
             .publish_plans(bundle_id, plans, pins, &override_of)
             .map_err(|error| {
-                // The database refused a call: the publish stopped where
-                // it was, and the job goes back to the queue.
+                // The database refused a call, or no recycle bin is known:
+                // the publish stopped where it was, and the job goes back
+                // to the queue. The error says which.
                 if let crate::publish::PublishError::Interrupted(cause) = &error {
-                    tracing::warn!(%error, job_id = snapshot.job.id, "management publish waits: the database is busy");
+                    tracing::warn!(%error, job_id = snapshot.job.id, "management publish waits");
                     return Refused::Busy(ManagementError::Busy(cause.clone()));
                 }
                 let reason = reasons::from_publish(&error);
@@ -2026,7 +2027,7 @@ impl Management {
 }
 
 /// Why one album was not published.
-enum Refused {
+pub(super) enum Refused {
     /// The reason every file in the album shares.
     Reason(ItemReason),
     /// The database was too busy to read what the album needs; the job

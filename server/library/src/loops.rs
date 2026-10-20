@@ -411,14 +411,15 @@ impl LibrarySetup {
         let registry = self.live_registry();
         // Reconcile-on-reopen (and the retry of held bundles) can resume
         // renames; a no-op tick takes no guards and bumps no revisions.
-        let reopen = cell.needs_refresh(&registry);
+        let session = cell.session(&registry);
+        let reopen = cell.needs_refresh(&session);
         let retry = !reopen && cell.has_held()?;
         let _guards = if reopen || retry {
             self.publish_guards(&registry)
         } else {
             Vec::new()
         };
-        cell.refresh(&registry, &self.root_dirs)?;
+        cell.refresh_to(session, &self.root_dirs)?;
         if retry {
             cell.retry_held()?;
         }

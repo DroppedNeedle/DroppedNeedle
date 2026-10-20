@@ -18,7 +18,7 @@ use std::sync::Arc;
 use crate::bootstrap::Outbound;
 use crate::settings::effects::Effects;
 use crate::settings::library_policy_service::LibraryPolicyService;
-use crate::settings::models::LibraryScanScheduleResponse;
+use crate::settings::models::{DownloadPolicyView, LibraryScanScheduleResponse};
 use crate::settings::musicbrainz::MusicBrainzLifecycle;
 use crate::settings::section_prefs::{LinkStatus, SectionPrefsStore};
 use crate::settings::services::{PolicyImpactBuckets, SettingsService};
@@ -31,6 +31,7 @@ use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::management::settings::service::LibraryManagementService;
 use droppedneedle_library::policy::LibraryPolicyCatalog;
+use droppedneedle_library::publish::bin::BinSource;
 use droppedneedle_providers::Providers;
 
 /// Section-prefs backends: the toggle store plus per-user link state.
@@ -50,6 +51,9 @@ pub struct SettingsSetup {
     prefs: Option<Arc<SectionPrefsDeps>>,
     buckets: Option<Arc<dyn PolicyImpactBuckets>>,
     policy: Arc<LibraryPolicyService>,
+    /// Checks the recycle bin path the download settings show; test
+    /// bundles have none.
+    bins: Option<BinSource>,
     /// The scan history the schedule shows its last scan from; test
     /// bundles have none.
     scans: Option<Arc<dyn LibraryLookups>>,
@@ -64,8 +68,10 @@ impl SettingsSetup {
     /// deployment timezone, with the wired fan-out in `effects`. The
     /// Library Management routes save through `management`, the library's
     /// own service, so an activation dry run and a page save never save
-    /// over each other. The schedule reads its last scan from `scans`, and
-    /// the Verify probes check keys through the clients in `providers`.
+    /// over each other. The schedule reads its last scan from `scans`, the
+    /// Verify probes check keys through the clients in `providers`, and the
+    /// download settings say through `bins` when the recycle bin path is
+    /// not used.
     pub fn build(
         platform: &Platform,
         effects: Effects,
@@ -73,6 +79,7 @@ impl SettingsSetup {
         management: Arc<LibraryManagementService>,
         scans: Arc<dyn LibraryLookups>,
         providers: &Providers,
+        bins: BinSource,
     ) -> Self {
         let mut setup = Self::assemble(
             platform.settings.clone(),
@@ -84,6 +91,7 @@ impl SettingsSetup {
             management,
         );
         setup.scans = Some(scans);
+        setup.bins = Some(bins);
         setup
     }
 
@@ -107,6 +115,7 @@ impl SettingsSetup {
             management,
             prefs: None,
             buckets: None,
+            bins: None,
             scans: None,
             #[cfg(any(test, feature = "test-support"))]
             _scratch: None,
@@ -207,6 +216,22 @@ impl SettingsSetup {
     /// The wired section service.
     pub fn service(&self) -> &SettingsService {
         &self.service
+    }
+
+    /// `view` with the reason its recycle bin path is not used, if it is
+    /// not. The check resolves paths, so it runs on the blocking pool.
+    pub async fn with_bin_warning(&self, mut view: DownloadPolicyView) -> DownloadPolicyView {
+        let Some(bins) = self.bins.clone() else {
+            return view;
+        };
+        let configured = view.policy.recycle_bin_path.clone();
+        match tokio::task::spawn_blocking(move || bins.refusal(&configured)).await {
+            Ok(refusal) => {
+                view.recycle_bin_warning = refusal.map(|refusal| refusal.message().to_owned());
+            }
+            Err(error) => tracing::warn!(%error, "recycle bin check did not run"),
+        }
+        view
     }
 
     /// The library policy routes' service.

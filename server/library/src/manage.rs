@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 use super::adapters::FsSpaceProbe;
 use super::clock::{now_ms, today_day};
+use super::publish::bin::BinSource;
 use super::publish::journal::JournalStore;
+use super::publish::paths::Root;
 use super::publish::planner::{
     Capability, CollisionGate, DiskPreflight, FileFingerprint, PlanBundle, PlanItem, PlanKind,
     ReleaseIdentity, SealRecheck, SealedPreview,
@@ -56,16 +58,28 @@ pub struct PreviewEntry {
 pub(crate) struct OpenPublish {
     pub(crate) sandbox: Sandbox,
     pub(crate) publisher: Publisher<SqliteCatalog, FsSpaceProbe>,
-    root_ids: Vec<String>,
+    session: SessionRoots,
+}
+
+/// What a publish session is open over: the usable library roots and the
+/// recycle bins, each by id and folder (`Err` with the cause while the
+/// bins are unknown). A change to any of them reopens the session. A
+/// caller works it out once and uses that one answer both to decide on
+/// the root guards and to refresh, so the two never disagree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionRoots {
+    library: Vec<Root>,
+    bins: Result<Vec<Root>, &'static str>,
 }
 
 /// Publish state. Empty until the first usable root is configured;
-/// reopened (with reconciliation) whenever the usable root set
-/// changes. One mutex serializes publishes against reopens. No read or
-/// write closure takes that mutex, so holding it across a database call
-/// cannot deadlock the lane.
+/// reopened (with reconciliation) whenever the usable roots or the
+/// recycle bins change. One mutex serializes publishes against reopens.
+/// No read or write closure takes that mutex, so holding it across a
+/// database call cannot deadlock the lane.
 pub struct PublishCell {
     db: Db,
+    bins: BinSource,
     pub(crate) cell: Option<OpenPublish>,
     placement: RootPlacement,
 }
@@ -251,10 +265,12 @@ impl LeftoverFiles {
 }
 
 impl PublishCell {
-    /// An unopened cell over the application database.
-    pub(crate) fn new(db: Db) -> Self {
+    /// An unopened cell over the application database, taking its
+    /// recycle bins from `bins`.
+    pub(crate) fn new(db: Db, bins: BinSource) -> Self {
         Self {
             db,
+            bins,
             cell: None,
             placement: RootPlacement::default(),
         }
@@ -272,7 +288,7 @@ impl PublishCell {
         let Some(open) = self.cell.as_ref() else {
             return Ok(None);
         };
-        if !open.root_ids.iter().any(|id| id == root_id) {
+        if !open.session.library.iter().any(|root| root.id == root_id) {
             return Ok(None);
         }
         let probed = open.sandbox.recheck_placement(root_id)?;
@@ -308,38 +324,59 @@ impl PublishCell {
         super::publish::recovery::reconcile(&self.db, &open.sandbox, &SqliteCatalog)
     }
 
-    fn root_dirs(registry: &RootRegistry) -> Vec<super::publish::paths::Root> {
+    fn root_dirs(registry: &RootRegistry) -> Vec<Root> {
         registry
             .roots()
             .iter()
             .filter(|root| root.policy != EffectivePolicy::Excluded)
-            .map(|root| super::publish::paths::Root {
-                id: root.id.clone(),
-                dir: root.path.clone(),
-            })
+            .map(|root| Root::library(root.id.clone(), root.path.clone()))
             .collect()
     }
 
-    /// Reconcile and (re)open when the usable root set changed.
-    /// Returns the bundle recoveries from the reconcile, if any.
+    /// The roots and bins a session would open over now. The bins are
+    /// resolved here, once per call.
+    pub(crate) fn session(&self, registry: &RootRegistry) -> SessionRoots {
+        SessionRoots {
+            library: Self::root_dirs(registry),
+            bins: self.bins.current(registry).map(|choice| choice.roots),
+        }
+    }
+
+    /// [`Self::refresh_to`] the session `registry` calls for now, for a
+    /// caller that holds the root guards whatever the answer.
     pub(crate) fn refresh(
         &mut self,
         registry: &RootRegistry,
         space_roots: &RootDirs,
     ) -> Result<Vec<super::publish::recovery::BundleRecovery>, PublishError> {
-        let roots = Self::root_dirs(registry);
-        let ids: Vec<String> = roots.iter().map(|root| root.id.clone()).collect();
-        if roots.is_empty() {
+        let session = self.session(registry);
+        self.refresh_to(session, space_roots)
+    }
+
+    /// Reconcile and (re)open when `session` differs from the open one:
+    /// the usable roots or the bins changed, by id or by folder. Returns
+    /// the bundle recoveries from the reconcile, if any.
+    pub(crate) fn refresh_to(
+        &mut self,
+        session: SessionRoots,
+        space_roots: &RootDirs,
+    ) -> Result<Vec<super::publish::recovery::BundleRecovery>, PublishError> {
+        if session.library.is_empty() {
             self.cell = None;
             self.placement.follow(None);
             return Ok(Vec::new());
         }
         if let Some(open) = self.cell.as_ref()
-            && open.root_ids == ids
+            && open.session == session
         {
             return Ok(Vec::new());
         }
-        let sandbox = Sandbox::new(roots)?;
+        let mut roots = session.library.clone();
+        roots.extend(session.bins.iter().flatten().cloned());
+        let mut sandbox = Sandbox::new(roots)?;
+        if let Err(cause) = session.bins {
+            sandbox = sandbox.with_bins_unknown(cause);
+        }
         // Recovery runs before the new session takes publishes. The
         // journal lives in the application database, so root order never
         // decides where it is.
@@ -355,7 +392,7 @@ impl PublishCell {
         self.cell = Some(OpenPublish {
             sandbox,
             publisher,
-            root_ids: ids,
+            session,
         });
         Ok(recoveries)
     }
@@ -374,14 +411,13 @@ impl PublishCell {
             .collect()
     }
 
-    /// True when a refresh would reopen (and reconcile) under
-    /// `registry`: exactly the case where reconcile can write.
-    pub(crate) fn needs_refresh(&self, registry: &RootRegistry) -> bool {
-        let ids = Self::pending_ids(registry);
-        if ids.is_empty() {
+    /// True when refreshing to `session` would reopen (and reconcile):
+    /// exactly the case where reconcile can write.
+    pub(crate) fn needs_refresh(&self, session: &SessionRoots) -> bool {
+        if session.library.is_empty() {
             return false;
         }
-        self.cell.as_ref().map(|open| &open.root_ids) != Some(&ids)
+        self.cell.as_ref().map(|open| &open.session) != Some(session)
     }
 }
 
@@ -936,12 +972,13 @@ impl LibrarySetup {
                 .publish
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let _guards = if cell.needs_refresh(&registry) {
+            let session = cell.session(&registry);
+            let _guards = if cell.needs_refresh(&session) {
                 self.publish_guards(&registry)
             } else {
                 Vec::new()
             };
-            cell.refresh(&registry, &self.root_dirs)
+            cell.refresh_to(session, &self.root_dirs)
                 .map_err(publish_error)?;
             cell.open().map_err(publish_error)?.sandbox.clone()
         };
@@ -1289,14 +1326,15 @@ impl LibrarySetup {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let registry = self.live_registry();
-        let reopen = cell.needs_refresh(&registry);
+        let session = cell.session(&registry);
+        let reopen = cell.needs_refresh(&session);
         let retry = !reopen && cell.has_held()?;
         let _guards = if reopen || retry {
             self.publish_guards(&registry)
         } else {
             Vec::new()
         };
-        cell.refresh(&registry, &self.root_dirs)?;
+        cell.refresh_to(session, &self.root_dirs)?;
         if retry {
             cell.retry_held()?;
         }
@@ -1311,12 +1349,13 @@ impl LibrarySetup {
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let _guards = if cell.needs_refresh(&registry) {
+        let session = cell.session(&registry);
+        let _guards = if cell.needs_refresh(&session) {
             self.publish_guards(&registry)
         } else {
             Vec::new()
         };
-        cell.refresh(&registry, &self.root_dirs)?;
+        cell.refresh_to(session, &self.root_dirs)?;
         Ok(cell.open()?.sandbox.clone())
     }
 
@@ -1333,12 +1372,13 @@ impl LibrarySetup {
             .publish
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let _guards = if cell.needs_refresh(&registry) {
+        let session = cell.session(&registry);
+        let _guards = if cell.needs_refresh(&session) {
             self.publish_guards(&registry)
         } else {
             Vec::new()
         };
-        cell.refresh(&registry, &self.root_dirs)?;
+        cell.refresh_to(session, &self.root_dirs)?;
         cell.recheck_placement(root_id)
     }
 
@@ -1491,12 +1531,13 @@ impl LibrarySetup {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let registry = self.live_registry();
-        let _guards = if cell.needs_refresh(&registry) {
+        let session = cell.session(&registry);
+        let _guards = if cell.needs_refresh(&session) {
             self.publish_guards(&registry)
         } else {
             Vec::new()
         };
-        cell.refresh(&registry, &self.root_dirs)
+        cell.refresh_to(session, &self.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         self.undo_files_in(open, bundle_id, override_of)
@@ -1818,12 +1859,13 @@ impl LibrarySetup {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let registry = self.live_registry();
-        let _guards = if cell.needs_refresh(&registry) {
+        let session = cell.session(&registry);
+        let _guards = if cell.needs_refresh(&session) {
             self.publish_guards(&registry)
         } else {
             Vec::new()
         };
-        cell.refresh(&registry, &self.root_dirs)
+        cell.refresh_to(session, &self.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         self.baseline_files_in(open, track_ids, override_of)

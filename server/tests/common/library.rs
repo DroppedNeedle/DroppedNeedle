@@ -201,6 +201,10 @@ pub fn library_with(
             enrichment,
             scan_completed: Arc::new(|| {}),
             fs: FsCoordinator::new(),
+            download_trees: droppedneedle_acquire::wiring::recycle_guard(
+                &platform.settings,
+                platform.config.imports_dir(),
+            ),
         },
     )
     .expect("library bundle builds")

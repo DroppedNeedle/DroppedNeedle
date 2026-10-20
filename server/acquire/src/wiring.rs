@@ -87,6 +87,7 @@ use droppedneedle_kernel::runtime_config::sections::{
 };
 use droppedneedle_kernel::runtime_config::{ConfigStore, Live, Section};
 use droppedneedle_library::operations::port::EditionPlans;
+use droppedneedle_library::publish::bin::DownloadTrees;
 use droppedneedle_plugins::host::PluginHost;
 use droppedneedle_plugins::scrobble::{ListenBrainzLinkStore, ScrobblePrefsStore};
 use droppedneedle_providers::Providers;
@@ -1472,8 +1473,7 @@ impl WorkerSettings {
         let policy = self.policy.read()?;
         let source_priority = self.source_priority.read()?;
         let sab = self.sabnzbd.read().unwrap_or_default();
-        let sab_mount = (!sab.sabnzbd.url.is_empty())
-            .then(|| PathBuf::from(sab.sabnzbd.downloads_mount.clone()));
+        let sab_mount = sabnzbd_mount(&sab);
         let library_roots: Vec<PathBuf> = self
             .library
             .read()?
@@ -1491,6 +1491,32 @@ impl WorkerSettings {
             &library_roots,
         ))
     }
+}
+
+/// SABnzbd's completed-downloads folder, while SABnzbd is set up.
+fn sabnzbd_mount(section: &DownloadClients) -> Option<PathBuf> {
+    (!section.sabnzbd.url.is_empty()).then(|| PathBuf::from(&section.sabnzbd.downloads_mount))
+}
+
+/// The download folders no recycle bin may overlap: the staging folder
+/// and SABnzbd's completed-downloads folder. An empty folder setting names
+/// no folder, so it guards nothing.
+fn download_trees(staging_root: &Path, sab_mount: Option<PathBuf>) -> Vec<PathBuf> {
+    std::iter::once(staging_root.to_owned())
+        .chain(sab_mount)
+        .filter(|tree| !tree.as_os_str().is_empty())
+        .collect()
+}
+
+/// The download folders a configured recycle bin must stay clear of, read
+/// live from the SABnzbd settings, for the library's builder. `None` while
+/// those settings cannot be read.
+pub fn recycle_guard(store: &ConfigStore, staging_root: PathBuf) -> DownloadTrees {
+    let sabnzbd: Live<DownloadClients> = store.live();
+    Arc::new(move || {
+        let section = sabnzbd.read()?;
+        Some(download_trees(&staging_root, sabnzbd_mount(&section)))
+    })
 }
 
 /// Worker tuning bound from the download-policy section. Only the
@@ -1518,10 +1544,7 @@ fn worker_config(
         .clone()
         .map(|mount| vec![("usenet".to_owned(), mount)])
         .unwrap_or_default();
-    let mut protected = vec![staging_root.to_owned()];
-    if let Some(mount) = &sab_mount {
-        protected.push(mount.clone());
-    }
+    let mut protected = download_trees(staging_root, sab_mount);
     protected.extend(library_roots.iter().cloned());
     let retention = policy.recycle_retention_days.max(0);
     let mut bin_roots: Vec<PathBuf> = RecycleBin::resolve(&policy.recycle_bin_path, &[])

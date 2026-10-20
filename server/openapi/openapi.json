@@ -41551,6 +41551,13 @@
               "quality_recipe_status": {
                 "type": "string",
                 "description": "Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`."
+              },
+              "recycle_bin_warning": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Why the recycle bin path is not used, when it is not: each library\nfolder's `.recycle` takes its place. Read-only."
               }
             }
           }
