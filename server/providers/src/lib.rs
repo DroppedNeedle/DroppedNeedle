@@ -105,6 +105,8 @@ pub struct ProviderEndpoints {
     pub musicbrainz: String,
     /// BrainzMash API root.
     pub brainzmash: String,
+    /// Cover Art Archive origin.
+    pub coverart: String,
 }
 
 impl ProviderEndpoints {
@@ -116,6 +118,7 @@ impl ProviderEndpoints {
         Self {
             musicbrainz: "http://127.0.0.1:9/musicbrainz/ws/2".to_owned(),
             brainzmash: "http://127.0.0.1:9/brainzmash/ws/2".to_owned(),
+            coverart: "http://127.0.0.1:9/coverart".to_owned(),
         }
     }
 }
@@ -136,6 +139,8 @@ pub struct Providers {
     pub health: Arc<health::ServiceHealth>,
     /// MusicBrainz: the official service, BrainzMash and a mirror.
     pub musicbrainz: musicbrainz::MusicBrainzClient,
+    /// The Cover Art Archive.
+    pub coverart: coverart::CaaClient,
 }
 
 impl Providers {
@@ -204,12 +209,17 @@ impl Providers {
             &endpoints.musicbrainz,
             &endpoints.brainzmash,
         );
+        let coverart = coverart::CaaClient::new(
+            executor(&coverart::SPEC, coverart::SOURCE),
+            &endpoints.coverart,
+        );
         Self {
             limiters,
             slots: SlotManager::new(),
             cache: Arc::new(InMemoryProviderCache::new()),
             health,
             musicbrainz,
+            coverart,
         }
     }
 

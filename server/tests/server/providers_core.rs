@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use droppedneedle_kernel::clock::SystemClock;
+use droppedneedle_providers::coverart::{self, DownloadSize, EntityKind};
 use droppedneedle_providers::executor::{
     Backoff, Executor, Method, RedirectRule, Redirects, Request, Scripted, ScriptedWire, Spec, Url,
     standard_classify,
@@ -33,7 +34,7 @@ static SPEC: Spec = Spec {
 
 static HOPS: RedirectRule = RedirectRule {
     max_hops: 2,
-    allow: |_, _| true,
+    next: |_, next| Some(next.clone()),
 };
 
 fn url(path: &str) -> String {
@@ -355,13 +356,14 @@ async fn a_run_of_failures_rests_the_provider() {
     assert!(started.elapsed() >= Duration::from_secs(29));
 }
 
-fn musicbrainz_over(wire: &Arc<ScriptedWire>) -> Providers {
+fn providers_over(wire: &Arc<ScriptedWire>) -> Providers {
     Providers::over_wire(
         wire.clone(),
         Arc::new(SystemClock),
         ProviderEndpoints {
             musicbrainz: musicbrainz::MB_API_BASE.to_owned(),
             brainzmash: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
+            coverart: coverart::COVER_ART_ARCHIVE_BASE.to_owned(),
         },
     )
 }
@@ -383,7 +385,7 @@ async fn musicbrainz_hooks() {
     let wire = Arc::new(ScriptedWire::new());
     let official = format!("{}/release/{RELEASE}", musicbrainz::MB_API_BASE);
     wire.answer(&official, 503, &[], "");
-    let providers = musicbrainz_over(&wire);
+    let providers = providers_over(&wire);
     let error = providers
         .musicbrainz
         .fixed(MbSource::official(), RequestPriority::UserInitiated)
@@ -408,7 +410,7 @@ async fn musicbrainz_hooks() {
     let wire = Arc::new(ScriptedWire::new());
     let mirror = format!("{}/release/{RELEASE}", musicbrainz::BRAINZMASH_API_BASE);
     wire.answer(&mirror, 429, &[], "");
-    let providers = musicbrainz_over(&wire);
+    let providers = providers_over(&wire);
     let reads = providers
         .musicbrainz
         .fixed(brainzmash(), RequestPriority::BackgroundSync);
@@ -426,7 +428,7 @@ async fn musicbrainz_hooks() {
 
     let wire = Arc::new(ScriptedWire::new());
     wire.answer(&mirror, 429, &[("retry-after", "9999")], "");
-    let providers = musicbrainz_over(&wire);
+    let providers = providers_over(&wire);
     let error = providers
         .musicbrainz
         .fixed(brainzmash(), RequestPriority::UserInitiated)
@@ -441,7 +443,7 @@ async fn musicbrainz_hooks() {
 
     let wire = Arc::new(ScriptedWire::new());
     wire.answer(&mirror, 200, &[], format!(r#"{{"id": "{RELEASE}"}}"#));
-    let providers = musicbrainz_over(&wire);
+    let providers = providers_over(&wire);
     providers
         .limiter("brainzmash")
         .unwrap()
@@ -457,6 +459,107 @@ async fn musicbrainz_hooks() {
         "{error:?}"
     );
     assert!(wire.sent().is_empty(), "nothing sent");
+}
+
+/// The Cover Art Archive rules: a redirect to the archive hosts is
+/// followed without another token, one to any other host is refused, an
+/// image past the cap is unusable but not an outage (a run of them never
+/// rests the archive), and a 404 at the end of the redirects is "no
+/// cover".
+#[tokio::test(start_paused = true)]
+async fn cover_art_archive_hooks() {
+    type Check = fn(&Result<Option<coverart::ArtworkBytes>, ProviderError>) -> bool;
+    type Row<'a> = (&'a str, Vec<(&'a str, Scripted)>, Check, usize);
+    let front = format!(
+        "{}/release-group/{RELEASE}/front-500",
+        coverart::COVER_ART_ARCHIVE_BASE
+    );
+    let cdn = "https://archive.org/download/mbid-x/front_500.png";
+    let png = [b"\x89PNG\r\n\x1a\n".as_slice(), &[0u8; 16]].concat();
+    let to_cdn = answer(307, &[("location", cdn)], "");
+    let rows: Vec<Row> = vec![
+        (
+            "307 to an archive host",
+            vec![
+                (front.as_str(), to_cdn.clone()),
+                (
+                    cdn,
+                    Scripted::Answer {
+                        status: 200,
+                        headers: Vec::new(),
+                        body: png.clone(),
+                    },
+                ),
+            ],
+            |result| matches!(result, Ok(Some(art)) if art.content_type == "image/png"),
+            2,
+        ),
+        (
+            "307 to another host",
+            vec![(
+                front.as_str(),
+                answer(
+                    307,
+                    &[("location", "https://archive.org.evil.example/x.png")],
+                    "",
+                ),
+            )],
+            |result| matches!(result, Err(ProviderError::Redirect { status: 307, .. })),
+            1,
+        ),
+        (
+            "over-cap image",
+            vec![
+                (front.as_str(), to_cdn.clone()),
+                (cdn, answer(200, &[], &"x".repeat(65))),
+            ],
+            |result| {
+                matches!(
+                    result,
+                    Err(ProviderError::Payload {
+                        kind: PayloadKind::TooLarge,
+                        ..
+                    })
+                )
+            },
+            2,
+        ),
+        (
+            "404 at the end of the redirects",
+            vec![
+                (front.as_str(), to_cdn.clone()),
+                (cdn, answer(404, &[], "")),
+            ],
+            |result| matches!(result, Ok(None)),
+            2,
+        ),
+    ];
+    for (name, script, check, sends) in rows {
+        let wire = Arc::new(ScriptedWire::new());
+        for (url, outcome) in script {
+            wire.on(Method::Get, url, outcome);
+        }
+        let providers = providers_over(&wire);
+        for _ in 0..5 {
+            let result = providers
+                .coverart
+                .fetch_front(
+                    EntityKind::ReleaseGroup,
+                    RELEASE,
+                    DownloadSize::Size500,
+                    64,
+                    RequestPriority::ImageFetch,
+                )
+                .await;
+            assert!(check(&result), "{name}: got {result:?}");
+        }
+        assert_eq!(wire.sent().len(), sends * 5, "{name}: requests sent");
+        assert_eq!(
+            providers.limiter("coverartarchive").unwrap().cooling_for(),
+            Duration::ZERO,
+            "{name}: the archive is not rested"
+        );
+    }
 }
 
 /// A key in the query or in the path never shows in the error or in any

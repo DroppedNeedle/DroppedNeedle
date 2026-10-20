@@ -2,7 +2,7 @@
 //! order, and the disk cache in front of the Cover Art Archive.
 
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::{
     Router,
@@ -10,13 +10,18 @@ use axum::{
     http::{Request, StatusCode},
 };
 use droppedneedle_catalog::reads::platform::artwork::{
-    ArtworkService, cache::ArtworkCache, local::LocalArtwork, remote::cover_client,
+    ArtworkService, MISS_TTL_SECS, OUTAGE_TTL_SECS,
+    cache::{ArtworkCache, KeyEntry, unix_now},
+    local::LocalArtwork,
 };
 use droppedneedle_catalog::reads::platform::covers::{self, CoversState};
+use droppedneedle_kernel::clock::SystemClock;
 use droppedneedle_kernel::db::{DbError, DbRuntime, Lane};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_library::scan::SqliteScanStore;
-use droppedneedle_providers::coverart::{CaaRequest, CaaTransport, RawResponse, TransportError};
+use droppedneedle_providers::coverart::COVER_ART_ARCHIVE_BASE;
+use droppedneedle_providers::executor::ScriptedWire;
+use droppedneedle_providers::{ProviderEndpoints, Providers};
 use tower::ServiceExt as _;
 
 use crate::common::ScratchDir;
@@ -32,38 +37,41 @@ const PNG_BYTES: &[u8] = &[
     0x42, 0x60, 0x82,
 ];
 
-/// Archive stand-in: every front cover redirects to the CDN, which answers
-/// with the PNG. Records each URL asked for.
-#[derive(Clone, Default)]
+const CDN: &str = "https://archive.org/download/mbid-x/front_500.png";
+
+fn front_url(mbid: &str) -> String {
+    format!("{COVER_ART_ARCHIVE_BASE}/release-group/{mbid}/front-500")
+}
+
+/// Archive stand-in: by default the front cover redirects to the CDN,
+/// which answers with the PNG. Records each URL asked for.
 struct FakeArchive {
-    seen: Arc<Mutex<Vec<String>>>,
+    wire: Arc<ScriptedWire>,
+    providers: Arc<Providers>,
 }
 
 impl FakeArchive {
-    fn calls(&self) -> Vec<String> {
-        self.seen.lock().unwrap().clone()
+    fn new() -> Self {
+        let wire = Arc::new(ScriptedWire::new());
+        let providers = Arc::new(Providers::over_wire(
+            wire.clone(),
+            Arc::new(SystemClock),
+            ProviderEndpoints {
+                coverart: COVER_ART_ARCHIVE_BASE.to_owned(),
+                ..ProviderEndpoints::closed()
+            },
+        ));
+        wire.answer(&front_url(RG), 307, &[("location", CDN)], "");
+        wire.answer(CDN, 200, &[("content-type", "image/png")], PNG_BYTES);
+        Self { wire, providers }
     }
-}
 
-impl CaaTransport for FakeArchive {
-    async fn get(&self, request: &CaaRequest) -> Result<RawResponse, TransportError> {
-        self.seen.lock().unwrap().push(request.url.clone());
-        if request.url.starts_with("https://coverartarchive.org/") {
-            Ok(RawResponse::new(
-                307,
-                vec![(
-                    "location",
-                    "https://archive.org/download/mbid-x/front_500.png",
-                )],
-                Vec::new(),
-            ))
-        } else {
-            Ok(RawResponse::new(
-                200,
-                vec![("content-type", "image/png")],
-                PNG_BYTES.to_vec(),
-            ))
-        }
+    fn calls(&self) -> Vec<String> {
+        self.wire
+            .sent()
+            .into_iter()
+            .map(|sent| sent.url.to_string())
+            .collect()
     }
 }
 
@@ -109,7 +117,7 @@ async fn rig(seed_track: Option<&Path>) -> Rig {
         .unwrap();
     Rig {
         runtime,
-        archive: FakeArchive::default(),
+        archive: FakeArchive::new(),
         dir,
     }
 }
@@ -127,7 +135,7 @@ impl Rig {
         let service = ArtworkService::new(
             ArtworkCache::new(self.dir.join("covers"), 1024 * 1024),
             LocalArtwork::new(self.runtime.db().sqlx().clone()),
-            Some(Arc::new(cover_client(self.archive.clone()))),
+            Some(Arc::new(self.archive.providers.coverart.clone())),
             config.live(),
         );
         covers::routes()
@@ -182,6 +190,50 @@ async fn archive_cover_is_fetched_once_then_served_from_cache() {
         ],
         "one fetch (the front plus its redirect hop), then the disk cache"
     );
+}
+
+/// How long a cover the archive could not give is remembered: "no cover"
+/// (404) for hours, an outage and an image too large to use for minutes,
+/// and a rate limit only as long as the archive asked.
+#[tokio::test]
+async fn archive_failures_are_remembered_for_as_long_as_they_mean() {
+    type Headers = &'static [(&'static str, &'static str)];
+    let rows: [(&str, u16, Headers, usize, u64); 4] = [
+        ("no cover", 404, &[], 0, MISS_TTL_SECS),
+        ("outage", 503, &[("retry-after", "3")], 0, OUTAGE_TTL_SECS),
+        (
+            "too large to use",
+            200,
+            &[("content-type", "image/png")],
+            20 * 1024 * 1024 + 1,
+            OUTAGE_TTL_SECS,
+        ),
+        ("rate limited", 429, &[("retry-after", "7")], 0, 7),
+    ];
+    for (index, (name, status, headers, body_len, ttl)) in rows.into_iter().enumerate() {
+        let rig = rig(None).await;
+        let mbid = format!("0a1b2c3d-0000-4000-8000-00000000010{index}");
+        rig.archive
+            .wire
+            .answer(&front_url(&mbid), status, headers, vec![0u8; body_len]);
+        let before = unix_now();
+        let (status, _, _) = get(
+            rig.app(true),
+            &format!("/api/v3/covers/release-group/{mbid}?size=500"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{name}: no cover to serve");
+        let cache = ArtworkCache::new(rig.dir.join("covers"), 1024 * 1024);
+        let Some(KeyEntry::Miss { until }) =
+            cache.key(&format!("caa:release-group:{mbid}:500")).await
+        else {
+            panic!("{name}: a miss is remembered");
+        };
+        assert!(
+            (before + ttl..=unix_now() + ttl).contains(&until),
+            "{name}: remembered for {ttl} s, until {until} (asked at {before})"
+        );
+    }
 }
 
 #[tokio::test]

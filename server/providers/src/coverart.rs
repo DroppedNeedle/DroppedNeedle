@@ -1,278 +1,62 @@
-//! Cover Art Archive provider client: metadata listing and downloads.
+//! Cover Art Archive provider client: metadata listing, downloads and
+//! front covers.
 //!
 //! This module ports the v2 CAA stack (`coverart_repository.py` management
 //! path plus `coverart_album.py` front-fetch shapes). The live provider
 //! boundary was probed on 2026-07-21 against coverartarchive.org and is
 //! recorded in `coverart_MANAGEMENT_API_NOTES.md`; every handler below
-//! cites it. Reads stay conservative (~1/s with backoff on 429/503) per
-//! the verified v3 policy-table row, and image bytes pass through
-//! untouched: originals may be PNG, so the client never assumes JPEG.
+//! cites it. Image bytes pass through untouched: originals may be PNG, so
+//! the client never assumes JPEG.
 //!
-//! Seam notes (the shared infrastructure lives in the provider core):
-//! - [`CaaTransport`] stays a typed local port: its requests carry
-//!   redirect-hop validation the catalog GET port cannot express, and the
-//!   reqwest adapter below serves production from the shared client.
-//! - [`RateGate`] and [`is_valid_mbid`] are small local copies of the
-//!   MusicBrainz module's helpers, left duplicated on purpose: they are
-//!   structs and functions, not traits, and unifying
-//!   them means reconciling real differences (per-source poison log
-//!   lines). Retry-After parsing already delegates to the core
-//!   [`parse_retry_after`](super::error::parse_retry_after), whose
-//!   [`Duration`](std::time::Duration) answer converts to the f64 seconds
-//!   this client carries.
+//! Every request goes through the archive's [`Executor`], which paces at
+//! the `coverartarchive` row of the rate table and the caller's priority.
+//! The archive answers covers with a redirect to archive.org; each hop
+//! passes [`check_redirect_hop`] and is not paced, so one cover costs one
+//! token.
 
-use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::Deserialize;
-use thiserror::Error;
 
-use droppedneedle_kernel::http_client::{BodyError, read_capped};
+use crate::RequestPriority;
+use crate::error::{PayloadKind, ProviderError};
+use crate::executor::{
+    Backoff, Executor, RedirectRule, Redirects, Reply, Request, Spec, Url, standard_classify,
+};
+use crate::musicbrainz::is_valid_mbid;
 
 /// Cover Art Archive root.
 pub const COVER_ART_ARCHIVE_BASE: &str = "https://coverartarchive.org";
-/// Conservative metadata/download pacing per the verified v3 policy row
-/// ("no documented allocation; stay conservative (~1/s), back off on
-/// 429/503").
-pub const CAA_RATE_PER_SEC: f64 = 1.0;
+/// The provider name errors carry, and the archive's rate row.
+pub const SOURCE: &str = "coverartarchive";
 /// Metadata documents larger than this are refused (v2
 /// `MANAGEMENT_ARTWORK_METADATA_MAX_BYTES`, 5 MiB).
 pub const METADATA_MAX_BYTES: usize = 5 * 1024 * 1024;
-/// Default ceiling for one backoff sleep before the single retry.
-pub const DEFAULT_MAX_BACKOFF: Duration = Duration::from_secs(30);
-
-/// One outbound CAA GET, transport-agnostic so fakes stay script-only.
-#[derive(Debug, Clone)]
-pub struct CaaRequest {
-    /// Full URL to fetch.
-    pub url: String,
-    /// Headers in send order; the client always sets User-Agent.
-    pub headers: Vec<(String, String)>,
-}
-
-impl CaaRequest {
-    /// Fetch one header value, case-insensitively.
-    pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(key, _)| key.eq_ignore_ascii_case(name))
-            .map(|(_, value)| value.as_str())
-    }
-}
-
-/// Minimal raw response: status, content type, and bytes.
-#[derive(Debug, Clone)]
-pub struct RawResponse {
-    /// HTTP status code.
-    pub status: u16,
-    /// Response headers in arrival order.
-    pub headers: Vec<(String, String)>,
-    /// Raw body bytes.
-    pub body: Vec<u8>,
-}
-
-impl RawResponse {
-    /// Build a response from the parts fakes script.
-    pub fn new(status: u16, headers: Vec<(&str, &str)>, body: impl Into<Vec<u8>>) -> Self {
-        Self {
-            status,
-            headers: headers
-                .into_iter()
-                .map(|(key, value)| (key.to_owned(), value.to_owned()))
-                .collect(),
-            body: body.into(),
-        }
-    }
-
-    /// Fetch one header value, case-insensitively.
-    pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(key, _)| key.eq_ignore_ascii_case(name))
-            .map(|(_, value)| value.as_str())
-    }
-}
-
-/// Wire failure below HTTP semantics (DNS, connect, TLS, timeout, reset).
-#[derive(Debug, Clone, Error)]
-#[error("coverartarchive transport failure: {0}")]
-pub struct TransportError(pub String);
-
-/// Minimal local transport port (see the module seam notes).
-pub trait CaaTransport: Send + Sync {
-    /// Perform one GET, following no redirects.
-    fn get(
-        &self,
-        request: &CaaRequest,
-    ) -> impl Future<Output = Result<RawResponse, TransportError>> + Send;
-}
-
-/// Largest body the transport reads: the biggest cap any caller applies
-/// (artwork bytes, v2 `MAX_DELIVERY_IMAGE_BYTES`). A larger body is a
-/// transport failure and is never buffered whole.
+/// Largest body read from the archive: the biggest cap any caller applies
+/// (artwork bytes, v2 `MAX_DELIVERY_IMAGE_BYTES`). A larger body is never
+/// buffered whole.
 pub const TRANSPORT_MAX_BODY_BYTES: usize = 20 * 1024 * 1024;
+/// Redirect hops followed for one request before giving up.
+pub const MAX_REDIRECT_HOPS: usize = 5;
 
-/// Production adapter over the factory's no-redirect client, which carries
-/// the shared timeouts and User-Agent.
-pub struct ReqwestCaaTransport {
-    client: reqwest::Client,
-}
+/// The archive on the wire: standard statuses, a second's rest after a
+/// rate limit that names no wait, and at most 30 seconds for one that
+/// does.
+pub static SPEC: Spec = Spec {
+    source: SOURCE,
+    health_key: SOURCE,
+    timeout: Duration::from_secs(30),
+    max_body: TRANSPORT_MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(1)),
+    retry_after_cap: Duration::from_secs(30),
+    classify: standard_classify,
+};
 
-impl ReqwestCaaTransport {
-    /// Wrap `HttpClientFactory::no_redirect`: the client walks and checks
-    /// each redirect hop itself.
-    pub fn new(no_redirect: reqwest::Client) -> Self {
-        Self {
-            client: no_redirect,
-        }
-    }
-}
-
-impl CaaTransport for ReqwestCaaTransport {
-    async fn get(&self, request: &CaaRequest) -> Result<RawResponse, TransportError> {
-        let mut outgoing = self.client.get(request.url.clone());
-        for (key, value) in &request.headers {
-            outgoing = outgoing.header(key.as_str(), value.as_str());
-        }
-        let response = outgoing
-            .send()
-            .await
-            .map_err(|error| TransportError(error.to_string()))?;
-        let status = response.status().as_u16();
-        let mut headers = Vec::new();
-        for name in ["location", "retry-after", "content-type"] {
-            if let Some(value) = response.headers().get(name)
-                && let Ok(text) = value.to_str()
-            {
-                headers.push((name.to_owned(), text.to_owned()));
-            }
-        }
-        let body = read_capped(response, TRANSPORT_MAX_BODY_BYTES)
-            .await
-            .map_err(|error| match error {
-                BodyError::TooLarge => {
-                    TransportError(format!("body larger than {TRANSPORT_MAX_BODY_BYTES} bytes"))
-                }
-                BodyError::Transport(cause) => TransportError(cause),
-            })?;
-        Ok(RawResponse {
-            status,
-            headers,
-            body,
-        })
-    }
-}
-
-/// Interval gate for the conservative ~1/s pacing. Local copy; unify with
-/// the shared limiters when core lands. The mutex never crosses an await.
-pub struct RateGate {
-    interval: Duration,
-    next_allowed: Mutex<Option<tokio::time::Instant>>,
-}
-
-impl RateGate {
-    /// Gate allowing `rate_per_sec` acquisitions per second, one at a time.
-    pub fn new(rate_per_sec: f64) -> Self {
-        let interval = Duration::from_secs_f64(1.0 / rate_per_sec.max(f64::MIN_POSITIVE));
-        Self {
-            interval,
-            next_allowed: Mutex::new(None),
-        }
-    }
-
-    /// The conservative CAA limiter.
-    pub fn coverart() -> Self {
-        Self::new(CAA_RATE_PER_SEC)
-    }
-
-    /// Configured rate, for the policy-table test.
-    pub fn rate_per_sec(&self) -> f64 {
-        1.0 / self.interval.as_secs_f64()
-    }
-
-    /// Wait until one acquisition is due, then take it.
-    pub async fn acquire(&self) {
-        loop {
-            let wait = {
-                let mut guard = self.next_allowed.lock().unwrap_or_else(|poison| {
-                    tracing::warn!("coverart rate-gate lock poisoned; resetting");
-                    poison.into_inner()
-                });
-                let now = tokio::time::Instant::now();
-                match *guard {
-                    None => {
-                        *guard = Some(now + self.interval);
-                        None
-                    }
-                    Some(due) if now >= due => {
-                        *guard = Some(now + self.interval);
-                        None
-                    }
-                    Some(due) => Some(due.saturating_duration_since(now)),
-                }
-            };
-            match wait {
-                None => return,
-                Some(delay) => tokio::time::sleep(delay).await,
-            }
-        }
-    }
-}
-
-/// Typed Cover Art Archive failures.
-#[derive(Debug, Error, PartialEq)]
-pub enum CaaError {
-    /// Transport dead or 5xx (other than the backed-off 503): retriable.
-    #[error("coverartarchive unavailable: {0}")]
-    Unavailable(String),
-    /// 429/503 after the single backoff retry: the caller waits out
-    /// `retry_after_secs` when the response gave one.
-    #[error("coverartarchive rate limited")]
-    RateLimited {
-        /// Seconds to wait before retrying, when the response said.
-        retry_after_secs: Option<f64>,
-    },
-    /// Caller passed a malformed MBID; nothing was sent.
-    #[error("coverartarchive refused the request as invalid: {0}")]
-    InvalidMbid(String),
-    /// Other 4xx: the request is wrong, retrying will not help.
-    #[error("coverartarchive rejected the request (HTTP {0})")]
-    Rejected(u16),
-    /// 200 with an unparseable or over-limit body.
-    #[error("coverartarchive contract break: {0}")]
-    Contract(String),
-    /// The archive returned an artwork URL this client will not fetch
-    /// (wrong host, scheme, credentials, or port).
-    #[error("coverartarchive returned an invalid artwork location")]
-    RejectedUrl,
-}
-
-/// Parse Retry-After in either legal shape: delay seconds or an HTTP date.
-/// Delegates to the core [`parse_retry_after`](super::error::parse_retry_after),
-/// which covers all three HTTP date shapes where the old local parser read
-/// IMF-fixdate only. Unparseable, non-finite, and negative values yield
-/// `None`; valid values clamp to 60 seconds.
-pub fn parse_retry_after_secs(value: Option<&str>) -> Option<f64> {
-    super::error::parse_retry_after(value).map(|delay| delay.as_secs_f64())
-}
-
-/// True for the `8-4-4-4-12` hex MBID shape. Local copy of the MusicBrainz helper; see the module seam notes.
-pub fn is_valid_mbid(value: &str) -> bool {
-    let trimmed = value.trim();
-    if trimmed.len() != 36 {
-        return false;
-    }
-    for (index, byte) in trimmed.bytes().enumerate() {
-        let is_dash_slot = matches!(index, 8 | 13 | 18 | 23);
-        if is_dash_slot != (byte == b'-') {
-            return false;
-        }
-        if !is_dash_slot && !byte.is_ascii_hexdigit() {
-            return false;
-        }
-    }
-    true
-}
+/// Redirects stay on the archive hosts.
+static HOPS: RedirectRule = RedirectRule {
+    max_hops: MAX_REDIRECT_HOPS,
+    next: |_, next| check_redirect_hop(next),
+};
 
 // ---------------------------------------------------------------------------
 // Wire models: the `{images: [...]}` document. Each image carries approved,
@@ -470,21 +254,20 @@ pub struct ArtworkBytes {
 /// Validate an archive artwork URL and upgrade it to https (v2
 /// `_management_artwork_url`): only `coverartarchive.org` over http/https,
 /// no credentials, default ports only, absolute path. Query strings
-/// survive; fragments do not. Anything else is rejected, since response
+/// survive; fragments do not. Anything else is `None`, since response
 /// image URLs arrive with an `http` scheme (live 2026-07-21) and only
 /// validated archive URLs may be upgraded.
-pub fn upgrade_artwork_url(url: &str) -> Result<String, CaaError> {
-    let (scheme, authority, path_and_query) =
-        split_artwork_url(url).ok_or(CaaError::RejectedUrl)?;
+pub fn upgrade_artwork_url(url: &str) -> Option<String> {
+    let (scheme, authority, path_and_query) = split_artwork_url(url)?;
     if scheme != "http" && scheme != "https" {
-        return Err(CaaError::RejectedUrl);
+        return None;
     }
     if authority.contains('@') {
-        return Err(CaaError::RejectedUrl);
+        return None;
     }
     let (host, port) = match authority.rsplit_once(':') {
         Some((host, port_text)) => {
-            let port: u16 = port_text.parse().map_err(|_| CaaError::RejectedUrl)?;
+            let port: u16 = port_text.parse().ok()?;
             (host, Some(port))
         }
         None => (authority, None),
@@ -492,54 +275,47 @@ pub fn upgrade_artwork_url(url: &str) -> Result<String, CaaError> {
     if !host.eq_ignore_ascii_case("coverartarchive.org")
         || !matches!(port, None | Some(80) | Some(443))
     {
-        return Err(CaaError::RejectedUrl);
+        return None;
     }
     if !path_and_query.starts_with('/') {
-        return Err(CaaError::RejectedUrl);
+        return None;
     }
     let path = path_and_query.split('#').next().unwrap_or("/");
-    Ok(format!("https://coverartarchive.org{path}"))
+    Some(format!("https://coverartarchive.org{path}"))
 }
 
-/// Redirect hops [`CaaClient::fetch_front`] follows before giving up.
-pub const MAX_REDIRECT_HOPS: usize = 5;
-
-/// Validate one artwork redirect and return the https URL to fetch next.
+/// Validate one artwork redirect target and return the https URL to
+/// fetch next.
 ///
-/// The location is parsed as a real URL (relative locations join onto the
-/// current one), never matched as text, so fragments, queries, backslashes
-/// or userinfo cannot smuggle another host past the check. It must be http
-/// or https, carry no credentials, use a default port, and name the archive
+/// The location has already been joined onto the current URL as a parsed
+/// URL, never matched as text, so fragments, queries, backslashes or
+/// userinfo cannot smuggle another host past the check. It must be http or
+/// https, carry no credentials, use a default port, and name the archive
 /// (`coverartarchive.org`) or the Internet Archive (`archive.org` and its
-/// subdomains) by domain; IP hosts are refused. The answer is re-serialized
-/// from the parsed URL as https, without the fragment.
-pub fn check_redirect_hop(current: &str, location: &str) -> Result<String, CaaError> {
-    let base = reqwest::Url::parse(current).map_err(|_| CaaError::RejectedUrl)?;
-    let mut next = base.join(location).map_err(|_| CaaError::RejectedUrl)?;
+/// subdomains) by domain; IP hosts are refused. The answer is the same URL
+/// as https, without the fragment.
+pub fn check_redirect_hop(next: &Url) -> Option<Url> {
     if !matches!(next.scheme(), "http" | "https") {
-        return Err(CaaError::RejectedUrl);
+        return None;
     }
     if !next.username().is_empty() || next.password().is_some() {
-        return Err(CaaError::RejectedUrl);
+        return None;
     }
     if !matches!(next.port(), None | Some(80) | Some(443)) {
-        return Err(CaaError::RejectedUrl);
+        return None;
     }
     // `domain` is None for IP hosts.
-    let Some(host) = next.domain() else {
-        return Err(CaaError::RejectedUrl);
-    };
-    let host = host.to_ascii_lowercase();
+    let host = next.domain()?.to_ascii_lowercase();
     let allowed =
         host == "coverartarchive.org" || host == "archive.org" || host.ends_with(".archive.org");
     if !allowed {
-        return Err(CaaError::RejectedUrl);
+        return None;
     }
+    let mut next = next.clone();
     next.set_fragment(None);
-    next.set_scheme("https")
-        .map_err(|_| CaaError::RejectedUrl)?;
-    next.set_port(None).map_err(|_| CaaError::RejectedUrl)?;
-    Ok(next.to_string())
+    next.set_scheme("https").ok()?;
+    next.set_port(None).ok()?;
+    Some(next)
 }
 
 /// Split a URL into (scheme, authority, path+query+fragment). A bare
@@ -632,83 +408,64 @@ fn is_image_content_type(content_type: &str) -> bool {
     )
 }
 
-/// Cover Art Archive client over any [`CaaTransport`]. Owns conservative
-/// pacing plus one Retry-After-honoring retry on 429/503 (v2 covers ride
-/// at most two attempts: a cover that fails twice degrades rather than
-/// stalling the hot path).
-pub struct CaaClient<T: CaaTransport> {
-    transport: T,
-    base_url: String,
-    gate: RateGate,
-    max_backoff: Duration,
-    fallback_backoff: Duration,
+/// Cover Art Archive client over the archive's executor. Built once with
+/// the providers; every call names its priority.
+#[derive(Debug, Clone)]
+pub struct CaaClient {
+    executor: Executor,
+    base: Option<Url>,
 }
 
-impl<T: CaaTransport> CaaClient<T> {
-    /// Client with production pacing and backoff ceilings.
-    pub fn new(transport: T) -> Self {
-        Self {
-            transport,
-            base_url: COVER_ART_ARCHIVE_BASE.to_owned(),
-            gate: RateGate::coverart(),
-            max_backoff: DEFAULT_MAX_BACKOFF,
-            fallback_backoff: Duration::from_secs(1),
+impl CaaClient {
+    /// The client sending through `executor` to the archive at `base_url`.
+    #[must_use]
+    pub fn new(executor: Executor, base_url: &str) -> Self {
+        let base = Url::parse(base_url.trim())
+            .ok()
+            .filter(|url| matches!(url.scheme(), "http" | "https") && !url.cannot_be_a_base());
+        if base.is_none() {
+            tracing::error!("the Cover Art Archive address is not an http or https URL");
         }
+        Self { executor, base }
     }
 
-    /// Reach the archive at another origin.
-    pub fn with_base(mut self, base_url: &str) -> Self {
-        self.base_url = base_url.trim_end_matches('/').to_owned();
-        self
-    }
-
-    /// Swap the pacing gate (tests pace faster than production).
-    pub fn with_gate(mut self, gate: RateGate) -> Self {
-        self.gate = gate;
-        self
-    }
-
-    /// Swap the backoff ceilings (tests sleep milliseconds, not seconds).
-    pub fn with_backoff(mut self, max_backoff: Duration, fallback_backoff: Duration) -> Self {
-        self.max_backoff = max_backoff;
-        self.fallback_backoff = fallback_backoff;
-        self
+    /// The executor every archive request goes through.
+    #[must_use]
+    pub fn executor(&self) -> &Executor {
+        &self.executor
     }
 
     /// List typed artwork images for an exact release or a labelled group
     /// fallback. A missing entity (404) is authoritative empty artwork;
     /// any other failure is a provider error, never silent emptiness.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::Invalid`] for a malformed MBID (nothing is sent),
+    /// otherwise the archive's typed failure.
     pub async fn list_artwork(
         &self,
         entity: EntityKind,
         mbid: &str,
         size: DownloadSize,
-    ) -> Result<Vec<ArtworkCandidate>, CaaError> {
-        let normalized = mbid.trim().to_ascii_lowercase();
-        if !is_valid_mbid(&normalized) {
-            return Err(CaaError::InvalidMbid(format!("invalid {entity:?} MBID")));
-        }
-        let url = format!("{}/{}/{normalized}", self.base_url, entity.path());
-        let response = self.get(&url).await?;
-        if response.status == 404 {
+        priority: RequestPriority,
+    ) -> Result<Vec<ArtworkCandidate>, ProviderError> {
+        let normalized = normalize(mbid)?;
+        let request = Request::get(self.base()?, &[entity.path(), &normalized], &[])
+            .map_err(|_| invalid("the Cover Art Archive address cannot carry a path"))?
+            .max_body(METADATA_MAX_BYTES);
+        let Some(reply) = self.send(request, priority).await? else {
             return Ok(Vec::new());
-        }
-        if response.status != 200 {
-            return Err(CaaError::Rejected(response.status));
-        }
-        if response.body.len() > METADATA_MAX_BYTES {
-            return Err(CaaError::Contract(
-                "artwork metadata exceeded the safety limit".to_owned(),
-            ));
-        }
-        let listing: CaaResponse = serde_json::from_slice(&response.body)
-            .map_err(|error| CaaError::Contract(format!("invalid artwork metadata: {error}")))?;
+        };
+        let listing: CaaResponse = reply.json()?;
         let mut candidates = Vec::new();
         for image in &listing.images {
             let selected = size.select(image);
             if selected.is_empty() {
                 continue;
             }
+            let locator = upgrade_artwork_url(selected)
+                .ok_or_else(|| contract("the listing named an artwork URL off the archive"))?;
             candidates.push(ArtworkCandidate {
                 candidate_id: format!(
                     "caa:{}:{normalized}:{}:{}",
@@ -717,7 +474,7 @@ impl<T: CaaTransport> CaaClient<T> {
                     size.label()
                 ),
                 source: entity.source().to_owned(),
-                locator: upgrade_artwork_url(selected)?,
+                locator,
                 image_types: classify_image_types(&image.types, image.front, image.back),
                 approved: image.approved,
                 primary: image.front,
@@ -731,43 +488,52 @@ impl<T: CaaTransport> CaaClient<T> {
 
     /// Download one candidate's bytes. The client only downloads its own
     /// CAA candidates, revalidates the locator, and caps the body.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::Invalid`] for a candidate this client will not
+    /// fetch (nothing is sent), [`ProviderError::NotFound`] when the image
+    /// is gone, a [`PayloadKind::TooLarge`] payload error past
+    /// `maximum_bytes`, otherwise the archive's typed failure.
     pub async fn download_artwork(
         &self,
         candidate: &ArtworkCandidate,
         maximum_bytes: usize,
-    ) -> Result<ArtworkBytes, CaaError> {
+        priority: RequestPriority,
+    ) -> Result<ArtworkBytes, ProviderError> {
         if candidate.source != EntityKind::Release.source()
             && candidate.source != EntityKind::ReleaseGroup.source()
         {
-            return Err(CaaError::Contract(
-                "the cover client only downloads CAA candidates".to_owned(),
-            ));
+            return Err(invalid("the cover client only downloads CAA candidates"));
         }
         if maximum_bytes == 0 {
-            return Err(CaaError::Contract(
-                "artwork byte limit must be positive".to_owned(),
-            ));
+            return Err(invalid("artwork byte limit must be positive"));
         }
-        let url = upgrade_artwork_url(&candidate.locator)?;
-        let response = self.get(&url).await?;
-        if response.status != 200 {
-            return Err(CaaError::Rejected(response.status));
-        }
-        if response.body.len() > maximum_bytes {
-            return Err(CaaError::Contract(
-                "artwork body exceeded the byte limit".to_owned(),
-            ));
-        }
-        let declared = response.header("content-type").unwrap_or("").to_owned();
+        let url = upgrade_artwork_url(&candidate.locator)
+            .and_then(|url| Url::parse(&url).ok())
+            .ok_or_else(|| invalid("the artwork URL is off the archive"))?;
+        let query: Vec<(String, String)> = url.query_pairs().into_owned().collect();
+        let query: Vec<(&str, &str)> = query
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        let request = Request::get(&url, &[], &query)
+            .map_err(|_| invalid("the artwork URL cannot carry a path"))?
+            .max_body(maximum_bytes);
+        let reply = self
+            .send(request, priority)
+            .await?
+            .ok_or(ProviderError::NotFound { provider: SOURCE })?;
+        let declared = reply.content_type().unwrap_or("").to_owned();
         let content_type = if is_image_content_type(&declared) {
             declared
-        } else if let Some(sniffed) = sniff_image_content_type(&response.body) {
+        } else if let Some(sniffed) = sniff_image_content_type(reply.bytes()) {
             sniffed.to_owned()
         } else {
             declared
         };
         Ok(ArtworkBytes {
-            bytes: response.body,
+            bytes: reply.bytes().to_vec(),
             content_type,
         })
     }
@@ -775,186 +541,118 @@ impl<T: CaaTransport> CaaClient<T> {
     /// Fetch the front cover of a release or release group at one size,
     /// the way v2 served covers: `/{entity}/{mbid}/front-{size}`, which the
     /// archive renders at 250, 500 and 1200 pixels, so nothing is resized
-    /// here. The archive answers with a redirect to archive.org; each hop
-    /// passes [`check_redirect_hop`] before it is followed. `None` means the
-    /// archive has no front cover (404), which is authoritative.
+    /// here. `None` means the archive has no front cover (404 at the end of
+    /// the redirects), which is authoritative.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::Invalid`] for a malformed MBID (nothing is sent),
+    /// [`ProviderError::Redirect`] for a hop off the archive hosts, a
+    /// payload error for an image past `maximum_bytes` ([`PayloadKind::TooLarge`])
+    /// or bytes that are not a raster image ([`PayloadKind::Contract`]),
+    /// otherwise the archive's typed failure.
     pub async fn fetch_front(
         &self,
         entity: EntityKind,
         mbid: &str,
         size: DownloadSize,
         maximum_bytes: usize,
-    ) -> Result<Option<ArtworkBytes>, CaaError> {
-        let normalized = mbid.trim().to_ascii_lowercase();
-        if !is_valid_mbid(&normalized) {
-            return Err(CaaError::InvalidMbid(format!("invalid {entity:?} MBID")));
-        }
-        let suffix = match size {
-            DownloadSize::Full => String::new(),
-            other => format!("-{}", other.label()),
+        priority: RequestPriority,
+    ) -> Result<Option<ArtworkBytes>, ProviderError> {
+        let normalized = normalize(mbid)?;
+        let front = match size {
+            DownloadSize::Full => "front".to_owned(),
+            other => format!("front-{}", other.label()),
         };
-        let mut url = format!(
-            "{}/{}/{normalized}/front{suffix}",
-            self.base_url,
-            entity.path()
-        );
-        let mut response = self.get(&url).await?;
-        let mut hops = 0;
-        while matches!(response.status, 301 | 302 | 303 | 307 | 308) {
-            hops += 1;
-            if hops > MAX_REDIRECT_HOPS {
-                return Err(CaaError::Contract("too many artwork redirects".to_owned()));
-            }
-            let location = response.header("location").ok_or_else(|| {
-                CaaError::Contract("artwork redirect without a location".to_owned())
-            })?;
-            url = check_redirect_hop(&url, location)?;
-            // Hops land on the archive.org CDN, which the archive pacing
-            // does not cover; only the first request is paced.
-            response = self
-                .transport
-                .get(&CaaRequest {
-                    url: url.clone(),
-                    headers: Vec::new(),
-                })
-                .await
-                .map_err(|error| CaaError::Unavailable(error.0))?;
-            if response.status == 429 || response.status == 503 {
-                return Err(CaaError::RateLimited {
-                    retry_after_secs: parse_retry_after_secs(response.header("Retry-After")),
-                });
-            }
-            if (500..600).contains(&response.status) {
-                return Err(CaaError::Unavailable(format!("HTTP {}", response.status)));
-            }
-        }
-        if response.status == 404 {
+        let request = Request::get(self.base()?, &[entity.path(), &normalized, &front], &[])
+            .map_err(|_| invalid("the Cover Art Archive address cannot carry a path"))?
+            .max_body(maximum_bytes);
+        let Some(reply) = self.send(request, priority).await? else {
             return Ok(None);
-        }
-        if response.status != 200 {
-            return Err(CaaError::Rejected(response.status));
-        }
-        if response.body.len() > maximum_bytes {
-            return Err(CaaError::Contract(
-                "artwork body exceeded the byte limit".to_owned(),
-            ));
-        }
-        let declared = response.header("content-type").unwrap_or("").to_owned();
-        let content_type = match sniff_image_content_type(&response.body) {
-            Some(sniffed) => sniffed.to_owned(),
-            None => {
-                return Err(CaaError::Contract(format!(
-                    "artwork is not a raster image ({declared})"
-                )));
-            }
         };
+        let content_type = sniff_image_content_type(reply.bytes())
+            .ok_or_else(|| contract("the artwork is not a raster image"))?;
         Ok(Some(ArtworkBytes {
-            bytes: response.body,
-            content_type,
+            bytes: reply.bytes().to_vec(),
+            content_type: content_type.to_owned(),
         }))
     }
 
-    /// One paced GET with a single backoff retry on 429/503.
-    async fn get(&self, url: &str) -> Result<RawResponse, CaaError> {
-        for attempt in 0..2 {
-            self.gate.acquire().await;
-            let request = CaaRequest {
-                url: url.to_owned(),
-                headers: Vec::new(),
-            };
-            let response = self
-                .transport
-                .get(&request)
-                .await
-                .map_err(|error| CaaError::Unavailable(error.0))?;
-            if response.status == 429 || response.status == 503 {
-                let retry_after_secs = parse_retry_after_secs(response.header("Retry-After"));
-                if attempt == 0 {
-                    let delay = retry_after_secs
-                        .map(Duration::from_secs_f64)
-                        .unwrap_or(self.fallback_backoff)
-                        .min(self.max_backoff);
-                    tokio::time::sleep(delay).await;
-                    continue;
-                }
-                return Err(CaaError::RateLimited { retry_after_secs });
-            }
-            if (500..600).contains(&response.status) {
-                return Err(CaaError::Unavailable(format!("HTTP {}", response.status)));
-            }
-            return Ok(response);
+    /// One request through the executor, following the archive's
+    /// redirects. A 404 is `None`.
+    async fn send(
+        &self,
+        request: Request,
+        priority: RequestPriority,
+    ) -> Result<Option<Reply>, ProviderError> {
+        match self
+            .executor
+            .send(request.redirects(Redirects::Follow(&HOPS)), priority)
+            .await
+        {
+            Ok(reply) => Ok(Some(reply)),
+            Err(ProviderError::NotFound { .. }) => Ok(None),
+            Err(error) => Err(error),
         }
-        Err(CaaError::Unavailable(
-            "coverartarchive request failed".to_owned(),
-        ))
+    }
+
+    fn base(&self) -> Result<&Url, ProviderError> {
+        self.base
+            .as_ref()
+            .ok_or_else(|| invalid("the Cover Art Archive address is not usable"))
+    }
+}
+
+/// A lowercase MBID, or the refusal to send a malformed one.
+fn normalize(mbid: &str) -> Result<String, ProviderError> {
+    let normalized = mbid.trim().to_ascii_lowercase();
+    if is_valid_mbid(&normalized) {
+        Ok(normalized)
+    } else {
+        Err(invalid("malformed MBID"))
+    }
+}
+
+fn invalid(reason: &'static str) -> ProviderError {
+    ProviderError::Invalid {
+        provider: SOURCE,
+        reason,
+    }
+}
+
+fn contract(message: &str) -> ProviderError {
+    ProviderError::Payload {
+        provider: SOURCE,
+        kind: PayloadKind::Contract,
+        message: message.to_owned(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-
-    /// Answer one request with `head` and then `body_bytes` of filler.
-    async fn serve_once(head: &'static str, body_bytes: usize) -> CaaRequest {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut raw = Vec::new();
-            let mut chunk = [0u8; 1024];
-            while !raw.windows(4).any(|window| window == b"\r\n\r\n") {
-                let read = socket.read(&mut chunk).await.unwrap();
-                assert_ne!(read, 0, "client closed before sending headers");
-                raw.extend_from_slice(&chunk[..read]);
-            }
-            // The client hangs up once it has seen too much, so a failed
-            // write here is the refusal working.
-            let _ = socket.write_all(head.as_bytes()).await;
-            let _ = socket.write_all(&vec![b' '; body_bytes]).await;
-        });
-        CaaRequest {
-            url: format!("http://{address}/cover"),
-            headers: Vec::new(),
-        }
-    }
-
-    /// The transport never buffers a body past its cap: a declared length
-    /// over the cap and a body that streams past it are both transport
-    /// failures.
-    #[tokio::test]
-    async fn a_body_over_the_transport_cap_is_never_buffered_whole() {
-        let factory = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
-        let transport = ReqwestCaaTransport::new(factory.no_redirect().clone());
-
-        let declared = serve_once("HTTP/1.1 200 OK\r\ncontent-length: 20971521\r\n\r\n", 0).await;
-        let error = transport.get(&declared).await.unwrap_err();
-        assert_eq!(error.0, "body larger than 20971520 bytes");
-
-        let streamed = serve_once(
-            "HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n",
-            TRANSPORT_MAX_BODY_BYTES + 4096,
-        )
-        .await;
-        let error = transport.get(&streamed).await.unwrap_err();
-        assert_eq!(error.0, "body larger than 20971520 bytes");
-    }
 
     #[test]
     fn redirect_hops_stay_on_the_archive_hosts() {
-        let current = "https://coverartarchive.org/release/x/front-500";
-        let hop = |location: &str| check_redirect_hop(current, location);
+        let current = Url::parse("https://coverartarchive.org/release/x/front-500").unwrap();
+        let hop = |location: &str| {
+            current
+                .join(location)
+                .ok()
+                .and_then(|next| check_redirect_hop(&next))
+                .map(String::from)
+        };
         assert_eq!(
-            hop("http://archive.org/download/a/b.jpg#frag").unwrap(),
-            "https://archive.org/download/a/b.jpg"
+            hop("http://archive.org/download/a/b.jpg#frag").as_deref(),
+            Some("https://archive.org/download/a/b.jpg")
         );
         assert_eq!(
-            hop("https://ia800.us.archive.org:443/x.png?y=1").unwrap(),
-            "https://ia800.us.archive.org/x.png?y=1"
+            hop("https://ia800.us.archive.org:443/x.png?y=1").as_deref(),
+            Some("https://ia800.us.archive.org/x.png?y=1")
         );
         assert_eq!(
-            hop("/release/x/1-500.jpg").unwrap(),
-            "https://coverartarchive.org/release/x/1-500.jpg"
+            hop("/release/x/1-500.jpg").as_deref(),
+            Some("https://coverartarchive.org/release/x/1-500.jpg")
         );
         for bad in [
             "https://evil.com#.archive.org/x",
@@ -969,7 +667,7 @@ mod tests {
             "https://[::1]/x",
             "//evil.com/x",
         ] {
-            assert!(hop(bad).is_err(), "{bad} must be refused");
+            assert!(hop(bad).is_none(), "{bad} must be refused");
         }
     }
 }

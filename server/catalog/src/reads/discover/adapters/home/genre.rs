@@ -250,7 +250,12 @@ impl Prewarm {
             if fetched {
                 tokio::time::sleep(PREWARM_PAUSE).await;
             }
-            self.artwork.warm_release_group_cover(mbid).await;
+            self.artwork
+                .warm_release_group_cover(
+                    mbid,
+                    droppedneedle_providers::RequestPriority::BackgroundSync,
+                )
+                .await;
             fetched = true;
         }
     }

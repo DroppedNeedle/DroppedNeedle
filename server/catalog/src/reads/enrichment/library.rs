@@ -254,7 +254,12 @@ impl EnrichmentPort for LiveEnrichment {
                 .as_ref()
                 .ok_or_else(|| "artwork is switched off".to_owned())?;
             match artwork
-                .front_cover(release_mbid, release_group_mbid, None)
+                .front_cover(
+                    release_mbid,
+                    release_group_mbid,
+                    None,
+                    droppedneedle_providers::RequestPriority::BackgroundSync,
+                )
                 .await
             {
                 Ok(found) => Ok(found.map(|cover| Cover {

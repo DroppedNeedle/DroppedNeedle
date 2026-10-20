@@ -134,7 +134,6 @@ impl Fixtures {
             commons: format!("{}/commons", self.base),
             itunes: format!("{}/itunes/search", self.base),
             deezer: format!("{}/deezer", self.base),
-            cover_art_archive: format!("{}/coverart", self.base),
             lrclib: format!("{}/lrclib", self.base),
             github_releases: format!("{}/releases", self.base),
             youtube: format!("{}/youtube", self.base),

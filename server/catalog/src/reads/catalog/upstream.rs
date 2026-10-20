@@ -151,8 +151,6 @@ pub struct Endpoints {
     pub itunes: String,
     /// Deezer API origin.
     pub deezer: String,
-    /// Cover Art Archive origin.
-    pub cover_art_archive: String,
     /// LRCLIB origin.
     pub lrclib: String,
     /// The releases list behind the version check.

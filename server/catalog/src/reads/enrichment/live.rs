@@ -533,7 +533,8 @@ mod tests {
             Arc::new(droppedneedle_kernel::clock::SystemClock),
             droppedneedle_providers::ProviderEndpoints {
                 musicbrainz: closed.clone(),
-                brainzmash: closed,
+                brainzmash: closed.clone(),
+                coverart: closed,
             },
         ))
     }
@@ -721,7 +722,6 @@ mod tests {
             commons: closed(),
             itunes: closed(),
             deezer: closed(),
-            cover_art_archive: closed(),
             lrclib: closed(),
             github_releases: closed(),
             youtube: closed(),

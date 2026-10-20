@@ -145,7 +145,7 @@ impl Outbound {
         }
     }
 
-    /// The addresses the catalog, discovery and cover reads use.
+    /// The addresses the catalog and discovery reads use.
     pub fn catalog(&self) -> droppedneedle_catalog::reads::catalog::upstream::Endpoints {
         droppedneedle_catalog::reads::catalog::upstream::Endpoints {
             listenbrainz: self.listenbrainz.clone(),
@@ -156,7 +156,6 @@ impl Outbound {
             commons: self.commons.clone(),
             itunes: self.itunes.clone(),
             deezer: self.deezer.clone(),
-            cover_art_archive: self.cover_art_archive.clone(),
             lrclib: self.lrclib.clone(),
             github_releases: self.github_releases.clone(),
             youtube: self.youtube.clone(),
@@ -168,6 +167,7 @@ impl Outbound {
         droppedneedle_providers::ProviderEndpoints {
             musicbrainz: self.musicbrainz.clone(),
             brainzmash: self.brainzmash.clone(),
+            coverart: self.cover_art_archive.clone(),
         }
     }
 

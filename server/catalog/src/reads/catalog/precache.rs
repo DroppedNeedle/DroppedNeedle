@@ -244,8 +244,10 @@ impl PrecacheSources for CatalogPrecache {
         Box::pin(async move {
             let (_, _) = tokio::join!(
                 self.catalog.warm_album_page(&album.release_group_mbid),
-                self.artwork
-                    .warm_release_group_cover(&album.release_group_mbid),
+                self.artwork.warm_release_group_cover(
+                    &album.release_group_mbid,
+                    droppedneedle_providers::RequestPriority::BackgroundSync
+                ),
             );
         })
     }

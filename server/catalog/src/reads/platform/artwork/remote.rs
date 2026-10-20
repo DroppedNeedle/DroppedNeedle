@@ -4,43 +4,34 @@
 use futures_util::future::BoxFuture;
 
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
-use droppedneedle_providers::coverart::{
-    ArtworkBytes, CaaClient, CaaError, CaaTransport, DownloadSize, EntityKind, RateGate,
-};
+use droppedneedle_providers::coverart::{ArtworkBytes, CaaClient, DownloadSize, EntityKind};
+use droppedneedle_providers::{ProviderError, RateLimiter, RatePolicy, RequestPriority};
 
 use super::MAX_REMOTE_BYTES;
 
-/// Cover fetch pacing toward the archive. The archive documents no limit
-/// and serves bytes from the Internet Archive CDN; v2 used 10 per second
-/// (burst 20) so a cold grid of covers does not load one per second.
-pub const COVER_FETCH_RATE_PER_SEC: f64 = 10.0;
-
 /// Fetch one front cover. Object-safe so the service holds any client.
 pub trait RemoteCovers: Send + Sync {
-    /// Front cover bytes, `Ok(None)` when the archive has none.
+    /// Front cover bytes at `priority`, `Ok(None)` when the archive has
+    /// none.
     fn front<'a>(
         &'a self,
         entity: EntityKind,
         mbid: &'a str,
         size: DownloadSize,
-    ) -> BoxFuture<'a, Result<Option<ArtworkBytes>, CaaError>>;
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<Option<ArtworkBytes>, ProviderError>>;
 }
 
-impl<T: CaaTransport + Send + Sync + 'static> RemoteCovers for CaaClient<T> {
+impl RemoteCovers for CaaClient {
     fn front<'a>(
         &'a self,
         entity: EntityKind,
         mbid: &'a str,
         size: DownloadSize,
-    ) -> BoxFuture<'a, Result<Option<ArtworkBytes>, CaaError>> {
-        Box::pin(self.fetch_front(entity, mbid, size, MAX_REMOTE_BYTES))
+        priority: RequestPriority,
+    ) -> BoxFuture<'a, Result<Option<ArtworkBytes>, ProviderError>> {
+        Box::pin(self.fetch_front(entity, mbid, size, MAX_REMOTE_BYTES, priority))
     }
-}
-
-/// The archive client covers use: the shared no-redirect HTTP client (each
-/// redirect hop is checked by the client) at the cover pacing.
-pub fn cover_client<T: CaaTransport>(transport: T) -> CaaClient<T> {
-    CaaClient::new(transport).with_gate(RateGate::new(COVER_FETCH_RATE_PER_SEC))
 }
 
 /// Pacing for artist and AudioDB image downloads. These come from CDNs
@@ -100,7 +91,7 @@ pub fn check_image_url(raw: &str) -> Option<reqwest::Url> {
 /// hop passes [`check_image_url`] before it is followed.
 pub struct HttpImages {
     client: reqwest::Client,
-    gate: RateGate,
+    gate: RateLimiter,
 }
 
 impl HttpImages {
@@ -108,7 +99,7 @@ impl HttpImages {
     pub fn new(no_redirect: reqwest::Client) -> Self {
         Self {
             client: no_redirect,
-            gate: RateGate::new(IMAGE_FETCH_RATE_PER_SEC),
+            gate: RateLimiter::new(RatePolicy::new(IMAGE_FETCH_RATE_PER_SEC, 1)),
         }
     }
 
@@ -117,7 +108,15 @@ impl HttpImages {
             tracing::warn!(url = raw, "image URL outside the allowed hosts; skipped");
             return ImageFetch::Unusable;
         };
-        self.gate.acquire().await;
+        if self
+            .gate
+            .acquire_with_priority(1, RequestPriority::ImageFetch)
+            .await
+            .is_err()
+        {
+            tracing::warn!("image pacing refused a request");
+            return ImageFetch::Failed;
+        }
         let mut hops = 0;
         let response = loop {
             let response = match self

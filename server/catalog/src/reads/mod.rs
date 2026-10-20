@@ -69,21 +69,14 @@ pub fn artwork(
     inputs: &ReadsInputs,
     artists: catalog::Catalog,
 ) -> platform::artwork::ArtworkService {
-    use droppedneedle_providers::coverart::ReqwestCaaTransport;
     use platform::artwork::{
-        ArtworkService,
-        cache::ArtworkCache,
-        local::LocalArtwork,
-        remote::{HttpImages, cover_client},
+        ArtworkService, cache::ArtworkCache, local::LocalArtwork, remote::HttpImages,
     };
 
     ArtworkService::new(
         ArtworkCache::new(inputs.covers_dir.clone(), inputs.cover_cache_max_bytes),
         LocalArtwork::new(platform.db.sqlx().clone()),
-        Some(Arc::new(
-            cover_client(ReqwestCaaTransport::new(inputs.no_redirect.clone()))
-                .with_base(&inputs.endpoints.cover_art_archive),
-        )),
+        Some(Arc::new(inputs.providers.coverart.clone())),
         platform.settings.live(),
     )
     .with_images(Arc::new(HttpImages::new(inputs.no_redirect.clone())))

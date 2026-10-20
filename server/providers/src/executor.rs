@@ -85,8 +85,9 @@ pub enum Redirects {
 pub struct RedirectRule {
     /// Hops followed at most per request.
     pub max_hops: usize,
-    /// Whether a hop from the first URL to the second may be taken.
-    pub allow: fn(&Url, &Url) -> bool,
+    /// Where a hop from the first URL toward the second goes: the URL to
+    /// fetch, or `None` to refuse the hop.
+    pub next: fn(&Url, &Url) -> Option<Url>,
 }
 
 /// One outgoing request. Built only from a parsed base URL, with path
@@ -682,7 +683,7 @@ impl Executor {
                     }
                     Redirects::Return => return Ok(reply),
                     Redirects::Follow(rule) => {
-                        let Some(next) = reply
+                        let Some(location) = reply
                             .header("location")
                             .and_then(|location| url.join(location).ok())
                         else {
@@ -691,12 +692,12 @@ impl Executor {
                         if hops >= rule.max_hops {
                             return Err(contract(provider, "too many redirects"));
                         }
-                        if !(rule.allow)(&url, &next) {
+                        let Some(next) = (rule.next)(&url, &location) else {
                             return Err(ProviderError::Redirect {
                                 provider,
                                 status: reply.status,
                             });
-                        }
+                        };
                         hops += 1;
                         url = next;
                         continue;
@@ -982,5 +983,64 @@ impl Wire for ScriptedWire {
                 }
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    const CAP: usize = 64 * 1024;
+
+    /// Answer one request with `head` and then `body_bytes` of filler.
+    async fn serve_once(head: &'static str, body_bytes: usize) -> Url {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut raw = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !raw.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = socket.read(&mut chunk).await.unwrap();
+                assert_ne!(read, 0, "client closed before sending headers");
+                raw.extend_from_slice(&chunk[..read]);
+            }
+            // The client hangs up once it has seen too much, so a failed
+            // write here is the refusal working.
+            let _ = socket.write_all(head.as_bytes()).await;
+            let _ = socket.write_all(&vec![b' '; body_bytes]).await;
+        });
+        Url::parse(&format!("http://{address}/cover")).unwrap()
+    }
+
+    async fn send(wire: &ReqwestWire, url: &Url) -> Result<WireAnswer, WireError> {
+        let request = Request::get(url, &[], &[]).unwrap();
+        wire.send(Prepared {
+            provider: "test",
+            request: &request,
+            url,
+            max_body: CAP,
+        })
+        .await
+    }
+
+    /// The real wire never buffers a body past its cap: a declared length
+    /// over the cap and a body that streams past it are both refused.
+    #[tokio::test]
+    async fn a_body_over_the_cap_is_never_buffered_whole() {
+        let wire = ReqwestWire::new(&HttpClientFactory::new().unwrap());
+
+        let declared = serve_once("HTTP/1.1 200 OK\r\ncontent-length: 65537\r\n\r\n", 0).await;
+        assert!(matches!(
+            send(&wire, &declared).await,
+            Err(WireError::TooLarge)
+        ));
+
+        let streamed = serve_once("HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n", CAP + 4096).await;
+        assert!(matches!(
+            send(&wire, &streamed).await,
+            Err(WireError::TooLarge)
+        ));
     }
 }

@@ -12,8 +12,7 @@ use droppedneedle_providers::{
     coverart, musicbrainz,
 };
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 const RELEASE_MBID: &str = "aff0622e-7bd3-4fb6-9ca3-0fa19dd2340b";
@@ -42,6 +41,7 @@ impl FakeMb {
             ProviderEndpoints {
                 musicbrainz: musicbrainz::MB_API_BASE.to_owned(),
                 brainzmash: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
+                coverart: coverart::COVER_ART_ARCHIVE_BASE.to_owned(),
             },
         ));
         Self { wire, providers }
@@ -77,77 +77,12 @@ fn raw(status: u16, headers: Vec<(&str, &str)>, body: Vec<u8>) -> Scripted {
     }
 }
 
-/// Scripted CAA transport with the same record-and-replay discipline.
-struct FakeCaa {
-    scripts: Mutex<HashMap<String, VecDeque<Result<coverart::RawResponse, String>>>>,
-    seen: Mutex<Vec<coverart::CaaRequest>>,
-}
-
-impl FakeCaa {
-    fn new() -> Self {
-        Self {
-            scripts: Mutex::new(HashMap::new()),
-            seen: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn script(&self, url: &str, outcome: Result<coverart::RawResponse, String>) {
-        self.scripts
-            .lock()
-            .unwrap()
-            .entry(url.to_owned())
-            .or_default()
-            .push_back(outcome);
-    }
-
-    fn seen(&self) -> Vec<coverart::CaaRequest> {
-        self.seen.lock().unwrap().clone()
-    }
-}
-
-impl coverart::CaaTransport for FakeCaa {
-    async fn get(
-        &self,
-        request: &coverart::CaaRequest,
-    ) -> Result<coverart::RawResponse, coverart::TransportError> {
-        self.seen.lock().unwrap().push(request.clone());
-        let mut scripts = self.scripts.lock().unwrap();
-        match scripts.get_mut(&request.url).and_then(VecDeque::pop_front) {
-            Some(Ok(response)) => Ok(response),
-            Some(Err(cause)) => Err(coverart::TransportError(cause)),
-            None => Err(coverart::TransportError(format!(
-                "unscripted {}",
-                request.url
-            ))),
-        }
-    }
-}
-
-/// Shared cover-art fake, newtyped for the same orphan-rule reason.
-#[derive(Clone)]
-struct SharedCaa(Arc<FakeCaa>);
-
-impl coverart::CaaTransport for SharedCaa {
-    async fn get(
-        &self,
-        request: &coverart::CaaRequest,
-    ) -> Result<coverart::RawResponse, coverart::TransportError> {
-        coverart::CaaTransport::get(self.0.as_ref(), request).await
-    }
-}
-
 fn fast_mb() -> FakeMb {
     FakeMb::new()
 }
 
 fn official_client(fake: FakeMb) -> musicbrainz::MusicBrainzView {
     fake.client(musicbrainz::MbSource::official())
-}
-
-fn fast_caa(fake: Arc<FakeCaa>) -> coverart::CaaClient<SharedCaa> {
-    coverart::CaaClient::new(SharedCaa(fake))
-        .with_gate(coverart::RateGate::new(1000.0))
-        .with_backoff(Duration::from_millis(5), Duration::from_millis(1))
 }
 
 fn mb_url(path: &str) -> String {
@@ -422,6 +357,7 @@ async fn an_answer_over_the_cap_is_refused_unread() {
         ProviderEndpoints {
             musicbrainz: base.clone(),
             brainzmash: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
+            coverart: coverart::COVER_ART_ARCHIVE_BASE.to_owned(),
         },
     );
     let client = providers.musicbrainz.fixed(
@@ -1008,20 +944,29 @@ fn caa_listing_body() -> Vec<u8> {
     .into_bytes()
 }
 
-#[tokio::test]
+fn caa() -> FakeMb {
+    FakeMb::new()
+}
+
+fn caa_answer(status: u16, headers: Vec<(&str, &str)>, body: Vec<u8>) -> Result<Scripted, String> {
+    Ok(raw(status, headers, body))
+}
+
+const CAA_PRIORITY: RequestPriority = RequestPriority::BackgroundSync;
+
+#[tokio::test(start_paused = true)]
 async fn caa_listing_decodes_the_live_shape() {
-    let fake = Arc::new(FakeCaa::new());
+    let fake = caa();
     let url = caa_listing_url("release", RELEASE_MBID);
-    fake.script(
-        &url,
-        Ok(coverart::RawResponse::new(200, vec![], caa_listing_body())),
-    );
-    let client = fast_caa(fake.clone());
-    let candidates = client
+    fake.script(&url, caa_answer(200, vec![], caa_listing_body()));
+    let candidates = fake
+        .providers
+        .coverart
         .list_artwork(
             coverart::EntityKind::Release,
             RELEASE_MBID,
             coverart::DownloadSize::Size500,
+            CAA_PRIORITY,
         )
         .await
         .expect("listing decodes");
@@ -1049,12 +994,14 @@ async fn caa_listing_decodes_the_live_shape() {
 #[test]
 fn caa_artwork_url_upgrade_and_rejection() {
     assert_eq!(
-        coverart::upgrade_artwork_url("http://coverartarchive.org/release/abc/front.png"),
-        Ok("https://coverartarchive.org/release/abc/front.png".to_owned())
+        coverart::upgrade_artwork_url("http://coverartarchive.org/release/abc/front.png")
+            .as_deref(),
+        Some("https://coverartarchive.org/release/abc/front.png")
     );
     assert_eq!(
-        coverart::upgrade_artwork_url("https://coverartarchive.org:443/a/b.jpg?x=1#frag"),
-        Ok("https://coverartarchive.org/a/b.jpg?x=1".to_owned())
+        coverart::upgrade_artwork_url("https://coverartarchive.org:443/a/b.jpg?x=1#frag")
+            .as_deref(),
+        Some("https://coverartarchive.org/a/b.jpg?x=1")
     );
     for bad in [
         "https://evil.example/a.jpg",
@@ -1065,32 +1012,29 @@ fn caa_artwork_url_upgrade_and_rejection() {
         "https://coverartarchive.org",
         "not-a-url",
     ] {
-        assert_eq!(
-            coverart::upgrade_artwork_url(bad),
-            Err(coverart::CaaError::RejectedUrl),
-            "{bad}"
-        );
+        assert_eq!(coverart::upgrade_artwork_url(bad), None, "{bad}");
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn caa_missing_is_empty_while_failures_are_errors() {
-    let fake = Arc::new(FakeCaa::new());
+    let fake = caa();
     let missing = "00000000-0000-0000-0000-000000000001";
     fake.script(
         &caa_listing_url("release", missing),
-        Ok(coverart::RawResponse::new(404, vec![], Vec::new())),
+        caa_answer(404, vec![], Vec::new()),
     );
     fake.script(
         &caa_listing_url("release", RELEASE_MBID),
-        Ok(coverart::RawResponse::new(500, vec![], Vec::new())),
+        caa_answer(500, vec![], Vec::new()),
     );
-    let client = fast_caa(fake.clone());
+    let client = &fake.providers.coverart;
     let candidates = client
         .list_artwork(
             coverart::EntityKind::Release,
             missing,
             coverart::DownloadSize::Full,
+            CAA_PRIORITY,
         )
         .await
         .expect("404 is authoritative emptiness");
@@ -1100,11 +1044,12 @@ async fn caa_missing_is_empty_while_failures_are_errors() {
             coverart::EntityKind::Release,
             RELEASE_MBID,
             coverart::DownloadSize::Full,
+            CAA_PRIORITY,
         )
         .await
         .expect_err("500 is a provider failure, not empty artwork");
     assert!(
-        matches!(error, coverart::CaaError::Unavailable(_)),
+        matches!(error, ProviderError::Server { status: 500, .. }),
         "got {error:?}"
     );
     let before = fake.seen().len();
@@ -1113,94 +1058,77 @@ async fn caa_missing_is_empty_while_failures_are_errors() {
             coverart::EntityKind::Release,
             "nope",
             coverart::DownloadSize::Full,
+            CAA_PRIORITY,
         )
         .await
         .expect_err("malformed mbid fails locally");
     assert!(
-        matches!(error, coverart::CaaError::InvalidMbid(_)),
+        matches!(error, ProviderError::Invalid { .. }),
         "got {error:?}"
     );
     assert_eq!(fake.seen().len(), before, "malformed mbid sends nothing");
 }
 
-#[tokio::test]
-async fn caa_backoff_retries_once_then_surfaces_rate_limit() {
-    let fake = Arc::new(FakeCaa::new());
+#[tokio::test(start_paused = true)]
+async fn caa_backoff_retries_then_surfaces_the_wait() {
+    let fake = caa();
     let url = caa_listing_url("release", RELEASE_MBID);
     fake.script(
         &url,
-        Ok(coverart::RawResponse::new(
-            429,
-            vec![("Retry-After", "1")],
-            Vec::new(),
-        )),
+        caa_answer(429, vec![("Retry-After", "1")], Vec::new()),
     );
-    fake.script(
-        &url,
-        Ok(coverart::RawResponse::new(
-            200,
-            vec![],
-            br#"{"images": []}"#.to_vec(),
-        )),
-    );
-    let client = fast_caa(fake.clone());
-    let candidates = client
+    fake.script(&url, caa_answer(200, vec![], br#"{"images": []}"#.to_vec()));
+    let candidates = fake
+        .providers
+        .coverart
         .list_artwork(
             coverart::EntityKind::Release,
             RELEASE_MBID,
             coverart::DownloadSize::Full,
+            RequestPriority::UserInitiated,
         )
         .await
         .expect("retry after backoff succeeds");
     assert!(candidates.is_empty());
     assert_eq!(fake.seen().len(), 2);
 
-    let fake = Arc::new(FakeCaa::new());
+    let fake = caa();
+    fake.script(&url, caa_answer(503, vec![], Vec::new()));
     fake.script(
         &url,
-        Ok(coverart::RawResponse::new(503, vec![], Vec::new())),
+        caa_answer(503, vec![("Retry-After", "2")], Vec::new()),
     );
-    fake.script(
-        &url,
-        Ok(coverart::RawResponse::new(
-            503,
-            vec![("Retry-After", "2")],
-            Vec::new(),
-        )),
-    );
-    let client = fast_caa(fake);
-    let error = client
+    let error = fake
+        .providers
+        .coverart
         .list_artwork(
             coverart::EntityKind::Release,
             RELEASE_MBID,
             coverart::DownloadSize::Full,
+            RequestPriority::UserInitiated,
         )
         .await
         .expect_err("second 503 surfaces");
-    match error {
-        coverart::CaaError::RateLimited { retry_after_secs } => {
-            assert_eq!(retry_after_secs, Some(2.0));
-        }
-        other => panic!("got {other:?}"),
-    }
+    assert!(
+        matches!(error, ProviderError::Unavailable { retry_after: Some(wait), .. } if wait == Duration::from_secs(2)),
+        "got {error:?}"
+    );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn caa_download_sniffs_when_declarations_lie() {
     let png: Vec<u8> = [b"\x89PNG\r\n\x1a\n".as_slice(), &[0u8; 16]].concat();
     assert!(png.len() >= 12);
-    let fake = Arc::new(FakeCaa::new());
+    let fake = caa();
     let listing = caa_listing_url("release", RELEASE_MBID);
-    fake.script(
-        &listing,
-        Ok(coverart::RawResponse::new(200, vec![], caa_listing_body())),
-    );
-    let client = fast_caa(fake.clone());
+    fake.script(&listing, caa_answer(200, vec![], caa_listing_body()));
+    let client = &fake.providers.coverart;
     let candidates = client
         .list_artwork(
             coverart::EntityKind::Release,
             RELEASE_MBID,
             coverart::DownloadSize::Full,
+            CAA_PRIORITY,
         )
         .await
         .expect("listing decodes");
@@ -1211,43 +1139,42 @@ async fn caa_download_sniffs_when_declarations_lie() {
 
     fake.script(
         &front.locator,
-        Ok(coverart::RawResponse::new(
-            200,
-            vec![("Content-Type", "text/html")],
-            png.clone(),
-        )),
+        caa_answer(200, vec![("Content-Type", "text/html")], png.clone()),
     );
+    fake.script(
+        &front.locator,
+        caa_answer(
+            200,
+            vec![("Content-Type", "image/jpeg; charset=binary")],
+            png.clone(),
+        ),
+    );
+    fake.script(&front.locator, caa_answer(200, vec![], png.clone()));
     let bytes = client
-        .download_artwork(&front, 1024 * 1024)
+        .download_artwork(&front, 1024 * 1024, CAA_PRIORITY)
         .await
         .expect("download decodes");
     assert_eq!(bytes.bytes, png);
     assert_eq!(bytes.content_type, "image/png", "bytes beat a lying header");
 
-    fake.script(
-        &front.locator,
-        Ok(coverart::RawResponse::new(
-            200,
-            vec![("Content-Type", "image/jpeg; charset=binary")],
-            png.clone(),
-        )),
-    );
     let bytes = client
-        .download_artwork(&front, 1024 * 1024)
+        .download_artwork(&front, 1024 * 1024, CAA_PRIORITY)
         .await
         .expect("download decodes");
     assert_eq!(bytes.content_type, "image/jpeg; charset=binary");
 
-    fake.script(
-        &front.locator,
-        Ok(coverart::RawResponse::new(200, vec![], png.clone())),
-    );
     let error = client
-        .download_artwork(&front, 4)
+        .download_artwork(&front, 4, CAA_PRIORITY)
         .await
         .expect_err("over-limit download fails");
     assert!(
-        matches!(error, coverart::CaaError::Contract(_)),
+        matches!(
+            error,
+            ProviderError::Payload {
+                kind: PayloadKind::TooLarge,
+                ..
+            }
+        ),
         "got {error:?}"
     );
 
@@ -1256,11 +1183,11 @@ async fn caa_download_sniffs_when_declarations_lie() {
         ..front.clone()
     };
     let error = client
-        .download_artwork(&foreign, 1024)
+        .download_artwork(&foreign, 1024, CAA_PRIORITY)
         .await
         .expect_err("foreign source refused");
     assert!(
-        matches!(error, coverart::CaaError::Contract(_)),
+        matches!(error, ProviderError::Invalid { .. }),
         "got {error:?}"
     );
 }

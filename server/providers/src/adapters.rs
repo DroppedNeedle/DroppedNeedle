@@ -19,9 +19,6 @@
 //! - [`ProviderClient`](super::client::ProviderClient) conformance: no
 //!   client performs cache writes yet, so claiming `cache_prefixes` would be
 //!   vacuous conformance. The impls land with cache-aside integration.
-//! - `CaaTransport`: a typed port whose requests carry redirect-hop
-//!   validation the catalog GET port cannot express; it keeps its own
-//!   reqwest adapter in its module.
 //!
 //! These bridges go as each client moves onto the
 //! [`executor`](super::executor), which paces through its rate row itself.

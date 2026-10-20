@@ -18,7 +18,9 @@
 //! Every image lands in the content-addressed [`cache`], so a cover is
 //! fetched from the archive once and served from disk afterwards, and a
 //! "no art" answer is remembered for a while instead of asked again.
-//! Concurrent requests for the same cover share one fetch. A fetch that
+//! Concurrent requests for the same cover share one fetch. A page never
+//! joins a background fetch, which queues behind every page at the
+//! archive; it starts its own. A fetch that
 //! outlasts [`WARM_WAIT`] keeps running in the background while the web
 //! route answers 202 ("warming"), which the frontend polls.
 //!
@@ -47,10 +49,11 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 
 use crate::reads::platform::covers::{CoverArt, CoverBytes, CoverLookup};
-use droppedneedle_providers::Singleflight;
 use droppedneedle_providers::coverart::{
     ArtworkBytes, DownloadSize, EntityKind, sniff_image_content_type,
 };
+use droppedneedle_providers::musicbrainz::is_valid_mbid;
+use droppedneedle_providers::{PayloadKind, ProviderError, RequestPriority, Singleflight};
 
 use self::cache::{ArtworkCache, KeyEntry, unix_now};
 use self::local::{LocalArt, LocalArtwork, read_local_art};
@@ -216,11 +219,18 @@ impl ArtworkService {
         .await
     }
 
-    /// Fetch and cache a release group's 500 px cover now (the precache).
-    pub async fn warm_release_group_cover(&self, mbid: &str) -> bool {
+    /// Fetch and cache a release group's 500 px cover now (the precache
+    /// and the grid prewarm), asking the archive at `priority`.
+    pub async fn warm_release_group_cover(&self, mbid: &str, priority: RequestPriority) -> bool {
         matches!(
-            self.mbid_cover(EntityKind::ReleaseGroup, mbid, Some("500"), PRECACHE_WAIT)
-                .await,
+            self.mbid_cover(
+                EntityKind::ReleaseGroup,
+                mbid,
+                Some("500"),
+                PRECACHE_WAIT,
+                priority
+            )
+            .await,
             CoverLookup::Found(_)
         )
     }
@@ -229,18 +239,23 @@ impl ArtworkService {
     /// none) at `size` (`None` for the original), through the cache and
     /// the fallbacks the pages use. Library Management embeds it and writes
     /// it next to the album. `Err` when an archive fetch is still running.
+    /// The archive is asked at `priority`.
     pub async fn front_cover(
         &self,
         release_mbid: &str,
         release_group_mbid: &str,
         size: Option<&str>,
+        priority: RequestPriority,
     ) -> Result<Option<CoverBytes>, ()> {
         let mut warming = false;
         for (entity, mbid) in [
             (EntityKind::Release, release_mbid),
             (EntityKind::ReleaseGroup, release_group_mbid),
         ] {
-            match self.mbid_cover(entity, mbid, size, PRECACHE_WAIT).await {
+            match self
+                .mbid_cover(entity, mbid, size, PRECACHE_WAIT, priority)
+                .await
+            {
                 CoverLookup::Found(cover) => return Ok(Some(cover)),
                 CoverLookup::Warming => warming = true,
                 CoverLookup::Missing => {}
@@ -349,23 +364,25 @@ impl ArtworkService {
         }
     }
 
-    /// Release or release-group cover by MBID.
+    /// Release or release-group cover by MBID, the archive asked at
+    /// `priority`.
     async fn mbid_cover(
         &self,
         entity: EntityKind,
         mbid: &str,
         size: Option<&str>,
         wait: Duration,
+        priority: RequestPriority,
     ) -> CoverLookup {
         let mbid = mbid.trim().to_ascii_lowercase();
-        if !droppedneedle_providers::coverart::is_valid_mbid(&mbid) {
+        if !is_valid_mbid(&mbid) {
             return CoverLookup::Missing;
         }
         let prefer_local = prefers_local(&self.settings);
         if prefer_local && let Some(cover) = self.local_for(entity, &mbid, size).await {
             return CoverLookup::Found(cover);
         }
-        match self.remote_cover(entity, &mbid, size, wait).await {
+        match self.remote_cover(entity, &mbid, size, wait, priority).await {
             CoverLookup::Missing => {}
             other => return other,
         }
@@ -486,12 +503,15 @@ impl ArtworkService {
     }
 
     /// Archive cover through the cache, coalesced, waiting up to `wait`.
+    /// Fetches are coalesced per priority class, so a page never waits on
+    /// a background fetch of the same cover.
     async fn remote_cover(
         &self,
         entity: EntityKind,
         mbid: &str,
         size: Option<&str>,
         wait: Duration,
+        priority: RequestPriority,
     ) -> CoverLookup {
         let Some(remote) = self.remote.clone() else {
             return CoverLookup::Missing;
@@ -518,11 +538,27 @@ impl ArtworkService {
         let mbid = mbid.to_owned();
         // Spawned so a fetch the caller stops waiting for still lands in
         // the cache for the next request.
+        let class = if priority.is_user_facing() {
+            "page"
+        } else {
+            "background"
+        };
         let flight = tokio::spawn(async move {
-            let flight_key = key.clone();
+            let flight_key = format!("{class}:{key}");
             flights
                 .run(&flight_key, move || async move {
-                    Ok(fetch_and_store(remote.as_ref(), &cache, entity, &mbid, size, &key).await)
+                    Ok(fetch_and_store(
+                        remote.as_ref(),
+                        &cache,
+                        CoverFetch {
+                            entity,
+                            mbid: &mbid,
+                            size,
+                            priority,
+                        },
+                        &key,
+                    )
+                    .await)
                 })
                 .await
         });
@@ -584,17 +620,28 @@ async fn resize_and_store(
     }
 }
 
+/// One archive fetch.
+struct CoverFetch<'a> {
+    entity: EntityKind,
+    mbid: &'a str,
+    size: DownloadSize,
+    priority: RequestPriority,
+}
+
 /// One archive fetch: store the bytes or a miss marker.
 async fn fetch_and_store(
     remote: &dyn RemoteCovers,
     cache: &ArtworkCache,
-    entity: EntityKind,
-    mbid: &str,
-    size: DownloadSize,
+    fetch: CoverFetch<'_>,
     key: &str,
 ) -> Option<CoverBytes> {
-    use droppedneedle_providers::coverart::CaaError;
-    match remote.front(entity, mbid, size).await {
+    let CoverFetch {
+        entity,
+        mbid,
+        size,
+        priority,
+    } = fetch;
+    match remote.front(entity, mbid, size, priority).await {
         Ok(Some(art)) => {
             let hash = cache
                 .put(Some(key), art.bytes.clone(), &art.content_type)
@@ -612,14 +659,33 @@ async fn fetch_and_store(
             None
         }
         Err(error) => {
-            let ttl = match error {
-                CaaError::Unavailable(_) | CaaError::RateLimited { .. } => OUTAGE_TTL_SECS,
-                _ => MISS_TTL_SECS,
-            };
             tracing::warn!(%error, entity = entity.path(), mbid, "cover art archive fetch failed");
-            cache.put_miss(key, ttl).await;
+            cache.put_miss(key, failure_ttl_secs(&error)).await;
             None
         }
+    }
+}
+
+/// How long a failed archive fetch is remembered before the cover is asked
+/// for again. An outage, and an image too large to use, are asked again
+/// soon; a rate limit is held only as long as the archive asked; anything
+/// else (a refused redirect, bytes that are not an image, a malformed
+/// MBID) is remembered like "no cover".
+fn failure_ttl_secs(error: &ProviderError) -> u64 {
+    match error {
+        ProviderError::RateLimited {
+            retry_after: Some(wait),
+            ..
+        } => (wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).clamp(1, OUTAGE_TTL_SECS),
+        ProviderError::RateLimited { .. }
+        | ProviderError::Unavailable { .. }
+        | ProviderError::Server { .. }
+        | ProviderError::Transport { .. }
+        | ProviderError::Payload {
+            kind: PayloadKind::TooLarge,
+            ..
+        } => OUTAGE_TTL_SECS,
+        _ => MISS_TTL_SECS,
     }
 }
 
@@ -728,7 +794,13 @@ impl CoverArt for ArtworkService {
         release_group_id: &'a str,
         size: Option<&'a str>,
     ) -> BoxFuture<'a, CoverLookup> {
-        Box::pin(self.mbid_cover(EntityKind::ReleaseGroup, release_group_id, size, WARM_WAIT))
+        Box::pin(self.mbid_cover(
+            EntityKind::ReleaseGroup,
+            release_group_id,
+            size,
+            WARM_WAIT,
+            RequestPriority::ImageFetch,
+        ))
     }
 
     fn release_cover<'a>(
@@ -736,7 +808,13 @@ impl CoverArt for ArtworkService {
         release_id: &'a str,
         size: Option<&'a str>,
     ) -> BoxFuture<'a, CoverLookup> {
-        Box::pin(self.mbid_cover(EntityKind::Release, release_id, size, WARM_WAIT))
+        Box::pin(self.mbid_cover(
+            EntityKind::Release,
+            release_id,
+            size,
+            WARM_WAIT,
+            RequestPriority::ImageFetch,
+        ))
     }
 
     fn artist_image<'a>(
@@ -746,7 +824,7 @@ impl CoverArt for ArtworkService {
     ) -> BoxFuture<'a, CoverLookup> {
         Box::pin(async move {
             let mbid = artist_id.trim().to_ascii_lowercase();
-            if !droppedneedle_providers::coverart::is_valid_mbid(&mbid) {
+            if !is_valid_mbid(&mbid) {
                 return CoverLookup::Missing;
             }
             match self.artist_original(&mbid, WARM_WAIT).await {
@@ -781,9 +859,15 @@ impl CoverArt for ArtworkService {
             }
             if let Some(group) = &context.release_group_mbid {
                 let group = group.trim().to_ascii_lowercase();
-                if droppedneedle_providers::coverart::is_valid_mbid(&group)
+                if is_valid_mbid(&group)
                     && let CoverLookup::Found(cover) = self
-                        .remote_cover(EntityKind::ReleaseGroup, &group, size, COMPAT_WAIT)
+                        .remote_cover(
+                            EntityKind::ReleaseGroup,
+                            &group,
+                            size,
+                            COMPAT_WAIT,
+                            RequestPriority::ImageFetch,
+                        )
                         .await
                 {
                     return Some(cover);
