@@ -65,6 +65,12 @@ const WATCHED: &[Watched] = &[
         threshold: 5,
     },
     Watched {
+        source: "wikidata",
+        capability: "artist info",
+        message: "Artist bios and images (Wikipedia) are temporarily unavailable.",
+        threshold: 5,
+    },
+    Watched {
         source: "acoustid",
         capability: "metadata",
         message: "AcoustID, our fingerprint identification source, is having trouble - \
