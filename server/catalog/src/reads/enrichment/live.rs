@@ -513,7 +513,12 @@ mod tests {
                 lrclib: closed.clone(),
                 wikidata: closed.clone(),
                 wikipedia: closed.clone(),
-                commons: closed,
+                commons: closed.clone(),
+                ticketmaster: closed.clone(),
+                skiddle: closed.clone(),
+                geocoding: closed.clone(),
+                youtube: closed.clone(),
+                github_releases: closed,
             },
         ))
     }

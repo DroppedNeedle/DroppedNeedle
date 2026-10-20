@@ -210,7 +210,6 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
 /// every outside service with an address fixed in code at the one
 /// `outbound` gives.
 pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, BootError> {
-    let endpoints = outbound.catalog();
     // The data lock, the key, the database, the supervisor, the settings
     // and the one event hub: every bundle below publishes into it from the
     // moment it is built, and the revision loops feed it after each commit.
@@ -264,7 +263,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         listenbrainz_links: Arc::new(SqliteListenBrainzLinkStore::new(db.clone(), crypto.clone())),
         youtube_quota_path: config.cache_dir.join(QUOTA_FILE_NAME),
         discover_warmer: config.discover_warmer,
-        endpoints: endpoints.clone(),
     };
     // The artist and album pages, with plugin purchase links and details.
     // The artwork service names artist images through it, and the library
@@ -274,7 +272,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             providers.clone(),
             Arc::new(LiveCatalogSettings::new(config_store)),
             auth.users.clone(),
-            endpoints,
         ),
         LocalCatalog::new(db.sqlx().clone()),
     )
@@ -296,7 +293,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         outbound.library(),
         library_ports(
             p,
-            &outbound,
             &providers,
             &auth,
             &artwork,
@@ -408,8 +404,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         Ok(loaded) => tracing::info!(loaded, "quota overrides reloaded"),
         Err(error) => tracing::warn!(%error, "quota overrides failed to reload; defaults apply"),
     }
-    let concerts =
-        droppedneedle_catalog::concerts::ConcertsSetup::from_platform(p, outbound.concerts());
+    let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_platform(p, &providers);
     // Your Weekly Mix: one builder behind the refresh route, the daily
     // loop and the scrobble-settings toggle.
     let mix_hooks = Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
@@ -563,7 +558,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
 #[allow(clippy::too_many_arguments)]
 fn library_ports(
     p: &Platform,
-    outbound: &Outbound,
     providers: &Arc<Providers>,
     auth: &AuthSetup,
     artwork: &ArtworkService,
@@ -578,7 +572,6 @@ fn library_ports(
             providers.clone(),
             Arc::new(LiveCatalogSettings::new(&p.settings)),
             auth.users.clone(),
-            outbound.catalog(),
         ),
         artwork: Some(artwork.clone()),
         lrclib: Default::default(),

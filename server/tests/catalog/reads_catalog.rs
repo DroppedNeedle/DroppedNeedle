@@ -17,7 +17,7 @@ use droppedneedle_auth::users::roles::Role;
 use droppedneedle_catalog::reads::catalog::{
     self, Catalog, CatalogDeps,
     library::LocalCatalog,
-    upstream::{CatalogSettings, Endpoints, Upstream},
+    upstream::{CatalogSettings, Upstream},
 };
 use droppedneedle_catalog::reads::search::{self, SearchDeps, service::SearchService};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
@@ -126,13 +126,6 @@ impl Fixtures {
 
     fn hits(&self, path: &str) -> usize {
         self.hits.lock().unwrap().get(path).copied().unwrap_or(0)
-    }
-
-    fn endpoints(&self) -> Endpoints {
-        Endpoints {
-            github_releases: format!("{}/releases", self.base),
-            youtube: format!("{}/youtube", self.base),
-        }
     }
 
     /// The providers with every catalog provider on this server.
@@ -387,7 +380,6 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> (axum::Router, (AuthRi
         Arc::new(fixtures.providers(&http)),
         Arc::new(TestSettings { mb_url }),
         rig.deps.clone(),
-        fixtures.endpoints(),
     );
     let catalog = Catalog::new(upstream, LocalCatalog::new(pool.clone()));
     let search = SearchDeps::new(
@@ -860,7 +852,6 @@ async fn lastfm_reads_fall_back_to_the_instance_key() {
             lastfm_switch: switch.clone(),
             ..rig.deps.clone()
         },
-        droppedneedle::bootstrap::Outbound::live().catalog(),
     );
     assert!(
         upstream.lastfm("no-key-user").await.is_none(),
@@ -949,7 +940,6 @@ async fn a_failed_portrait_lookup_keeps_the_short_outage_marker() {
                 mb_url: format!("{}/mb/ws/2", fixtures.base),
             }),
             rig.deps.clone(),
-            fixtures.endpoints(),
         ),
         LocalCatalog::new(pool.clone()),
     );

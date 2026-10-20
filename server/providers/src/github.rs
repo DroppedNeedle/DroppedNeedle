@@ -1,10 +1,10 @@
 //! GitHub releases client (the update check).
 //!
 //! Port of v2's GitHub repository and its `GitHubRelease` schema. This is
-//! the quiet client: every failure mode (non-200 answers,
-//! undecodable bodies, transport errors) degrades to an empty release list
-//! with a log line, never an error. An update check must not break the app
-//! it checks for updates.
+//! the quiet client: every failure (an error answer, an undecodable body,
+//! no answer at all) degrades to an empty release list with a log line,
+//! never an error. An update check must not break the app it checks for
+//! updates. Requests go through the executor at the `github` rate row.
 //!
 //! Kept behaviors:
 //!
@@ -13,27 +13,63 @@
 //!   [GitHubClient::fetch_latest_release] skips them (the API returns
 //!   newest first, so the first stable release wins).
 //! - Missing `name` falls back to the tag, missing `body` to `""`.
-//! - One hourly memo: repeated checks within the hour reuse the last good
-//!   answer instead of calling GitHub again.
+//! - One hourly memo of the last good answer. A failure is never
+//!   remembered, so the next check asks again.
 //!
-//! Shared infrastructure note: v2's hourly cache is an injected shared cache; here it
-//! is a small in-client TTL memo so the port stays self-contained. Wiring
-//! may later replace it with the shared cache without changing this surface.
+//! Rate limits, from GitHub's REST rate-limit page (read 2026-10-18): a 403
+//! or 429 with `x-ratelimit-remaining: 0` waits until `x-ratelimit-reset`
+//! (unix seconds); any other 403 or 429 with `retry-after` waits that long;
+//! with neither, wait at least a minute.
 
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
-use thiserror::Error;
 
-/// Production endpoint. Tests point elsewhere via [GitHubClient::with_base_url].
+use crate::RequestPriority;
+use crate::client::{decode, parse_base, unusable_base};
+use crate::error::ProviderError;
+use crate::executor::{
+    Answer, Backoff, Executor, Request, Spec, USER_COOLDOWN_WAIT, Url, standard_classify,
+};
+
+/// The provider name errors carry, and its rate row.
+pub const SOURCE: &str = "github";
+/// Production endpoint.
 pub const GITHUB_RELEASES_URL: &str =
     "https://api.github.com/repos/DroppedNeedle/DroppedNeedle/releases";
 /// How long a fetched release list stays fresh, kept from v2's 1h TTL.
 pub const RELEASES_CACHE_TTL: Duration = Duration::from_secs(3600);
-/// Per-request timeout, kept from v2's 10s client call.
-pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Largest releases answer read.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+
+/// GitHub on the wire: the standard rules plus its rate-limit answers.
+pub static SPEC: Spec = Spec {
+    source: SOURCE,
+    health_key: SOURCE,
+    timeout: Duration::from_secs(10),
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(60)),
+    retry_after_cap: Duration::from_secs(3600),
+    classify,
+};
+
+/// A 403 or 429 that says the allowance is spent, or names a wait, is a
+/// rate limit; any other 403 is a refusal.
+fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
+    let reply = answer.reply;
+    if matches!(reply.status(), 403 | 429) {
+        let spent = reply
+            .header("x-ratelimit-remaining")
+            .is_some_and(|remaining| remaining.trim() == "0");
+        if spent || reply.header("retry-after").is_some() {
+            return Err(ProviderError::RateLimited {
+                provider: SOURCE,
+                retry_after: answer.retry_after(),
+            });
+        }
+    }
+    standard_classify(answer)
+}
 
 /// One published release. `tag_name`, `published_at`, and `html_url` are the
 /// required identity fields: an entry without one fails the whole decode,
@@ -74,57 +110,59 @@ struct RawRelease {
     draft: bool,
 }
 
-/// Transport failure inside the fetch. Never escapes the client: it only
-/// exists so the fetch can log the kind before degrading to `[]`.
-#[derive(Debug, Error)]
-enum FetchError {
-    /// The request never completed (DNS, TLS, connect, timeout).
-    #[error("github releases request failed: {0}")]
-    Transport(String),
-}
-
 /// The hourly memo: when the list was fetched plus the list itself.
 type ReleaseMemo = std::sync::Arc<tokio::sync::Mutex<Option<(Instant, Vec<GitHubRelease>)>>>;
 
-/// The releases client. Clone the shared `reqwest::Client` from the HTTP
-/// factory at wiring time; clones share the hourly memo.
+/// The releases client, built once with the providers; clones share the
+/// hourly memo.
 #[derive(Debug, Clone)]
 pub struct GitHubClient {
-    http: reqwest::Client,
-    base_url: String,
+    executor: Executor,
+    url: Option<Url>,
     memo: ReleaseMemo,
 }
 
 impl GitHubClient {
-    /// Client against the given releases endpoint.
-    pub fn with_base_url(http: reqwest::Client, base_url: impl Into<String>) -> Self {
+    /// The client sending through `executor` to the releases list at
+    /// `releases_url`.
+    #[must_use]
+    pub fn new(executor: Executor, releases_url: &str) -> Self {
         Self {
-            http,
-            base_url: base_url.into(),
+            executor,
+            url: parse_base(releases_url, SOURCE),
             memo: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
     /// All non-draft releases, newest first, with the hourly memo. Every
-    /// failure degrades to `[]` with a log line.
-    pub async fn fetch_releases(&self) -> Vec<GitHubRelease> {
+    /// failure degrades to `[]` with a log line and is not remembered. A
+    /// person's check never waits for a request: while the row has none to
+    /// give within [`USER_COOLDOWN_WAIT`] (a rest, or the hourly allowance
+    /// spent on failures), it answers `[]` at once without sending.
+    pub async fn fetch_releases(&self, priority: RequestPriority) -> Vec<GitHubRelease> {
         if let Some(cached) = self.memo_get().await {
             return cached;
         }
-        let releases = match self.fetch().await {
-            Ok(releases) => releases,
-            Err(error) => {
-                tracing::error!(%error, "failed to fetch github releases");
-                return Vec::new();
+        if priority.is_user_facing() && self.executor.limiter().retry_after(1) > USER_COOLDOWN_WAIT
+        {
+            tracing::debug!("github releases skipped: no request free soon");
+            return Vec::new();
+        }
+        match self.fetch(priority).await {
+            Ok(releases) => {
+                self.memo_put(releases.clone()).await;
+                releases
             }
-        };
-        self.memo_put(releases.clone()).await;
-        releases
+            Err(error) => {
+                tracing::warn!(%error, "github releases unavailable");
+                Vec::new()
+            }
+        }
     }
 
     /// The latest non-prerelease release, if any.
-    pub async fn fetch_latest_release(&self) -> Option<GitHubRelease> {
-        self.fetch_releases()
+    pub async fn fetch_latest_release(&self, priority: RequestPriority) -> Option<GitHubRelease> {
+        self.fetch_releases(priority)
             .await
             .into_iter()
             .find(|release| !release.prerelease)
@@ -147,34 +185,14 @@ impl GitHubClient {
         *memo = Some((Instant::now(), releases));
     }
 
-    /// One uncached fetch. Non-200 answers warn and degrade; transport and
-    /// decode failures error and degrade.
-    async fn fetch(&self) -> Result<Vec<GitHubRelease>, FetchError> {
-        let response = self
-            .http
-            .get(self.base_url.as_str())
-            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .map_err(|error| FetchError::Transport(transport_kind(&error).to_owned()))?;
-        if response.status() != reqwest::StatusCode::OK {
-            tracing::warn!(
-                status = response.status().as_u16(),
-                "github releases API returned a non-200 status"
-            );
-            return Ok(Vec::new());
-        }
-        let body = droppedneedle_kernel::http_client::read_capped(response, MAX_BODY_BYTES)
-            .await
-            .map_err(|error| FetchError::Transport(error.kind().to_owned()))?;
-        let raw: Vec<RawRelease> = match serde_json::from_slice(&body) {
-            Ok(raw) => raw,
-            Err(error) => {
-                tracing::error!(%error, "github releases payload did not decode");
-                return Ok(Vec::new());
-            }
-        };
+    /// One uncached fetch.
+    async fn fetch(&self, priority: RequestPriority) -> Result<Vec<GitHubRelease>, ProviderError> {
+        let url = self.url.as_ref().ok_or_else(|| unusable_base(SOURCE))?;
+        let request = Request::get(url, &[], &[])
+            .map_err(|_| unusable_base(SOURCE))?
+            .header("accept", "application/vnd.github+json");
+        let reply = self.executor.send(request, priority).await?;
+        let raw: Vec<RawRelease> = decode(&reply)?;
         Ok(raw
             .into_iter()
             .filter(|entry| !entry.draft)
@@ -187,17 +205,5 @@ impl GitHubClient {
                 prerelease: entry.prerelease,
             })
             .collect())
-    }
-}
-
-/// Short transport failure kind. Only the kind is kept, never the URL, the
-/// same shape as v2's logged exception.
-fn transport_kind(error: &reqwest::Error) -> &'static str {
-    if error.is_timeout() {
-        "timed out"
-    } else if error.is_connect() {
-        "connection failed"
-    } else {
-        "request failed"
     }
 }

@@ -97,7 +97,6 @@ pub fn reads_at(
             ))),
             Arc::new(LiveCatalogSettings::new(&platform.settings)),
             users.clone(),
-            super::closed_endpoints(),
         ),
         LocalCatalog::new(platform.db.sqlx().clone()),
     );

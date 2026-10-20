@@ -228,16 +228,9 @@ impl E2e {
             None,
             droppedneedle::bootstrap::jobs::ScansEnded::default(),
         );
-        // Concerts over the scratch database; the sources point at the
-        // discard port so no row can reach a real provider.
-        let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_platform(
-            p,
-            droppedneedle_catalog::concerts::Endpoints {
-                ticketmaster: "http://127.0.0.1:9".to_owned(),
-                skiddle: "http://127.0.0.1:9".to_owned(),
-                geocoding: "http://127.0.0.1:9".to_owned(),
-            },
-        );
+        // Concerts over the scratch database and the rig's providers, whose
+        // addresses are closed, so no row can reach a real provider.
+        let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_platform(p, &providers);
         let admin = droppedneedle::admin::AdminSetup::new(
             auth.users.clone(),
             acquire.requests.quota.clone(),

@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use axum::{Json, extract::State};
 use droppedneedle_kernel::mount::{Routes, routes};
+use droppedneedle_providers::RequestPriority;
 use futures_util::future::BoxFuture;
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -131,14 +132,22 @@ impl ReleaseSource for GitHubReleases {
         self.current.clone()
     }
 
+    // Both are asked for by a page someone has open, so they go at user
+    // priority: while GitHub rests, or no request is free soon, the answer
+    // is nothing at once instead of a held page.
     fn latest_release(&self) -> BoxFuture<'_, Option<GitHubRelease>> {
-        Box::pin(async move { self.client.fetch_latest_release().await.map(from_github) })
+        Box::pin(async move {
+            self.client
+                .fetch_latest_release(RequestPriority::UserInitiated)
+                .await
+                .map(from_github)
+        })
     }
 
     fn release_history(&self) -> BoxFuture<'_, Vec<GitHubRelease>> {
         Box::pin(async move {
             self.client
-                .fetch_releases()
+                .fetch_releases(RequestPriority::UserInitiated)
                 .await
                 .into_iter()
                 .map(from_github)

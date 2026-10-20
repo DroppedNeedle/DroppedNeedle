@@ -520,6 +520,12 @@ impl RateLimiter {
         state.failure_run
     }
 
+    /// How many failed calls in a row the row has seen.
+    #[must_use]
+    pub fn failure_run(&self) -> u32 {
+        self.lock().failure_run
+    }
+
     /// The provider answered: its run of failures starts over.
     pub fn note_answer(&self) {
         self.lock().failure_run = 0;

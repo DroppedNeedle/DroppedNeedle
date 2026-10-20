@@ -58,8 +58,8 @@ pub struct DiscoverInputs {
     pub users: UsersDeps,
     /// Whether the discover warm cycle runs (the deployment kill switch).
     pub discover_warmer: bool,
-    /// Base URLs of the chart and discovery upstreams.
-    pub endpoints: crate::reads::catalog::upstream::Endpoints,
+    /// The kernel clock, which dates the YouTube daily budget.
+    pub clock: Arc<dyn droppedneedle_kernel::clock::Clock>,
     /// The cover and artist image cache, which genre pages warm.
     pub artwork: Option<crate::reads::platform::artwork::ArtworkService>,
     /// The requests side of discovery batches.
@@ -79,8 +79,8 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
         lastfm_charts,
         inputs.db.sqlx().clone(),
     ));
-    let youtube: Arc<dyn YouTubeSource> = match YouTubeClient::with_base_url(
-        inputs.http.clone(),
+    let youtube: Arc<dyn YouTubeSource> = match YouTubeClient::new(
+        inputs.providers.youtube.clone(),
         inputs.youtube_quota_path.clone(),
         YouTubeSettings {
             api_key: String::new(),
@@ -88,7 +88,7 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
             api_enabled: false,
             daily_quota_limit: DEFAULT_DAILY_QUOTA_LIMIT,
         },
-        inputs.endpoints.youtube.as_str(),
+        Arc::clone(&inputs.clock),
     ) {
         Ok(client) => Arc::new(youtube::LiveYouTube::new(client, config.live())),
         Err(error) => {
@@ -153,7 +153,6 @@ fn live_upstream(inputs: &DiscoverInputs, config: &ConfigStore) -> Upstream {
         inputs.providers.clone(),
         Arc::new(LiveCatalogSettings::new(config)),
         inputs.users.clone(),
-        inputs.endpoints.clone(),
     )
 }
 

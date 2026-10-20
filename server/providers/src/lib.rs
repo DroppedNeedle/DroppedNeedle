@@ -124,6 +124,16 @@ pub struct ProviderEndpoints {
     pub wikipedia: String,
     /// Wikimedia Commons origin.
     pub commons: String,
+    /// Ticketmaster Discovery root.
+    pub ticketmaster: String,
+    /// Skiddle API root.
+    pub skiddle: String,
+    /// Open-Meteo geocoding search URL.
+    pub geocoding: String,
+    /// YouTube Data API host.
+    pub youtube: String,
+    /// The releases list behind the version check.
+    pub github_releases: String,
 }
 
 impl ProviderEndpoints {
@@ -147,6 +157,11 @@ impl ProviderEndpoints {
             wikidata: "http://127.0.0.1:9/wikidata".to_owned(),
             wikipedia: "http://127.0.0.1:9/wikipedia-{lang}".to_owned(),
             commons: "http://127.0.0.1:9/commons".to_owned(),
+            ticketmaster: "http://127.0.0.1:9/ticketmaster".to_owned(),
+            skiddle: "http://127.0.0.1:9/skiddle".to_owned(),
+            geocoding: "http://127.0.0.1:9/geocoding".to_owned(),
+            youtube: "http://127.0.0.1:9/youtube".to_owned(),
+            github_releases: "http://127.0.0.1:9/releases".to_owned(),
         }
     }
 }
@@ -192,6 +207,17 @@ pub struct Providers {
     pub lrclib: lrclib::LrclibClient,
     /// Wikidata, Wikipedia and Commons, on one bucket.
     pub wikidata: wikidata::WikidataClient,
+    /// Ticketmaster events for the concerts sweep.
+    pub ticketmaster: ticketmaster::TicketmasterClient,
+    /// Skiddle events for the concerts sweep.
+    pub skiddle: skiddle::SkiddleClient,
+    /// Open-Meteo city search for the concerts city picker.
+    pub geocoding: geocoding::GeocodingClient,
+    /// The YouTube Data API, which the one quota-keeping YouTube client
+    /// sends through.
+    pub youtube: youtube::YouTubeApi,
+    /// GitHub releases for the version check.
+    pub github: github::GitHubClient,
 }
 
 impl Providers {
@@ -309,6 +335,26 @@ impl Providers {
             &endpoints.wikipedia,
             &endpoints.commons,
         );
+        let ticketmaster = ticketmaster::TicketmasterClient::new(
+            executor(&ticketmaster::SPEC, ticketmaster::SOURCE),
+            &endpoints.ticketmaster,
+        );
+        let skiddle = skiddle::SkiddleClient::new(
+            executor(&skiddle::SPEC, skiddle::SOURCE),
+            &endpoints.skiddle,
+        );
+        let geocoding = geocoding::GeocodingClient::new(
+            executor(&geocoding::SPEC, geocoding::RATE_ROW),
+            &endpoints.geocoding,
+        );
+        let youtube = youtube::YouTubeApi::new(
+            executor(&youtube::SPEC, youtube::SOURCE),
+            &endpoints.youtube,
+        );
+        let github = github::GitHubClient::new(
+            executor(&github::SPEC, github::SOURCE),
+            &endpoints.github_releases,
+        );
         Self {
             limiters,
             slots: SlotManager::new(),
@@ -326,6 +372,11 @@ impl Providers {
             previews,
             lrclib,
             wikidata,
+            ticketmaster,
+            skiddle,
+            geocoding,
+            youtube,
+            github,
         }
     }
 

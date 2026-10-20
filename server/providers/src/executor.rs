@@ -46,7 +46,13 @@ const FAILURE_RUN: usize = 5;
 const MAX_MESSAGE: usize = 200;
 
 /// The headers an answer keeps; the rest are dropped at the wire.
-const KEPT_HEADERS: [&str; 4] = ["content-type", "location", "retry-after", "ratelimit-reset"];
+const KEPT_HEADERS: [&str; 5] = [
+    "content-type",
+    "location",
+    "retry-after",
+    "ratelimit-reset",
+    "rate-limit-reset",
+];
 
 /// The request method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -770,6 +776,22 @@ impl Executor {
         })
     }
 
+    /// Whether a run of `run` failed calls rests the provider: five, or
+    /// more where its health entry waits for more.
+    fn run_reached(&self, run: u32) -> bool {
+        let threshold = health::threshold(self.spec.health_key)
+            .unwrap_or(FAILURE_RUN)
+            .max(FAILURE_RUN);
+        usize::try_from(run).unwrap_or(usize::MAX) >= threshold
+    }
+
+    /// Whether the provider is resting after a run of failed calls (an
+    /// outage), rather than after a wait it asked for.
+    #[must_use]
+    pub fn resting_after_failures(&self) -> bool {
+        !self.limiter.cooling_for().is_zero() && self.run_reached(self.limiter.failure_run())
+    }
+
     /// Record a call the provider answered without a failure that counts
     /// against it.
     fn answered(&self, error: Option<&ProviderError>) {
@@ -786,11 +808,7 @@ impl Executor {
         if error.trips_breaker() {
             self.health
                 .record_failure(self.spec.health_key, std::time::Instant::now());
-            let run = self.limiter.note_failure();
-            let threshold = health::threshold(self.spec.health_key)
-                .unwrap_or(FAILURE_RUN)
-                .max(FAILURE_RUN);
-            if usize::try_from(run).unwrap_or(usize::MAX) >= threshold {
+            if self.run_reached(self.limiter.note_failure()) {
                 self.limiter.cool_down(FAILURE_COOLDOWN);
             }
             tracing::warn!(provider, %error, "provider call failed");

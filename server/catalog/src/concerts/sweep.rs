@@ -32,6 +32,7 @@ use droppedneedle_kernel::jobs::events_watcher::{EventsWatcher, SweepEnd};
 use droppedneedle_kernel::jobs::{BoxFuture, CancellationToken};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
+use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::error::ProviderError;
 
 /// Source resolutions older than this are looked up again, from v2.
@@ -43,7 +44,7 @@ const PRUNE_GRACE_DAYS: i64 = 2;
 /// Far-future noise guard. A constant on purpose, not a setting.
 const HORIZON_DAYS: i64 = 365;
 /// Cap on one source's fetch for one artist.
-const FETCH_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const FETCH_TIMEOUT: Duration = Duration::from_secs(60);
 /// Pause between artists, from v2.
 const INTER_ARTIST_DELAY: Duration = Duration::from_secs(1);
 
@@ -263,7 +264,10 @@ impl ConcertsSweep {
                 (found.attraction_id, found.basis)
             }
             _ => {
-                let attractions = self.sources.tm_attractions(key, &artist.name).await?;
+                let attractions = self
+                    .sources
+                    .tm_attractions(key, &artist.name, RequestPriority::BackgroundSync)
+                    .await?;
                 let (id, basis) =
                     pick_tm_attraction(&attractions, &artist.name, &artist.mbid_lower);
                 self.store
@@ -280,7 +284,10 @@ impl ConcertsSweep {
         } else {
             Confidence::Name
         };
-        let events = self.sources.tm_events(key, &attraction_id).await?;
+        let events = self
+            .sources
+            .tm_events(key, &attraction_id, RequestPriority::BackgroundSync)
+            .await?;
         Ok(events
             .iter()
             .filter_map(|event| map_tm_event(event, artist, confidence))
@@ -298,7 +305,10 @@ impl ConcertsSweep {
                 found.artist_ids
             }
             _ => {
-                let candidates = self.sources.skiddle_artists(key, &artist.name).await?;
+                let candidates = self
+                    .sources
+                    .skiddle_artists(key, &artist.name, RequestPriority::BackgroundSync)
+                    .await?;
                 let ids = pick_skiddle_ids(&candidates, &artist.name);
                 self.store
                     .set_skiddle_resolution(&artist.mbid_lower, ids.clone(), now_unix())
@@ -310,7 +320,11 @@ impl ConcertsSweep {
         // last copy of a listing wins.
         let mut by_listing: HashMap<String, EventRow> = HashMap::new();
         for id in &ids {
-            for event in self.sources.skiddle_events(key, id).await? {
+            for event in self
+                .sources
+                .skiddle_events(key, id, RequestPriority::BackgroundSync)
+                .await?
+            {
                 if let Some(row) = map_skiddle_event(&event, artist) {
                     by_listing.insert(row.source_event_id.clone(), row);
                 }

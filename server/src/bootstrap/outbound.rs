@@ -145,14 +145,6 @@ impl Outbound {
         }
     }
 
-    /// The addresses the catalog and discovery reads use.
-    pub fn catalog(&self) -> droppedneedle_catalog::reads::catalog::upstream::Endpoints {
-        droppedneedle_catalog::reads::catalog::upstream::Endpoints {
-            github_releases: self.github_releases.clone(),
-            youtube: self.youtube.clone(),
-        }
-    }
-
     /// The addresses of the providers built once for every area.
     pub fn providers(&self) -> droppedneedle_providers::ProviderEndpoints {
         droppedneedle_providers::ProviderEndpoints {
@@ -170,15 +162,11 @@ impl Outbound {
             wikidata: self.wikidata.clone(),
             wikipedia: self.wikipedia.clone(),
             commons: self.commons.clone(),
-        }
-    }
-
-    /// The addresses the events sources use.
-    pub fn concerts(&self) -> droppedneedle_catalog::concerts::Endpoints {
-        droppedneedle_catalog::concerts::Endpoints {
             ticketmaster: self.ticketmaster.clone(),
             skiddle: self.skiddle.clone(),
             geocoding: self.geocoding.clone(),
+            youtube: self.youtube.clone(),
+            github_releases: self.github_releases.clone(),
         }
     }
 

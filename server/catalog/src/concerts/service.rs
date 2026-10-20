@@ -19,6 +19,7 @@ use super::store::{ConcertsStore, StoreError};
 use super::{ActiveSources, now_unix, today};
 use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
+use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::error::ProviderError;
 
 /// Cities kept per user, from v2.
@@ -193,7 +194,7 @@ impl ConcertsService {
         }
         let found = self
             .sources
-            .cities(query)
+            .cities(query, RequestPriority::UserInitiated)
             .await
             .map_err(ConcertsError::SearchUnavailable)?;
         Ok(CitySearchResponse {

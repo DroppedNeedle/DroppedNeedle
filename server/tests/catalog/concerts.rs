@@ -1,7 +1,8 @@
 //! Concerts end to end: a sweep against scripted Ticketmaster and Skiddle
 //! fakes fills the feed, the routes narrow it to the user's city, the seen
-//! marker clears the badge, and a second sweep keeps first-seen times and
-//! deletes what vanished upstream.
+//! marker clears the badge, a second sweep keeps first-seen times and
+//! deletes what vanished upstream, and a sweep while Ticketmaster's daily
+//! allowance is spent fails the artist without touching its listings.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,16 +10,18 @@ use std::sync::{Arc, Mutex};
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use axum::response::IntoResponse as _;
 use axum::routing::get;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
 use droppedneedle_auth::Role;
 use droppedneedle_auth::session::store::SessionKind;
-use droppedneedle_catalog::concerts::{ConcertsEvents, ConcertsNew, ConcertsSetup, Endpoints};
+use droppedneedle_catalog::concerts::{ConcertsEvents, ConcertsNew, ConcertsSetup};
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::runtime_config::secret_sections::EventsSettings;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
+use droppedneedle_providers::{ProviderEndpoints, Providers, ReqwestWire};
 
 use crate::common::ScratchDir;
 use crate::common::auth::{test_principal, with_test_principal};
@@ -44,8 +47,15 @@ fn tm_event(id: &str, date: &str, venue: &str, city: &str, lat: &str, lon: &str)
 }
 
 /// Ticketmaster under `/tm`, Skiddle under `/sk`. `drop_o2` removes the
-/// Liverpool gig from Ticketmaster for the second sweep.
-fn fakes(attraction_calls: Arc<AtomicUsize>, drop_o2: Arc<AtomicBool>) -> Router {
+/// Liverpool gig from Ticketmaster for the second sweep; `spent` makes
+/// Ticketmaster answer that the day's allowance is used up, resetting in
+/// two minutes. `event_calls` counts what reached the events route.
+fn fakes(
+    attraction_calls: Arc<AtomicUsize>,
+    drop_o2: Arc<AtomicBool>,
+    spent: Arc<AtomicBool>,
+    event_calls: Arc<AtomicUsize>,
+) -> Router {
     Router::new()
         .route(
             "/tm/attractions.json",
@@ -63,6 +73,17 @@ fn fakes(attraction_calls: Arc<AtomicUsize>, drop_o2: Arc<AtomicBool>) -> Router
         .route(
             "/tm/events.json",
             get(move || {
+                event_calls.fetch_add(1, Ordering::SeqCst);
+                if spent.load(Ordering::SeqCst) {
+                    let reset_ms = (time::OffsetDateTime::now_utc().unix_timestamp() + 120) * 1000;
+                    let answer = (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        [("rate-limit-reset", reset_ms.to_string())],
+                        r#"{"fault": {"faultstring": "Rate limit quota violation. Quota limit exceeded. Identifier : tm-key", "detail": {"errorcode": "policies.ratelimit.QuotaViolation"}}}"#,
+                    )
+                        .into_response();
+                    return std::future::ready(answer);
+                }
                 let mut events = vec![tm_event(
                     "tm-tokyo",
                     &day(20),
@@ -90,9 +111,10 @@ fn fakes(attraction_calls: Arc<AtomicUsize>, drop_o2: Arc<AtomicBool>) -> Router
                     "53.40",
                     "-2.98",
                 ));
-                async move {
+                std::future::ready(
                     axum::Json(json!({"_embedded": {"events": events}, "page": {"totalPages": 1}}))
-                }
+                        .into_response(),
+                )
             }),
         )
         .route(
@@ -192,21 +214,32 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
 
     let attraction_calls = Arc::new(AtomicUsize::new(0));
     let drop_o2 = Arc::new(AtomicBool::new(false));
+    let spent = Arc::new(AtomicBool::new(false));
+    let event_calls = Arc::new(AtomicUsize::new(0));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
-    let fake = fakes(Arc::clone(&attraction_calls), Arc::clone(&drop_o2));
+    let fake = fakes(
+        Arc::clone(&attraction_calls),
+        Arc::clone(&drop_o2),
+        Arc::clone(&spent),
+        Arc::clone(&event_calls),
+    );
     tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
 
     let recorder = Arc::new(Recorder::default());
-    let setup = ConcertsSetup::new(
-        runtime.db().clone(),
-        reqwest::Client::new(),
-        config.live(),
-        Endpoints {
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
+    let providers = Providers::unpaced_at(
+        Arc::new(ReqwestWire::new(&http)),
+        ProviderEndpoints {
             ticketmaster: format!("{base}/tm"),
             skiddle: format!("{base}/sk"),
-            geocoding: "http://127.0.0.1:9".to_owned(),
+            ..ProviderEndpoints::closed()
         },
+    );
+    let setup = ConcertsSetup::new(
+        runtime.db().clone(),
+        config.live(),
+        &providers,
         recorder.clone(),
     );
     let app = with_test_principal(
@@ -294,6 +327,26 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
     assert_eq!(ids, ["sk-cavern", "sk-o2"]);
     let (_, body) = call(&app, "GET", "/api/v3/following/concerts/unseen-count", None).await;
     assert_eq!(body, json!({"count": 1}));
+
+    // Ticketmaster's daily allowance runs out, resetting in two minutes.
+    // The sweep counts the artist as failed and keeps every listing it had;
+    // the next sweep sends nothing while Ticketmaster rests.
+    spent.store(true, Ordering::SeqCst);
+    let asked = event_calls.load(Ordering::SeqCst);
+    let (_, third) = sweep.run(None, &stop).await.unwrap();
+    assert_eq!((third.events_new, third.errors), (0, 1));
+    assert_eq!(event_calls.load(Ordering::SeqCst), asked + 1);
+    let (_, fourth) = sweep.run(None, &stop).await.unwrap();
+    assert_eq!(fourth.errors, 1);
+    assert_eq!(event_calls.load(Ordering::SeqCst), asked + 1);
+    let (_, body) = call(&app, "GET", "/api/v3/following/concerts", None).await;
+    let kept: Vec<&str> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item["source_event_id"].as_str())
+        .collect();
+    assert_eq!(kept, ["sk-cavern", "sk-o2"]);
 
     // Bad input stays a 400 in the shared envelope.
     let (status, body) = call(

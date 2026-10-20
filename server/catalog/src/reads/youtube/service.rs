@@ -8,8 +8,9 @@ use std::sync::Arc;
 
 use crate::reads::collections::db::StoreError;
 use crate::reads::discover::ports::{ProviderFailure, YouTubeSource};
+use droppedneedle_kernel::clock::Clock;
 use droppedneedle_kernel::ids::IdGenerator;
-use droppedneedle_providers::youtube::utc_today;
+use droppedneedle_providers::youtube::utc_date;
 
 use super::models::{
     YouTubeLink, YouTubeLinkGenerateRequest, YouTubeLinkUpdateRequest, YouTubeManualLinkRequest,
@@ -71,32 +72,39 @@ pub struct YouTubeLinks {
     store: LinkStore,
     search: Arc<dyn YouTubeSource>,
     ids: Arc<dyn IdGenerator>,
+    clock: Arc<dyn Clock>,
 }
 
 impl YouTubeLinks {
     /// Service over `store`, searching through `search`, the server's one
-    /// YouTube client.
+    /// YouTube client, and dating the budget by `clock`.
     pub fn new(
         store: LinkStore,
         search: Arc<dyn YouTubeSource>,
         ids: Arc<dyn IdGenerator>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
-        Self { store, search, ids }
+        Self {
+            store,
+            search,
+            ids,
+            clock,
+        }
     }
 
     /// Today's search budget. While search is switched off or has no key
     /// there is nothing to spend, which reads as a zero budget.
     pub async fn quota(&self) -> YouTubeQuotaStatus {
-        self.search
-            .quota()
-            .await
-            .map(quota_status)
-            .unwrap_or_else(|| YouTubeQuotaStatus {
+        let date = utc_date(self.clock.now_unix());
+        match self.search.quota().await {
+            Some(quota) => quota_status(quota, date),
+            None => YouTubeQuotaStatus {
                 used: 0,
                 limit: 0,
                 remaining: 0,
-                date: utc_today(),
-            })
+                date,
+            },
+        }
     }
 
     /// The saved link for an album, searching YouTube only when there is no
@@ -350,12 +358,15 @@ fn failure(track: &YouTubeTrackInput, reason: &str) -> YouTubeTrackLinkFailure {
     }
 }
 
-fn quota_status(quota: crate::reads::discover::models::YouTubeQuotaResponse) -> YouTubeQuotaStatus {
+fn quota_status(
+    quota: crate::reads::discover::models::YouTubeQuotaResponse,
+    date: String,
+) -> YouTubeQuotaStatus {
     YouTubeQuotaStatus {
         used: quota.used,
         limit: quota.limit,
         remaining: (quota.limit - quota.used).max(0),
-        date: utc_today(),
+        date,
     }
 }
 

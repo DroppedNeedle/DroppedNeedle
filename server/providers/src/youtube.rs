@@ -12,14 +12,22 @@
 //! one unit from a daily budget persisted in `youtube_quota.json` before any
 //! HTTP leaves the box, so two concurrent searches (two users) cannot spend
 //! the last slot twice, and a restart never forgets what today already spent.
-//! Rollover is by UTC date: a file stamped yesterday reads as zero. The
-//! write path is atomic (temp file, fsync, rename, directory fsync), kept
-//! from v2.
+//! Rollover is by UTC date, read from the kernel clock the client is given:
+//! a file stamped yesterday reads as zero. The write path is atomic (temp
+//! file, fsync, rename, directory fsync), kept from v2.
+//!
+//! The daily budget is not a rate: it stays here, before the executor.
+//! Each reserved unit pays for exactly one request, so a search is sent
+//! once and never retried by the executor. The request itself goes through
+//! the executor at the `youtube` rate row, with the key as a query pair,
+//! never in an error or a log line. A 403 (the API's "quota exceeded"
+//! answer among others) is [`ProviderError::Forbidden`].
 //!
 //! Charging rules, kept from v2's quota tests:
 //!
-//! - Quota exhaustion and a disabled/misconfigured client fail before any
-//!   HTTP, leaving the file untouched.
+//! - Quota exhaustion, a disabled/misconfigured client and, for a person's
+//!   search, an API resting after a rate limit fail before any HTTP,
+//!   leaving the file untouched.
 //! - A reservation that never dispatches (disabled mid-flight, limit
 //!   lowered) is refunded.
 //! - A dispatched search stays charged whatever the outcome: transport
@@ -43,25 +51,111 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
+use droppedneedle_kernel::clock::Clock;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// API host. Tests point elsewhere via [YouTubeClient::with_base_url].
+use crate::RequestPriority;
+use crate::client::{decode, parse_base, payload, unusable_base};
+use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
+use crate::executor::{
+    Backoff, Executor, Request, Spec, USER_COOLDOWN_WAIT, Url, standard_classify,
+};
+
+/// The provider name errors carry, and its rate row.
+pub const SOURCE: &str = "youtube";
+/// API host.
 pub const YOUTUBE_API_HOST: &str = "https://www.googleapis.com";
-/// Search endpoint path.
-pub const YOUTUBE_SEARCH_PATH: &str = "/youtube/v3/search";
 /// Default daily quota budget, kept from v2.
 pub const DEFAULT_DAILY_QUOTA_LIMIT: u32 = 80;
 /// Largest accepted daily budget (v2 validates 1..=10000).
 pub const MAX_DAILY_QUOTA_LIMIT: u32 = 10_000;
 /// Preview cache size; oldest entries evict first.
 pub const PREVIEW_CACHE_MAX: usize = 100;
-/// Per-request timeout, kept from v2's 10s client calls.
-pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Largest search answer read.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+
+/// YouTube on the wire: the standard rules, v2's 10 second deadline.
+pub static SPEC: Spec = Spec {
+    source: SOURCE,
+    health_key: SOURCE,
+    timeout: Duration::from_secs(10),
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(60)),
+    retry_after_cap: MAX_RETRY_AFTER,
+    classify: standard_classify,
+};
+
+/// The YouTube Data API on the executor, built once with the providers.
+/// The quota-keeping [`YouTubeClient`] sends through it.
+#[derive(Debug, Clone)]
+pub struct YouTubeApi {
+    executor: Executor,
+    base: Option<Url>,
+}
+
+impl YouTubeApi {
+    /// The API at `base_url`, sending through `executor`.
+    #[must_use]
+    pub fn new(executor: Executor, base_url: &str) -> Self {
+        Self {
+            executor,
+            base: parse_base(base_url, SOURCE),
+        }
+    }
+
+    /// The executor's answer for a user-facing call while the API rests
+    /// longer than such a call waits: checked before a unit is reserved, so
+    /// a search that would never be sent spends nothing.
+    fn resting(&self, priority: RequestPriority) -> Option<ProviderError> {
+        let cooling = self.executor.limiter().cooling_for();
+        (priority.is_user_facing() && cooling > USER_COOLDOWN_WAIT).then_some(
+            ProviderError::RateLimited {
+                provider: SOURCE,
+                retry_after: Some(cooling),
+            },
+        )
+    }
+
+    /// One search for a single video. Sent once: the caller has paid one
+    /// unit of the daily budget for it.
+    async fn search(
+        &self,
+        key: &str,
+        query: &str,
+        priority: RequestPriority,
+    ) -> Result<Option<String>, ProviderError> {
+        let base = self.base.as_ref().ok_or_else(|| unusable_base(SOURCE))?;
+        let request = Request::get(
+            base,
+            &["youtube", "v3", "search"],
+            &[
+                ("part", "id"),
+                ("type", "video"),
+                ("maxResults", "1"),
+                ("q", query),
+                ("key", key),
+            ],
+        )
+        .map_err(|_| unusable_base(SOURCE))?
+        .idempotent(false);
+        let reply = self.executor.send(request, priority).await?;
+        let decoded: YouTubeSearchResponse = decode(&reply)?;
+        match decoded.items.into_iter().next() {
+            None => Ok(None),
+            Some(item) => match item.id.and_then(|id| id.video_id) {
+                Some(video_id) => Ok(Some(video_id)),
+                None => Err(payload(
+                    SOURCE,
+                    PayloadKind::Contract,
+                    "a search result without a video id",
+                )),
+            },
+        }
+    }
+}
 
 /// What kind of preview a search is after. Album and track searches are
 /// separate cache identities: the same artist+title pair can hold two
@@ -85,7 +179,7 @@ struct SearchKey {
 /// Connection settings. Wiring pushes fresh settings via
 /// [YouTubeClient::update_settings]; v2's live settings-getter becomes a
 /// push at this seam.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct YouTubeSettings {
     /// API key.
     pub api_key: String,
@@ -95,6 +189,17 @@ pub struct YouTubeSettings {
     pub api_enabled: bool,
     /// Daily quota budget, 1..=[MAX_DAILY_QUOTA_LIMIT].
     pub daily_quota_limit: u32,
+}
+
+impl std::fmt::Debug for YouTubeSettings {
+    // The key never prints.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("YouTubeSettings")
+            .field("enabled", &self.enabled)
+            .field("api_enabled", &self.api_enabled)
+            .field("daily_quota_limit", &self.daily_quota_limit)
+            .finish_non_exhaustive()
+    }
 }
 
 impl YouTubeSettings {
@@ -131,9 +236,8 @@ pub struct QuotaStatus {
     pub date: String,
 }
 
-/// What can go wrong on a YouTube call. Quota exhaustion and configuration
-/// are deterministic for the call and must not be retried; transport and
-/// upstream rate limiting may be.
+/// What can go wrong on a YouTube call. Configuration, the budget and the
+/// quota file are local; everything the API answers is a [`ProviderError`].
 #[derive(Debug, Error)]
 pub enum YoutubeError {
     /// Search is disabled, unconfigured, or the settings are invalid.
@@ -145,23 +249,9 @@ pub enum YoutubeError {
     /// The quota file could not be loaded or persisted.
     #[error("youtube quota store failed: {0}")]
     QuotaStore(String),
-    /// The request never completed (DNS, TLS, connect, timeout).
-    #[error("youtube search transport failed: {0}")]
-    Transport(String),
-    /// The provider answered 429.
-    #[error("youtube search rate limited upstream")]
-    UpstreamRateLimited,
-    /// The provider answered outside 200..300 (v2 matches the 2xx range
-    /// here, unlike the strict-200 events clients).
-    #[error("youtube search failed with HTTP {status}")]
-    Api {
-        /// The status the provider sent back.
-        status: u16,
-    },
-    /// The body was not the documented shape, or carried items without a
-    /// usable video id.
-    #[error("youtube search returned an invalid payload: {0}")]
-    InvalidPayload(String),
+    /// The search was sent and failed.
+    #[error(transparent)]
+    Provider(#[from] ProviderError),
 }
 
 /// Durable quota state: the UTC date it belongs to plus units spent.
@@ -233,7 +323,6 @@ impl PreviewCache {
 struct ClientState {
     quota_path: PathBuf,
     quota: tokio::sync::Mutex<QuotaState>,
-    today_override: Mutex<Option<String>>,
     cache: Mutex<PreviewCache>,
     inflight: tokio::sync::Mutex<HashMap<SearchKey, Arc<tokio::sync::Mutex<()>>>>,
     settings: Mutex<YouTubeSettings>,
@@ -242,38 +331,42 @@ struct ClientState {
 /// The YouTube client. Cheap to clone: clones share the quota file, the
 /// cache, and the settings of their path. Construct once per quota path at
 /// wiring time.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct YouTubeClient {
-    http: reqwest::Client,
-    base_url: String,
+    api: YouTubeApi,
+    clock: Arc<dyn Clock>,
     state: Arc<ClientState>,
 }
 
+impl std::fmt::Debug for YouTubeClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("YouTubeClient")
+            .field("quota_path", &self.state.quota_path)
+            .finish_non_exhaustive()
+    }
+}
+
 impl YouTubeClient {
-    /// Client against the given host with `quota_path` as its durable
-    /// budget file (wire `<cache_dir>/youtube_quota.json`). Fails when the
-    /// settings are invalid or a present quota file cannot be decoded.
-    pub fn with_base_url(
-        http: reqwest::Client,
+    /// Client over `api` with `quota_path` as its durable budget file (wire
+    /// `<cache_dir>/youtube_quota.json`), dating the budget by `clock`.
+    /// Fails when the settings are invalid or a present quota file cannot
+    /// be decoded.
+    pub fn new(
+        api: YouTubeApi,
         quota_path: PathBuf,
         settings: YouTubeSettings,
-        base_url: impl Into<String>,
+        clock: Arc<dyn Clock>,
     ) -> Result<Self, YoutubeError> {
         settings.validate()?;
         let loaded = load_quota_file(&quota_path)?;
         let state = Arc::new(ClientState {
             quota_path,
             quota: tokio::sync::Mutex::new(loaded),
-            today_override: Mutex::new(None),
             cache: Mutex::new(PreviewCache::new()),
             inflight: tokio::sync::Mutex::new(HashMap::new()),
             settings: Mutex::new(settings),
         });
-        Ok(Self {
-            http,
-            base_url: base_url.into(),
-            state,
-        })
+        Ok(Self { api, clock, state })
     }
 
     /// Replace the whole settings snapshot after validating it.
@@ -332,8 +425,10 @@ impl YouTubeClient {
         &self,
         artist: &str,
         album: &str,
+        priority: RequestPriority,
     ) -> Result<Option<String>, YoutubeError> {
-        self.search(SearchKind::Album, artist, album).await
+        self.search(SearchKind::Album, artist, album, priority)
+            .await
     }
 
     /// Track preview search: the query is the bare artist + title.
@@ -341,19 +436,10 @@ impl YouTubeClient {
         &self,
         artist: &str,
         track: &str,
+        priority: RequestPriority,
     ) -> Result<Option<String>, YoutubeError> {
-        self.search(SearchKind::Track, artist, track).await
-    }
-
-    /// Test seam: pin the client's UTC date (rollover tests). `None`
-    /// restores the real clock. Applies to every clone of this client.
-    pub fn set_today_override(&self, today: Option<String>) {
-        let mut guard = self
-            .state
-            .today_override
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        *guard = today;
+        self.search(SearchKind::Track, artist, track, priority)
+            .await
     }
 
     /// One search with singleflight: concurrent identical searches share one
@@ -363,6 +449,7 @@ impl YouTubeClient {
         kind: SearchKind,
         artist: &str,
         title: &str,
+        priority: RequestPriority,
     ) -> Result<Option<String>, YoutubeError> {
         let key = SearchKey {
             kind,
@@ -387,7 +474,7 @@ impl YouTubeClient {
             self.release_slot(&key, &slot).await;
             return Ok(hit);
         }
-        let outcome = self.dispatch(&key, artist, title).await;
+        let outcome = self.dispatch(&key, artist, title, priority).await;
         self.release_slot(&key, &slot).await;
         outcome
     }
@@ -400,12 +487,16 @@ impl YouTubeClient {
         key: &SearchKey,
         artist: &str,
         title: &str,
+        priority: RequestPriority,
     ) -> Result<Option<String>, YoutubeError> {
         let settings = self.snapshot_settings();
         if settings.usable_key().is_none() {
             return Err(YoutubeError::NotConfigured(
                 "youtube API search is disabled or not configured".to_owned(),
             ));
+        }
+        if let Some(resting) = self.api.resting(priority) {
+            return Err(resting.into());
         }
         let mut date = self.quota_reserve(settings.daily_quota_limit).await?;
         loop {
@@ -442,50 +533,7 @@ impl YouTubeClient {
             SearchKind::Album => format!("{artist} {title} full album"),
             SearchKind::Track => format!("{artist} {title}"),
         };
-        let url = join(&self.base_url, YOUTUBE_SEARCH_PATH);
-        let params = [
-            ("part", "id".to_owned()),
-            ("type", "video".to_owned()),
-            ("maxResults", "1".to_owned()),
-            ("q", query),
-            ("key", api_key),
-        ];
-        let response = self
-            .http
-            .get(url)
-            .query(&params)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .map_err(|error| YoutubeError::Transport(transport_kind(&error).to_owned()))?;
-        let status = response.status().as_u16();
-        if status == 429 {
-            return Err(YoutubeError::UpstreamRateLimited);
-        }
-        if !(200..300).contains(&status) {
-            return Err(YoutubeError::Api { status });
-        }
-        let body = droppedneedle_kernel::http_client::read_capped(response, MAX_BODY_BYTES)
-            .await
-            .map_err(|error| YoutubeError::Transport(error.kind().to_owned()))?;
-        let video_id = match serde_json::from_slice::<YouTubeSearchResponse>(&body) {
-            Ok(decoded) => match decoded.items.into_iter().next() {
-                None => None,
-                Some(item) => match item.id.and_then(|id| id.video_id) {
-                    Some(video_id) => Some(video_id),
-                    None => {
-                        return Err(YoutubeError::InvalidPayload(
-                            "youtube search returned an invalid video".to_owned(),
-                        ));
-                    }
-                },
-            },
-            Err(error) => {
-                return Err(YoutubeError::InvalidPayload(format!(
-                    "youtube search returned an invalid payload: {error}"
-                )));
-            }
-        };
+        let video_id = self.api.search(&api_key, &query, priority).await?;
         self.cache_put(key, video_id.clone());
         Ok(video_id)
     }
@@ -544,14 +592,9 @@ impl YouTubeClient {
         }
     }
 
-    /// Today's UTC date, or the pinned test date when set.
+    /// Today's UTC date by the client's clock.
     fn today(&self) -> String {
-        self.state
-            .today_override
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .clone()
-            .unwrap_or_else(utc_today)
+        utc_date(self.clock.now_unix())
     }
 
     /// Drop a finished in-flight slot, but only when it is still ours (a
@@ -626,15 +669,9 @@ fn write_quota_file_atomic(path: &Path, bytes: &[u8]) -> Result<(), YoutubeError
     let store_error = || YoutubeError::QuotaStore("could not persist youtube quota".to_owned());
     let parent = path.parent().ok_or_else(store_error)?;
     std::fs::create_dir_all(parent).map_err(|_| store_error())?;
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos())
-        .unwrap_or(0);
+    // The process id and a counter keep concurrent writers apart.
     let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let temp = parent.join(format!(
-        ".youtube-quota-{}-{stamp}-{seq}.tmp",
-        std::process::id()
-    ));
+    let temp = parent.join(format!(".youtube-quota-{}-{seq}.tmp", std::process::id()));
     let written = (|| -> std::io::Result<()> {
         std::fs::write(&temp, bytes)?;
         let file = std::fs::File::open(&temp)?;
@@ -652,52 +689,18 @@ fn write_quota_file_atomic(path: &Path, bytes: &[u8]) -> Result<(), YoutubeError
     Ok(())
 }
 
-/// Today's UTC date as YYYY-MM-DD, without a date dependency: unix days to a
-/// civil date via Howard Hinnant's algorithm.
-pub fn utc_today() -> String {
-    let days = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs() / 86_400)
-        .unwrap_or(0) as i64;
-    let (year, month, day) = civil_from_days(days);
-    format!("{year:04}-{month:02}-{day:02}")
-}
-
-/// Convert days since the unix epoch to a (year, month, day) civil date.
-fn civil_from_days(days: i64) -> (i32, u32, u32) {
-    let shifted = days + 719_468;
-    let era = shifted.div_euclid(146_097);
-    let day_of_era = shifted.rem_euclid(146_097);
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 - day_of_era / 36_524 + day_of_era / 146_096) / 365;
-    let year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_prime = (5 * day_of_year + 2) / 153;
-    let day = (day_of_year - (153 * month_prime + 2) / 5 + 1) as u32;
-    let month = (if month_prime < 10 {
-        month_prime + 3
-    } else {
-        month_prime - 9
-    }) as u32;
-    let year = (if month <= 2 { year + 1 } else { year }) as i32;
-    (year, month, day)
-}
-
-/// Join a base URL and a path without doubling the slash.
-fn join(base: &str, path: &str) -> String {
-    format!("{}{}", base.trim_end_matches('/'), path)
-}
-
-/// Short transport failure kind. Only the kind is kept, never the URL, the
-/// same shape as v2's exception-type-only message.
-fn transport_kind(error: &reqwest::Error) -> &'static str {
-    if error.is_timeout() {
-        "timed out"
-    } else if error.is_connect() {
-        "connection failed"
-    } else {
-        "request failed"
-    }
+/// The UTC date of `unix_secs` as YYYY-MM-DD, the quota file's day stamp.
+#[must_use]
+pub fn utc_date(unix_secs: i64) -> String {
+    let date = time::OffsetDateTime::from_unix_timestamp(unix_secs)
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
+        .date();
+    format!(
+        "{:04}-{:02}-{:02}",
+        date.year(),
+        u8::from(date.month()),
+        date.day()
+    )
 }
 
 /// Search answer id block.

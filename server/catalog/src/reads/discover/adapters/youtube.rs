@@ -9,6 +9,7 @@ use crate::reads::discover::{
     ports::{BoxFuture, ProviderFailure, YouTubeSource},
 };
 use droppedneedle_kernel::runtime_config::{Live, secret_sections::YouTubeConnection};
+use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::youtube::{SearchKind, YouTubeClient, YouTubeSettings, YoutubeError};
 
 /// Live YouTube search.
@@ -51,9 +52,12 @@ impl LiveYouTube {
         title: &str,
     ) -> Result<Option<String>, ProviderFailure> {
         self.refresh();
+        // Every search is a person's request (a preview, a queue card, a
+        // saved link); nothing searches YouTube in the background.
+        let priority = RequestPriority::UserInitiated;
         let found = match kind {
-            SearchKind::Album => self.client.search_video(artist, title).await,
-            SearchKind::Track => self.client.search_track(artist, title).await,
+            SearchKind::Album => self.client.search_video(artist, title, priority).await,
+            SearchKind::Track => self.client.search_track(artist, title, priority).await,
         };
         found.map_err(|error| match error {
             YoutubeError::NotConfigured(_) => ProviderFailure::not_configured(

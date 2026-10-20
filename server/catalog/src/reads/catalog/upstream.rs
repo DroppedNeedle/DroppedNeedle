@@ -132,17 +132,6 @@ impl CatalogSettings for LiveCatalogSettings {
     }
 }
 
-/// Base URLs of the upstreams whose address is fixed in code. A
-/// MusicBrainz mirror follows its own settings section; tests point
-/// everything here at a loopback fixture server.
-#[derive(Debug, Clone)]
-pub struct Endpoints {
-    /// The releases list behind the version check.
-    pub github_releases: String,
-    /// YouTube Data API host.
-    pub youtube: String,
-}
-
 /// The MusicBrainz client type the catalog uses.
 pub type CatalogMusicBrainz = MusicBrainzView;
 /// The ListenBrainz client type the catalog uses.
@@ -211,7 +200,6 @@ pub struct Upstream {
     providers: Arc<Providers>,
     settings: Arc<dyn CatalogSettings>,
     users: UsersDeps,
-    endpoints: Endpoints,
 }
 
 /// The API key the admin saved under Settings > Last.fm (the sealed
@@ -264,19 +252,16 @@ pub async fn user_lastfm(users: &UsersDeps, user_id: &str) -> UserLastFm {
 }
 
 impl Upstream {
-    /// Assemble from the shared provider deps, reaching the upstreams not
-    /// yet among them at `endpoints`.
+    /// Assemble from the shared provider deps.
     pub fn new(
         providers: Arc<Providers>,
         settings: Arc<dyn CatalogSettings>,
         users: UsersDeps,
-        endpoints: Endpoints,
     ) -> Self {
         Self {
             providers,
             settings,
             users,
-            endpoints,
         }
     }
 
@@ -377,10 +362,5 @@ impl Upstream {
     /// The users store (roles, Last.fm links).
     pub fn users(&self) -> &UsersDeps {
         &self.users
-    }
-
-    /// The configured endpoints.
-    pub fn endpoints(&self) -> &Endpoints {
-        &self.endpoints
     }
 }

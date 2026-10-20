@@ -342,6 +342,7 @@ async fn a_run_of_failures_rests_the_provider() {
             .await
             .expect_err("500");
     }
+    assert!(executor.resting_after_failures());
     let sent = wire.sent().len();
     let declined = executor
         .send(get("next"), RequestPriority::UserInitiated)
@@ -853,6 +854,117 @@ async fn acoustid_hooks() {
             )
             .await;
         assert!(check(&outcome), "{name}: got {outcome:?}");
+    }
+}
+
+/// GitHub: a 403 that says the allowance is spent rests until
+/// `x-ratelimit-reset`, one that names a wait rests that long, and any
+/// other 403 is a refusal. Ticketmaster: a 429 naming the spent daily
+/// allowance rests until `Rate-Limit-Reset` (unix milliseconds), or an hour
+/// when it names none, and the key its body echoes never reaches the error.
+#[tokio::test(start_paused = true)]
+async fn github_and_ticketmaster_hooks() {
+    use droppedneedle_kernel::clock::Clock as _;
+    use droppedneedle_providers::github;
+
+    let reset = (SystemClock.now_unix() + 120).to_string();
+    type Check = fn(&ProviderError) -> bool;
+    let rows: Vec<(&str, Scripted, Check, Duration)> = vec![
+        (
+            "403 with the allowance spent",
+            answer(
+                403,
+                &[
+                    ("x-ratelimit-remaining", "0"),
+                    ("x-ratelimit-reset", &reset),
+                ],
+                "{}",
+            ),
+            |error| matches!(error, ProviderError::RateLimited { .. }),
+            Duration::from_secs(120),
+        ),
+        (
+            "403 naming a wait",
+            answer(403, &[("retry-after", "30")], "{}"),
+            |error| matches!(error, ProviderError::RateLimited { retry_after: Some(wait), .. } if *wait == Duration::from_secs(30)),
+            Duration::from_secs(30),
+        ),
+        (
+            "plain 403",
+            answer(403, &[("x-ratelimit-remaining", "12")], "{}"),
+            |error| matches!(error, ProviderError::Forbidden { .. }),
+            Duration::ZERO,
+        ),
+    ];
+    for (name, scripted, check, rest) in rows {
+        let wire = Arc::new(ScriptedWire::new());
+        wire.on(Method::Get, &url("releases"), scripted);
+        let limiter = Arc::new(RateLimiter::new(RatePolicy::new(1000.0, 1000)));
+        let executor = Executor::new(
+            &github::SPEC,
+            limiter.clone(),
+            wire.clone(),
+            Arc::new(ServiceHealth::new()),
+            Arc::new(SystemClock),
+        );
+        let error = executor
+            .send(get("releases"), RequestPriority::UserInitiated)
+            .await
+            .expect_err(name);
+        assert!(check(&error), "{name}: got {error:?}");
+        assert_eq!(wire.sent().len(), 1, "{name}: requests sent");
+        let cooling = limiter.cooling_for();
+        assert!(
+            cooling <= rest && cooling + Duration::from_secs(2) >= rest,
+            "{name}: rests {cooling:?}, expected {rest:?}"
+        );
+    }
+
+    let quota = r#"{"fault": {"faultstring": "Rate limit quota violation. Quota limit exceeded. Identifier : TM-SECRET", "detail": {"errorcode": "policies.ratelimit.QuotaViolation"}}}"#;
+    let reset_ms = ((SystemClock.now_unix() + 120) * 1000).to_string();
+    let rows: Vec<(&str, Scripted, Duration)> = vec![
+        (
+            "allowance spent, with its reset",
+            answer(429, &[("rate-limit-reset", &reset_ms)], quota),
+            Duration::from_secs(120),
+        ),
+        (
+            "allowance spent, no reset named",
+            answer(429, &[], quota),
+            Duration::from_secs(3600),
+        ),
+    ];
+    for (name, scripted, rest) in rows {
+        let wire = Arc::new(ScriptedWire::new());
+        wire.on(
+            Method::Get,
+            "http://127.0.0.1:9/ticketmaster/attractions.json",
+            scripted,
+        );
+        let providers = providers_over(&wire);
+        let error = providers
+            .ticketmaster
+            .search_attractions("TM-SECRET", "Radiohead", RequestPriority::UserInitiated)
+            .await
+            .expect_err(name);
+        assert!(
+            matches!(error, ProviderError::RateLimited { retry_after: Some(wait), .. } if wait <= rest && wait + Duration::from_secs(2) >= rest),
+            "{name}: got {error:?}"
+        );
+        assert!(
+            !format!("{error} {error:?}").contains("TM-SECRET"),
+            "{name}: the key leaked"
+        );
+        assert_eq!(wire.sent().len(), 1, "{name}: requests sent");
+        assert!(
+            !providers.ticketmaster.resting_after_failures(),
+            "{name}: a rest the provider asked for is not an outage"
+        );
+        let cooling = providers.ticketmaster.cooling_for();
+        assert!(
+            cooling <= rest && cooling + Duration::from_secs(2) >= rest,
+            "{name}: rests {cooling:?}, expected {rest:?}"
+        );
     }
 }
 

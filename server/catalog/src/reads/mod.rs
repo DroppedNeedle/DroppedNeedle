@@ -117,12 +117,13 @@ impl ReadsSetup {
                 youtube_quota_path: inputs.youtube_quota_path.clone(),
                 users: users.clone(),
                 discover_warmer: inputs.discover_warmer,
-                endpoints: inputs.endpoints.clone(),
+                clock: Arc::clone(&platform.clock),
                 batch_requests,
                 artwork: Some(artwork.clone()),
             },
             settings,
         );
+        let clock = Arc::clone(&platform.clock);
         let platform = platform_state(&users, settings, inputs, &artwork);
         // Saved links search through discover's YouTube client, so both
         // spend from one daily budget.
@@ -130,6 +131,7 @@ impl ReadsSetup {
             youtube::store::LinkStore::new(collections.db.clone()),
             discover.youtube.clone(),
             ids,
+            clock,
         );
         let library = library_deps(pool, settings, enrichment.as_ref(), library_files);
         let search_enrichment: Arc<dyn search::ports::EnrichmentPort> = match &enrichment {
@@ -236,6 +238,7 @@ fn unwired_youtube(
         youtube::store::LinkStore::new(collections::db::CollectionsDb::unwired()),
         discover.youtube.clone(),
         ids,
+        discover.clock.clone(),
     )
 }
 
@@ -277,9 +280,6 @@ pub struct ReadsInputs {
     pub youtube_quota_path: std::path::PathBuf,
     /// Whether the discover warm cycle runs (`DISCOVER_WARMER_ENABLED`).
     pub discover_warmer: bool,
-    /// Base URLs of the upstreams fixed in code. Production uses the real
-    /// hosts; tests point them at a closed local port.
-    pub endpoints: catalog::upstream::Endpoints,
 }
 
 /// Production platform states: art through `artwork`, GitHub releases for
@@ -291,7 +291,6 @@ fn platform_state(
     inputs: ReadsInputs,
     artwork: &platform::artwork::ArtworkService,
 ) -> platform::PlatformState {
-    use droppedneedle_providers::github::GitHubClient;
     use platform::{
         covers::CoversState,
         listenbrainz_wrapped::ListenBrainzWrapped,
@@ -306,10 +305,9 @@ fn platform_state(
     ));
     platform::PlatformState::new(
         CoversState::new(Arc::new(artwork.clone())),
-        VersionState::new(Arc::new(GitHubReleases::new(GitHubClient::with_base_url(
-            inputs.http,
-            inputs.endpoints.github_releases,
-        )))),
+        VersionState::new(Arc::new(GitHubReleases::new(
+            inputs.providers.github.clone(),
+        ))),
         WrappedState::new(ConfigWrappedKey::new(settings.live()), wrapped),
     )
 }

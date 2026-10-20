@@ -1,10 +1,11 @@
 //! Skiddle API client (Upcoming Events, the UK/IE depth source).
 //!
-//! Port of v2's Skiddle repository and models. An actionable-failure client:
-//! non-200 answers, undecodable bodies, and Skiddle's own `error != 0`
-//! envelope on HTTP 200 all raise [SkiddleError] (wiring maps it to 503);
-//! HTTP 429 raises [SkiddleError::RateLimited]; raw transport errors never
-//! escape as anything but [SkiddleError::Transport].
+//! Port of v2's Skiddle repository and models. Every request goes through
+//! the executor at the `skiddle` rate row, which retries, rests on a rate
+//! limit and types each failure as a [`ProviderError`]; Skiddle's own
+//! `error != 0` envelope on HTTP 200 is a payload failure that carries
+//! only the code. The API key travels as the `api_key` query pair, so it is
+//! never in an error or a log line.
 //!
 //! Wire quirks, verified against the live API on 2026-07-06 and preserved
 //! here with the v2 decode fixtures as reference
@@ -17,29 +18,34 @@
 //! - Key casing is mixed (`eventname` vs `ticketUrl` vs `EventCode`).
 //! - `totalcount` is an int on the artists endpoint but a string on events
 //!   (`"392"`), so both shapes decode.
-//!
-//! Pacing: every request waits on the limiter given through
-//! [SkiddleClient::with_limiter]. The concerts sweep passes a conservative
-//! 1 req/s bucket (Skiddle documents only that unspecified daily and hourly
-//! caps exist). Retry and the circuit breaker sit with the caller, which
-//! maps failures onto [ProviderError].
 
-use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
-use super::error::{ProviderError, classify_status};
-use super::limiter::RateLimiter;
-use droppedneedle_kernel::http_client::read_capped;
+use crate::RequestPriority;
+use crate::client::{decode, parse_base, payload, unusable_base};
+use crate::error::{MAX_RETRY_AFTER, PayloadKind, ProviderError};
+use crate::executor::{Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 
-/// Provider key used in [ProviderError] and logs.
+/// Provider key used in [ProviderError] and logs, and its rate row.
 pub const SOURCE: &str = "skiddle";
 
-/// Production endpoint. Tests point elsewhere via [SkiddleClient::with_base_url].
+/// Production endpoint.
 pub const SKIDDLE_API_URL: &str = "https://www.skiddle.com/api/v1";
 /// Largest Skiddle answer read.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+
+/// Skiddle on the wire: the standard rules.
+pub static SPEC: Spec = Spec {
+    source: SOURCE,
+    health_key: SOURCE,
+    timeout: Duration::from_secs(15),
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(5)),
+    retry_after_cap: MAX_RETRY_AFTER,
+    classify: standard_classify,
+};
 
 /// One matching act. `id` is the required identity field: a result without
 /// one fails the whole decode rather than materializing as an empty act.
@@ -77,8 +83,6 @@ impl Default for TotalCount {
 struct SkiddleArtistsResponse {
     #[serde(default)]
     error: i64,
-    #[serde(default)]
-    errormessage: Option<String>,
     #[serde(default)]
     totalcount: TotalCount,
     #[serde(default)]
@@ -173,188 +177,114 @@ struct SkiddleEventsResponse {
     #[serde(default)]
     error: i64,
     #[serde(default)]
-    errormessage: Option<String>,
-    #[serde(default)]
     totalcount: TotalCount,
     #[serde(default)]
     results: Vec<SkiddleEvent>,
 }
 
-/// What can go wrong on a Skiddle call. Only [SkiddleError::Transport] and
-/// [SkiddleError::RateLimited] are retriable; the envelope and decode
-/// failures are deterministic for the payload.
-#[derive(Debug, Error)]
-pub enum SkiddleError {
-    /// The request never completed (DNS, TLS, connect, timeout).
-    #[error("skiddle request failed: {0}")]
-    Transport(String),
-    /// The provider answered 429.
-    #[error("skiddle rate limit exceeded")]
-    RateLimited,
-    /// The provider answered a non-200 status (v2 matches strict 200).
-    #[error("skiddle returned HTTP {status}")]
-    Api {
-        /// The status the provider sent back.
-        status: u16,
-    },
-    /// The body was not the documented shape.
-    #[error("skiddle response decode failed: {0}")]
-    Decode(String),
-    /// HTTP 200 carrying Skiddle's own `error != 0` envelope.
-    #[error("skiddle search failed: {0}")]
-    Envelope(String),
-}
-
-/// The Skiddle client. Clone the shared `reqwest::Client` from the HTTP
-/// factory at wiring time; the API key travels as an `api_key` query param.
+/// The Skiddle client, built once with the providers. The key is an
+/// argument of each call, read from settings by the caller.
 #[derive(Debug, Clone)]
 pub struct SkiddleClient {
-    http: reqwest::Client,
-    api_key: String,
-    base_url: String,
-    limiter: Option<Arc<RateLimiter>>,
+    executor: Executor,
+    base: Option<Url>,
 }
 
 impl SkiddleClient {
-    /// Client against the given endpoint.
-    pub fn with_base_url(
-        http: reqwest::Client,
-        api_key: impl Into<String>,
-        base_url: impl Into<String>,
-    ) -> Self {
+    /// The client sending through `executor` to the API root at
+    /// `base_url`.
+    #[must_use]
+    pub fn new(executor: Executor, base_url: &str) -> Self {
         Self {
-            http,
-            api_key: api_key.into(),
-            base_url: base_url.into(),
-            limiter: None,
+            executor,
+            base: parse_base(base_url, SOURCE),
         }
     }
 
-    /// Pace every request through `limiter`.
+    /// How much longer the bucket rests, for a caller that will not wait
+    /// that long.
     #[must_use]
-    pub fn with_limiter(mut self, limiter: Arc<RateLimiter>) -> Self {
-        self.limiter = Some(limiter);
-        self
+    pub fn cooling_for(&self) -> Duration {
+        self.executor.limiter().cooling_for()
+    }
+
+    /// Whether the bucket rests after a run of failed calls (an outage).
+    #[must_use]
+    pub fn resting_after_failures(&self) -> bool {
+        self.executor.resting_after_failures()
     }
 
     /// Acts matching `name`; `[]` means Skiddle knows no such act.
-    pub async fn search_artists(&self, name: &str) -> Result<Vec<SkiddleArtist>, SkiddleError> {
-        let body = self
-            .fetch("/artists/", &[("name", name.to_owned())])
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
+    pub async fn search_artists(
+        &self,
+        key: &str,
+        name: &str,
+        priority: RequestPriority,
+    ) -> Result<Vec<SkiddleArtist>, ProviderError> {
+        let reply = self
+            .get(key, &["artists"], &[("name", name)], priority)
             .await?;
-        let decoded: SkiddleArtistsResponse = serde_json::from_slice(&body)
-            .map_err(|error| SkiddleError::Decode(error.to_string()))?;
-        if decoded.error != 0 {
-            return Err(SkiddleError::Envelope(envelope_detail(
-                decoded.error,
-                decoded.errormessage.as_deref(),
-            )));
-        }
+        let decoded: SkiddleArtistsResponse = decode(&reply)?;
+        envelope(decoded.error)?;
         Ok(decoded.results)
     }
 
     /// Upcoming events tagged with one Skiddle artist id (`a=` filter).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn events_for_artist(
         &self,
+        key: &str,
         artist_id: &str,
-    ) -> Result<Vec<SkiddleEvent>, SkiddleError> {
-        let body = self
-            .fetch(
-                "/events/search/",
-                &[("a", artist_id.to_owned()), ("description", "1".to_owned())],
+        priority: RequestPriority,
+    ) -> Result<Vec<SkiddleEvent>, ProviderError> {
+        let reply = self
+            .get(
+                key,
+                &["events", "search"],
+                &[("a", artist_id), ("description", "1")],
+                priority,
             )
             .await?;
-        let decoded: SkiddleEventsResponse = serde_json::from_slice(&body)
-            .map_err(|error| SkiddleError::Decode(error.to_string()))?;
-        if decoded.error != 0 {
-            return Err(SkiddleError::Envelope(envelope_detail(
-                decoded.error,
-                decoded.errormessage.as_deref(),
-            )));
-        }
+        let decoded: SkiddleEventsResponse = decode(&reply)?;
+        envelope(decoded.error)?;
         Ok(decoded.results)
     }
 
-    /// One GET with the key merged into the params. Skiddle answers strict
-    /// 200 on success; anything else (besides 429) is an API error.
-    async fn fetch(&self, path: &str, params: &[(&str, String)]) -> Result<Vec<u8>, SkiddleError> {
-        if let Some(limiter) = &self.limiter {
-            // One token never exceeds a bucket's burst, so this cannot fail.
-            let _ = limiter.acquire().await;
-        }
-        let mut query: Vec<(&str, String)> = params.to_vec();
-        query.push(("api_key", self.api_key.clone()));
-        let url = join(&self.base_url, path);
-        let response = self
-            .http
-            .get(url)
-            .query(&query)
-            .send()
-            .await
-            .map_err(|error| SkiddleError::Transport(transport_kind(&error).to_owned()))?;
-        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(SkiddleError::RateLimited);
-        }
-        if response.status() != reqwest::StatusCode::OK {
-            return Err(SkiddleError::Api {
-                status: response.status().as_u16(),
-            });
-        }
-        read_capped(response, MAX_BODY_BYTES)
-            .await
-            .map_err(|error| SkiddleError::Transport(error.kind().to_owned()))
+    /// One GET of `segments` under the root, with the key as a query pair.
+    /// Skiddle serves these routes with a trailing slash.
+    async fn get(
+        &self,
+        key: &str,
+        segments: &[&str],
+        params: &[(&str, &str)],
+        priority: RequestPriority,
+    ) -> Result<Reply, ProviderError> {
+        let base = self.base.as_ref().ok_or_else(|| unusable_base(SOURCE))?;
+        let mut query = params.to_vec();
+        query.push(("api_key", key));
+        let request = Request::get(base, segments, &query)
+            .map_err(|_| unusable_base(SOURCE))?
+            .trailing_slash();
+        self.executor.send(request, priority).await
     }
 }
 
-impl From<SkiddleError> for ProviderError {
-    fn from(error: SkiddleError) -> Self {
-        match error {
-            SkiddleError::Transport(message) => Self::Transport {
-                provider: SOURCE,
-                kind: super::error::TransportKind::named(&message),
-            },
-            SkiddleError::RateLimited => Self::RateLimited {
-                provider: SOURCE,
-                retry_after: None,
-            },
-            SkiddleError::Api { status } => {
-                classify_status(SOURCE, status, None).unwrap_or(Self::Server {
-                    provider: SOURCE,
-                    status,
-                })
-            }
-            // Both are deterministic for the payload: a retry gets the same answer.
-            SkiddleError::Decode(message) | SkiddleError::Envelope(message) => Self::Payload {
-                provider: SOURCE,
-                kind: super::error::PayloadKind::Decode,
-                message,
-            },
-        }
+/// Skiddle's own failure envelope on HTTP 200. Only the code is kept: the
+/// message is the provider's text and is not ours to log.
+fn envelope(code: i64) -> Result<(), ProviderError> {
+    if code == 0 {
+        return Ok(());
     }
-}
-
-/// Join a base URL and a path without doubling the slash.
-fn join(base: &str, path: &str) -> String {
-    format!("{}{}", base.trim_end_matches('/'), path)
-}
-
-/// Envelope detail: the message when set and non-blank, else the numeric
-/// code, mirroring v2's `errormessage or error` fallback.
-fn envelope_detail(code: i64, message: Option<&str>) -> String {
-    match message {
-        Some(text) if !text.is_empty() => text.to_owned(),
-        _ => code.to_string(),
-    }
-}
-
-/// Short transport failure kind. Only the kind is kept, never the URL, the
-/// same shape as v2's exception-type-only message.
-fn transport_kind(error: &reqwest::Error) -> &'static str {
-    if error.is_timeout() {
-        "timed out"
-    } else if error.is_connect() {
-        "connection failed"
-    } else {
-        "request failed"
-    }
+    Err(payload(
+        SOURCE,
+        PayloadKind::Contract,
+        &format!("skiddle answered error {code}"),
+    ))
 }

@@ -52,6 +52,7 @@ async fn youtube_links_journey() {
         Arc::new(FixedIdGenerator::new(
             "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
         )),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
     );
     let app = with_test_principal(
         youtube::routes().with_state(links).into_router(),

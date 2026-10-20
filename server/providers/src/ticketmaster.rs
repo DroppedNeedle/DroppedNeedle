@@ -1,11 +1,10 @@
 //! Ticketmaster Discovery v2 client (Upcoming Events).
 //!
-//! Port of v2's Ticketmaster repository and models. An actionable-failure
-//! client: non-200 answers and undecodable bodies raise [TicketmasterError]
-//! (wiring maps it to 503), HTTP 429 raises
-//! [TicketmasterError::RateLimited] carrying the server's retry hint, and raw
-//! transport errors never escape as anything but
-//! [TicketmasterError::Transport].
+//! Port of v2's Ticketmaster repository and models. Every request goes
+//! through the executor at the `ticketmaster` rate row, which retries,
+//! rests on a rate limit and types each failure as a [`ProviderError`].
+//! The API key travels as the `apikey` query pair, so it is never in an
+//! error or a log line: the executor prints neither the URL nor the body.
 //!
 //! Wire quirks, verified against the live API on 2026-07-06 and preserved
 //! here with the v2 decode fixtures as reference
@@ -22,28 +21,30 @@
 //!   consumes is `musicbrainz`, whose ids arrive padded or cased and are
 //!   trimmed and lowercased on read, blanks skipped.
 //!
-//! Pacing: every request, pagination follow-ups included, waits on the
-//! limiter given through [TicketmasterClient::with_limiter]. The concerts
-//! sweep passes a 2 req/s bucket (Ticketmaster's docs state 5 req/s in one
-//! place and 2 req/s in another; v2 encodes the documented floor). Retry and
-//! the circuit breaker sit with the caller, which maps failures onto
-//! [ProviderError]. The 5,000/day quota stays enforced by sweep sizing, not
-//! by this client.
+//! - A spent daily allowance is a 429 whose body names
+//!   `policies.ratelimit.QuotaViolation`; the bucket then rests until the
+//!   `Rate-Limit-Reset` time, at most an hour. The docs' example value
+//!   (`1453180594367`) is unix milliseconds. Read on the getting-started
+//!   page on 2026-10-20. That body's fault string echoes the key, so it is
+//!   never logged or kept.
+//!
+//! Every page of a paged answer is its own request, retried on its own.
+//! The 5,000/day allowance is kept by the sweep's size, not by this client.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::time::Duration;
 
 use serde::Deserialize;
-use thiserror::Error;
 
-use super::error::{MAX_RETRY_AFTER, ProviderError, classify_status};
-use super::limiter::RateLimiter;
-use droppedneedle_kernel::http_client::read_capped;
+use crate::RequestPriority;
+use crate::client::{decode, parse_base, unusable_base};
+use crate::error::ProviderError;
+use crate::executor::{Answer, Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 
-/// Provider key used in [ProviderError] and logs.
+/// Provider key used in [ProviderError] and logs, and its rate row.
 pub const SOURCE: &str = "ticketmaster";
 
-/// Production endpoint. Tests point elsewhere via [TicketmasterClient::with_base_url].
+/// Production endpoint.
 pub const TICKETMASTER_API_URL: &str = "https://app.ticketmaster.com/discovery/v2";
 /// Events requested per page, kept from v2.
 pub const PAGE_SIZE: u32 = 200;
@@ -54,6 +55,49 @@ pub const MAX_PAGES: u32 = 3;
 /// events, each with its own image list, venue and attraction blocks, so
 /// a full page can pass 4 MiB.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+/// How long a spent daily allowance rests the bucket when the answer
+/// names no reset time, and the longest rest it may ask for.
+const QUOTA_REST: Duration = Duration::from_secs(3600);
+
+/// Ticketmaster on the wire: the standard rules plus the daily allowance
+/// hook.
+pub static SPEC: Spec = Spec {
+    source: SOURCE,
+    health_key: SOURCE,
+    timeout: Duration::from_secs(30),
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(5)),
+    retry_after_cap: QUOTA_REST,
+    classify,
+};
+
+/// A 429 that names the spent daily allowance rests until its reset;
+/// everything else follows the standard rules.
+fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
+    let reply = answer.reply;
+    if reply.status() == 429
+        && String::from_utf8_lossy(reply.bytes()).contains("policies.ratelimit.QuotaViolation")
+    {
+        return Err(ProviderError::RateLimited {
+            provider: SOURCE,
+            retry_after: Some(quota_reset(reply, answer.now_unix).unwrap_or(QUOTA_REST)),
+        });
+    }
+    standard_classify(answer)
+}
+
+/// The wait until `Rate-Limit-Reset`: unix milliseconds as documented, or
+/// unix seconds. `None` when missing, unreadable or past.
+fn quota_reset(reply: &Reply, now_unix: i64) -> Option<Duration> {
+    let stamp: u64 = reply.header("rate-limit-reset")?.trim().parse().ok()?;
+    let reset = if stamp > 100_000_000_000 {
+        stamp / 1000
+    } else {
+        stamp
+    };
+    let now = u64::try_from(now_unix).ok()?;
+    (reset > now).then(|| Duration::from_secs(reset - now))
+}
 
 /// One external id link inside an attraction's `externalLinks` map.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -283,7 +327,6 @@ pub struct TmEventsPage {
 
 /// Follow an attraction's pages through `fetch_page`, up to [MAX_PAGES].
 /// A deeper result set is truncated with a warning, never silently.
-/// Callers that retry pass a fetcher that retries one page at a time.
 pub async fn collect_event_pages<F, Fut, E>(
     attraction_id: &str,
     mut fetch_page: F,
@@ -309,82 +352,63 @@ where
     Ok(events)
 }
 
-/// What can go wrong on a Ticketmaster call. Only
-/// [TicketmasterError::Transport] and [TicketmasterError::RateLimited] are
-/// retriable; API and decode failures are deterministic for the call.
-#[derive(Debug, Error)]
-pub enum TicketmasterError {
-    /// The request never completed (DNS, TLS, connect, timeout).
-    #[error("ticketmaster request failed: {0}")]
-    Transport(String),
-    /// The provider answered 429, with the server's retry hint when it sent
-    /// a usable one.
-    #[error("ticketmaster rate limit exceeded")]
-    RateLimited {
-        /// Parsed `Retry-After` seconds, when positive and numeric.
-        retry_after_secs: Option<f64>,
-    },
-    /// The provider answered a non-200 status (v2 matches strict 200).
-    #[error("ticketmaster returned HTTP {status}")]
-    Api {
-        /// The status the provider sent back.
-        status: u16,
-    },
-    /// The body was not the documented shape.
-    #[error("ticketmaster response decode failed: {0}")]
-    Decode(String),
-}
-
-/// The Ticketmaster client. Clone the shared `reqwest::Client` from the HTTP
-/// factory at wiring time; the API key travels as an `apikey` query param.
+/// The Ticketmaster client, built once with the providers. The key is an
+/// argument of each call, read from settings by the caller.
 #[derive(Debug, Clone)]
 pub struct TicketmasterClient {
-    http: reqwest::Client,
-    api_key: String,
-    base_url: String,
-    limiter: Option<Arc<RateLimiter>>,
+    executor: Executor,
+    base: Option<Url>,
 }
 
 impl TicketmasterClient {
-    /// Client against the given endpoint.
-    pub fn with_base_url(
-        http: reqwest::Client,
-        api_key: impl Into<String>,
-        base_url: impl Into<String>,
-    ) -> Self {
+    /// The client sending through `executor` to the Discovery root at
+    /// `base_url`.
+    #[must_use]
+    pub fn new(executor: Executor, base_url: &str) -> Self {
         Self {
-            http,
-            api_key: api_key.into(),
-            base_url: base_url.into(),
-            limiter: None,
+            executor,
+            base: parse_base(base_url, SOURCE),
         }
     }
 
-    /// Pace every request through `limiter`.
+    /// How much longer the bucket rests, for a caller that will not wait
+    /// that long.
     #[must_use]
-    pub fn with_limiter(mut self, limiter: Arc<RateLimiter>) -> Self {
-        self.limiter = Some(limiter);
-        self
+    pub fn cooling_for(&self) -> Duration {
+        self.executor.limiter().cooling_for()
+    }
+
+    /// Whether the bucket rests after a run of failed calls (an outage).
+    #[must_use]
+    pub fn resting_after_failures(&self) -> bool {
+        self.executor.resting_after_failures()
     }
 
     /// Music attractions matching `keyword`; `[]` means Ticketmaster knows
     /// no such act.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn search_attractions(
         &self,
+        key: &str,
         keyword: &str,
-    ) -> Result<Vec<TmAttraction>, TicketmasterError> {
-        let body = self
-            .fetch(
-                "/attractions.json",
+        priority: RequestPriority,
+    ) -> Result<Vec<TmAttraction>, ProviderError> {
+        let reply = self
+            .get(
+                key,
+                "attractions.json",
                 &[
-                    ("keyword", keyword.to_owned()),
-                    ("classificationName", "Music".to_owned()),
-                    ("size", "50".to_owned()),
+                    ("keyword", keyword),
+                    ("classificationName", "Music"),
+                    ("size", "50"),
                 ],
+                priority,
             )
             .await?;
-        let decoded: TmAttractionsResponse = serde_json::from_slice(&body)
-            .map_err(|error| TicketmasterError::Decode(error.to_string()))?;
+        let decoded: TmAttractionsResponse = decode(&reply)?;
         Ok(decoded
             .embedded
             .map(|inner| inner.attractions)
@@ -393,32 +417,50 @@ impl TicketmasterClient {
 
     /// All upcoming events for one attraction, worldwide, oldest first,
     /// through [collect_event_pages].
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the first page that failed.
     pub async fn events_for_attraction(
         &self,
+        key: &str,
         attraction_id: &str,
-    ) -> Result<Vec<TmEvent>, TicketmasterError> {
-        collect_event_pages(attraction_id, |page| self.events_page(attraction_id, page)).await
+        priority: RequestPriority,
+    ) -> Result<Vec<TmEvent>, ProviderError> {
+        collect_event_pages(attraction_id, |page| {
+            self.events_page(key, attraction_id, page, priority)
+        })
+        .await
     }
 
     /// One page (zero-based) of an attraction's upcoming events.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call or of its answer.
     pub async fn events_page(
         &self,
+        key: &str,
         attraction_id: &str,
         page: u32,
-    ) -> Result<TmEventsPage, TicketmasterError> {
-        let body = self
-            .fetch(
-                "/events.json",
+        priority: RequestPriority,
+    ) -> Result<TmEventsPage, ProviderError> {
+        let size = PAGE_SIZE.to_string();
+        let page = page.to_string();
+        let reply = self
+            .get(
+                key,
+                "events.json",
                 &[
-                    ("attractionId", attraction_id.to_owned()),
-                    ("sort", "date,asc".to_owned()),
-                    ("size", PAGE_SIZE.to_string()),
-                    ("page", page.to_string()),
+                    ("attractionId", attraction_id),
+                    ("sort", "date,asc"),
+                    ("size", &size),
+                    ("page", &page),
                 ],
+                priority,
             )
             .await?;
-        let decoded: TmEventsResponse = serde_json::from_slice(&body)
-            .map_err(|error| TicketmasterError::Decode(error.to_string()))?;
+        let decoded: TmEventsResponse = decode(&reply)?;
         Ok(TmEventsPage {
             events: decoded
                 .embedded
@@ -428,97 +470,18 @@ impl TicketmasterClient {
         })
     }
 
-    /// One GET with the key merged into the params. Ticketmaster answers
-    /// strict 200 on success; anything else (besides 429) is an API error.
-    async fn fetch(
+    /// One GET of `endpoint` under the root, with the key as a query pair.
+    async fn get(
         &self,
-        path: &str,
-        params: &[(&str, String)],
-    ) -> Result<Vec<u8>, TicketmasterError> {
-        if let Some(limiter) = &self.limiter {
-            // One token never exceeds a bucket's burst, so this cannot fail.
-            let _ = limiter.acquire().await;
-        }
-        let mut query: Vec<(&str, String)> = params.to_vec();
-        query.push(("apikey", self.api_key.clone()));
-        let url = join(&self.base_url, path);
-        let response = self
-            .http
-            .get(url)
-            .query(&query)
-            .send()
-            .await
-            .map_err(|error| TicketmasterError::Transport(transport_kind(&error).to_owned()))?;
-        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(TicketmasterError::RateLimited {
-                retry_after_secs: parse_retry_after(
-                    response
-                        .headers()
-                        .get(reqwest::header::RETRY_AFTER)
-                        .and_then(|value| value.to_str().ok()),
-                ),
-            });
-        }
-        if response.status() != reqwest::StatusCode::OK {
-            return Err(TicketmasterError::Api {
-                status: response.status().as_u16(),
-            });
-        }
-        read_capped(response, MAX_BODY_BYTES)
-            .await
-            .map_err(|error| TicketmasterError::Transport(error.kind().to_owned()))
-    }
-}
-
-impl From<TicketmasterError> for ProviderError {
-    fn from(error: TicketmasterError) -> Self {
-        match error {
-            TicketmasterError::Transport(message) => Self::Transport {
-                provider: SOURCE,
-                kind: super::error::TransportKind::named(&message),
-            },
-            TicketmasterError::RateLimited { retry_after_secs } => Self::RateLimited {
-                provider: SOURCE,
-                retry_after: retry_after_secs
-                    .and_then(|secs| std::time::Duration::try_from_secs_f64(secs).ok())
-                    .map(|delay| delay.min(MAX_RETRY_AFTER)),
-            },
-            TicketmasterError::Api { status } => {
-                classify_status(SOURCE, status, None).unwrap_or(Self::Server {
-                    provider: SOURCE,
-                    status,
-                })
-            }
-            TicketmasterError::Decode(message) => Self::Payload {
-                provider: SOURCE,
-                kind: super::error::PayloadKind::Decode,
-                message,
-            },
-        }
-    }
-}
-
-/// Parse a `Retry-After` value into seconds. Only positive numbers count;
-/// missing, unparsable, zero, and negative values all mean "no hint", kept
-/// from v2's `_parse_retry_after`.
-pub fn parse_retry_after(value: Option<&str>) -> Option<f64> {
-    let seconds: f64 = value?.trim().parse().ok()?;
-    if seconds > 0.0 { Some(seconds) } else { None }
-}
-
-/// Join a base URL and a path without doubling the slash.
-fn join(base: &str, path: &str) -> String {
-    format!("{}{}", base.trim_end_matches('/'), path)
-}
-
-/// Short transport failure kind. Only the kind is kept, never the URL, the
-/// same shape as v2's exception-type-only message.
-fn transport_kind(error: &reqwest::Error) -> &'static str {
-    if error.is_timeout() {
-        "timed out"
-    } else if error.is_connect() {
-        "connection failed"
-    } else {
-        "request failed"
+        key: &str,
+        endpoint: &str,
+        params: &[(&str, &str)],
+        priority: RequestPriority,
+    ) -> Result<Reply, ProviderError> {
+        let base = self.base.as_ref().ok_or_else(|| unusable_base(SOURCE))?;
+        let mut query = params.to_vec();
+        query.push(("apikey", key));
+        let request = Request::get(base, &[endpoint], &query).map_err(|_| unusable_base(SOURCE))?;
+        self.executor.send(request, priority).await
     }
 }

@@ -6,9 +6,9 @@
 //! ([`store`]). The routes ([`handlers`]) read that feed through
 //! [`service`], narrow it to the caller's cities, keep the caller's city
 //! list, count what is new since they last looked, and proxy city search
-//! to the Open-Meteo geocoder. [`sources`] wraps the three outside services
-//! with pacing, retry and a circuit breaker. [`events`] is the seam for the
-//! `concerts_new` push.
+//! to the Open-Meteo geocoder. [`sources`] names the three outside
+//! services, which send through the provider executor. [`events`] is the
+//! seam for the `concerts_new` push.
 //!
 //! Settings come from the `events` section and are read per call (routes)
 //! or per run (sweep), so a key change applies without a restart.
@@ -34,10 +34,10 @@ use droppedneedle_kernel::db::Db;
 use droppedneedle_kernel::platform::Platform;
 use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
 use droppedneedle_kernel::runtime_config::{Live as LiveSettings, Plain, Secret};
+use droppedneedle_providers::Providers;
 
 pub use events::{ConcertsEvents, ConcertsNew};
 pub use service::ConcertsService;
-pub use sources::Endpoints;
 pub use sweep::ConcertsSweep;
 
 /// The concerts bundle on `AppState`: the routes plus the sweep the jobs
@@ -56,33 +56,30 @@ struct Live {
 }
 
 impl ConcertsSetup {
-    /// Production wiring over the platform's database, shared outbound
-    /// client, events settings and event hub, with the sources at
-    /// `endpoints`.
-    pub fn from_platform(platform: &Platform, endpoints: Endpoints) -> Self {
+    /// Production wiring over the platform's database, events settings and
+    /// event hub, with the providers' events clients.
+    pub fn from_platform(platform: &Platform, providers: &Providers) -> Self {
         Self::new(
             platform.db.clone(),
-            platform.http.shared().clone(),
             platform.settings.live(),
-            endpoints,
+            providers,
             Arc::new(platform.events.clone()),
         )
     }
 
-    /// Wiring from parts; tests point `endpoints` at local fakes and
+    /// Wiring from parts; tests point the providers at local fakes and
     /// record `concerts_new` through `events`.
     pub fn new(
         db: Db,
-        http: reqwest::Client,
         settings: LiveSettings<EventsSettings>,
-        endpoints: Endpoints,
+        providers: &Providers,
         events: Arc<dyn ConcertsEvents>,
     ) -> Self {
         Self {
             live: Some(Live {
                 store: store::ConcertsStore::new(db),
                 settings,
-                sources: Arc::new(sources::Sources::new(http, endpoints)),
+                sources: Arc::new(sources::Sources::new(providers)),
                 events,
             }),
         }

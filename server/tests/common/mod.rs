@@ -207,15 +207,7 @@ pub fn reads_inputs(dir: &Path) -> droppedneedle_catalog::reads::ReadsInputs {
         ),
         youtube_quota_path: dir.join("youtube_quota.json"),
         discover_warmer: false,
-        // Nothing listens on the discard port, so no test reaches a real
-        // chart or discovery provider.
-        endpoints: closed_endpoints(),
     }
-}
-
-/// Every catalog upstream on a closed port.
-pub fn closed_endpoints() -> droppedneedle_catalog::reads::catalog::upstream::Endpoints {
-    closed_outbound().catalog()
 }
 
 /// Every outside service with a fixed address on the discard port, where

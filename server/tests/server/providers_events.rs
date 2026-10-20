@@ -1,53 +1,53 @@
-//! Geocoding, Skiddle, Ticketmaster, YouTube and GitHub clients against a
-//! scripted local server: the decode of each live wire shape, required
-//! identity fields, rate limits, Ticketmaster's page cap, and the YouTube
-//! quota file (reserved before HTTP, charged for dispatched calls, kept
-//! across restarts).
+//! Geocoding, Skiddle, Ticketmaster, YouTube and GitHub clients over a
+//! scripted wire: the decode of each live wire shape, required identity
+//! fields, rate limits, Ticketmaster's page cap, and the YouTube quota file
+//! (reserved before HTTP, charged for dispatched calls, kept across
+//! restarts).
 
 use crate::common::ScratchDir;
-use droppedneedle_providers::{geocoding, github, skiddle, ticketmaster, youtube};
+use droppedneedle_providers::executor::{ScriptedWire, Sent};
+use droppedneedle_providers::{PayloadKind, ProviderError, Providers, RequestPriority};
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
-use axum::Router;
-use axum::extract::Query;
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::response::IntoResponse;
-use axum::routing::get;
-use geocoding::{DEFAULT_CITY_COUNT, GeocodingClient, GeocodingError};
-use github::GitHubClient;
+use droppedneedle_kernel::clock::ManualClock;
+use droppedneedle_providers::geocoding::DEFAULT_CITY_COUNT;
+use droppedneedle_providers::youtube::{SearchKind, YouTubeClient, YouTubeSettings, YoutubeError};
 use serde_json::json;
-use skiddle::{SkiddleClient, SkiddleError};
-use ticketmaster::{TicketmasterClient, TicketmasterError};
-use youtube::{SearchKind, YouTubeClient, YouTubeSettings, YoutubeError};
+
+const USER: RequestPriority = RequestPriority::UserInitiated;
+const ORIGIN: &str = "http://127.0.0.1:9";
 
 // ---------------------------------------------------------------------------
-// Scripted fakes
+// Scripted wire
 // ---------------------------------------------------------------------------
 
-/// Recorded query params per call, in arrival order.
-type Calls = Arc<std::sync::Mutex<Vec<HashMap<String, String>>>>;
-
-fn recorder() -> Calls {
-    Arc::new(std::sync::Mutex::new(Vec::new()))
+/// The providers over a scripted wire, every address on the closed origin.
+fn scripted() -> (Arc<ScriptedWire>, Providers) {
+    let wire = Arc::new(ScriptedWire::new());
+    let providers = Providers::unpaced(wire.clone());
+    (wire, providers)
 }
 
-/// Serve a scripted router on an ephemeral localhost port; returns the base URL.
-async fn serve(router: Router) -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
-    base
+fn url(path: &str) -> String {
+    format!("{ORIGIN}/{path}")
 }
 
-fn http() -> reqwest::Client {
-    reqwest::Client::new()
+fn json_answer(wire: &ScriptedWire, path: &str, body: serde_json::Value) {
+    wire.answer(&url(path), 200, &[], body.to_string());
+}
+
+fn sent_to(wire: &ScriptedWire, path: &str) -> Vec<Sent> {
+    let target = url(path);
+    wire.sent()
+        .into_iter()
+        .filter(|sent| {
+            let mut bare = sent.url.clone();
+            bare.set_query(None);
+            bare.as_str() == target
+        })
+        .collect()
 }
 
 /// A not-yet-created quota path nested in a fresh scratch dir (so the
@@ -73,6 +73,29 @@ fn enabled_settings(limit: u32) -> YouTubeSettings {
     }
 }
 
+/// A clock at noon UTC on 2026-05-05.
+fn may_fifth() -> Arc<ManualClock> {
+    let noon = time::Date::from_calendar_date(2026, time::Month::May, 5)
+        .unwrap()
+        .midnight()
+        .assume_utc()
+        .unix_timestamp()
+        + 12 * 3600;
+    Arc::new(ManualClock::at(noon * 1000))
+}
+
+fn youtube(providers: &Providers, path: &Path, limit: u32) -> YouTubeClient {
+    YouTubeClient::new(
+        providers.youtube.clone(),
+        path.to_path_buf(),
+        enabled_settings(limit),
+        may_fifth(),
+    )
+    .unwrap()
+}
+
+const SEARCH: &str = "youtube/youtube/v3/search";
+
 // ---------------------------------------------------------------------------
 // Geocoding
 // ---------------------------------------------------------------------------
@@ -82,30 +105,23 @@ fn enabled_settings(limit: u32) -> YouTubeSettings {
 /// fields (`id`, `population`) decode past silently.
 #[tokio::test]
 async fn geocoding_search_decodes_live_shape_and_tolerates_unknown_fields() {
-    let seen = recorder();
-    let handler_seen = Arc::clone(&seen);
-    let app = Router::new().route(
-        "/v1/search",
-        get(move |Query(params): Query<HashMap<String, String>>| {
-            let handler_seen = Arc::clone(&handler_seen);
-            async move {
-                handler_seen.lock().unwrap().push(params);
-                axum::Json(json!({
-                    "results": [{
-                        "id": 2644210, "name": "Liverpool",
-                        "latitude": 53.41058, "longitude": -2.97794,
-                        "country_code": "GB", "country": "United Kingdom",
-                        "admin1": "England", "population": 496770,
-                    }],
-                }))
-            }
+    let (wire, providers) = scripted();
+    json_answer(
+        &wire,
+        "geocoding",
+        json!({
+            "results": [{
+                "id": 2644210, "name": "Liverpool",
+                "latitude": 53.41058, "longitude": -2.97794,
+                "country_code": "GB", "country": "United Kingdom",
+                "admin1": "England", "population": 496770,
+            }],
         }),
     );
-    let base = serve(app).await;
-    let client = GeocodingClient::with_base_url(http(), format!("{base}/v1/search"));
 
-    let cities = client
-        .search_cities("Liverpool", DEFAULT_CITY_COUNT)
+    let cities = providers
+        .geocoding
+        .search_cities("Liverpool", DEFAULT_CITY_COUNT, USER)
         .await
         .unwrap();
 
@@ -117,29 +133,28 @@ async fn geocoding_search_decodes_live_shape_and_tolerates_unknown_fields() {
     assert_eq!(city.country_code.as_deref(), Some("GB"));
     assert_eq!(city.country.as_deref(), Some("United Kingdom"));
     assert_eq!(city.admin1.as_deref(), Some("England"));
-    let calls = seen.lock().unwrap();
+    let calls = sent_to(&wire, "geocoding");
     assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].get("name").map(String::as_str), Some("Liverpool"));
+    assert_eq!(calls[0].query("name").as_deref(), Some("Liverpool"));
     assert_eq!(
-        calls[0].get("count").map(String::as_str),
-        Some(DEFAULT_CITY_COUNT.to_string()).as_deref()
+        calls[0].query("count"),
+        Some(DEFAULT_CITY_COUNT.to_string())
     );
-    assert_eq!(calls[0].get("language").map(String::as_str), Some("en"));
-    assert_eq!(calls[0].get("format").map(String::as_str), Some("json"));
+    assert_eq!(calls[0].query("language").as_deref(), Some("en"));
+    assert_eq!(calls[0].query("format").as_deref(), Some("json"));
 }
 
 #[tokio::test]
 async fn geocoding_429_maps_to_rate_limited() {
-    let app = Router::new().route(
-        "/v1/search",
-        get(|| async { (StatusCode::TOO_MANY_REQUESTS, "{}") }),
-    );
-    let base = serve(app).await;
-    let client = GeocodingClient::with_base_url(http(), format!("{base}/v1/search"));
+    let (wire, providers) = scripted();
+    wire.answer(&url("geocoding"), 429, &[], "{}");
 
     assert!(matches!(
-        client.search_cities("Liverpool", 8).await,
-        Err(GeocodingError::RateLimited)
+        providers
+            .geocoding
+            .search_cities("Liverpool", 8, USER)
+            .await,
+        Err(ProviderError::RateLimited { .. })
     ));
 }
 
@@ -148,26 +163,25 @@ async fn geocoding_429_maps_to_rate_limited() {
 /// skip-and-continue: one mistyped identity field fails the whole decode.
 #[tokio::test]
 async fn geocoding_name_only_row_decodes_mistyped_identity_fails() {
-    let app = Router::new().route(
-        "/v1/search",
-        get(|Query(params): Query<HashMap<String, String>>| async move {
-            match params.get("name").map(String::as_str) {
-                Some("X") => axum::Json(json!({"results": [{"name": "X"}]})).into_response(),
-                _ => axum::Json(json!({"results": [{"name": 123}]})).into_response(),
-            }
-        }),
-    );
-    let base = serve(app).await;
-    let client = GeocodingClient::with_base_url(http(), format!("{base}/v1/search"));
+    let (wire, providers) = scripted();
+    json_answer(&wire, "geocoding", json!({"results": [{"name": "X"}]}));
+    json_answer(&wire, "geocoding", json!({"results": [{"name": 123}]}));
 
-    let cities = client.search_cities("X", 8).await.unwrap();
+    let cities = providers
+        .geocoding
+        .search_cities("X", 8, USER)
+        .await
+        .unwrap();
     assert_eq!(cities.len(), 1);
     assert_eq!(cities[0].name, "X");
     assert_eq!(cities[0].latitude, 0.0);
     assert_eq!(cities[0].country_code, None);
     assert!(matches!(
-        client.search_cities("bad", 8).await,
-        Err(GeocodingError::Decode(_))
+        providers.geocoding.search_cities("bad", 8, USER).await,
+        Err(ProviderError::Payload {
+            kind: PayloadKind::Decode,
+            ..
+        })
     ));
 }
 
@@ -180,39 +194,35 @@ async fn geocoding_name_only_row_decodes_mistyped_identity_fails() {
 /// mixed key casing (`eventname` vs `ticketUrl`).
 #[tokio::test]
 async fn skiddle_events_decode_live_shape() {
-    let seen = recorder();
-    let handler_seen = Arc::clone(&seen);
-    let app = Router::new().route(
-        "/events/search/",
-        get(move |Query(params): Query<HashMap<String, String>>| {
-            let handler_seen = Arc::clone(&handler_seen);
-            async move {
-                handler_seen.lock().unwrap().push(params);
-                axum::Json(json!({
-                    "error": 0, "totalcount": "4", "pagecount": 4,
-                    "results": [{
-                        "id": "41414028", "EventCode": "FEST",
-                        "eventname": "Reading Festival",
-                        "cancelled": "0", "cancellationDate": "",
-                        "rescheduledDate": "",
-                        "link": "https://www.skiddle.com/festivals/Reading/",
-                        "ticketUrl": "",
-                        "date": "2026-08-27",
-                        "startdate": "2026-08-27T11:00:00+00:00",
-                        "venue": {"id": 8138, "name": "Little John's Farm",
-                                  "town": "Reading", "region": "Berkshire",
-                                  "country": "GB",
-                                  "latitude": 51.456062, "longitude": -0.991697},
-                        "artists": [{"artistid": "123611539", "name": "Sombr"}],
-                    }],
-                }))
-            }
+    let (wire, providers) = scripted();
+    json_answer(
+        &wire,
+        "skiddle/events/search/",
+        json!({
+            "error": 0, "totalcount": "4", "pagecount": 4,
+            "results": [{
+                "id": "41414028", "EventCode": "FEST",
+                "eventname": "Reading Festival",
+                "cancelled": "0", "cancellationDate": "",
+                "rescheduledDate": "",
+                "link": "https://www.skiddle.com/festivals/Reading/",
+                "ticketUrl": "",
+                "date": "2026-08-27",
+                "startdate": "2026-08-27T11:00:00+00:00",
+                "venue": {"id": 8138, "name": "Little John's Farm",
+                          "town": "Reading", "region": "Berkshire",
+                          "country": "GB",
+                          "latitude": 51.456062, "longitude": -0.991697},
+                "artists": [{"artistid": "123611539", "name": "Sombr"}],
+            }],
         }),
     );
-    let base = serve(app).await;
-    let client = SkiddleClient::with_base_url(http(), "k", &base);
 
-    let events = client.events_for_artist("123568993").await.unwrap();
+    let events = providers
+        .skiddle
+        .events_for_artist("k", "123568993", USER)
+        .await
+        .unwrap();
 
     assert_eq!(events.len(), 1);
     let event = &events[0];
@@ -236,26 +246,31 @@ async fn skiddle_events_decode_live_shape() {
     assert_eq!(event.artists.len(), 1);
     assert_eq!(event.artists[0].artistid.as_deref(), Some("123611539"));
     assert_eq!(event.artists[0].name.as_deref(), Some("Sombr"));
-    let calls = seen.lock().unwrap();
+    let calls = sent_to(&wire, "skiddle/events/search/");
     assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].get("a").map(String::as_str), Some("123568993"));
-    assert_eq!(calls[0].get("description").map(String::as_str), Some("1"));
-    assert_eq!(calls[0].get("api_key").map(String::as_str), Some("k"));
+    assert_eq!(calls[0].query("a").as_deref(), Some("123568993"));
+    assert_eq!(calls[0].query("description").as_deref(), Some("1"));
+    assert_eq!(calls[0].query("api_key").as_deref(), Some("k"));
 }
 
-/// Skiddle's own failure envelope arrives on HTTP 200 with `error != 0`.
+/// Skiddle's own failure envelope arrives on HTTP 200 with `error != 0`;
+/// only its code is kept.
 #[tokio::test]
 async fn skiddle_error_envelope_on_http_200_raises() {
-    let app = Router::new().route(
-        "/artists/",
-        get(|| async { axum::Json(json!({"error": 1, "errormessage": "bad key"})) }),
+    let (wire, providers) = scripted();
+    json_answer(
+        &wire,
+        "skiddle/artists/",
+        json!({"error": 1, "errormessage": "bad key"}),
     );
-    let base = serve(app).await;
-    let client = SkiddleClient::with_base_url(http(), "k", &base);
 
-    match client.search_artists("x").await {
-        Err(SkiddleError::Envelope(detail)) => assert!(detail.contains("bad key")),
-        other => panic!("expected Envelope error, got {other:?}"),
+    match providers.skiddle.search_artists("k", "x", USER).await {
+        Err(ProviderError::Payload {
+            kind: PayloadKind::Contract,
+            message,
+            ..
+        }) => assert!(message.contains("error 1"), "{message}"),
+        other => panic!("expected the envelope as a payload error, got {other:?}"),
     }
 }
 
@@ -263,31 +278,30 @@ async fn skiddle_error_envelope_on_http_200_raises() {
 /// materializing as an empty act.
 #[tokio::test]
 async fn skiddle_missing_id_fails_decode() {
-    let app = Router::new().route(
-        "/artists/",
-        get(|| async { axum::Json(json!({"error": 0, "results": [{"name": "Nameless"}]})) }),
+    let (wire, providers) = scripted();
+    json_answer(
+        &wire,
+        "skiddle/artists/",
+        json!({"error": 0, "results": [{"name": "Nameless"}]}),
     );
-    let base = serve(app).await;
-    let client = SkiddleClient::with_base_url(http(), "k", &base);
 
     assert!(matches!(
-        client.search_artists("x").await,
-        Err(SkiddleError::Decode(_))
+        providers.skiddle.search_artists("k", "x", USER).await,
+        Err(ProviderError::Payload {
+            kind: PayloadKind::Decode,
+            ..
+        })
     ));
 }
 
 #[tokio::test]
 async fn skiddle_429_maps_to_rate_limited() {
-    let app = Router::new().route(
-        "/artists/",
-        get(|| async { (StatusCode::TOO_MANY_REQUESTS, "{}") }),
-    );
-    let base = serve(app).await;
-    let client = SkiddleClient::with_base_url(http(), "k", &base);
+    let (wire, providers) = scripted();
+    wire.answer(&url("skiddle/artists/"), 429, &[], "{}");
 
     assert!(matches!(
-        client.search_artists("x").await,
-        Err(SkiddleError::RateLimited)
+        providers.skiddle.search_artists("k", "x", USER).await,
+        Err(ProviderError::RateLimited { .. })
     ));
 }
 
@@ -299,38 +313,40 @@ async fn skiddle_429_maps_to_rate_limited() {
 /// with STRING coordinates, festival lineup with per-act MBIDs.
 #[tokio::test]
 async fn ticketmaster_events_decode_live_shape() {
-    let app = Router::new().route(
-        "/events.json",
-        get(|| async {
-            axum::Json(json!({
-                "_embedded": {"events": [{
-                    "name": "Reading Festival 2026 - Friday",
-                    "id": "1AdjZbVGklbLnsr",
-                    "url": "https://www.ticketmaster.co.uk/event/1",
-                    "dates": {"start": {"localDate": "2026-08-28",
-                                       "dateTime": "2026-08-28T11:00:00Z"},
-                              "status": {"code": "onsale"}},
-                    "_embedded": {
-                        "venues": [{"name": "Richfield Avenue",
-                                    "city": {"name": "Reading"},
-                                    "state": {"name": "Berkshire"},
-                                    "country": {"countryCode": "GB"},
-                                    "location": {"latitude": "51.46368200",
-                                                 "longitude": "-0.97305600"}}],
-                        "attractions": [
-                            {"name": "Fontaines D.C.", "id": "K8vZ9179LP7",
-                             "externalLinks": {"musicbrainz": [
-                                 {"id": "FD87ACC7-E0A0-4A45-BC2A-D2AB5C10BE68  "}]}}],
-                    }},
-                ]},
-                "page": {"size": 200, "totalElements": 1, "totalPages": 1, "number": 0},
-            }))
+    let (wire, providers) = scripted();
+    json_answer(
+        &wire,
+        "ticketmaster/events.json",
+        json!({
+            "_embedded": {"events": [{
+                "name": "Reading Festival 2026 - Friday",
+                "id": "1AdjZbVGklbLnsr",
+                "url": "https://www.ticketmaster.co.uk/event/1",
+                "dates": {"start": {"localDate": "2026-08-28",
+                                   "dateTime": "2026-08-28T11:00:00Z"},
+                          "status": {"code": "onsale"}},
+                "_embedded": {
+                    "venues": [{"name": "Richfield Avenue",
+                                "city": {"name": "Reading"},
+                                "state": {"name": "Berkshire"},
+                                "country": {"countryCode": "GB"},
+                                "location": {"latitude": "51.46368200",
+                                             "longitude": "-0.97305600"}}],
+                    "attractions": [
+                        {"name": "Fontaines D.C.", "id": "K8vZ9179LP7",
+                         "externalLinks": {"musicbrainz": [
+                             {"id": "FD87ACC7-E0A0-4A45-BC2A-D2AB5C10BE68  "}]}}],
+                }},
+            ]},
+            "page": {"size": 200, "totalElements": 1, "totalPages": 1, "number": 0},
         }),
     );
-    let base = serve(app).await;
-    let client = TicketmasterClient::with_base_url(http(), "k", &base);
 
-    let events = client.events_for_attraction("K8vZ9179LP7").await.unwrap();
+    let events = providers
+        .ticketmaster
+        .events_for_attraction("k", "K8vZ9179LP7", USER)
+        .await
+        .unwrap();
 
     assert_eq!(events.len(), 1);
     let event = &events[0];
@@ -374,57 +390,69 @@ async fn ticketmaster_events_decode_live_shape() {
         inner.attractions[0].musicbrainz_ids(),
         ["fd87acc7-e0a0-4a45-bc2a-d2ab5c10be68"]
     );
+    let calls = sent_to(&wire, "ticketmaster/events.json");
+    assert_eq!(calls[0].query("apikey").as_deref(), Some("k"));
+    assert_eq!(
+        calls[0].query("attractionId").as_deref(),
+        Some("K8vZ9179LP7")
+    );
 }
 
 /// A result set deeper than the cap stops after three pages: no silent
 /// fourth request.
 #[tokio::test]
 async fn ticketmaster_pagination_truncates_at_three_pages() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let handler_calls = Arc::clone(&calls);
-    let app = Router::new().route(
-        "/events.json",
-        get(move |Query(params): Query<HashMap<String, String>>| {
-            let handler_calls = Arc::clone(&handler_calls);
-            async move {
-                let call = handler_calls.fetch_add(1, Ordering::SeqCst);
-                let number: u32 = params
-                    .get("page")
-                    .and_then(|page| page.parse().ok())
-                    .unwrap_or(0);
-                axum::Json(json!({
-                    "_embedded": {"events": [{"id": format!("e{call}")}]},
-                    "page": {"totalPages": 99, "number": number},
-                }))
-            }
-        }),
-    );
-    let base = serve(app).await;
-    let client = TicketmasterClient::with_base_url(http(), "k", &base);
+    let (wire, providers) = scripted();
+    for call in 0..5 {
+        json_answer(
+            &wire,
+            "ticketmaster/events.json",
+            json!({
+                "_embedded": {"events": [{"id": format!("e{call}")}]},
+                "page": {"totalPages": 99, "number": call},
+            }),
+        );
+    }
 
-    let events = client.events_for_attraction("A1").await.unwrap();
+    let events = providers
+        .ticketmaster
+        .events_for_attraction("k", "A1", USER)
+        .await
+        .unwrap();
 
     assert_eq!(events.len(), 3);
-    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    let pages: Vec<Option<String>> = sent_to(&wire, "ticketmaster/events.json")
+        .iter()
+        .map(|sent| sent.query("page"))
+        .collect();
+    assert_eq!(
+        pages,
+        [
+            Some("0".to_owned()),
+            Some("1".to_owned()),
+            Some("2".to_owned())
+        ]
+    );
 }
 
 /// The server's `Retry-After` hint travels on the rate-limit error.
 #[tokio::test]
 async fn ticketmaster_429_carries_retry_after_hint() {
-    let app = Router::new().route(
-        "/attractions.json",
-        get(|| async {
-            let mut headers = HeaderMap::new();
-            headers.insert(header::RETRY_AFTER, HeaderValue::from_static("7"));
-            (StatusCode::TOO_MANY_REQUESTS, headers, "slow down")
-        }),
+    let (wire, providers) = scripted();
+    wire.answer(
+        &url("ticketmaster/attractions.json"),
+        429,
+        &[("retry-after", "7")],
+        "slow down",
     );
-    let base = serve(app).await;
-    let client = TicketmasterClient::with_base_url(http(), "k", &base);
 
-    match client.search_attractions("x").await {
-        Err(TicketmasterError::RateLimited { retry_after_secs }) => {
-            assert_eq!(retry_after_secs, Some(7.0));
+    match providers
+        .ticketmaster
+        .search_attractions("k", "x", USER)
+        .await
+    {
+        Err(ProviderError::RateLimited { retry_after, .. }) => {
+            assert_eq!(retry_after, Some(std::time::Duration::from_secs(7)));
         }
         other => panic!("expected RateLimited error, got {other:?}"),
     }
@@ -434,21 +462,25 @@ async fn ticketmaster_429_carries_retry_after_hint() {
 /// materializing as an empty event.
 #[tokio::test]
 async fn ticketmaster_missing_id_fails_decode() {
-    let app = Router::new().route(
-        "/events.json",
-        get(|| async {
-            axum::Json(json!({
-                "_embedded": {"events": [{"name": "Nameless"}]},
-                "page": {"totalPages": 1, "number": 0},
-            }))
+    let (wire, providers) = scripted();
+    json_answer(
+        &wire,
+        "ticketmaster/events.json",
+        json!({
+            "_embedded": {"events": [{"name": "Nameless"}]},
+            "page": {"totalPages": 1, "number": 0},
         }),
     );
-    let base = serve(app).await;
-    let client = TicketmasterClient::with_base_url(http(), "k", &base);
 
     assert!(matches!(
-        client.events_for_attraction("A1").await,
-        Err(TicketmasterError::Decode(_))
+        providers
+            .ticketmaster
+            .events_for_attraction("k", "A1", USER)
+            .await,
+        Err(ProviderError::Payload {
+            kind: PayloadKind::Decode,
+            ..
+        })
     ));
 }
 
@@ -466,66 +498,57 @@ fn search_hit(video_id: &str) -> serde_json::Value {
 }
 
 /// Unknown answer fields decode past silently, at the top level and
-/// inside the result id.
+/// inside the result id; the key goes out as the `key` query pair.
 #[tokio::test]
 async fn youtube_search_tolerates_unknown_fields() {
-    let app = Router::new().route(
-        "/youtube/v3/search",
-        get(|| async {
-            let mut hit = search_hit("abcdefghijk");
-            hit["futureTop"] = json!(1);
-            hit["items"][0]["id"]["futureId"] = json!(1);
-            axum::Json(hit)
-        }),
-    );
-    let base = serve(app).await;
+    let (wire, providers) = scripted();
+    let mut hit = search_hit("abcdefghijk");
+    hit["futureTop"] = json!(1);
+    hit["items"][0]["id"]["futureId"] = json!(1);
+    json_answer(&wire, SEARCH, hit);
     let (_scratch, path) = quota_path("tolerant");
-    let client =
-        YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(80), &base).unwrap();
+    let client = youtube(&providers, &path, 80);
 
     let found = client
-        .search_video("Neil", "After the Gold Rush")
+        .search_video("Neil", "After the Gold Rush", USER)
         .await
         .unwrap();
 
     assert_eq!(found.as_deref(), Some("abcdefghijk"));
-    let _ = std::fs::remove_file(&path);
+    let calls = sent_to(&wire, SEARCH);
+    assert_eq!(calls[0].query("key").as_deref(), Some("secret"));
+    assert_eq!(
+        calls[0].query("q").as_deref(),
+        Some("Neil After the Gold Rush full album")
+    );
 }
 
 /// The quota governor: the first search reserves durably, the second (on a
-/// fresh key) is refused before any HTTP, and the status snapshot matches.
+/// fresh key) is refused before any HTTP, and the status snapshot matches,
+/// dated by the clock the client was given.
 #[tokio::test]
 async fn youtube_quota_exhaustion_blocks_second_search() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let handler_calls = Arc::clone(&calls);
-    let app = Router::new().route(
-        "/youtube/v3/search",
-        get(move || {
-            let handler_calls = Arc::clone(&handler_calls);
-            async move {
-                handler_calls.fetch_add(1, Ordering::SeqCst);
-                axum::Json(search_hit("abcdefghijk"))
-            }
-        }),
-    );
-    let base = serve(app).await;
+    let (wire, providers) = scripted();
+    json_answer(&wire, SEARCH, search_hit("abcdefghijk"));
     let (_scratch, path) = quota_path("exhausted");
-    let client =
-        YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(1), &base).unwrap();
-    client.set_today_override(Some("2026-05-05".to_owned()));
+    let client = youtube(&providers, &path, 1);
 
     assert_eq!(client.quota_remaining().await, 1);
     assert!(client.search_available().await);
     assert_eq!(
-        client.search_video("a", "one").await.unwrap().as_deref(),
+        client
+            .search_video("a", "one", USER)
+            .await
+            .unwrap()
+            .as_deref(),
         Some("abcdefghijk")
     );
     assert!(matches!(
-        client.search_track("a", "two").await,
+        client.search_track("a", "two", USER).await,
         Err(YoutubeError::QuotaExhausted)
     ));
 
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(sent_to(&wire, SEARCH).len(), 1);
     assert_eq!(
         quota_file_json(&path),
         json!({"date": "2026-05-05", "count": 1})
@@ -537,139 +560,120 @@ async fn youtube_quota_exhaustion_blocks_second_search() {
     assert_eq!(status.limit, 1);
     assert_eq!(status.remaining, 0);
     assert_eq!(status.date, "2026-05-05");
-    let _ = std::fs::remove_file(&path);
 }
 
-/// A recreated client on the same quota path remembers what today spent.
+/// A recreated client on the same quota path remembers what today spent,
+/// and the next day by the clock starts from zero.
 #[tokio::test]
 async fn youtube_quota_survives_client_recreation() {
-    let app = Router::new().route(
-        "/youtube/v3/search",
-        get(|| async { axum::Json(search_hit("abcdefghijk")) }),
-    );
-    let base = serve(app).await;
+    let (wire, providers) = scripted();
+    json_answer(&wire, SEARCH, search_hit("abcdefghijk"));
     let (_scratch, path) = quota_path("recreate");
-    let first =
-        YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(1), &base).unwrap();
-    first.set_today_override(Some("2026-05-05".to_owned()));
-    first.search_video("a", "one").await.unwrap();
+    let first = youtube(&providers, &path, 1);
+    first.search_video("a", "one", USER).await.unwrap();
     drop(first);
 
-    let second =
-        YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(1), &base).unwrap();
-    second.set_today_override(Some("2026-05-05".to_owned()));
+    let clock = may_fifth();
+    let second = YouTubeClient::new(
+        providers.youtube.clone(),
+        path.clone(),
+        enabled_settings(1),
+        clock.clone(),
+    )
+    .unwrap();
     assert!(matches!(
-        second.search_video("a", "blocked").await,
+        second.search_video("a", "blocked", USER).await,
         Err(YoutubeError::QuotaExhausted)
     ));
-    let _ = std::fs::remove_file(&path);
+    clock.advance(24 * 3600 * 1000);
+    assert_eq!(second.quota_remaining().await, 1);
 }
 
 /// A dispatched search that fails stays charged and uncached; a later search
-/// for the same pair tries the network again.
+/// for the same pair tries the network again. A 403 (the API's quota
+/// answer among others) is a refusal.
 #[tokio::test]
 async fn youtube_failures_are_charged_not_cached() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let handler_calls = Arc::clone(&calls);
-    let app = Router::new().route(
-        "/youtube/v3/search",
-        get(move || {
-            let handler_calls = Arc::clone(&handler_calls);
-            async move {
-                let call = handler_calls.fetch_add(1, Ordering::SeqCst);
-                if call == 0 {
-                    (StatusCode::FORBIDDEN, axum::Json(json!({}))).into_response()
-                } else {
-                    axum::Json(search_hit("abcdefghijk")).into_response()
-                }
-            }
-        }),
-    );
-    let base = serve(app).await;
+    let (wire, providers) = scripted();
+    wire.answer(&url(SEARCH), 403, &[], "{}");
+    json_answer(&wire, SEARCH, search_hit("abcdefghijk"));
     let (_scratch, path) = quota_path("charged");
-    let client =
-        YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(2), &base).unwrap();
-    client.set_today_override(Some("2026-05-05".to_owned()));
+    let client = youtube(&providers, &path, 2);
 
     assert!(matches!(
-        client.search_video("a", "album").await,
-        Err(YoutubeError::Api { status: 403 })
+        client.search_video("a", "album", USER).await,
+        Err(YoutubeError::Provider(ProviderError::Forbidden { .. }))
     ));
     assert_eq!(quota_file_json(&path)["count"], json!(1));
     assert!(!client.is_cached("a", "album", SearchKind::Album));
 
     assert_eq!(
-        client.search_video("a", "album").await.unwrap().as_deref(),
+        client
+            .search_video("a", "album", USER)
+            .await
+            .unwrap()
+            .as_deref(),
         Some("abcdefghijk")
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(sent_to(&wire, SEARCH).len(), 2);
     assert_eq!(quota_file_json(&path)["count"], json!(2));
-    let _ = std::fs::remove_file(&path);
 }
 
-/// Upstream 429 and undecodable bodies map distinctly; both stay charged.
+/// Undecodable bodies and an upstream 429 map distinctly and are charged
+/// once each, never resent. While the API rests after the 429, a person's
+/// search is refused before a unit is spent.
 #[tokio::test]
 async fn youtube_upstream_429_and_bad_payload_map() {
-    let app = Router::new().route(
-        "/youtube/v3/search",
-        get(|Query(params): Query<HashMap<String, String>>| async move {
-            match params.get("q").map(String::as_str) {
-                Some("x limited") => (StatusCode::TOO_MANY_REQUESTS, "{}").into_response(),
-                Some("x broken") => "not json".into_response(),
-                _ => axum::Json(json!({"items": [{"id": {}}]})).into_response(),
-            }
-        }),
-    );
-    let base = serve(app).await;
+    let (wire, providers) = scripted();
+    wire.answer(&url(SEARCH), 200, &[], "not json");
+    json_answer(&wire, SEARCH, json!({"items": [{"id": {}}]}));
+    wire.answer(&url(SEARCH), 429, &[("retry-after", "30")], "{}");
     let (_scratch, path) = quota_path("upstream");
-    let client =
-        YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(80), &base).unwrap();
-    client.set_today_override(Some("2026-05-05".to_owned()));
+    let client = youtube(&providers, &path, 80);
 
     assert!(matches!(
-        client.search_track("x", "limited").await,
-        Err(YoutubeError::UpstreamRateLimited)
+        client.search_track("x", "broken", USER).await,
+        Err(YoutubeError::Provider(ProviderError::Payload {
+            kind: PayloadKind::Decode,
+            ..
+        }))
     ));
     assert!(matches!(
-        client.search_track("x", "broken").await,
-        Err(YoutubeError::InvalidPayload(_))
+        client.search_track("x", "no-id", USER).await,
+        Err(YoutubeError::Provider(ProviderError::Payload {
+            kind: PayloadKind::Contract,
+            ..
+        }))
     ));
     assert!(matches!(
-        client.search_track("x", "no-id").await,
-        Err(YoutubeError::InvalidPayload(_))
+        client.search_track("x", "limited", USER).await,
+        Err(YoutubeError::Provider(ProviderError::RateLimited { .. }))
     ));
-    // All three dispatched, so all three were charged.
+    // All three dispatched once, so all three were charged.
+    assert_eq!(sent_to(&wire, SEARCH).len(), 3);
     assert_eq!(quota_file_json(&path)["count"], json!(3));
-    let _ = std::fs::remove_file(&path);
+
+    assert!(matches!(
+        client.search_track("x", "resting", USER).await,
+        Err(YoutubeError::Provider(ProviderError::RateLimited { .. }))
+    ));
+    assert_eq!(sent_to(&wire, SEARCH).len(), 3);
+    assert_eq!(quota_file_json(&path)["count"], json!(3));
 }
 
 /// Two users sharing the one client of a quota path cannot spend the last
 /// slot twice.
 #[tokio::test]
 async fn youtube_two_instances_share_last_slot() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let handler_calls = Arc::clone(&calls);
-    let app = Router::new().route(
-        "/youtube/v3/search",
-        get(move || {
-            let handler_calls = Arc::clone(&handler_calls);
-            async move {
-                handler_calls.fetch_add(1, Ordering::SeqCst);
-                // Overlap window, as above: 10ms forces the race with margin.
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                axum::Json(search_hit("abcdefghijk"))
-            }
-        }),
-    );
-    let base = serve(app).await;
+    let (wire, providers) = scripted();
+    json_answer(&wire, SEARCH, search_hit("abcdefghijk"));
     let (_scratch, path) = quota_path("last-slot");
-    let first =
-        YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(1), &base).unwrap();
+    let first = youtube(&providers, &path, 1);
     let second = first.clone();
 
     let (one, two) = tokio::join!(
-        first.search_video("a", "one"),
-        second.search_track("a", "two"),
+        first.search_video("a", "one", USER),
+        second.search_track("a", "two", USER),
     );
     let outcomes = [one, two];
     assert_eq!(
@@ -686,7 +690,7 @@ async fn youtube_two_instances_share_last_slot() {
             .count(),
         1
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(sent_to(&wire, SEARCH).len(), 1);
     assert_eq!(quota_file_json(&path)["count"], json!(1));
 }
 
@@ -709,36 +713,14 @@ fn releases_payload() -> serde_json::Value {
     ])
 }
 
-fn releases_app(seen_accept: Arc<std::sync::Mutex<Vec<String>>>) -> Router {
-    Router::new().route(
-        "/repos/DroppedNeedle/DroppedNeedle/releases",
-        get(move |headers: HeaderMap| {
-            let seen_accept = Arc::clone(&seen_accept);
-            async move {
-                let accept = headers
-                    .get(header::ACCEPT)
-                    .and_then(|value| value.to_str().ok())
-                    .unwrap_or("")
-                    .to_owned();
-                seen_accept.lock().unwrap().push(accept);
-                axum::Json(releases_payload())
-            }
-        }),
-    )
-}
-
 /// Drafts filter out, prereleases stay, and missing name/body fall back to
 /// the tag and `""`. The GitHub media type header goes out on the call.
 #[tokio::test]
 async fn github_releases_decode_filter_and_fall_back() {
-    let seen_accept = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let base = serve(releases_app(Arc::clone(&seen_accept))).await;
-    let client = GitHubClient::with_base_url(
-        http(),
-        format!("{base}/repos/DroppedNeedle/DroppedNeedle/releases"),
-    );
+    let (wire, providers) = scripted();
+    json_answer(&wire, "releases", releases_payload());
 
-    let releases = client.fetch_releases().await;
+    let releases = providers.github.fetch_releases(USER).await;
 
     assert_eq!(releases.len(), 2);
     assert_eq!(releases[0].tag_name, "v3.1.0");
@@ -751,19 +733,62 @@ async fn github_releases_decode_filter_and_fall_back() {
     assert_eq!(releases[1].name, "v3.0.0");
     assert_eq!(releases[1].body, "");
     assert!(!releases[1].prerelease);
+    let calls = sent_to(&wire, "releases");
     assert_eq!(
-        seen_accept.lock().unwrap().as_slice(),
-        ["application/vnd.github+json"]
+        calls[0].headers,
+        [(
+            "accept".to_owned(),
+            "application/vnd.github+json".to_owned()
+        )]
     );
 }
 
-/// Non-200 answers degrade to `[]`, quietly.
+/// Error answers degrade to `[]`, quietly, and are not remembered: the
+/// next check asks again, while the row has a request to give, and keeps
+/// what it gets.
 #[tokio::test]
-async fn github_non_200_degrades_to_empty() {
-    let app = Router::new().route("/releases", get(|| async { (StatusCode::FORBIDDEN, "{}") }));
-    let base = serve(app).await;
-    let client = GitHubClient::with_base_url(http(), format!("{base}/releases"));
+async fn github_failures_degrade_to_empty_and_are_not_kept() {
+    let (wire, providers) = scripted();
+    wire.answer(&url("releases"), 404, &[], "{}");
+    json_answer(&wire, "releases", releases_payload());
 
-    assert_eq!(client.fetch_releases().await, vec![]);
-    assert_eq!(client.fetch_latest_release().await, None);
+    assert_eq!(providers.github.fetch_releases(USER).await, vec![]);
+    assert_eq!(
+        providers
+            .github
+            .fetch_latest_release(USER)
+            .await
+            .map(|release| release.tag_name),
+        Some("v3.0.0".to_owned())
+    );
+    assert_eq!(providers.github.fetch_releases(USER).await.len(), 2);
+    assert_eq!(sent_to(&wire, "releases").len(), 2);
+}
+
+/// A person's check never waits for a request. Once failing answers have
+/// spent the row's burst (50 an hour, so the next request is 72 s away),
+/// the check answers `[]` at once and sends nothing.
+#[tokio::test(start_paused = true)]
+async fn github_check_never_waits_for_a_request() {
+    let wire = Arc::new(ScriptedWire::new());
+    wire.answer(&url("releases"), 404, &[], "{}");
+    let providers = Providers::over_wire(
+        wire.clone(),
+        Arc::new(droppedneedle_kernel::clock::SystemClock),
+        droppedneedle_providers::ProviderEndpoints::closed(),
+    );
+    let burst = droppedneedle_providers::rates::row("github").unwrap().burst as usize;
+    for _ in 0..burst {
+        assert_eq!(providers.github.fetch_releases(USER).await, vec![]);
+    }
+    assert_eq!(sent_to(&wire, "releases").len(), burst);
+
+    let started = tokio::time::Instant::now();
+    assert_eq!(providers.github.fetch_releases(USER).await, vec![]);
+    assert!(
+        started.elapsed() <= droppedneedle_providers::executor::USER_COOLDOWN_WAIT,
+        "waited {:?}",
+        started.elapsed()
+    );
+    assert_eq!(sent_to(&wire, "releases").len(), burst, "nothing sent");
 }
