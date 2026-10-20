@@ -249,9 +249,12 @@ pub fn recover_expired(
     kind: OperationKind,
     now: f64,
 ) -> Result<u64, DbError> {
+    // The work and the job compare against the same rounded time, so a
+    // job requeued here never leaves its work running.
+    let now_ms = millis(now);
     tx.prepare_cached(sql::WORK_RECOVER_EXPIRED.text())?
-        .execute(named_params! { ":kind": kind, ":now": now })?;
-    lease::recover_expired(tx, &STATEMENTS, kind.as_str(), millis(now)).map_err(db_error)
+        .execute(named_params! { ":kind": kind, ":now": now_ms as f64 / 1000.0 })?;
+    lease::recover_expired(tx, &STATEMENTS, kind.as_str(), now_ms).map_err(db_error)
 }
 
 /// Requeue every running job of `kind`, with its running work: at start,
