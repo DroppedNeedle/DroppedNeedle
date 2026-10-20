@@ -37,15 +37,21 @@ describe('carousel images', () => {
 			}
 		});
 
-		await expect
-			.element(page.getByRole('img', { name: 'Artist 7' }))
-			.toHaveAttribute('src', expect.stringContaining(`/covers/artist/${mbidOf(7)}`));
-		await expect
-			.element(page.getByRole('img', { name: 'Artist 19' }))
-			.toHaveAttribute('src', expect.stringMatching(/^data:/));
 		// A row not marked eager leaves even its first image to the observer.
 		await expect
 			.element(page.getByRole('img', { name: 'Artist 0' }))
 			.toHaveAttribute('data-src', expect.stringContaining(`/covers/artist/${mbidOf(0)}`));
+		// Started loading: the cover address is set, or the test server's missing
+		// cover has already swapped the image for its placeholder.
+		const artist7 = page.getByRole('img', { name: 'Artist 7' });
+		await expect
+			.poll(() => {
+				const src = artist7.query()?.getAttribute('src');
+				return src === undefined || src?.includes(`/covers/artist/${mbidOf(7)}`);
+			})
+			.toBe(true);
+		await expect
+			.element(page.getByRole('img', { name: 'Artist 19' }))
+			.toHaveAttribute('src', expect.stringMatching(/^data:/));
 	});
 });
