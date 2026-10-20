@@ -6240,6 +6240,17 @@ impl ArtistRig {
         store.link_album_artists(&album).unwrap();
     }
 
+    /// One sweep of identification's artist links, as its loop runs it.
+    fn sweep_artist_links(&self) {
+        use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
+        SqliteIdentifyStore::new(
+            droppedneedle_kernel::db::Db::open_for_tests(&self.scratch.join("app.db"))
+                .expect("store opens"),
+        )
+        .sweep_artist_links()
+        .expect("sweep runs");
+    }
+
     /// The MusicBrainz link of the artist and who made it.
     fn link_source(&self, artist: &str) -> Option<String> {
         self.text(&format!(
@@ -6502,6 +6513,78 @@ async fn ids_that_do_not_line_up_go_by_name() {
     assert_eq!(
         rig.count("SELECT COUNT(*) FROM local_track_artists WHERE artist_mbid IS NOT NULL"),
         0
+    );
+}
+
+/// An album whose match is accepted, tagged with no artist ids, is
+/// retagged with another sort name: the rescan puts its credits on a new
+/// row. The next sweep works the album through again, and the artist is
+/// one row holding the MusicBrainz id, the old row's id kept as an alias.
+/// A rescan that changes nothing leaves the album's state as it was.
+#[tokio::test]
+async fn a_changed_sort_name_keeps_one_artist_row() {
+    let rig = ArtistRig::new("artist-sort-change");
+    let side = |sort| Side {
+        names: &["Oh"],
+        ids: &[],
+        sort: Some(sort),
+        listed: false,
+    };
+    let tag = |sort| {
+        for file in ["A/01.flac", "A/02.flac"] {
+            rig.put(file, "Album A", side(sort), side(sort));
+        }
+    };
+    tag("Oh, The");
+    rig.scan().await;
+    rig.match_album("A/01.flac", MBID_X, "Oh");
+    let old = rig.track_artist("A/01.flac", 0);
+    assert_eq!(rig.link_source(&old), Some(format!("{MBID_X} automatic")));
+    let album = |rig: &ArtistRig| {
+        rig.text("SELECT local_album_id FROM local_tracks WHERE relative_path = 'A/01.flac'")
+            .expect("album")
+    };
+    let matched = album(&rig);
+
+    tag("Oh Band");
+    rig.scan().await;
+    let new = rig.track_artist("A/01.flac", 0);
+    assert_ne!(new, old, "the new sort name keys another row");
+    assert_eq!(album(&rig), matched);
+    rig.sweep_artist_links();
+
+    assert_eq!(rig.retired_into(&old).as_deref(), Some(new.as_str()));
+    assert_eq!(rig.link_source(&new), Some(format!("{MBID_X} automatic")));
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM local_artist_aliases WHERE alias = '{old}' \
+             AND local_artist_id = '{new}' AND kind = 'merged_artist'"
+        )),
+        1
+    );
+    assert_eq!(
+        rig.count(
+            "SELECT COUNT(*) FROM local_artists WHERE display_name = 'Oh' \
+             AND retired_into_artist_id IS NULL"
+        ),
+        1
+    );
+    assert_eq!(rig.album_artist("A/01.flac"), (new.clone(), new.clone()));
+
+    let state = |rig: &ArtistRig| {
+        rig.text(&format!(
+            "SELECT input_revision || ' ' || updated_at FROM library_artist_reconciliation_state \
+             WHERE local_album_id = '{matched}'"
+        ))
+    };
+    let settled = state(&rig);
+    assert!(settled.is_some());
+    tag("Oh Band");
+    rig.scan().await;
+    assert_eq!(
+        state(&rig),
+        settled,
+        "unchanged credits leave the state alone"
     );
 }
 

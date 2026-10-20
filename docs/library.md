@@ -55,7 +55,7 @@ After an upgrade from v2, a one-time cleanup tidies album rows the old version l
 
 Duplicate artists can be merged from the artist identity page (admins). The preview counts what moves to the artist you keep: album and track credits, favorites, play history, playlist entries and app IDs. The merged artist's old links lead to the one you keep. As in earlier versions, merging artists can't be undone.
 
-DroppedNeedle also merges two records by itself when MusicBrainz proves they are one artist: every credit of the record that goes is on an album matched to a release crediting that artist, or in a file carrying that artist's ID. Records marked as different people are never merged. These merges show as resolved in the duplicate artists list and can't be undone either.
+DroppedNeedle also merges two records by itself when MusicBrainz proves they are one artist: every credit of the record that goes is on an album matched to a release crediting that artist, or in a file carrying that artist's ID. A track your files credit to the album's artist alone, where the release credits that artist with guests ("feat.", "&"), counts as crediting that artist. When a retag moves an artist's credits to a new record (a changed sort name, for example), the old record follows them once nothing is left on it, even when a large retag is read in several steps: it merges into the new one, taking its favorites and plays, unless a play is of a track now credited to someone else or MusicBrainz proves the new record is another artist. Records marked as different people are never merged. These merges show as resolved in the duplicate artists list and can't be undone either.
 
 ## Removing albums and tracks
 

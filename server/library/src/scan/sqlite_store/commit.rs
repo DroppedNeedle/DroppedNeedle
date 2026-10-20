@@ -41,6 +41,7 @@ use crate::corrections::continuation::{Scope, continue_tracks};
 use crate::corrections::placement::place_scanned;
 use crate::corrections::release_join::join_replaced;
 use crate::corrections::retag_merge::{JoinCause, MergeOutcome, album_has_record, merge_retagged};
+use crate::identify::artist_links::mark_stale;
 use crate::identify::sqlite::{
     chosen_matches_differ, match_chosen, offer_album, release_chosen, retarget_references,
     settle_followed_match,
@@ -631,6 +632,42 @@ struct AlbumRow<'a> {
     now: f64,
 }
 
+/// Which side of a file's credits [`credit_rows`] reads.
+#[derive(Clone, Copy)]
+enum CreditSide {
+    Album,
+    Track,
+}
+
+/// Each credit of an album or a track as its artist links read it: the
+/// position, the artist row, the name it is credited as and the id its
+/// file holds. When they change, the album's artist links are worked out
+/// again ([`mark_stale`]): its proofs name the rows the credits pointed at
+/// and rest on those names and ids.
+type CreditRow = (i64, String, Option<String>, Option<String>);
+
+fn credit_rows(
+    tx: &Connection,
+    side: CreditSide,
+    subject: &str,
+) -> rusqlite::Result<Vec<CreditRow>> {
+    let sql = match side {
+        CreditSide::Album => {
+            "SELECT position, local_artist_id, credited_name, artist_mbid \
+             FROM local_album_artists WHERE local_album_id = ?1 ORDER BY position"
+        }
+        CreditSide::Track => {
+            "SELECT position, local_artist_id, credited_name, artist_mbid \
+             FROM local_track_artists WHERE local_track_id = ?1 ORDER BY position"
+        }
+    };
+    tx.prepare_cached(sql)?
+        .query_map(params![subject], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
+        .collect()
+}
+
 /// Insert or refresh the album row and its artist credits from one file.
 fn write_album(
     tx: &Connection,
@@ -691,6 +728,7 @@ fn write_album(
         tag.compilation,
         now,
     ])?;
+    let rows_before = credit_rows(tx, CreditSide::Album, album_id)?;
     let mut album_artist_rows = tx.prepare_cached(
         "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, \
          credited_name, join_phrase, artist_mbid) VALUES (?1, ?2, ?3, 'main', ?4, ?5, ?6) \
@@ -707,6 +745,9 @@ fn write_album(
             credit.join_phrase,
             credit.mbid,
         ])?;
+    }
+    if credit_rows(tx, CreditSide::Album, album_id)? != rows_before {
+        mark_stale(tx, album_id)?;
     }
 
     Ok(())
@@ -1176,6 +1217,7 @@ fn write_item(
         edition.total_discs,
         edition.release_date,
     ])?;
+    let rows_before = credit_rows(tx, CreditSide::Track, &track_id)?;
     tx.prepare_cached("DELETE FROM local_track_artists WHERE local_track_id = ?1")?
         .execute(params![track_id])?;
     let mut track_artist_rows = tx.prepare_cached(
@@ -1191,6 +1233,12 @@ fn write_item(
             credit.join_phrase,
             credit.mbid,
         ])?;
+    }
+    if credit_rows(tx, CreditSide::Track, &track_id)? != rows_before {
+        let album: String = tx
+            .prepare_cached("SELECT local_album_id FROM local_tracks WHERE id = ?1")?
+            .query_row(params![track_id], |row| row.get(0))?;
+        mark_stale(tx, &album)?;
     }
     tx.prepare_cached(
         "DELETE FROM local_track_genres WHERE local_track_id = ?1 AND source = 'local'",
@@ -1422,6 +1470,7 @@ fn follow_regrouped(
             "UPDATE local_album_artists SET local_album_id = ?1 WHERE local_album_id = ?2",
             params![album_id, target],
         )?;
+        mark_stale(tx, album_id)?;
         tx.execute(
             "DELETE FROM local_album_artwork WHERE local_album_id = ?1",
             params![target],

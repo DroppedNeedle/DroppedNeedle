@@ -35,7 +35,9 @@ use super::sql::{
     ALBUM_IDENTITY, REVISABLE, SAVE_ALBUM_IDENTITY, SAVE_TRACK_IDENTITY, TRACK_IDENTITY,
 };
 use super::stores::{Approval, RELEASE_FRESH_SECS, StoreError};
-use crate::corrections::artist_convergence::converge_ids;
+use crate::corrections::artist_convergence::{
+    any_waiting, converge_ids, follow_moved, follow_waiting,
+};
 use crate::corrections::continuation::{DRAIN_BOUND, Scope, continue_tracks, drain_continuations};
 use crate::corrections::release_join::join_replaced;
 use crate::matching::Release;
@@ -1143,13 +1145,15 @@ impl SqliteIdentifyStore {
 
 /// Work out what album `album`'s match proves about its artists and settle
 /// their links; with `converge`, also merge what the links prove to be one
-/// artist.
+/// artist. Either way, a row the pass left empty follows its credits.
 fn artist_pass(tx: &Transaction<'_>, album: &str, converge: bool) -> Result<(), StoreError> {
     let now = now_ms();
     let linked = artist_links::link_album(tx, album, now)?;
-    if converge && !linked.is_empty() {
-        converge_ids(tx, &linked, now as f64 / 1000.0)?;
+    let now_secs = now as f64 / 1000.0;
+    if converge && !linked.ids.is_empty() {
+        converge_ids(tx, &linked.ids, now_secs)?;
     }
+    follow_moved(tx, &linked.moved, now_secs)?;
     Ok(())
 }
 
@@ -1157,8 +1161,9 @@ fn artist_pass(tx: &Transaction<'_>, album: &str, converge: bool) -> Result<(), 
 /// (`artist_links`).
 impl SqliteIdentifyStore {
     /// Work out what the album's match proves about its artists and settle
-    /// their links, with no merge. Library Management runs this before it
-    /// plans an album.
+    /// their links, with no merge of rows the links prove to be one
+    /// artist; a row the pass left empty still follows its credits.
+    /// Library Management runs this before it plans an album.
     pub fn link_album_artists(&self, local_album_id: &str) -> Result<(), StoreError> {
         self.db
             .write_blocking(Lane::Background, "identify.link_album_artists", |tx| {
@@ -1216,6 +1221,29 @@ impl SqliteIdentifyStore {
                         "the album's artist links could not be worked out; a later sweep tries again"
                     ),
                 }
+            }
+            let any_waiting = self.db.read_blocking("identify.any_waiting", |conn| {
+                Ok::<_, StoreError>(any_waiting(conn)?)
+            })?;
+            let waiting = if any_waiting {
+                self.db
+                    .write_blocking(Lane::Background, "identify.follow_waiting", |tx| {
+                        changing(tx, |tx| {
+                            follow_waiting(tx, now_ms() as f64 / 1000.0)?;
+                            Ok(())
+                        })
+                    })
+                    .map(|written| self.landed(written))
+            } else {
+                Ok(())
+            };
+            match waiting {
+                Ok(()) => {}
+                Err(error @ (StoreError::Busy(_) | StoreError::Closed)) => return Err(error),
+                Err(error) => tracing::warn!(
+                    %error,
+                    "rows waiting to follow their artist credits not looked at; a later sweep tries again"
+                ),
             }
             *self.swept_guard() = stale.is_empty().then(|| Swept {
                 writes,

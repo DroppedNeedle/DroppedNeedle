@@ -8,7 +8,9 @@
 //! when the names agree (as credited, or one of the artist's MusicBrainz
 //! names when those were fetched). A name never picks a row: only the row
 //! already at that position can be proven. Placeholder artists, Various
-//! Artists rows and the sentinels prove nothing.
+//! Artists rows and the sentinels prove nothing. A track whose file
+//! credits only the lead of a release credit with guests is proven by the
+//! album's proof of its one artist (`stand_in`).
 //!
 //! Proofs are stored per album and count only while the album, its match
 //! and the credit they prove stay as they were ([`CURRENT_PROOF`]). A row
@@ -115,11 +117,15 @@ pub const CURRENT_PROOF: &str = "EXISTS (SELECT 1 FROM local_albums proof_album 
        AND lower(trim(COALESCE(ti.release_track_mbid, ''))) = lower(trim(p.release_track_mbid))) \
      END";
 
-/// SQL for the stamp of album `a`: its match (release, who made it, its
-/// revision and when), whether the match is accepted, and the count,
-/// revisions and latest time of its tracks' mappings. Any change to them
-/// moves it.
-const STAMP: &str = "COALESCE((SELECT lower(trim(COALESCE(e.release_mbid, ''))) || '|' \
+/// SQL for the stamp of album `a`: the version of the rules below, its
+/// match (release, who made it, its revision and when), whether the match
+/// is accepted, and the count, revisions and latest time of its tracks'
+/// mappings. Any change to them moves it. A change to the credits, which
+/// it leaves out, clears it instead ([`mark_stale`]).
+///
+/// Any change to what a pass proves bumps the leading version, so every
+/// album is worked through again once.
+const STAMP: &str = "'rules-2|' || COALESCE((SELECT lower(trim(COALESCE(e.release_mbid, ''))) || '|' \
      || e.decision_source || '|' || e.row_revision || '|' || e.selected_at || '|' \
      || (EXISTS (SELECT 1 FROM library_album_match_state s WHERE s.local_album_id = a.id) \
       OR EXISTS (SELECT 1 FROM library_custom_edition_active c WHERE c.local_album_id = a.id)) \
@@ -166,6 +172,18 @@ const ROW_IDS: &str = "SELECT DISTINCT mbid FROM ( \
       FROM library_artist_credit_proofs p WHERE p.source_local_artist_id = ?1 \
       AND (CURRENT_PROOF) LIMIT 2)) WHERE mbid IS NOT NULL";
 
+/// Have the next sweep work album `album` through again: which rows its
+/// credits point at, the names they are credited as or an artist id they
+/// hold changed in a way the stamp does not see.
+pub(crate) fn mark_stale(conn: &Connection, album: &str) -> rusqlite::Result<()> {
+    conn.prepare_cached(
+        "UPDATE library_artist_reconciliation_state SET input_revision = '' \
+         WHERE local_album_id = ?1 AND input_revision <> ''",
+    )?
+    .execute(params![album])?;
+    Ok(())
+}
+
 fn stale_albums_sql() -> String {
     STALE_ALBUMS.replace("STAMP", STAMP)
 }
@@ -200,6 +218,8 @@ struct LocalCredit {
     name: String,
     /// A live row that is neither a sentinel nor a Various Artists row.
     provable: bool,
+    /// The id the credit's file holds, if any.
+    file_id: Option<String>,
 }
 
 fn side_credits(
@@ -211,7 +231,7 @@ fn side_credits(
     conn.prepare_cached(&format!(
         "SELECT c.position, c.local_artist_id, c.credited_name, a.display_name, \
          a.retired_into_artist_id IS NULL AND a.kind <> 'various_artists' \
-         AND a.id NOT IN (?2, ?3) \
+         AND a.id NOT IN (?2, ?3), c.artist_mbid \
          FROM {table} c JOIN local_artists a ON a.id = c.local_artist_id \
          WHERE c.{key} = ?1 ORDER BY c.position"
     ))?
@@ -228,6 +248,7 @@ fn side_credits(
                 artist: row.get(1)?,
                 name,
                 provable: row.get(4)?,
+                file_id: row.get(5)?,
             })
         },
     )?
@@ -366,11 +387,39 @@ fn prove_side(
         {
             continue;
         }
+        out.push(Proof::of(
+            credit,
+            artist,
+            mbid,
+            names,
+            subject,
+            track,
+            release,
+            album_revision,
+        ));
+    }
+    Ok(true)
+}
+
+impl Proof {
+    /// The proof that `credit` is `artist` of the release, as `mbid`.
+    #[allow(clippy::too_many_arguments)]
+    fn of(
+        credit: &LocalCredit,
+        artist: &CreditedArtist,
+        mbid: String,
+        names: Option<&ArtistNames>,
+        subject: &str,
+        track: Option<(&str, &str, i64)>,
+        release: &str,
+        album_revision: i64,
+    ) -> Self {
+        let own = artist.id.trim().to_ascii_lowercase();
         let canonical = names
             .and_then(|names| names.artists.get(&own))
             .map(|known| known.name.clone())
             .unwrap_or_else(|| artist.name.clone());
-        out.push(Proof {
+        Self {
             track: track.map(|(id, _, _)| id.to_owned()),
             subject: subject.to_owned(),
             position: credit.position,
@@ -384,9 +433,72 @@ fn prove_side(
             release_track: track.map(|(_, release_track, _)| release_track.to_owned()),
             album_revision,
             track_revision: track.map(|(_, _, revision)| revision),
-        });
+        }
     }
-    Ok(true)
+}
+
+/// The album's proof of its one artist `album_artist` standing in for a
+/// track side that does not line up: the file credits one artist where
+/// the release credits a lead and others (guests, a duet). The credit is
+/// proven to be the lead when the lead is `album_artist`, the credit's
+/// name agrees with the lead and no other credit of the track, it holds
+/// none of the others' names (a combined tag such as "A feat. B" proves
+/// nothing), and its file holds no other id.
+#[allow(clippy::too_many_arguments)]
+fn stand_in(
+    conn: &Connection,
+    side: &[LocalCredit],
+    credits: &[CreditedArtist],
+    names: Option<&ArtistNames>,
+    album_artist: &str,
+    track: (&str, &str, i64),
+    release: &str,
+    album_revision: i64,
+    out: &mut Vec<Proof>,
+) -> rusqlite::Result<()> {
+    let [credit] = side else {
+        return Ok(());
+    };
+    let Some((lead, others)) = credits.split_first() else {
+        return Ok(());
+    };
+    if credit.position != 0
+        || !credit.provable
+        || credit
+            .file_id
+            .as_deref()
+            .is_some_and(|id| !id.eq_ignore_ascii_case(album_artist))
+        || merged_ids::current_id(conn, &lead.id)? != album_artist
+    {
+        return Ok(());
+    }
+    let agrees = |artist: &CreditedArtist| {
+        names_agree(
+            &credit.name,
+            artist,
+            &artist.id.trim().to_ascii_lowercase(),
+            names,
+        )
+    };
+    let folded = fold_text(&credit.name);
+    let combined = others.iter().any(|other| {
+        let name = fold_text(&other.name);
+        !name.is_empty() && folded.contains(&name)
+    });
+    if !agrees(lead) || others.iter().any(agrees) || combined {
+        return Ok(());
+    }
+    out.push(Proof::of(
+        credit,
+        lead,
+        album_artist.to_owned(),
+        names,
+        track.0,
+        Some(track),
+        release,
+        album_revision,
+    ));
+    Ok(())
 }
 
 /// What an album's accepted match proves: its proofs and its state.
@@ -412,6 +524,15 @@ fn prove(
         album_revision,
         &mut proofs,
     )?;
+    // The album's one artist, when its credit lines up and is proven.
+    let album_artist = (lines_up && album_side.len() == 1)
+        .then(|| {
+            proofs
+                .iter()
+                .find(|proof| proof.track.is_none() && proof.position == 0)
+                .map(|proof| proof.mbid.clone())
+        })
+        .flatten();
     let tracks: Vec<(String, String, i64)> = conn
         .prepare_cached(
             "SELECT t.id, i.release_track_mbid, i.row_revision FROM local_tracks t \
@@ -435,17 +556,31 @@ fn prove(
             continue;
         };
         let side = side_credits(conn, "local_track_artists", "local_track_id", track)?;
-        prove_side(
+        let mapped = (track.as_str(), release_track.as_str(), *revision);
+        let track_lines_up = prove_side(
             conn,
             &side,
             &on_release.artists,
             names,
             track,
-            Some((track, release_track, *revision)),
+            Some(mapped),
             identity_release,
             album_revision,
             &mut proofs,
         )?;
+        if !track_lines_up && let Some(album_artist) = &album_artist {
+            stand_in(
+                conn,
+                &side,
+                &on_release.artists,
+                names,
+                album_artist,
+                mapped,
+                identity_release,
+                album_revision,
+                &mut proofs,
+            )?;
+        }
     }
     Ok(if lines_up {
         (proofs, CreditState::Projected, "CREDITS_LINE_UP")
@@ -458,20 +593,40 @@ fn prove(
     })
 }
 
+/// A proof that moved, at the same credit, from one row to another and
+/// still proves the same artist: the credit's row changed under it (a
+/// changed sort name, say), not who the credit is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MovedProof {
+    pub from: String,
+    pub to: String,
+    pub mbid: String,
+}
+
+/// What [`link_album`] found: the ids worth judging for a merge, and the
+/// proofs that moved to another row.
+#[derive(Debug, Default)]
+pub struct Linked {
+    pub ids: Vec<String>,
+    pub moved: Vec<MovedProof>,
+}
+
 /// Replace the album's proofs with `proofs`, writing only what differs.
-/// Returns the rows of every proof removed or changed.
+/// Returns the rows of every proof removed or changed, and the proofs that
+/// moved to another row with the same id.
 fn store_proofs(
     tx: &Transaction<'_>,
     album: &str,
     proofs: &[Proof],
     now_ms: i64,
-) -> rusqlite::Result<BTreeSet<String>> {
+) -> rusqlite::Result<(BTreeSet<String>, Vec<MovedProof>)> {
     type Key = (String, String, i64);
-    let existing: Vec<(Key, String, Option<String>, String)> = tx
+    #[allow(clippy::type_complexity)]
+    let existing: Vec<(Key, String, Option<String>, String, String)> = tx
         .prepare_cached(
             "SELECT subject_kind, subject_id, credit_position, evidence_hash, \
-             source_local_artist_id, local_artist_id FROM library_artist_credit_proofs \
-             WHERE local_album_id = ?1",
+             source_local_artist_id, local_artist_id, artist_mbid \
+             FROM library_artist_credit_proofs WHERE local_album_id = ?1",
         )?
         .query_map(params![album], |row| {
             Ok((
@@ -479,6 +634,7 @@ fn store_proofs(
                 row.get(3)?,
                 row.get(4)?,
                 row.get(5)?,
+                row.get(6)?,
             ))
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -496,10 +652,21 @@ fn store_proofs(
         })
         .collect();
     let mut lost = BTreeSet::new();
-    for (key, hash, source, artist) in &existing {
+    let mut moved = Vec::new();
+    for (key, hash, source, artist, mbid) in &existing {
         let kept = wanted.get(key).is_some_and(|(_, wanted)| wanted == hash);
         if kept {
             continue;
+        }
+        if let (Some(from), Some((proof, _))) = (source, wanted.get(key))
+            && *from != proof.artist
+            && *mbid == proof.mbid
+        {
+            moved.push(MovedProof {
+                from: from.clone(),
+                to: proof.artist.clone(),
+                mbid: mbid.clone(),
+            });
         }
         lost.extend(source.iter().cloned());
         lost.insert(artist.clone());
@@ -554,7 +721,7 @@ fn store_proofs(
             now_ms,
         ])?;
     }
-    Ok(lost)
+    Ok((lost, moved))
 }
 
 /// Write the album's state with its stamp, or remove it (`None`), only
@@ -594,15 +761,16 @@ fn store_state(
 /// Work out what the album's match proves about its artists, store it,
 /// and settle the links of every row credited on it and of every row that
 /// lost a proof. Returns the ids the album proves and the ids newly
-/// linked: the groups worth judging for a merge. One transaction, no file
-/// read, nothing asked of any outside service.
-pub fn link_album(tx: &Transaction<'_>, album: &str, now_ms: i64) -> rusqlite::Result<Vec<String>> {
+/// linked (the groups worth judging for a merge), and the proofs that
+/// moved to another row. One transaction, no file read, nothing asked of
+/// any outside service.
+pub fn link_album(tx: &Transaction<'_>, album: &str, now_ms: i64) -> rusqlite::Result<Linked> {
     let live: Option<bool> = tx
         .prepare_cached("SELECT retired_into_album_id IS NULL FROM local_albums WHERE id = ?1")?
         .query_row(params![album], |row| row.get(0))
         .optional()?;
     let Some(live) = live else {
-        return Ok(Vec::new());
+        return Ok(Linked::default());
     };
     let identity: Option<(Option<String>, i64)> = if live {
         tx.prepare_cached(
@@ -640,7 +808,7 @@ pub fn link_album(tx: &Transaction<'_>, album: &str, now_ms: i64) -> rusqlite::R
             },
         },
     };
-    let mut rows = store_proofs(tx, album, &proofs, now_ms)?;
+    let (mut rows, moved) = store_proofs(tx, album, &proofs, now_ms)?;
     store_state(tx, album, state, now_ms)?;
     let credited: Vec<String> = tx
         .prepare_cached(
@@ -653,7 +821,10 @@ pub fn link_album(tx: &Transaction<'_>, album: &str, now_ms: i64) -> rusqlite::R
     rows.extend(credited);
     let mut ids: BTreeSet<String> = proofs.into_iter().map(|proof| proof.mbid).collect();
     ids.extend(settle(tx, &rows.into_iter().collect::<Vec<_>>(), now_ms)?);
-    Ok(ids.into_iter().collect())
+    Ok(Linked {
+        ids: ids.into_iter().collect(),
+        moved,
+    })
 }
 
 /// A change to one row's link.

@@ -1105,6 +1105,13 @@ impl Links {
     /// The release on file: credited to `artists`, with `tracks` tracks
     /// each credited to `track_artists`.
     fn release(&self, artists: &[(&str, &str)], tracks: u32, track_artists: &[(&str, &str)]) {
+        let each = vec![track_artists; tracks as usize];
+        self.release_tracks(artists, &each);
+    }
+
+    /// The release on file: credited to `artists`, with one track per
+    /// entry of `tracks`, credited as it says.
+    fn release_tracks(&self, artists: &[(&str, &str)], tracks: &[&[(&str, &str)]]) {
         let credited = |artists: &[(&str, &str)]| -> Vec<CreditedArtist> {
             artists
                 .iter()
@@ -1123,8 +1130,9 @@ impl Links {
                     release_group_id: LINK_GROUP.to_owned(),
                     title: "Album".to_owned(),
                     artists: credited(artists),
-                    tracks: (1..=tracks)
-                        .map(|number| ReleaseTrack {
+                    tracks: (1..)
+                        .zip(tracks)
+                        .map(|(number, track_artists)| ReleaseTrack {
                             id: format!("rt-{number}"),
                             recording_id: format!("rec-{number}"),
                             title: format!("Song {number}"),
@@ -1575,6 +1583,10 @@ fn a_row_its_matched_album_proves_merges_into_the_linked_row() {
 /// has a credit of its own no proof covers.
 #[test]
 fn a_row_not_proven_on_every_credit_is_not_merged() {
+    use droppedneedle_library::matching::model::{
+        ArtistAlias, ArtistName, ArtistNames, ReleaseExtras,
+    };
+
     let case = |survivor_link: &str| {
         let links = Links::new();
         links.artist("ar-s", "Alpha", 1.0);
@@ -1614,6 +1626,263 @@ fn a_row_not_proven_on_every_credit_is_not_merged() {
     links.unmatched_album("an", &[("ar-s", "Alpha", None)]);
     unmerged(&links);
     assert_eq!(links.link_of("ar-s"), automatic(LINK_X));
+
+    // The file credits only a guest of the release's track: the album's
+    // proof of its lead does not stand in for it.
+    let links = Links::new();
+    links.artist("ar-s", "Alpha", 1.0);
+    links.artist("ar-r", "Gamma", 2.0);
+    links.link("ar-s", LINK_X, "manual");
+    links.album(
+        "al",
+        &[("ar-r", "Alpha", None)],
+        &[("t1", &[("ar-r", "Gamma", None)])],
+        "automatic",
+    );
+    links.release(
+        &[(LINK_X, "Alpha")],
+        1,
+        &[(LINK_X, "Alpha"), (LINK_Z, "Gamma")],
+    );
+    unmerged(&links);
+
+    // The row the app linked to x has a file holding x, but another
+    // matched album proves it to be y, and nothing has settled its link
+    // since.
+    let links = Links::new();
+    links.artist("ar-s", "Alpha", 1.0);
+    links.artist("ar-r", "ALPHA", 2.0);
+    links.artist("ar-q", "Qu", 3.0);
+    links.unmatched_album("af", &[("ar-s", "Alpha", Some(LINK_X))]);
+    links.album(
+        "ay",
+        &[("ar-q", "Qu", None)],
+        &[
+            ("ty1", &[("ar-q", "Qu", None)]),
+            ("ty2", &[("ar-s", "Alpha", None)]),
+        ],
+        "automatic",
+    );
+    let alpha: &[Seeded<'_>] = &[("ar-r", "Alpha", None)];
+    links.album("al", alpha, &[("t1", alpha)], "automatic");
+    links.release_tracks(
+        &[(LINK_X, "Alpha")],
+        &[&[(LINK_X, "Alpha")], &[(LINK_Y, "Alpha")]],
+    );
+    links.store.link_album_artists("ay").unwrap();
+    assert!(
+        links
+            .proofs()
+            .contains(&Links::proof("track", "ty2", 0, "ar-s", LINK_Y))
+    );
+    links.link("ar-s", LINK_X, "automatic");
+    unmerged(&links);
+
+    // The file credits "Alpha & Gamma" as one artist. MusicBrainz lists
+    // that as one of x's names, but it holds the guest's name too: the
+    // album's proof does not stand in for it.
+    let links = Links::new();
+    links.artist("ar-s", "Alpha", 1.0);
+    links.artist("ar-r", "ALPHA", 2.0);
+    links.link("ar-s", LINK_X, "manual");
+    links.album(
+        "al",
+        &[("ar-r", "Alpha", None)],
+        &[("t1", &[("ar-r", "Alpha & Gamma", None)])],
+        "automatic",
+    );
+    links.release(
+        &[(LINK_X, "Alpha")],
+        1,
+        &[(LINK_X, "Alpha"), (LINK_Z, "Gamma")],
+    );
+    links
+        .store
+        .graft_extras(
+            LINK_RELEASE,
+            &ReleaseExtras {
+                relations: None,
+                names: Some(ArtistNames {
+                    fetched_at_ms: 1,
+                    artists: std::collections::BTreeMap::from([(
+                        LINK_X.to_owned(),
+                        ArtistName {
+                            name: "Alpha".to_owned(),
+                            sort_name: None,
+                            aliases: Some(vec![ArtistAlias {
+                                name: "Alpha & Gamma".to_owned(),
+                                ..ArtistAlias::default()
+                            }]),
+                        },
+                    )]),
+                }),
+            },
+        )
+        .unwrap()
+        .expect("names grafted");
+    unmerged(&links);
+    assert!(
+        !links
+            .proofs()
+            .iter()
+            .any(|(kind, subject, ..)| kind == "track" && subject == "t1")
+    );
+}
+
+/// Rows a matched album proves to be x merge into the row the app linked
+/// to x when its files hold x, though a credit of its own on an album
+/// with no accepted match is not proven. A track the file credits to the
+/// lead alone, where the release credits the lead and a guest, is proven
+/// by the album's proof of its one artist, so the row merges too.
+#[test]
+fn rows_a_matched_album_proves_merge_into_the_row_holding_the_id() {
+    let links = Links::new();
+    links.artist("ar-s", "Alpha", 1.0);
+    links.artist("ar-r", "ALPHA", 2.0);
+    links.link("ar-s", LINK_X, "automatic");
+    links.unmatched_album("af", &[("ar-s", "Alpha", Some(LINK_X))]);
+    links.unmatched_album("an", &[("ar-s", "Alpha", None)]);
+    let alpha: &[Seeded<'_>] = &[("ar-r", "Alpha", None)];
+    links.album("al", alpha, &[("t1", alpha)], "automatic");
+    links.release(&[(LINK_X, "Alpha")], 1, &[(LINK_X, "Alpha")]);
+    links.store.link_and_merge_album_artists("al").unwrap();
+    assert_eq!(links.retired_into("ar-r").as_deref(), Some("ar-s"));
+    assert_eq!(links.link_of("ar-s"), automatic(LINK_X));
+
+    let links = Links::new();
+    links.artist("ar-s", "Alpha", 1.0);
+    links.artist("ar-r", "ALPHA", 2.0);
+    links.link("ar-s", LINK_X, "manual");
+    let alpha: &[Seeded<'_>] = &[("ar-r", "Alpha", None)];
+    links.album("al", alpha, &[("t1", alpha), ("t2", alpha)], "automatic");
+    links.release_tracks(
+        &[(LINK_X, "Alpha")],
+        &[
+            &[(LINK_X, "Alpha")],
+            &[(LINK_X, "Alpha"), (LINK_Z, "Gamma")],
+        ],
+    );
+    links.store.link_and_merge_album_artists("al").unwrap();
+    assert_eq!(links.retired_into("ar-r").as_deref(), Some("ar-s"));
+    assert!(
+        links
+            .proofs()
+            .contains(&Links::proof("track", "t2", 0, "ar-s", LINK_X)),
+        "the lead's proof stands in for the track"
+    );
+}
+
+/// A row whose proven credits all moved to another row (as a changed
+/// sort name moves them) and that has nothing left of its own merges
+/// into that row, its id kept as an alias, even on a pass that merges
+/// nothing else. It stays when one of its plays is of a track now
+/// credited to another artist (the play would be filed under the wrong
+/// one), and when a link or a file proves the other row another artist.
+#[test]
+fn a_row_left_empty_follows_its_credits() {
+    let case = |play_track: &str, before: &dyn Fn(&Links)| {
+        let links = Links::new();
+        links.artist("ar-o", "Alpha", 1.0);
+        links.artist("ar-n", "Alpha", 2.0);
+        links.artist("ar-z", "Zeta", 3.0);
+        links.album(
+            "al",
+            &[("ar-o", "Alpha", None)],
+            &[
+                ("t1", &[("ar-o", "Alpha", None)]),
+                ("t2", &[("ar-z", "Zeta", None)]),
+            ],
+            "automatic",
+        );
+        links.release(&[(LINK_X, "Alpha")], 2, &[(LINK_X, "Alpha")]);
+        links.store.link_album_artists("al").unwrap();
+        assert_eq!(links.link_of("ar-o"), automatic(LINK_X));
+        links
+            .db
+            .execute_batch(&format!(
+                "UPDATE local_album_artists SET local_artist_id = 'ar-n' \
+                 WHERE local_artist_id = 'ar-o'; \
+                 UPDATE local_track_artists SET local_artist_id = 'ar-n' \
+                 WHERE local_artist_id = 'ar-o'; \
+                 UPDATE local_albums SET album_artist_id = 'ar-n' WHERE id = 'al'; \
+                 INSERT INTO library_play_history (id, user_id, local_artist_id, \
+                 local_track_id, track_name, artist_name, played_at) VALUES ('play', 'admin', \
+                 'ar-o', '{play_track}', 'Song', 'Alpha', '2026-01-01T00:00:00Z');"
+            ))
+            .expect("credits move");
+        before(&links);
+        links.store.link_album_artists("al").unwrap();
+        links
+    };
+    let stays = |links: &Links| {
+        assert_eq!(links.retired_into("ar-o"), None);
+        assert_eq!(links.merges(), 0);
+    };
+
+    let links = case("t1", &|_| {});
+    assert_eq!(links.retired_into("ar-o").as_deref(), Some("ar-n"));
+    assert_eq!(links.link_of("ar-n"), automatic(LINK_X));
+    assert_eq!(
+        links.count(
+            "SELECT COUNT(*) FROM local_artist_aliases WHERE alias = 'ar-o' \
+             AND local_artist_id = 'ar-n' AND kind = 'merged_artist'"
+        ),
+        1
+    );
+    assert_eq!(
+        links.count("SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = 'ar-n'"),
+        1
+    );
+    assert_eq!(links.merges(), 1);
+
+    stays(&case("t2", &|_| {}));
+    stays(&case("t1", &|links| links.link("ar-n", LINK_Y, "manual")));
+    stays(&case("t1", &|links| {
+        links.unmatched_album("ay", &[("ar-n", "Alpha", Some(LINK_Y))]);
+    }));
+}
+
+/// A row whose proven credits moved while other credits of its own have
+/// yet to (a scan commits a large retag in several windows) waits as an
+/// open merge candidate, and follows them at the next sweep once the rest
+/// have moved too.
+#[test]
+fn a_row_follows_its_credits_once_the_rest_have_moved() {
+    let links = Links::new();
+    links.artist("ar-o", "Alpha", 1.0);
+    links.artist("ar-n", "Alpha", 2.0);
+    let alpha: &[Seeded<'_>] = &[("ar-o", "Alpha", None)];
+    links.album("al", alpha, &[("t1", alpha)], "automatic");
+    links.unmatched_album("ac", alpha);
+    links.release(&[(LINK_X, "Alpha")], 1, &[(LINK_X, "Alpha")]);
+    links.store.link_album_artists("al").unwrap();
+    let waiting = "SELECT COUNT(*) FROM local_artist_merge_candidates \
+                   WHERE left_artist_id = 'ar-o' AND right_artist_id = 'ar-n' \
+                   AND reason_code = 'CREDITS_MOVED_TO_PROVEN_ROW' AND state = ";
+
+    links
+        .db
+        .execute_batch(
+            "UPDATE local_album_artists SET local_artist_id = 'ar-n' WHERE local_album_id = 'al'; \
+             UPDATE local_track_artists SET local_artist_id = 'ar-n' WHERE local_track_id = 't1'; \
+             UPDATE local_albums SET album_artist_id = 'ar-n' WHERE id = 'al';",
+        )
+        .expect("first window moves");
+    links.store.link_album_artists("al").unwrap();
+    assert_eq!(links.retired_into("ar-o"), None);
+    assert_eq!(links.count(&format!("{waiting}'open'")), 1);
+
+    links
+        .db
+        .execute_batch(
+            "UPDATE local_album_artists SET local_artist_id = 'ar-n' WHERE local_album_id = 'ac'; \
+             UPDATE local_albums SET album_artist_id = 'ar-n' WHERE id = 'ac';",
+        )
+        .expect("second window moves");
+    links.store.sweep_artist_links().unwrap();
+    assert_eq!(links.retired_into("ar-o").as_deref(), Some("ar-n"));
+    assert_eq!(links.count(&format!("{waiting}'resolved'")), 1);
+    assert_eq!(links.merges(), 1);
 }
 
 /// After a sweep finds no album to work through, writes by other

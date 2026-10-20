@@ -12,22 +12,35 @@
 //! A row is retired into it only when it has no link and every one of its
 //! credits holds the artist, by its file's id or by a current proof at
 //! that credit, so a file nothing proves never moves with it. A survivor
-//! the app linked, or one in the group only through a matched album's
-//! proofs, takes others only when it has credits and every one holds the
-//! artist too: one wrong album match cannot pull other rows into it.
+//! in the group only through a matched album's proofs takes others only
+//! when it has credits and every one holds the artist too: one wrong album
+//! match cannot pull other rows into it. A survivor the app linked takes
+//! them when that holds, or when its own files hold the artist's id and
+//! nothing names another, so its link does not rest on a match alone.
 //! A group an administrator marked as distinct artists is left alone. The
 //! merge is the manual merge's, with no undo: credits, favorites, plays,
 //! links and app ids move, and the old id stays as an alias. No file is
 //! read or written.
 //!
+//! A row a pass of artist links left empty follows its credits
+//! ([`follow_moved`]): when a credit proven to be the artist moved to
+//! another row (a changed sort name, say), nothing proves that row another
+//! artist, and the old row has nothing left of its own, it is merged into
+//! the row the credit went to. While some of its credits have yet to move
+//! (a scan commits a large retag in several windows), the old row waits as
+//! an open merge candidate and is looked at again at each run end and in
+//! each sweep ([`follow_waiting`]).
+//!
 //! The app's links among a run end's candidates are settled first, so a
 //! link whose support is gone does not lead a group.
 
-use rusqlite::{OptionalExtension as _, Transaction, params};
+use std::collections::BTreeSet;
 
-use super::artists::retire_artist;
+use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
+
+use super::artists::{CREDITS_MOVED, retire_artist};
 use crate::catalog_revision::bump_catalog;
-use crate::identify::artist_links::{CURRENT_PROOF, settle};
+use crate::identify::artist_links::{CURRENT_PROOF, MovedProof, settle};
 use crate::operations::decisions::{ArtistAction, record_artist_action};
 use crate::scan::sqlite_store::artists::{SENTINEL_ARTIST_IDS, proven_rows};
 use droppedneedle_kernel::db::savepoint;
@@ -84,19 +97,21 @@ fn with_current(sql: &str) -> String {
         .replace("CURRENT_PROOF", CURRENT_PROOF)
 }
 
-/// Merge every group of live rows proven to be one MusicBrainz artist.
-/// A group the store fails on is rolled back and logged, and the next run
-/// end tries it again.
+/// Merge every group of live rows proven to be one MusicBrainz artist,
+/// then the rows waiting to follow their credits that now can. A group
+/// the store fails on is rolled back and logged, and the next run end
+/// tries it again.
 pub(crate) fn converge_artists(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<()> {
-    let ids = match candidate_ids(tx) {
-        Ok(ids) => ids,
+    match candidate_ids(tx) {
+        Ok(ids) => {
+            settle_automatic(tx, &ids, now)?;
+            converge_ids(tx, &ids, now)?;
+        }
         Err(error) => {
             tracing::warn!(%error, "artist convergence could not list its candidates");
-            return Ok(());
         }
-    };
-    settle_automatic(tx, &ids, now)?;
-    converge_ids(tx, &ids, now)
+    }
+    follow_waiting(tx, now)
 }
 
 /// Settle the app's links to any of `ids` before their groups are judged.
@@ -158,7 +173,14 @@ pub(crate) fn converge_ids(tx: &Transaction<'_>, ids: &[String], now: f64) -> ru
         if retire.is_empty() {
             continue;
         }
-        if (survivor.automatic || survivor.proof_only) && !fully_proven(tx, &survivor.id, mbid)? {
+        let takes_others = if survivor.proof_only {
+            fully_proven(tx, &survivor.id, mbid)?
+        } else if survivor.automatic {
+            fully_proven(tx, &survivor.id, mbid)? || files_prove(tx, &survivor.id, mbid)?
+        } else {
+            true
+        };
+        if !takes_others {
             tracing::debug!(
                 artist_mbid = mbid,
                 artist_id = survivor.id,
@@ -167,7 +189,8 @@ pub(crate) fn converge_ids(tx: &Transaction<'_>, ids: &[String], now: f64) -> ru
             );
             continue;
         }
-        if marked_distinct(tx, &rows)? {
+        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        if marked_distinct(tx, &ids)? {
             tracing::info!(
                 artist_mbid = mbid,
                 artist_ids = ?rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
@@ -305,11 +328,261 @@ fn other_id(tx: &Transaction<'_>, artist: &str, mbid: &str) -> rusqlite::Result<
         .query_row(params![artist, mbid], |row| row.get(0))
 }
 
+/// Whether a file of one of `artist`'s credits holds `mbid` and nothing
+/// proves it another artist: what lets a survivor the app linked take in
+/// others while a credit of its own is not proven.
+fn files_prove(tx: &Transaction<'_>, artist: &str, mbid: &str) -> rusqlite::Result<bool> {
+    let held: bool = tx
+        .prepare_cached(
+            "SELECT EXISTS (SELECT 1 FROM local_track_artists \
+             WHERE local_artist_id = ?1 AND artist_mbid = ?2) \
+             OR EXISTS (SELECT 1 FROM local_album_artists \
+             WHERE local_artist_id = ?1 AND artist_mbid = ?2)",
+        )?
+        .query_row(params![artist, mbid], |row| row.get(0))?;
+    Ok(held && !other_id(tx, artist, mbid)?)
+}
+
+/// True when something other than credits still on it keeps row `?1`,
+/// whose proven credits for `?3` moved to the row that is now `?2`, from
+/// following them: it is not live, is a sentinel (`?4`, `?5`) or a Various
+/// Artists row, has a link, has a proof naming another id, or has a play
+/// of a track now credited to neither row (a play goes with its row, and
+/// must not land on another artist's).
+const HELD_BACK: &str = "SELECT NOT EXISTS (SELECT 1 FROM local_artists WHERE id = ?1 \
+     AND retired_into_artist_id IS NULL AND kind <> 'various_artists' AND id NOT IN (?4, ?5)) \
+     OR EXISTS (SELECT 1 FROM local_artist_external_identities WHERE local_artist_id = ?1) \
+     OR EXISTS (SELECT 1 FROM library_artist_credit_proofs \
+      WHERE (source_local_artist_id = ?1 OR local_artist_id = ?1) AND artist_mbid <> ?3) \
+     OR EXISTS (SELECT 1 FROM library_play_history h WHERE h.local_artist_id = ?1 \
+      AND EXISTS (SELECT 1 FROM local_track_artists c WHERE c.local_track_id = h.local_track_id) \
+      AND NOT EXISTS (SELECT 1 FROM local_track_artists c \
+       WHERE c.local_track_id = h.local_track_id AND c.local_artist_id IN (?1, ?2)))";
+
+/// True when row `?1` still has a credit, or an album names it as album
+/// artist: it follows its credits once the rest of them have moved.
+const STILL_CREDITED: &str = "SELECT \
+     EXISTS (SELECT 1 FROM local_album_artists WHERE local_artist_id = ?1) \
+     OR EXISTS (SELECT 1 FROM local_track_artists WHERE local_artist_id = ?1) \
+     OR EXISTS (SELECT 1 FROM local_albums WHERE album_artist_id = ?1)";
+
+/// The live row `artist` is now: itself, or the row a chain of merges
+/// retired it into.
+fn live_row(tx: &Transaction<'_>, artist: &str) -> rusqlite::Result<Option<String>> {
+    tx.prepare_cached(
+        "WITH RECURSIVE chain(id, next, depth) AS ( \
+         SELECT id, retired_into_artist_id, 0 FROM local_artists WHERE id = ?1 \
+         UNION ALL SELECT a.id, a.retired_into_artist_id, chain.depth + 1 \
+          FROM local_artists a JOIN chain ON a.id = chain.next WHERE chain.depth < 16) \
+         SELECT id FROM chain WHERE next IS NULL LIMIT 1",
+    )?
+    .query_row(params![artist], |row| row.get(0))
+    .optional()
+}
+
+/// Whether `artist` is proven to be an artist other than `mbid`: a link
+/// to another id, a file holding another id, or a current proof naming
+/// another.
+fn contradicted(tx: &Transaction<'_>, artist: &str, mbid: &str) -> rusqlite::Result<bool> {
+    let link: Option<String> = tx
+        .prepare_cached(
+            "SELECT lower(provider_artist_id) FROM local_artist_external_identities \
+             WHERE local_artist_id = ?1 AND provider = 'musicbrainz'",
+        )?
+        .query_row(params![artist], |row| row.get(0))
+        .optional()?;
+    Ok(link.is_some_and(|link| link != mbid) || other_id(tx, artist, mbid)?)
+}
+
+/// Where one row whose proven credits moved stands.
+enum Follow {
+    /// Merged into the row its credits went to.
+    Merged,
+    /// Some of its credits have not moved yet.
+    Waiting(String),
+    /// It stays where it is.
+    Stays,
+}
+
+/// Merge row `from` into the live row of `to`, where its credits proven to
+/// be `mbid` moved, once nothing of its own is left ([`HELD_BACK`],
+/// [`STILL_CREDITED`]) and nothing proves that row another artist. A
+/// merge the store fails on is rolled back and logged.
+fn follow_one(
+    tx: &Transaction<'_>,
+    from: &str,
+    to: &str,
+    mbid: &str,
+    now: f64,
+) -> rusqlite::Result<Follow> {
+    let Some(survivor) = live_row(tx, to)? else {
+        return Ok(Follow::Stays);
+    };
+    if survivor == from {
+        return Ok(Follow::Stays);
+    }
+    let held: bool = tx.prepare_cached(HELD_BACK)?.query_row(
+        params![
+            from,
+            survivor,
+            mbid,
+            SENTINEL_ARTIST_IDS[0],
+            SENTINEL_ARTIST_IDS[1]
+        ],
+        |row| row.get(0),
+    )?;
+    if held {
+        tracing::debug!(
+            artist_mbid = mbid,
+            artist_id = from,
+            "artist row whose credits moved has something of its own; not merged"
+        );
+        return Ok(Follow::Stays);
+    }
+    if contradicted(tx, &survivor, mbid)? {
+        tracing::debug!(
+            artist_mbid = mbid,
+            artist_id = survivor,
+            "row the credits moved to is proven to be another artist; not merged"
+        );
+        return Ok(Follow::Stays);
+    }
+    if marked_distinct(tx, &[from, survivor.as_str()])? {
+        tracing::info!(
+            artist_mbid = mbid,
+            artist_ids = ?[from, survivor.as_str()],
+            "artist rows marked distinct by an administrator; not merged"
+        );
+        return Ok(Follow::Stays);
+    }
+    let credited: bool = tx
+        .prepare_cached(STILL_CREDITED)?
+        .query_row(params![from], |row| row.get(0))?;
+    if credited {
+        return Ok(Follow::Waiting(survivor));
+    }
+    let retire = [from.to_owned()];
+    match savepoint(tx, "artist_follow_credits", || {
+        merge_group(tx, &survivor, &retire, mbid, now)
+    })? {
+        Ok(()) => {
+            tracing::info!(
+                artist_mbid = mbid,
+                surviving_artist_id = survivor,
+                retired_artist_id = from,
+                "artist row left empty merged into the row its credits moved to"
+            );
+            Ok(Follow::Merged)
+        }
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                artist_mbid = mbid,
+                surviving_artist_id = survivor,
+                retired_artist_id = from,
+                "artist row left empty could not be merged; it stays as it is"
+            );
+            Ok(Follow::Stays)
+        }
+    }
+}
+
+/// The id of the open candidate recording that `from` waits to follow its
+/// credits proven to be `mbid`: the id is read back from it.
+fn waiting_id(from: &str, mbid: &str) -> String {
+    format!("credits-moved:{from}:{mbid}")
+}
+
+/// Merge each row a pass left empty into the row its proven credits moved
+/// to ([`follow_one`]). A row with credits still to move is recorded as an
+/// open merge candidate and looked at again by [`follow_waiting`]. Runs
+/// after every pass, merging or not, since the moved proof is overwritten
+/// in place and no later pass can find the move again.
+pub(crate) fn follow_moved(
+    tx: &Transaction<'_>,
+    moved: &[MovedProof],
+    now: f64,
+) -> rusqlite::Result<()> {
+    let mut seen = BTreeSet::new();
+    let mut merged = 0;
+    for MovedProof { from, to, mbid } in moved {
+        if !seen.insert(from.as_str()) {
+            continue;
+        }
+        match follow_one(tx, from, to, mbid, now)? {
+            Follow::Merged => merged += 1,
+            Follow::Waiting(survivor) => {
+                tx.prepare_cached(
+                    "INSERT OR IGNORE INTO local_artist_merge_candidates (id, left_artist_id, \
+                     right_artist_id, reason_code, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                )?
+                .execute(params![
+                    waiting_id(from, mbid),
+                    from,
+                    survivor,
+                    CREDITS_MOVED,
+                    now
+                ])?;
+            }
+            Follow::Stays => {}
+        }
+    }
+    if merged > 0 {
+        bump_catalog(tx)?;
+    }
+    Ok(())
+}
+
+/// Whether a row waits to follow its credits ([`follow_waiting`]).
+pub(crate) fn any_waiting(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.prepare_cached(
+        "SELECT EXISTS (SELECT 1 FROM local_artist_merge_candidates \
+         WHERE reason_code = ?1 AND state = 'open')",
+    )?
+    .query_row(params![CREDITS_MOVED], |row| row.get(0))
+}
+
+/// Look again at every row waiting to follow its credits
+/// ([`follow_moved`]), at the end of each scan run and in each sweep of
+/// identification's artist links. A merge resolves the candidate; one
+/// still waiting stays open.
+pub(crate) fn follow_waiting(tx: &Transaction<'_>, now: f64) -> rusqlite::Result<()> {
+    let waiting: Vec<(String, String, String)> = tx
+        .prepare_cached(
+            "SELECT id, left_artist_id, right_artist_id FROM local_artist_merge_candidates \
+             WHERE reason_code = ?1 AND state = 'open' ORDER BY id",
+        )?
+        .query_map(params![CREDITS_MOVED], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut merged = 0;
+    for (id, from, to) in waiting {
+        let Some(mbid) = id
+            .strip_prefix(&format!("credits-moved:{from}:"))
+            .map(str::to_owned)
+        else {
+            tracing::warn!(
+                candidate_id = id,
+                "waiting artist follow has no artist id; skipped"
+            );
+            continue;
+        };
+        if let Follow::Merged = follow_one(tx, &from, &to, &mbid, now)? {
+            merged += 1;
+        }
+    }
+    if merged > 0 {
+        bump_catalog(tx)?;
+    }
+    Ok(())
+}
+
 /// Whether an administrator marked any two of the rows as distinct
 /// artists, at any revision, either row possibly merged since.
-fn marked_distinct(tx: &Transaction<'_>, rows: &[Member]) -> rusqlite::Result<bool> {
-    let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
-    let ids = serde_json::to_string(&ids).unwrap_or_default();
+fn marked_distinct(tx: &Transaction<'_>, ids: &[&str]) -> rusqlite::Result<bool> {
+    let ids = serde_json::to_string(ids).unwrap_or_default();
     tx.prepare_cached(
         "WITH members(id) AS (SELECT value FROM json_each(?1)), \
          pairs AS (SELECT \

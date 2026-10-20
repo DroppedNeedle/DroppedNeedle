@@ -233,6 +233,10 @@ fn reference_counts(
     Ok(counts)
 }
 
+/// The reason of an open merge candidate that records a row waiting to
+/// follow its proven credits to another row (`artist_convergence`).
+pub(super) const CREDITS_MOVED: &str = "CREDITS_MOVED_TO_PROVEN_ROW";
+
 /// Point every reference of `artist` at `survivor` and retire it.
 pub(super) fn retire_artist(
     tx: &Transaction<'_>,
@@ -240,6 +244,16 @@ pub(super) fn retire_artist(
     survivor: &str,
     now: f64,
 ) -> rusqlite::Result<()> {
+    // A row waiting to follow its credits to `artist` follows them on to
+    // the survivor; every other open candidate naming `artist` is resolved
+    // below.
+    tx.prepare_cached(
+        "UPDATE OR IGNORE local_artist_merge_candidates SET right_artist_id = ?2, \
+         updated_at = ?3, row_revision = row_revision + 1 \
+         WHERE reason_code = ?4 AND state = 'open' AND right_artist_id = ?1 \
+         AND left_artist_id <> ?2",
+    )?
+    .execute(params![artist, survivor, now, CREDITS_MOVED])?;
     let moves = [
         "UPDATE local_album_artists SET local_artist_id = ?2, row_revision = row_revision + 1 \
          WHERE local_artist_id = ?1",

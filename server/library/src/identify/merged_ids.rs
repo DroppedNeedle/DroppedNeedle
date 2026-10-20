@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
-use super::artist_links::{placeholder, settle, touch_artist};
+use super::artist_links::{mark_stale, placeholder, settle, touch_artist};
 use super::sources::ArtistAnswer;
 use crate::operations::decisions::{ArtistAction, record_artist_action};
 
@@ -256,11 +256,7 @@ fn follow(
     tx.prepare_cached("UPDATE local_artists SET converged_mbid = ?2 WHERE converged_mbid = ?1")?
         .execute(params![retired, current])?;
     for album in &albums {
-        tx.prepare_cached(
-            "UPDATE library_artist_reconciliation_state SET input_revision = '' \
-             WHERE local_album_id = ?1",
-        )?
-        .execute(params![album])?;
+        mark_stale(tx, album)?;
     }
     let rows: Vec<String> = tx
         .prepare_cached(
