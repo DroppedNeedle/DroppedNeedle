@@ -9,18 +9,17 @@
 //! - [`CollectionsPlaylistBridge`]: imported playlists are ordinary rows in
 //!   `playlists` / `playlist_tracks`, written through the collections
 //!   playlist store, so they show up wherever playlists do.
+//!
+//! Errors carry a log-only cause.
 
 use std::sync::Arc;
 
-use futures_util::future::BoxFuture;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use super::spotify::{ImportedTrack, PlaylistIndex, PlaylistTrackSink};
+use super::spotify::ImportedTrack;
 use super::spotify_client::now_unix_secs;
-use super::spotify_oauth::{
-    PendingAuth, STATE_TTL_SECS, SpotifyConnection, SpotifyConnectionStore, SpotifyStateStore,
-};
+use super::spotify_oauth::{PendingAuth, STATE_TTL_SECS, SpotifyConnection};
 use crate::db::AcquireDb;
 use droppedneedle_auth::times::{parse_iso, to_iso};
 use droppedneedle_catalog::reads::collections::store::PlaylistStore;
@@ -30,7 +29,7 @@ use droppedneedle_kernel::runtime_config::crypto::Crypto;
 /// The `user_connections.service` tag for Spotify links (v2's).
 const SERVICE: &str = "spotify";
 
-/// Authorize states over the shared database.
+/// Single-use authorize states over the shared database.
 #[derive(Clone)]
 pub struct SqliteSpotifyStates {
     db: AcquireDb,
@@ -41,70 +40,60 @@ impl SqliteSpotifyStates {
     pub fn new(db: AcquireDb) -> Self {
         Self { db }
     }
-}
 
-impl SpotifyStateStore for SqliteSpotifyStates {
-    fn store_state<'a>(
-        &'a self,
-        state: &'a str,
-        pending: &'a PendingAuth,
-    ) -> BoxFuture<'a, Result<(), String>> {
+    /// Remember `state` for [`STATE_TTL_SECS`], pruning expired states.
+    pub async fn store_state(&self, state: &str, pending: &PendingAuth) -> Result<(), String> {
         let (state, pending) = (state.to_owned(), pending.clone());
-        Box::pin(async move {
-            self.db
-                .write("spotify.state.store", move |tx| {
-                    let now = now_unix_secs();
-                    tx.execute(
-                        "DELETE FROM spotify_auth_requests WHERE expires_at <= ?1",
-                        params![now],
-                    )?;
-                    tx.execute(
-                        "INSERT INTO spotify_auth_requests \
-                         (state, user_id, redirect_uri, expires_at) VALUES (?1, ?2, ?3, ?4)",
-                        params![
-                            state,
-                            pending.user_id,
-                            pending.redirect_uri,
-                            now + STATE_TTL_SECS
-                        ],
-                    )?;
-                    Ok(())
-                })
-                .await
-                .map_err(|error| error.to_string())
-        })
+        self.db
+            .write("spotify.state.store", move |tx| {
+                let now = now_unix_secs();
+                tx.execute(
+                    "DELETE FROM spotify_auth_requests WHERE expires_at <= ?1",
+                    params![now],
+                )?;
+                tx.execute(
+                    "INSERT INTO spotify_auth_requests \
+                     (state, user_id, redirect_uri, expires_at) VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        state,
+                        pending.user_id,
+                        pending.redirect_uri,
+                        now + STATE_TTL_SECS
+                    ],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(|error| error.to_string())
     }
 
-    fn consume_state<'a>(
-        &'a self,
-        state: &'a str,
-    ) -> BoxFuture<'a, Result<Option<PendingAuth>, String>> {
+    /// Consume `state` once. Unknown, expired or replayed states read as
+    /// none.
+    pub async fn consume_state(&self, state: &str) -> Result<Option<PendingAuth>, String> {
         let state = state.to_owned();
-        Box::pin(async move {
-            self.db
-                .write("spotify.state.consume", move |tx| {
-                    let row: Option<(String, String, i64)> = tx
-                        .query_row(
-                            "SELECT user_id, redirect_uri, expires_at \
-                             FROM spotify_auth_requests WHERE state = ?1",
-                            params![state],
-                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                        )
-                        .optional()?;
-                    tx.execute(
-                        "DELETE FROM spotify_auth_requests WHERE state = ?1",
+        self.db
+            .write("spotify.state.consume", move |tx| {
+                let row: Option<(String, String, i64)> = tx
+                    .query_row(
+                        "SELECT user_id, redirect_uri, expires_at \
+                         FROM spotify_auth_requests WHERE state = ?1",
                         params![state],
-                    )?;
-                    Ok(row
-                        .filter(|(_, _, expires_at)| *expires_at > now_unix_secs())
-                        .map(|(user_id, redirect_uri, _)| PendingAuth {
-                            user_id,
-                            redirect_uri,
-                        }))
-                })
-                .await
-                .map_err(|error| error.to_string())
-        })
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .optional()?;
+                tx.execute(
+                    "DELETE FROM spotify_auth_requests WHERE state = ?1",
+                    params![state],
+                )?;
+                Ok(row
+                    .filter(|(_, _, expires_at)| *expires_at > now_unix_secs())
+                    .map(|(user_id, redirect_uri, _)| PendingAuth {
+                        user_id,
+                        redirect_uri,
+                    }))
+            })
+            .await
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -155,118 +144,112 @@ impl SqliteSpotifyLinks {
             .encrypt(&document)
             .map_err(|error| format!("spotify link seal: {error}"))
     }
-}
 
-impl SpotifyConnectionStore for SqliteSpotifyLinks {
-    fn upsert<'a>(
-        &'a self,
-        user_id: &'a str,
-        connection: &'a SpotifyConnection,
-    ) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            let (user_id, sealed) = (user_id.to_owned(), self.seal(connection)?);
-            self.db
-                .write("spotify.link.upsert", move |tx| {
-                    let now = to_iso(now_unix_secs());
-                    tx.execute(
-                        "INSERT INTO user_connections \
-                         (user_id, service, connection_data, enabled, created_at, updated_at) \
-                         VALUES (?1, ?2, ?3, 1, ?4, ?4) \
-                         ON CONFLICT (user_id, service) DO UPDATE SET \
-                         connection_data = excluded.connection_data, enabled = 1, \
-                         updated_at = excluded.updated_at",
-                        params![user_id, SERVICE, sealed, now],
-                    )?;
-                    Ok(())
-                })
-                .await
-                .map_err(|error| error.to_string())
-        })
-    }
-
-    fn update_tokens_if_present<'a>(
-        &'a self,
-        user_id: &'a str,
-        connection: &'a SpotifyConnection,
-    ) -> BoxFuture<'a, Result<bool, String>> {
-        Box::pin(async move {
-            let (user_id, sealed) = (user_id.to_owned(), self.seal(connection)?);
-            self.db
-                .write("spotify.link.refresh", move |tx| {
-                    let changed = tx.execute(
-                        "UPDATE user_connections SET connection_data = ?3, updated_at = ?4 \
-                         WHERE user_id = ?1 AND service = ?2",
-                        params![user_id, SERVICE, sealed, to_iso(now_unix_secs())],
-                    )?;
-                    Ok(changed > 0)
-                })
-                .await
-                .map_err(|error| error.to_string())
-        })
-    }
-
-    fn get<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<SpotifyConnection>, String>> {
-        Box::pin(async move {
-            let sealed: Option<String> = sqlx::query_scalar(
-                "SELECT connection_data FROM user_connections \
-                 WHERE user_id = ?1 AND service = ?2 AND enabled = 1",
-            )
-            .bind(user_id)
-            .bind(SERVICE)
-            .fetch_optional(self.db.pool())
+    /// Insert or replace one user's link (the OAuth callback).
+    pub async fn upsert(
+        &self,
+        user_id: &str,
+        connection: &SpotifyConnection,
+    ) -> Result<(), String> {
+        let (user_id, sealed) = (user_id.to_owned(), self.seal(connection)?);
+        self.db
+            .write("spotify.link.upsert", move |tx| {
+                let now = to_iso(now_unix_secs());
+                tx.execute(
+                    "INSERT INTO user_connections \
+                     (user_id, service, connection_data, enabled, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, 1, ?4, ?4) \
+                     ON CONFLICT (user_id, service) DO UPDATE SET \
+                     connection_data = excluded.connection_data, enabled = 1, \
+                     updated_at = excluded.updated_at",
+                    params![user_id, SERVICE, sealed, now],
+                )?;
+                Ok(())
+            })
             .await
-            .map_err(|error| format!("spotify link read: {error}"))?;
-            let Some(sealed) = sealed else {
-                return Ok(None);
-            };
-            // A link that no longer opens (lost or rotated key, damaged
-            // row) reads as no link, as in v2: the user connects again.
-            let document = match self.crypto.decrypt(&sealed).map(|plain| {
-                serde_json::from_str::<LinkDocument>(&plain).map_err(|error| error.to_string())
-            }) {
-                Ok(Ok(document)) => document,
-                Ok(Err(error)) => {
-                    tracing::warn!(%error, "spotify link does not decode; treating as unlinked");
-                    return Ok(None);
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "spotify link does not open; treating as unlinked");
-                    return Ok(None);
-                }
-            };
-            Ok(Some(SpotifyConnection {
-                access_token: document.access_token,
-                refresh_token: document.refresh_token,
-                // An unreadable expiry reads as expired, so the next call
-                // refreshes (v2 `_is_expired`).
-                expires_at_unix: parse_iso(&document.expires_at).unwrap_or(0),
-                username: document.username,
-                spotify_user_id: document.spotify_user_id,
-            }))
-        })
+            .map_err(|error| error.to_string())
     }
 
-    fn remove<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
+    /// Write refreshed tokens only when the link still exists, so a token
+    /// refresh racing a disconnect never brings the link back. Answers
+    /// whether a row was updated.
+    pub async fn update_tokens_if_present(
+        &self,
+        user_id: &str,
+        connection: &SpotifyConnection,
+    ) -> Result<bool, String> {
+        let (user_id, sealed) = (user_id.to_owned(), self.seal(connection)?);
+        self.db
+            .write("spotify.link.refresh", move |tx| {
+                let changed = tx.execute(
+                    "UPDATE user_connections SET connection_data = ?3, updated_at = ?4 \
+                     WHERE user_id = ?1 AND service = ?2",
+                    params![user_id, SERVICE, sealed, to_iso(now_unix_secs())],
+                )?;
+                Ok(changed > 0)
+            })
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    /// Read one user's link, if any.
+    pub async fn get(&self, user_id: &str) -> Result<Option<SpotifyConnection>, String> {
+        let sealed: Option<String> = sqlx::query_scalar(
+            "SELECT connection_data FROM user_connections \
+             WHERE user_id = ?1 AND service = ?2 AND enabled = 1",
+        )
+        .bind(user_id)
+        .bind(SERVICE)
+        .fetch_optional(self.db.pool())
+        .await
+        .map_err(|error| format!("spotify link read: {error}"))?;
+        let Some(sealed) = sealed else {
+            return Ok(None);
+        };
+        // A link that no longer opens (lost or rotated key, damaged
+        // row) reads as no link, as in v2: the user connects again.
+        let document = match self.crypto.decrypt(&sealed).map(|plain| {
+            serde_json::from_str::<LinkDocument>(&plain).map_err(|error| error.to_string())
+        }) {
+            Ok(Ok(document)) => document,
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "spotify link does not decode; treating as unlinked");
+                return Ok(None);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "spotify link does not open; treating as unlinked");
+                return Ok(None);
+            }
+        };
+        Ok(Some(SpotifyConnection {
+            access_token: document.access_token,
+            refresh_token: document.refresh_token,
+            // An unreadable expiry reads as expired, so the next call
+            // refreshes (v2 `_is_expired`).
+            expires_at_unix: parse_iso(&document.expires_at).unwrap_or(0),
+            username: document.username,
+            spotify_user_id: document.spotify_user_id,
+        }))
+    }
+
+    /// Drop one user's link. Answers whether a link was there.
+    pub async fn remove(&self, user_id: &str) -> Result<bool, String> {
         let user_id = user_id.to_owned();
-        Box::pin(async move {
-            self.db
-                .write("spotify.link.remove", move |tx| {
-                    let changed = tx.execute(
-                        "DELETE FROM user_connections WHERE user_id = ?1 AND service = ?2",
-                        params![user_id, SERVICE],
-                    )?;
-                    Ok(changed > 0)
-                })
-                .await
-                .map_err(|error| error.to_string())
-        })
+        self.db
+            .write("spotify.link.remove", move |tx| {
+                let changed = tx.execute(
+                    "DELETE FROM user_connections WHERE user_id = ?1 AND service = ?2",
+                    params![user_id, SERVICE],
+                )?;
+                Ok(changed > 0)
+            })
+            .await
+            .map_err(|error| error.to_string())
     }
 }
 
-/// Imported playlists as collection playlists.
+/// Imported playlists as collection playlists, keyed on `spotify:{id}`
+/// source refs (v2 `PlaylistService` source-ref half).
 #[derive(Clone)]
 pub struct CollectionsPlaylistBridge {
     playlists: PlaylistStore,
@@ -279,127 +262,118 @@ impl CollectionsPlaylistBridge {
     pub fn new(playlists: PlaylistStore, db: AcquireDb) -> Self {
         Self { playlists, db }
     }
-}
 
-impl PlaylistIndex for CollectionsPlaylistBridge {
-    fn get_by_source_ref<'a>(
-        &'a self,
-        source_ref: &'a str,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<String>, String>> {
-        Box::pin(async move {
-            self.playlists
-                .find_by_source(user_id, source_ref)
-                .await
-                .map_err(|error| error.to_string())
-        })
-    }
-
-    fn create<'a>(
-        &'a self,
-        user_id: &'a str,
-        name: &'a str,
-        source_ref: &'a str,
-    ) -> BoxFuture<'a, Result<String, String>> {
-        Box::pin(async move {
-            if let Some(id) = self
-                .playlists
-                .create(user_id, name, Some(source_ref))
-                .await
-                .map_err(|error| error.to_string())?
-            {
-                return Ok(id);
-            }
-            // A racing import made it first: answer that one.
-            self.playlists
-                .find_by_source(user_id, source_ref)
-                .await
-                .map_err(|error| error.to_string())?
-                .ok_or_else(|| format!("playlist for {source_ref} vanished during create"))
-        })
-    }
-
-    fn source_refs_for<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<(String, String)>, String>> {
-        Box::pin(async move {
-            sqlx::query_as(
-                "SELECT source_ref, id FROM playlists \
-                 WHERE user_id = ?1 AND source_ref LIKE 'spotify:%'",
-            )
-            .bind(user_id)
-            .fetch_all(self.db.pool())
+    /// Internal id for a source ref, if imported before.
+    pub async fn get_by_source_ref(
+        &self,
+        source_ref: &str,
+        user_id: &str,
+    ) -> Result<Option<String>, String> {
+        self.playlists
+            .find_by_source(user_id, source_ref)
             .await
-            .map_err(|error| format!("spotify playlist refs read: {error}"))
-        })
-    }
-}
-
-impl PlaylistTrackSink for CollectionsPlaylistBridge {
-    fn replace_tracks<'a>(
-        &'a self,
-        playlist_id: &'a str,
-        tracks: &'a [ImportedTrack],
-    ) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            let existing: Vec<String> = self
-                .playlists
-                .tracks(playlist_id)
-                .await
-                .map_err(|error| error.to_string())?
-                .into_iter()
-                .map(|track| track.id)
-                .collect();
-            if !existing.is_empty() {
-                self.playlists
-                    .remove(playlist_id, &existing)
-                    .await
-                    .map_err(|error| error.to_string())?;
-            }
-            let entries = tracks.iter().map(entry_for).collect();
-            match self
-                .playlists
-                .insert(playlist_id, None, entries)
-                .await
-                .map_err(|error| error.to_string())?
-            {
-                Written::Done(_) => Ok(()),
-                Written::Missing => Err(format!("playlist {playlist_id} is gone")),
-            }
-        })
+            .map_err(|error| error.to_string())
     }
 
-    fn set_imported_cover<'a>(
-        &'a self,
-        playlist_id: &'a str,
-        data: &'a [u8],
-        content_type: &'a str,
-    ) -> BoxFuture<'a, Result<bool, String>> {
-        Box::pin(async move {
-            if self
-                .playlists
-                .cover(playlist_id)
+    /// Create a playlist record, or answer the one a racing import made
+    /// for the same source ref; returns its internal id.
+    pub async fn create(
+        &self,
+        user_id: &str,
+        name: &str,
+        source_ref: &str,
+    ) -> Result<String, String> {
+        if let Some(id) = self
+            .playlists
+            .create(user_id, name, Some(source_ref))
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            return Ok(id);
+        }
+        // A racing import made it first: answer that one.
+        self.playlists
+            .find_by_source(user_id, source_ref)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("playlist for {source_ref} vanished during create"))
+    }
+
+    /// One user's `(source_ref, playlist_id)` pairs, for the imported
+    /// mapping.
+    pub async fn source_refs_for(&self, user_id: &str) -> Result<Vec<(String, String)>, String> {
+        sqlx::query_as(
+            "SELECT source_ref, id FROM playlists \
+             WHERE user_id = ?1 AND source_ref LIKE 'spotify:%'",
+        )
+        .bind(user_id)
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(|error| format!("spotify playlist refs read: {error}"))
+    }
+
+    /// Replace every row on a playlist with `tracks`, in order.
+    pub async fn replace_tracks(
+        &self,
+        playlist_id: &str,
+        tracks: &[ImportedTrack],
+    ) -> Result<(), String> {
+        let existing: Vec<String> = self
+            .playlists
+            .tracks(playlist_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|track| track.id)
+            .collect();
+        if !existing.is_empty() {
+            self.playlists
+                .remove(playlist_id, &existing)
                 .await
-                .map_err(|error| error.to_string())?
-                .is_some()
-            {
-                return Ok(false);
-            }
-            let cover = CoverImage {
-                content_type: content_type.to_owned(),
-                bytes: data.to_vec(),
-            };
-            match self
-                .playlists
-                .set_cover(playlist_id, cover)
-                .await
-                .map_err(|error| error.to_string())?
-            {
-                Written::Done(()) => Ok(true),
-                Written::Missing => Err(format!("playlist {playlist_id} is gone")),
-            }
-        })
+                .map_err(|error| error.to_string())?;
+        }
+        let entries = tracks.iter().map(entry_for).collect();
+        match self
+            .playlists
+            .insert(playlist_id, None, entries)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            Written::Done(_) => Ok(()),
+            Written::Missing => Err(format!("playlist {playlist_id} is gone")),
+        }
+    }
+
+    /// Store the picked provider image as the local cover. Answers false
+    /// when a cover already exists (v2 `kept_existing`).
+    pub async fn set_imported_cover(
+        &self,
+        playlist_id: &str,
+        data: &[u8],
+        content_type: &str,
+    ) -> Result<bool, String> {
+        if self
+            .playlists
+            .cover(playlist_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Ok(false);
+        }
+        let cover = CoverImage {
+            content_type: content_type.to_owned(),
+            bytes: data.to_vec(),
+        };
+        match self
+            .playlists
+            .set_cover(playlist_id, cover)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            Written::Done(()) => Ok(true),
+            Written::Missing => Err(format!("playlist {playlist_id} is gone")),
+        }
     }
 }
 

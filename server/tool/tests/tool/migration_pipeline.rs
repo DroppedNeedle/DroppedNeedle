@@ -505,7 +505,6 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
     // Spotify keeps v2's field names, sealed whole like the media servers,
     // and v3's Spotify store reads the carried link as it is.
     let spotify = {
-        use droppedneedle_acquire::imports::spotify_oauth::SpotifyConnectionStore as _;
         let db =
             Db::open_for_tests(&v3_root.join("cache").join("library.db")).expect("database opens");
         let key = Crypto::load(&v3_root.join("config")).expect("v3 key loads");

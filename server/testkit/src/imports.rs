@@ -33,6 +33,8 @@ pub const SPOTIFY_TOKEN: &str = "spotify-test-token";
 pub const SPOTIFY_REFRESH: &str = "spotify-refresh-token";
 /// Spotify user id the mock owns.
 pub const SPOTIFY_USER_ID: &str = "spotify-user-1";
+/// A playlist whose one track arrives without its `id`, a changed answer.
+pub const SPOTIFY_PLAYLIST_NO_TRACK_ID: &str = "sp-playlist-noid";
 /// MBIDs the Lidarr mock serves.
 pub const LIDARR_MBID_ALL: &str = "11111111-1111-1111-1111-111111111111";
 /// Second mock MBID (monitor `none`).
@@ -367,11 +369,11 @@ async fn spotify_playlist(
     if !spotify_authed(&headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    if id != "sp-playlist-1" {
+    if id != "sp-playlist-1" && id != SPOTIFY_PLAYLIST_NO_TRACK_ID {
         return StatusCode::NOT_FOUND.into_response();
     }
     Json(json!({
-        "id": "sp-playlist-1",
+        "id": id,
         "name": "Neon Nights",
         "images": [
             {"url": format!("{}/covers/neon-small.jpg", state.cover_base), "width": 60},
@@ -393,10 +395,20 @@ async fn spotify_items(
     if !spotify_authed(&headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    if id == SPOTIFY_PLAYLIST_NO_TRACK_ID {
+        return Json(json!({
+            "items": [{"track": {
+                "type": "track", "name": "Nameless",
+                "artists": [{"name": "Aurora Current"}],
+                "album": {"id": "sp-album-1", "name": "Neon Meridian", "images": []},
+            }}],
+            "next": null,
+        }))
+        .into_response();
+    }
     if id != "sp-playlist-1" {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let _ = &state;
     // One entry under the legacy `track` alias, one under the new `item`
     // key, plus an `is_local` row the client must skip.
     Json(json!({

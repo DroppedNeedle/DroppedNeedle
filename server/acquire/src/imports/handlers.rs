@@ -14,6 +14,9 @@
 
 use std::sync::Arc;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
 use axum::{
     Json,
     extract::{Path, Request, State},
@@ -26,7 +29,6 @@ use droppedneedle_auth::{Admin, User};
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::{ValidJson, ValidQuery};
-use droppedneedle_kernel::http_client::read_capped;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::mount::{Routes, routes};
 use serde::Deserialize;
@@ -47,18 +49,18 @@ use super::models::{
     SpotifyAuthUrlResponse, SpotifyImportRequest, SpotifyImportResponse, SpotifyJobStatus,
     SpotifyPlaylistListResponse, SpotifyRedirectUri, SpotifySettings,
 };
-use super::spotify::{AlbumMbidResolver, PlaylistIndex, PlaylistTrackSink, SpotifyImportService};
-use super::spotify_client::{MAX_API_BODY_BYTES, SpotifyClient, SpotifyError, now_unix_secs};
+use super::spotify::{AlbumMbidResolver, SpotifyImportService};
+use super::spotify_client::{SpotifyClient, SpotifyError, now_unix_secs};
 use super::spotify_oauth::{
     PendingAuth, SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyConnection,
-    SpotifyConnectionStore, SpotifySettingsStore, SpotifyStateStore, redirect_uri,
+    redirect_uri,
 };
+use super::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates};
+use crate::settings::ConfigSpotifySettings;
 
 /// Every dependency the imports routes need, injected by constructor.
 #[derive(Clone)]
 pub struct ImportsDeps {
-    /// Shared outbound HTTP client.
-    pub http: reqwest::Client,
     /// Read-only Lidarr client (the two sanctioned GETs).
     pub lidarr: LidarrClient,
     /// Lidarr connection rows.
@@ -69,16 +71,14 @@ pub struct ImportsDeps {
     pub approvals: Arc<dyn ApprovalSink>,
     /// Spotify API client over injected bases.
     pub spotify: SpotifyClient,
-    /// Spotify app settings rows.
-    pub spotify_settings: Arc<dyn SpotifySettingsStore>,
+    /// Spotify app settings.
+    pub spotify_settings: Arc<ConfigSpotifySettings>,
     /// Single-use OAuth states.
-    pub spotify_states: Arc<dyn SpotifyStateStore>,
+    pub spotify_states: Arc<SqliteSpotifyStates>,
     /// Per-user Spotify links.
-    pub spotify_links: Arc<dyn SpotifyConnectionStore>,
-    /// Internal playlist index (`spotify:{id}` refs).
-    pub playlists: Arc<dyn PlaylistIndex>,
-    /// Imported track rows.
-    pub tracks: Arc<dyn PlaylistTrackSink>,
+    pub spotify_links: Arc<SqliteSpotifyLinks>,
+    /// Imported playlists (`spotify:{id}` refs) and their rows.
+    pub spotify_playlists: Arc<CollectionsPlaylistBridge>,
     /// Album-to-MBID resolver.
     pub resolver: Arc<dyn AlbumMbidResolver>,
     /// `spotify:import` job registry.
@@ -112,8 +112,7 @@ impl ImportsDeps {
             self.spotify.clone(),
             self.spotify_settings.clone(),
             self.spotify_links.clone(),
-            self.playlists.clone(),
-            self.tracks.clone(),
+            self.spotify_playlists.clone(),
             self.resolver.clone(),
         )
     }
@@ -457,35 +456,18 @@ async fn finish_spotify_link(deps: &ImportsDeps, query: SpotifyCallbackQuery) ->
                 .into_response();
         }
     };
-    let me = match deps
-        .http
-        .get(format!("{}/me", deps.spotify.api_base()))
-        .header("Authorization", format!("Bearer {}", grant.access_token))
-        .send()
-        .await
-    {
-        Ok(response) => match read_capped(response, MAX_API_BODY_BYTES).await {
-            Ok(body) => serde_json::from_slice::<serde_json::Value>(&body)
-                .unwrap_or(serde_json::Value::Null),
-            Err(_) => serde_json::Value::Null,
-        },
+    let me = match deps.spotify.profile(&grant.access_token).await {
+        Ok(me) => me,
         Err(cause) => {
-            tracing::warn!(%cause, "spotify callback /me failed");
+            tracing::warn!(?cause, "spotify callback /me failed");
             return Redirect::temporary(&profile("/profile?spotify=error&reason=network"))
                 .into_response();
         }
     };
-    let username = me
-        .get("display_name")
-        .and_then(|name| name.as_str())
-        .or_else(|| me.get("id").and_then(|id| id.as_str()))
-        .unwrap_or("Spotify")
-        .to_owned();
-    let spotify_user_id = me
-        .get("id")
-        .and_then(|id| id.as_str())
-        .unwrap_or("")
-        .to_owned();
+    let (username, spotify_user_id) = match me {
+        Some(me) => (me.display_name.unwrap_or_else(|| me.id.clone()), me.id),
+        None => ("Spotify".to_owned(), String::new()),
+    };
     let link = SpotifyConnection {
         access_token: grant.access_token,
         refresh_token: grant.refresh_token.unwrap_or_default(),
@@ -663,16 +645,5 @@ fn fresh_state(deps: &ImportsDeps) -> String {
     if getrandom::fill(&mut bytes).is_err() {
         return deps.ids.new_id();
     }
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut out = String::with_capacity(43);
-    for chunk in bytes.chunks(3) {
-        let mut block: u32 = 0;
-        for (index, byte) in chunk.iter().enumerate() {
-            block |= (*byte as u32) << (16 - 8 * index);
-        }
-        for index in 0..4 - (3 - chunk.len()) {
-            out.push(ALPHABET[((block >> (18 - 6 * index)) & 0x3F) as usize] as char);
-        }
-    }
-    out
+    URL_SAFE_NO_PAD.encode(bytes)
 }

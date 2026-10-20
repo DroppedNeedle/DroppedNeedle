@@ -615,6 +615,7 @@ name = "droppedneedle-acquire"
 version = "3.0.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "droppedneedle-auth",
  "droppedneedle-catalog",
  "droppedneedle-kernel",
@@ -625,6 +626,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.3.4",
  "libc",
+ "percent-encoding",
  "quick-xml",
  "reqwest",
  "rusqlite",

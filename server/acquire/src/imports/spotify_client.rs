@@ -6,11 +6,19 @@
 //! tracks endpoint (the old `/tracks` 403s for dev-mode apps after the
 //! March 2026 migration), the `track`/`item` alias with `is_local` skips,
 //! and the bounded no-redirect cover fetch that never fails an import.
+//! Answers decode through [`super::spotify_models`].
 
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::spotify_oauth::{SpotifyConnection, SpotifyConnectionStore};
+use serde::de::DeserializeOwned;
+
+use super::spotify_models::{
+    EntryPage, EntryTrack, Image, PlaylistInfo, PlaylistPage, Profile, SimplifiedPlaylist,
+    TokenAnswer, TrackCount,
+};
+use super::spotify_oauth::{SpotifyConnection, UNRESERVED};
+use super::spotify_store::SqliteSpotifyLinks;
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 /// Seconds before expiry a token counts as expired (v2 buffer).
@@ -29,55 +37,29 @@ pub fn now_unix_secs() -> i64 {
         .unwrap_or(0)
 }
 
-/// Track count from a `GET /me/playlists` item (v2 `_playlist_track_count`).
-/// The count lives under `items` as a dict `{"href", "total"}` with
-/// `tracks` null/absent on the current shape; the older shape used
-/// `tracks: {"total"}`. `items` doubles as the pagination key elsewhere
-/// and may arrive as a list, which carries no total, so only dict shapes
-/// are read and anything else yields 0.
-pub fn playlist_track_count(item: &serde_json::Value) -> i64 {
-    for key in ["items", "tracks"] {
-        if let Some(total) = item
-            .get(key)
-            .and_then(|value| value.get("total"))
-            .and_then(|total| total.as_i64())
-        {
-            return total;
-        }
-    }
-    0
+/// Track count of a listed playlist (v2 `_playlist_track_count`). The
+/// count lives under `items` on the current shape, with `tracks` null or
+/// absent; the older shape used `tracks`. Neither with a total reads as 0.
+pub fn playlist_track_count(playlist: &SimplifiedPlaylist) -> i64 {
+    [&playlist.items, &playlist.tracks]
+        .into_iter()
+        .find_map(|count| match count {
+            Some(TrackCount::Counted { total }) => Some(*total),
+            _ => None,
+        })
+        .unwrap_or(0)
 }
 
 /// Pick the smallest image at least `min_size` wide, else the largest (v2
 /// `_best_image_url`, default floor 250).
-pub fn best_image_url(images: &serde_json::Value, min_size: i64) -> Option<String> {
-    let images = images.as_array()?;
-    if images.is_empty() {
-        return None;
-    }
-    let mut sorted: Vec<&serde_json::Value> = images.iter().collect();
-    sorted.sort_by_key(|image| {
-        image
-            .get("width")
-            .and_then(|width| width.as_i64())
-            .unwrap_or(0)
-    });
-    for image in &sorted {
-        let width = image
-            .get("width")
-            .and_then(|width| width.as_i64())
-            .unwrap_or(0);
-        if width >= min_size
-            && let Some(url) = image.get("url").and_then(|url| url.as_str())
-        {
-            return Some(url.to_owned());
-        }
-    }
+pub fn best_image_url(images: Option<&[Image]>, min_size: i64) -> Option<String> {
+    let mut sorted: Vec<&Image> = images.unwrap_or_default().iter().collect();
+    sorted.sort_by_key(|image| image.width.unwrap_or(0));
     sorted
-        .last()
-        .and_then(|image| image.get("url"))
-        .and_then(|url| url.as_str())
-        .map(str::to_owned)
+        .iter()
+        .find(|image| image.width.unwrap_or(0) >= min_size)
+        .or(sorted.last())
+        .map(|image| image.url.clone())
 }
 
 /// True for a fetchable Spotify cover URL: https over the CDN allowlist.
@@ -107,7 +89,8 @@ fn is_loopback_host(url: &reqwest::Url) -> bool {
 pub enum SpotifyError {
     /// No link row, or the token flow cannot proceed.
     NotLinked,
-    /// Upstream or network failure. The detail reaches the log only.
+    /// Upstream or network failure, or an answer that does not decode. The
+    /// detail reaches the log only.
     Unavailable(String),
     /// A local store read or write failed. The detail reaches the log only.
     Store(String),
@@ -155,11 +138,6 @@ impl SpotifyClient {
         }
     }
 
-    /// API base URL (the callback's `/me` fetch builds on it).
-    pub fn api_base(&self) -> &str {
-        &self.api_base
-    }
-
     /// True when the token is missing or inside the refresh buffer (v2
     /// `_is_expired`: unparseable reads as expired).
     pub fn is_expired(expires_at_unix: i64, now_unix: i64) -> bool {
@@ -177,31 +155,17 @@ impl SpotifyClient {
         code: &str,
         redirect_uri: &str,
     ) -> Result<TokenGrant, SpotifyError> {
-        let credentials = format!("{client_id}:{client_secret}");
-        let mut encoded = String::new();
-        base64_encode(credentials.as_bytes(), &mut encoded);
-        let response = self
-            .http
-            .post(format!("{}/api/token", self.accounts_base))
-            .header("Authorization", format!("Basic {encoded}"))
-            .form(&[
+        self.token(
+            client_id,
+            client_secret,
+            &[
                 ("grant_type", "authorization_code"),
                 ("code", code),
                 ("redirect_uri", redirect_uri),
-            ])
-            .send()
-            .await
-            .map_err(|cause| {
-                SpotifyError::Unavailable(format!("token exchange failed: {cause}"))
-            })?;
-        if response.status() != reqwest::StatusCode::OK {
-            return Err(SpotifyError::Unavailable(format!(
-                "token exchange status {}",
-                response.status().as_u16()
-            )));
-        }
-        let body = json_body(response, "token").await?;
-        Ok(TokenGrant::from_value(&body))
+            ],
+            "token exchange",
+        )
+        .await
     }
 
     /// Refresh an access token (v2 `_refresh`).
@@ -214,38 +178,52 @@ impl SpotifyClient {
         if refresh_token.is_empty() {
             return Err(SpotifyError::NotLinked);
         }
-        let credentials = format!("{client_id}:{client_secret}");
-        let mut encoded = String::new();
-        base64_encode(credentials.as_bytes(), &mut encoded);
+        self.token(
+            client_id,
+            client_secret,
+            &[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", refresh_token),
+            ],
+            "token refresh",
+        )
+        .await
+    }
+
+    /// One Basic-auth grant on the accounts host.
+    async fn token(
+        &self,
+        client_id: &str,
+        client_secret: &str,
+        form: &[(&str, &str)],
+        what: &str,
+    ) -> Result<TokenGrant, SpotifyError> {
         let response = self
             .http
             .post(format!("{}/api/token", self.accounts_base))
-            .header("Authorization", format!("Basic {encoded}"))
-            .form(&[
-                ("grant_type", "refresh_token"),
-                ("refresh_token", refresh_token),
-            ])
+            .basic_auth(client_id, Some(client_secret))
+            .form(form)
             .send()
             .await
-            .map_err(|cause| SpotifyError::Unavailable(format!("token refresh failed: {cause}")))?;
+            .map_err(|cause| SpotifyError::Unavailable(format!("{what} failed: {cause}")))?;
         if response.status() != reqwest::StatusCode::OK {
             return Err(SpotifyError::Unavailable(format!(
-                "token refresh status {}",
+                "{what} status {}",
                 response.status().as_u16()
             )));
         }
-        let body = json_body(response, "refresh").await?;
-        Ok(TokenGrant::from_value(&body))
+        let answer: TokenAnswer = json_body(response, what).await?;
+        Ok(TokenGrant::from(answer))
     }
 
     /// Authenticated GET with the v2 retry rules: refresh-then-once on 401,
     /// one short wait on 429 when `Retry-After` is at most 10 seconds.
-    pub async fn authed_get(
+    async fn authed_get<T: DeserializeOwned>(
         &self,
         refresher: &TokenRefresher<'_>,
         path: &str,
         query: &[(&str, String)],
-    ) -> Result<serde_json::Value, SpotifyError> {
+    ) -> Result<T, SpotifyError> {
         let token = refresher.valid_token().await?;
         let mut response = self.get_with(path, query, &token).await?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
@@ -271,7 +249,7 @@ impl SpotifyClient {
                 response.status().as_u16()
             )));
         }
-        json_body(response, "spotify").await
+        json_body(response, path).await
     }
 
     async fn get_with(
@@ -283,7 +261,7 @@ impl SpotifyClient {
         self.http
             .get(format!("{}{path}", self.api_base))
             .query(query)
-            .header("Authorization", format!("Bearer {token}"))
+            .bearer_auth(token)
             .send()
             .await
             .map_err(|cause| SpotifyError::Unavailable(format!("spotify GET failed: {cause}")))
@@ -293,37 +271,50 @@ impl SpotifyClient {
     pub async fn current_user(
         &self,
         refresher: &TokenRefresher<'_>,
-    ) -> Result<serde_json::Value, SpotifyError> {
+    ) -> Result<Profile, SpotifyError> {
         self.authed_get(refresher, "/me", &[]).await
+    }
+
+    /// The profile behind a fresh grant, for the OAuth callback. A
+    /// transport failure is an error; an answer that is not a profile (a
+    /// refusal, a body that does not decode) is logged and reads as none,
+    /// so the link still lands and the listing asks again later.
+    pub async fn profile(&self, access_token: &str) -> Result<Option<Profile>, SpotifyError> {
+        let response = self.get_with("/me", &[], access_token).await?;
+        if !response.status().is_success() {
+            tracing::warn!(
+                status = response.status().as_u16(),
+                "spotify callback /me refused"
+            );
+            return Ok(None);
+        }
+        match json_body::<Profile>(response, "/me").await {
+            Ok(profile) => Ok(Some(profile)),
+            Err(cause) => {
+                tracing::warn!(?cause, "spotify callback /me unreadable");
+                Ok(None)
+            }
+        }
     }
 
     /// Every owned-or-followed playlist page (`GET /me/playlists`, 50/page).
     pub async fn user_playlists(
         &self,
         refresher: &TokenRefresher<'_>,
-    ) -> Result<Vec<serde_json::Value>, SpotifyError> {
+    ) -> Result<Vec<SimplifiedPlaylist>, SpotifyError> {
         let mut playlists = Vec::new();
         let mut offset: i64 = 0;
         loop {
-            let page = self
+            let page: PlaylistPage = self
                 .authed_get(
                     refresher,
                     "/me/playlists",
                     &[("limit", "50".to_owned()), ("offset", offset.to_string())],
                 )
                 .await?;
-            let items = page
-                .get("items")
-                .and_then(|items| items.as_array())
-                .cloned()
-                .unwrap_or_default();
-            let total = page
-                .get("total")
-                .and_then(|total| total.as_i64())
-                .unwrap_or(0);
-            let page_len = items.len();
-            playlists.extend(items);
-            if playlists.len() as i64 >= total || page_len == 0 {
+            let page_len = page.items.len();
+            playlists.extend(page.items);
+            if playlists.len() as i64 >= page.total || page_len == 0 {
                 break;
             }
             offset += 50;
@@ -336,10 +327,10 @@ impl SpotifyClient {
         &self,
         refresher: &TokenRefresher<'_>,
         playlist_id: &str,
-    ) -> Result<serde_json::Value, SpotifyError> {
+    ) -> Result<PlaylistInfo, SpotifyError> {
         self.authed_get(
             refresher,
-            &format!("/playlists/{playlist_id}"),
+            &format!("/playlists/{}", path_segment(playlist_id)),
             &[("fields", "id,name,images,tracks.total".to_owned())],
         )
         .await
@@ -354,52 +345,34 @@ impl SpotifyClient {
         &self,
         refresher: &TokenRefresher<'_>,
         playlist_id: &str,
-    ) -> Result<Vec<serde_json::Value>, SpotifyError> {
+    ) -> Result<Vec<EntryTrack>, SpotifyError> {
         let mut tracks = Vec::new();
         let mut offset: i64 = 0;
         loop {
-            let page = self
+            let page: EntryPage = self
                 .authed_get(
                     refresher,
-                    &format!("/playlists/{playlist_id}/items"),
+                    &format!("/playlists/{}/items", path_segment(playlist_id)),
                     &[("limit", "100".to_owned()), ("offset", offset.to_string())],
                 )
                 .await?;
-            let items = page
-                .get("items")
-                .and_then(|items| items.as_array())
-                .cloned()
-                .unwrap_or_default();
-            for item in &items {
-                if item
-                    .get("is_local")
-                    .and_then(|flag| flag.as_bool())
-                    .unwrap_or(false)
-                {
+            let page_len = page.items.len();
+            for entry in page.items {
+                if entry.is_local {
                     continue;
                 }
-                let track = item.get("track").or_else(|| item.get("item"));
-                let Some(track) = track else { continue };
-                if track
-                    .get("id")
-                    .and_then(|id| id.as_str())
-                    .unwrap_or("")
-                    .is_empty()
-                {
+                let Some(track) = entry.track.or(entry.item) else {
+                    continue;
+                };
+                if track.id.as_deref().unwrap_or("").is_empty() {
                     continue;
                 }
-                if track
-                    .get("type")
-                    .and_then(|kind| kind.as_str())
-                    .unwrap_or("track")
-                    != "track"
-                {
+                if track.kind.as_deref().unwrap_or("track") != "track" {
                     continue;
                 }
-                tracks.push(track.clone());
+                tracks.push(track);
             }
-            let has_next = page.get("next").is_some_and(|next| !next.is_null());
-            if items.is_empty() || !has_next {
+            if page_len == 0 || page.next.is_none() {
                 break;
             }
             offset += 100;
@@ -450,11 +423,17 @@ impl SpotifyClient {
     }
 }
 
+/// A playlist id as one path segment: anything outside the unreserved set
+/// is percent-encoded, so an id from a request cannot add a path or a query.
+fn path_segment(id: &str) -> percent_encoding::PercentEncode<'_> {
+    percent_encoding::utf8_percent_encode(id, UNRESERVED)
+}
+
 /// Decode a JSON body read under [`MAX_API_BODY_BYTES`].
-async fn json_body(
+async fn json_body<T: DeserializeOwned>(
     response: reqwest::Response,
     what: &str,
-) -> Result<serde_json::Value, SpotifyError> {
+) -> Result<T, SpotifyError> {
     let bytes = read_capped(response, MAX_API_BODY_BYTES)
         .await
         .map_err(|cause| match cause {
@@ -463,7 +442,7 @@ async fn json_body(
                 SpotifyError::Unavailable(format!("{what} read failed: {cause}"))
             }
         })?;
-    serde_json::from_slice::<serde_json::Value>(&bytes)
+    serde_json::from_slice::<T>(&bytes)
         .map_err(|cause| SpotifyError::Unavailable(format!("{what} decode failed: {cause}")))
 }
 
@@ -492,23 +471,12 @@ impl std::fmt::Debug for TokenGrant {
     }
 }
 
-impl TokenGrant {
-    /// Decode the tolerant grant shape.
-    pub fn from_value(body: &serde_json::Value) -> Self {
+impl From<TokenAnswer> for TokenGrant {
+    fn from(answer: TokenAnswer) -> Self {
         Self {
-            access_token: body
-                .get("access_token")
-                .and_then(|token| token.as_str())
-                .unwrap_or("")
-                .to_owned(),
-            refresh_token: body
-                .get("refresh_token")
-                .and_then(|token| token.as_str())
-                .map(str::to_owned),
-            expires_in_secs: body
-                .get("expires_in")
-                .and_then(|secs| secs.as_i64())
-                .unwrap_or(3600),
+            access_token: answer.access_token,
+            refresh_token: answer.refresh_token,
+            expires_in_secs: answer.expires_in.unwrap_or(3600),
         }
     }
 }
@@ -518,7 +486,7 @@ impl TokenGrant {
 /// refresh that lands after a disconnect must not relink the account.
 pub struct TokenRefresher<'a> {
     client: &'a SpotifyClient,
-    connections: &'a dyn SpotifyConnectionStore,
+    connections: &'a SqliteSpotifyLinks,
     user_id: String,
     client_id: String,
     client_secret: String,
@@ -529,7 +497,7 @@ impl<'a> TokenRefresher<'a> {
     /// Wrap one user's link.
     pub fn new(
         client: &'a SpotifyClient,
-        connections: &'a dyn SpotifyConnectionStore,
+        connections: &'a SqliteSpotifyLinks,
         user_id: &str,
         client_id: &str,
         client_secret: &str,
@@ -602,23 +570,5 @@ impl<'a> TokenRefresher<'a> {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone_from(&updated);
         Ok(updated.access_token)
-    }
-}
-
-/// Minimal base64 encoder for the Basic auth header (no new dependency).
-fn base64_encode(input: &[u8], out: &mut String) {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    for chunk in input.chunks(3) {
-        let mut block: u32 = 0;
-        for (index, byte) in chunk.iter().enumerate() {
-            block |= (*byte as u32) << (16 - 8 * index);
-        }
-        let pads = 3 - chunk.len();
-        for index in 0..4 - pads {
-            out.push(ALPHABET[((block >> (18 - 6 * index)) & 0x3F) as usize] as char);
-        }
-        for _ in 0..pads {
-            out.push('=');
-        }
     }
 }

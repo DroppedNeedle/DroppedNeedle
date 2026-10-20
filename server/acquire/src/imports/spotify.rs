@@ -2,68 +2,22 @@
 //! populate worker the `spotify:import` job runs.
 //!
 //! Imported playlists persist through the collections playlist store (see
-//! [`super::spotify_store`]); the memory stores here are test doubles.
+//! [`super::spotify_store`]).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-
-use futures_util::future::BoxFuture;
-use serde::{Deserialize, Serialize};
 
 use super::models::{SpotifyAuthUrlResponse, SpotifyPlaylistItem, SpotifyPlaylistListResponse};
 use super::spotify_client::{
     SpotifyClient, SpotifyError, TokenRefresher, best_image_url, playlist_track_count,
 };
-use super::spotify_oauth::{
-    SPOTIFY_SCOPES, SpotifyConnection, SpotifyConnectionStore, SpotifySettingsStore, percent_encode,
-};
-
-/// The playlists an import keys on `spotify:{id}` source refs (v2
-/// `PlaylistService` source-ref half). Errors carry a log-only cause.
-pub trait PlaylistIndex: Send + Sync {
-    /// Internal id for a source ref, if imported before.
-    fn get_by_source_ref<'a>(
-        &'a self,
-        source_ref: &'a str,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<String>, String>>;
-    /// Create a playlist record, or answer the one a racing import made
-    /// for the same source ref; returns its internal id.
-    fn create<'a>(
-        &'a self,
-        user_id: &'a str,
-        name: &'a str,
-        source_ref: &'a str,
-    ) -> BoxFuture<'a, Result<String, String>>;
-    /// One user's `(source_ref, playlist_id)` pairs, for the imported
-    /// mapping.
-    fn source_refs_for<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<(String, String)>, String>>;
-}
-
-/// Track rows the populate replaces wholesale (v2 async-playlist half).
-/// Same backing as [`PlaylistIndex`]. Errors carry a log-only cause.
-pub trait PlaylistTrackSink: Send + Sync {
-    /// Replace every row on a playlist with `tracks`, in order.
-    fn replace_tracks<'a>(
-        &'a self,
-        playlist_id: &'a str,
-        tracks: &'a [ImportedTrack],
-    ) -> BoxFuture<'a, Result<(), String>>;
-    /// Store the picked provider image as the local cover. Answers false
-    /// when a cover already exists (v2 `kept_existing`).
-    fn set_imported_cover<'a>(
-        &'a self,
-        playlist_id: &'a str,
-        data: &'a [u8],
-        content_type: &'a str,
-    ) -> BoxFuture<'a, Result<bool, String>>;
-}
+use super::spotify_models::{EntryTrack, PlaylistInfo};
+use super::spotify_oauth::{SpotifyConnection, authorize_url};
+use super::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks};
+use crate::settings::ConfigSpotifySettings;
 
 /// One imported track row (v2 `populate_playlist` dict shape).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ImportedTrack {
     /// Track title.
     pub track_name: String,
@@ -124,170 +78,14 @@ impl AlbumMbidResolver for FixedMbidResolver {
     }
 }
 
-/// In-memory playlist index, for tests.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct MemoryPlaylistIndex {
-    inner: Mutex<MemoryPlaylists>,
-}
-
-/// In-memory playlist rows.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-struct MemoryPlaylists {
-    next: u64,
-    by_ref: HashMap<(String, String), String>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl MemoryPlaylistIndex {
-    /// Empty index.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    fn rows(&self) -> std::sync::MutexGuard<'_, MemoryPlaylists> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl PlaylistIndex for MemoryPlaylistIndex {
-    fn get_by_source_ref<'a>(
-        &'a self,
-        source_ref: &'a str,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<String>, String>> {
-        let id = self
-            .rows()
-            .by_ref
-            .get(&(user_id.to_owned(), source_ref.to_owned()))
-            .cloned();
-        Box::pin(async move { Ok(id) })
-    }
-
-    fn create<'a>(
-        &'a self,
-        user_id: &'a str,
-        _name: &'a str,
-        source_ref: &'a str,
-    ) -> BoxFuture<'a, Result<String, String>> {
-        let mut rows = self.rows();
-        let key = (user_id.to_owned(), source_ref.to_owned());
-        let id = match rows.by_ref.get(&key) {
-            Some(existing) => existing.clone(),
-            None => {
-                rows.next += 1;
-                let id = format!("pl-{}", rows.next);
-                rows.by_ref.insert(key, id.clone());
-                id
-            }
-        };
-        Box::pin(async move { Ok(id) })
-    }
-
-    fn source_refs_for<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<(String, String)>, String>> {
-        let refs = self
-            .rows()
-            .by_ref
-            .iter()
-            .filter(|((owner, _), _)| owner == user_id)
-            .map(|((_, source_ref), id)| (source_ref.clone(), id.clone()))
-            .collect();
-        Box::pin(async move { Ok(refs) })
-    }
-}
-
-/// In-memory track rows plus covers, for tests.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct MemoryTrackSink {
-    inner: Mutex<MemoryTracks>,
-}
-
-/// In-memory track rows.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-struct MemoryTracks {
-    rows: HashMap<String, Vec<ImportedTrack>>,
-    covers: HashMap<String, (Vec<u8>, String)>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl MemoryTrackSink {
-    /// Empty sink.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Rows currently on a playlist.
-    pub fn tracks(&self, playlist_id: &str) -> Vec<ImportedTrack> {
-        self.lock()
-            .rows
-            .get(playlist_id)
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    /// Stored cover bytes and type for a playlist, if any.
-    pub fn cover(&self, playlist_id: &str) -> Option<(Vec<u8>, String)> {
-        self.lock().covers.get(playlist_id).cloned()
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, MemoryTracks> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl PlaylistTrackSink for MemoryTrackSink {
-    fn replace_tracks<'a>(
-        &'a self,
-        playlist_id: &'a str,
-        tracks: &'a [ImportedTrack],
-    ) -> BoxFuture<'a, Result<(), String>> {
-        self.lock()
-            .rows
-            .insert(playlist_id.to_owned(), tracks.to_vec());
-        Box::pin(async { Ok(()) })
-    }
-
-    fn set_imported_cover<'a>(
-        &'a self,
-        playlist_id: &'a str,
-        data: &'a [u8],
-        content_type: &'a str,
-    ) -> BoxFuture<'a, Result<bool, String>> {
-        let mut inner = self.lock();
-        let stored = if inner.covers.contains_key(playlist_id) {
-            false
-        } else {
-            inner.covers.insert(
-                playlist_id.to_owned(),
-                (data.to_vec(), content_type.to_owned()),
-            );
-            true
-        };
-        Box::pin(async move { Ok(stored) })
-    }
-}
-
 /// Spotify import service: OAuth helpers, playlist listing, and the
 /// populate worker the `spotify:import` job runs (v2
 /// `SpotifyImportService`).
 pub struct SpotifyImportService {
     client: SpotifyClient,
-    settings: Arc<dyn SpotifySettingsStore>,
-    connections: Arc<dyn SpotifyConnectionStore>,
-    playlists: Arc<dyn PlaylistIndex>,
-    tracks: Arc<dyn PlaylistTrackSink>,
+    settings: Arc<ConfigSpotifySettings>,
+    connections: Arc<SqliteSpotifyLinks>,
+    playlists: Arc<CollectionsPlaylistBridge>,
     resolver: Arc<dyn AlbumMbidResolver>,
 }
 
@@ -306,10 +104,9 @@ impl SpotifyImportService {
     /// Wire the service from its parts.
     pub fn new(
         client: SpotifyClient,
-        settings: Arc<dyn SpotifySettingsStore>,
-        connections: Arc<dyn SpotifyConnectionStore>,
-        playlists: Arc<dyn PlaylistIndex>,
-        tracks: Arc<dyn PlaylistTrackSink>,
+        settings: Arc<ConfigSpotifySettings>,
+        connections: Arc<SqliteSpotifyLinks>,
+        playlists: Arc<CollectionsPlaylistBridge>,
         resolver: Arc<dyn AlbumMbidResolver>,
     ) -> Self {
         Self {
@@ -317,7 +114,6 @@ impl SpotifyImportService {
             settings,
             connections,
             playlists,
-            tracks,
             resolver,
         }
     }
@@ -334,19 +130,8 @@ impl SpotifyImportService {
         if !raw.enabled || raw.client_id.is_empty() || raw.client_secret.expose().is_empty() {
             return Err("Spotify is not configured by the administrator".to_owned());
         }
-        let query = [
-            ("client_id", raw.client_id.as_str()),
-            ("response_type", "code"),
-            ("redirect_uri", redirect_uri),
-            ("scope", SPOTIFY_SCOPES),
-            ("state", state),
-        ]
-        .iter()
-        .map(|(key, value)| format!("{key}={}", percent_encode(value)))
-        .collect::<Vec<_>>()
-        .join("&");
         Ok(SpotifyAuthUrlResponse {
-            auth_url: format!("https://accounts.spotify.com/authorize?{query}"),
+            auth_url: authorize_url(&raw.client_id, redirect_uri, state),
         })
     }
 
@@ -384,14 +169,9 @@ impl SpotifyImportService {
         let mut spotify_user_id = stored.spotify_user_id.clone();
         let refresher = self.refresher(user_id, stored);
         if spotify_user_id.is_empty() {
-            let me = self.client.current_user(&refresher).await?;
-            spotify_user_id = me
-                .get("id")
-                .and_then(|id| id.as_str())
-                .unwrap_or("")
-                .to_owned();
+            spotify_user_id = self.client.current_user(&refresher).await?.id;
         }
-        let raw = self.client.user_playlists(&refresher).await?;
+        let listed = self.client.user_playlists(&refresher).await?;
 
         let mut imported: HashMap<String, String> = HashMap::new();
         let refs = self
@@ -405,46 +185,19 @@ impl SpotifyImportService {
             }
         }
 
-        let mut playlists = Vec::new();
-        for item in &raw {
-            let owner = item
-                .get("owner")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            if owner.get("id").and_then(|id| id.as_str()).unwrap_or("") != spotify_user_id {
-                continue;
-            }
-            let pid = item
-                .get("id")
-                .and_then(|id| id.as_str())
-                .unwrap_or("")
-                .to_owned();
-            let images = item
-                .get("images")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            playlists.push(SpotifyPlaylistItem {
-                id: pid.clone(),
-                name: item
-                    .get("name")
-                    .and_then(|name| name.as_str())
-                    .unwrap_or("")
-                    .to_owned(),
-                description: item
-                    .get("description")
-                    .and_then(|description| description.as_str())
-                    .unwrap_or("")
-                    .to_owned(),
-                track_count: playlist_track_count(item),
-                cover_url: best_image_url(&images, 250),
-                owner: owner
-                    .get("display_name")
-                    .and_then(|name| name.as_str())
-                    .unwrap_or("")
-                    .to_owned(),
-                imported_playlist_id: imported.get(&pid).cloned(),
-            });
-        }
+        let playlists = listed
+            .into_iter()
+            .filter(|playlist| playlist.owner.id == spotify_user_id)
+            .map(|playlist| SpotifyPlaylistItem {
+                track_count: playlist_track_count(&playlist),
+                cover_url: best_image_url(playlist.images.as_deref(), 250),
+                imported_playlist_id: imported.get(&playlist.id).cloned(),
+                owner: playlist.owner.display_name.unwrap_or_default(),
+                description: playlist.description.unwrap_or_default(),
+                name: playlist.name,
+                id: playlist.id,
+            })
+            .collect();
         Ok(SpotifyPlaylistListResponse { playlists })
     }
 
@@ -467,12 +220,12 @@ impl SpotifyImportService {
             return Ok(existing);
         }
         let name = if name.is_empty() {
-            "Spotify Playlist".to_owned()
+            "Spotify Playlist"
         } else {
-            name.to_owned()
+            name
         };
         self.playlists
-            .create(user_id, &name, &source_ref)
+            .create(user_id, name, &source_ref)
             .await
             .map_err(SpotifyError::Store)
     }
@@ -487,79 +240,60 @@ impl SpotifyImportService {
         playlist_id: &str,
     ) -> Result<usize, SpotifyError> {
         let refresher = self.refresher(user_id, self.link(user_id).await?);
-        let (info, raw_tracks) = tokio::join!(
+        let (info, tracks) = tokio::join!(
             self.client.playlist(&refresher, spotify_playlist_id),
             self.client.playlist_tracks(&refresher, spotify_playlist_id)
         );
         let info = info?;
-        let raw_tracks = raw_tracks?;
+        let tracks = tracks?;
 
         let mut album_mbid: HashMap<String, Option<String>> = HashMap::new();
-        for track in &raw_tracks {
-            let album = track
-                .get("album")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            let album_id = album.get("id").and_then(|id| id.as_str()).unwrap_or("");
+        for track in &tracks {
+            let Some(album) = &track.album else { continue };
+            let album_id = album.id.as_deref().unwrap_or("");
             if album_id.is_empty() || album_mbid.contains_key(album_id) {
                 continue;
             }
             let isrc = track
-                .get("external_ids")
-                .and_then(|ids| ids.get("isrc"))
-                .and_then(|isrc| isrc.as_str());
-            let artist = joined_artists(track);
-            let album_name = album
-                .get("name")
-                .and_then(|name| name.as_str())
-                .unwrap_or("");
+                .external_ids
+                .as_ref()
+                .and_then(|ids| ids.isrc.as_deref());
+            let album_name = album.name.as_deref().unwrap_or("");
             album_mbid.insert(
                 album_id.to_owned(),
-                self.resolver.resolve(isrc, &artist, album_name),
+                self.resolver
+                    .resolve(isrc, &joined_artists(track), album_name),
             );
         }
 
-        let mut rows = Vec::with_capacity(raw_tracks.len());
-        for track in &raw_tracks {
-            let album = track
-                .get("album")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            let album_spotify_id = album.get("id").and_then(|id| id.as_str()).unwrap_or("");
-            let mbid = album_mbid.get(album_spotify_id).cloned().flatten();
-            let cover_url = match &mbid {
-                Some(mbid) => Some(format!("/api/v1/covers/release-group/{mbid}?size=250")),
-                None => {
-                    let images = album
-                        .get("images")
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null);
-                    best_image_url(&images, 250)
+        let rows: Vec<ImportedTrack> = tracks
+            .iter()
+            .map(|track| {
+                let album = track.album.as_ref();
+                let mbid = album
+                    .and_then(|album| album.id.as_deref())
+                    .and_then(|id| album_mbid.get(id).cloned().flatten());
+                let cover_url = match &mbid {
+                    Some(mbid) => Some(format!("/api/v1/covers/release-group/{mbid}?size=250")),
+                    None => best_image_url(album.and_then(|album| album.images.as_deref()), 250),
+                };
+                ImportedTrack {
+                    track_name: track.name.clone(),
+                    artist_name: joined_artists(track),
+                    album_name: album
+                        .and_then(|album| album.name.clone())
+                        .unwrap_or_default(),
+                    album_id: mbid.unwrap_or_default(),
+                    source_type: String::new(),
+                    track_number: track.track_number,
+                    disc_number: track.disc_number,
+                    duration: track.duration_ms.map(|ms| ms / 1000),
+                    cover_url,
                 }
-            };
-            let duration_ms = track.get("duration_ms").and_then(|ms| ms.as_i64());
-            rows.push(ImportedTrack {
-                track_name: track
-                    .get("name")
-                    .and_then(|name| name.as_str())
-                    .unwrap_or("")
-                    .to_owned(),
-                artist_name: joined_artists(track),
-                album_name: album
-                    .get("name")
-                    .and_then(|name| name.as_str())
-                    .unwrap_or("")
-                    .to_owned(),
-                album_id: mbid.unwrap_or_default(),
-                source_type: String::new(),
-                track_number: track.get("track_number").and_then(|number| number.as_i64()),
-                disc_number: track.get("disc_number").and_then(|number| number.as_i64()),
-                duration: duration_ms.map(|ms| ms / 1000),
-                cover_url,
-            });
-        }
+            })
+            .collect();
         let written = rows.len();
-        self.tracks
+        self.playlists
             .replace_tracks(playlist_id, &rows)
             .await
             .map_err(SpotifyError::Store)?;
@@ -579,13 +313,9 @@ impl SpotifyImportService {
         &self,
         spotify_playlist_id: &str,
         playlist_id: &str,
-        info: &serde_json::Value,
+        info: &PlaylistInfo,
     ) -> CoverOutcome {
-        let images = info
-            .get("images")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        let Some(cover_url) = best_image_url(&images, 250) else {
+        let Some(cover_url) = best_image_url(info.images.as_deref(), 250) else {
             return CoverOutcome::Skipped("no cover offered".to_owned());
         };
         let fetched = match self.client.fetch_cover(&cover_url).await {
@@ -602,7 +332,7 @@ impl SpotifyImportService {
             ));
         };
         match self
-            .tracks
+            .playlists
             .set_imported_cover(playlist_id, &data, &content_type)
             .await
         {
@@ -614,18 +344,12 @@ impl SpotifyImportService {
 }
 
 /// Comma-joined track artist names (v2 populate loop).
-fn joined_artists(track: &serde_json::Value) -> String {
+fn joined_artists(track: &EntryTrack) -> String {
     track
-        .get("artists")
-        .and_then(|artists| artists.as_array())
-        .map(|artists| {
-            artists
-                .iter()
-                .filter_map(|artist| artist.get("name"))
-                .filter_map(|name| name.as_str())
-                .filter(|name| !name.is_empty())
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .unwrap_or_default()
+        .artists
+        .iter()
+        .filter_map(|artist| artist.name.as_deref())
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
 }

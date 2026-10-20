@@ -7,9 +7,9 @@
 //!
 //! Credentials and URLs live in the config store (encrypted at rest,
 //! never in plaintext): [`ConfigLidarrSettings`] and
-//! [`ConfigSpotifySettings`] implement the imports settings traits over
-//! the `lidarr_import` and `spotify_settings` secret sections. They read
-//! through live handles and hold the store only to save.
+//! [`ConfigSpotifySettings`] serve the imports over the `lidarr_import`
+//! and `spotify_settings` secret sections. They read through live handles
+//! and hold the store only to save.
 //!
 //! The follow bridges share one follow/approval truth across modules:
 //!
@@ -33,7 +33,6 @@ use futures_util::future::BoxFuture;
 use super::db::now_epoch;
 use super::imports::lidarr::{ApprovalSink, FollowStore, LidarrSettingsStore};
 use super::imports::models::{LidarrConnectionSettings, SpotifySettings as ImportsSpotifySettings};
-use super::imports::spotify_oauth::SpotifySettingsStore;
 use super::requests::bridges::FollowDecisionSink;
 use super::requests::sqlite::FollowApprovalStore;
 use droppedneedle_catalog::reads::collections::state::{
@@ -134,12 +133,16 @@ impl ConfigSpotifySettings {
     }
 }
 
-impl SpotifySettingsStore for ConfigSpotifySettings {
-    fn legacy_callback(&self) -> bool {
+impl ConfigSpotifySettings {
+    /// True when the app was registered against v2, so its dashboard lists
+    /// the v2 callback path. The v2 import sets it; saving a different
+    /// client id clears it.
+    pub fn legacy_callback(&self) -> bool {
         self.live.read().unwrap_or_default().legacy_callback
     }
 
-    fn get(&self) -> ImportsSpotifySettings {
+    /// Masked settings for reads.
+    pub fn get(&self) -> ImportsSpotifySettings {
         let section = self.live.read().unwrap_or_default();
         ImportsSpotifySettings {
             client_id: section.client_id.clone(),
@@ -149,48 +152,46 @@ impl SpotifySettingsStore for ConfigSpotifySettings {
         }
     }
 
-    fn get_raw(&self) -> SpotifySettings {
+    /// The saved app settings with the real secret, which sits in a
+    /// [`Secret`] so it never reaches a response.
+    pub fn get_raw(&self) -> SpotifySettings {
         (**self.live.read().unwrap_or_default()).clone()
     }
 
-    fn save<'a>(
-        &'a self,
-        settings: &'a ImportsSpotifySettings,
-    ) -> BoxFuture<'a, Result<(), ImportsError>> {
+    /// Save; a masked secret keeps the stored one. A redirect origin that
+    /// is not an absolute http(s) address is invalid input.
+    pub async fn save(&self, settings: &ImportsSpotifySettings) -> Result<(), ImportsError> {
         let submitted = settings.clone();
-        Box::pin(async move {
-            // The v2 marker belongs to the app it was stamped for: a
-            // different client id is a new app, registered with the v3
-            // path. The check reads the stored row in the same write, and a
-            // stored section that does not read fails the save rather than
-            // dropping the marker.
-            self.store
-                .update_secret::<SpotifySettings, ConfigError, _>(move |stored| {
-                    let stored = stored.into_inner();
-                    let same_app = stored.client_id.trim() == submitted.client_id.trim();
-                    Ok(SpotifySettings {
-                        client_id: submitted.client_id,
-                        client_secret: Secret::new(submitted.client_secret),
-                        enabled: submitted.enabled,
-                        spotify_redirect_origin: submitted.spotify_redirect_origin,
-                        legacy_callback: stored.legacy_callback && same_app,
-                    })
+        // The v2 marker belongs to the app it was stamped for: a different
+        // client id is a new app, registered with the v3 path. The check
+        // reads the stored row in the same write, and a stored section that
+        // does not read fails the save rather than dropping the marker.
+        self.store
+            .update_secret::<SpotifySettings, ConfigError, _>(move |stored| {
+                let stored = stored.into_inner();
+                let same_app = stored.client_id.trim() == submitted.client_id.trim();
+                Ok(SpotifySettings {
+                    client_id: submitted.client_id,
+                    client_secret: Secret::new(submitted.client_secret),
+                    enabled: submitted.enabled,
+                    spotify_redirect_origin: submitted.spotify_redirect_origin,
+                    legacy_callback: stored.legacy_callback && same_app,
                 })
-                .await
-                .map(|_| ())
-                .map_err(|error| match error {
-                    UpdateError::Rejected(error) | UpdateError::Config(error) => error,
-                })
-                .map_err(|error| match error {
-                    ConfigError::Validation { .. } => ImportsError::InvalidInput {
-                        message: error.to_string(),
-                    },
-                    error if error.is_busy() => ImportsError::Busy {
-                        cause: error.to_string(),
-                    },
-                    error => ImportsError::internal(&error),
-                })
-        })
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| match error {
+                UpdateError::Rejected(error) | UpdateError::Config(error) => error,
+            })
+            .map_err(|error| match error {
+                ConfigError::Validation { .. } => ImportsError::InvalidInput {
+                    message: error.to_string(),
+                },
+                error if error.is_busy() => ImportsError::Busy {
+                    cause: error.to_string(),
+                },
+                error => ImportsError::internal(&error),
+            })
     }
 }
 

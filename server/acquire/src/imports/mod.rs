@@ -8,7 +8,8 @@
 //!
 //! Layout: `lidarr` holds the two-endpoint client plus the import service,
 //! `spotify_oauth` holds the OAuth half (states, links, app settings),
-//! `spotify_client` the Web API client, `spotify` the playlist listing and
+//! `spotify_client` the Web API client over the wire shapes in
+//! `spotify_models`, `spotify` the playlist listing and
 //! the populate worker, `spotify_store` holds the SQLite stores behind it (links, authorize
 //! states, imported playlists),
 //! `jobs` holds the `spotify:import` durable-job key plus the minimal local
@@ -29,5 +30,6 @@ pub mod models;
 pub mod mount;
 pub mod spotify;
 pub mod spotify_client;
+pub mod spotify_models;
 pub mod spotify_oauth;
 pub mod spotify_store;

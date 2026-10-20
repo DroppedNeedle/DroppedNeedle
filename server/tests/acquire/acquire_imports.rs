@@ -5,7 +5,8 @@
 //! the `spotify:import` durable job, and the acquisition health smoke with
 //! its independent per-source release gates. Every test runs against the
 //! in-repo loopback mocks or scripted probes; nothing touches a live
-//! Lidarr, Spotify, slskd, SABnzbd, or indexer.
+//! Lidarr, Spotify, slskd, SABnzbd, or indexer. The Spotify import runs on
+//! the production stores over the rig's database and settings.
 
 use crate::common;
 use crate::common::auth::{AuthRig, test_principal, with_test_principal};
@@ -16,10 +17,17 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::settings::ConfigSpotifySettings;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
+use droppedneedle_catalog::reads::collections::db::CollectionsDb;
+use droppedneedle_catalog::reads::collections::models::PlaylistTrack;
+use droppedneedle_catalog::reads::collections::store::PlaylistStore;
+use droppedneedle_kernel::runtime_config::ConfigError;
+use droppedneedle_kernel::runtime_config::secret_sections::SpotifySettings as SpotifySection;
 use droppedneedle_testkit::imports::{
-    LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_TOKEN, serve_lidarr,
-    serve_spotify,
+    LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_PLAYLIST_NO_TRACK_ID,
+    SPOTIFY_TOKEN, serve_lidarr, serve_spotify,
 };
 use imports::handlers::{ImportsDeps, imports_router};
 use imports::health::{
@@ -30,15 +38,11 @@ use imports::lidarr::{
     LidarrClient, LidarrImportService, MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings,
 };
 use imports::models::{LidarrConnectionSettings, SpotifySettings};
-use imports::spotify::{
-    FixedMbidResolver, ImportedTrack, MemoryPlaylistIndex, MemoryTrackSink, PlaylistIndex as _,
-    PlaylistTrackSink as _, SpotifyImportService,
-};
+use imports::spotify::{FixedMbidResolver, ImportedTrack, SpotifyImportService};
 use imports::spotify_client::{SpotifyClient, TokenGrant, is_allowed_cover_url};
 use imports::spotify_oauth::{
-    MemorySpotifyConnections, MemorySpotifySettings, MemorySpotifyStates, PendingAuth,
-    SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyConnection, SpotifyConnectionStore,
-    SpotifyStateStore as _, redirect_uri,
+    PendingAuth, SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyConnection,
+    redirect_uri,
 };
 use imports::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates};
 use serde_json::{Value, json};
@@ -68,17 +72,17 @@ fn no_redirect_client() -> reqwest::Client {
         .clone()
 }
 
-/// Fully wired module bundle over memory stores for tests.
+/// Fully wired module bundle for tests: the Spotify import on the
+/// production stores over the auth rig's database and settings, Lidarr on
+/// its memory stores, health on scripted probes.
 #[allow(dead_code)]
 struct Rig {
     deps: ImportsDeps,
     lidarr_settings: Arc<MemoryLidarrSettings>,
     follows: Arc<MemoryFollowStore>,
     approvals: Arc<MemoryApprovalSink>,
-    spotify_settings: Arc<MemorySpotifySettings>,
-    spotify_links: Arc<MemorySpotifyConnections>,
-    playlists: Arc<MemoryPlaylistIndex>,
-    tracks: Arc<MemoryTrackSink>,
+    spotify_links: Arc<SqliteSpotifyLinks>,
+    playlists: PlaylistStore,
     resolver: Arc<FixedMbidResolver>,
     slskd: Arc<ScriptedSlskd>,
     sabnzbd: Arc<ScriptedSabnzbd>,
@@ -86,16 +90,18 @@ struct Rig {
     lidarr_probe: Arc<ScriptedLidarr>,
 }
 
-fn rig_for(lidarr_base: &str, api_base: &str, accounts_base: &str) -> Rig {
+fn rig_for(auth: &AuthRig, api_base: &str, accounts_base: &str) -> Rig {
     let http = http_client();
+    let platform = &auth.platform;
+    let db = AcquireDb::new(platform.db.clone());
+    let playlists = PlaylistStore::new(CollectionsDb::new(platform.db.clone()));
     let lidarr_settings = Arc::new(MemoryLidarrSettings::new());
     let follows = Arc::new(MemoryFollowStore::new());
     let approvals = Arc::new(MemoryApprovalSink::new());
-    let spotify_settings = Arc::new(MemorySpotifySettings::new());
-    let spotify_states = Arc::new(MemorySpotifyStates::new());
-    let spotify_links = Arc::new(MemorySpotifyConnections::new());
-    let playlists = Arc::new(MemoryPlaylistIndex::new());
-    let tracks = Arc::new(MemoryTrackSink::new());
+    let spotify_settings = Arc::new(ConfigSpotifySettings::new(platform.settings.clone()));
+    let spotify_states = Arc::new(SqliteSpotifyStates::new(db.clone()));
+    let spotify_links = Arc::new(SqliteSpotifyLinks::new(db.clone(), platform.crypto.clone()));
+    let spotify_playlists = Arc::new(CollectionsPlaylistBridge::new(playlists.clone(), db));
     let resolver = Arc::new(FixedMbidResolver::new());
     let spotify_client =
         SpotifyClient::new(http.clone(), no_redirect_client(), api_base, accounts_base);
@@ -103,8 +109,7 @@ fn rig_for(lidarr_base: &str, api_base: &str, accounts_base: &str) -> Rig {
         spotify_client.clone(),
         spotify_settings.clone(),
         spotify_links.clone(),
-        playlists.clone(),
-        tracks.clone(),
+        spotify_playlists.clone(),
         resolver.clone(),
     ));
     let jobs = Arc::new(JobRegistry::new());
@@ -126,19 +131,16 @@ fn rig_for(lidarr_base: &str, api_base: &str, accounts_base: &str) -> Rig {
     let sabnzbd = Arc::new(ScriptedSabnzbd::new());
     let newznab = Arc::new(ScriptedNewznab::new());
     let lidarr_probe = Arc::new(ScriptedLidarr::new());
-    let _ = lidarr_base;
     let deps = ImportsDeps {
-        http: http.clone(),
         lidarr: LidarrClient::new(http),
         lidarr_settings: lidarr_settings.clone(),
         follows: follows.clone(),
         approvals: approvals.clone(),
         spotify: spotify_client,
-        spotify_settings: spotify_settings.clone(),
+        spotify_settings,
         spotify_states,
         spotify_links: spotify_links.clone(),
-        playlists: playlists.clone(),
-        tracks: tracks.clone(),
+        spotify_playlists,
         resolver: resolver.clone(),
         jobs,
         executor,
@@ -157,16 +159,19 @@ fn rig_for(lidarr_base: &str, api_base: &str, accounts_base: &str) -> Rig {
         lidarr_settings,
         follows,
         approvals,
-        spotify_settings,
         spotify_links,
         playlists,
-        tracks,
         resolver,
         slskd,
         sabnzbd,
         newznab,
         lidarr_probe,
     }
+}
+
+/// The rows on one playlist, in order.
+async fn playlist_rows(playlists: &PlaylistStore, playlist_id: &str) -> Vec<PlaylistTrack> {
+    playlists.tracks(playlist_id).await.expect("rows read")
 }
 
 fn authed_app(deps: ImportsDeps, user_id: &str, role: Role) -> Router {
@@ -306,9 +311,9 @@ async fn lidarr_transport_errors_never_carry_the_url() {
 
 #[tokio::test]
 async fn lidarr_import_becomes_follows_with_counts() {
-    let (_rig, admin_id, _) = seed_rig().await;
+    let (auth, admin_id, _) = seed_rig().await;
     let (server, _) = serve_lidarr().await.expect("mock serves");
-    let bundle = rig_for(&server.base_url, "http://127.0.0.1:1", "http://127.0.0.1:1");
+    let bundle = rig_for(&auth, "http://127.0.0.1:1", "http://127.0.0.1:1");
     bundle.lidarr_settings.seed(&server.base_url, LIDARR_KEY);
     let payload = json!({"selected_mbids": [LIDARR_MBID_ALL, LIDARR_MBID_NONE]});
 
@@ -376,9 +381,9 @@ async fn lidarr_non_admin_mirror_opens_approval_batch_at_service_level() {
 
 #[tokio::test]
 async fn lidarr_config_round_trip_masks_and_normalizes() {
-    let (_rig, admin_id, _) = seed_rig().await;
+    let (auth, admin_id, _) = seed_rig().await;
     let (server, _) = serve_lidarr().await.expect("mock serves");
-    let bundle = rig_for(&server.base_url, "http://127.0.0.1:1", "http://127.0.0.1:1");
+    let bundle = rig_for(&auth, "http://127.0.0.1:1", "http://127.0.0.1:1");
     let pasted = format!("{}/api/v1", server.base_url);
 
     let (status, body) = put_json(
@@ -412,9 +417,9 @@ async fn lidarr_config_round_trip_masks_and_normalizes() {
 
 #[tokio::test]
 async fn lidarr_surface_issues_only_the_two_sanctioned_gets() {
-    let (_rig, admin_id, _) = seed_rig().await;
+    let (auth, admin_id, _) = seed_rig().await;
     let (server, recorder) = serve_lidarr().await.expect("mock serves");
-    let bundle = rig_for(&server.base_url, "http://127.0.0.1:1", "http://127.0.0.1:1");
+    let bundle = rig_for(&auth, "http://127.0.0.1:1", "http://127.0.0.1:1");
     bundle.lidarr_settings.seed(&server.base_url, LIDARR_KEY);
 
     let _ = post_json(
@@ -450,9 +455,9 @@ async fn lidarr_surface_issues_only_the_two_sanctioned_gets() {
 
 #[tokio::test]
 async fn lidarr_routes_gate_anonymous_and_non_admin() {
-    let (_rig, admin_id, user_id) = seed_rig().await;
+    let (auth, admin_id, user_id) = seed_rig().await;
     let (server, _) = serve_lidarr().await.expect("mock serves");
-    let bundle = rig_for(&server.base_url, "http://127.0.0.1:1", "http://127.0.0.1:1");
+    let bundle = rig_for(&auth, "http://127.0.0.1:1", "http://127.0.0.1:1");
     bundle.lidarr_settings.seed(&server.base_url, LIDARR_KEY);
 
     let (status, body) = get_json(
@@ -598,10 +603,9 @@ async fn poll_job_done(deps: ImportsDeps, user_id: &str, spotify_id: &str) -> Va
 
 #[tokio::test]
 async fn spotify_settings_round_trip_and_reject_bad_origin() {
-    let (_rig, admin_id, user_id) = seed_rig().await;
-    let (lidarr, _) = serve_lidarr().await.expect("mock serves");
+    let (auth, admin_id, user_id) = seed_rig().await;
     let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&auth, &api.base_url, &accounts.base_url);
 
     let (status, body) = get_json(
         authed_app(bundle.deps.clone(), &admin_id, Role::Admin),
@@ -692,10 +696,9 @@ async fn callback_addresses(deps: &ImportsDeps, admin_id: &str, peer: &str) -> S
 async fn spotify_callback_address_follows_a_trusted_proxy_only() {
     const TRUSTED: &str = "127.0.0.1:4000";
     const STRANGER: &str = "203.0.113.9:4000";
-    let (_rig, admin_id, _) = seed_rig().await;
-    let (lidarr, _) = serve_lidarr().await.expect("mock serves");
+    let (auth, admin_id, _) = seed_rig().await;
     let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&auth, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
 
     assert_eq!(
@@ -752,10 +755,9 @@ async fn spotify_callback_address_follows_a_trusted_proxy_only() {
 
 #[tokio::test]
 async fn spotify_callback_rejects_error_and_replayed_state() {
-    let (_rig, admin_id, user_id) = seed_rig().await;
-    let (lidarr, _) = serve_lidarr().await.expect("mock serves");
+    let (auth, admin_id, user_id) = seed_rig().await;
     let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&auth, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
 
     // Provider-side error redirects plain.
@@ -847,10 +849,9 @@ async fn spotify_callback_rejects_error_and_replayed_state() {
 
 #[tokio::test]
 async fn spotify_import_answers_fast_then_populates_two_tracks() {
-    let (_rig, admin_id, user_id) = seed_rig().await;
-    let (lidarr, _) = serve_lidarr().await.expect("mock serves");
+    let (auth, admin_id, user_id) = seed_rig().await;
     let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&auth, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
     link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
     bundle
@@ -875,18 +876,23 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
     assert_eq!(done["track_count"], 2);
 
     // The `is_local` row never lands; the resolved album carries its MBID.
-    let rows = bundle.tracks.tracks(&playlist_id);
+    let rows = playlist_rows(&bundle.playlists, &playlist_id).await;
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].track_name, "Midnight Drive");
     assert_eq!(rows[0].artist_name, "Aurora Current");
-    assert_eq!(rows[0].album_id, "rg-mbid-1");
-    assert_eq!(rows[0].duration, Some(183));
+    assert_eq!(rows[0].album_id.as_deref(), Some("rg-mbid-1"));
+    assert_eq!(rows[0].duration, Some(183.0));
     assert_eq!(rows[1].track_name, "Glass Tides");
-    assert_eq!(rows[1].album_id, "");
-    assert_eq!(rows[1].duration, Some(201));
+    assert_eq!(rows[1].album_id, None);
+    assert_eq!(rows[1].duration, Some(201.0));
 
     // The cover persisted best-effort.
-    assert!(bundle.tracks.cover(&playlist_id).is_some());
+    let cover = bundle
+        .playlists
+        .cover(&playlist_id)
+        .await
+        .expect("cover reads");
+    assert!(cover.is_some());
 
     // Re-import answers the same record and replaces the rows wholesale.
     let (status, body) = post_json(
@@ -899,7 +905,10 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
     assert_eq!(body["playlist_id"], playlist_id);
     let done = poll_job_done(bundle.deps.clone(), &user_id, "sp-playlist-1").await;
     assert_eq!(done["state"], "done");
-    assert_eq!(bundle.tracks.tracks(&playlist_id).len(), 2);
+    assert_eq!(
+        playlist_rows(&bundle.playlists, &playlist_id).await.len(),
+        2
+    );
 
     // Playlists now carry the imported mapping.
     let (status, body) = get_json(
@@ -913,10 +922,9 @@ async fn spotify_import_answers_fast_then_populates_two_tracks() {
 
 #[tokio::test]
 async fn spotify_tracks_come_from_items_never_legacy_tracks() {
-    let (_rig, admin_id, user_id) = seed_rig().await;
-    let (lidarr, _) = serve_lidarr().await.expect("mock serves");
+    let (auth, admin_id, user_id) = seed_rig().await;
     let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&auth, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
     link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
 
@@ -951,6 +959,38 @@ async fn spotify_tracks_come_from_items_never_legacy_tracks() {
     );
 }
 
+/// A playlist entry whose track comes without its id is an answer the
+/// import does not understand: the import fails and writes no rows, never
+/// a playlist that quietly lost the track.
+#[tokio::test]
+async fn spotify_track_without_id_fails_the_import() {
+    let (auth, admin_id, user_id) = seed_rig().await;
+    let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
+    let bundle = rig_for(&auth, &api.base_url, &accounts.base_url);
+    seed_spotify_app(bundle.deps.clone(), &admin_id).await;
+    link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
+
+    let (status, body) = post_json(
+        authed_app(bundle.deps.clone(), &user_id, Role::User),
+        &format!("/api/v3/acquire/spotify/playlists/{SPOTIFY_PLAYLIST_NO_TRACK_ID}/import"),
+        json!({"name": "Nameless"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let playlist_id = body["playlist_id"]
+        .as_str()
+        .expect("playlist id")
+        .to_owned();
+
+    let done = poll_job_done(bundle.deps, &user_id, SPOTIFY_PLAYLIST_NO_TRACK_ID).await;
+    assert_eq!(done["state"], "error", "{done}");
+    assert!(
+        playlist_rows(&bundle.playlists, &playlist_id)
+            .await
+            .is_empty()
+    );
+}
+
 #[tokio::test]
 async fn spotify_cover_fetch_refuses_redirects_and_non_images() {
     let (_, _, covers, _) = serve_spotify().await.expect("mock serves");
@@ -981,10 +1021,9 @@ async fn spotify_cover_fetch_refuses_redirects_and_non_images() {
 
 #[tokio::test]
 async fn spotify_expired_tokens_refresh_transparently() {
-    let (_rig, admin_id, user_id) = seed_rig().await;
-    let (lidarr, _) = serve_lidarr().await.expect("mock serves");
+    let (auth, admin_id, user_id) = seed_rig().await;
     let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&auth, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
     link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
 
@@ -1029,7 +1068,7 @@ async fn spotify_callback_paths_are_mounted_in_the_app() {
 }
 
 /// One user's stored link, which must exist.
-async fn linked(links: &MemorySpotifyConnections, user_id: &str) -> SpotifyConnection {
+async fn linked(links: &SqliteSpotifyLinks, user_id: &str) -> SpotifyConnection {
     links
         .get(user_id)
         .await
@@ -1043,10 +1082,9 @@ async fn linked(links: &MemorySpotifyConnections, user_id: &str) -> SpotifyConne
 /// Disconnect then removes it.
 #[tokio::test]
 async fn spotify_v2_registered_app_links_and_disconnects() {
-    let (_rig, admin_id, user_id) = seed_rig().await;
-    let (lidarr, _) = serve_lidarr().await.expect("mock serves");
+    let (auth, admin_id, user_id) = seed_rig().await;
     let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
+    let bundle = rig_for(&auth, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
     recorder.register_redirect_uri(&format!("http://app.test{SPOTIFY_LEGACY_CALLBACK_PATH}"));
 
@@ -1073,7 +1111,14 @@ async fn spotify_v2_registered_app_links_and_disconnects() {
         "saw {location}"
     );
 
-    bundle.spotify_settings.set_legacy_callback(true);
+    auth.config
+        .update_secret::<SpotifySection, ConfigError, _>(|stored| {
+            let mut section = stored.into_inner();
+            section.legacy_callback = true;
+            Ok(section)
+        })
+        .await
+        .expect("marker saves");
     link_spotify_via(
         bundle.deps.clone(),
         &recorder,
@@ -1100,10 +1145,9 @@ async fn spotify_v2_registered_app_links_and_disconnects() {
     assert!(gone.is_none());
 }
 
-/// The SQLite stores keep what the memory doubles only pretend to:
-/// single-use, expiring states with their redirect URI; sealed links that
-/// a late token refresh cannot bring back; imported playlists as real
-/// playlist rows, replaced wholesale on re-import.
+/// The SQLite stores keep single-use, expiring states with their redirect
+/// URI; sealed links that a late token refresh cannot bring back; imported
+/// playlists as real playlist rows, replaced wholesale on re-import.
 #[tokio::test]
 async fn spotify_sqlite_stores_persist_and_expire() {
     let db = droppedneedle_acquire::db::AcquireDb::scratch().expect("scratch db");
@@ -1220,11 +1264,9 @@ async fn spotify_sqlite_stores_persist_and_expire() {
 // --- Health smoke + per-source gate tests ---
 
 async fn seed_scripted_bases() -> (AuthRig, String, String, Rig) {
-    let (rig, admin_id, user_id) = seed_rig().await;
-    let (lidarr, _) = serve_lidarr().await.expect("mock serves");
-    let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
-    let bundle = rig_for(&lidarr.base_url, &api.base_url, &accounts.base_url);
-    (rig, admin_id, user_id, bundle)
+    let (auth, admin_id, user_id) = seed_rig().await;
+    let bundle = rig_for(&auth, "http://127.0.0.1:1", "http://127.0.0.1:1");
+    (auth, admin_id, user_id, bundle)
 }
 
 fn gate<'a>(body: &'a Value, source: &str) -> &'a Value {

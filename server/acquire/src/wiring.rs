@@ -36,14 +36,8 @@ use super::flows::stores::{
 use super::imports::handlers::{ImportsDeps, imports_legacy_callback_router};
 use super::imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor};
 use super::imports::lidarr::LidarrClient;
-use super::imports::spotify::{
-    FixedMbidResolver, PlaylistIndex, PlaylistTrackSink, SpotifyImportService,
-};
-#[cfg(any(test, feature = "test-support"))]
-use super::imports::spotify::{MemoryPlaylistIndex, MemoryTrackSink};
+use super::imports::spotify::{FixedMbidResolver, SpotifyImportService};
 use super::imports::spotify_client::SpotifyClient;
-#[cfg(any(test, feature = "test-support"))]
-use super::imports::spotify_oauth::{MemorySpotifyConnections, MemorySpotifyStates};
 use super::imports::spotify_store::{
     CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates,
 };
@@ -792,8 +786,6 @@ impl AcquireSetup {
             collections.playlists.clone(),
             db.clone(),
         ));
-        let playlists: Arc<dyn PlaylistIndex> = spotify_playlists.clone();
-        let tracks: Arc<dyn PlaylistTrackSink> = spotify_playlists;
         let resolver = Arc::new(FixedMbidResolver::new());
         let spotify_client =
             SpotifyClient::new(http.clone(), no_redirect, &spotify.api, &spotify.accounts);
@@ -801,8 +793,7 @@ impl AcquireSetup {
             spotify_client.clone(),
             spotify_settings.clone(),
             spotify_links.clone(),
-            playlists.clone(),
-            tracks.clone(),
+            spotify_playlists.clone(),
             resolver.clone(),
         ));
         let jobs = Arc::new(JobRegistry::new());
@@ -833,7 +824,6 @@ impl AcquireSetup {
         let probe_cache = Arc::new(ProbeCache::new(clients.clone()));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let imports = ImportsDeps {
-            http: http.clone(),
             lidarr: LidarrClient::new(http.clone()),
             lidarr_settings,
             follows: Arc::new(CollectionsFollowBridge::new(collections.follows.clone())),
@@ -842,8 +832,7 @@ impl AcquireSetup {
             spotify_settings,
             spotify_states,
             spotify_links,
-            playlists,
-            tracks,
+            spotify_playlists,
             resolver,
             jobs,
             executor,
@@ -916,7 +905,7 @@ impl AcquireSetup {
     }
 
     /// Test bundle over `db` (a scratch database), default settings and
-    /// the memory import stores. Finished downloads land in `library` when
+    /// the import stores over it. Finished downloads land in `library` when
     /// there is one. The follow verdicts go to an unwired collections
     /// store. Call inside a tokio runtime.
     #[cfg(any(test, feature = "test-support"))]
@@ -930,8 +919,9 @@ impl AcquireSetup {
             HealthProbes, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd, ScriptedSlskd,
         };
         use super::imports::lidarr::{MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings};
-        use super::imports::spotify_oauth::MemorySpotifySettings;
         use droppedneedle_catalog::reads::collections::db::CollectionsDb;
+        use droppedneedle_catalog::reads::collections::store::PlaylistStore;
+        use droppedneedle_kernel::runtime_config::crypto::Crypto;
 
         let stores = AcquireStores::over(db.clone());
         // Under the scratch database's directory, so it goes with it.
@@ -982,17 +972,20 @@ impl AcquireSetup {
             SPOTIFY_API_BASE,
             SPOTIFY_ACCOUNTS_BASE,
         );
-        let spotify_settings = Arc::new(MemorySpotifySettings::new());
-        let spotify_links = Arc::new(MemorySpotifyConnections::new());
-        let playlists = Arc::new(MemoryPlaylistIndex::new());
-        let tracks = Arc::new(MemoryTrackSink::new());
+        let spotify_settings = Arc::new(ConfigSpotifySettings::new(Arc::new(settings.clone())));
+        let crypto =
+            Arc::new(Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?);
+        let spotify_links = Arc::new(SqliteSpotifyLinks::new(db.clone(), crypto));
+        let spotify_playlists = Arc::new(CollectionsPlaylistBridge::new(
+            PlaylistStore::new(CollectionsDb::new(db.db().clone())),
+            db.clone(),
+        ));
         let resolver = Arc::new(FixedMbidResolver::new());
         let service = Arc::new(SpotifyImportService::new(
             spotify_client.clone(),
             spotify_settings.clone(),
             spotify_links.clone(),
-            playlists.clone(),
-            tracks.clone(),
+            spotify_playlists.clone(),
             resolver.clone(),
         ));
         let jobs = Arc::new(JobRegistry::new());
@@ -1015,17 +1008,15 @@ impl AcquireSetup {
             },
         ));
         let imports = ImportsDeps {
-            http: http.clone(),
             lidarr: LidarrClient::new(http),
             lidarr_settings: Arc::new(MemoryLidarrSettings::new()),
             follows: Arc::new(MemoryFollowStore::new()),
             approvals: Arc::new(MemoryApprovalSink::new()),
             spotify: spotify_client,
             spotify_settings,
-            spotify_states: Arc::new(MemorySpotifyStates::new()),
+            spotify_states: Arc::new(SqliteSpotifyStates::new(db.clone())),
             spotify_links,
-            playlists,
-            tracks,
+            spotify_playlists,
             resolver,
             jobs,
             executor,
