@@ -323,7 +323,6 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             mb_source,
             &plugin_host,
             &collections,
-            &outbound,
         ),
         &outbound.spotify(),
     )
@@ -360,6 +359,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         plugin_host.clone(),
         outbound.plex_tv.clone(),
         outbound.scrobbles(),
+        providers.listenbrainz.clone(),
     )
     .map_err(stage("media setup"))?;
     // Startup recovery before serving traffic. Re-running after a clean
@@ -477,6 +477,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         &outbound,
         library.management_settings.clone(),
         scans,
+        providers.listenbrainz.clone(),
     )
     .with_section_prefs(
         Arc::new(SqliteSectionPrefsStore { db: db.clone() }),
@@ -497,7 +498,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         plugin_ticks,
         provider_cache,
         outbound.plugin_hosts(),
-        &outbound.listenbrainz,
+        providers.listenbrainz.clone(),
     )
     .with_presence(Arc::new(media.playback.presence.clone()))
     .with_mix_grants(mix_hooks.clone(), mix_hooks);
@@ -621,7 +622,6 @@ fn acquire_ports(
     mb_source: droppedneedle_providers::musicbrainz::LiveSource,
     plugin_host: &Arc<droppedneedle_plugins::host::PluginHost>,
     collections: &Stores,
-    outbound: &Outbound,
 ) -> AcquirePorts {
     AcquirePorts {
         library: Arc::new(
@@ -644,7 +644,6 @@ fn acquire_ports(
         plugins: plugin_host.clone(),
         collections: collections.clone(),
         providers: providers.clone(),
-        listenbrainz: outbound.listenbrainz.clone(),
     }
 }
 

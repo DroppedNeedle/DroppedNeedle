@@ -78,6 +78,7 @@ impl QueueSources for Scripted {
         _username: &'a str,
         _range: StatsRange,
         _count: u32,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         ok(vec![ArtistRow {
             name: "Seed".to_owned(),
@@ -90,6 +91,7 @@ impl QueueSources for Scripted {
         _username: &'a str,
         _range: StatsRange,
         _count: u32,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         ok(Vec::new())
     }
@@ -98,6 +100,7 @@ impl QueueSources for Scripted {
         _user_id: &'a str,
         artist_mbid: &'a str,
         _limit: usize,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         let rows = if artist_mbid == SEED {
             vec![ArtistRow {
@@ -115,6 +118,7 @@ impl QueueSources for Scripted {
         _user_id: &'a str,
         artist_mbid: &'a str,
         _count: usize,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         let rows = if artist_mbid == SIMILAR {
             (1..=5).map(|n| album(n, SIMILAR)).collect()
@@ -123,12 +127,17 @@ impl QueueSources for Scripted {
         };
         ok(rows)
     }
-    fn listenbrainz_genres<'a>(&'a self, _u: &'a str) -> BoxFuture<'a, SourceResult<Vec<String>>> {
+    fn listenbrainz_genres<'a>(
+        &'a self,
+        _u: &'a str,
+        _priority: droppedneedle_providers::RequestPriority,
+    ) -> BoxFuture<'a, SourceResult<Vec<String>>> {
         ok(Vec::new())
     }
     fn listenbrainz_fresh_releases<'a>(
         &'a self,
         _u: &'a str,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         ok(Vec::new())
     }
@@ -136,10 +145,15 @@ impl QueueSources for Scripted {
         &'a self,
         _u: &'a str,
         _c: u32,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<String>>> {
         ok(Vec::new())
     }
-    fn listenbrainz_trending(&self, _count: u32) -> BoxFuture<'_, SourceResult<Vec<AlbumRow>>> {
+    fn listenbrainz_trending(
+        &self,
+        _count: u32,
+        _priority: droppedneedle_providers::RequestPriority,
+    ) -> BoxFuture<'_, SourceResult<Vec<AlbumRow>>> {
         // Distinct artists each, so the per-artist cap never bites.
         ok((11..=15)
             .map(|n| album(n, &format!("{n:08x}-bbbb-4bbb-8bbb-bbbbbbbbbbbb")))
@@ -149,6 +163,7 @@ impl QueueSources for Scripted {
         &'a self,
         _user_id: &'a str,
         _ids: &'a [String],
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<HashMap<String, i64>>> {
         ok(HashMap::new())
     }

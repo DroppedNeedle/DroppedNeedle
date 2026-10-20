@@ -72,7 +72,6 @@ pub fn acquire_at(
             plugins: idle_host(platform, library.fs.clone()),
             collections: collections.clone(),
             providers,
-            listenbrainz: outbound.listenbrainz.clone(),
         },
         &outbound.spotify(),
     )

@@ -168,12 +168,11 @@ impl VerifyProbes for FakeProbes {
 
     fn listenbrainz<'a>(
         &'a self,
-        base: &'a str,
         username: &'a str,
         token: &'a str,
     ) -> BoxFuture<'a, ListenBrainzVerdict> {
         Box::pin(async move {
-            self.recorded("listenbrainz", &[base, username, token]);
+            self.recorded("listenbrainz", &[username, token]);
             ListenBrainzVerdict {
                 valid: self.valid,
                 message: "fake listenbrainz".to_owned(),
@@ -966,7 +965,11 @@ fn stub_app() -> Router {
                     .and_then(|value| value.to_str().ok())
                 {
                     Some("Token bad") => StatusCode::UNAUTHORIZED.into_response(),
-                    Some("Token limited") => StatusCode::TOO_MANY_REQUESTS.into_response(),
+                    // A long wait, so the check answers at once instead of
+                    // trying again.
+                    Some("Token limited") => {
+                        (StatusCode::TOO_MANY_REQUESTS, [("retry-after", "60")]).into_response()
+                    }
                     _ => Json(json!({"valid": true, "user_name": "ada"})).into_response(),
                 }
             }),
@@ -1060,7 +1063,18 @@ async fn serve_stub() -> String {
 #[tokio::test]
 async fn live_probes_hit_stubs() {
     let base = serve_stub().await;
-    let probes = LiveProbes::new(reqwest::Client::new());
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
+    let probes = LiveProbes::new(
+        reqwest::Client::new(),
+        droppedneedle_providers::Providers::unpaced_at(
+            Arc::new(droppedneedle_providers::ReqwestWire::new(&http)),
+            droppedneedle_providers::ProviderEndpoints {
+                listenbrainz: base.clone(),
+                ..droppedneedle_providers::ProviderEndpoints::closed()
+            },
+        )
+        .listenbrainz,
+    );
     let dead = "http://127.0.0.1:9";
 
     let jellyfin = probes.jellyfin(&base, "key").await;
@@ -1081,12 +1095,12 @@ async fn live_probes_hit_stubs() {
     let libraries = probes.plex_libraries(&base, "token").await.expect("lists");
     assert_eq!(libraries.len(), 1);
 
-    let lb = probes.listenbrainz(&base, "ada", "tok").await;
+    let lb = probes.listenbrainz("ada", "tok").await;
     assert!(lb.valid);
     assert!(!lb.rate_limited);
-    let lb = probes.listenbrainz(&base, "ada", "bad").await;
+    let lb = probes.listenbrainz("ada", "bad").await;
     assert!(!lb.valid);
-    let lb = probes.listenbrainz(&base, "ada", "limited").await;
+    let lb = probes.listenbrainz("ada", "limited").await;
     assert!(lb.rate_limited);
 
     let youtube = probes.youtube(&base, "key").await;

@@ -1,7 +1,7 @@
 //! ListenBrainz linking and scrobble settings: connect verifies before it
 //! stores, rejected credentials store nothing, sealed tokens survive a
-//! reopen of the SQLite stores, the link lifecycle over HTTP, and the HTTP
-//! verifier against a loopback stub.
+//! reopen of the SQLite stores, the link lifecycle over HTTP, and the
+//! ListenBrainz client as the verifier against a scripted wire.
 
 use crate::common::ScratchDir;
 use crate::common::auth::{test_principal, with_test_principal};
@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum::response::IntoResponse as _;
 use droppedneedle_auth::Principal;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::roles::Role;
@@ -23,7 +22,7 @@ use droppedneedle_plugins::scrobble::{
     ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
     connect_listenbrainz,
 };
-use droppedneedle_providers::listenbrainz::{HttpListenBrainzVerifier, VerifyOutcome};
+use droppedneedle_providers::listenbrainz::VerifyOutcome;
 use tower::ServiceExt as _;
 
 fn test_crypto() -> Arc<Crypto> {
@@ -202,76 +201,62 @@ async fn scrobble_routes_need_a_session() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
-/// Loopback ListenBrainz stub: scripted statuses per endpoint.
-async fn stub_server() -> (String, tokio::task::JoinHandle<()>) {
-    use axum::routing::get;
-    let app = axum::Router::new()
-        .route(
-            "/1/validate-token",
-            get(|headers: axum::http::HeaderMap| async move {
-                let token = headers
-                    .get("authorization")
-                    .and_then(|value| value.to_str().ok())
-                    .unwrap_or("");
-                match token {
-                    "Token good-token" => (
-                        StatusCode::OK,
-                        JsonStub(serde_json::json!({"valid": true, "user_name": "melody"})),
-                    )
-                        .into_response(),
-                    "Token limited" => StatusCode::TOO_MANY_REQUESTS.into_response(),
-                    _ => StatusCode::UNAUTHORIZED.into_response(),
-                }
-            }),
-        )
-        .route(
-            "/1/user/{name}/listen-count",
-            get(
-                |axum::extract::Path(name): axum::extract::Path<String>| async move {
-                    if name == "melody" {
-                        (
-                            StatusCode::OK,
-                            JsonStub(serde_json::json!({"payload": {"count": 1234}})),
-                        )
-                            .into_response()
-                    } else {
-                        StatusCode::NOT_FOUND.into_response()
-                    }
-                },
-            ),
-        );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
-    let handle = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (base, handle)
-}
+/// The link verifier is the one ListenBrainz client: a good token
+/// connects as the account ListenBrainz names, a refused one is invalid, a
+/// known username counts its listens, an unknown one is "not found", and a
+/// rate limit asks the caller to back off.
+#[tokio::test(start_paused = true)]
+async fn the_listenbrainz_client_verifies_links() {
+    use droppedneedle_providers::Providers;
+    use droppedneedle_providers::executor::ScriptedWire;
+    use droppedneedle_providers::listenbrainz::{DEFAULT_BASE_URL, ListenBrainzVerifier};
 
-struct JsonStub(serde_json::Value);
-
-impl axum::response::IntoResponse for JsonStub {
-    fn into_response(self) -> axum::response::Response {
-        axum::Json(self.0).into_response()
-    }
-}
-
-#[tokio::test]
-async fn http_verifier_maps_stub_statuses() {
-    use droppedneedle_providers::listenbrainz::ListenBrainzVerifier;
-    let (base, server) = stub_server().await;
-    let verifier = HttpListenBrainzVerifier::new(reqwest::Client::new(), &base);
+    let wire = Arc::new(ScriptedWire::new());
+    let token = format!("{DEFAULT_BASE_URL}/1/validate-token");
+    wire.answer(
+        &token,
+        200,
+        &[],
+        r#"{"valid": true, "user_name": "melody"}"#,
+    );
+    wire.answer(&token, 401, &[], "");
+    wire.answer(&token, 429, &[], "");
+    wire.answer(
+        &format!("{DEFAULT_BASE_URL}/1/user/melody/listen-count"),
+        200,
+        &[],
+        r#"{"payload": {"count": 1234}}"#,
+    );
+    wire.answer(
+        &format!("{DEFAULT_BASE_URL}/1/user/ghost/listen-count"),
+        404,
+        &[],
+        "",
+    );
+    let providers = Providers::unpaced_at(
+        wire.clone(),
+        droppedneedle_providers::ProviderEndpoints {
+            listenbrainz: DEFAULT_BASE_URL.to_owned(),
+            ..droppedneedle_providers::ProviderEndpoints::closed()
+        },
+    );
+    // Through the trait, as account linking holds it.
+    let verifier: &dyn ListenBrainzVerifier = &providers.listenbrainz;
 
     let ok = verifier.verify("melody", "good-token").await;
     assert!(ok.valid);
     assert!(ok.message.contains("melody"));
+    let sent = wire.sent();
+    let authorization = sent[0]
+        .headers
+        .iter()
+        .find(|(name, _)| name == "authorization")
+        .map(|(_, value)| value.as_str());
+    assert_eq!(authorization, Some("Token good-token"));
 
     let bad = verifier.verify("melody", "bad-token").await;
     assert!(!bad.valid);
     assert_eq!(bad.message, "Token invalid or expired");
-
-    let limited = verifier.verify("melody", "limited").await;
-    assert!(limited.rate_limited);
 
     let named = verifier.verify("melody", "").await;
     assert!(named.valid);
@@ -281,7 +266,16 @@ async fn http_verifier_maps_stub_statuses() {
     assert!(!ghost.valid);
     assert!(ghost.message.contains("ghost"));
 
-    server.abort();
+    let limited = verifier.verify("melody", "limited").await;
+    assert!(limited.rate_limited);
+
+    let unsafe_token = verifier.verify("melody", "two words").await;
+    assert!(!unsafe_token.valid);
+    assert_eq!(
+        wire.sent().len(),
+        sent.len() + 5,
+        "an unsafe token never reaches the wire"
+    );
 }
 
 // ---------------------------------------------------------------------------

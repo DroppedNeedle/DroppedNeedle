@@ -40,16 +40,20 @@ use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
 use droppedneedle_providers::adapters::{CorePacer, CoreSink};
 use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials, TopItem};
 use droppedneedle_providers::listenbrainz::{
-    ListenBrainzClient, Outcome,
+    ListenBrainzClient,
     stats::{ArtistStat, ReleaseGroupStat},
 };
+use droppedneedle_providers::{ProviderError, RequestPriority};
 
 /// Most rows one Last.fm range page reads (v2 `min(limit + offset + 1, 200)`).
 const LASTFM_MAX_ROWS: i64 = 200;
 
+/// The chart pages are read while a person waits.
+const PRIORITY: RequestPriority = RequestPriority::UserInitiated;
+
 /// Live charts: ListenBrainz always, Last.fm when its client could be paced.
 pub struct LiveCharts {
-    client: ListenBrainzClient<CorePacer, CoreSink>,
+    client: ListenBrainzClient,
     links: Arc<dyn ListenBrainzLinkStore>,
     lastfm: Option<LastFmCharts>,
     pool: SqlitePool,
@@ -101,10 +105,10 @@ fn credentials(api_key: String) -> LastFmCredentials {
 }
 
 impl LiveCharts {
-    /// Charts over one paced ListenBrainz client, the users' links, the
-    /// Last.fm half (when it could be built) and the catalog.
+    /// Charts over the ListenBrainz client, the users' links, the Last.fm
+    /// half (when it could be built) and the catalog.
     pub fn new(
-        client: ListenBrainzClient<CorePacer, CoreSink>,
+        client: ListenBrainzClient,
         links: Arc<dyn ListenBrainzLinkStore>,
         lastfm: Option<LastFmCharts>,
         pool: SqlitePool,
@@ -299,13 +303,9 @@ fn lastfm_period(range: ChartRange) -> &'static str {
     }
 }
 
-/// Found rows, an authoritative empty answer, or the provider failure.
-fn rows<T>(outcome: Outcome<Vec<T>>) -> Result<Vec<T>, ProviderFailure> {
-    match outcome {
-        Outcome::Found(rows) => Ok(rows),
-        Outcome::Missing => Ok(Vec::new()),
-        Outcome::Unavailable { message, .. } => Err(ProviderFailure::failed(message)),
-    }
+/// The rows, or the provider failure.
+fn rows<T>(result: Result<Vec<T>, ProviderError>) -> Result<Vec<T>, ProviderFailure> {
+    result.map_err(|error| ProviderFailure::failed(error.to_string()))
 }
 
 /// The Last.fm counterpart of [`rows`], skipping the earlier pages.
@@ -344,7 +344,7 @@ impl ChartsSource for LiveCharts {
                     let (count, skip) = window(limit, offset);
                     listenbrainz_artists(rows(
                         self.client
-                            .sitewide_top_artists(range.as_str(), count, skip)
+                            .sitewide_top_artists(range.as_str(), count, skip, PRIORITY)
                             .await,
                     )?)
                 }
@@ -372,7 +372,7 @@ impl ChartsSource for LiveCharts {
                     let (count, skip) = window(limit, offset);
                     listenbrainz_albums(rows(
                         self.client
-                            .sitewide_top_release_groups(range.as_str(), count, skip)
+                            .sitewide_top_release_groups(range.as_str(), count, skip, PRIORITY)
                             .await,
                     )?)
                 }
@@ -414,7 +414,13 @@ impl ChartsSource for LiveCharts {
                     let (count, skip) = window(limit, offset);
                     listenbrainz_albums(rows(
                         self.client
-                            .user_top_release_groups(&link.username, range.as_str(), count, skip)
+                            .user_top_release_groups(
+                                &link.username,
+                                range.as_str(),
+                                count,
+                                skip,
+                                PRIORITY,
+                            )
                             .await,
                     )?)
                 }

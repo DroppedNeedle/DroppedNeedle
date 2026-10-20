@@ -111,8 +111,10 @@ impl MediaSetup {
     /// download ids (track ids) into files under the live library roots;
     /// `imports` is where remote playlist imports land; `plugins` hears
     /// accepted plays and serves `streaming_source` plugin streams;
-    /// `plex_tv` and `scrobbles` are the plex.tv root and the scrobble
-    /// forwarding addresses.
+    /// `plex_tv` and `scrobbles` are the plex.tv root and the Last.fm
+    /// forwarding address; ListenBrainz forwards go through `listenbrainz`,
+    /// the one ListenBrainz client.
+    #[allow(clippy::too_many_arguments)]
     pub fn build(
         platform: &Platform,
         users: UsersDeps,
@@ -121,6 +123,7 @@ impl MediaSetup {
         plugins: Arc<droppedneedle_plugins::host::PluginHost>,
         plex_tv: String,
         scrobbles: crate::playback::forwarding::Endpoints,
+        listenbrainz: droppedneedle_providers::listenbrainz::ListenBrainzClient,
     ) -> Result<(Self, MediaWorkers), String> {
         let (db, app_config, config) = (&platform.db, &platform.config, &*platform.settings);
         let (http_factory, ids, crypto) = (
@@ -180,7 +183,8 @@ impl MediaSetup {
         let (queue, rx) = ReportQueue::channel();
         let (forwarder, forwards) =
             ScrobbleForwarder::channel(playback_db.clone(), users.lastfm_switch.clone());
-        let forwards = ForwardWorker::new(forwards, http.clone(), credentials, scrobbles);
+        let forwards =
+            ForwardWorker::new(forwards, http.clone(), listenbrainz, credentials, scrobbles);
         let playback = PlaybackDeps {
             catalog: playback_db.clone(),
             sinks: Arc::new(forwarder),

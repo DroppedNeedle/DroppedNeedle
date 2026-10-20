@@ -358,7 +358,6 @@ async fn lastfm_charts_read_the_instance_key_per_call() {
     use droppedneedle_providers::Providers;
     use droppedneedle_providers::adapters::{CorePacer, CoreSink};
     use droppedneedle_providers::lastfm::{self, LastFmClient};
-    use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 
     let seen: Arc<Mutex<Vec<String>>> = Arc::default();
     let record = seen.clone();
@@ -388,12 +387,7 @@ async fn lastfm_charts_read_the_instance_key_per_call() {
     let switch = Arc::new(crate::common::auth_fakes::InstanceKeySwitch::default());
     let auth = AuthRig::new("charts").await;
     let charts = LiveCharts::new(
-        ListenBrainzClient::new(
-            http.shared().clone(),
-            "http://127.0.0.1:9",
-            CorePacer::for_source(providers.clone(), "listenbrainz").unwrap(),
-            CoreSink,
-        ),
+        providers.listenbrainz.clone(),
         Arc::new(MemoryListenBrainzLinkStore::new(auth.deps.crypto.clone())),
         Some(LastFmCharts::new(
             LastFmClient::new(

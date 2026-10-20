@@ -178,6 +178,9 @@ impl E2e {
             collections.wired(&acquire),
             Some(&acquire),
         );
+        let providers = Arc::new(Providers::unpaced(Arc::new(
+            droppedneedle_providers::executor::ScriptedWire::new(),
+        )));
         let (media, _worker) = droppedneedle_media::MediaSetup::build(
             p,
             auth.users.clone(),
@@ -190,6 +193,7 @@ impl E2e {
             crate::common::bundles::idle_host(p, library.fs.clone()),
             droppedneedle::bootstrap::Outbound::live().plex_tv,
             droppedneedle::bootstrap::Outbound::live().scrobbles(),
+            providers.listenbrainz.clone(),
         )
         .expect("media bundle builds");
         let compat = droppedneedle_compat::CompatSetup::build(
@@ -202,9 +206,6 @@ impl E2e {
                 &reads,
             ),
         );
-        let providers = Arc::new(Providers::unpaced(Arc::new(
-            droppedneedle_providers::executor::ScriptedWire::new(),
-        )));
         let backup_dir = p.config.root_app_dir.join("backups");
         let jobs = droppedneedle::bootstrap::jobs::JobsSetup::build(
             p,
@@ -236,9 +237,11 @@ impl E2e {
         ))
         .with_checkpoint(self.runtime.checkpoint().clone())
         .with_precache(jobs.precache_trigger());
-        let plugins =
-            droppedneedle_plugins::wiring::PluginsSetup::for_tests(jobs.supervisor().clone())
-                .expect("test plugins bundle builds");
+        let plugins = droppedneedle_plugins::wiring::PluginsSetup::for_tests(
+            jobs.supervisor().clone(),
+            providers.listenbrainz.clone(),
+        )
+        .expect("test plugins bundle builds");
         let settings =
             droppedneedle::settings::wiring::SettingsSetup::for_tests(Arc::clone(&p.ids))
                 .expect("test settings bundle builds")

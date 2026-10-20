@@ -496,7 +496,7 @@ impl Inner {
             .collect();
         if let Err(cause) = self
             .sources
-            .listenbrainz_listen_counts(&user_id, &ids)
+            .listenbrainz_listen_counts(&user_id, &ids, priority)
             .await
         {
             tracing::debug!(%cause, "queue listen counts not prefetched");

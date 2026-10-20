@@ -18,8 +18,8 @@ use super::wrapped::{
 };
 use droppedneedle_auth::users::stores::UserStore;
 use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
-use droppedneedle_providers::adapters::{CorePacer, CoreSink};
-use droppedneedle_providers::listenbrainz::{ListenBrainzClient, Outcome};
+use droppedneedle_providers::listenbrainz::ListenBrainzClient;
+use droppedneedle_providers::{ProviderError, RequestPriority};
 
 /// Rows per top list (v2 `_TOP_N`).
 const TOP_N: u32 = 10;
@@ -30,12 +30,15 @@ const USERS_PAGE: u64 = 500;
 /// Loved-recordings sample size; ListenBrainz caps the page at 100.
 const LOVED_SAMPLE: u32 = 100;
 
-/// Wrapped over the user store, the ListenBrainz links, and one paced
-/// client.
+/// Loading wrapped is a page a person waits on.
+const PRIORITY: RequestPriority = RequestPriority::UserInitiated;
+
+/// Wrapped over the user store, the ListenBrainz links, and the
+/// ListenBrainz client.
 pub struct ListenBrainzWrapped {
     users: Arc<dyn UserStore>,
     links: Arc<dyn ListenBrainzLinkStore>,
-    client: ListenBrainzClient<CorePacer, CoreSink>,
+    client: ListenBrainzClient,
 }
 
 impl ListenBrainzWrapped {
@@ -43,7 +46,7 @@ impl ListenBrainzWrapped {
     pub fn new(
         users: Arc<dyn UserStore>,
         links: Arc<dyn ListenBrainzLinkStore>,
-        client: ListenBrainzClient<CorePacer, CoreSink>,
+        client: ListenBrainzClient,
     ) -> Self {
         Self {
             users,
@@ -101,12 +104,15 @@ impl ListenBrainzWrapped {
         };
         let username = link.username.as_str();
         let (artists, recordings, groups, genres, loved) = tokio::join!(
-            self.client.user_top_artists(username, RANGE, TOP_N, 0),
-            self.client.user_top_recordings(username, RANGE, TOP_N, 0),
             self.client
-                .user_top_release_groups(username, RANGE, TOP_N, 0),
-            self.client.user_genre_activity(username),
-            self.client.user_loved_sample(username, LOVED_SAMPLE),
+                .user_top_artists(username, RANGE, TOP_N, 0, PRIORITY),
+            self.client
+                .user_top_recordings(username, RANGE, TOP_N, 0, PRIORITY),
+            self.client
+                .user_top_release_groups(username, RANGE, TOP_N, 0, PRIORITY),
+            self.client.user_genre_activity(username, PRIORITY),
+            self.client
+                .user_loved_sample(username, LOVED_SAMPLE, PRIORITY),
         );
         payload.top_artists = leg(artists, "top_artists", user_id)
             .into_iter()
@@ -142,10 +148,9 @@ impl ListenBrainzWrapped {
             })
             .collect();
         payload.loved_tracks_count = match loved {
-            Outcome::Found(count) => i64::try_from(count).unwrap_or(i64::MAX),
-            Outcome::Missing => 0,
-            Outcome::Unavailable { message, .. } => {
-                tracing::warn!(user_id, %message, "wrapped loved_recordings fetch failed");
+            Ok(count) => i64::try_from(count).unwrap_or(i64::MAX),
+            Err(error) => {
+                tracing::warn!(user_id, %error, "wrapped loved_recordings fetch failed");
                 0
             }
         };
@@ -158,15 +163,11 @@ impl ListenBrainzWrapped {
 }
 
 /// One leg's rows; a failed leg is logged and reads as empty (v2).
-fn leg<T>(outcome: Outcome<Vec<T>>, label: &str, user_id: &str) -> Vec<T> {
-    match outcome {
-        Outcome::Found(rows) => rows,
-        Outcome::Missing => Vec::new(),
-        Outcome::Unavailable { message, .. } => {
-            tracing::warn!(user_id, %message, "wrapped {label} fetch failed");
-            Vec::new()
-        }
-    }
+fn leg<T>(result: Result<Vec<T>, ProviderError>, label: &str, user_id: &str) -> Vec<T> {
+    result.unwrap_or_else(|error| {
+        tracing::warn!(user_id, %error, "wrapped {label} fetch failed");
+        Vec::new()
+    })
 }
 
 impl WrappedData for ListenBrainzWrapped {
@@ -219,8 +220,9 @@ impl WrappedData for ListenBrainzWrapped {
             // v2 read these through the charts' one-row pages, which skip
             // artists without an MBID.
             let (artists, groups) = tokio::join!(
-                self.client.sitewide_top_artists(RANGE, 2, 0),
-                self.client.sitewide_top_release_groups(RANGE, 2, 0),
+                self.client.sitewide_top_artists(RANGE, 2, 0, PRIORITY),
+                self.client
+                    .sitewide_top_release_groups(RANGE, 2, 0, PRIORITY),
             );
             let top_artist_sitewide = leg(artists, "sitewide top artist", "server")
                 .into_iter()

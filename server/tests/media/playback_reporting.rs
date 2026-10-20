@@ -625,12 +625,20 @@ async fn a_scrobble_reaches_listenbrainz_once() {
         Arc::new(ListenBrainzOnly),
         Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
     );
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().expect("http");
+    let providers = droppedneedle_providers::Providers::unpaced_at(
+        Arc::new(droppedneedle_providers::ReqwestWire::new(&http)),
+        droppedneedle_providers::ProviderEndpoints {
+            listenbrainz: base,
+            ..droppedneedle_providers::ProviderEndpoints::closed()
+        },
+    );
     let worker = ForwardWorker::new(
         rx,
         reqwest::Client::new(),
+        providers.listenbrainz.clone(),
         Arc::new(FixedToken),
         Endpoints {
-            listenbrainz: base,
             lastfm: "http://127.0.0.1:9/unused".to_owned(),
         },
     );
@@ -671,6 +679,88 @@ async fn a_scrobble_reaches_listenbrainz_once() {
     assert_eq!(
         body["payload"][0]["track_metadata"]["release_name"],
         "Dummy"
+    );
+}
+
+/// A listen ListenBrainz refuses with its "currently disabled" 500 is kept
+/// and sent again, and lands once the endpoint answers.
+#[tokio::test(start_paused = true)]
+async fn a_switched_off_listenbrainz_keeps_the_listen_for_later() {
+    use droppedneedle_providers::executor::{Method, Scripted, ScriptedWire};
+    use droppedneedle_providers::listenbrainz::DEFAULT_BASE_URL;
+    use playback::forwarding::{Endpoints, ForwardWorker, ScrobbleForwarder};
+    use playback::ports::{ReportTrack, ScrobbleSinks as _, ScrobbleTargets};
+
+    let wire = Arc::new(ScriptedWire::new());
+    let submit = format!("{DEFAULT_BASE_URL}/1/submit-listens");
+    for (status, body) in [
+        (
+            500,
+            r#"{"code": 500, "error": "Listen submission currently disabled"}"#,
+        ),
+        (200, r#"{"status": "ok"}"#),
+    ] {
+        wire.on(
+            Method::Post,
+            &submit,
+            Scripted::Answer {
+                status,
+                headers: Vec::new(),
+                body: body.as_bytes().to_vec(),
+            },
+        );
+    }
+    let providers = droppedneedle_providers::Providers::unpaced_at(
+        wire.clone(),
+        droppedneedle_providers::ProviderEndpoints {
+            listenbrainz: DEFAULT_BASE_URL.to_owned(),
+            ..droppedneedle_providers::ProviderEndpoints::closed()
+        },
+    );
+    let (forwarder, rx) = ScrobbleForwarder::channel(
+        Arc::new(ListenBrainzOnly),
+        Arc::new(crate::common::auth_fakes::StaticLastFmSwitch(true)),
+    );
+    let worker = ForwardWorker::new(
+        rx,
+        reqwest::Client::new(),
+        providers.listenbrainz.clone(),
+        Arc::new(FixedToken),
+        Endpoints {
+            lastfm: "http://127.0.0.1:9/unused".to_owned(),
+        },
+    );
+    forwarder.submit_scrobble(
+        "user-1",
+        &ReportTrack {
+            track_name: "Roads".to_owned(),
+            artist_name: "Portishead".to_owned(),
+            album_name: None,
+            duration_ms: 0,
+            mbid: None,
+            release_group_mbid: None,
+            source: None,
+            played_at: Some(NOW - 60),
+        },
+        ScrobbleTargets {
+            lastfm: false,
+            listenbrainz: true,
+        },
+    );
+    let worker = tokio::spawn(worker.run(droppedneedle_kernel::jobs::CancellationToken::new()));
+    // The queue stays open while the retry is due; time is virtual.
+    for _ in 0..600 {
+        if wire.sent().len() >= 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    drop(forwarder);
+    worker.await.expect("the worker ends cleanly");
+    assert_eq!(
+        wire.sent().len(),
+        2,
+        "the refused listen is sent again and the second try lands"
     );
 }
 

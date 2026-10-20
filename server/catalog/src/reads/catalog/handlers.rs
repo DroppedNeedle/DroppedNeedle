@@ -10,6 +10,7 @@ use axum::{
 use droppedneedle_auth::User;
 use droppedneedle_kernel::error::ApiError;
 use droppedneedle_kernel::extract::ValidQuery;
+use droppedneedle_providers::RequestPriority;
 
 use super::CatalogDeps;
 use super::error::CatalogError;
@@ -127,7 +128,13 @@ pub async fn similar_artists(
     let count = count(query.count, 15, 50)?;
     answer(
         deps.catalog
-            .similar_artists(user.user_id(), &mbid, count, query.source)
+            .similar_artists(
+                user.user_id(),
+                &mbid,
+                count,
+                query.source,
+                RequestPriority::UserInitiated,
+            )
             .await,
     )
 }
@@ -153,7 +160,13 @@ pub async fn top_songs(
     let count = count(query.count, 10, 50)?;
     answer(
         deps.catalog
-            .top_songs(user.user_id(), &mbid, count, query.source)
+            .top_songs(
+                user.user_id(),
+                &mbid,
+                count,
+                query.source,
+                RequestPriority::UserInitiated,
+            )
             .await,
     )
 }
@@ -179,7 +192,13 @@ pub async fn top_albums(
     let count = count(query.count, 10, 50)?;
     answer(
         deps.catalog
-            .top_albums(user.user_id(), &mbid, count, query.source)
+            .top_albums(
+                user.user_id(),
+                &mbid,
+                count,
+                query.source,
+                RequestPriority::UserInitiated,
+            )
             .await,
     )
 }

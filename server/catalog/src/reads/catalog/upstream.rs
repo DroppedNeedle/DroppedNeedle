@@ -22,7 +22,7 @@ use droppedneedle_library::edition_prefs::LivePreferences;
 use droppedneedle_providers::adapters::{CorePacer, HealthSink, ReqwestGet};
 use droppedneedle_providers::audiodb::{self, AudioDbClient};
 use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials};
-use droppedneedle_providers::listenbrainz::{self, ListenBrainzClient, ListenBrainzCredentials};
+use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
 use droppedneedle_providers::musicbrainz::{MbSource, MusicBrainzView};
 use droppedneedle_providers::{ProviderCache, Providers, RequestPriority};
 
@@ -135,8 +135,6 @@ impl CatalogSettings for LiveCatalogSettings {
 /// everything here at a loopback fixture server.
 #[derive(Debug, Clone)]
 pub struct Endpoints {
-    /// ListenBrainz API root.
-    pub listenbrainz: String,
     /// Last.fm API endpoint.
     pub lastfm: String,
     /// TheAudioDB API root.
@@ -162,7 +160,7 @@ pub struct Endpoints {
 /// The MusicBrainz client type the catalog uses.
 pub type CatalogMusicBrainz = MusicBrainzView;
 /// The ListenBrainz client type the catalog uses.
-pub type CatalogListenBrainz = ListenBrainzClient<CorePacer, HealthSink>;
+pub type CatalogListenBrainz = ListenBrainzClient;
 /// The Last.fm client type the catalog uses.
 pub type CatalogLastFm = LastFmClient<CorePacer, HealthSink>;
 /// The AudioDB client type the catalog uses.
@@ -295,19 +293,12 @@ impl Upstream {
     /// The ListenBrainz client, or `None` when ListenBrainz is switched off.
     /// The reads used here are public and need no token.
     pub fn listenbrainz(&self) -> Option<(CatalogListenBrainz, ListenBrainzCredentials)> {
-        if !self.settings.listenbrainz_enabled() {
-            return None;
-        }
-        let pacer = CorePacer::for_source(self.providers.clone(), listenbrainz::SOURCE)?;
-        Some((
-            ListenBrainzClient::new(
-                self.http.clone(),
-                &self.endpoints.listenbrainz,
-                pacer,
-                HealthSink::new(&self.providers),
-            ),
-            ListenBrainzCredentials::default(),
-        ))
+        self.settings.listenbrainz_enabled().then(|| {
+            (
+                self.providers.listenbrainz.clone(),
+                ListenBrainzCredentials::default(),
+            )
+        })
     }
 
     /// The Last.fm client with this user's own API key, else the instance

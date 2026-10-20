@@ -36,7 +36,7 @@ use super::scrobble::{
     ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
 };
 use super::ticks::{PluginTickLoops, TICK_CANCEL_GRACE, TickLoopSync, TickStoreKind};
-use droppedneedle_providers::listenbrainz::HttpListenBrainzVerifier;
+use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 
 /// The Python helper module, shipped inside the binary.
 const PYTHON_SDK: &str = include_str!("../../../sdk/python/droppedneedle_plugin.py");
@@ -145,17 +145,17 @@ pub struct PluginsSetup {
 
 impl PluginsSetup {
     /// Bind the production seams over a host from [`new_host`] and the
-    /// tick store it was given: SQLite scrobble stores, the HTTP verifier
-    /// and fetcher, cache invalidation on link changes, and tick loops over
-    /// the shared loop supervisor. Loads the host, which starts the enabled
-    /// plugins.
+    /// tick store it was given: SQLite scrobble stores, the ListenBrainz
+    /// client as the link verifier, the HTTP fetcher, cache invalidation on
+    /// link changes, and tick loops over the shared loop supervisor. Loads
+    /// the host, which starts the enabled plugins.
     pub fn build(
         platform: &Platform,
         host: Arc<PluginHost>,
         ticks: TickStoreKind,
         cache: Arc<dyn ProviderCache>,
         github: GitHubHosts,
-        listenbrainz: &str,
+        listenbrainz: ListenBrainzClient,
     ) -> Self {
         let db = &platform.db;
         Self::assemble(
@@ -176,9 +176,13 @@ impl PluginsSetup {
 
     /// Test bundle: scratch config store and plugins directory, fake
     /// plugin runtimes (no subprocesses), memory tick and scrobble stores,
-    /// the production verifier, and tick loops on the caller's supervisor.
+    /// `listenbrainz` as the verifier, and tick loops on the caller's
+    /// supervisor.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests(supervisor: Supervisor) -> Result<Self, String> {
+    pub fn for_tests(
+        supervisor: Supervisor,
+        listenbrainz: ListenBrainzClient,
+    ) -> Result<Self, String> {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         use super::fakes::FakeLauncher;
@@ -222,7 +226,7 @@ impl PluginsSetup {
                 api: super::install::API_BASE.to_owned(),
                 codeload: super::install::CODELOAD_BASE.to_owned(),
             },
-            droppedneedle_providers::listenbrainz::DEFAULT_BASE_URL,
+            listenbrainz,
             cache,
             supervisor,
             ticks,
@@ -240,7 +244,7 @@ impl PluginsSetup {
         host: Arc<PluginHost>,
         http: reqwest::Client,
         github: GitHubHosts,
-        listenbrainz: &str,
+        listenbrainz: ListenBrainzClient,
         cache: Arc<dyn ProviderCache>,
         supervisor: Supervisor,
         ticks: TickStoreKind,
@@ -262,7 +266,7 @@ impl PluginsSetup {
             deps: ScrobbleDeps::new(
                 prefs,
                 links,
-                Arc::new(HttpListenBrainzVerifier::new(http, listenbrainz)),
+                Arc::new(listenbrainz),
                 Arc::new(NoopMixApprovalHook),
                 Arc::new(ListenBrainzCacheHook { cache }),
             ),

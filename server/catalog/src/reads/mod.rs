@@ -296,9 +296,7 @@ fn platform_state(
     inputs: ReadsInputs,
     artwork: &platform::artwork::ArtworkService,
 ) -> platform::PlatformState {
-    use droppedneedle_providers::adapters::{CorePacer, CoreSink};
     use droppedneedle_providers::github::GitHubClient;
-    use droppedneedle_providers::listenbrainz::ListenBrainzClient;
     use platform::{
         covers::CoversState,
         listenbrainz_wrapped::ListenBrainzWrapped,
@@ -306,23 +304,11 @@ fn platform_state(
         wrapped::{ConfigWrappedKey, WrappedData, WrappedState},
     };
 
-    let wrapped: Arc<dyn WrappedData> =
-        match CorePacer::for_source(inputs.providers.clone(), "listenbrainz") {
-            Some(pacer) => Arc::new(ListenBrainzWrapped::new(
-                users.users.clone(),
-                inputs.listenbrainz_links,
-                ListenBrainzClient::new(
-                    inputs.http.clone(),
-                    &inputs.endpoints.listenbrainz,
-                    pacer,
-                    CoreSink,
-                ),
-            )),
-            None => {
-                tracing::error!("no listenbrainz rate limit row; wrapped has no data source");
-                Arc::new(platform::wrapped::NoWrappedData)
-            }
-        };
+    let wrapped: Arc<dyn WrappedData> = Arc::new(ListenBrainzWrapped::new(
+        users.users.clone(),
+        inputs.listenbrainz_links,
+        inputs.providers.listenbrainz.clone(),
+    ));
     platform::PlatformState::new(
         CoversState::new(Arc::new(artwork.clone())),
         VersionState::new(Arc::new(GitHubReleases::new(GitHubClient::with_base_url(

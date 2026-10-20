@@ -3,6 +3,10 @@
 //! The page shares the queue's [`LiveSources`]: the same clients, the same
 //! shared provider cache and the same ListenBrainz popularity health
 //! signal, so a shelf and a queue card never pay for the same read twice.
+//!
+//! The discover page and home build in the background (a visit answers
+//! from the last built page), so their ListenBrainz reads wait behind the
+//! ones a person is waiting on.
 
 use std::collections::HashMap;
 
@@ -26,6 +30,10 @@ use droppedneedle_providers::musicbrainz::Criticality;
 
 /// The algorithm ListenBrainz names its weekly exploration playlist after.
 const WEEKLY_EXPLORATION_PATCH: &str = "weekly-exploration";
+
+/// The priority of every ListenBrainz read the page and home builds make.
+pub(in crate::reads::discover::adapters) const BUILD: RequestPriority =
+    RequestPriority::BackgroundSync;
 
 fn ranked(
     row: droppedneedle_providers::listenbrainz::stats::ReleaseGroupStat,
@@ -79,7 +87,9 @@ impl PageSources for LiveSources {
             let key = format!("lb_page:sitewide_artists:{count}");
             self.cached(key, ARTIST_TTL, async {
                 let rows = self.listenbrainz_result(
-                    self.lb()?.sitewide_top_artists("this_week", count, 0).await,
+                    self.lb()
+                        .sitewide_top_artists("this_week", count, 0, BUILD)
+                        .await,
                 )?;
                 Ok(rows
                     .into_iter()
@@ -102,7 +112,7 @@ impl PageSources for LiveSources {
     ) -> BoxFuture<'a, SourceResult<Vec<ScoredArtist>>> {
         Box::pin(async move {
             let rows = self
-                .listenbrainz_similar_artists(user_id, artist_mbid, limit)
+                .listenbrainz_similar_artists(user_id, artist_mbid, limit, BUILD)
                 .await?;
             Ok(rows
                 .into_iter()
@@ -130,9 +140,9 @@ impl PageSources for LiveSources {
             );
             self.cached(key, ARTIST_TTL, async {
                 let creds = self.credentials(user_id).await;
-                let rows = self.listenbrainz_result(
-                    self.lb()?
-                        .artist_top_release_groups(artist_mbid, count, &creds)
+                let rows = self.popularity_result(
+                    self.lb()
+                        .artist_top_release_groups(artist_mbid, count, &creds, BUILD)
                         .await,
                 )?;
                 Ok(rows
@@ -161,8 +171,8 @@ impl PageSources for LiveSources {
             let key = format!("lb_page:trending_ranked:{count}");
             self.cached(key, ARTIST_TTL, async {
                 let rows = self.listenbrainz_result(
-                    self.lb()?
-                        .sitewide_top_release_groups("this_week", count, 0)
+                    self.lb()
+                        .sitewide_top_release_groups("this_week", count, 0, BUILD)
                         .await,
                 )?;
                 Ok(rows.into_iter().filter_map(ranked).collect())
@@ -185,8 +195,8 @@ impl PageSources for LiveSources {
             );
             self.cached(key, USER_STATS_TTL, async {
                 let rows = self.listenbrainz_result(
-                    self.lb()?
-                        .user_top_release_groups(username, range.as_str(), count, 0)
+                    self.lb()
+                        .user_top_release_groups(username, range.as_str(), count, 0, BUILD)
                         .await,
                 )?;
                 Ok(rows.into_iter().filter_map(ranked).collect())
@@ -203,7 +213,7 @@ impl PageSources for LiveSources {
             let key = format!("lb_page:genre_counts:{}", username.to_lowercase());
             self.cached(key, ARTIST_TTL, async {
                 let rows =
-                    self.listenbrainz_result(self.lb()?.user_genre_activity(username).await)?;
+                    self.listenbrainz_result(self.lb().user_genre_activity(username, BUILD).await)?;
                 Ok(rows
                     .into_iter()
                     .map(|row| (row.genre, row.listen_count))
@@ -220,7 +230,7 @@ impl PageSources for LiveSources {
         Box::pin(async move {
             let key = format!("lb_page:similar_users:{}", username.to_lowercase());
             self.cached(key, ARTIST_TTL, async {
-                self.listenbrainz_result(self.lb()?.similar_users(username).await)
+                self.listenbrainz_result(self.lb().similar_users(username, BUILD).await)
             })
             .await
         })
@@ -235,9 +245,10 @@ impl PageSources for LiveSources {
             let key = format!("lb_page:weekly:{}", username.to_lowercase());
             self.cached(key, USER_STATS_TTL, async {
                 let creds = self.credentials(user_id).await;
-                let lb = self.lb()?;
-                let playlists =
-                    self.listenbrainz_result(lb.recommendation_playlists(username, &creds).await)?;
+                let lb = self.lb();
+                let playlists = self.listenbrainz_result(
+                    lb.recommendation_playlists(username, &creds, BUILD).await,
+                )?;
                 let Some(newest) = playlists
                     .iter()
                     .find(|playlist| playlist.source_patch == WEEKLY_EXPLORATION_PATCH)
@@ -245,8 +256,8 @@ impl PageSources for LiveSources {
                 else {
                     return Ok(None);
                 };
-                let page =
-                    self.listenbrainz_result(lb.playlist(&newest.playlist_id, &creds).await)?;
+                let page = self
+                    .listenbrainz_result(lb.playlist(&newest.playlist_id, &creds, BUILD).await)?;
                 if page.tracks.is_empty() {
                     return Ok(None);
                 }
@@ -281,8 +292,8 @@ impl PageSources for LiveSources {
         Box::pin(async move {
             let creds = self.credentials(user_id).await;
             let found = self.listenbrainz_result(
-                self.lb()?
-                    .recording_release_groups(recording_mbids, &creds)
+                self.lb()
+                    .recording_release_groups(recording_mbids, &creds, BUILD)
                     .await,
             )?;
             Ok(found

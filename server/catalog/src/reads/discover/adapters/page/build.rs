@@ -483,7 +483,13 @@ impl Builder<'_> {
             tokio::join!(
                 async {
                     tracker
-                        .run("lb_fresh", sources.listenbrainz_fresh_releases(username))
+                        .run(
+                            "lb_fresh",
+                            sources.listenbrainz_fresh_releases(
+                                username,
+                                RequestPriority::BackgroundSync,
+                            ),
+                        )
                         .await
                         .unwrap_or_default()
                 },

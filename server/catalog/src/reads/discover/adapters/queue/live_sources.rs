@@ -2,10 +2,12 @@
 //! MusicBrainz, Wikipedia and the user's Jellyfin account.
 //!
 //! Clients come from the catalog's [`Upstream`], built per call from the
-//! settings as they are now. Repeated provider reads go through the shared
-//! provider cache, so a rebuild minutes later does not pay the 1/s
-//! ListenBrainz pacing again. Popularity refusals from ListenBrainz (its
-//! "disabled due to high load" answer) mark popularity as down for a few
+//! settings as they are now; ListenBrainz is the one shared client. Each
+//! ListenBrainz read takes the priority of the build that asked for it.
+//! Repeated provider reads go through the shared provider cache, so a
+//! rebuild minutes later does not pay the 1/s ListenBrainz pacing again.
+//! ListenBrainz switching a popularity endpoint off (its "disabled due to high load"
+//! answer and its anti-scraper refusal) marks popularity as down for a few
 //! minutes, which lets Last.fm stand in (v2 `lb_popularity_degraded`).
 
 use std::collections::HashMap;
@@ -27,10 +29,9 @@ use droppedneedle_media::remotes::connections::{ConnectionResolver, ResolveError
 use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
 use droppedneedle_media::remotes::models::SourceName;
 use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
-use droppedneedle_providers::adapters::{CorePacer, CoreSink};
 use droppedneedle_providers::cache::cache_aside_json;
 use droppedneedle_providers::lastfm::{self, LastFmCredentials};
-use droppedneedle_providers::listenbrainz::{self, ListenBrainzClient, ListenBrainzCredentials};
+use droppedneedle_providers::listenbrainz::{ListenBrainzClient, ListenBrainzCredentials};
 use droppedneedle_providers::musicbrainz::models::{ArtistCreditName, Relation};
 use droppedneedle_providers::musicbrainz::{Criticality, is_valid_mbid};
 use droppedneedle_providers::wikidata::WikidataClient;
@@ -47,7 +48,7 @@ pub(in crate::reads::discover::adapters) const ARTIST_TTL: Duration = Duration::
 /// The live provider reads.
 pub struct LiveSources {
     pub(in crate::reads::discover::adapters) upstream: Upstream,
-    listenbrainz: Option<ListenBrainzClient<CorePacer, CoreSink>>,
+    listenbrainz: ListenBrainzClient,
     links: Arc<dyn ListenBrainzLinkStore>,
     pub(in crate::reads::discover::adapters) jellyfin: Arc<ConnectionResolver>,
     pub(in crate::reads::discover::adapters) http: reqwest::Client,
@@ -65,21 +66,8 @@ impl LiveSources {
         jellyfin: Arc<ConnectionResolver>,
         pool: SqlitePool,
     ) -> Self {
-        let base = upstream.endpoints().listenbrainz.clone();
-        let listenbrainz = match CorePacer::for_source(providers, listenbrainz::SOURCE) {
-            Some(pacer) => Some(ListenBrainzClient::new(
-                http.clone(),
-                &base,
-                pacer,
-                CoreSink,
-            )),
-            None => {
-                tracing::error!("no listenbrainz rate limit row; the queue skips ListenBrainz");
-                None
-            }
-        };
         Self {
-            listenbrainz,
+            listenbrainz: providers.listenbrainz.clone(),
             upstream,
             links,
             jellyfin,
@@ -89,12 +77,8 @@ impl LiveSources {
         }
     }
 
-    pub(in crate::reads::discover::adapters) fn lb(
-        &self,
-    ) -> SourceResult<&ListenBrainzClient<CorePacer, CoreSink>> {
-        self.listenbrainz
-            .as_ref()
-            .ok_or_else(|| "no listenbrainz limiter".to_owned())
+    pub(in crate::reads::discover::adapters) fn lb(&self) -> &ListenBrainzClient {
+        &self.listenbrainz
     }
 
     pub(in crate::reads::discover::adapters) async fn cached<T, Fut>(
@@ -127,26 +111,29 @@ impl LiveSources {
         }
     }
 
-    fn mark_popularity_down(&self, message: &str) {
-        if message.contains("popularity endpoint unavailable upstream")
-            && let Ok(mut until) = self.popularity_down_until.lock()
-        {
+    fn mark_popularity_down(&self) {
+        if let Ok(mut until) = self.popularity_down_until.lock() {
             *until = Some(Instant::now() + POPULARITY_DOWN_FOR);
         }
     }
 
-    pub(in crate::reads::discover::adapters) fn listenbrainz_result<T: Default>(
+    pub(in crate::reads::discover::adapters) fn listenbrainz_result<T>(
         &self,
-        outcome: listenbrainz::Outcome<T>,
+        result: Result<T, ProviderError>,
     ) -> SourceResult<T> {
-        match outcome {
-            listenbrainz::Outcome::Found(value) => Ok(value),
-            listenbrainz::Outcome::Missing => Ok(T::default()),
-            listenbrainz::Outcome::Unavailable { message, .. } => {
-                self.mark_popularity_down(&message);
-                Err(message)
-            }
+        result.map_err(|error| error.to_string())
+    }
+
+    /// [`listenbrainz_result`](Self::listenbrainz_result) for a popularity
+    /// read: ListenBrainz switching it off marks popularity as down.
+    pub(in crate::reads::discover::adapters) fn popularity_result<T>(
+        &self,
+        result: Result<T, ProviderError>,
+    ) -> SourceResult<T> {
+        if matches!(result, Err(ProviderError::Disabled { .. })) {
+            self.mark_popularity_down();
         }
+        self.listenbrainz_result(result)
     }
 
     pub(in crate::reads::discover::adapters) async fn lastfm(
@@ -280,6 +267,7 @@ impl QueueSources for LiveSources {
         username: &'a str,
         range: StatsRange,
         count: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         Box::pin(async move {
             let key = format!(
@@ -289,8 +277,8 @@ impl QueueSources for LiveSources {
             );
             self.cached(key, USER_STATS_TTL, async {
                 let rows = self.listenbrainz_result(
-                    self.lb()?
-                        .user_top_artists(username, range.as_str(), count, 0)
+                    self.lb()
+                        .user_top_artists(username, range.as_str(), count, 0, priority)
                         .await,
                 )?;
                 Ok(rows
@@ -311,6 +299,7 @@ impl QueueSources for LiveSources {
         username: &'a str,
         range: StatsRange,
         count: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         Box::pin(async move {
             let key = format!(
@@ -320,8 +309,8 @@ impl QueueSources for LiveSources {
             );
             self.cached(key, USER_STATS_TTL, async {
                 let rows = self.listenbrainz_result(
-                    self.lb()?
-                        .user_top_release_groups(username, range.as_str(), count, 0)
+                    self.lb()
+                        .user_top_release_groups(username, range.as_str(), count, 0, priority)
                         .await,
                 )?;
                 Ok(rows
@@ -345,13 +334,16 @@ impl QueueSources for LiveSources {
         user_id: &'a str,
         artist_mbid: &'a str,
         limit: usize,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         Box::pin(async move {
             let key = format!("lb_queue:similar:{}:{limit}", artist_mbid.to_lowercase());
             self.cached(key, ARTIST_TTL, async {
                 let creds = self.credentials(user_id).await;
                 let rows = self.listenbrainz_result(
-                    self.lb()?.similar_artists(artist_mbid, limit, &creds).await,
+                    self.lb()
+                        .similar_artists(artist_mbid, limit, &creds, priority)
+                        .await,
                 )?;
                 Ok(rows
                     .into_iter()
@@ -371,6 +363,7 @@ impl QueueSources for LiveSources {
         user_id: &'a str,
         artist_mbid: &'a str,
         count: usize,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         Box::pin(async move {
             if self.listenbrainz_popularity_down() {
@@ -382,9 +375,9 @@ impl QueueSources for LiveSources {
             );
             self.cached(key, ARTIST_TTL, async {
                 let creds = self.credentials(user_id).await;
-                let rows = self.listenbrainz_result(
-                    self.lb()?
-                        .artist_top_release_groups(artist_mbid, count, &creds)
+                let rows = self.popularity_result(
+                    self.lb()
+                        .artist_top_release_groups(artist_mbid, count, &creds, priority)
                         .await,
                 )?;
                 Ok(rows
@@ -405,12 +398,13 @@ impl QueueSources for LiveSources {
     fn listenbrainz_genres<'a>(
         &'a self,
         username: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<String>>> {
         Box::pin(async move {
             let key = format!("lb_queue:genres:{}", username.to_lowercase());
             self.cached(key, ARTIST_TTL, async {
-                let rows =
-                    self.listenbrainz_result(self.lb()?.user_genre_activity(username).await)?;
+                let rows = self
+                    .listenbrainz_result(self.lb().user_genre_activity(username, priority).await)?;
                 Ok(rows.into_iter().map(|row| row.genre).collect())
             })
             .await
@@ -420,12 +414,13 @@ impl QueueSources for LiveSources {
     fn listenbrainz_fresh_releases<'a>(
         &'a self,
         username: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         Box::pin(async move {
             let key = format!("lb_queue:fresh:{}", username.to_lowercase());
             self.cached(key, ARTIST_TTL, async {
-                let rows =
-                    self.listenbrainz_result(self.lb()?.user_fresh_releases(username).await)?;
+                let rows = self
+                    .listenbrainz_result(self.lb().user_fresh_releases(username, priority).await)?;
                 Ok(rows
                     .into_iter()
                     .filter_map(|row| {
@@ -447,23 +442,32 @@ impl QueueSources for LiveSources {
         &'a self,
         username: &'a str,
         count: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<String>>> {
         Box::pin(async move {
             let key = format!("lb_queue:loved:{}:{count}", username.to_lowercase());
             self.cached(key, USER_STATS_TTL, async {
-                self.listenbrainz_result(self.lb()?.user_loved_artist_mbids(username, count).await)
+                self.listenbrainz_result(
+                    self.lb()
+                        .user_loved_artist_mbids(username, count, priority)
+                        .await,
+                )
             })
             .await
         })
     }
 
-    fn listenbrainz_trending(&self, count: u32) -> BoxFuture<'_, SourceResult<Vec<AlbumRow>>> {
+    fn listenbrainz_trending(
+        &self,
+        count: u32,
+        priority: RequestPriority,
+    ) -> BoxFuture<'_, SourceResult<Vec<AlbumRow>>> {
         Box::pin(async move {
             let key = format!("lb_queue:trending:{count}");
             self.cached(key, ARTIST_TTL, async {
                 let rows = self.listenbrainz_result(
-                    self.lb()?
-                        .sitewide_top_release_groups("this_week", count, 0)
+                    self.lb()
+                        .sitewide_top_release_groups("this_week", count, 0, priority)
                         .await,
                 )?;
                 Ok(rows
@@ -486,6 +490,7 @@ impl QueueSources for LiveSources {
         &'a self,
         user_id: &'a str,
         release_group_mbids: &'a [String],
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<HashMap<String, i64>>> {
         Box::pin(async move {
             let cache = self.upstream.cache();
@@ -508,8 +513,11 @@ impl QueueSources for LiveSources {
                 return Ok(counts);
             }
             let creds = self.credentials(user_id).await;
-            let fetched = self
-                .listenbrainz_result(self.lb()?.release_group_popularity(&missing, &creds).await)?;
+            let fetched = self.popularity_result(
+                self.lb()
+                    .release_group_popularity(&missing, &creds, priority)
+                    .await,
+            )?;
             for (mbid, count) in fetched {
                 if let Ok(bytes) = serde_json::to_vec(&count) {
                     cache.set_bytes(&key_of(&mbid), bytes, ARTIST_TTL).await;

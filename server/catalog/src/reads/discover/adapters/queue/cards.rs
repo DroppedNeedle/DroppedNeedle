@@ -85,7 +85,9 @@ pub async fn enrich(
     let listens = async {
         quiet(
             "listenbrainz listen counts",
-            sources.listenbrainz_listen_counts(user_id, &ids).await,
+            sources
+                .listenbrainz_listen_counts(user_id, &ids, RequestPriority::UserInitiated)
+                .await,
         )
         .get(release_group_mbid)
         .copied()

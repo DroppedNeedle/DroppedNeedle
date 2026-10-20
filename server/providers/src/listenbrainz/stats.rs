@@ -14,10 +14,8 @@
 
 use serde::Deserialize;
 
-use super::{
-    Body, ListenBrainzClient, ListenBrainzCredentials, Outcome, RequestFailure, path_segment,
-};
-use crate::{DegradationSink, Pacer};
+use super::{ListenBrainzClient, ListenBrainzCredentials};
+use crate::{ProviderError, RequestPriority};
 
 /// Ranges the stats endpoints accept (v2 `ALLOWED_STATS_RANGE`, the
 /// spellings the charts use).
@@ -113,121 +111,190 @@ pub struct GenreActivity {
     pub listen_count: i64,
 }
 
-impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
+impl ListenBrainzClient {
     /// Sitewide top artists (`/1/stats/sitewide/artists`).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn sitewide_top_artists(
         &self,
         range: &str,
         count: u32,
         offset: u32,
-    ) -> Outcome<Vec<ArtistStat>> {
-        self.stats_rows("/1/stats/sitewide/artists", range, count, offset, "artists")
-            .await
+        priority: RequestPriority,
+    ) -> Result<Vec<ArtistStat>, ProviderError> {
+        self.stats_rows(
+            &["1", "stats", "sitewide", "artists"],
+            range,
+            count,
+            offset,
+            "artists",
+            priority,
+        )
+        .await
     }
 
     /// Sitewide top release groups (`/1/stats/sitewide/release-groups`).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn sitewide_top_release_groups(
         &self,
         range: &str,
         count: u32,
         offset: u32,
-    ) -> Outcome<Vec<ReleaseGroupStat>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<ReleaseGroupStat>, ProviderError> {
         self.stats_rows(
-            "/1/stats/sitewide/release-groups",
+            &["1", "stats", "sitewide", "release-groups"],
             range,
             count,
             offset,
             "release_groups",
+            priority,
         )
         .await
     }
 
     /// A user's top artists (`/1/stats/user/{user}/artists`).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn user_top_artists(
         &self,
         username: &str,
         range: &str,
         count: u32,
         offset: u32,
-    ) -> Outcome<Vec<ArtistStat>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<ArtistStat>, ProviderError> {
         if username.is_empty() {
-            return Outcome::Found(Vec::new());
+            return Ok(Vec::new());
         }
-        let endpoint = format!("/1/stats/user/{}/artists", path_segment(username));
-        self.stats_rows(&endpoint, range, count, offset, "artists")
-            .await
+        self.stats_rows(
+            &["1", "stats", "user", username, "artists"],
+            range,
+            count,
+            offset,
+            "artists",
+            priority,
+        )
+        .await
     }
 
     /// A user's top release groups (`/1/stats/user/{user}/release-groups`).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn user_top_release_groups(
         &self,
         username: &str,
         range: &str,
         count: u32,
         offset: u32,
-    ) -> Outcome<Vec<ReleaseGroupStat>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<ReleaseGroupStat>, ProviderError> {
         if username.is_empty() {
-            return Outcome::Found(Vec::new());
+            return Ok(Vec::new());
         }
-        let endpoint = format!("/1/stats/user/{}/release-groups", path_segment(username));
-        self.stats_rows(&endpoint, range, count, offset, "release_groups")
-            .await
+        self.stats_rows(
+            &["1", "stats", "user", username, "release-groups"],
+            range,
+            count,
+            offset,
+            "release_groups",
+            priority,
+        )
+        .await
     }
 
     /// A user's top recordings (`/1/stats/user/{user}/recordings`).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn user_top_recordings(
         &self,
         username: &str,
         range: &str,
         count: u32,
         offset: u32,
-    ) -> Outcome<Vec<RecordingStat>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<RecordingStat>, ProviderError> {
         if username.is_empty() {
-            return Outcome::Found(Vec::new());
+            return Ok(Vec::new());
         }
-        let endpoint = format!("/1/stats/user/{}/recordings", path_segment(username));
-        self.stats_rows(&endpoint, range, count, offset, "recordings")
-            .await
+        self.stats_rows(
+            &["1", "stats", "user", username, "recordings"],
+            range,
+            count,
+            offset,
+            "recordings",
+            priority,
+        )
+        .await
     }
 
     /// Users whose listening is most like `username`'s, most similar first
     /// (`/1/user/{user}/similar-users`). Only the user names are kept.
-    pub async fn similar_users(&self, username: &str) -> Outcome<Vec<String>> {
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
+    pub async fn similar_users(
+        &self,
+        username: &str,
+        priority: RequestPriority,
+    ) -> Result<Vec<String>, ProviderError> {
         if username.is_empty() {
-            return Outcome::Found(Vec::new());
+            return Ok(Vec::new());
         }
-        let endpoint = format!("/1/user/{}/similar-users", path_segment(username));
-        let payload = match self.public_get(&endpoint, &[]).await {
-            Ok(Some(payload)) => payload,
-            Ok(None) => return Outcome::Found(Vec::new()),
-            Err(outcome) => return outcome,
+        let Some(payload) = self
+            .public_read(&["1", "user", username, "similar-users"], &[], priority)
+            .await?
+        else {
+            return Ok(Vec::new());
         };
-        Outcome::Found(
-            payload
-                .get("payload")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|row| row.get("user_name")?.as_str())
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_owned)
-                .collect(),
-        )
+        Ok(payload
+            .get("payload")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|row| row.get("user_name")?.as_str())
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect())
     }
 
     /// A user's listens per genre, largest first
     /// (`/1/stats/user/{user}/genre-activity`, summed over its hourly
     /// buckets as v2 did).
-    pub async fn user_genre_activity(&self, username: &str) -> Outcome<Vec<GenreActivity>> {
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
+    pub async fn user_genre_activity(
+        &self,
+        username: &str,
+        priority: RequestPriority,
+    ) -> Result<Vec<GenreActivity>, ProviderError> {
         if username.is_empty() {
-            return Outcome::Found(Vec::new());
+            return Ok(Vec::new());
         }
-        let endpoint = format!("/1/stats/user/{}/genre-activity", path_segment(username));
-        let payload = match self.public_get(&endpoint, &[]).await {
-            Ok(Some(payload)) => payload,
-            Ok(None) => return Outcome::Found(Vec::new()),
-            Err(outcome) => return outcome,
+        let Some(payload) = self
+            .public_read(
+                &["1", "stats", "user", username, "genre-activity"],
+                &[],
+                priority,
+            )
+            .await?
+        else {
+            return Ok(Vec::new());
         };
         let mut totals: Vec<GenreActivity> = Vec::new();
         let rows = payload
@@ -257,25 +324,35 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             }
         }
         totals.sort_by(|a, b| b.listen_count.cmp(&a.listen_count));
-        Outcome::Found(totals)
+        Ok(totals)
     }
 
     /// How many recordings the user loved, sampled from one page of at most
     /// `count` (ListenBrainz caps the page at 100, as v2 noted, so this is
     /// a sample size and not a total).
-    pub async fn user_loved_sample(&self, username: &str, count: u32) -> Outcome<usize> {
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
+    pub async fn user_loved_sample(
+        &self,
+        username: &str,
+        count: u32,
+        priority: RequestPriority,
+    ) -> Result<usize, ProviderError> {
         if username.is_empty() {
-            return Outcome::Found(0);
+            return Ok(0);
         }
-        let endpoint = format!("/1/feedback/user/{}/get-feedback", path_segment(username));
         let count_text = count.min(MAX_STATS_COUNT).to_string();
-        let payload = match self
-            .public_get(&endpoint, &[("score", "1"), ("count", &count_text)])
-            .await
-        {
-            Ok(Some(payload)) => payload,
-            Ok(None) => return Outcome::Found(0),
-            Err(outcome) => return outcome,
+        let Some(payload) = self
+            .public_read(
+                &["1", "feedback", "user", username, "get-feedback"],
+                &[("score", "1"), ("count", &count_text)],
+                priority,
+            )
+            .await?
+        else {
+            return Ok(0);
         };
         let body = payload.get("payload").unwrap_or(&payload);
         let rows = body
@@ -283,25 +360,34 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             .or_else(|| body.get("recordings"))
             .and_then(serde_json::Value::as_array)
             .or_else(|| body.as_array());
-        Outcome::Found(rows.map_or(0, |rows| rows.iter().filter(|row| row.is_object()).count()))
+        Ok(rows.map_or(0, |rows| rows.iter().filter(|row| row.is_object()).count()))
     }
 
     /// Releases out recently by artists the user listens to
     /// (`/1/user/{user}/fresh_releases?past=true&future=false`, v2
     /// `get_user_fresh_releases`). Rows without a release group id or a
     /// title are skipped.
-    pub async fn user_fresh_releases(&self, username: &str) -> Outcome<Vec<FreshRelease>> {
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
+    pub async fn user_fresh_releases(
+        &self,
+        username: &str,
+        priority: RequestPriority,
+    ) -> Result<Vec<FreshRelease>, ProviderError> {
         if username.is_empty() {
-            return Outcome::Found(Vec::new());
+            return Ok(Vec::new());
         }
-        let endpoint = format!("/1/user/{}/fresh_releases", path_segment(username));
-        let payload = match self
-            .public_get(&endpoint, &[("past", "true"), ("future", "false")])
-            .await
-        {
-            Ok(Some(payload)) => payload,
-            Ok(None) => return Outcome::Found(Vec::new()),
-            Err(outcome) => return outcome,
+        let Some(payload) = self
+            .public_read(
+                &["1", "user", username, "fresh_releases"],
+                &[("past", "true"), ("future", "false")],
+                priority,
+            )
+            .await?
+        else {
+            return Ok(Vec::new());
         };
         let rows = payload
             .get("payload")
@@ -309,57 +395,63 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             .and_then(serde_json::Value::as_array)
             .cloned()
             .unwrap_or_default();
-        Outcome::Found(
-            rows.into_iter()
-                .filter_map(|row| serde_json::from_value(row).ok())
-                .collect(),
-        )
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| serde_json::from_value(row).ok())
+            .collect())
     }
 
     /// The first artist MBID of each recording the user loved, in feedback
     /// order (`/1/feedback/user/{user}/get-feedback?score=1&metadata=true`,
     /// v2 `get_user_loved_recordings`). Recordings without a mapped artist
     /// are skipped; repeats stay so the caller decides how to dedupe.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn user_loved_artist_mbids(
         &self,
         username: &str,
         count: u32,
-    ) -> Outcome<Vec<String>> {
-        match self.loved_feedback(username, count).await {
-            Ok(rows) => Outcome::Found(rows.iter().filter_map(loved_artist_mbid).collect()),
-            Err(outcome) => outcome,
-        }
+        priority: RequestPriority,
+    ) -> Result<Vec<String>, ProviderError> {
+        let rows = self.loved_feedback(username, count, priority).await?;
+        Ok(rows.iter().filter_map(loved_artist_mbid).collect())
     }
 
     /// The user's loved recordings with their names, newest first (v2
     /// `get_user_loved_recordings`, the home "Your Favorites" shelf).
     /// Rows without a track title are skipped.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn user_loved_recordings(
         &self,
         username: &str,
         count: u32,
-    ) -> Outcome<Vec<LovedRecording>> {
-        match self.loved_feedback(username, count).await {
-            Ok(rows) => Outcome::Found(rows.iter().filter_map(loved_recording).collect()),
-            Err(outcome) => outcome,
-        }
+        priority: RequestPriority,
+    ) -> Result<Vec<LovedRecording>, ProviderError> {
+        let rows = self.loved_feedback(username, count, priority).await?;
+        Ok(rows.iter().filter_map(loved_recording).collect())
     }
 
     /// One page of the user's loved-recording feedback rows, with metadata.
-    async fn loved_feedback<T>(
+    async fn loved_feedback(
         &self,
         username: &str,
         count: u32,
-    ) -> Result<Vec<serde_json::Value>, Outcome<T>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<serde_json::Value>, ProviderError> {
         if username.is_empty() {
             return Ok(Vec::new());
         }
-        let endpoint = format!("/1/feedback/user/{}/get-feedback", path_segment(username));
         let count_text = count.min(MAX_STATS_COUNT).to_string();
         let Some(payload) = self
-            .public_get(
-                &endpoint,
+            .public_read(
+                &["1", "feedback", "user", username, "get-feedback"],
                 &[("score", "1"), ("count", &count_text), ("metadata", "true")],
+                priority,
             )
             .await?
         else {
@@ -379,12 +471,13 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
     /// without their required names.
     async fn stats_rows<T: serde::de::DeserializeOwned>(
         &self,
-        endpoint: &str,
+        segments: &[&str],
         range: &str,
         count: u32,
         offset: u32,
         key: &str,
-    ) -> Outcome<Vec<T>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<T>, ProviderError> {
         let range = if STATS_RANGES.contains(&range) {
             range
         } else {
@@ -397,10 +490,8 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             ("offset", offset_text.as_str()),
             ("range", range),
         ];
-        let payload = match self.public_get(endpoint, &params).await {
-            Ok(Some(payload)) => payload,
-            Ok(None) => return Outcome::Found(Vec::new()),
-            Err(outcome) => return outcome,
+        let Some(payload) = self.public_read(segments, &params, priority).await? else {
+            return Ok(Vec::new());
         };
         let rows = payload
             .get("payload")
@@ -408,37 +499,21 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             .and_then(serde_json::Value::as_array)
             .cloned()
             .unwrap_or_default();
-        Outcome::Found(
-            rows.into_iter()
-                .filter_map(|row| serde_json::from_value(row).ok())
-                .collect(),
-        )
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| serde_json::from_value(row).ok())
+            .collect())
     }
 
-    /// One anonymous GET. `Ok(None)` is an empty answer (204, or a body
-    /// that did not decode, which the classifier already recorded).
-    async fn public_get<T>(
+    /// One anonymous read. `None` is an empty answer.
+    async fn public_read(
         &self,
-        endpoint: &str,
+        segments: &[&str],
         params: &[(&str, &str)],
-    ) -> Result<Option<serde_json::Value>, Outcome<T>> {
-        match self
-            .get(
-                endpoint,
-                params,
-                &ListenBrainzCredentials::default(),
-                false,
-                &[],
-            )
-            .await
-        {
-            Ok(Body::Json(payload)) => Ok(Some(payload)),
-            Ok(Body::NoContent | Body::InvalidJson) => Ok(None),
-            Err(RequestFailure::Outcome(outcome)) => Err(outcome),
-            Err(RequestFailure::Accepted(_)) => {
-                Err(self.shape_error("ListenBrainz gave an unexpected reply"))
-            }
-        }
+        priority: RequestPriority,
+    ) -> Result<Option<serde_json::Value>, ProviderError> {
+        let request = self.get(segments, params, &ListenBrainzCredentials::default())?;
+        self.read(request, priority).await
     }
 }
 

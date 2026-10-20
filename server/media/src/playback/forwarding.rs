@@ -16,8 +16,10 @@
 //! (no answer, 5xx, 429, Last.fm codes 11/16/29) are retried with backoff,
 //! up to [`SCROBBLE_ATTEMPTS`] tries; a rejected credential or a refused
 //! play is dropped with a log line. Now-playing reports are not retried: a
-//! late one is wrong. Calls are paced per service (ListenBrainz 1/s,
-//! Last.fm 5/s).
+//! late one is wrong. ListenBrainz submissions go through the one
+//! ListenBrainz client at background priority, so they take their tokens
+//! from the same 1/s bucket as every ListenBrainz read; Last.fm is paced
+//! here at 5/s.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,6 +32,8 @@ use droppedneedle_kernel::http_client::{BodyError, read_capped};
 use droppedneedle_kernel::jobs::CancellationToken;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
+use droppedneedle_providers::listenbrainz::ListenBrainzClient;
+use droppedneedle_providers::{ProviderError, RequestPriority};
 
 use super::ports::{ReportTrack, ScrobbleLinks, ScrobbleSinks, ScrobbleTargets, ServiceOutcome};
 use super::scrobble_models::{AdditionalInfo, LastFmError, Listen, SubmitListens, TrackMetadata};
@@ -46,8 +50,6 @@ pub const MAX_BACKOFF: Duration = Duration::from_secs(300);
 const MAX_LASTFM_BODY_BYTES: usize = 4 * 1024 * 1024;
 /// Per-request budget.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-/// ListenBrainz pacing (provider policy: 1 request per second).
-pub const LISTENBRAINZ_SPACING: Duration = Duration::from_secs(1);
 /// Last.fm pacing (provider policy: 5 requests per second).
 pub const LASTFM_SPACING: Duration = Duration::from_millis(200);
 
@@ -69,10 +71,12 @@ impl Service {
         }
     }
 
+    /// Spacing kept in the lane. ListenBrainz needs none here: its client
+    /// paces on the shared bucket.
     fn spacing(self) -> Duration {
         match self {
             Self::LastFm => LASTFM_SPACING,
-            Self::ListenBrainz => LISTENBRAINZ_SPACING,
+            Self::ListenBrainz => Duration::ZERO,
         }
     }
 }
@@ -321,11 +325,9 @@ impl ScrobbleCredentials for StoredScrobbleCredentials {
     }
 }
 
-/// Where the worker sends requests.
+/// Where the worker sends Last.fm requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Endpoints {
-    /// ListenBrainz API root.
-    pub listenbrainz: String,
     /// Last.fm API endpoint.
     pub lastfm: String,
 }
@@ -350,15 +352,18 @@ pub struct ForwardWorker {
 /// Makes the upstream calls; shared by both service lanes.
 struct Courier {
     http: reqwest::Client,
+    listenbrainz: ListenBrainzClient,
     credentials: Arc<dyn ScrobbleCredentials>,
     endpoints: Endpoints,
 }
 
 impl ForwardWorker {
-    /// Build the worker over the forwarder's queues.
+    /// Build the worker over the forwarder's queues: ListenBrainz through
+    /// the one ListenBrainz client, Last.fm through `http`.
     pub fn new(
         queues: ForwardQueues,
         http: reqwest::Client,
+        listenbrainz: ListenBrainzClient,
         credentials: Arc<dyn ScrobbleCredentials>,
         endpoints: Endpoints,
     ) -> Self {
@@ -366,6 +371,7 @@ impl ForwardWorker {
             queues,
             courier: Courier {
                 http,
+                listenbrainz,
                 credentials,
                 endpoints,
             },
@@ -468,10 +474,6 @@ impl Courier {
     }
 
     async fn listenbrainz(&self, job: &ForwardJob, token: &str) -> Delivery {
-        let Ok(authorization) = reqwest::header::HeaderValue::from_str(&format!("Token {token}"))
-        else {
-            return Delivery::Drop("stored ListenBrainz token is not header-safe".to_owned());
-        };
         let track = &job.track;
         let body = SubmitListens {
             listen_type: match job.kind {
@@ -496,34 +498,28 @@ impl Courier {
         let Ok(payload) = serde_json::to_vec(&body) else {
             return Delivery::Drop("listen body failed to render".to_owned());
         };
-        let response = self
-            .http
-            .post(format!(
-                "{}/1/submit-listens",
-                self.endpoints.listenbrainz.trim_end_matches('/')
-            ))
-            .header(reqwest::header::AUTHORIZATION, authorization)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .header(reqwest::header::ACCEPT, "application/json")
-            .body(payload)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await;
-        let response = match response {
-            Ok(response) => response,
-            Err(error) => return Delivery::Retry(None, transport_cause(&error)),
-        };
-        let status = response.status();
-        if status.is_success() {
-            return Delivery::Done;
+        match self
+            .listenbrainz
+            .submit_listens(token, payload, RequestPriority::BackgroundSync)
+            .await
+        {
+            Ok(()) => Delivery::Done,
+            Err(ProviderError::Invalid { .. }) => {
+                Delivery::Drop("stored ListenBrainz token is not header-safe".to_owned())
+            }
+            // A passing failure, or an endpoint switched off for now: the
+            // queue's own ladder tries again, after the wait ListenBrainz
+            // named, if any.
+            Err(error)
+                if error.is_retriable() || matches!(error, ProviderError::Disabled { .. }) =>
+            {
+                Delivery::Retry(
+                    error.retry_after().map(|wait| wait.min(MAX_BACKOFF)),
+                    error.to_string(),
+                )
+            }
+            Err(error) => Delivery::Drop(format!("ListenBrainz refused the listen: {error}")),
         }
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Delivery::Retry(retry_after(response.headers()), "rate limited".to_owned());
-        }
-        if status.is_server_error() {
-            return Delivery::Retry(None, format!("ListenBrainz answered {status}"));
-        }
-        Delivery::Drop(format!("ListenBrainz refused the listen ({status})"))
     }
 
     async fn lastfm(&self, job: &ForwardJob, session: &LastFmSession) -> Delivery {

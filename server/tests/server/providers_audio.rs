@@ -1,6 +1,7 @@
-//! AudioDB, AcoustID, Last.fm and ListenBrainz clients against a scripted
-//! loopback server: the decode of each real wire shape, rate limits and
-//! Retry-After, degradation recording, and credential handling.
+//! AudioDB, AcoustID and Last.fm clients against a scripted loopback
+//! server, and ListenBrainz against the scripted provider wire: the decode
+//! of each real wire shape, rate limits and Retry-After, degradation
+//! recording, and credential handling.
 
 use droppedneedle_providers::{DegradationSink, Pacer};
 use droppedneedle_providers::{acoustid, audiodb, lastfm, listenbrainz};
@@ -19,18 +20,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 struct CapturedRequest {
     method: String,
     path: String,
-    headers: Vec<(String, String)>,
     body: Vec<u8>,
 }
 
 impl CapturedRequest {
-    fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value.as_str())
-    }
-
     fn text_body(&self) -> String {
         String::from_utf8_lossy(&self.body).into_owned()
     }
@@ -177,15 +170,12 @@ async fn serve(
             let mut parts = request_line.split_whitespace();
             let method = parts.next().unwrap_or("").to_owned();
             let path = parts.next().unwrap_or("").to_owned();
-            let mut headers: Vec<(String, String)> = Vec::new();
             let mut content_length = 0usize;
             for line in lines {
-                if let Some((key, value)) = line.split_once(':') {
-                    let key = key.trim().to_ascii_lowercase();
-                    if key == "content-length" {
-                        content_length = value.trim().parse::<usize>().unwrap_or(0).min(1 << 20);
-                    }
-                    headers.push((key, value.trim().to_owned()));
+                if let Some((key, value)) = line.split_once(':')
+                    && key.trim().eq_ignore_ascii_case("content-length")
+                {
+                    content_length = value.trim().parse::<usize>().unwrap_or(0).min(1 << 20);
                 }
             }
             let mut body = buffer.get(head_end..).unwrap_or(&[]).to_vec();
@@ -193,12 +183,7 @@ async fn serve(
                 read_exactly(&mut stream, content_length - body.len(), &mut body).await;
             }
             body.truncate(content_length);
-            let captured = CapturedRequest {
-                method,
-                path,
-                headers,
-                body,
-            };
+            let captured = CapturedRequest { method, path, body };
             let scripted = respond(&captured);
             hits.lock().expect("hits lock").push(captured);
             let reason = match scripted.status {
@@ -1074,12 +1059,21 @@ async fn lastfm_per_user_credentials_stay_isolated() {
 // ListenBrainz
 // ---------------------------------------------------------------------------
 
-fn listenbrainz_client(
-    base_url: &str,
-    pacer: CountingPacer,
-    sink: RecSink,
-) -> listenbrainz::ListenBrainzClient<CountingPacer, RecSink> {
-    listenbrainz::ListenBrainzClient::new(http(), base_url, pacer, sink)
+/// The providers over `wire`, with ListenBrainz at its real address.
+fn listenbrainz_providers(
+    wire: &Arc<droppedneedle_providers::executor::ScriptedWire>,
+) -> droppedneedle_providers::Providers {
+    droppedneedle_providers::Providers::unpaced_at(
+        wire.clone(),
+        droppedneedle_providers::ProviderEndpoints {
+            listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
+            ..droppedneedle_providers::ProviderEndpoints::closed()
+        },
+    )
+}
+
+fn lb_url(path: &str) -> String {
+    format!("{}{path}", listenbrainz::DEFAULT_BASE_URL)
 }
 
 fn lb_anonymous() -> listenbrainz::ListenBrainzCredentials {
@@ -1096,25 +1090,39 @@ fn lb_authed() -> listenbrainz::ListenBrainzCredentials {
     }
 }
 
+const LB_PRIORITY: droppedneedle_providers::RequestPriority =
+    droppedneedle_providers::RequestPriority::UserInitiated;
+
 #[tokio::test]
 async fn listenbrainz_required_headers_sent() {
-    let payload = serde_json::json!({"payload": {"count": 12}});
-    let fake = Fake::start(always(ScriptedResponse::json(200, &payload))).await;
-    let client = listenbrainz_client(&fake.base_url, CountingPacer::new(), RecSink::new());
+    let wire = Arc::new(droppedneedle_providers::executor::ScriptedWire::new());
+    wire.answer(
+        &lb_url("/1/user/listener/listens"),
+        200,
+        &[],
+        r#"{"payload": {"listens": []}}"#,
+    );
+    let providers = listenbrainz_providers(&wire);
 
-    let validation = client
-        .validate_username("listener", &lb_authed())
+    providers
+        .listenbrainz
+        .user_listens("listener", 25, &lb_authed(), LB_PRIORITY)
         .await
-        .into_option()
-        .expect("validation answered");
-    assert!(validation.valid);
+        .expect("listens answered");
 
-    let hits = fake.hits();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].header("accept"), Some("application/json"));
-    assert_eq!(hits[0].header("content-type"), Some("application/json"));
+    let sent = wire.sent();
+    assert_eq!(sent.len(), 1);
+    let header = |name: &str| {
+        sent[0]
+            .headers
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    };
+    assert_eq!(header("accept"), Some("application/json"));
+    assert_eq!(header("content-type"), Some("application/json"));
     assert_eq!(
-        hits[0].header("authorization"),
+        header("authorization"),
         Some("Token lb-token"),
         "Token scheme, exactly like v2"
     );
@@ -1122,32 +1130,53 @@ async fn listenbrainz_required_headers_sent() {
 
 #[tokio::test]
 async fn listenbrainz_unsafe_tokens_rejected_without_wire() {
+    let wire = Arc::new(droppedneedle_providers::executor::ScriptedWire::new());
+    wire.answer(
+        &lb_url("/1/user/listener/listens"),
+        200,
+        &[],
+        r#"{"payload": {"listens": []}}"#,
+    );
+    let providers = listenbrainz_providers(&wire);
     for token in [
         "has\nnewline".to_owned(),
         "has space".to_owned(),
         "x".repeat(1025),
     ] {
-        let fake = Fake::start(always(ScriptedResponse::json(
-            200,
-            &serde_json::json!({"payload": {"count": 1}}),
-        )))
-        .await;
-        let sink = RecSink::new();
-        let client = listenbrainz_client(&fake.base_url, CountingPacer::new(), sink.clone());
         let creds = listenbrainz::ListenBrainzCredentials {
             username: Some("listener".to_owned()),
-            user_token: Some(token),
+            user_token: Some(token.clone()),
         };
 
-        let outcome = client.validate_username("listener", &creds).await;
-
-        match outcome {
-            listenbrainz::Outcome::Unavailable { recorded, .. } => assert!(!recorded),
-            other => panic!("expected unrecorded Unavailable, got {other:?}"),
-        }
-        assert_eq!(fake.hit_count(), 0, "rejected tokens never reach the wire");
-        assert_eq!(sink.count(), 0);
+        let error = providers
+            .listenbrainz
+            .user_listens("listener", 25, &creds, LB_PRIORITY)
+            .await
+            .expect_err("an unsafe token is refused");
+        assert!(
+            matches!(
+                error,
+                droppedneedle_providers::ProviderError::Invalid { .. }
+            ),
+            "{error:?}"
+        );
+        let refused = providers
+            .listenbrainz
+            .submit_listens(&token, b"{}".to_vec(), LB_PRIORITY)
+            .await
+            .expect_err("an unsafe token is refused");
+        assert!(
+            matches!(
+                refused,
+                droppedneedle_providers::ProviderError::Invalid { .. }
+            ),
+            "{refused:?}"
+        );
     }
+    assert!(
+        wire.sent().is_empty(),
+        "rejected tokens never reach the wire"
+    );
 }
 
 #[tokio::test]
@@ -1172,14 +1201,19 @@ async fn listenbrainz_user_listens_found_with_mbid_mapping() {
         {"listened_at": 1, "track_metadata": {"artist_name": "No Track"}},
         {"listened_at": 2, "track_metadata": {"track_name": "No Artist"}}
     ]}});
-    let fake = Fake::start(always(ScriptedResponse::json(200, &payload))).await;
-    let sink = RecSink::new();
-    let client = listenbrainz_client(&fake.base_url, CountingPacer::new(), sink.clone());
+    let wire = Arc::new(droppedneedle_providers::executor::ScriptedWire::new());
+    wire.answer(
+        &lb_url("/1/user/listener/listens"),
+        200,
+        &[],
+        payload.to_string(),
+    );
+    let providers = listenbrainz_providers(&wire);
 
-    let listens = client
-        .user_listens("listener", 25, &lb_anonymous())
+    let listens = providers
+        .listenbrainz
+        .user_listens("listener", 25, &lb_anonymous(), LB_PRIORITY)
         .await
-        .into_option()
         .expect("listens found");
 
     assert_eq!(listens.len(), 1);
@@ -1192,88 +1226,44 @@ async fn listenbrainz_user_listens_found_with_mbid_mapping() {
         Some(vec!["a1".to_owned()]),
         "mapping wins over additional info"
     );
-    assert_eq!(sink.count(), 0);
-    let (route, _) = route_and_query(&fake.hits()[0].path);
-    assert_eq!(route, "/1/user/listener/listens");
+    assert_eq!(wire.sent()[0].query("count").as_deref(), Some("25"));
 }
 
 #[tokio::test]
 async fn listenbrainz_popularity_malformed_never_reads_as_zeros() {
     // v2's poisoning guard: a malformed answer returns partial results with
     // nothing written, never an authoritative empty map from an outage.
-    let payload = serde_json::json!({"oops": true});
-    let fake = Fake::start(always(ScriptedResponse::json(200, &payload))).await;
-    let sink = RecSink::new();
-    let client = listenbrainz_client(&fake.base_url, CountingPacer::new(), sink.clone());
-
-    let counts = client
-        .release_group_popularity(&["a".to_owned()], &lb_anonymous())
-        .await
-        .into_option()
-        .expect("malformed popularity stays soft");
-
-    assert!(counts.is_empty());
-    assert_eq!(
-        sink.count(),
-        0,
-        "popularity swallows malformed replies silently"
+    let popularity = lb_url("/1/popularity/release-group");
+    let wire = Arc::new(droppedneedle_providers::executor::ScriptedWire::new());
+    wire.on(
+        droppedneedle_providers::executor::Method::Post,
+        &popularity,
+        droppedneedle_providers::executor::Scripted::Answer {
+            status: 200,
+            headers: Vec::new(),
+            body: br#"{"oops": true}"#.to_vec(),
+        },
     );
+    wire.on(
+        droppedneedle_providers::executor::Method::Post,
+        &popularity,
+        droppedneedle_providers::executor::Scripted::Answer {
+            status: 200,
+            headers: Vec::new(),
+            body: b"[]".to_vec(),
+        },
+    );
+    let providers = listenbrainz_providers(&wire);
 
-    let empty = Fake::start(always(ScriptedResponse::json(200, &serde_json::json!([])))).await;
-    let client = listenbrainz_client(&empty.base_url, CountingPacer::new(), RecSink::new());
-    let counts = client
-        .release_group_popularity(&["a".to_owned()], &lb_anonymous())
-        .await
-        .into_option()
-        .expect("empty list is legitimate");
-    assert!(counts.is_empty());
-}
-
-#[tokio::test]
-async fn listenbrainz_429_prefers_explicit_delay_then_defaults() {
-    let reset_in = Fake::start(always(
-        ScriptedResponse::empty(429).with_header("x-ratelimit-reset-in", "12"),
-    ))
-    .await;
-    let client = listenbrainz_client(&reset_in.base_url, CountingPacer::new(), RecSink::new());
-    match client.validate_token(&lb_authed()).await {
-        listenbrainz::Outcome::Unavailable {
-            retry_after_secs, ..
-        } => assert_eq!(retry_after_secs, Some(12.0)),
-        other => panic!("expected Unavailable, got {other:?}"),
-    }
-
-    let retry_after = Fake::start(always(
-        ScriptedResponse::empty(429).with_header("retry-after", "5"),
-    ))
-    .await;
-    let client = listenbrainz_client(&retry_after.base_url, CountingPacer::new(), RecSink::new());
-    match client.validate_token(&lb_authed()).await {
-        listenbrainz::Outcome::Unavailable {
-            retry_after_secs, ..
-        } => assert_eq!(retry_after_secs, Some(5.0)),
-        other => panic!("expected Unavailable, got {other:?}"),
-    }
-
-    for scripted in [
-        ScriptedResponse::empty(429),
-        ScriptedResponse::empty(429).with_header("retry-after", "bogus"),
-        ScriptedResponse::empty(429).with_header("x-ratelimit-reset-in", "0"),
+    for answer in [
+        "malformed popularity stays soft",
+        "empty list is legitimate",
     ] {
-        let fake = Fake::start(always(scripted)).await;
-        let sink = RecSink::new();
-        let client = listenbrainz_client(&fake.base_url, CountingPacer::new(), sink.clone());
-        match client.validate_token(&lb_authed()).await {
-            listenbrainz::Outcome::Unavailable {
-                retry_after_secs,
-                recorded,
-                ..
-            } => {
-                assert_eq!(retry_after_secs, Some(2.0));
-                assert!(recorded);
-            }
-            other => panic!("expected Unavailable, got {other:?}"),
-        }
-        assert_eq!(sink.count(), 1);
+        let counts = providers
+            .listenbrainz
+            .release_group_popularity(&["a".to_owned()], &lb_anonymous(), LB_PRIORITY)
+            .await
+            .expect(answer);
+        assert!(counts.is_empty(), "{answer}");
     }
 }

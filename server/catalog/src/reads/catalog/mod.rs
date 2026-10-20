@@ -82,6 +82,7 @@ struct Flights {
     extended: Singleflight<artist::Biography, CatalogError>,
     search: Singleflight<search::RemoteHits, CatalogError>,
     other: Singleflight<serde_json::Value, CatalogError>,
+    other_background: Singleflight<serde_json::Value, CatalogError>,
 }
 
 impl Catalog {

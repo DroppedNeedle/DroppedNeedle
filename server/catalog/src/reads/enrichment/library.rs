@@ -145,35 +145,36 @@ impl EnrichmentPort for LiveEnrichment {
     fn listenbrainz_genres<'a>(
         &'a self,
         release_group_mbid: &'a str,
+        background: bool,
     ) -> BoxFuture<'a, Result<Vec<Candidate>, String>> {
-        use droppedneedle_providers::listenbrainz::Outcome;
         Box::pin(async move {
             let (client, creds) = self
                 .upstream
                 .listenbrainz()
                 .ok_or_else(|| "ListenBrainz is switched off".to_owned())?;
-            let answer = client
-                .release_group_genres(&[release_group_mbid.to_owned()], &creds)
+            let priority = if background {
+                droppedneedle_providers::RequestPriority::BackgroundSync
+            } else {
+                droppedneedle_providers::RequestPriority::UserInitiated
+            };
+            let groups = client
+                .release_group_genres(&[release_group_mbid.to_owned()], &creds, priority)
                 .await
                 .map_err(|error| error.to_string())?;
-            match answer {
-                Outcome::Found(groups) => Ok(groups
-                    .get(release_group_mbid)
-                    .map(|metadata| {
-                        metadata
-                            .release_group_tags
-                            .iter()
-                            .map(|tag| Candidate {
-                                name: tag.tag.clone(),
-                                count: Some(tag.count),
-                                curated: tag.genre_mbid.is_some(),
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default()),
-                Outcome::Missing => Ok(Vec::new()),
-                Outcome::Unavailable { message, .. } => Err(message),
-            }
+            Ok(groups
+                .get(release_group_mbid)
+                .map(|metadata| {
+                    metadata
+                        .release_group_tags
+                        .iter()
+                        .map(|tag| Candidate {
+                            name: tag.tag.clone(),
+                            count: Some(tag.count),
+                            curated: tag.genre_mbid.is_some(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default())
         })
     }
 

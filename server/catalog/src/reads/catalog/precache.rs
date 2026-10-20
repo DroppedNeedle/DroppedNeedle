@@ -22,6 +22,9 @@ use super::Catalog;
 const SIMILAR_COUNT: u32 = 15;
 const TOP_SONGS_COUNT: u32 = 10;
 const TOP_ALBUMS_COUNT: u32 = 10;
+/// The precache warms ahead of any page, so it waits behind them.
+const BACKGROUND: droppedneedle_providers::RequestPriority =
+    droppedneedle_providers::RequestPriority::BackgroundSync;
 
 impl Catalog {
     /// The library's identified artists and albums.
@@ -76,9 +79,9 @@ impl Catalog {
     /// them.
     async fn warm_artist_discovery(&self, user_id: &str, mbid: &str) {
         let (similar, songs, albums) = tokio::join!(
-            self.similar_artists(user_id, mbid, SIMILAR_COUNT, None),
-            self.top_songs(user_id, mbid, TOP_SONGS_COUNT, None),
-            self.top_albums(user_id, mbid, TOP_ALBUMS_COUNT, None),
+            self.similar_artists(user_id, mbid, SIMILAR_COUNT, None, BACKGROUND),
+            self.top_songs(user_id, mbid, TOP_SONGS_COUNT, None, BACKGROUND),
+            self.top_albums(user_id, mbid, TOP_ALBUMS_COUNT, None, BACKGROUND),
         );
         if let Some(error) = [similar.err(), songs.err(), albums.err()]
             .into_iter()

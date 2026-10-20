@@ -176,6 +176,7 @@ pub trait QueueSources: Send + Sync {
         username: &'a str,
         range: StatsRange,
         count: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>>;
     /// A ListenBrainz user's top release groups.
     fn listenbrainz_top_albums<'a>(
@@ -183,6 +184,7 @@ pub trait QueueSources: Send + Sync {
         username: &'a str,
         range: StatsRange,
         count: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>>;
     /// Artists similar to one artist. `user_id` lends its token.
     fn listenbrainz_similar_artists<'a>(
@@ -190,6 +192,7 @@ pub trait QueueSources: Send + Sync {
         user_id: &'a str,
         artist_mbid: &'a str,
         limit: usize,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>>;
     /// One artist's most played release groups, credited to that artist.
     fn listenbrainz_artist_albums<'a>(
@@ -197,30 +200,39 @@ pub trait QueueSources: Send + Sync {
         user_id: &'a str,
         artist_mbid: &'a str,
         count: usize,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>>;
     /// A user's genres, most listened first.
     fn listenbrainz_genres<'a>(
         &'a self,
         username: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<String>>>;
     /// Recent releases by artists the user listens to.
     fn listenbrainz_fresh_releases<'a>(
         &'a self,
         username: &'a str,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>>;
     /// The first artist id of each loved recording, in order.
     fn listenbrainz_loved_artists<'a>(
         &'a self,
         username: &'a str,
         count: u32,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<String>>>;
     /// This week's most played release groups site-wide.
-    fn listenbrainz_trending(&self, count: u32) -> BoxFuture<'_, SourceResult<Vec<AlbumRow>>>;
+    fn listenbrainz_trending(
+        &self,
+        count: u32,
+        priority: RequestPriority,
+    ) -> BoxFuture<'_, SourceResult<Vec<AlbumRow>>>;
     /// Listen counts per release group. `user_id` lends its token.
     fn listenbrainz_listen_counts<'a>(
         &'a self,
         user_id: &'a str,
         release_group_mbids: &'a [String],
+        priority: RequestPriority,
     ) -> BoxFuture<'a, SourceResult<HashMap<String, i64>>>;
     /// Whether ListenBrainz popularity reads are refused upstream right now.
     /// While they are, Last.fm stands in when the user has it.

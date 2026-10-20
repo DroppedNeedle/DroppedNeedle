@@ -20,6 +20,8 @@ use futures_util::future::BoxFuture;
 
 use droppedneedle_kernel::http_client::read_capped;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
+use droppedneedle_providers::RequestPriority;
+use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 
 /// Per-probe HTTP budget, matching the v2 repositories.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -187,7 +189,6 @@ pub trait VerifyProbes: Send + Sync {
     /// ListenBrainz token (or username-only) check.
     fn listenbrainz<'a>(
         &'a self,
-        base: &'a str,
         username: &'a str,
         token: &'a str,
     ) -> BoxFuture<'a, ListenBrainzVerdict>;
@@ -222,12 +223,14 @@ pub trait VerifyProbes: Send + Sync {
 pub struct LiveProbes {
     /// Outbound client.
     pub http: reqwest::Client,
+    /// The one ListenBrainz client, which checks ListenBrainz credentials.
+    pub listenbrainz: ListenBrainzClient,
 }
 
 impl LiveProbes {
-    /// Build over the shared client.
-    pub fn new(http: reqwest::Client) -> Self {
-        Self { http }
+    /// Build over the shared client and the ListenBrainz client.
+    pub fn new(http: reqwest::Client, listenbrainz: ListenBrainzClient) -> Self {
+        Self { http, listenbrainz }
     }
 }
 
@@ -416,16 +419,15 @@ impl VerifyProbes for LiveProbes {
 
     fn listenbrainz<'a>(
         &'a self,
-        base: &'a str,
         username: &'a str,
         token: &'a str,
     ) -> BoxFuture<'a, ListenBrainzVerdict> {
         Box::pin(async move {
-            use droppedneedle_providers::listenbrainz::{
-                HttpListenBrainzVerifier, ListenBrainzVerifier as _,
-            };
-            let verifier = HttpListenBrainzVerifier::new(self.http.clone(), base);
-            let outcome = verifier.verify(username, token).await;
+            // An admin waits on the Verify button.
+            let outcome = self
+                .listenbrainz
+                .verify(username, token, RequestPriority::UserInitiated)
+                .await;
             ListenBrainzVerdict {
                 valid: outcome.valid,
                 message: outcome.message,

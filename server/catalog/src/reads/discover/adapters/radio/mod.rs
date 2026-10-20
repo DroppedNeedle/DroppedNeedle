@@ -302,7 +302,12 @@ impl LiveRadio {
     async fn artist_name(&self, user_id: &str, mbid: &str) -> String {
         timed(
             "listenbrainz artist albums",
-            self.sources.listenbrainz_artist_albums(user_id, mbid, 1),
+            self.sources.listenbrainz_artist_albums(
+                user_id,
+                mbid,
+                1,
+                RequestPriority::UserInitiated,
+            ),
         )
         .await
         .into_iter()
@@ -502,8 +507,12 @@ impl LiveRadio {
         };
         let similar = timed(
             "listenbrainz similar artists",
-            self.sources
-                .listenbrainz_similar_artists(user_id, &base.0, MAX_SEED_ARTISTS + 1),
+            self.sources.listenbrainz_similar_artists(
+                user_id,
+                &base.0,
+                MAX_SEED_ARTISTS + 1,
+                RequestPriority::UserInitiated,
+            ),
         )
         .await;
         let mut seeds = vec![base];
@@ -599,6 +608,7 @@ impl LiveRadio {
                 mbid,
                 TRACKS_PER_ARTIST as u32,
                 Some(DiscoverySource::Listenbrainz),
+                RequestPriority::UserInitiated,
             )
             .await
         {

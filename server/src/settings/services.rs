@@ -657,11 +657,7 @@ impl SettingsService {
         let resolved = self.unmask(incoming)?;
         let verdict = self
             .probes
-            .listenbrainz(
-                &self.outbound.listenbrainz,
-                &resolved.username,
-                resolved.user_token.expose(),
-            )
+            .listenbrainz(&resolved.username, resolved.user_token.expose())
             .await;
         if verdict.rate_limited {
             return Err(SettingsError::RateLimited {

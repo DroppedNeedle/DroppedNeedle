@@ -85,6 +85,7 @@ impl QueueSources for Scripted {
         _u: &'a str,
         _r: StatsRange,
         _c: u32,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         ok(vec![ArtistRow {
             name: "Seed".to_owned(),
@@ -97,6 +98,7 @@ impl QueueSources for Scripted {
         _u: &'a str,
         _r: StatsRange,
         _c: u32,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         ok(Vec::new())
     }
@@ -105,6 +107,7 @@ impl QueueSources for Scripted {
         _user: &'a str,
         _artist: &'a str,
         _limit: usize,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<ArtistRow>>> {
         ok(Vec::new())
     }
@@ -113,15 +116,21 @@ impl QueueSources for Scripted {
         _user: &'a str,
         _artist: &'a str,
         _count: usize,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         ok(Vec::new())
     }
-    fn listenbrainz_genres<'a>(&'a self, _u: &'a str) -> BoxFuture<'a, SourceResult<Vec<String>>> {
+    fn listenbrainz_genres<'a>(
+        &'a self,
+        _u: &'a str,
+        _priority: droppedneedle_providers::RequestPriority,
+    ) -> BoxFuture<'a, SourceResult<Vec<String>>> {
         ok(Vec::new())
     }
     fn listenbrainz_fresh_releases<'a>(
         &'a self,
         _u: &'a str,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<AlbumRow>>> {
         ok(vec![ranked(90, &mbid('f', 1), 0).album])
     }
@@ -129,16 +138,22 @@ impl QueueSources for Scripted {
         &'a self,
         _u: &'a str,
         _c: u32,
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<Vec<String>>> {
         ok(Vec::new())
     }
-    fn listenbrainz_trending(&self, _count: u32) -> BoxFuture<'_, SourceResult<Vec<AlbumRow>>> {
+    fn listenbrainz_trending(
+        &self,
+        _count: u32,
+        _priority: droppedneedle_providers::RequestPriority,
+    ) -> BoxFuture<'_, SourceResult<Vec<AlbumRow>>> {
         ok(Vec::new())
     }
     fn listenbrainz_listen_counts<'a>(
         &'a self,
         _user: &'a str,
         _ids: &'a [String],
+        _priority: droppedneedle_providers::RequestPriority,
     ) -> BoxFuture<'a, SourceResult<HashMap<String, i64>>> {
         ok(HashMap::new())
     }

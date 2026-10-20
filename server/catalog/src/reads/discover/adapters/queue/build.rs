@@ -237,7 +237,7 @@ pub(in crate::reads::discover::adapters) async fn seed_artists(
             let rows = or_empty(
                 "listenbrainz top artists",
                 ctx.sources
-                    .listenbrainz_top_artists(username, range, 10.max(wanted as u32))
+                    .listenbrainz_top_artists(username, range, 10.max(wanted as u32), ctx.priority)
                     .await,
             );
             take(rows, &mut seeds);
@@ -275,7 +275,7 @@ pub(in crate::reads::discover::adapters) async fn listened_albums(
     let rows = or_empty(
         "listenbrainz listened albums",
         ctx.sources
-            .listenbrainz_top_albums(username, StatsRange::AllTime, 100)
+            .listenbrainz_top_albums(username, StatsRange::AllTime, 100, ctx.priority)
             .await,
     );
     rows.into_iter()
@@ -394,6 +394,7 @@ pub(in crate::reads::discover::adapters) async fn similar_artist_pools(
                 user_id,
                 seed_mbid,
                 settings.similar_artists_limit,
+                ctx.priority,
             ),
         )
         .await;
@@ -413,6 +414,7 @@ pub(in crate::reads::discover::adapters) async fn similar_artist_pools(
                     user_id,
                     &artist_mbid,
                     settings.albums_per_similar,
+                    ctx.priority,
                 ),
             )
             .await;
@@ -449,7 +451,9 @@ async fn genre_albums(
     }
     let genres = or_empty(
         "listenbrainz genres",
-        ctx.sources.listenbrainz_genres(username).await,
+        ctx.sources
+            .listenbrainz_genres(username, ctx.priority)
+            .await,
     );
     let top: Vec<String> = genres.into_iter().take(4).collect();
     let found = join_all(
@@ -495,7 +499,9 @@ async fn fresh_releases(
     }
     let rows = or_empty(
         "listenbrainz fresh releases",
-        ctx.sources.listenbrainz_fresh_releases(username).await,
+        ctx.sources
+            .listenbrainz_fresh_releases(username, ctx.priority)
+            .await,
     );
     let mut items = Vec::new();
     let mut seen = HashSet::new();
@@ -532,7 +538,9 @@ async fn loved_artist_albums(
     }
     let loved = or_empty(
         "listenbrainz loved recordings",
-        ctx.sources.listenbrainz_loved_artists(username, 50).await,
+        ctx.sources
+            .listenbrainz_loved_artists(username, 50, ctx.priority)
+            .await,
     );
     let mut artists: Vec<String> = Vec::new();
     for mbid in loved {
@@ -547,7 +555,7 @@ async fn loved_artist_albums(
     }
     let found = join_all(artists.iter().map(|artist| {
         ctx.sources
-            .listenbrainz_artist_albums(user_id, artist, per_artist)
+            .listenbrainz_artist_albums(user_id, artist, per_artist, ctx.priority)
     }))
     .await;
     let mut items = Vec::new();
@@ -589,7 +597,7 @@ async fn deep_cuts(
     let top = or_empty(
         "listenbrainz top albums",
         ctx.sources
-            .listenbrainz_top_albums(username, StatsRange::ThisMonth, 25)
+            .listenbrainz_top_albums(username, StatsRange::ThisMonth, 25, ctx.priority)
             .await,
     );
     let current: HashSet<String> = top
@@ -610,7 +618,7 @@ async fn deep_cuts(
     let wanted = (per_artist + 2).max(4);
     let found = join_all(artists.iter().map(|(artist, _)| {
         ctx.sources
-            .listenbrainz_artist_albums(user_id, artist, wanted)
+            .listenbrainz_artist_albums(user_id, artist, wanted, ctx.priority)
     }))
     .await;
     let mut items = Vec::new();
@@ -858,7 +866,7 @@ async fn trending_filler(
     } else {
         let mut albums = or_empty(
             "listenbrainz trending",
-            ctx.sources.listenbrainz_trending(25).await,
+            ctx.sources.listenbrainz_trending(25, ctx.priority).await,
         );
         shuffler.shuffle(&mut albums);
         trending_cards(albums, &mut exclude, target, "Trending This Week")
@@ -976,7 +984,7 @@ async fn anonymous(
     } else {
         let mut albums = or_empty(
             "listenbrainz trending",
-            ctx.sources.listenbrainz_trending(50).await,
+            ctx.sources.listenbrainz_trending(50, ctx.priority).await,
         );
         shuffler.shuffle(&mut albums);
         trending_cards(albums, &mut exclude, count, "Trending This Week")

@@ -13,8 +13,8 @@ use droppedneedle_kernel::runtime_config::Live;
 use droppedneedle_kernel::runtime_config::secret_sections::ListenBrainzConnection;
 use droppedneedle_kernel::runtime_config::sections::LyricsSettings;
 use droppedneedle_providers::{
-    Providers,
-    adapters::{CorePacer, CoreSink, ReqwestGet},
+    Providers, RequestPriority,
+    adapters::ReqwestGet,
     degradation::IntegrationStatus as CoreStatus,
     error::ProviderError as CoreError,
     listenbrainz::{ListenBrainzClient, ListenBrainzCredentials},
@@ -56,12 +56,12 @@ impl From<enrich::IntegrationStatus> for CoreStatus {
 /// Live ListenBrainz popularity behind the enrichment role.
 ///
 /// Popularity reads are anonymous (no token), so this adapter serves
-/// production with default credentials. `Missing` (authoritative negative)
-/// reads as empty, exactly like the client's fail-soft contract; only
-/// `Unavailable` becomes a leg error and degrades the row.
+/// production with default credentials. An empty answer reads as empty; a
+/// failed call becomes a leg error and degrades the row. Search results
+/// and album pages wait on these reads, so they go at user priority.
 #[derive(Clone)]
 pub struct LiveListenBrainz {
-    client: ListenBrainzClient<CorePacer, CoreSink>,
+    client: ListenBrainzClient,
     settings: Option<Live<ListenBrainzConnection>>,
 }
 
@@ -98,10 +98,10 @@ impl std::fmt::Debug for LiveListenBrainz {
 }
 
 impl LiveListenBrainz {
-    /// Popularity reads against the given origin.
-    pub fn with_base(http: reqwest::Client, base_url: &str, pacer: CorePacer) -> Self {
+    /// Popularity reads through the one ListenBrainz client.
+    pub fn new(client: ListenBrainzClient) -> Self {
         Self {
-            client: ListenBrainzClient::new(http, base_url, pacer, CoreSink),
+            client,
             settings: None,
         }
     }
@@ -141,23 +141,17 @@ impl enrich::ListenBrainzClient for LiveListenBrainz {
                 return Err(off);
             }
             let creds = ListenBrainzCredentials::default();
-            match self
+            let top = self
                 .client
-                .artist_top_release_groups(mbid, count, &creds)
-                .await
-            {
-                droppedneedle_providers::listenbrainz::Outcome::Found(top) => Ok(top
-                    .into_iter()
-                    .map(|row| enrich::TopRelease {
-                        mbid: row.release_group_mbid,
-                        listen_count: row.listen_count,
-                    })
-                    .collect()),
-                droppedneedle_providers::listenbrainz::Outcome::Missing => Ok(Vec::new()),
-                droppedneedle_providers::listenbrainz::Outcome::Unavailable { message, .. } => {
-                    Err(enrich::ProviderError::new("listenbrainz", message))
-                }
-            }
+                .artist_top_release_groups(mbid, count, &creds, RequestPriority::UserInitiated)
+                .await?;
+            Ok(top
+                .into_iter()
+                .map(|row| enrich::TopRelease {
+                    mbid: row.release_group_mbid,
+                    listen_count: row.listen_count,
+                })
+                .collect())
         })
     }
 
@@ -171,15 +165,10 @@ impl enrich::ListenBrainzClient for LiveListenBrainz {
                 return Err(off);
             }
             let creds = ListenBrainzCredentials::default();
-            match self.client.release_group_popularity(mbids, &creds).await {
-                droppedneedle_providers::listenbrainz::Outcome::Found(counts) => Ok(counts),
-                droppedneedle_providers::listenbrainz::Outcome::Missing => {
-                    Ok(std::collections::HashMap::new())
-                }
-                droppedneedle_providers::listenbrainz::Outcome::Unavailable { message, .. } => {
-                    Err(enrich::ProviderError::new("listenbrainz", message))
-                }
-            }
+            Ok(self
+                .client
+                .release_group_popularity(mbids, &creds, RequestPriority::UserInitiated)
+                .await?)
         })
     }
 }
@@ -490,13 +479,7 @@ pub fn production_enrichment(
     lyrics: Live<LyricsSettings>,
 ) -> ProductionEnrichment {
     let lb: Arc<dyn enrich::ListenBrainzClient> =
-        match CorePacer::for_source(providers.clone(), "listenbrainz") {
-            Some(pacer) => Arc::new(
-                LiveListenBrainz::with_base(http.clone(), &endpoints.listenbrainz, pacer)
-                    .with_settings(listenbrainz),
-            ),
-            None => Arc::new(UnconfiguredListenBrainz),
-        };
+        Arc::new(LiveListenBrainz::new(providers.listenbrainz.clone()).with_settings(listenbrainz));
     let live_lyrics = Arc::new(LiveLrclib::with_base(
         ReqwestGet::new(http.clone()),
         &endpoints.lrclib,
@@ -525,6 +508,12 @@ mod tests {
     /// The providers with every address on the discard port, where nothing
     /// listens.
     fn closed_providers() -> Arc<Providers> {
+        providers_with_listenbrainz("http://127.0.0.1:9")
+    }
+
+    /// The providers with ListenBrainz at `listenbrainz` and every other
+    /// address on the discard port.
+    fn providers_with_listenbrainz(listenbrainz: &str) -> Arc<Providers> {
         let closed = "http://127.0.0.1:9".to_owned();
         Arc::new(Providers::over_wire(
             Arc::new(droppedneedle_providers::ReqwestWire::new(
@@ -535,6 +524,7 @@ mod tests {
                 musicbrainz: closed.clone(),
                 brainzmash: closed.clone(),
                 coverart: closed,
+                listenbrainz: listenbrainz.to_owned(),
             },
         ))
     }
@@ -645,11 +635,10 @@ mod tests {
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let pacer = CorePacer::for_source(closed_providers(), "listenbrainz").unwrap();
-        let role = LiveListenBrainz::with_base(
-            HttpClientFactory::new().unwrap().shared().clone(),
-            &format!("http://{address}"),
-            pacer,
+        let role = LiveListenBrainz::new(
+            providers_with_listenbrainz(&format!("http://{address}"))
+                .listenbrainz
+                .clone(),
         );
         let pending =
             tokio::spawn(async move { role.artist_top_release_groups("artist-mbid", 5).await });
@@ -688,12 +677,7 @@ mod tests {
         assert_eq!(top[0].listen_count, 10);
 
         // A dead upstream becomes a leg error, never invented rows.
-        let pacer = CorePacer::for_source(closed_providers(), "listenbrainz").unwrap();
-        let dead = LiveListenBrainz::with_base(
-            HttpClientFactory::new().unwrap().shared().clone(),
-            "http://127.0.0.1:9/",
-            pacer,
-        );
+        let dead = LiveListenBrainz::new(closed_providers().listenbrainz.clone());
         let error = dead
             .artist_top_release_groups("artist-mbid", 5)
             .await
@@ -714,7 +698,6 @@ mod tests {
         // Nothing listens on the discard port.
         let closed = || "http://127.0.0.1:9".to_owned();
         let endpoints = crate::reads::catalog::upstream::Endpoints {
-            listenbrainz: closed(),
             lastfm: closed(),
             audiodb: closed(),
             wikidata: closed(),

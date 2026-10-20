@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::reads::catalog::mapping::should_include_release;
 use crate::reads::discover::adapters::page::build::weekly_exploration;
+use crate::reads::discover::adapters::page::live_sources::BUILD;
 use crate::reads::discover::adapters::page::sources::{LastFmChartAlbum, PageSources, RankedAlbum};
 use crate::reads::discover::adapters::queue::live_sources::{
     ARTIST_TTL, LiveSources, USER_STATS_TTL, credit_name, lastfm_result,
@@ -189,8 +190,11 @@ impl HomeSources for LiveSources {
         Box::pin(async move {
             let key = format!("lb_home:loved:{}:{count}", username.to_lowercase());
             self.cached(key, USER_STATS_TTL, async {
-                let rows = self
-                    .listenbrainz_result(self.lb()?.user_loved_recordings(username, count).await)?;
+                let rows = self.listenbrainz_result(
+                    self.lb()
+                        .user_loved_recordings(username, count, BUILD)
+                        .await,
+                )?;
                 Ok(rows
                     .into_iter()
                     .map(|row| LovedTrack {

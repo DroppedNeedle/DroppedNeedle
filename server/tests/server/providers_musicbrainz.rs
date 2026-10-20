@@ -42,6 +42,7 @@ impl FakeMb {
                 musicbrainz: musicbrainz::MB_API_BASE.to_owned(),
                 brainzmash: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
                 coverart: coverart::COVER_ART_ARCHIVE_BASE.to_owned(),
+                ..ProviderEndpoints::closed()
             },
         ));
         Self { wire, providers }
@@ -358,6 +359,7 @@ async fn an_answer_over_the_cap_is_refused_unread() {
             musicbrainz: base.clone(),
             brainzmash: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
             coverart: coverart::COVER_ART_ARCHIVE_BASE.to_owned(),
+            ..ProviderEndpoints::closed()
         },
     );
     let client = providers.musicbrainz.fixed(

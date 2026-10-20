@@ -594,20 +594,17 @@ pub struct AcquirePorts {
     /// The collections stores: follow verdicts, imported playlists and the
     /// Weekly Mix playlist are written to them.
     pub collections: CollectionsStores,
-    /// The shared provider limiters the Weekly Mix paces ListenBrainz on.
+    /// The shared providers; the Weekly Mix reads ListenBrainz through
+    /// them.
     pub providers: Arc<Providers>,
-    /// The ListenBrainz API base the Weekly Mix reads.
-    pub listenbrainz: String,
 }
 
 /// What the Weekly Mix builder is made from.
 struct MixInputs {
     providers: Arc<Providers>,
-    http: reqwest::Client,
     links: Arc<dyn ListenBrainzLinkStore>,
     prefs: Arc<dyn ScrobblePrefsStore>,
     playlists: droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore,
-    listenbrainz: String,
 }
 
 /// What the durable core reaches outside acquisition. The test bundle
@@ -663,16 +660,14 @@ fn core(
         readiness: ports.readiness,
         ..RequestsState::new(db, quota, dispatch.clone())
     };
-    let mixer = ports.mix.and_then(|mix| {
+    let mixer = ports.mix.map(|mix| {
         super::requests::mix_sources::live_builder(
             &intake,
-            mix.providers,
-            mix.http,
+            &mix.providers,
             mix.links,
             mix.prefs,
             mix.playlists,
             events.clone(),
-            &mix.listenbrainz,
         )
     });
     let requests = RequestsState { mixer, ..intake };
@@ -762,7 +757,6 @@ impl AcquireSetup {
                 release_poll: ports.release_poll,
                 mix: Some(MixInputs {
                     providers: ports.providers,
-                    http: http.clone(),
                     links: Arc::new(
                         droppedneedle_plugins::scrobble::SqliteListenBrainzLinkStore::new(
                             platform.db.clone(),
@@ -775,7 +769,6 @@ impl AcquireSetup {
                         ),
                     ),
                     playlists: collections.playlists.clone(),
-                    listenbrainz: ports.listenbrainz,
                 }),
             },
             events.clone(),

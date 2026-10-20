@@ -40,7 +40,6 @@ use droppedneedle_providers::{
     Providers,
     adapters::{CorePacer, CoreSink, ReqwestGet},
     lastfm::{self, LastFmClient},
-    listenbrainz::ListenBrainzClient,
     youtube::{DEFAULT_DAILY_QUOTA_LIMIT, YouTubeClient, YouTubeSettings},
 };
 
@@ -89,24 +88,12 @@ pub fn production_deps(inputs: DiscoverInputs, config: &ConfigStore) -> ReadsDep
             None
         }
     };
-    let charts: Arc<dyn ChartsSource> =
-        match CorePacer::for_source(inputs.providers.clone(), "listenbrainz") {
-            Some(pacer) => Arc::new(charts::LiveCharts::new(
-                ListenBrainzClient::new(
-                    inputs.http.clone(),
-                    &inputs.endpoints.listenbrainz,
-                    pacer,
-                    CoreSink,
-                ),
-                inputs.listenbrainz_links.clone(),
-                lastfm_charts,
-                inputs.db.sqlx().clone(),
-            )),
-            None => {
-                tracing::error!("no listenbrainz rate limit row; charts are unavailable");
-                Arc::new(unbuilt::UnavailableCharts)
-            }
-        };
+    let charts: Arc<dyn ChartsSource> = Arc::new(charts::LiveCharts::new(
+        inputs.providers.listenbrainz.clone(),
+        inputs.listenbrainz_links.clone(),
+        lastfm_charts,
+        inputs.db.sqlx().clone(),
+    ));
     let youtube: Arc<dyn YouTubeSource> = match YouTubeClient::with_base_url(
         inputs.http.clone(),
         inputs.youtube_quota_path.clone(),

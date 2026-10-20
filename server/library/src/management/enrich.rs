@@ -46,9 +46,11 @@ pub struct Cover {
 /// The outside sources planning reads. `Err` means the source could not
 /// answer now; `Ok(None)` (or an empty list) that it has nothing.
 pub trait EnrichmentPort: Send + Sync {
+    /// `background` asks at background priority (automatic runs).
     fn listenbrainz_genres<'a>(
         &'a self,
         release_group_mbid: &'a str,
+        background: bool,
     ) -> BoxFuture<'a, Result<Vec<Candidate>, String>>;
     fn lastfm_genres<'a>(
         &'a self,
@@ -469,7 +471,8 @@ pub fn gather(
     }
     if profile.genres.enabled {
         if profile.genres.sources.contains(&GenreSource::Listenbrainz) {
-            extras.genres.listenbrainz = wait(port.listenbrainz_genres(&release.release_group_id));
+            extras.genres.listenbrainz =
+                wait(port.listenbrainz_genres(&release.release_group_id, automatic));
         }
         if profile.genres.sources.contains(&GenreSource::Lastfm) {
             let artist = release.artist_text();
@@ -648,6 +651,7 @@ impl EnrichmentPort for ScriptedEnrichment {
     fn listenbrainz_genres<'a>(
         &'a self,
         _release_group_mbid: &'a str,
+        _background: bool,
     ) -> BoxFuture<'a, Result<Vec<Candidate>, String>> {
         let answer = self
             .listenbrainz

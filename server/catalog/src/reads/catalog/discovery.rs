@@ -113,15 +113,23 @@ impl Catalog {
         count: u32,
         asked: Option<DiscoverySource>,
         section: Section,
+        priority: RequestPriority,
     ) -> Result<Answer, CatalogError> {
         let mbid = checked_mbid(raw_mbid, "artist")?;
         let source = self.preferred_source(asked);
         let first = self
-            .section_from(source, user_id, &mbid, count, section)
+            .section_from(source, user_id, &mbid, count, section, priority)
             .await;
         if source == DiscoverySource::Listenbrainz && first.rows.is_empty() {
             let fallback = self
-                .section_from(DiscoverySource::Lastfm, user_id, &mbid, count, section)
+                .section_from(
+                    DiscoverySource::Lastfm,
+                    user_id,
+                    &mbid,
+                    count,
+                    section,
+                    priority,
+                )
                 .await;
             if fallback.configured && !fallback.rows.is_empty() {
                 return Ok(fallback);
@@ -137,7 +145,14 @@ impl Catalog {
         mbid: &str,
         count: u32,
         section: Section,
+        priority: RequestPriority,
     ) -> Answer {
+        // A page never waits behind a warm-up's flight.
+        let flights = if priority.is_user_facing() {
+            &self.inner.flights.other
+        } else {
+            &self.inner.flights.other_background
+        };
         let key = format!(
             "{}{}:{}:{}",
             section.key_prefix(),
@@ -160,9 +175,9 @@ impl Catalog {
                 };
                 let catalog = self.clone();
                 let mbid = mbid.to_owned();
-                self.cached(&self.inner.flights.other, key, move || async move {
+                self.cached(flights, key, move || async move {
                     let rows = catalog
-                        .listenbrainz_rows(&client, &creds, &mbid, count, section)
+                        .listenbrainz_rows(&client, &creds, &mbid, count, section, priority)
                         .await;
                     catalog.cacheable(rows, &mbid).await
                 })
@@ -174,7 +189,7 @@ impl Catalog {
                 };
                 let catalog = self.clone();
                 let mbid = mbid.to_owned();
-                self.cached(&self.inner.flights.other, key, move || async move {
+                self.cached(flights, key, move || async move {
                     // Top albums match Last.fm titles against the artist's
                     // (cached) discography to find release groups.
                     let groups = match section {
@@ -235,14 +250,15 @@ impl Catalog {
         mbid: &str,
         count: u32,
         section: Section,
+        priority: RequestPriority,
     ) -> Option<SectionRows> {
         let count = count as usize;
         match section {
             Section::Similar => {
                 let similar = client
-                    .similar_artists(mbid, count, creds)
+                    .similar_artists(mbid, count, creds, priority)
                     .await
-                    .into_option()?;
+                    .ok()?;
                 Some(SectionRows {
                     similar: similar
                         .into_iter()
@@ -260,17 +276,16 @@ impl Catalog {
             }
             Section::TopSongs => {
                 let recordings = client
-                    .artist_top_recordings(mbid, count, creds)
+                    .artist_top_recordings(mbid, count, creds, priority)
                     .await
-                    .into_option()?;
+                    .ok()?;
                 let ids: Vec<String> = recordings
                     .iter()
                     .filter_map(|recording| recording.recording_mbid.clone())
                     .collect();
                 let groups = client
-                    .recording_release_groups(&ids, creds)
+                    .recording_release_groups(&ids, creds, priority)
                     .await
-                    .into_option()
                     .unwrap_or_default();
                 Some(SectionRows {
                     songs: recordings
@@ -294,13 +309,17 @@ impl Catalog {
                 })
             }
             Section::TopAlbums => {
-                let groups = match client.artist_top_release_groups(mbid, count, creds).await {
-                    listenbrainz::Outcome::Found(groups) if !groups.is_empty() => groups,
+                let groups = match client
+                    .artist_top_release_groups(mbid, count, creds, priority)
+                    .await
+                {
+                    Ok(groups) if !groups.is_empty() => groups,
                     // No popularity rows, or the popularity read failed: v2
                     // rebuilt the list from the top recordings instead.
                     _ => {
                         return Some(SectionRows {
-                            albums: albums_from_recordings(client, creds, mbid, count).await?,
+                            albums: albums_from_recordings(client, creds, mbid, count, priority)
+                                .await?,
                             ..SectionRows::default()
                         });
                     }
@@ -324,16 +343,18 @@ impl Catalog {
         }
     }
 
-    /// `GET /artists/{artist_mbid}/similar`.
+    /// `GET /artists/{artist_mbid}/similar`. A page reads at user
+    /// priority, the precache at background priority.
     pub async fn similar_artists(
         &self,
         user_id: &str,
         mbid: &str,
         count: u32,
         source: Option<DiscoverySource>,
+        priority: RequestPriority,
     ) -> Result<SimilarArtistsResponse, CatalogError> {
         let answer = self
-            .artist_section(user_id, mbid, count, source, Section::Similar)
+            .artist_section(user_id, mbid, count, source, Section::Similar, priority)
             .await?;
         let mut similar = answer.rows.similar;
         let mut seen = std::collections::HashSet::new();
@@ -353,16 +374,18 @@ impl Catalog {
         })
     }
 
-    /// `GET /artists/{artist_mbid}/top-songs`.
+    /// `GET /artists/{artist_mbid}/top-songs`. A page reads at user
+    /// priority, the precache at background priority.
     pub async fn top_songs(
         &self,
         user_id: &str,
         mbid: &str,
         count: u32,
         source: Option<DiscoverySource>,
+        priority: RequestPriority,
     ) -> Result<TopSongsResponse, CatalogError> {
         let answer = self
-            .artist_section(user_id, mbid, count, source, Section::TopSongs)
+            .artist_section(user_id, mbid, count, source, Section::TopSongs, priority)
             .await?;
         let mut songs = answer.rows.songs;
         self.fill_track_numbers(&mut songs).await;
@@ -454,16 +477,18 @@ impl Catalog {
         }
     }
 
-    /// `GET /artists/{artist_mbid}/top-albums`.
+    /// `GET /artists/{artist_mbid}/top-albums`. A page reads at user
+    /// priority, the precache at background priority.
     pub async fn top_albums(
         &self,
         user_id: &str,
         mbid: &str,
         count: u32,
         source: Option<DiscoverySource>,
+        priority: RequestPriority,
     ) -> Result<TopAlbumsResponse, CatalogError> {
         let answer = self
-            .artist_section(user_id, mbid, count, source, Section::TopAlbums)
+            .artist_section(user_id, mbid, count, source, Section::TopAlbums, priority)
             .await?;
         let mut albums = answer.rows.albums;
         let ids: Vec<String> = albums
@@ -514,10 +539,11 @@ impl Catalog {
         let (lb_album, lb_artist) = (album.clone(), artist.clone());
         let value = self
             .cached(&self.inner.flights.other, key, move || async move {
-                let Some(similar) = client
-                    .similar_artists(&lb_artist, SIMILAR_ALBUM_ARTISTS, &creds)
+                // Album pages and radio wait on this.
+                let priority = RequestPriority::UserInitiated;
+                let Ok(similar) = client
+                    .similar_artists(&lb_artist, SIMILAR_ALBUM_ARTISTS, &creds, priority)
                     .await
-                    .into_option()
                 else {
                     return Ok((serde_json::Value::Null, None));
                 };
@@ -529,10 +555,14 @@ impl Catalog {
                     .collect();
                 let mut albums = Vec::new();
                 for (similar_mbid, similar_name) in &similar {
-                    let Some(groups) = client
-                        .artist_top_release_groups(similar_mbid, ALBUMS_PER_SIMILAR_ARTIST, &creds)
+                    let Ok(groups) = client
+                        .artist_top_release_groups(
+                            similar_mbid,
+                            ALBUMS_PER_SIMILAR_ARTIST,
+                            &creds,
+                            priority,
+                        )
                         .await
-                        .into_option()
                     else {
                         continue;
                     };
@@ -863,19 +893,19 @@ async fn albums_from_recordings(
     creds: &listenbrainz::ListenBrainzCredentials,
     mbid: &str,
     count: usize,
+    priority: RequestPriority,
 ) -> Option<Vec<TopAlbum>> {
     let recordings = client
-        .artist_top_recordings(mbid, (count * 8).max(80), creds)
+        .artist_top_recordings(mbid, (count * 8).max(80), creds, priority)
         .await
-        .into_option()?;
+        .ok()?;
     let ids: Vec<String> = recordings
         .iter()
         .filter_map(|recording| recording.recording_mbid.clone())
         .collect();
     let groups = client
-        .recording_release_groups(&ids, creds)
+        .recording_release_groups(&ids, creds, priority)
         .await
-        .into_option()
         .unwrap_or_default();
     let mut order: Vec<String> = Vec::new();
     let mut totals: HashMap<String, TopAlbum> = HashMap::new();

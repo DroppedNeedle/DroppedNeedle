@@ -31,6 +31,7 @@ use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_library::management::settings::service::LibraryManagementService;
 use droppedneedle_library::policy::LibraryPolicyCatalog;
+use droppedneedle_providers::listenbrainz::ListenBrainzClient;
 
 /// Section-prefs backends: the toggle store plus per-user link state.
 pub struct SectionPrefsDeps {
@@ -70,12 +71,16 @@ impl SettingsSetup {
         outbound: &Outbound,
         management: Arc<LibraryManagementService>,
         scans: Arc<dyn LibraryLookups>,
+        listenbrainz: ListenBrainzClient,
     ) -> Self {
         let mut setup = Self::assemble(
             platform.settings.clone(),
             effects,
             platform.ids.clone(),
-            Arc::new(LiveProbes::new(platform.http.shared().clone())),
+            Arc::new(LiveProbes::new(
+                platform.http.shared().clone(),
+                listenbrainz,
+            )),
             platform.config.timezone.clone(),
             outbound.clone(),
             management,
@@ -152,7 +157,8 @@ impl SettingsSetup {
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         let http = reqwest::Client::new();
-        Self::for_tests_with_probes(ids, Arc::new(LiveProbes::new(http)))
+        let listenbrainz = droppedneedle_providers::Providers::closed().listenbrainz;
+        Self::for_tests_with_probes(ids, Arc::new(LiveProbes::new(http, listenbrainz)))
     }
 
     /// Test bundle with scripted verify probes.

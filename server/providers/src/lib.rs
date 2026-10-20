@@ -107,6 +107,8 @@ pub struct ProviderEndpoints {
     pub brainzmash: String,
     /// Cover Art Archive origin.
     pub coverart: String,
+    /// ListenBrainz API root.
+    pub listenbrainz: String,
 }
 
 impl ProviderEndpoints {
@@ -119,6 +121,7 @@ impl ProviderEndpoints {
             musicbrainz: "http://127.0.0.1:9/musicbrainz/ws/2".to_owned(),
             brainzmash: "http://127.0.0.1:9/brainzmash/ws/2".to_owned(),
             coverart: "http://127.0.0.1:9/coverart".to_owned(),
+            listenbrainz: "http://127.0.0.1:9/listenbrainz".to_owned(),
         }
     }
 }
@@ -141,6 +144,9 @@ pub struct Providers {
     pub musicbrainz: musicbrainz::MusicBrainzClient,
     /// The Cover Art Archive.
     pub coverart: coverart::CaaClient,
+    /// ListenBrainz: every read, the credential check and scrobble
+    /// forwarding, on one bucket.
+    pub listenbrainz: listenbrainz::ListenBrainzClient,
 }
 
 impl Providers {
@@ -173,10 +179,17 @@ impl Providers {
     #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn unpaced(wire: Arc<dyn Wire>) -> Self {
+        Self::unpaced_at(wire, ProviderEndpoints::closed())
+    }
+
+    /// [`unpaced`](Self::unpaced) with the providers at `endpoints`.
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn unpaced_at(wire: Arc<dyn Wire>, endpoints: ProviderEndpoints) -> Self {
         Self::assemble(
             wire,
             Arc::new(droppedneedle_kernel::clock::SystemClock),
-            ProviderEndpoints::closed(),
+            endpoints,
             LimiterSet::unpaced(),
         )
     }
@@ -213,6 +226,10 @@ impl Providers {
             executor(&coverart::SPEC, coverart::SOURCE),
             &endpoints.coverart,
         );
+        let listenbrainz = listenbrainz::ListenBrainzClient::new(
+            executor(&listenbrainz::SPEC, listenbrainz::SOURCE),
+            &endpoints.listenbrainz,
+        );
         Self {
             limiters,
             slots: SlotManager::new(),
@@ -220,6 +237,7 @@ impl Providers {
             health,
             musicbrainz,
             coverart,
+            listenbrainz,
         }
     }
 

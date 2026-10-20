@@ -1,6 +1,10 @@
-//! [`MixSources`] over the live ListenBrainz client and the per-user link
+//! [`MixSources`] over the one ListenBrainz client and the per-user link
 //! store. Popularity and similar-artist reads are public, so they go out
 //! without the user's token; playlist reads lend it.
+//!
+//! Every read runs at background priority: the weekly sweep is scheduled,
+//! and a manual refresh runs in a spawned task whose result reaches the
+//! user as an event, so no request waits on it.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,27 +14,29 @@ use sqlx::SqlitePool;
 
 use super::mix::MixSources;
 use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
-use droppedneedle_providers::adapters::{CorePacer, CoreSink};
 use droppedneedle_providers::listenbrainz::playlists::{
     RecommendationPlaylist, RecommendationTrack,
 };
 use droppedneedle_providers::listenbrainz::{
-    ListenBrainzClient, ListenBrainzCredentials, Outcome, SimilarArtist, TopRecording,
-    TopReleaseGroup,
+    ListenBrainzClient, ListenBrainzCredentials, SimilarArtist, TopRecording, TopReleaseGroup,
 };
+use droppedneedle_providers::{ProviderError, RequestPriority};
+
+/// The priority of every Weekly Mix read.
+const PRIORITY: RequestPriority = RequestPriority::BackgroundSync;
 
 /// Live ListenBrainz reads for the mix builder.
 pub struct LiveMixSources {
-    client: ListenBrainzClient<CorePacer, CoreSink>,
+    client: ListenBrainzClient,
     links: Arc<dyn ListenBrainzLinkStore>,
     pool: SqlitePool,
 }
 
 impl LiveMixSources {
-    /// Sources over one paced client, the link store and the database
-    /// holding `user_connections`.
+    /// Sources over the ListenBrainz client, the link store and the
+    /// database holding `user_connections`.
     pub fn new(
-        client: ListenBrainzClient<CorePacer, CoreSink>,
+        client: ListenBrainzClient,
         links: Arc<dyn ListenBrainzLinkStore>,
         pool: SqlitePool,
     ) -> Self {
@@ -42,14 +48,9 @@ impl LiveMixSources {
     }
 }
 
-/// Collapse an outcome: `Missing` is an empty answer, `Unavailable` an
-/// error carrying ListenBrainz's reason.
-fn settle<T: Default>(outcome: Outcome<T>) -> Result<T, String> {
-    match outcome {
-        Outcome::Found(value) => Ok(value),
-        Outcome::Missing => Ok(T::default()),
-        Outcome::Unavailable { message, .. } => Err(message),
-    }
+/// A failed read becomes an error carrying ListenBrainz's reason.
+fn settle<T>(result: Result<T, ProviderError>) -> Result<T, String> {
+    result.map_err(|error| error.to_string())
 }
 
 fn anonymous() -> ListenBrainzCredentials {
@@ -86,7 +87,11 @@ impl MixSources for LiveMixSources {
     ) -> BoxFuture<'a, Result<Vec<RecommendationPlaylist>, String>> {
         Box::pin(async move {
             let username = creds.username.as_deref().unwrap_or_default();
-            settle(self.client.recommendation_playlists(username, creds).await)
+            settle(
+                self.client
+                    .recommendation_playlists(username, creds, PRIORITY)
+                    .await,
+            )
         })
     }
 
@@ -95,7 +100,13 @@ impl MixSources for LiveMixSources {
         playlist_id: &'a str,
         creds: &'a ListenBrainzCredentials,
     ) -> BoxFuture<'a, Result<Vec<RecommendationTrack>, String>> {
-        Box::pin(async move { settle(self.client.playlist_tracks(playlist_id, creds).await) })
+        Box::pin(async move {
+            settle(
+                self.client
+                    .playlist_tracks(playlist_id, creds, PRIORITY)
+                    .await,
+            )
+        })
     }
 
     fn release_groups<'a>(
@@ -106,7 +117,7 @@ impl MixSources for LiveMixSources {
         Box::pin(async move {
             settle(
                 self.client
-                    .recording_release_groups(recording_mbids, creds)
+                    .recording_release_groups(recording_mbids, creds, PRIORITY)
                     .await,
             )
         })
@@ -120,7 +131,7 @@ impl MixSources for LiveMixSources {
         Box::pin(async move {
             settle(
                 self.client
-                    .similar_artists(artist_mbid, limit, &anonymous())
+                    .similar_artists(artist_mbid, limit, &anonymous(), PRIORITY)
                     .await,
             )
         })
@@ -134,7 +145,7 @@ impl MixSources for LiveMixSources {
         Box::pin(async move {
             settle(
                 self.client
-                    .artist_top_release_groups(artist_mbid, count, &anonymous())
+                    .artist_top_release_groups(artist_mbid, count, &anonymous(), PRIORITY)
                     .await,
             )
         })
@@ -147,7 +158,7 @@ impl MixSources for LiveMixSources {
         Box::pin(async move {
             settle(
                 self.client
-                    .artist_top_recordings(artist_mbid, 1, &anonymous())
+                    .artist_top_recordings(artist_mbid, 1, &anonymous(), PRIORITY)
                     .await,
             )
             .map(|recordings| recordings.into_iter().next())
@@ -155,37 +166,26 @@ impl MixSources for LiveMixSources {
     }
 }
 
-/// The production builder: live ListenBrainz reads paced on the shared
-/// ListenBrainz limiter. `None` (logged) when no limiter row exists, which
-/// leaves the refresh route answering "not available".
-#[allow(clippy::too_many_arguments)]
+/// The production builder: live ListenBrainz reads through the one
+/// ListenBrainz client.
 pub fn live_builder(
     requests: &super::RequestsState,
-    providers: Arc<droppedneedle_providers::Providers>,
-    http: reqwest::Client,
+    providers: &droppedneedle_providers::Providers,
     links: Arc<dyn ListenBrainzLinkStore>,
     prefs: Arc<dyn droppedneedle_plugins::scrobble::ScrobblePrefsStore>,
     playlists: droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore,
     events: droppedneedle_kernel::events::EventHub,
-    listenbrainz: &str,
-) -> Option<Arc<super::mix::PersonalMixBuilder>> {
-    use droppedneedle_providers::listenbrainz::SOURCE;
-
-    let Some(pacer) = CorePacer::for_source(providers, SOURCE) else {
-        tracing::error!("no listenbrainz rate limit row; Weekly Mix is off");
-        return None;
-    };
-    let client = ListenBrainzClient::new(http, listenbrainz, pacer, CoreSink);
+) -> Arc<super::mix::PersonalMixBuilder> {
     let sources = Arc::new(LiveMixSources::new(
-        client,
+        providers.listenbrainz.clone(),
         links,
         requests.library.pool().clone(),
     ));
-    Some(Arc::new(super::mix::PersonalMixBuilder::new(
+    Arc::new(super::mix::PersonalMixBuilder::new(
         sources,
         prefs,
         playlists,
         requests.clone(),
         events,
-    )))
+    ))
 }

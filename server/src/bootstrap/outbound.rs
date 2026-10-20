@@ -148,7 +148,6 @@ impl Outbound {
     /// The addresses the catalog and discovery reads use.
     pub fn catalog(&self) -> droppedneedle_catalog::reads::catalog::upstream::Endpoints {
         droppedneedle_catalog::reads::catalog::upstream::Endpoints {
-            listenbrainz: self.listenbrainz.clone(),
             lastfm: self.lastfm.clone(),
             audiodb: self.audiodb.clone(),
             wikidata: self.wikidata.clone(),
@@ -168,6 +167,7 @@ impl Outbound {
             musicbrainz: self.musicbrainz.clone(),
             brainzmash: self.brainzmash.clone(),
             coverart: self.cover_art_archive.clone(),
+            listenbrainz: self.listenbrainz.clone(),
         }
     }
 
@@ -180,10 +180,9 @@ impl Outbound {
         }
     }
 
-    /// The addresses scrobbles are forwarded to.
+    /// The address Last.fm scrobbles are forwarded to.
     pub fn scrobbles(&self) -> droppedneedle_media::playback::forwarding::Endpoints {
         droppedneedle_media::playback::forwarding::Endpoints {
-            listenbrainz: self.listenbrainz.clone(),
             lastfm: self.lastfm.clone(),
         }
     }

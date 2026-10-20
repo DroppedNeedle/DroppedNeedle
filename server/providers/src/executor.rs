@@ -193,6 +193,16 @@ impl Request {
         self
     }
 
+    /// End the path with a slash, for a route the provider only serves
+    /// that way.
+    #[must_use]
+    pub fn trailing_slash(mut self) -> Self {
+        if let Ok(mut path) = self.url.path_segments_mut() {
+            path.pop_if_empty().push("");
+        }
+        self
+    }
+
     /// How a redirect is handled.
     #[must_use]
     pub fn redirects(mut self, redirects: Redirects) -> Self {

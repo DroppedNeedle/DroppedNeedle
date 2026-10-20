@@ -12,6 +12,7 @@ use droppedneedle_providers::executor::{
     standard_classify,
 };
 use droppedneedle_providers::health::ServiceHealth;
+use droppedneedle_providers::listenbrainz;
 use droppedneedle_providers::musicbrainz::{self, Criticality, MbSource};
 use droppedneedle_providers::rates::{RATES, Rate};
 use droppedneedle_providers::{
@@ -364,6 +365,7 @@ fn providers_over(wire: &Arc<ScriptedWire>) -> Providers {
             musicbrainz: musicbrainz::MB_API_BASE.to_owned(),
             brainzmash: musicbrainz::BRAINZMASH_API_BASE.to_owned(),
             coverart: coverart::COVER_ART_ARCHIVE_BASE.to_owned(),
+            listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
         },
     )
 }
@@ -558,6 +560,114 @@ async fn cover_art_archive_hooks() {
             providers.limiter("coverartarchive").unwrap().cooling_for(),
             Duration::ZERO,
             "{name}: the archive is not rested"
+        );
+    }
+}
+
+/// The ListenBrainz rules: a policy block (the popularity 500 "currently
+/// disabled", the anti-scraper 401) is a deliberate switch-off that is not
+/// retried and never rests the bucket; a 429 rests it for
+/// `X-RateLimit-Reset-In`, else `Retry-After`, else two seconds; and an
+/// answer that says the window is spent rests it until the window resets.
+#[tokio::test(start_paused = true)]
+async fn listenbrainz_hooks() {
+    type Check = fn(&Result<Vec<listenbrainz::stats::ArtistStat>, ProviderError>) -> bool;
+    let artists = format!(
+        "{}/1/stats/sitewide/artists",
+        listenbrainz::DEFAULT_BASE_URL
+    );
+    let rows: Vec<(&str, Scripted, Check, usize, Duration)> = vec![
+        (
+            "popularity switched off",
+            answer(
+                500,
+                &[],
+                r#"{"code": 500, "error": "Popularity API currently disabled due to high load"}"#,
+            ),
+            |result| matches!(result, Err(ProviderError::Disabled { .. })),
+            1,
+            Duration::ZERO,
+        ),
+        (
+            "anti-scraper 401",
+            answer(
+                401,
+                &[],
+                r#"{"code": 401, "error": "Due to AI scrapers, please provide an Auth token"}"#,
+            ),
+            |result| matches!(result, Err(ProviderError::Disabled { .. })),
+            1,
+            Duration::ZERO,
+        ),
+        (
+            "plain 401",
+            answer(401, &[], r#"{"error": "Invalid authorization token."}"#),
+            |result| matches!(result, Err(ProviderError::Unauthorized { .. })),
+            1,
+            Duration::ZERO,
+        ),
+        (
+            "429 with Retry-After",
+            answer(429, &[("retry-after", "7")], ""),
+            |result| matches!(result, Err(ProviderError::RateLimited { retry_after: Some(wait), .. }) if *wait == Duration::from_secs(7)),
+            1,
+            Duration::from_secs(7),
+        ),
+        (
+            "429 with X-RateLimit-Reset-In",
+            answer(
+                429,
+                &[("x-ratelimit-reset-in", "12"), ("retry-after", "5")],
+                "",
+            ),
+            |result| matches!(result, Err(ProviderError::RateLimited { retry_after: Some(wait), .. }) if *wait == Duration::from_secs(12)),
+            1,
+            Duration::from_secs(12),
+        ),
+        (
+            "429 naming no wait",
+            answer(429, &[], ""),
+            |result| {
+                matches!(
+                    result,
+                    Err(ProviderError::RateLimited {
+                        retry_after: None,
+                        ..
+                    })
+                )
+            },
+            2,
+            Duration::from_secs(2),
+        ),
+        (
+            "window spent",
+            answer(
+                200,
+                &[
+                    ("x-ratelimit-remaining", "0"),
+                    ("x-ratelimit-reset-in", "9"),
+                ],
+                r#"{"payload": {"artists": []}}"#,
+            ),
+            |result| matches!(result, Ok(rows) if rows.is_empty()),
+            1,
+            Duration::from_secs(9),
+        ),
+    ];
+    for (name, scripted, check, sends, rest) in rows {
+        let wire = Arc::new(ScriptedWire::new());
+        wire.on(Method::Get, &artists, scripted);
+        let providers = providers_over(&wire);
+        let result = providers
+            .listenbrainz
+            .sitewide_top_artists("this_week", 10, 0, RequestPriority::UserInitiated)
+            .await;
+        assert!(check(&result), "{name}: got {result:?}");
+        assert_eq!(wire.sent().len(), sends, "{name}: requests sent");
+        let cooling = providers.limiter("listenbrainz").unwrap().cooling_for();
+        assert!(
+            cooling <= rest && cooling + Duration::from_millis(600) >= rest,
+            "{name}: rests {cooling:?}, expected {rest:?}"
         );
     }
 }

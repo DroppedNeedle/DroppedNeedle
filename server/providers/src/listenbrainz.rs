@@ -1,56 +1,40 @@
-//! ListenBrainz metadata client.
+//! ListenBrainz client.
 //!
 //! Ports the read paths of v2's ListenBrainz repository and its wire
-//! models, including the
-//! live-verified metadata surface (`listenbrainz_MANAGEMENT_API_NOTES.md`,
-//! verified against production on 2026-07-21; the recording-metadata POST
-//! was verified on 2026-07-17).
+//! models, including the live-verified metadata surface
+//! (`listenbrainz_MANAGEMENT_API_NOTES.md`, verified against production on
+//! 2026-07-21; the recording-metadata POST was verified on 2026-07-17), the
+//! credential check behind Settings and account linking, and listen
+//! submission for scrobble forwarding.
 //!
-//! Every call sends the headers ListenBrainz requires (`Accept` and
-//! `Content-Type` as JSON, plus `Authorization: Token <token>` whenever a
-//! token is configured), and every token is header-safety checked before it
-//! goes near the wire (v2 `_is_header_safe_listenbrainz_token`). The source
-//! is optional, so failures fail soft into [`Outcome`]: a dead upstream
-//! records one degradation note and yields [`Outcome::Unavailable`], while
-//! an authoritative "no such thing" yields [`Outcome::Missing`].
+//! Every request goes through the one ListenBrainz [`Executor`], which
+//! paces at the `listenbrainz` row of the rate table: reads and scrobble
+//! forwarding share that bucket, so one install never sends more than one
+//! request a second. Each call names its priority.
 //!
-//! Pacing and degradation ride the shared core traits
-//! ([`Pacer`](super::limiter::Pacer), [`DegradationSink`](super::degradation::DegradationSink)):
-//! wire the pacer to a 1/second bucket. v2
-//! paces at 2.5/second from live edge evidence (30 requests/10 seconds,
-//! 2026-08-26); v3 uses the stricter documented 1/second.
+//! Every call sends `Accept: application/json`, plus
+//! `Authorization: Token <token>` whenever a token is given, and every
+//! token is header-safety checked before it goes near the wire (v2
+//! `_is_header_safe_listenbrainz_token`). A token that fails the check is
+//! refused before sending.
 //!
-//! One gap stays open: v2's response-header window tracking
-//! (`X-RateLimit-Remaining` merging, the headerless-429 escalation, the
-//! popularity-degraded flag) is retry and limiter state, so it belongs to
-//! the provider core, and this client only reads the 429 delay headers on
-//! the failure itself and reports the hint. Proactive
-//! `X-RateLimit-Remaining` tracking is absent. The core [`RateLimiter`](super::limiter::RateLimiter)
-//! exposes no header-feedback hook, so adding it means growing limiter API
-//! surface, not client logic. The 1/s bucket plus the 429 delay hint carry
-//! the pacing until that hook exists.
-//!
-//! v2 also borrows a fallback token for anonymous public reads when its own
-//! repo has none; that provider callback is wiring, not client logic, so
-//! this client simply sends no `Authorization` header when unconfigured.
+//! Failures are typed [`ProviderError`]s. An empty answer (204, or a body
+//! that does not decode, which is noted for the request) reads as an empty
+//! result, so an outage never reads as "zero listens".
 
 use std::collections::HashMap;
 use std::time::Duration;
 
-use super::{DegradationSink, Pacer};
-use droppedneedle_kernel::http_client::read_capped;
+use crate::RequestPriority;
+use crate::degradation::{IntegrationStatus, record_current};
+use crate::error::{ProviderError, TransportKind, retry_delay_from_headers};
+use crate::executor::{Answer, Backoff, Executor, Reply, Request, Spec, Url, standard_classify};
 
 pub mod playlists;
 pub mod stats;
 
 /// Default API host (v2 `LISTENBRAINZ_API_URL`).
 pub const DEFAULT_BASE_URL: &str = "https://api.listenbrainz.org";
-/// Wait hint when a 429 carries no usable delay header (v2
-/// `_RATE_LIMIT_DEFAULT_COOLDOWN_SECONDS`).
-pub const DEFAULT_RETRY_AFTER_SECS: f64 = 2.0;
-/// Upper clamp for server-supplied retry delays (v2
-/// `_RATE_LIMIT_MAX_DELAY_SECONDS`).
-pub const MAX_RETRY_AFTER_SECS: f64 = 3600.0;
 /// Local ceiling on release-group ids per metadata GET. The notes stress this
 /// is a local safety bound, not an upstream claim (v2 batches of 25).
 pub const RELEASE_GROUP_BATCH: usize = 25;
@@ -61,44 +45,62 @@ pub const MAX_GENRE_IDS: usize = 500;
 /// Longest token accepted for a header (v2
 /// `_MAX_LISTENBRAINZ_TOKEN_LENGTH`).
 pub const MAX_TOKEN_LEN: usize = 1024;
-/// Per-request wire timeout (v2 request timeout).
-pub const REQUEST_TIMEOUT_SECS: u64 = 15;
-/// Source name used for degradation records.
+/// The provider name errors carry, and the ListenBrainz rate row.
 pub const SOURCE: &str = "listenbrainz";
 /// Largest ListenBrainz answer read.
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
-/// What a call produced. `Found` carries the payload, `Missing` is an
-/// authoritative negative (safe to treat as one), and `Unavailable` covers
-/// transport failure, rate limiting, server errors, deterministic upstream
-/// policy blocks, and malformed payloads. Credential rejections surface as
-/// `Unavailable` without a record, because v2 raises those instead of
-/// recording them.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Outcome<T> {
-    /// The upstream answer, decoded.
-    Found(T),
-    /// Authoritative negative. Never recorded as degradation.
-    Missing,
-    /// The source could not answer.
-    Unavailable {
-        /// Seconds the caller should wait before retrying, when known.
-        retry_after_secs: Option<f64>,
-        /// Short human-readable reason (never carries secrets).
-        message: String,
-        /// Whether the sink already holds a record for this failure.
-        recorded: bool,
-    },
+/// ListenBrainz on the wire. A policy block is [`ProviderError::Disabled`];
+/// a 429 waits for `X-RateLimit-Reset-In`, else `Retry-After`, else two
+/// seconds (v2 `_RATE_LIMIT_DEFAULT_COOLDOWN_SECONDS`), and never more than
+/// an hour (v2 `_RATE_LIMIT_MAX_DELAY_SECONDS`). The rate-limit headers are
+/// described at
+/// https://listenbrainz.readthedocs.io/en/latest/users/api/index.html (read
+/// 2026-10-18).
+pub static SPEC: Spec = Spec {
+    source: SOURCE,
+    health_key: SOURCE,
+    timeout: Duration::from_secs(15),
+    max_body: MAX_BODY_BYTES,
+    retry_after_default: Backoff::Fixed(Duration::from_secs(2)),
+    retry_after_cap: Duration::from_secs(3600),
+    classify,
+};
+
+/// The ListenBrainz hook over the standard rules.
+fn classify(answer: &Answer<'_>) -> Result<(), ProviderError> {
+    let reply = answer.reply;
+    let status = reply.status();
+    if is_policy_block(status, &String::from_utf8_lossy(reply.bytes())) {
+        return Err(ProviderError::Disabled {
+            provider: SOURCE,
+            message: format!("ListenBrainz switched this endpoint off upstream ({status})"),
+        });
+    }
+    if status == 429 {
+        return Err(ProviderError::RateLimited {
+            provider: SOURCE,
+            retry_after: reset_in(reply, answer.now_unix).or_else(|| answer.retry_after()),
+        });
+    }
+    standard_classify(answer)
 }
 
-impl<T> Outcome<T> {
-    /// Collapse to the fail-soft `Option` shape: only `Found` is `Some`.
-    pub fn into_option(self) -> Option<T> {
-        match self {
-            Outcome::Found(value) => Some(value),
-            Outcome::Missing | Outcome::Unavailable { .. } => None,
-        }
-    }
+/// Whether this answer is a deterministic upstream policy block rather
+/// than an ordinary error (v2 `_is_upstream_policy_block`): the popularity
+/// feature-flag 500, and the anti-scraper 401 added in 2026-07 when
+/// ListenBrainz began gating anonymous popularity calls.
+fn is_policy_block(status: u16, body: &str) -> bool {
+    (status == 500 && body.contains("currently disabled"))
+        || (status == 401
+            && (body.contains("provide an Auth token") || body.contains("AI scrapers")))
+}
+
+/// The positive `X-RateLimit-Reset-In` wait in seconds, read by the shared
+/// delta-seconds parser.
+fn reset_in(reply: &Reply, now_unix: i64) -> Option<Duration> {
+    let value = reply.header("x-ratelimit-reset-in")?;
+    retry_delay_from_headers([("ratelimit-reset", value)], now_unix).filter(|wait| !wait.is_zero())
 }
 
 /// One user's ListenBrainz identity. The username scopes reads; the token
@@ -110,15 +112,6 @@ pub struct ListenBrainzCredentials {
     pub username: Option<String>,
     /// User token, sent as `Authorization: Token <token>`.
     pub user_token: Option<String>,
-}
-
-/// A username/token validation answer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Validation {
-    /// Whether the value checked out.
-    pub valid: bool,
-    /// Short human-readable detail.
-    pub detail: String,
 }
 
 /// One listen (v2 `ListenBrainzListen`). Track and artist names are required;
@@ -215,191 +208,66 @@ pub struct SimilarArtist {
     pub listen_count: i64,
 }
 
-/// Too many ids for one genre-batch call (v2 raises past 500).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BatchTooLarge {
-    /// How many ids were asked for.
-    pub asked: usize,
-    /// The local ceiling.
-    pub max: usize,
-}
-
-impl std::fmt::Display for BatchTooLarge {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "ListenBrainz genre lookup accepts at most {} IDs (asked {})",
-            self.max, self.asked
-        )
-    }
-}
-
-impl std::error::Error for BatchTooLarge {}
-
-/// ListenBrainz client. Stateless apart from its ports; cheap to clone.
+/// ListenBrainz client over the ListenBrainz executor. Built once with the
+/// providers; every call names its priority.
 #[derive(Debug, Clone)]
-pub struct ListenBrainzClient<P, S> {
-    http: reqwest::Client,
-    base_url: String,
-    pacer: P,
-    sink: S,
+pub struct ListenBrainzClient {
+    executor: Executor,
+    base: Option<Url>,
 }
 
-impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
-    /// Build a client against `base_url` (the production host or a fake).
-    pub fn new(http: reqwest::Client, base_url: &str, pacer: P, sink: S) -> Self {
-        Self {
-            http,
-            base_url: base_url.trim_end_matches('/').to_owned(),
-            pacer,
-            sink,
+impl ListenBrainzClient {
+    /// The client sending through `executor` to the API root at `base_url`.
+    #[must_use]
+    pub fn new(executor: Executor, base_url: &str) -> Self {
+        let base = Url::parse(base_url.trim())
+            .ok()
+            .filter(|url| matches!(url.scheme(), "http" | "https") && !url.cannot_be_a_base());
+        if base.is_none() {
+            tracing::error!("the ListenBrainz address is not an http or https URL");
         }
+        Self { executor, base }
     }
 
-    /// Check that a username exists (`GET /1/user/{user}/listen-count`). A
-    /// 404 is an ordinary invalid answer (v2 `accepted_statuses=(404,)`).
-    pub async fn validate_username(
-        &self,
-        username: &str,
-        creds: &ListenBrainzCredentials,
-    ) -> Outcome<Validation> {
-        if username.is_empty() {
-            return Outcome::Found(Validation {
-                valid: false,
-                detail: "No username provided".to_owned(),
-            });
-        }
-        let endpoint = format!("/1/user/{}/listen-count", path_segment(username));
-        let payload = match self.get(&endpoint, &[], creds, false, &[404]).await {
-            Ok(payload) => payload,
-            Err(RequestFailure::Accepted(404)) => {
-                return Outcome::Found(Validation {
-                    valid: false,
-                    detail: format!("User '{username}' not found"),
-                });
-            }
-            Err(RequestFailure::Outcome(outcome)) => return outcome,
-            Err(RequestFailure::Accepted(_)) => {
-                return self.shape_error("ListenBrainz gave an unexpected reply");
-            }
-        };
-        match payload {
-            Body::Json(payload) => {
-                let count = payload
-                    .get("payload")
-                    .and_then(|payload| payload.get("count"))
-                    .and_then(serde_json::Value::as_i64)
-                    .unwrap_or(0);
-                Outcome::Found(Validation {
-                    valid: true,
-                    detail: format!("User found with {count} listens"),
-                })
-            }
-            // A 204 or an undecodable body reads as "not found" (v2 returns
-            // `(False, ...)` when the result is None).
-            Body::NoContent | Body::InvalidJson => Outcome::Found(Validation {
-                valid: false,
-                detail: format!("User '{username}' not found"),
-            }),
-        }
-    }
-
-    /// Check that the configured token is valid (`GET /1/validate-token`). A
-    /// 401 or 403 is an ordinary invalid answer.
-    pub async fn validate_token(&self, creds: &ListenBrainzCredentials) -> Outcome<Validation> {
-        if creds
-            .user_token
-            .as_deref()
-            .filter(|token| !token.is_empty())
-            .is_none()
-        {
-            return Outcome::Found(Validation {
-                valid: false,
-                detail: "No token provided".to_owned(),
-            });
-        }
-        let payload = match self
-            .get("/1/validate-token", &[], creds, false, &[401, 403])
-            .await
-        {
-            Ok(payload) => payload,
-            Err(RequestFailure::Accepted(_)) => {
-                return Outcome::Found(Validation {
-                    valid: false,
-                    detail: "Token invalid or expired".to_owned(),
-                });
-            }
-            Err(RequestFailure::Outcome(outcome)) => return outcome,
-        };
-        let valid = match &payload {
-            Body::Json(payload) => payload
-                .get("valid")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
-            Body::NoContent | Body::InvalidJson => false,
-        };
-        if !valid {
-            return Outcome::Found(Validation {
-                valid: false,
-                detail: "Token invalid or expired".to_owned(),
-            });
-        }
-        let username = match &payload {
-            Body::Json(payload) => payload
-                .get("user_name")
-                .and_then(serde_json::Value::as_str)
-                .or(creds.username.as_deref())
-                .unwrap_or(""),
-            Body::NoContent | Body::InvalidJson => creds.username.as_deref().unwrap_or(""),
-        };
-        Outcome::Found(Validation {
-            valid: true,
-            detail: format!("Successfully connected as '{username}'"),
-        })
+    /// The executor every ListenBrainz request goes through.
+    #[must_use]
+    pub fn executor(&self) -> &Executor {
+        &self.executor
     }
 
     /// Recent listens for a user (`GET /1/user/{user}/listens`, at most 100
     /// per call). An empty username answers empty without touching the wire
     /// (v2). Items missing track or artist names are skipped.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn user_listens(
         &self,
         username: &str,
         count: u32,
         creds: &ListenBrainzCredentials,
-    ) -> Outcome<Vec<Listen>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<Listen>, ProviderError> {
         if username.is_empty() {
-            return Outcome::Found(Vec::new());
+            return Ok(Vec::new());
         }
-        let count_text = count.min(100).to_string();
-        let endpoint = format!("/1/user/{}/listens", path_segment(username));
-        let payload = match self
-            .get(
-                &endpoint,
-                &[("count", count_text.as_str())],
-                creds,
-                false,
-                &[],
-            )
-            .await
-        {
-            Ok(payload) => payload,
-            Err(RequestFailure::Outcome(outcome)) => return outcome,
-            Err(RequestFailure::Accepted(_)) => {
-                return self.shape_error("ListenBrainz gave an unexpected reply");
-            }
+        let count = count.min(100).to_string();
+        let request = self.get(
+            &["1", "user", username, "listens"],
+            &[("count", &count)],
+            creds,
+        )?;
+        let Some(payload) = self.read(request, priority).await? else {
+            return Ok(Vec::new());
         };
-        // An empty answer reads as no listens (v2 returns `[]` when the
-        // result is falsy).
-        let listens = match payload {
-            Body::Json(payload) => payload
-                .get("payload")
-                .and_then(|payload| payload.get("listens"))
-                .and_then(serde_json::Value::as_array)
-                .cloned()
-                .unwrap_or_default(),
-            Body::NoContent | Body::InvalidJson => Vec::new(),
-        };
-        Outcome::Found(listens.iter().filter_map(parse_listen).collect())
+        let listens = payload
+            .get("payload")
+            .and_then(|payload| payload.get("listens"))
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        Ok(listens.iter().filter_map(parse_listen).collect())
     }
 
     /// Resolve recording MBIDs to release-group MBIDs (`POST
@@ -407,51 +275,38 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
     /// 2026-07-17, returns an object keyed by recording MBID whose release
     /// object carries `release_group_mbid`). Input dedupes, wire calls batch
     /// at 50, and MBIDs absent from the answer are simply left out.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the first batch that failed.
     pub async fn recording_release_groups(
         &self,
         recording_mbids: &[String],
         creds: &ListenBrainzCredentials,
-    ) -> Outcome<HashMap<String, String>> {
+        priority: RequestPriority,
+    ) -> Result<HashMap<String, String>, ProviderError> {
         let mut unique: Vec<&str> = Vec::new();
         for mbid in recording_mbids {
             if !mbid.is_empty() && !unique.contains(&mbid.as_str()) {
                 unique.push(mbid.as_str());
             }
         }
-        if unique.is_empty() {
-            return Outcome::Found(HashMap::new());
-        }
         unique.sort_unstable();
         let mut resolved: HashMap<String, String> = HashMap::new();
         for batch in unique.chunks(RECORDING_BATCH) {
             let body = serde_json::json!({"recording_mbids": batch, "inc": "release"});
-            let payload = match self
-                .post("/1/metadata/recording/", &body, creds, false)
-                .await
-            {
-                Ok(payload) => payload,
-                Err(outcome) => return outcome,
-            };
-            // A non-object payload records a note and skips the batch (v2);
+            let request = self.post(&["1", "metadata", "recording"], &body, creds)?;
+            // A read sent as POST: sending it twice is safe.
+            let request = request.trailing_slash().idempotent(true);
+            // A non-object payload is noted and skips the batch (v2);
             // results gathered so far are kept.
-            let payload = match payload {
-                Body::Json(payload) => match payload.as_object() {
-                    Some(payload) => payload.clone(),
-                    None => {
-                        self.sink.record_quiet(
-                            SOURCE,
-                            "ListenBrainz returned no recording metadata".to_owned(),
-                        );
-                        continue;
-                    }
-                },
-                Body::NoContent | Body::InvalidJson => {
-                    self.sink.record_quiet(
-                        SOURCE,
-                        "ListenBrainz returned no recording metadata".to_owned(),
-                    );
-                    continue;
-                }
+            let Some(payload) = self
+                .read(request, priority)
+                .await?
+                .and_then(|payload| payload.as_object().cloned())
+            else {
+                note_shape("ListenBrainz returned no recording metadata");
+                continue;
             };
             for mbid in batch {
                 let release_group = payload
@@ -464,7 +319,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
                 }
             }
         }
-        Outcome::Found(resolved)
+        Ok(resolved)
     }
 
     /// Genre tags for release-group MBIDs from the live-verified GET-only
@@ -475,11 +330,18 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
     /// POST must never be used here: the live notes record that POST answers
     /// 405, and the recording endpoint's POST support must not be
     /// generalized to release groups.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::Invalid`] for more than [`MAX_GENRE_IDS`] ids
+    /// (nothing is sent), a payload error when a batch carries no metadata
+    /// object, otherwise the typed failure of the call.
     pub async fn release_group_genres(
         &self,
         release_group_mbids: &[String],
         creds: &ListenBrainzCredentials,
-    ) -> Result<Outcome<HashMap<String, ReleaseGroupMetadata>>, BatchTooLarge> {
+        priority: RequestPriority,
+    ) -> Result<HashMap<String, ReleaseGroupMetadata>, ProviderError> {
         let mut unique: Vec<String> = Vec::new();
         for mbid in release_group_mbids {
             let trimmed = mbid.trim();
@@ -488,55 +350,34 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             }
         }
         if unique.len() > MAX_GENRE_IDS {
-            return Err(BatchTooLarge {
-                asked: unique.len(),
-                max: MAX_GENRE_IDS,
-            });
+            return Err(invalid("too many release groups for one genre lookup"));
         }
         let mut resolved: HashMap<String, ReleaseGroupMetadata> = HashMap::new();
         unique.sort();
         for batch in unique.chunks(RELEASE_GROUP_BATCH) {
             let ids = batch.join(",");
-            let payload = match self
+            let request = self
                 .get(
-                    "/1/metadata/release_group/",
+                    &["1", "metadata", "release_group"],
                     &[
                         ("release_group_mbids", ids.as_str()),
                         ("inc", "artist tag release"),
                     ],
                     creds,
-                    false,
-                    &[],
-                )
-                .await
-            {
-                Ok(payload) => payload,
-                Err(RequestFailure::Outcome(outcome)) => return Ok(outcome),
-                Err(RequestFailure::Accepted(_)) => {
-                    return Ok(self.shape_error("ListenBrainz gave an unexpected reply"));
-                }
-            };
+                )?
+                .trailing_slash();
             // No payload at all is an upstream failure, not an empty answer
-            // (v2 raises `ExternalServiceError` without recording here; an
-            // undecodable body already holds its classifier record).
-            let payload = match payload {
-                Body::Json(payload) => match payload.as_object() {
-                    Some(payload) => payload.clone(),
-                    None => {
-                        return Ok(self
-                            .shape_error("ListenBrainz returned invalid release-group metadata."));
-                    }
-                },
-                Body::NoContent => {
-                    return Ok(self.unrecorded("ListenBrainz returned no release-group metadata."));
-                }
-                Body::InvalidJson => {
-                    return Ok(Outcome::Unavailable {
-                        retry_after_secs: None,
-                        message: "ListenBrainz returned no release-group metadata.".to_owned(),
-                        recorded: true,
-                    });
-                }
+            // (v2 raises `ExternalServiceError` here).
+            let Some(payload) = self
+                .read(request, priority)
+                .await?
+                .and_then(|payload| payload.as_object().cloned())
+            else {
+                return Err(ProviderError::Payload {
+                    provider: SOURCE,
+                    kind: crate::PayloadKind::Contract,
+                    message: "ListenBrainz returned no release-group metadata".to_owned(),
+                });
             };
             for mbid in batch {
                 let metadata = payload
@@ -546,21 +387,25 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
                 resolved.insert(mbid.clone(), metadata);
             }
         }
-        Ok(Outcome::Found(resolved))
+        Ok(resolved)
     }
 
     /// Listen counts for release-group MBIDs (`POST
     /// /1/popularity/release-group`). A malformed or absent answer yields
-    /// whatever was gathered so far with nothing written, because an outage
-    /// must never read as "zero listens" (v2's poisoning guards). A
-    /// well-formed empty list is legitimate and yields an empty map.
+    /// an empty map, because an outage must never read as "zero listens"
+    /// (v2's poisoning guards). A well-formed empty list is legitimate.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn release_group_popularity(
         &self,
         release_group_mbids: &[String],
         creds: &ListenBrainzCredentials,
-    ) -> Outcome<HashMap<String, i64>> {
+        priority: RequestPriority,
+    ) -> Result<HashMap<String, i64>, ProviderError> {
         if release_group_mbids.is_empty() {
-            return Outcome::Found(HashMap::new());
+            return Ok(HashMap::new());
         }
         let mut unique: Vec<&str> = Vec::new();
         for mbid in release_group_mbids {
@@ -570,23 +415,17 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
         }
         unique.sort_unstable();
         let body = serde_json::json!({"release_group_mbids": unique});
-        let payload = match self
-            .post("/1/popularity/release-group", &body, creds, false)
-            .await
-        {
-            Ok(payload) => payload,
-            Err(outcome) => return outcome,
-        };
-        // Malformed or absent payloads return whatever was gathered so
-        // far (v2 writes nothing and returns `counts`): an outage must never
-        // read as "zero listens", and a well-formed empty list is legitimate.
+        // A read sent as POST: sending it twice is safe.
+        let request = self
+            .post(&["1", "popularity", "release-group"], &body, creds)?
+            .idempotent(true);
         let mut counts: HashMap<String, i64> = HashMap::new();
-        let items = match payload {
-            Body::Json(payload) => match payload.as_array() {
-                Some(items) => items.clone(),
-                None => return Outcome::Found(counts),
-            },
-            Body::NoContent | Body::InvalidJson => return Outcome::Found(counts),
+        let Some(items) = self
+            .read(request, priority)
+            .await?
+            .and_then(|payload| payload.as_array().cloned())
+        else {
+            return Ok(counts);
         };
         for item in &items {
             let mbid = item
@@ -595,119 +434,123 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
                 .unwrap_or("");
             // v2 keeps a zero count (`count is not None`) but skips a blank
             // id; a non-integer count is malformed and skipped.
-            let count = item.get("total_listen_count").and_then(count_int);
             if mbid.is_empty() {
                 continue;
             }
-            if let Some(count) = count {
+            if let Some(count) = item.get("total_listen_count").and_then(count_int) {
                 counts.insert(mbid.to_owned(), count);
             }
         }
-        Outcome::Found(counts)
+        Ok(counts)
     }
 
-    /// Top release groups behind one artist's popularity sum (`GET`
+    /// Top release groups behind one artist's popularity sum (`GET
     /// /1/popularity/top-release-groups-for-artist/{mbid}`, v2
-    /// `get_artist_top_release_groups`). Anonymous: popularity reads need
-    /// no token. Malformed items are skipped and a malformed payload yields
-    /// whatever was gathered, mirroring the popularity batch: an outage
-    /// must never read as "zero listens", and a well-formed empty list is
-    /// a legitimate unknown artist.
+    /// `get_artist_top_release_groups`). Malformed items are skipped and a
+    /// malformed payload reads as empty, mirroring the popularity batch.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn artist_top_release_groups(
         &self,
         artist_mbid: &str,
         count: usize,
         creds: &ListenBrainzCredentials,
-    ) -> Outcome<Vec<TopReleaseGroup>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<TopReleaseGroup>, ProviderError> {
         let artist_mbid = artist_mbid.trim();
         if artist_mbid.is_empty() || count == 0 {
-            return Outcome::Found(Vec::new());
+            return Ok(Vec::new());
         }
-        let endpoint = format!("/1/popularity/top-release-groups-for-artist/{artist_mbid}");
-        let payload = match self.get(&endpoint, &[], creds, false, &[]).await {
-            Ok(payload) => payload,
-            Err(RequestFailure::Outcome(outcome)) => return outcome,
-            Err(RequestFailure::Accepted(_)) => {
-                return self.shape_error("ListenBrainz gave an unexpected reply");
-            }
-        };
-        let items = match payload {
-            Body::Json(payload) => match payload.as_array() {
-                Some(items) => items.clone(),
-                None => return Outcome::Found(Vec::new()),
-            },
-            Body::NoContent | Body::InvalidJson => return Outcome::Found(Vec::new()),
-        };
-        Outcome::Found(
-            items
-                .iter()
-                .take(count)
-                .filter_map(parse_top_release_group)
-                .collect(),
-        )
+        let request = self.get(
+            &[
+                "1",
+                "popularity",
+                "top-release-groups-for-artist",
+                artist_mbid,
+            ],
+            &[],
+            creds,
+        )?;
+        Ok(self
+            .read_array(request, priority)
+            .await?
+            .iter()
+            .take(count)
+            .filter_map(parse_top_release_group)
+            .collect())
     }
 
     /// An artist's most played recordings
     /// (`GET /1/popularity/top-recordings-for-artist/{mbid}`), most played
-    /// first. Public, no token. Malformed rows are skipped; a malformed
-    /// payload reads as an empty answer, never as "zero listens" rows.
+    /// first. Malformed rows are skipped; a malformed payload reads as an
+    /// empty answer, never as "zero listens" rows.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn artist_top_recordings(
         &self,
         artist_mbid: &str,
         count: usize,
         creds: &ListenBrainzCredentials,
-    ) -> Outcome<Vec<TopRecording>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<TopRecording>, ProviderError> {
         let artist_mbid = artist_mbid.trim();
         if artist_mbid.is_empty() || count == 0 {
-            return Outcome::Found(Vec::new());
+            return Ok(Vec::new());
         }
-        let endpoint = format!("/1/popularity/top-recordings-for-artist/{artist_mbid}");
-        let items = match self.get_array(&endpoint, &[], creds).await {
-            Ok(items) => items,
-            Err(outcome) => return outcome,
-        };
-        Outcome::Found(
-            items
-                .iter()
-                .filter_map(parse_top_recording)
-                .take(count)
-                .collect(),
-        )
+        let request = self.get(
+            &["1", "popularity", "top-recordings-for-artist", artist_mbid],
+            &[],
+            creds,
+        )?;
+        Ok(self
+            .read_array(request, priority)
+            .await?
+            .iter()
+            .filter_map(parse_top_recording)
+            .take(count)
+            .collect())
     }
 
     /// Artists similar to one artist, from LB Radio's artist mode
     /// (`GET /1/lb-radio/artist/{mbid}` with v2's `easy` parameters). The
     /// reply maps each similar artist's MBID to a sample of its recordings;
     /// the seed artist is dropped and the rest sort by summed listens.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn similar_artists(
         &self,
         artist_mbid: &str,
         max_similar: usize,
         creds: &ListenBrainzCredentials,
-    ) -> Outcome<Vec<SimilarArtist>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<SimilarArtist>, ProviderError> {
         let artist_mbid = artist_mbid.trim();
         if artist_mbid.is_empty() || max_similar == 0 {
-            return Outcome::Found(Vec::new());
+            return Ok(Vec::new());
         }
-        let endpoint = format!("/1/lb-radio/artist/{artist_mbid}");
         let max = max_similar.to_string();
-        let params = [
-            ("mode", "easy"),
-            ("max_similar_artists", max.as_str()),
-            ("max_recordings_per_artist", "5"),
-            ("pop_begin", "0"),
-            ("pop_end", "100"),
-        ];
-        let payload = match self.get(&endpoint, &params, creds, false, &[]).await {
-            Ok(Body::Json(payload)) => payload,
-            Ok(Body::NoContent | Body::InvalidJson) => return Outcome::Found(Vec::new()),
-            Err(RequestFailure::Outcome(outcome)) => return outcome,
-            Err(RequestFailure::Accepted(_)) => {
-                return self.shape_error("ListenBrainz gave an unexpected reply");
-            }
+        let request = self.get(
+            &["1", "lb-radio", "artist", artist_mbid],
+            &[
+                ("mode", "easy"),
+                ("max_similar_artists", max.as_str()),
+                ("max_recordings_per_artist", "5"),
+                ("pop_begin", "0"),
+                ("pop_end", "100"),
+            ],
+            creds,
+        )?;
+        let Some(payload) = self.read(request, priority).await? else {
+            return Ok(Vec::new());
         };
         let Some(entries) = payload.as_object() else {
-            return Outcome::Found(Vec::new());
+            return Ok(Vec::new());
         };
         let mut similar: Vec<SimilarArtist> = entries
             .iter()
@@ -735,314 +578,241 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             })
             .collect();
         similar.sort_by(|left, right| right.listen_count.cmp(&left.listen_count));
-        Outcome::Found(similar)
+        Ok(similar)
     }
 
-    /// GET an endpoint whose answer is a JSON array. Anything else reads
-    /// as an empty array.
-    async fn get_array<T>(
+    /// Submit listens for the token's account (`POST /1/submit-listens`).
+    /// `listens` is the JSON document. Sent once: a submission is never
+    /// repeated here, the caller's queue decides about another try.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::Invalid`] for a token that cannot ride in a header
+    /// (nothing is sent), otherwise the typed failure of the call.
+    pub async fn submit_listens(
         &self,
-        endpoint: &str,
-        params: &[(&str, &str)],
-        creds: &ListenBrainzCredentials,
-    ) -> Result<Vec<serde_json::Value>, Outcome<T>> {
-        match self.get(endpoint, params, creds, false, &[]).await {
-            Ok(Body::Json(serde_json::Value::Array(items))) => Ok(items),
-            Ok(_) => Ok(Vec::new()),
-            Err(RequestFailure::Outcome(outcome)) => Err(outcome),
-            Err(RequestFailure::Accepted(_)) => {
-                Err(self.shape_error("ListenBrainz gave an unexpected reply"))
-            }
+        token: &str,
+        listens: Vec<u8>,
+        priority: RequestPriority,
+    ) -> Result<(), ProviderError> {
+        let request = Request::post_json(self.base()?, &["1", "submit-listens"], listens)
+            .map_err(|_| invalid("the ListenBrainz address is not usable"))?;
+        if token.is_empty() {
+            return Err(invalid("a submission needs a token"));
+        }
+        let request = with_headers(request.header("accept", "application/json"), Some(token))?;
+        self.send(request, priority).await.map(|_| ())
+    }
+
+    /// Check one username and token pair: with a token, the token
+    /// (`GET /1/validate-token`); without one, that the username exists
+    /// (`GET /1/user/{user}/listen-count`). 401 and 403 mean an invalid
+    /// token, 404 an unknown user, and a rate limit asks the caller to back
+    /// off (v2's repository verify methods).
+    pub async fn verify(
+        &self,
+        username: &str,
+        token: &str,
+        priority: RequestPriority,
+    ) -> VerifyOutcome {
+        if token.is_empty() {
+            self.verify_username(username, priority).await
+        } else {
+            self.verify_token(token, username, priority).await
         }
     }
 
-    /// Run one paced GET. `accepted` statuses are validators' expected
-    /// negatives (a 404 on a username check, a 401/403 on a token check);
-    /// they come back as `Accepted` and stay neutral to retry and
-    /// degradation bookkeeping (v2 `_ListenBrainzValidationOutcome`).
-    async fn get<T>(
+    async fn verify_token(
         &self,
-        endpoint: &str,
-        params: &[(&str, &str)],
-        creds: &ListenBrainzCredentials,
-        require_auth: bool,
-        accepted: &[u16],
-    ) -> Result<Body, RequestFailure<T>> {
-        let headers = self.headers(creds, require_auth)?;
-        self.pacer.acquire().await;
-        let url = format!("{base}{endpoint}", base = self.base_url);
-        let response = match self
-            .http
-            .get(url)
-            .headers(headers)
-            .query(params)
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-            .send()
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                return Err(RequestFailure::Outcome(self.recorded(
-                    None,
-                    &format!("ListenBrainz GET request failed during transport: {error}"),
-                )));
-            }
+        token: &str,
+        username: &str,
+        priority: RequestPriority,
+    ) -> VerifyOutcome {
+        let invalid_token = || VerifyOutcome::invalid("Token invalid or expired".to_owned());
+        if !header_safe_token(token) {
+            return invalid_token();
+        }
+        let creds = ListenBrainzCredentials {
+            username: None,
+            user_token: Some(token.to_owned()),
         };
-        self.classify(response, "GET", endpoint, accepted).await
+        let reply = match self.get(&["1", "validate-token"], &[], &creds) {
+            Ok(request) => self.send(request, priority).await,
+            Err(error) => Err(error),
+        };
+        let body: serde_json::Value = match reply.and_then(|reply| reply.json()) {
+            Ok(body) => body,
+            Err(ProviderError::Unauthorized { .. } | ProviderError::Forbidden { .. }) => {
+                return invalid_token();
+            }
+            Err(error) => return VerifyOutcome::failed(&error),
+        };
+        if body.get("valid").and_then(serde_json::Value::as_bool) != Some(true) {
+            return invalid_token();
+        }
+        let who = body
+            .get("user_name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(username);
+        VerifyOutcome {
+            valid: true,
+            message: format!("Successfully connected as '{who}'"),
+            rate_limited: false,
+        }
     }
 
-    /// Run one paced POST with a JSON body.
-    async fn post<T>(
+    async fn verify_username(&self, username: &str, priority: RequestPriority) -> VerifyOutcome {
+        if username.is_empty() {
+            return VerifyOutcome::invalid("No username provided".to_owned());
+        }
+        let reply = match self.get(
+            &["1", "user", username, "listen-count"],
+            &[],
+            &ListenBrainzCredentials::default(),
+        ) {
+            Ok(request) => self.send(request, priority).await,
+            Err(error) => Err(error),
+        };
+        let body: serde_json::Value = match reply.and_then(|reply| reply.json()) {
+            Ok(body) => body,
+            Err(ProviderError::NotFound { .. }) => {
+                return VerifyOutcome::invalid(format!("User '{username}' not found"));
+            }
+            Err(error) => return VerifyOutcome::failed(&error),
+        };
+        let count = body
+            .get("payload")
+            .and_then(|payload| payload.get("count"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
+        VerifyOutcome {
+            valid: true,
+            message: format!("User found with {} listens", grouped_count(count)),
+            rate_limited: false,
+        }
+    }
+
+    /// A GET of `segments` under the API root, with the headers every call
+    /// carries.
+    fn get(
         &self,
-        endpoint: &str,
+        segments: &[&str],
+        query: &[(&str, &str)],
+        creds: &ListenBrainzCredentials,
+    ) -> Result<Request, ProviderError> {
+        let request = Request::get(self.base()?, segments, query)
+            .map_err(|_| invalid("the ListenBrainz address is not usable"))?
+            .header("accept", "application/json")
+            .header("content-type", "application/json");
+        with_headers(request, creds.user_token.as_deref())
+    }
+
+    /// A POST of a JSON document under the API root, with the headers
+    /// every call carries.
+    fn post(
+        &self,
+        segments: &[&str],
         body: &serde_json::Value,
         creds: &ListenBrainzCredentials,
-        require_auth: bool,
-    ) -> Result<Body, Outcome<T>> {
-        let headers = self
-            .headers(creds, require_auth)
-            .map_err(|failure| match failure {
-                RequestFailure::Outcome(outcome) => outcome,
-                RequestFailure::Accepted(_) => {
-                    self.shape_error("ListenBrainz gave an unexpected reply")
-                }
-            })?;
-        self.pacer.acquire().await;
-        let url = format!("{base}{endpoint}", base = self.base_url);
-        let body_text = serde_json::to_string(body).unwrap_or_else(|_| "{}".to_owned());
-        let response = match self
-            .http
-            .post(url)
-            .headers(headers)
-            .body(body_text)
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-            .send()
-            .await
+    ) -> Result<Request, ProviderError> {
+        let json = serde_json::to_vec(body).map_err(|_| invalid("the request did not encode"))?;
+        let request = Request::post_json(self.base()?, segments, json)
+            .map_err(|_| invalid("the ListenBrainz address is not usable"))?
+            .header("accept", "application/json");
+        with_headers(request, creds.user_token.as_deref())
+    }
+
+    /// Send one request. An answer that says the rate window is spent
+    /// rests the bucket until the window resets, as the API docs ask.
+    async fn send(
+        &self,
+        request: Request,
+        priority: RequestPriority,
+    ) -> Result<Reply, ProviderError> {
+        let reply = self.executor.send(request, priority).await?;
+        if reply.header("x-ratelimit-remaining").map(str::trim) == Some("0")
+            && let Some(wait) = reply
+                .header("x-ratelimit-reset-in")
+                .and_then(|value| value.trim().parse::<f64>().ok())
+                .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+                .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok())
         {
-            Ok(response) => response,
+            self.executor
+                .limiter()
+                .cool_down(wait.min(SPEC.retry_after_cap));
+        }
+        Ok(reply)
+    }
+
+    /// Send one read and decode its JSON body. `None` is an empty answer:
+    /// a 204 (ListenBrainz is still computing), or a body that does not
+    /// decode, which is noted for the request.
+    async fn read(
+        &self,
+        request: Request,
+        priority: RequestPriority,
+    ) -> Result<Option<serde_json::Value>, ProviderError> {
+        let reply = self.send(request, priority).await?;
+        if reply.status() == 204 {
+            return Ok(None);
+        }
+        match reply.json::<serde_json::Value>() {
+            Ok(payload) => Ok(Some(payload)),
             Err(error) => {
-                return Err(self.recorded(
-                    None,
-                    &format!("ListenBrainz POST request failed during transport: {error}"),
-                ));
-            }
-        };
-        match self.classify(response, "POST", endpoint, &[]).await {
-            Ok(payload) => Ok(payload),
-            Err(RequestFailure::Outcome(outcome)) => Err(outcome),
-            Err(RequestFailure::Accepted(_)) => {
-                Err(self.shape_error("ListenBrainz gave an unexpected reply"))
+                note_shape(&error.to_string());
+                Ok(None)
             }
         }
     }
 
-    /// Build the required headers: JSON `Accept` and `Content-Type` always,
-    /// plus `Authorization: Token <token>` when a token is configured (v2
-    /// `_get_headers`). Tokens are header-safety checked first; a rejected
-    /// token (or a missing one on an auth-required call) surfaces as an
-    /// unrecorded `Unavailable`, because v2 raises those deterministically
-    /// without retrying.
-    fn headers<T>(
+    /// Send one read whose answer is a JSON array. Anything else reads as
+    /// an empty array.
+    async fn read_array(
         &self,
-        creds: &ListenBrainzCredentials,
-        require_auth: bool,
-    ) -> Result<reqwest::header::HeaderMap, RequestFailure<T>> {
-        if require_auth {
-            match creds.user_token.as_deref() {
-                Some(token) if header_safe_token(token) => {}
-                _ => {
-                    return Err(RequestFailure::Outcome(
-                        self.unrecorded("ListenBrainz user token required for this request"),
-                    ));
-                }
-            }
-        }
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::ACCEPT,
-            reqwest::header::HeaderValue::from_static("application/json"),
-        );
-        headers.insert(
-            reqwest::header::CONTENT_TYPE,
-            reqwest::header::HeaderValue::from_static("application/json"),
-        );
-        if let Some(token) = creds
-            .user_token
-            .as_deref()
-            .filter(|token| !token.is_empty())
-        {
-            if !header_safe_token(token) {
-                return Err(RequestFailure::Outcome(
-                    self.unrecorded("ListenBrainz credentials rejected"),
-                ));
-            }
-            let value = format!("Token {token}");
-            match reqwest::header::HeaderValue::from_str(&value) {
-                Ok(value) => {
-                    headers.insert(reqwest::header::AUTHORIZATION, value);
-                }
-                Err(_) => {
-                    return Err(RequestFailure::Outcome(
-                        self.unrecorded("ListenBrainz credentials rejected"),
-                    ));
-                }
-            }
-        }
-        Ok(headers)
+        request: Request,
+        priority: RequestPriority,
+    ) -> Result<Vec<serde_json::Value>, ProviderError> {
+        Ok(match self.read(request, priority).await? {
+            Some(serde_json::Value::Array(items)) => items,
+            _ => Vec::new(),
+        })
     }
 
-    /// Classify one wire response, following v2 `_request_attempt` branch
-    /// for branch.
-    async fn classify<T>(
-        &self,
-        response: reqwest::Response,
-        method: &str,
-        endpoint: &str,
-        accepted: &[u16],
-    ) -> Result<Body, RequestFailure<T>> {
-        let status = response.status().as_u16();
-        let category = endpoint_category(endpoint);
-        if status == 204 {
-            self.sink.succeeded(SOURCE);
-            return Ok(Body::NoContent);
-        }
-        if status == 429 {
-            // Explicit server delay wins; a headerless 429 falls back to the
-            // 2s default here, while the provider core owns the streak escalation.
-            let retry_after = retry_after_secs(response.headers());
-            return Err(RequestFailure::Outcome(self.recorded(
-                Some(retry_after),
-                "ListenBrainz is temporarily rate-limiting this server. Try again shortly.",
-            )));
-        }
-        if status != 200 {
-            if accepted.contains(&status) {
-                return Err(RequestFailure::Accepted(status));
-            }
-            let body = read_capped(response, MAX_BODY_BYTES)
-                .await
-                .unwrap_or_default();
-            let body = String::from_utf8_lossy(&body);
-            // Deterministic upstream policy blocks fail fast and must not
-            // trip any shared breaker (v2 `_is_upstream_policy_block`): the
-            // popularity feature-flag 500, and the anti-scraper 401 added in
-            // 2026-07 when ListenBrainz began gating anonymous popularity
-            // calls.
-            if is_policy_block(status, &body) {
-                let message = format!(
-                    "ListenBrainz {method} {category} endpoint unavailable upstream ({status})"
-                );
-                self.sink.record_quiet(SOURCE, message.clone());
-                return Err(RequestFailure::Outcome(Outcome::Unavailable {
-                    retry_after_secs: None,
-                    message,
-                    recorded: true,
-                }));
-            }
-            if status == 401 || status == 403 {
-                return Err(RequestFailure::Outcome(self.unrecorded(&format!(
-                    "ListenBrainz credentials rejected ({status})"
-                ))));
-            }
-            return Err(RequestFailure::Outcome(self.recorded(
-                None,
-                &format!("ListenBrainz {method} {category} request failed ({status})"),
-            )));
-        }
-        match read_capped(response, MAX_BODY_BYTES).await {
-            Ok(body) => match serde_json::from_slice(&body) {
-                Ok(payload) => {
-                    self.sink.succeeded(SOURCE);
-                    Ok(Body::Json(payload))
-                }
-                // v2 records a note and returns None on invalid JSON rather
-                // than raising; each caller below then applies its own
-                // empty-answer rule.
-                Err(_) => {
-                    self.sink.record_quiet(
-                        SOURCE,
-                        format!("ListenBrainz returned invalid JSON for {method} {category}"),
-                    );
-                    Ok(Body::InvalidJson)
-                }
-            },
-            Err(error) => Err(RequestFailure::Outcome(self.recorded(
-                None,
-                &format!("ListenBrainz response body unreadable: {}", error.kind()),
-            ))),
-        }
-    }
-
-    /// Build a recorded `Unavailable` outcome.
-    fn recorded<T>(&self, retry_after_secs: Option<f64>, message: &str) -> Outcome<T> {
-        self.sink.record(SOURCE, message.to_owned());
-        Outcome::Unavailable {
-            retry_after_secs,
-            message: message.to_owned(),
-            recorded: true,
-        }
-    }
-
-    /// A reply whose shape did not decode: recorded for the request, kept
-    /// out of service health (the service answered).
-    fn shape_error<T>(&self, message: &str) -> Outcome<T> {
-        self.sink.record_quiet(SOURCE, message.to_owned());
-        Outcome::Unavailable {
-            retry_after_secs: None,
-            message: message.to_owned(),
-            recorded: true,
-        }
-    }
-
-    /// Build an unrecorded `Unavailable` outcome for credential failures,
-    /// which v2 raises rather than records.
-    fn unrecorded<T>(&self, message: &str) -> Outcome<T> {
-        Outcome::Unavailable {
-            retry_after_secs: None,
-            message: message.to_owned(),
-            recorded: false,
-        }
+    fn base(&self) -> Result<&Url, ProviderError> {
+        self.base
+            .as_ref()
+            .ok_or_else(|| invalid("the ListenBrainz address is not usable"))
     }
 }
 
-/// What a 200 response carried: either a decoded payload, a genuine
-/// empty answer (204), or an undecodable body (already recorded in the sink
-/// by the classifier). Callers need all three because v2 treats them
-/// differently: validators read emptiness as a negative, the genre batch
-/// escalates it, and the popularity batch swallows it as partial results.
-#[derive(Debug, Clone, PartialEq)]
-enum Body {
-    /// Decoded JSON payload.
-    Json(serde_json::Value),
-    /// HTTP 204: genuinely empty.
-    NoContent,
-    /// Undecodable body. The sink already holds its record.
-    InvalidJson,
-}
-
-/// What went wrong below the payload level: either a validator's expected
-/// status (neutral to retry and degradation) or a finished outcome.
-enum RequestFailure<T> {
-    /// An accepted deterministic status (v2
-    /// `_ListenBrainzValidationOutcome`).
-    Accepted(u16),
-    /// A finished outcome, already recorded when recording applies.
-    Outcome(Outcome<T>),
-}
-
-/// Percent-encode one URL path segment (a username can hold `/`, `?`, `#`
-/// or spaces).
-pub(crate) fn path_segment(value: &str) -> String {
-    use std::fmt::Write as _;
-    let mut out = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            out.push(byte as char);
-        } else {
-            let _ = write!(out, "%{byte:02X}");
+/// `request` with `Authorization: Token <token>` when a token is given.
+/// A token that cannot ride in a header is refused before sending.
+fn with_headers(request: Request, token: Option<&str>) -> Result<Request, ProviderError> {
+    match token.filter(|token| !token.is_empty()) {
+        None => Ok(request),
+        Some(token) if header_safe_token(token) => {
+            Ok(request.header("authorization", format!("Token {token}")))
         }
+        Some(_) => Err(invalid("the token cannot be sent in a header")),
     }
-    out
+}
+
+/// An answer that did not have the expected shape: the service answered,
+/// so it is noted for the request but never counted as an outage.
+fn note_shape(cause: &str) {
+    tracing::debug!(
+        provider = SOURCE,
+        cause,
+        "ListenBrainz answer had no usable shape"
+    );
+    record_current(SOURCE, IntegrationStatus::Error, true);
+}
+
+fn invalid(reason: &'static str) -> ProviderError {
+    ProviderError::Invalid {
+        provider: SOURCE,
+        reason,
+    }
 }
 
 /// Whether a token may ride in a header: non-empty, at most 1024 chars, all
@@ -1054,57 +824,6 @@ fn header_safe_token(token: &str) -> bool {
     token
         .chars()
         .all(|char| ('\u{21}'..='\u{7e}').contains(&char))
-}
-
-/// Read the retry delay from a 429's headers: `X-RateLimit-Reset-In` first,
-/// then `Retry-After`, requiring a positive finite value and clamping to an
-/// hour; anything else falls back to the 2s default (v2
-/// `_parse_retry_after_info`).
-fn retry_after_secs(headers: &reqwest::header::HeaderMap) -> f64 {
-    for name in ["x-ratelimit-reset-in", "retry-after"] {
-        let delay = headers
-            .get(name)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|text| text.trim().parse::<f64>().ok())
-            .filter(|seconds| seconds.is_finite() && *seconds >= 0.0);
-        if let Some(delay) = delay.filter(|delay| *delay > 0.0) {
-            return delay.min(MAX_RETRY_AFTER_SECS);
-        }
-    }
-    DEFAULT_RETRY_AFTER_SECS
-}
-
-/// Whether this response is a deterministic upstream policy block rather
-/// than an ordinary error (v2 `_is_upstream_policy_block`).
-fn is_policy_block(status: u16, body: &str) -> bool {
-    if status == 500 && body.contains("currently disabled") {
-        return true;
-    }
-    if status == 401 && (body.contains("provide an Auth token") || body.contains("AI scrapers")) {
-        return true;
-    }
-    false
-}
-
-/// Short category for log and degradation messages (v2
-/// `_listenbrainz_endpoint_category`).
-fn endpoint_category(endpoint: &str) -> &'static str {
-    let path = endpoint.split('?').next().unwrap_or(endpoint);
-    for (marker, category) in [
-        ("/validate-token", "token validation"),
-        ("/popularity/", "popularity"),
-        ("/metadata/", "metadata"),
-        ("/feedback/", "feedback"),
-        ("/submit-listens", "listen submission"),
-        ("/playing-now", "now-playing"),
-        ("/stats/", "statistics"),
-        ("/user/", "user data"),
-    ] {
-        if path.contains(marker) {
-            return category;
-        }
-    }
-    "request"
 }
 
 /// Read an integer count, tolerating integral floats the way the lenient v2
@@ -1256,8 +975,7 @@ fn parse_release_group_metadata(entry: &serde_json::Value) -> ReleaseGroupMetada
 // --- credential verification ---------------------------------------------------
 //
 // The settings Verify button and the per-user link flow both check a
-// username/token pair against the live API. Neither goes through the paced
-// metadata client: a verify is one admin-initiated call, not a read path.
+// username/token pair against the live API, through the one client.
 
 /// Answer from a ListenBrainz credential check.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1268,6 +986,40 @@ pub struct VerifyOutcome {
     pub message: String,
     /// The upstream is rate-limiting; the caller should answer 429.
     pub rate_limited: bool,
+}
+
+impl VerifyOutcome {
+    fn invalid(message: String) -> Self {
+        Self {
+            valid: false,
+            message,
+            rate_limited: false,
+        }
+    }
+
+    /// A check that got no verdict: rate limited, unreachable or failing.
+    fn failed(error: &ProviderError) -> Self {
+        match error {
+            ProviderError::RateLimited { .. } => Self {
+                valid: false,
+                message:
+                    "ListenBrainz is temporarily rate-limiting this server. Try again shortly."
+                        .to_owned(),
+                rate_limited: true,
+            },
+            ProviderError::Transport {
+                kind: TransportKind::Timeout,
+                ..
+            } => Self::invalid("Connection timed out".to_owned()),
+            ProviderError::Transport {
+                kind: TransportKind::Connect,
+                ..
+            } => Self::invalid("Could not connect to ListenBrainz".to_owned()),
+            _ => Self::invalid(
+                "ListenBrainz is temporarily unavailable. Try again shortly.".to_owned(),
+            ),
+        }
+    }
 }
 
 /// Credential checks against ListenBrainz. With a token this validates the
@@ -1281,17 +1033,21 @@ pub trait ListenBrainzVerifier: Send + Sync {
     ) -> futures_util::future::BoxFuture<'a, VerifyOutcome>;
 }
 
-/// Percent-encode one path segment.
-fn encode_segment(segment: &str) -> String {
-    let mut out = String::new();
-    for byte in segment.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
+/// A person waits on every check: linking an account or the Settings
+/// Verify button.
+impl ListenBrainzVerifier for ListenBrainzClient {
+    fn verify<'a>(
+        &'a self,
+        username: &'a str,
+        token: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, VerifyOutcome> {
+        Box::pin(ListenBrainzClient::verify(
+            self,
+            username,
+            token,
+            RequestPriority::UserInitiated,
+        ))
     }
-    out
 }
 
 /// Render a count with thousands separators, the way v2's `{count:,}` does.
@@ -1305,191 +1061,4 @@ fn grouped_count(count: i64) -> String {
         out.push(digit);
     }
     out.chars().rev().collect()
-}
-
-fn unavailable() -> VerifyOutcome {
-    VerifyOutcome {
-        valid: false,
-        message: "ListenBrainz is temporarily unavailable. Try again shortly.".to_owned(),
-        rate_limited: false,
-    }
-}
-
-fn transport_outcome(error: &reqwest::Error) -> VerifyOutcome {
-    if error.is_timeout() {
-        return VerifyOutcome {
-            valid: false,
-            message: "Connection timed out".to_owned(),
-            rate_limited: false,
-        };
-    }
-    if error.is_connect() {
-        return VerifyOutcome {
-            valid: false,
-            message: "Could not connect to ListenBrainz".to_owned(),
-            rate_limited: false,
-        };
-    }
-    unavailable()
-}
-
-/// Credential checks over HTTP. Status mapping ports v2's repository
-/// verify methods: 401/403 on the token call means an invalid token, 404
-/// on the username call means an unknown user, and 429 means back off.
-pub struct HttpListenBrainzVerifier {
-    http: reqwest::Client,
-    base_url: String,
-}
-
-impl HttpListenBrainzVerifier {
-    /// Check against one API root (the production host or a fake).
-    pub fn new(http: reqwest::Client, base_url: &str) -> Self {
-        Self {
-            http,
-            base_url: base_url.trim_end_matches('/').to_owned(),
-        }
-    }
-
-    async fn verify_token(&self, token: &str, username: &str) -> VerifyOutcome {
-        if !header_safe_token(token) {
-            return VerifyOutcome {
-                valid: false,
-                message: "Token invalid or expired".to_owned(),
-                rate_limited: false,
-            };
-        }
-        let response = self
-            .http
-            .get(format!("{}/1/validate-token", self.base_url))
-            .header("Authorization", format!("Token {token}"))
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-            .send()
-            .await;
-        let response = match response {
-            Ok(response) => response,
-            Err(error) => return transport_outcome(&error),
-        };
-        let status = response.status().as_u16();
-        if status == 429 {
-            return VerifyOutcome {
-                valid: false,
-                message:
-                    "ListenBrainz is temporarily rate-limiting this server. Try again shortly."
-                        .to_owned(),
-                rate_limited: true,
-            };
-        }
-        if status == 401 || status == 403 {
-            return VerifyOutcome {
-                valid: false,
-                message: "Token invalid or expired".to_owned(),
-                rate_limited: false,
-            };
-        }
-        if status != 200 {
-            return unavailable();
-        }
-        let bytes = match read_capped(response, MAX_BODY_BYTES).await {
-            Ok(bytes) => bytes,
-            Err(_) => return unavailable(),
-        };
-        let body: serde_json::Value = match serde_json::from_slice(&bytes) {
-            Ok(body) => body,
-            Err(_) => return unavailable(),
-        };
-        if body.get("valid").and_then(|valid| valid.as_bool()) == Some(true) {
-            let who = body
-                .get("user_name")
-                .and_then(|name| name.as_str())
-                .unwrap_or(username);
-            return VerifyOutcome {
-                valid: true,
-                message: format!("Successfully connected as '{who}'"),
-                rate_limited: false,
-            };
-        }
-        VerifyOutcome {
-            valid: false,
-            message: "Token invalid or expired".to_owned(),
-            rate_limited: false,
-        }
-    }
-
-    async fn verify_username(&self, username: &str) -> VerifyOutcome {
-        if username.is_empty() {
-            return VerifyOutcome {
-                valid: false,
-                message: "No username provided".to_owned(),
-                rate_limited: false,
-            };
-        }
-        let response = self
-            .http
-            .get(format!(
-                "{}/1/user/{}/listen-count",
-                self.base_url,
-                encode_segment(username)
-            ))
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-            .send()
-            .await;
-        let response = match response {
-            Ok(response) => response,
-            Err(error) => return transport_outcome(&error),
-        };
-        let status = response.status().as_u16();
-        if status == 429 {
-            return VerifyOutcome {
-                valid: false,
-                message:
-                    "ListenBrainz is temporarily rate-limiting this server. Try again shortly."
-                        .to_owned(),
-                rate_limited: true,
-            };
-        }
-        if status == 404 {
-            return VerifyOutcome {
-                valid: false,
-                message: format!("User '{username}' not found"),
-                rate_limited: false,
-            };
-        }
-        if status != 200 {
-            return unavailable();
-        }
-        let bytes = match read_capped(response, MAX_BODY_BYTES).await {
-            Ok(bytes) => bytes,
-            Err(_) => return unavailable(),
-        };
-        let body: serde_json::Value = match serde_json::from_slice(&bytes) {
-            Ok(body) => body,
-            Err(_) => return unavailable(),
-        };
-        let count = body
-            .get("payload")
-            .and_then(|payload| payload.get("count"))
-            .and_then(|count| count.as_i64())
-            .unwrap_or(0);
-        VerifyOutcome {
-            valid: true,
-            message: format!("User found with {} listens", grouped_count(count)),
-            rate_limited: false,
-        }
-    }
-}
-
-impl ListenBrainzVerifier for HttpListenBrainzVerifier {
-    fn verify<'a>(
-        &'a self,
-        username: &'a str,
-        token: &'a str,
-    ) -> futures_util::future::BoxFuture<'a, VerifyOutcome> {
-        Box::pin(async move {
-            if token.is_empty() {
-                self.verify_username(username).await
-            } else {
-                self.verify_token(token, username).await
-            }
-        })
-    }
 }

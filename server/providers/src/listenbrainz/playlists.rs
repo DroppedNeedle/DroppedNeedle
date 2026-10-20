@@ -8,10 +8,8 @@
 //! sits in the MusicBrainz playlist extension as `source_patch`
 //! (`weekly-jams`, `weekly-exploration`, ...).
 
-use super::{
-    Body, ListenBrainzClient, ListenBrainzCredentials, Outcome, RequestFailure, path_segment,
-};
-use crate::{DegradationSink, Pacer};
+use super::{ListenBrainzClient, ListenBrainzCredentials};
+use crate::{ProviderError, RequestPriority};
 
 /// JSPF extension key for playlist-level MusicBrainz metadata.
 const PLAYLIST_EXTENSION: &str = "https://musicbrainz.org/doc/jspf#playlist";
@@ -60,85 +58,74 @@ pub struct RecommendationTrack {
     pub duration_ms: Option<i64>,
 }
 
-impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
+impl ListenBrainzClient {
     /// The recommendation playlists made for `username`
     /// (`GET /1/user/{user}/playlists/recommendations`).
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn recommendation_playlists(
         &self,
         username: &str,
         creds: &ListenBrainzCredentials,
-    ) -> Outcome<Vec<RecommendationPlaylist>> {
+        priority: RequestPriority,
+    ) -> Result<Vec<RecommendationPlaylist>, ProviderError> {
         if username.is_empty() {
-            return Outcome::Found(Vec::new());
+            return Ok(Vec::new());
         }
-        let endpoint = format!(
-            "/1/user/{}/playlists/recommendations",
-            path_segment(username)
-        );
-        let payload = match self.get(&endpoint, &[], creds, false, &[404]).await {
-            Ok(Body::Json(payload)) => payload,
-            Ok(Body::NoContent | Body::InvalidJson) | Err(RequestFailure::Accepted(_)) => {
-                return Outcome::Found(Vec::new());
-            }
-            Err(RequestFailure::Outcome(outcome)) => return outcome,
+        let request = self.get(
+            &["1", "user", username, "playlists", "recommendations"],
+            &[],
+            creds,
+        )?;
+        let Some(payload) = absent_on_404(self.read(request, priority).await)? else {
+            return Ok(Vec::new());
         };
         let entries = payload
             .get("playlists")
             .and_then(serde_json::Value::as_array)
             .cloned()
             .unwrap_or_default();
-        Outcome::Found(
-            entries
-                .iter()
-                .filter_map(|entry| parse_playlist_header(entry.get("playlist")?))
-                .collect(),
-        )
+        Ok(entries
+            .iter()
+            .filter_map(|entry| parse_playlist_header(entry.get("playlist")?))
+            .collect())
     }
 
     /// One playlist's tracks (`GET /1/playlist/{id}`). A missing playlist
     /// reads as no tracks.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn playlist_tracks(
         &self,
         playlist_id: &str,
         creds: &ListenBrainzCredentials,
-    ) -> Outcome<Vec<RecommendationTrack>> {
-        match self.playlist(playlist_id, creds).await {
-            Outcome::Found(page) => Outcome::Found(page.tracks),
-            Outcome::Missing => Outcome::Missing,
-            Outcome::Unavailable {
-                retry_after_secs,
-                message,
-                recorded,
-            } => Outcome::Unavailable {
-                retry_after_secs,
-                message,
-                recorded,
-            },
-        }
+        priority: RequestPriority,
+    ) -> Result<Vec<RecommendationTrack>, ProviderError> {
+        Ok(self.playlist(playlist_id, creds, priority).await?.tracks)
     }
 
     /// One playlist with its title and date (`GET /1/playlist/{id}`). A
     /// missing playlist reads as an empty page.
+    ///
+    /// # Errors
+    ///
+    /// The typed failure of the call.
     pub async fn playlist(
         &self,
         playlist_id: &str,
         creds: &ListenBrainzCredentials,
-    ) -> Outcome<PlaylistPage> {
-        let empty = PlaylistPage {
-            title: String::new(),
-            date: String::new(),
-            tracks: Vec::new(),
-        };
+        priority: RequestPriority,
+    ) -> Result<PlaylistPage, ProviderError> {
         if playlist_id.is_empty() {
-            return Outcome::Found(empty);
+            return Ok(PlaylistPage::default());
         }
-        let endpoint = format!("/1/playlist/{}", path_segment(playlist_id));
-        let payload = match self.get(&endpoint, &[], creds, false, &[404]).await {
-            Ok(Body::Json(payload)) => payload,
-            Ok(Body::NoContent | Body::InvalidJson) | Err(RequestFailure::Accepted(_)) => {
-                return Outcome::Found(empty);
-            }
-            Err(RequestFailure::Outcome(outcome)) => return outcome,
+        let request = self.get(&["1", "playlist", playlist_id], &[], creds)?;
+        let Some(payload) = absent_on_404(self.read(request, priority).await)? else {
+            return Ok(PlaylistPage::default());
         };
         let playlist = payload.get("playlist");
         let field = |key: &str| {
@@ -153,11 +140,21 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             .and_then(serde_json::Value::as_array)
             .cloned()
             .unwrap_or_default();
-        Outcome::Found(PlaylistPage {
+        Ok(PlaylistPage {
             title: field("title"),
             date: field("date"),
             tracks: tracks.iter().filter_map(parse_track).collect(),
         })
+    }
+}
+
+/// A 404 here means "nothing here yet", the same as an empty answer.
+fn absent_on_404(
+    read: Result<Option<serde_json::Value>, ProviderError>,
+) -> Result<Option<serde_json::Value>, ProviderError> {
+    match read {
+        Err(ProviderError::NotFound { .. }) => Ok(None),
+        other => other,
     }
 }
 
