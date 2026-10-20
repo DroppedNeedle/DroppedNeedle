@@ -94,7 +94,7 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 		h.isError = false;
 		h.error = null;
 		h.refetch = vi.fn();
-		h.mutateAsync = vi.fn().mockResolvedValue(undefined);
+		h.mutateAsync = vi.fn(async (policy: DownloadPolicySettings) => structuredClone(policy));
 	});
 
 	it('derives the live legacy range from custom MP3 coverage and clamps the cutoff', async () => {

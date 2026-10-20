@@ -1,69 +1,34 @@
 <script lang="ts">
-	import { SECRET_MASK } from '$lib/ui/secretMask';
-	import { CircleCheck, CircleX, CloudDownload } from 'lucide-svelte';
+	import { CloudDownload } from 'lucide-svelte';
 
 	import { getLidarrImportConfigQuery } from '$lib/queries/lidarr-import/LidarrImportQueries.svelte';
 	import {
 		saveLidarrConfigMutation,
 		testLidarrMutation
 	} from '$lib/queries/lidarr-import/LidarrImportMutations.svelte';
-	import { toastStore } from '$lib/stores/toast';
-	import type { LidarrImportConnection, LidarrTestResult } from '$lib/queries/lidarr-import/types';
-	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import TextField from '$lib/ui/TextField.svelte';
+	import { SECRET_MASK } from '$lib/ui/secretMask';
+	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 	import LidarrImportSyncCard from './LidarrImportSyncCard.svelte';
 
-	const configQuery = getLidarrImportConfigQuery();
-	const save = saveLidarrConfigMutation();
 	const test = testLidarrMutation();
 
-	let draft = $state<LidarrImportConnection>({ url: '', api_key: '' });
-
-	let testResult = $state<LidarrTestResult | null>(null);
-	let saveError = $state<string | null>(null);
-	let seeded = false;
-
-	// Locked until a connection is saved. The masked config getter returns ''
-	// api_key when nothing is stored, so a non-empty pair means configured.
-	// The save mutation invalidates the config query, so this flips live after Save.
-	const unlocked = $derived(
-		(configQuery.data?.url ?? '').trim() !== '' && (configQuery.data?.api_key ?? '') !== ''
-	);
-
-	// Seed the form once from the masked config, then let the user edit freely.
-	$effect(() => {
-		const data = configQuery.data;
-		if (data && !seeded) {
-			draft = { url: data.url, api_key: data.api_key };
-			seeded = true;
+	const section = createSettingsSection(getLidarrImportConfigQuery(), saveLidarrConfigMutation(), {
+		test: async (draft) => {
+			const result = await test.mutateAsync(draft);
+			return { passed: result.valid, message: result.message };
 		}
 	});
 
-	async function runTest() {
-		testResult = null;
-		try {
-			testResult = await test.mutateAsync({ ...draft });
-		} catch {
-			testResult = { valid: false, message: "Couldn't reach Lidarr." };
-		}
-	}
-
-	async function saveConnection() {
-		saveError = null;
-		try {
-			await save.mutateAsync({ ...draft });
-			toastStore.show({ message: 'Lidarr connection saved', type: 'success' });
-			// Re-mask the key in the form so it isn't shown after a save.
-			if (draft.api_key && draft.api_key !== SECRET_MASK) {
-				draft = { ...draft, api_key: SECRET_MASK };
-			}
-			testResult = null;
-		} catch (e: unknown) {
-			saveError = (e as { message?: string })?.message ?? 'Could not save the connection';
-		}
-	}
+	// Locked until a connection is saved. The masked config returns an empty
+	// api_key when nothing is stored, so a non-empty pair means configured.
+	const unlocked = $derived(
+		(section.saved?.url ?? '').trim() !== '' && (section.saved?.api_key ?? '') !== ''
+	);
 </script>
 
 <section class="space-y-4">
@@ -89,55 +54,28 @@
 				</div>
 			</div>
 
-			<div class="space-y-4 border-t border-base-300 p-5">
-				<TextField
-					label="URL"
-					mono
-					placeholder="http://localhost:8686"
-					help="Your Lidarr address. A plain http:// LAN URL is fine."
-					bind:value={draft.url}
-				/>
+			<QueryBoundary query={section} what="the Lidarr connection">
+				{#snippet children(draft)}
+					<div class="space-y-4 border-t border-base-300 p-5">
+						<TextField
+							label="URL"
+							mono
+							placeholder="http://localhost:8686"
+							help="Your Lidarr address. A plain http:// LAN URL is fine."
+							bind:value={draft.url}
+						/>
 
-				<SecretField
-					label="API key"
-					mask={SECRET_MASK}
-					placeholder="Lidarr → Settings → General → Security → API Key"
-					bind:value={draft.api_key}
-				/>
+						<SecretField
+							label="API key"
+							mask={SECRET_MASK}
+							placeholder="Lidarr → Settings → General → Security → API Key"
+							bind:value={draft.api_key}
+						/>
 
-				<div class="flex flex-wrap items-center gap-3">
-					<Button size="sm" onclick={runTest} disabled={test.isPending || !draft.url.trim()}>
-						{test.isPending ? 'Testing…' : 'Test'}
-					</Button>
-					{#if testResult}
-						<span
-							class="flex items-center gap-1.5 text-sm"
-							class:text-success={testResult.valid}
-							class:text-error={!testResult.valid}
-						>
-							{#if testResult.valid}
-								<CircleCheck class="size-4" aria-hidden="true" />
-							{:else}
-								<CircleX class="size-4" aria-hidden="true" />
-							{/if}
-							{testResult.message}
-						</span>
-					{/if}
-					<div class="flex-1"></div>
-					<Button
-						variant="primary"
-						size="sm"
-						onclick={saveConnection}
-						disabled={save.isPending || !draft.url.trim()}
-					>
-						Save
-					</Button>
-				</div>
-
-				{#if saveError}
-					<div class="alert alert-error py-2 text-sm">{saveError}</div>
-				{/if}
-			</div>
+						<SaveBar {...section.bar} disabled={!draft.url.trim()} />
+					</div>
+				{/snippet}
+			</QueryBoundary>
 		</div>
 	</Card>
 

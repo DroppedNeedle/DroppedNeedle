@@ -2,7 +2,7 @@ import { page } from 'vitest/browser';
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
-const saveMutate = vi.fn().mockResolvedValue({ success: true });
+const saveMutate = vi.fn(async (connection: Record<string, unknown>) => ({ ...connection }));
 const testMutate = vi.fn().mockResolvedValue({
 	valid: true,
 	version: '1.32.2.4987',
@@ -37,8 +37,11 @@ describe('SettingsProwlarr.svelte', () => {
 
 	it('shows the untouched masked sentinel is preserved (save sends the sentinel back)', async () => {
 		await render(SettingsProwlarr);
+		await page.getByLabelText('URL').fill('http://prowlarr.lan:9696');
 		await page.getByRole('button', { name: 'Save' }).click();
-		expect(saveMutate).toHaveBeenCalledWith(expect.objectContaining({ api_key: '********' }));
+		expect(saveMutate).toHaveBeenCalledWith(
+			expect.objectContaining({ url: 'http://prowlarr.lan:9696', api_key: '********' })
+		);
 	});
 
 	it('runs Test pre-save and renders the indexer count', async () => {

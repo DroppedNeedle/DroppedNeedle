@@ -56,7 +56,8 @@ vi.mock('$lib/queries/musicbrainz/MusicBrainzMutations.svelte', () => ({
 	activateBrainzMash: () => h.activate
 }));
 
-vi.mock('$lib/queries/QueryClient', () => ({
+vi.mock('$lib/queries/QueryClient', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/queries/QueryClient')>()),
 	invalidateMusicBrainzProviderQueries: h.invalidate
 }));
 
@@ -364,6 +365,7 @@ describe('MusicBrainz four-way source picker', () => {
 		h.save.mutateAsync.mockResolvedValueOnce(next);
 		await render(SettingsMusicBrainz);
 
+		await page.getByRole('spinbutton', { name: 'Rate Limit (requests/sec)' }).fill('2');
 		await page.getByRole('button', { name: 'Test Connection' }).click();
 		await expect.element(page.getByText('MusicBrainz connection verified.')).toBeVisible();
 		await page.getByRole('button', { name: 'Save Settings' }).click();

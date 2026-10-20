@@ -3,15 +3,17 @@
 		getDownloadPolicyQuery,
 		saveDownloadPolicy
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
-	import type { DownloadPolicySettings as DownloadPolicyDto } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
-	import { toastStore } from '$lib/stores/toast';
-	import Button from '$lib/ui/Button.svelte';
+	import type { DownloadPolicySettings as DownloadPolicyView } from '$lib/queries/downloads/DownloadClientsQueries.svelte';
+	import type { DownloadPolicySettings } from '$lib/types';
 	import Card from '$lib/ui/Card.svelte';
-	import { untrack } from 'svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import SaveBar from '$lib/ui/SaveBar.svelte';
+	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
 	import AdvancedBehaviorSection from './acquisition/AdvancedBehaviorSection.svelte';
 	import QualityOrderSection from './acquisition/QualityOrderSection.svelte';
 	import {
+		cloneRecipe,
 		legacyRangeFromRecipe,
 		recipeFingerprint,
 		recipeFromPolicy,
@@ -21,10 +23,6 @@
 	} from './acquisition/qualityRecipeModel';
 	import SearchReviewSection from './acquisition/SearchReviewSection.svelte';
 	import UpgradesSection from './acquisition/UpgradesSection.svelte';
-	import type { DownloadPolicySettings } from '$lib/types';
-
-	const policyQuery = getDownloadPolicyQuery();
-	const save = saveDownloadPolicy();
 
 	const LEGACY_TIER_RANK: Record<string, number> = {
 		low: 0,
@@ -41,217 +39,177 @@
 		return cutoff;
 	}
 
-	let qualityCutoff = $state('lossless');
-	let upgradeAllowed = $state(false);
-	let backgroundScan = $state(false);
-	let qualityRecipe = $state<RecipeDraftEntry[]>([]);
-	let baselineRecipe = $state<RecipeDraftEntry[]>([]);
-	let migrationStatus = $state<
-		'v1' | 'v2' | 'current' | 'projected' | 'non_convertible' | 'invalid' | null
-	>(null);
-	let migrationMessage = $state<string | null>(null);
-	let searchReview = $state('when_unsure');
-	let autoAccept = $state(0.7);
-	let manualMin = $state(0.5);
-	let maxConcurrent = $state(3);
-	let maxFailover = $state(3);
-	let preferredQualityWait = $state(15);
-	let autoRetryEnabled = $state(true);
-	let autoRetryMax = $state(6);
-	let baselineFingerprint = $state<string | null>(null);
-	let seeded = $state(false);
+	// The stored policy plus the editable recipe. Fields this form does not
+	// edit, such as ignored terms and the recycle bin, are sent back as stored.
+	type PolicyDraft = DownloadPolicyView & { recipe: RecipeDraftEntry[] };
 
-	const liveLegacyRange = $derived.by(() => legacyRangeFromRecipe(qualityRecipe));
-	const qualityMin = $derived(liveLegacyRange?.quality_min ?? 'mp3_320');
-	const qualityMax = $derived(liveLegacyRange?.quality_max ?? 'lossless');
-	const recipeValidationError = $derived.by(() => {
-		for (let index = 0; index < qualityRecipe.length; index += 1) {
-			const error = validateRecipeEntry(qualityRecipe[index], qualityRecipe.slice(0, index));
-			if (error) return error;
-		}
-		return null;
-	});
-	const saveDisabled = $derived(
-		save.isPending || qualityRecipe.length === 0 || recipeValidationError !== null
-	);
-
-	$effect(() => {
-		const range = liveLegacyRange;
-		if (!range) return;
-		const clamped = clampCutoff(qualityCutoff, range.quality_min, range.quality_max);
-		if (clamped !== qualityCutoff) qualityCutoff = clamped;
-	});
-
-	$effect(() => {
-		const d = policyQuery.data as DownloadPolicySettings | undefined;
-		if (!d || seeded) return;
-		const migration = recipeFromPolicy(d);
-		untrack(() => {
-			qualityCutoff = d.quality_cutoff;
-			upgradeAllowed = d.upgrade_allowed;
-			backgroundScan = d.background_upgrade_scan_enabled;
-			qualityRecipe = migration.recipe;
-			baselineRecipe = migration.recipe.map((entry) => ({ ...entry }));
-			migrationStatus = migration.status;
-			migrationMessage = migration.message || null;
-			autoAccept = d.preflight_score_auto_accept;
-			manualMin = d.preflight_score_manual_min;
-			maxConcurrent = d.max_concurrent_downloads;
-			maxFailover = d.max_failover_attempts;
-			preferredQualityWait = d.preferred_quality_wait_minutes;
-			autoRetryEnabled = d.auto_retry_enabled;
-			autoRetryMax = d.auto_retry_max_attempts;
-			searchReview = d.search_review ?? 'when_unsure';
-			baselineFingerprint = recipeFingerprint(migration.recipe);
-			seeded = true;
-		});
-	});
-
-	function discardRecipe() {
-		qualityRecipe = baselineRecipe.map((entry) => ({ ...entry }));
+	function toDraft(view: DownloadPolicyView): PolicyDraft {
+		return {
+			...view,
+			search_review: view.search_review ?? 'when_unsure',
+			recipe: recipeFromPolicy(view as DownloadPolicySettings).recipe
+		};
 	}
 
-	async function onSave() {
-		const raw = policyQuery.data;
-		if (!raw) return;
-		if (!qualityRecipe.length) {
-			toastStore.show({
-				message: 'Add at least one quality recipe entry before saving',
-				type: 'error'
-			});
-			return;
-		}
-		const legacyRange = legacyRangeFromRecipe(qualityRecipe);
-		const nextQualityMin = legacyRange?.quality_min ?? qualityMin;
-		const nextQualityMax = legacyRange?.quality_max ?? qualityMax;
-		const nextCutoff = clampCutoff(qualityCutoff, nextQualityMin, nextQualityMax);
-		if (nextCutoff !== qualityCutoff) qualityCutoff = nextCutoff;
-		// The save payload round-trips the full v3 DTO (which carries fields the
-		// recipe model does not know, like ignored terms and the recycle bin)
-		// with the edited fields overlaid.
-		const policy: DownloadPolicyDto = {
-			...raw,
-			quality_min: nextQualityMin,
-			quality_max: nextQualityMax,
-			quality_cutoff: nextCutoff,
-			upgrade_allowed: upgradeAllowed,
-			background_upgrade_scan_enabled: backgroundScan,
+	function toPolicy(draft: PolicyDraft): DownloadPolicyView {
+		const { recipe, ...policy } = draft;
+		const range = legacyRangeFromRecipe(recipe);
+		const qualityMin = range?.quality_min ?? policy.quality_min;
+		const qualityMax = range?.quality_max ?? policy.quality_max;
+		return {
+			...policy,
+			quality_min: qualityMin,
+			quality_max: qualityMax,
+			quality_cutoff: clampCutoff(policy.quality_cutoff, qualityMin, qualityMax),
 			flac_mp3_only: true,
-			preflight_score_auto_accept: autoAccept,
-			preflight_score_manual_min: manualMin,
-			max_concurrent_downloads: maxConcurrent,
-			max_failover_attempts: maxFailover,
-			preferred_quality_wait_minutes: preferredQualityWait,
-			auto_retry_enabled: autoRetryEnabled,
-			auto_retry_max_attempts: autoRetryMax,
-			quality_recipe: stripRecipeIds(qualityRecipe),
-			search_review: searchReview,
+			quality_recipe: stripRecipeIds(recipe),
 			quality_recipe_status: 'v2',
 			quality_recipe_error: null
 		};
-		try {
-			await save.mutateAsync(policy);
-			baselineRecipe = qualityRecipe.map((entry) => ({ ...entry }));
-			baselineFingerprint = recipeFingerprint(qualityRecipe);
-			migrationStatus = 'v2';
-			migrationMessage = null;
-			toastStore.show({
-				message:
-					'Acquisition policy saved for new acquisitions; active tasks keep the recipe they started with.',
-				type: 'success'
-			});
-		} catch {
-			toastStore.show({
-				message: 'Could not save the acquisition policy. Your draft is still here.',
-				type: 'error'
-			});
-		}
 	}
 
-	const queryHasError = $derived(Boolean(policyQuery.isError || policyQuery.error));
+	const policyQuery = getDownloadPolicyQuery();
+	const save = saveDownloadPolicy();
+
+	const section = createSettingsSection<PolicyDraft>(
+		{
+			get data() {
+				return policyQuery.data ? toDraft(policyQuery.data) : undefined;
+			},
+			get isPending() {
+				return policyQuery.isPending;
+			},
+			get isError() {
+				return policyQuery.isError;
+			},
+			get error() {
+				return policyQuery.error;
+			},
+			refetch: () => policyQuery.refetch()
+		},
+		{
+			mutateAsync: async (draft) => toDraft(await save.mutateAsync(toPolicy(draft))),
+			get isPending() {
+				return save.isPending;
+			}
+		},
+		{ savedMessage: 'Saved.' }
+	);
+
+	const migration = $derived(
+		section.saved ? recipeFromPolicy(section.saved as DownloadPolicySettings) : null
+	);
+	const baselineRecipe = $derived(section.saved?.recipe ?? []);
+
+	// A stored policy that is not in the shape this form saves (a projected v1
+	// recipe, or a quality range the recipe no longer implies) can be saved as is.
+	const needsRewrite = $derived.by(() => {
+		const saved = section.saved;
+		if (!saved) return false;
+		if (saved.quality_recipe_status !== 'v2') return true;
+		const range = legacyRangeFromRecipe(saved.recipe);
+		return (
+			range !== null &&
+			(range.quality_min !== saved.quality_min || range.quality_max !== saved.quality_max)
+		);
+	});
+
+	function recipeError(recipe: RecipeDraftEntry[]): string | null {
+		for (let index = 0; index < recipe.length; index += 1) {
+			const error = validateRecipeEntry(recipe[index], recipe.slice(0, index));
+			if (error) return error;
+		}
+		return null;
+	}
+
+	// Keeps the upgrade cutoff inside the range the recipe covers.
+	$effect(() => {
+		const draft = section.draft;
+		if (!draft) return;
+		const range = legacyRangeFromRecipe(draft.recipe);
+		if (!range) return;
+		const clamped = clampCutoff(draft.quality_cutoff, range.quality_min, range.quality_max);
+		if (clamped !== draft.quality_cutoff) draft.quality_cutoff = clamped;
+	});
 </script>
 
-{#if queryHasError && !policyQuery.data}
-	<section class="alert alert-error" role="alert">
-		<div class="min-w-0">
-			<h2 class="font-semibold">Could not load acquisition policy</h2>
-			<p class="text-sm">Your saved policy was not changed. Retry to try loading it again.</p>
-		</div>
-		<Button size="sm" onclick={() => void policyQuery.refetch()}>Retry</Button>
-	</section>
-{:else if policyQuery.isPending || !policyQuery.data}
-	<Card variant="bordered" as="section" aria-busy="true" aria-label="Loading acquisition policy">
-		<div class="flex flex-col gap-4">
-			<div class="skeleton h-5 w-48"></div>
-			<div class="skeleton h-4 w-80 max-w-full"></div>
-			<div class="grid gap-3 sm:grid-cols-2">
-				<div class="skeleton h-20 w-full"></div>
-				<div class="skeleton h-20 w-full"></div>
+<QueryBoundary query={section} what="the acquisition policy">
+	{#snippet loading()}
+		<Card variant="bordered" as="section" aria-busy="true" aria-label="Loading acquisition policy">
+			<div class="flex flex-col gap-4">
+				<div class="skeleton h-5 w-48"></div>
+				<div class="skeleton h-4 w-80 max-w-full"></div>
+				<div class="grid gap-3 sm:grid-cols-2">
+					<div class="skeleton h-20 w-full"></div>
+					<div class="skeleton h-20 w-full"></div>
+				</div>
+				<div class="skeleton h-32 w-full"></div>
 			</div>
-			<div class="skeleton h-32 w-full"></div>
-		</div>
-	</Card>
-{:else}
-	<Card variant="bordered" as="section">
-		<div class="flex min-w-0 flex-col gap-4">
-			<div>
-				<h2 class="font-semibold">Acquisition quality</h2>
-				<p class="text-sm text-base-content/70">
-					Set which complete-album format and quality DroppedNeedle tries first, then arrange the
-					fallbacks. New work uses saved changes; active tasks keep the recipe they started with.
-				</p>
-			</div>
+		</Card>
+	{/snippet}
+	{#snippet children(draft)}
+		{@const range = legacyRangeFromRecipe(draft.recipe)}
+		<Card variant="bordered" as="section">
+			<div class="flex min-w-0 flex-col gap-4">
+				<div>
+					<h2 class="font-semibold">Acquisition quality</h2>
+					<p class="text-sm text-base-content/70">
+						Set which complete-album format and quality DroppedNeedle tries first, then arrange the
+						fallbacks. New work uses saved changes.
+					</p>
+				</div>
 
-			<QualityOrderSection
-				bind:qualityRecipe
-				baseline={baselineFingerprint}
-				{baselineRecipe}
-				migrationStatus={migrationStatus === 'v1' ? 'projected' : migrationStatus}
-				{migrationMessage}
-				saving={save.isPending}
-				ondiscard={discardRecipe}
-			/>
-
-			<div class="divider my-1"></div>
-
-			<div>
-				<h3 class="font-medium">Upgrades</h3>
-				<UpgradesSection
-					bind:upgradeAllowed
-					bind:backgroundScan
-					bind:qualityCutoff
-					minTier={qualityMin}
-					maxTier={qualityMax}
+				<QualityOrderSection
+					bind:qualityRecipe={draft.recipe}
+					baseline={recipeFingerprint(baselineRecipe)}
+					{baselineRecipe}
+					migrationStatus={migration?.status === 'v1' ? 'projected' : (migration?.status ?? null)}
+					migrationMessage={migration?.message || null}
+					saving={section.saving}
+					ondiscard={() => (draft.recipe = cloneRecipe(baselineRecipe))}
 				/>
-			</div>
 
-			<div>
-				<h3 class="font-medium">Picking a copy</h3>
-				<p class="text-xs text-base-content/60">
-					When an album should wait for you to pick which copy to download.
-				</p>
-				<SearchReviewSection bind:searchReview />
-			</div>
+				<div class="divider my-1"></div>
 
-			<AdvancedBehaviorSection
-				bind:autoAccept
-				bind:manualMin
-				bind:maxConcurrent
-				bind:maxFailover
-				bind:preferredQualityWait
-				bind:autoRetryEnabled
-				bind:autoRetryMax
-			/>
-			<div class="flex justify-end border-t border-base-300 pt-4">
-				<Button
-					variant="primary"
-					disabled={saveDisabled}
-					aria-label="Save acquisition policy"
-					onclick={() => void onSave()}
-				>
-					{save.isPending ? 'Saving acquisition policy…' : 'Save acquisition policy'}
-				</Button>
+				<div>
+					<h3 class="font-medium">Upgrades</h3>
+					<UpgradesSection
+						bind:upgradeAllowed={draft.upgrade_allowed}
+						bind:backgroundScan={draft.background_upgrade_scan_enabled}
+						bind:qualityCutoff={draft.quality_cutoff}
+						minTier={range?.quality_min ?? 'mp3_320'}
+						maxTier={range?.quality_max ?? 'lossless'}
+					/>
+				</div>
+
+				<div>
+					<h3 class="font-medium">Picking a copy</h3>
+					<p class="text-xs text-base-content/60">
+						When an album should wait for you to pick which copy to download.
+					</p>
+					<SearchReviewSection bind:searchReview={draft.search_review} />
+				</div>
+
+				<AdvancedBehaviorSection
+					bind:autoAccept={draft.preflight_score_auto_accept}
+					bind:manualMin={draft.preflight_score_manual_min}
+					bind:maxConcurrent={draft.max_concurrent_downloads}
+					bind:maxFailover={draft.max_failover_attempts}
+					bind:preferredQualityWait={draft.preferred_quality_wait_minutes}
+					bind:autoRetryEnabled={draft.auto_retry_enabled}
+					bind:autoRetryMax={draft.auto_retry_max_attempts}
+				/>
+				<!-- The recipe editor above has its own Discard, so the bar shows none. -->
+				<div class="border-t border-base-300 pt-4">
+					<SaveBar
+						{...section.bar}
+						dirty={section.dirty || needsRewrite}
+						ondiscard={undefined}
+						disabled={draft.recipe.length === 0 || recipeError(draft.recipe) !== null}
+						saveLabel="Save acquisition policy"
+					/>
+				</div>
 			</div>
-		</div>
-	</Card>
-{/if}
+		</Card>
+	{/snippet}
+</QueryBoundary>

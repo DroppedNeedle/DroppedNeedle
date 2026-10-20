@@ -11,63 +11,30 @@
 		saveConnectAppsSettings
 	} from '$lib/queries/connect-apps/ConnectAppsMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import type { AdminAppPasswordView, ConnectAppsSettings } from '$lib/types';
+	import type { AdminAppPasswordView } from '$lib/types';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
 	import CardTitle from '$lib/ui/CardTitle.svelte';
 	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
 	import NumberField from '$lib/ui/NumberField.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
+	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 
-	const settingsQuery = getConnectAppsSettingsQuery();
 	const rosterQuery = getAdminAppPasswordsQuery();
-	const save = saveConnectAppsSettings();
 	const adminRevoke = adminRevokeAppPassword();
 
-	// seeded once so a background refetch never clobbers in-flight edits
-	let subsonicEnabled = $state(false);
-	let jellyfinEnabled = $state(false);
-	let transcodingEnabled = $state(true);
-	let transcodeFormat = $state<'mp3' | 'opus'>('mp3');
-	let transcodeMaxKbps = $state(320);
-	let seeded = $state(false);
-
-	let pendingRevoke = $state<AdminAppPasswordView | null>(null);
-
-	$effect(() => {
-		const d = settingsQuery.data;
-		if (d && !seeded) {
-			subsonicEnabled = d.subsonic_enabled;
-			jellyfinEnabled = d.jellyfin_enabled;
-			transcodingEnabled = d.transcoding_enabled;
-			transcodeFormat = d.transcode_default_format;
-			transcodeMaxKbps = d.transcode_max_bitrate_kbps;
-			seeded = true;
-		}
+	const section = createSettingsSection(getConnectAppsSettingsQuery(), saveConnectAppsSettings(), {
+		// A cleared number field binds to null; never send null.
+		normalize: (draft) => ({
+			...draft,
+			transcode_max_bitrate_kbps: draft.transcode_max_bitrate_kbps ?? 320
+		})
 	});
 
-	function currentSettings(): ConnectAppsSettings {
-		return {
-			subsonic_enabled: subsonicEnabled,
-			jellyfin_enabled: jellyfinEnabled,
-			transcoding_enabled: transcodingEnabled,
-			transcode_default_format: transcodeFormat,
-			// a cleared number input binds to null; fall back so we never PUT null
-			transcode_max_bitrate_kbps: transcodeMaxKbps ?? 320,
-			advertise_server_name: settingsQuery.data?.advertise_server_name ?? 'DroppedNeedle',
-			advertise_server_version: settingsQuery.data?.advertise_server_version ?? '10.10.6'
-		};
-	}
-
-	async function handleSave() {
-		try {
-			await save.mutateAsync(currentSettings());
-			toastStore.show({ message: 'Connect Apps settings saved', type: 'success' });
-		} catch {
-			toastStore.show({ message: 'Could not save settings', type: 'error' });
-		}
-	}
+	let pendingRevoke = $state<AdminAppPasswordView | null>(null);
 
 	async function confirmRevoke() {
 		const target = pendingRevoke;
@@ -110,60 +77,53 @@
 		</Card>
 	</header>
 
-	{#if settingsQuery.isLoading}
-		<div class="skeleton h-56 w-full rounded-box"></div>
-	{:else if settingsQuery.isError}
-		<div class="alert alert-error" role="alert">
-			<TriangleAlert class="h-5 w-5" aria-hidden="true" />
-			<span>Could not load Connect Apps settings.</span>
-		</div>
-	{:else}
-		<Card variant="bordered">
-			{#snippet header()}
-				<CardTitle as="h3" class="text-base">Protocols</CardTitle>
-			{/snippet}
-			<div class="mt-3 flex flex-col gap-5">
-				<ToggleRow
-					label="OpenSubsonic API"
-					description="Symfonium, Feishin, Amperfy and other Subsonic apps."
-					bind:checked={subsonicEnabled}
-				/>
+	<Card variant="bordered">
+		{#snippet header()}
+			<CardTitle as="h3" class="text-base">Protocols</CardTitle>
+		{/snippet}
+		<QueryBoundary query={section} what="the Connect Apps settings">
+			{#snippet children(draft)}
+				<div class="mt-3 flex flex-col gap-5">
+					<ToggleRow
+						label="OpenSubsonic API"
+						description="Symfonium, Feishin, Amperfy and other Subsonic apps."
+						bind:checked={draft.subsonic_enabled}
+					/>
 
-				<ToggleRow
-					label="Jellyfin-compatible API"
-					description="Finamp, Jellify, Manet Music and Symfonium's Jellyfin mode."
-					bind:checked={jellyfinEnabled}
-				/>
+					<ToggleRow
+						label="Jellyfin-compatible API"
+						description="Finamp, Jellify, Manet Music and Symfonium's Jellyfin mode."
+						bind:checked={draft.jellyfin_enabled}
+					/>
 
-				<div class="divider my-0"></div>
+					<div class="divider my-0"></div>
 
-				<ToggleRow label="On-the-fly transcoding" bind:checked={transcodingEnabled} />
+					<ToggleRow label="On-the-fly transcoding" bind:checked={draft.transcoding_enabled} />
 
-				{#if transcodingEnabled}
-					<div class="grid gap-4 sm:grid-cols-2">
-						<SelectField
-							label="Default format"
-							bind:value={transcodeFormat}
-							options={[
-								{ value: 'mp3', label: 'MP3' },
-								{ value: 'opus', label: 'Opus' }
-							]}
-						/>
-						<NumberField
-							label="Max bitrate (kbps)"
-							min={32}
-							max={1411}
-							bind:value={transcodeMaxKbps}
-						/>
-					</div>
-				{/if}
+					{#if draft.transcoding_enabled}
+						<div class="grid gap-4 sm:grid-cols-2">
+							<SelectField
+								label="Default format"
+								bind:value={draft.transcode_default_format}
+								options={[
+									{ value: 'mp3', label: 'MP3' },
+									{ value: 'opus', label: 'Opus' }
+								]}
+							/>
+							<NumberField
+								label="Max bitrate (kbps)"
+								min={32}
+								max={1411}
+								bind:value={draft.transcode_max_bitrate_kbps}
+							/>
+						</div>
+					{/if}
 
-				<div class="flex justify-end">
-					<Button variant="accent" loading={save.isPending} onclick={handleSave}>Save</Button>
+					<SaveBar {...section.bar} />
 				</div>
-			</div>
-		</Card>
-	{/if}
+			{/snippet}
+		</QueryBoundary>
+	</Card>
 
 	<!-- oversight: every user's connected apps (metadata only, never the secret) -->
 	<Card variant="bordered">

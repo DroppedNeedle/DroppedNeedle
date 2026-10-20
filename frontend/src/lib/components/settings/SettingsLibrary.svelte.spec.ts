@@ -245,6 +245,7 @@ describe('SettingsLibrary target policy UI', () => {
 		h.impactResult = { ...h.impactResult, stale: true };
 		h.impact.mockResolvedValue(h.impactResult);
 		await render(SettingsLibrary);
+		await page.getByRole('combobox').first().selectOptions('excluded');
 		await page.getByRole('button', { name: 'Preview and save settings' }).click();
 		expect(h.save).not.toHaveBeenCalled();
 		expect(h.requestRun).not.toHaveBeenCalled();
@@ -253,12 +254,12 @@ describe('SettingsLibrary target policy UI', () => {
 		);
 	});
 
-	it('keeps saving disabled until the settings have loaded and seeded', async () => {
-		h.settings = { data: undefined, isLoading: false, isError: false };
+	it('offers no save until the settings have loaded', async () => {
+		h.settings = { data: undefined, isPending: true, isError: false };
 		await render(SettingsLibrary);
 		await expect
 			.element(page.getByRole('button', { name: 'Preview and save settings' }))
-			.toBeDisabled();
+			.not.toBeInTheDocument();
 		expect(h.impact).not.toHaveBeenCalled();
 		expect(h.save).not.toHaveBeenCalled();
 	});
@@ -304,7 +305,7 @@ describe('SettingsLibrary target policy UI', () => {
 			.toBeVisible();
 		await expect
 			.element(page.getByRole('button', { name: 'Preview and save settings' }))
-			.toBeDisabled();
+			.not.toBeInTheDocument();
 		expect(h.impact).not.toHaveBeenCalled();
 	});
 });

@@ -25,17 +25,19 @@
 	import SettingsLyrics from './SettingsLyrics.svelte';
 	import Button from '$lib/ui/Button.svelte';
 	import Card from '$lib/ui/Card.svelte';
-	import CardActions from '$lib/ui/CardActions.svelte';
 	import Field from '$lib/ui/Field.svelte';
 	import Input from '$lib/ui/Input.svelte';
+	import NumberField from '$lib/ui/NumberField.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import SaveBar from '$lib/ui/SaveBar.svelte';
 	import SecretField from '$lib/ui/SecretField.svelte';
 	import TextAreaField from '$lib/ui/TextAreaField.svelte';
 	import ToggleRow from '$lib/ui/ToggleRow.svelte';
+	import { createSettingsSection } from '$lib/ui/settingsSection.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';
 	import type {
-		LibraryRootSettings,
 		TargetLibrarySettingsResponse,
 		TypedLibrarySettings
 	} from '$lib/queries/library/LibraryOperationsTypes';
@@ -51,11 +53,6 @@
 	const savePolicy = saveDownloadPolicy();
 	const statsQuery = getLibraryStatsQuery();
 
-	let namingScript = $state('');
-	let acoustidKey = $state('');
-	let roots = $state<LibraryRootSettings[]>([]);
-	let libraryEnabled = $state(true);
-	let seeded = $state(false);
 	let savedSettings = $state<TargetLibrarySettingsResponse | null>(null);
 	let impactDialog: HTMLDialogElement;
 	let applyDialog: HTMLDialogElement;
@@ -67,46 +64,94 @@
 	let applyOpener: HTMLElement | null = null;
 	let restoreOpener: HTMLElement | null = null;
 	let restorePaths = $state<Record<string, string>>({});
-	let maxLibraryGb = $state<number | null>(0);
-	let capSeeded = $state(false);
 
-	const restorableRoots = $derived(restorableQuery.data?.restorable_roots ?? []);
-
-	$effect(() => {
-		const data = settingsQuery.data;
-		if (data && !seeded) {
-			namingScript = data.naming_script;
-			acoustidKey = data.acoustid_api_key;
-			roots = data.library_roots.map((root) => ({
+	function toForm(data: TargetLibrarySettingsResponse): TypedLibrarySettings {
+		return {
+			library_roots: data.library_roots.map((root) => ({
 				...root,
 				rules: root.rules.map((rule) => ({ ...rule }))
-			}));
-			libraryEnabled = data.enabled ?? true;
-			seeded = true;
-		}
-	});
+			})),
+			staging_path: data.staging_path,
+			naming_script: data.naming_script,
+			acoustid_api_key: data.acoustid_api_key,
+			enabled: data.enabled ?? true
+		};
+	}
 
-	$effect(() => {
-		const policy = policyQuery.data;
-		if (policy && !capSeeded) {
-			maxLibraryGb = policy.max_library_size_gb;
-			capSeeded = true;
+	// Saving goes through a preview first; the save itself sends the revision
+	// the preview was made against.
+	const section = createSettingsSection<TypedLibrarySettings>(
+		{
+			get data() {
+				return settingsQuery.data ? toForm(settingsQuery.data) : undefined;
+			},
+			get isPending() {
+				return settingsQuery.isPending;
+			},
+			get isError() {
+				return settingsQuery.isError;
+			},
+			get error() {
+				return settingsQuery.error;
+			},
+			refetch: () => settingsQuery.refetch()
+		},
+		{
+			mutateAsync: async (form) => {
+				savedSettings = await save.mutateAsync({
+					settings: form,
+					expected_policy_revision: impact.data?.current_policy_revision ?? ''
+				});
+				return toForm(savedSettings);
+			},
+			get isPending() {
+				return save.isPending;
+			}
 		}
-	});
+	);
 
+	// The storage cap is one field of the download policy.
+	const cap = createSettingsSection<{ max_library_size_gb: number | null }>(
+		{
+			get data() {
+				const policy = policyQuery.data;
+				return policy ? { max_library_size_gb: policy.max_library_size_gb } : undefined;
+			},
+			get isPending() {
+				return policyQuery.isPending;
+			},
+			get isError() {
+				return policyQuery.isError;
+			},
+			get error() {
+				return policyQuery.error;
+			},
+			refetch: () => policyQuery.refetch()
+		},
+		{
+			mutateAsync: async (form) => {
+				const policy = policyQuery.data;
+				if (!policy) throw new Error('The download policy has not loaded.');
+				const saved = await savePolicy.mutateAsync({
+					...policy,
+					max_library_size_gb: form.max_library_size_gb ?? 0
+				});
+				return { max_library_size_gb: saved.max_library_size_gb };
+			},
+			get isPending() {
+				return savePolicy.isPending;
+			}
+		},
+		{ normalize: (form) => ({ max_library_size_gb: form.max_library_size_gb ?? 0 }) }
+	);
+
+	const restorableRoots = $derived(restorableQuery.data?.restorable_roots ?? []);
 	const currentSettings = $derived(savedSettings ?? settingsQuery.data);
+	const roots = $derived(section.draft?.library_roots ?? []);
+	const libraryEnabled = $derived(section.draft?.enabled ?? true);
 	const usedGb = $derived((statsQuery.data?.total_size_bytes ?? 0) / 1024 ** 3);
-	const capPercent = $derived(
-		maxLibraryGb && maxLibraryGb > 0 ? Math.min(100, (usedGb / maxLibraryGb) * 100) : 0
-	);
-	const hasKey = $derived(Boolean(acoustidKey));
-	const settingsBlockedMessage = $derived(
-		!settingsQuery.isLoading && !seeded
-			? authStore.isAdmin
-				? 'Library settings could not be loaded yet. Reload the page to retry.'
-				: 'Sign in as an administrator to change library settings.'
-			: null
-	);
+	const maxLibraryGb = $derived(cap.draft?.max_library_size_gb ?? 0);
+	const capPercent = $derived(maxLibraryGb > 0 ? Math.min(100, (usedGb / maxLibraryGb) * 100) : 0);
 	const impactErrorMessage = $derived.by((): string | null => {
 		if (!impact.isError) return null;
 		const error = impact.error;
@@ -116,23 +161,14 @@
 		return 'Could not reach the server to preview these settings. Check your connection and try again. Nothing has been saved.';
 	});
 
-	function draft(): TypedLibrarySettings {
-		return {
-			library_roots: roots,
-			staging_path: settingsQuery.data?.staging_path ?? '',
-			naming_script: namingScript,
-			acoustid_api_key: acoustidKey,
-			enabled: libraryEnabled
-		};
-	}
-
-	async function previewSave(event: MouseEvent): Promise<void> {
-		if (!seeded) return;
-		impactOpener = event.currentTarget as HTMLElement;
+	async function previewSave(): Promise<void> {
+		const draft = section.draft;
+		if (!draft) return;
+		impactOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		let result;
 		try {
 			result = await impact.mutateAsync({
-				settings: draft(),
+				settings: $state.snapshot(draft) as TypedLibrarySettings,
 				expected_policy_revision: currentSettings?.policy_revision ?? null
 			});
 		} catch {
@@ -150,14 +186,9 @@
 	}
 
 	async function confirmSave(): Promise<void> {
-		const expectedRevision = impact.data?.current_policy_revision;
-		if (!expectedRevision) return;
-		const result = await save.mutateAsync({
-			settings: draft(),
-			expected_policy_revision: expectedRevision
-		});
-		savedSettings = result;
-		impactDialog.close();
+		if (!impact.data?.current_policy_revision) return;
+		await section.save();
+		if (!save.error) impactDialog.close();
 	}
 
 	function openRestore(event: MouseEvent): void {
@@ -169,15 +200,16 @@
 
 	async function confirmRestore(): Promise<void> {
 		const revision = restorableQuery.data?.policy_revision;
-		if (!revision) return;
+		const draft = section.draft;
+		if (!revision || !draft) return;
 		try {
 			const result = await restore.mutateAsync({
 				expected_policy_revision: revision,
 				paths: restorePaths
 			});
-			const draftIds = new Set(roots.map((root) => root.id));
-			roots = [
-				...roots,
+			const draftIds = new Set(draft.library_roots.map((root) => root.id));
+			draft.library_roots = [
+				...draft.library_roots,
 				...result.library_roots
 					.filter((root) => !draftIds.has(root.id))
 					.map((root) => ({
@@ -227,17 +259,6 @@
 			expected_policy_revision: revision
 		});
 	}
-
-	async function handleSaveCap(): Promise<void> {
-		const policy = policyQuery.data;
-		if (!policy) return;
-		try {
-			await savePolicy.mutateAsync({ ...policy, max_library_size_gb: maxLibraryGb ?? 0 });
-			toastStore.show({ message: 'Storage cap saved', type: 'success' });
-		} catch {
-			toastStore.show({ message: 'Could not save the storage cap', type: 'error' });
-		}
-	}
 </script>
 
 <div class="space-y-6">
@@ -248,247 +269,236 @@
 		</p>
 	</div>
 
-	{#if settingsQuery.isLoading}
-		<div class="space-y-3">
-			<div class="skeleton h-48 rounded-box"></div>
-			<div class="skeleton h-28 rounded-box"></div>
-		</div>
-	{:else if settingsQuery.isError && !settingsQuery.data}
-		<div class="alert alert-error">
-			<span
-				>Could not load library settings.{#if settingsQuery.error?.message}
-					{settingsQuery.error.message}{/if}</span
+	{#if settingsQuery.isError && settingsQuery.data}
+		<div class="alert alert-warning text-sm">
+			<TriangleAlert class="h-4 w-4" /><span
+				>Could not refresh library settings. You are seeing the last loaded values; saving still
+				checks for conflicting changes.</span
 			>
 		</div>
-	{:else}
-		{#if settingsQuery.isError}
-			<div class="alert alert-warning text-sm">
-				<TriangleAlert class="h-4 w-4" /><span
-					>Could not refresh library settings. You are seeing the last loaded values; saving still
-					checks for conflicting changes.</span
-				>
-			</div>
-		{/if}
-		<header class="library-scanning-header">
-			<div class="library-scanning-mark"><ScanSearch class="h-6 w-6" /></div>
-			<div>
-				<p class="library-scanning-kicker">Read-only catalog work</p>
-				<h2 class="font-display text-xl font-semibold">Scanning &amp; identification</h2>
-				<p class="mt-1 text-sm text-base-content/65">
-					Reads files and updates DroppedNeedle. It does not change your music files.
+	{/if}
+	<header class="library-scanning-header">
+		<div class="library-scanning-mark"><ScanSearch class="h-6 w-6" /></div>
+		<div>
+			<p class="library-scanning-kicker">Read-only catalog work</p>
+			<h2 class="font-display text-xl font-semibold">Scanning &amp; identification</h2>
+			<p class="mt-1 text-sm text-base-content/65">
+				Reads files and updates DroppedNeedle. It does not change your music files.
+			</p>
+		</div>
+	</header>
+
+	{#if section.draft && !section.draft.acoustid_api_key}
+		<div class="alert alert-warning">
+			<TriangleAlert class="h-5 w-5" /><span class="text-sm"
+				>No AcoustID key - fingerprint identification is off for files without MusicBrainz tags. Add
+				a key to enable it.</span
+			>
+		</div>
+	{/if}
+
+	{#if currentSettings?.reconciliation_required}
+		<div class="alert alert-warning items-start">
+			<TriangleAlert class="mt-0.5 h-5 w-5" />
+			<div class="min-w-0 flex-1">
+				<strong>Awaiting reconciliation</strong>
+				<p class="text-sm">
+					The saved policies already prevent prohibited new work. Apply the changes when you are
+					ready to update existing catalog availability.
 				</p>
 			</div>
-		</header>
+			<Button
+				variant="warning"
+				size="sm"
+				loading={applyPreview.isPending}
+				onclick={(event: MouseEvent) => void previewApply(event)}>Apply changes...</Button
+			>
+		</div>
+	{/if}
+	{#if applyPreview.isError}
+		<div class="alert alert-error text-sm">
+			Could not preview policy reconciliation. No scan was started.
+		</div>
+	{/if}
 
-		{#if !hasKey}
-			<div class="alert alert-warning">
-				<TriangleAlert class="h-5 w-5" /><span class="text-sm"
-					>No AcoustID key - fingerprint identification is off for files without MusicBrainz tags.
-					Add a key to enable it.</span
-				>
+	{#if restorableRoots.length > 0}
+		<div class="alert alert-warning items-start">
+			<TriangleAlert class="mt-0.5 h-5 w-5" />
+			<div class="min-w-0 flex-1">
+				<strong>Library roots were removed</strong>
+				<p class="text-sm">
+					This page is missing {restorableRoots.length} library
+					{restorableRoots.length === 1 ? 'root' : 'roots'} that the catalog still uses. Restore
+					{restorableRoots.length === 1 ? 'it' : 'them'} to keep your library working without a rescan.
+				</p>
 			</div>
-		{/if}
+			<Button
+				variant="warning"
+				size="sm"
+				loading={restore.isPending}
+				onclick={(event: MouseEvent) => openRestore(event)}>Restore roots...</Button
+			>
+		</div>
+	{/if}
 
-		{#if currentSettings?.reconciliation_required}
-			<div class="alert alert-warning items-start">
-				<TriangleAlert class="mt-0.5 h-5 w-5" />
-				<div class="min-w-0 flex-1">
-					<strong>Awaiting reconciliation</strong>
-					<p class="text-sm">
-						The saved policies already prevent prohibited new work. Apply the changes when you are
-						ready to update existing catalog availability.
-					</p>
-				</div>
-				<Button
-					variant="warning"
-					size="sm"
-					loading={applyPreview.isPending}
-					onclick={(event: MouseEvent) => void previewApply(event)}>Apply changes...</Button
-				>
-			</div>
-		{/if}
-		{#if applyPreview.isError}
-			<div class="alert alert-error text-sm">
-				Could not preview policy reconciliation. No scan was started.
-			</div>
-		{/if}
-
-		{#if restorableRoots.length > 0}
-			<div class="alert alert-warning items-start">
-				<TriangleAlert class="mt-0.5 h-5 w-5" />
-				<div class="min-w-0 flex-1">
-					<strong>Library roots were removed</strong>
-					<p class="text-sm">
-						This page is missing {restorableRoots.length} library
-						{restorableRoots.length === 1 ? 'root' : 'roots'} that the catalog still uses. Restore
-						{restorableRoots.length === 1 ? 'it' : 'them'} to keep your library working without a rescan.
-					</p>
-				</div>
-				<Button
-					variant="warning"
-					size="sm"
-					loading={restore.isPending}
-					onclick={(event: MouseEvent) => openRestore(event)}>Restore roots...</Button
-				>
-			</div>
-		{/if}
-
-		<Card as="section" variant="bordered">
-			<div class="flex flex-col gap-6">
-				<ToggleRow
-					label="Local library"
-					description="Scanning, identification, and file organization run while this is on. Turn it off to pause the library without removing your roots. Existing catalog data and playback keep working."
-					bind:checked={libraryEnabled}
-				/>
-
-				<div class="divider my-0"></div>
-
-				<LibraryRootPolicyEditor {roots} onchange={(value) => (roots = value)} />
-
-				<div class="divider my-0"></div>
-
-				<section class="space-y-2">
-					<TextAreaField
-						label="Import naming script"
-						help="Where downloads and dropped files are filed. Same script language as Library Management."
-						mono
-						bind:value={namingScript}
-					/>
-					<LibraryNamingExample example={currentSettings?.naming_example ?? null} />
-				</section>
-
-				<div class="divider my-0"></div>
-
-				<SecretField
-					label="AcoustID API key"
-					mask={SECRET_MASK}
-					placeholder="Enter AcoustID API key"
-					help="Used to identify files that do not contain MusicBrainz tags."
-					bind:value={acoustidKey}
-				/>
-
-				{#if settingsBlockedMessage}
-					<p class="text-sm text-warning">{settingsBlockedMessage}</p>
-				{/if}
-				<CardActions
-					class="items-center justify-between gap-3 border-t border-base-content/10 pt-5"
-				>
-					{#if impactErrorMessage}
-						<p class="text-sm text-error">{impactErrorMessage}</p>
-					{:else}
-						<span></span>
-					{/if}
-					<Button
-						variant="primary"
-						loading={impact.isPending || save.isPending}
-						disabled={!seeded}
-						onclick={(event: MouseEvent) => void previewSave(event)}
-						>Preview and save settings</Button
-					>
-				</CardActions>
-			</div>
-		</Card>
-
-		<Card as="section" variant="bordered">
-			<div class="flex flex-col gap-4">
-				<div>
-					<h3 class="font-semibold">Storage cap</h3>
-					<p class="mt-1 text-xs text-base-content/60">
-						Block new downloads once the library reaches this size. 0 = unlimited. Nothing is
-						deleted, and quality upgrades are exempt because they replace existing files.
-					</p>
-				</div>
-				<div class="flex flex-wrap items-end gap-3">
-					<Field label="Maximum library size (GB)">
-						{#snippet children(control)}
-							<Input
-								{...control}
-								label="Maximum library size (GB)"
-								type="number"
-								size="sm"
-								min="0"
-								max="1000000"
-								class="w-40"
-								bind:value={maxLibraryGb}
-							/>
-						{/snippet}
-					</Field>
-					<Button
-						variant="primary"
-						size="sm"
-						class="mb-1"
-						loading={savePolicy.isPending}
-						disabled={!capSeeded}
-						onclick={() => void handleSaveCap()}>Save cap</Button
-					>
-				</div>
-				{#if maxLibraryGb && maxLibraryGb > 0}<div class="max-w-md space-y-1">
-						<progress
-							class="progress w-full {capPercent >= 100
-								? 'progress-error'
-								: capPercent >= 85
-									? 'progress-warning'
-									: 'progress-primary'}"
-							value={capPercent}
-							max="100"
-						></progress>
-						<p class="text-xs text-base-content/60">
-							{usedGb.toFixed(1)} GB of {maxLibraryGb} GB used{#if capPercent >= 100}
-								- new downloads are blocked{/if}
-						</p>
-					</div>{:else}<p class="text-xs text-base-content/40">
-						Library size: {usedGb.toFixed(1)} GB (no cap set)
-					</p>{/if}
-			</div>
-		</Card>
-
-		<Card as="section" variant="bordered">
-			<div class="flex flex-col gap-5">
-				<section class="space-y-2">
-					<h3 class="font-semibold">Automatic scanning</h3>
-					<p class="text-xs text-base-content/60">
-						How often DroppedNeedle scans your library for new and changed files.
-					</p>
-					<LibraryScanScheduleControl />
-				</section>
-				<div class="divider my-0"></div>
-				<section class="space-y-2">
-					<h3 class="font-semibold">Manual scan</h3>
-					<Button
-						variant="outline"
-						size="sm"
-						loading={requestRun.isPending}
-						disabled={roots.length === 0 || !libraryEnabled}
-						onclick={() => void scanForChanges()}>Scan for changes</Button
-					>
-					{#if !libraryEnabled}<p class="text-xs text-warning">
-							The local library is disabled. Re-enable it before starting a scan.
-						</p>{/if}
-				</section>
-			</div>
-		</Card>
-
+	<Card as="section" variant="bordered">
 		{#if authStore.isAdmin}
-			<SettingsLyrics />
-			<section class="management-settings-portal">
-				<div class="management-write-mark"><FolderCog class="h-6 w-6" /></div>
-				<div class="min-w-0 flex-1">
-					<p class="management-kicker">Administrator workspace</p>
-					<h3 class="font-display text-lg font-semibold">Organize files</h3>
-					<p class="mt-1 text-sm text-base-content/60">
-						Profiles, automatic write access, dry runs, and recovery live in the Library Management
-						workspace under the Automation tab.
-					</p>
-				</div>
-				<Button
-					variant="warning"
-					size="sm"
-					href={withBasePath('/library/management?tab=automation')}
-					icon={ArrowRight}
-					iconPosition="end">Open Organize files settings</Button
-				>
-			</section>
+			<QueryBoundary query={section} what="the library settings">
+				{#snippet loading()}
+					<div class="space-y-3">
+						<div class="skeleton h-48 rounded-box"></div>
+						<div class="skeleton h-28 rounded-box"></div>
+					</div>
+				{/snippet}
+				{#snippet children(draft)}
+					<div class="flex flex-col gap-6">
+						<ToggleRow
+							label="Local library"
+							description="Scanning, identification, and file organization run while this is on. Turn it off to pause the library without removing your roots. Existing catalog data and playback keep working."
+							bind:checked={draft.enabled}
+						/>
+
+						<div class="divider my-0"></div>
+
+						<LibraryRootPolicyEditor
+							roots={draft.library_roots}
+							onchange={(value) => (draft.library_roots = value)}
+						/>
+
+						<div class="divider my-0"></div>
+
+						<section class="space-y-2">
+							<TextAreaField
+								label="Import naming script"
+								help="Where downloads and dropped files are filed. Same script language as Library Management."
+								mono
+								bind:value={draft.naming_script}
+							/>
+							<LibraryNamingExample example={currentSettings?.naming_example ?? null} />
+						</section>
+
+						<div class="divider my-0"></div>
+
+						<SecretField
+							label="AcoustID API key"
+							mask={SECRET_MASK}
+							placeholder="Enter AcoustID API key"
+							help="Used to identify files that do not contain MusicBrainz tags."
+							bind:value={draft.acoustid_api_key}
+						/>
+
+						<div class="space-y-2 border-t border-base-content/10 pt-5">
+							{#if impactErrorMessage}
+								<p class="text-sm text-error">{impactErrorMessage}</p>
+							{/if}
+							<SaveBar
+								{...section.bar}
+								onsave={previewSave}
+								saving={impact.isPending || section.saving}
+								saveLabel="Preview and save settings"
+							/>
+						</div>
+					</div>
+				{/snippet}
+			</QueryBoundary>
+		{:else}
+			<p class="text-sm text-warning">Sign in as an administrator to change library settings.</p>
 		{/if}
+	</Card>
+
+	<Card as="section" variant="bordered">
+		<div class="flex flex-col gap-4">
+			<div>
+				<h3 class="font-semibold">Storage cap</h3>
+				<p class="mt-1 text-xs text-base-content/60">
+					Block new downloads once the library reaches this size. 0 = unlimited. Nothing is deleted,
+					and quality upgrades are exempt because they replace existing files.
+				</p>
+			</div>
+			<QueryBoundary query={cap} what="the storage cap">
+				{#snippet children(draft)}
+					<div class="flex flex-col gap-3">
+						<div class="max-w-xs">
+							<NumberField
+								label="Maximum library size (GB)"
+								size="sm"
+								min={0}
+								max={1000000}
+								bind:value={
+									() => draft.max_library_size_gb ?? 0, (next) => (draft.max_library_size_gb = next)
+								}
+							/>
+						</div>
+						<SaveBar {...cap.bar} saveLabel="Save cap" />
+					</div>
+				{/snippet}
+			</QueryBoundary>
+			{#if maxLibraryGb > 0}<div class="max-w-md space-y-1">
+					<progress
+						class="progress w-full {capPercent >= 100
+							? 'progress-error'
+							: capPercent >= 85
+								? 'progress-warning'
+								: 'progress-primary'}"
+						value={capPercent}
+						max="100"
+					></progress>
+					<p class="text-xs text-base-content/60">
+						{usedGb.toFixed(1)} GB of {maxLibraryGb} GB used{#if capPercent >= 100}
+							- new downloads are blocked{/if}
+					</p>
+				</div>{:else}<p class="text-xs text-base-content/40">
+					Library size: {usedGb.toFixed(1)} GB (no cap set)
+				</p>{/if}
+		</div>
+	</Card>
+
+	<Card as="section" variant="bordered">
+		<div class="flex flex-col gap-5">
+			<section class="space-y-2">
+				<h3 class="font-semibold">Automatic scanning</h3>
+				<p class="text-xs text-base-content/60">
+					How often DroppedNeedle scans your library for new and changed files.
+				</p>
+				<LibraryScanScheduleControl />
+			</section>
+			<div class="divider my-0"></div>
+			<section class="space-y-2">
+				<h3 class="font-semibold">Manual scan</h3>
+				<Button
+					variant="outline"
+					size="sm"
+					loading={requestRun.isPending}
+					disabled={roots.length === 0 || !libraryEnabled}
+					onclick={() => void scanForChanges()}>Scan for changes</Button
+				>
+				{#if !libraryEnabled}<p class="text-xs text-warning">
+						The local library is disabled. Re-enable it before starting a scan.
+					</p>{/if}
+			</section>
+		</div>
+	</Card>
+
+	{#if authStore.isAdmin}
+		<SettingsLyrics />
+		<section class="management-settings-portal">
+			<div class="management-write-mark"><FolderCog class="h-6 w-6" /></div>
+			<div class="min-w-0 flex-1">
+				<p class="management-kicker">Administrator workspace</p>
+				<h3 class="font-display text-lg font-semibold">Organize files</h3>
+				<p class="mt-1 text-sm text-base-content/60">
+					Profiles, automatic write access, dry runs, and recovery live in the Library Management
+					workspace under the Automation tab.
+				</p>
+			</div>
+			<Button
+				variant="warning"
+				size="sm"
+				href={withBasePath('/library/management?tab=automation')}
+				icon={ArrowRight}
+				iconPosition="end">Open Organize files settings</Button
+			>
+		</section>
 	{/if}
 </div>
 
