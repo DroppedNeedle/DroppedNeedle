@@ -235,7 +235,7 @@ fn managed_album(v2_root: &Path, alice: &str) -> PathBuf {
     music
 }
 
-async fn drain_scans(library: &LibrarySetup) {
+pub(crate) async fn drain_scans(library: &LibrarySetup) {
     use droppedneedle_library::scan::{ScanKind, ScanRequest, ScanTrigger};
     let registry = library.live_registry();
     library

@@ -20,6 +20,7 @@ use sha2::{Digest as _, Sha256};
 
 use crate::export::envelope::LeftBehind;
 use crate::export::error::ExportError;
+use crate::export::sections::library::ARTIST_ALIASES;
 use crate::export::sections::{ALL, Column, FileSet, LIVE_USER, Source, TableSection, V2Value};
 
 /// What building the bundle produced.
@@ -31,6 +32,8 @@ pub struct BundleOutcome {
     pub left_behind: Vec<LeftBehind>,
     /// v2 tables the sections read, so the inventory skips them.
     pub read_tables: HashSet<&'static str>,
+    /// Lines for the export's notes.
+    pub notes: Vec<String>,
 }
 
 /// Image extensions v2 wrote for avatars and playlist covers, with their
@@ -58,11 +61,12 @@ fn db_error(table: &str, error: rusqlite::Error) -> ExportError {
 
 /// Build a fresh bundle at `bundle_path` from the stopped v2 database at
 /// `v2_db`, reading cover and avatar files under `v2_cache`. The path must
-/// not exist yet.
+/// not exist yet. `now` (seconds) dates the aliases the export adds.
 pub fn write_bundle(
     v2_db: &Path,
     v2_cache: &Path,
     bundle_path: &Path,
+    now: f64,
 ) -> Result<BundleOutcome, ExportError> {
     // Created empty and owner-only first: the bundle holds listening
     // history and request records, and SQLite would create it world
@@ -132,8 +136,14 @@ pub fn write_bundle(
         index_section(&conn, section)?;
         outcome.sections.insert(section.name.to_owned(), rows);
     }
-    // Album keys in v3's form, now that albums and tracks are both in.
+    // Album keys and artist ids in v3's form, now that the catalog is in.
     crate::export::library_keys::rekey_albums(&conn)?;
+    let artists = crate::export::artist_keys::rekey_artists(&conn, now)?;
+    *outcome
+        .sections
+        .entry(ARTIST_ALIASES.name.to_owned())
+        .or_default() += artists.aliases_added;
+    outcome.notes = artists.notes();
     conn.execute_batch("COMMIT").map_err(bundle_error)?;
     conn.execute_batch("DETACH DATABASE v2")
         .map_err(bundle_error)?;

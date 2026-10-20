@@ -12,6 +12,7 @@ library/src/
 media/src/
 plugins/src/
 src/
+tool/src/export/artist_keys.rs
 tool/src/export/bundle.rs
 tool/src/export/library_keys.rs
 tool/src/export/sections/

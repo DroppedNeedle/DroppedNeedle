@@ -1,19 +1,22 @@
 //! The library catalog and the curator's identity decisions.
 //!
 //! v2 and v3 keep the catalog in the same tables with the same columns,
-//! so rows travel verbatim and keep their ids. That is what keeps every
-//! Subsonic id and every Jellyfin track id stable (they derive from these
-//! ids; Jellyfin album and artist ids are keyed with the data key as well),
-//! and what lets favorites, history, playlists and queues find their tracks
-//! again.
+//! so album and track rows travel verbatim and keep their ids. That is what
+//! keeps every Subsonic album and track id and every Jellyfin track id
+//! stable (they derive from these ids; Jellyfin album and artist ids are
+//! keyed with the data key as well), and what lets favorites, history,
+//! playlists and queues find their tracks again.
 //! v3's first scan then matches the carried rows by root and path instead
 //! of minting new ids.
 //!
-//! Two things change on the way:
+//! Three things change on the way:
 //!
 //! - album grouping keys are rewritten in v3's form (see
 //!   [`crate::export::library_keys`]), so a file v3 re-reads stays in its
 //!   album;
+//! - artists take the id v3's scan finds them by, and v2's id stays as an
+//!   alias (see [`crate::export::artist_keys`]), so the first scan keeps
+//!   each artist's credits on its row;
 //! - tracks v2 grouped on its own are marked `legacy_import`, which tells
 //!   v3's scan to keep them in their v2 album while the file still names
 //!   it. Tracks a curator placed (`manual`, locked) stay locked.

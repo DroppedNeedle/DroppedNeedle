@@ -24,7 +24,7 @@ use serde_json::{Map, Value, json};
 
 use crate::export::envelope::{
     ApprovalRecord, Attachment, BUNDLE_ROLE, ConnectionRecord, EventCityRecord, EventSeenRecord,
-    ExportDoc, FollowRecord, SealedValue, UserRecord, derive_hash_scheme,
+    ExportDoc, FollowRecord, LeftBehind, SealedValue, UserRecord, derive_hash_scheme,
 };
 use crate::export::error::ExportError;
 use crate::export::fernet::FernetKey;
@@ -258,14 +258,16 @@ fn build_doc(
         .clone()
         .map_or_else(utc_now_rfc3339, Ok)?;
 
+    let now = time::OffsetDateTime::now_utc();
     let built = bundle_with_inventory(
         &db,
         &db_path,
         &request.v2.cache_dir,
         bundle_path,
         bundle_name,
+        unix_seconds(now),
     );
-    let (attachment, left_behind) = match built {
+    let (attachment, left_behind, notes) = match built {
         Ok(built) => built,
         Err(error) => {
             let _ = std::fs::remove_file(bundle_path);
@@ -289,6 +291,7 @@ fn build_doc(
         user_connections,
         attachments: vec![attachment],
         left_behind,
+        notes,
         content_hmac: String::new(),
     };
     let value = serde_json::to_value(&doc).map_err(|error| ExportError::InvalidEnvelope {
@@ -306,8 +309,9 @@ fn bundle_with_inventory(
     v2_cache: &Path,
     bundle_path: &Path,
     bundle_name: &str,
-) -> Result<(Attachment, Vec<crate::export::envelope::LeftBehind>), ExportError> {
-    let bundle = crate::export::bundle::write_bundle(db_path, v2_cache, bundle_path)?;
+    now: f64,
+) -> Result<(Attachment, Vec<LeftBehind>, Vec<String>), ExportError> {
+    let bundle = crate::export::bundle::write_bundle(db_path, v2_cache, bundle_path, now)?;
     let (sha256, bytes) =
         crate::export::bundle::file_sha256(bundle_path).map_err(|error| ExportError::Bundle {
             reason: error.to_string(),
@@ -323,7 +327,13 @@ fn bundle_with_inventory(
         bytes,
         sections: bundle.sections,
     };
-    Ok((attachment, left_behind))
+    Ok((attachment, left_behind, bundle.notes))
+}
+
+/// Seconds since the epoch, as the catalog's `REAL` time columns hold them.
+fn unix_seconds(at: time::OffsetDateTime) -> f64 {
+    let millis = at.unix_timestamp_nanos() / 1_000_000;
+    i64::try_from(millis).map_or(0.0, |millis| millis as f64 / 1000.0)
 }
 
 /// v2 tables the export JSON carries (the bundle reports its own).

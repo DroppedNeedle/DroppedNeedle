@@ -6,6 +6,7 @@
 //! re-encryption, conflict merge, section carry, machine-readable report)
 //! in [`crate::import`] build on these parsed types.
 
+pub mod artist_keys;
 pub mod bundle;
 pub mod envelope;
 pub mod error;

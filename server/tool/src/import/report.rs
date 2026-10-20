@@ -155,6 +155,9 @@ pub struct ImportReport {
     pub pending_links: u64,
     /// What the export left behind in v2, copied from the file.
     pub left_behind: Vec<LeftBehind>,
+    /// What the export changed on the way, copied from the file.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
     /// Itemized outcomes with semantic keys.
     pub items: Vec<ReportItem>,
 }
@@ -180,6 +183,7 @@ pub struct ReportBuilder {
     pending_links: u64,
     carried_writes: u64,
     left_behind: Vec<LeftBehind>,
+    notes: Vec<String>,
     items: Vec<ReportItem>,
     sampled_imports: HashMap<String, usize>,
     committed: bool,
@@ -207,6 +211,7 @@ impl ReportBuilder {
             pending_links: 0,
             carried_writes: 0,
             left_behind: Vec::new(),
+            notes: Vec::new(),
             items: Vec::new(),
             sampled_imports: HashMap::new(),
             committed: false,
@@ -216,6 +221,11 @@ impl ReportBuilder {
     /// Copy the export's left-behind list into the report.
     pub fn set_left_behind(&mut self, left_behind: Vec<LeftBehind>) {
         self.left_behind = left_behind;
+    }
+
+    /// Copy the export's notes into the report.
+    pub fn set_notes(&mut self, notes: Vec<String>) {
+        self.notes = notes;
     }
 
     /// Add one section's counts in bulk. Large sections are counted, not
@@ -359,6 +369,7 @@ impl ReportBuilder {
             secrets_reencrypted: self.secrets_reencrypted,
             pending_links: self.pending_links,
             left_behind: self.left_behind,
+            notes: self.notes,
             items: self.items,
         }
     }

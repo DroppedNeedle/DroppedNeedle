@@ -390,6 +390,7 @@ fn run_validate(args: &[String]) -> Result<(), String> {
         );
     }
     print_left_behind(&parsed.root);
+    print_notes(&parsed.root);
     if let Some(v2_root) = flag_value(args, "--v2-root")? {
         let instance_id = parsed
             .root
@@ -406,6 +407,19 @@ fn run_validate(args: &[String]) -> Result<(), String> {
             println!("error {} at {}: {}", issue.code, issue.path, issue.message);
         }
         Err(format!("invalid: {} error(s)", report.errors.len()))
+    }
+}
+
+/// Print the export's notes, one line each.
+fn print_notes(root: &serde_json::Value) {
+    let notes = root
+        .get("notes")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str);
+    for note in notes {
+        println!("note: {note}");
     }
 }
 
@@ -666,6 +680,12 @@ fn print_summary(dirs: &DataDirs, summary: &Summary) {
         println!("\nLeft behind in v2 (not carried to v3):");
         for item in &report.left_behind {
             println!("  {}: {} ({})", item.table, item.rows, item.reason);
+        }
+    }
+    if !report.notes.is_empty() {
+        println!("\nWorth a look:");
+        for note in &report.notes {
+            println!("  {note}");
         }
     }
     if !report.settings_defaulted.is_empty() {

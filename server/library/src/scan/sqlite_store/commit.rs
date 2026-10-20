@@ -55,19 +55,7 @@ use crate::scan::naming::{
 use crate::scan::store::{IndexWindow, WindowOutcome};
 use droppedneedle_kernel::db::savepoint;
 
-/// The catalog's "Unknown Artist" sentinel (seeded by the baseline).
-pub(super) const UNKNOWN_ARTIST_ID: &str = "00000000-0000-4000-8000-000000000002";
-pub(super) const UNKNOWN_ARTIST: &str = "Unknown Artist";
-
-/// A stable UUID-shaped id from a namespaced key.
-pub(super) fn stable_id(key: &str) -> String {
-    let digest = Sha256::digest(key.as_bytes());
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&digest[..16]);
-    uuid::Builder::from_custom_bytes(bytes)
-        .into_uuid()
-        .to_string()
-}
+pub(super) use crate::scan::naming::{UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID, stable_id};
 
 fn non_empty(value: &str) -> Option<String> {
     let trimmed = value.trim();

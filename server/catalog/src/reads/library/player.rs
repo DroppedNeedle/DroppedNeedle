@@ -412,8 +412,9 @@ pub trait PlayerCatalog: Send + Sync {
         id: &'a str,
     ) -> BoxFuture<'a, Result<Option<String>, StoreError>>;
 
-    /// Every `(kind, id)` an album or artist merge retired, and every track
-    /// alias: the old local ids an app may still hold.
+    /// Every `(kind, id)` an album or artist merge retired, every artist id
+    /// v2 gave that the upgrade replaced, and every track alias: the old
+    /// local ids an app may still hold.
     fn merged_ids<'a>(&'a self) -> BoxFuture<'a, Result<Vec<(&'static str, String)>, StoreError>>;
 
     /// Every year at least one album with a streamable track has,
@@ -2348,7 +2349,8 @@ impl PlayerCatalog for SqlitePlayerCatalog {
                 ),
                 (
                     "artist",
-                    "SELECT alias FROM local_artist_aliases WHERE kind = 'merged_artist'",
+                    "SELECT alias FROM local_artist_aliases \
+                     WHERE kind IN ('merged_artist', 'legacy_artist')",
                 ),
                 ("track", "SELECT alias FROM local_track_aliases"),
             ] {

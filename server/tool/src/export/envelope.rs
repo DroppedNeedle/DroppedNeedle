@@ -44,7 +44,7 @@ pub const REQUIRED_KEYS: &[&str] = &[
 /// Optional top-level keys a file of any version may carry. The concerts
 /// sections came after the first v1 files, so a file without them is still
 /// whole (its digest covers only the keys it has).
-pub const OPTIONAL_KEYS: &[&str] = &["v2_commit", "event_cities", "event_seen"];
+pub const OPTIONAL_KEYS: &[&str] = &["v2_commit", "event_cities", "event_seen", "notes"];
 
 /// Top-level keys a version 2 file carries on top of [`REQUIRED_KEYS`].
 pub const REQUIRED_KEYS_V2: &[&str] = &["user_connections", "attachments", "left_behind"];
@@ -415,6 +415,10 @@ pub struct ExportDoc {
     /// What stayed behind in v2 (version 2).
     #[serde(default)]
     pub left_behind: Vec<LeftBehind>,
+    /// What the export changed on the way that a person may want to check,
+    /// one line each; omitted when there is nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
     /// HMAC over every other top-level key (see `export::seal`). Empty
     /// only while the exporter assembles the document.
     #[serde(default, skip_serializing_if = "String::is_empty")]

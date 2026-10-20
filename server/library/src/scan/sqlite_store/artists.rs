@@ -22,14 +22,12 @@ use std::collections::{HashMap, HashSet};
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 
-use super::commit::{TRACK_GONE, UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID, stable_id};
+use super::commit::{TRACK_GONE, UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID};
 use crate::identify::merged_ids;
 use crate::matching::model::VARIOUS_ARTISTS_MBID;
+use crate::scan::naming::{VARIOUS_ARTISTS_ID, artist_key, artist_mbid_key};
 use crate::tags::AudioArtistCredit;
 use droppedneedle_kernel::db::fold_text;
-
-/// The catalog's "Various Artists" sentinel (seeded by the baseline).
-const VARIOUS_ARTISTS_ID: &str = "00000000-0000-4000-8000-000000000001";
 
 /// The catalog's two sentinel artist rows: Various Artists and Unknown
 /// Artist. Neither is ever proven to be an artist.
@@ -49,14 +47,7 @@ pub(super) struct Credit {
 
 /// The row a credit's name and sort name key to.
 fn artist_id(credit: &Credit) -> String {
-    if credit.name == UNKNOWN_ARTIST {
-        return UNKNOWN_ARTIST_ID.to_owned();
-    }
-    stable_id(&format!(
-        "artist:{}:{}",
-        credit.name,
-        credit.sort_name.as_deref().unwrap_or("")
-    ))
+    artist_key(&credit.name, credit.sort_name.as_deref())
 }
 
 /// The ids of one side of a file, lowercased, when they line up with its
@@ -366,7 +357,7 @@ impl Resolver<'_> {
             let row = if fits {
                 base.live
             } else {
-                let keyed = stable_id(&format!("artist-mbid:{mbid}"));
+                let keyed = artist_mbid_key(mbid);
                 insert_artist(self.tx, &keyed, credit, self.now)?;
                 live_artist(self.tx, &keyed)?.unwrap_or(keyed)
             };

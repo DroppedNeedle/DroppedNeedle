@@ -237,6 +237,13 @@ pub async fn run_import(request: ImportRequest) -> ImportReport {
     {
         report.set_left_behind(left_behind);
     }
+    if let Some(notes) = parsed
+        .root
+        .get("notes")
+        .and_then(|list| serde_json::from_value(list.clone()).ok())
+    {
+        report.set_notes(notes);
+    }
 
     // The bundle is checked whole before anything is written: a missing,
     // swapped or inconsistent bundle refuses the import with zero writes.

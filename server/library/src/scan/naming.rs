@@ -1,9 +1,46 @@
 //! Path-derived names for the catalog, ported from v2's album grouper and
 //! filename parser: the grouping directory an album keys on (disc folders
 //! fold into their parent) and the best-effort artist, album, title, and
-//! track number for files whose tags leave them out.
+//! track number for files whose tags leave them out. Also the keys artist
+//! rows are found by, which the v2 export uses to key carried artists.
 
 use std::path::Path;
+
+use sha2::{Digest as _, Sha256};
+
+/// The catalog's "Various Artists" sentinel (seeded by the baseline).
+pub const VARIOUS_ARTISTS_ID: &str = "00000000-0000-4000-8000-000000000001";
+/// The catalog's "Unknown Artist" sentinel (seeded by the baseline).
+pub const UNKNOWN_ARTIST_ID: &str = "00000000-0000-4000-8000-000000000002";
+/// The name a credit with no artist gets, keyed to the sentinel.
+pub const UNKNOWN_ARTIST: &str = "Unknown Artist";
+
+/// A stable UUID-shaped id from a namespaced key.
+pub(crate) fn stable_id(key: &str) -> String {
+    let digest = Sha256::digest(key.as_bytes());
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    uuid::Builder::from_custom_bytes(bytes)
+        .into_uuid()
+        .to_string()
+}
+
+/// The artist row a credit's trimmed name and sort name key to. The sort
+/// name is the file's only when its side lists a single artist.
+#[must_use]
+pub fn artist_key(name: &str, sort_name: Option<&str>) -> String {
+    if name == UNKNOWN_ARTIST {
+        return UNKNOWN_ARTIST_ID.to_owned();
+    }
+    stable_id(&format!("artist:{name}:{}", sort_name.unwrap_or("")))
+}
+
+/// The artist row for a credit with the lowercased MusicBrainz id `mbid`
+/// whose name row is proven to be another artist.
+#[must_use]
+pub fn artist_mbid_key(mbid: &str) -> String {
+    stable_id(&format!("artist-mbid:{mbid}"))
+}
 
 /// True for a disc folder name like `CD1`, `Disc 02`, `(Vol. 3)`, matched
 /// case-insensitively with balanced parentheses.

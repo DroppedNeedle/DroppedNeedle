@@ -11,6 +11,7 @@ mod import_migration;
 mod import_pipeline;
 mod import_safety;
 mod import_validate;
+mod migration_artists;
 mod migration_library;
 mod migration_pipeline;
 mod tooling_cli;
